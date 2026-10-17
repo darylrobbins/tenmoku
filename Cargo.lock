@@ -2187,6 +2187,7 @@ dependencies = [
  "futures",
  "gpui-pre",
  "gpui-pre-platform",
+ "kiln",
  "kiln-command",
  "kiln-platform",
  "kiln-shell",

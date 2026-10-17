@@ -57,6 +57,7 @@ use crate::{
 };
 use fe_command::Value;
 use fe_ui::Icon;
+use kiln::ViewCommands as _;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     ModalEvent, ModalId, ModalLayer, PaneView as _, Shell, Workspace, WorkspaceEvent,
@@ -2478,90 +2479,81 @@ impl Workbench {
         self.reload_auto_save(&event.settings.editor, cx);
     }
 
-    /// Runs a `workbench.*` command on the active pane, a pane command, a
-    /// palette toggle, a status bar command or a dock command; others go on
-    /// to the app.
+    /// Runs a typed command (the `workbench.*` tab commands) as its action,
+    /// or a pane command, a palette toggle, a status bar command or a dock
+    /// command; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(test)]
         self.commands_run.push(run.0.clone());
-        let Some(registry) =
-            crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
-        else {
-            if let Some(op) = open::op(run, cx) {
-                return self.prompt_open(op, window, cx);
-            }
-            if let Some(trusted) = trust::op(run, cx) {
-                return self.set_root_trust(trusted, cx);
-            }
-            match picker::toggled(run, cx) {
-                Some(Toggle::QuickOpen) => return self.toggle_quick_open(window, cx),
-                Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
-                None => {}
-            }
-            if toast::dismisses_all(run, cx) {
-                return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
-            }
-            if let Some(op) = recent_picker::op(run, cx) {
-                return self.run_recent_op(op, window, cx);
-            }
-            if config_problems::shows(run, cx) {
-                return self.show_config_problems(window, cx);
-            }
-            if let Some(op) = nav::op(run, cx) {
-                return self.run_nav_op(op, window, cx);
-            }
-            if self.run_references_command(run, window, cx) {
-                return;
-            }
-            if let Some(op) = status_bar::op(run, cx) {
-                return self.run_status_op(op, window, cx);
-            }
-            if let Some(op) = lsp::op(run, cx) {
-                return self.run_lsp_op(op, window, cx);
-            }
-            if let Some(command) = git_commands::op(run, cx) {
-                return self.run_git_command(command, window, cx);
-            }
-            if let Some(op) = pane_group::op(run, cx) {
-                return self.run_pane_op(op, window, cx);
-            }
-            if let Some(op) = dock_layout::op(run, cx) {
-                return self.run_dock_layout_op(op, window, cx);
-            }
-            if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
-                return self.reveal_active(cx);
-            }
-            if pane_toolbar::toggles(run, cx) {
-                return self.toggle_breadcrumbs(cx);
-            }
-            if let Some(op) = terminal_panel::op(run, cx) {
-                return self.run_terminal_op(op, window, cx);
-            }
-            let op = if outline_panel::shows(run, cx) {
-                Some(DockOp::ShowOutline)
-            } else {
-                dock::op(run, cx)
-            };
-            // `problems.show` is the dock's; the other problems commands
-            // the workbench's.
-            if let Some(DockOp::Problems(op)) = op
-                && op != ProblemsOp::Show
-            {
-                return self.run_problems_op(op, window, cx);
-            }
-            let done = op.is_some_and(|op| self.run_dock_op(op, window, cx));
-            if !done {
-                cx.propagate();
-            }
+        // A typed command, as its action: the tab commands.
+        if kiln::commands::dispatch_typed(run, window, cx) {
             return;
+        }
+        if let Some(op) = open::op(run, cx) {
+            return self.prompt_open(op, window, cx);
+        }
+        if let Some(trusted) = trust::op(run, cx) {
+            return self.set_root_trust(trusted, cx);
+        }
+        match picker::toggled(run, cx) {
+            Some(Toggle::QuickOpen) => return self.toggle_quick_open(window, cx),
+            Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
+            None => {}
+        }
+        if toast::dismisses_all(run, cx) {
+            return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
+        }
+        if let Some(op) = recent_picker::op(run, cx) {
+            return self.run_recent_op(op, window, cx);
+        }
+        if config_problems::shows(run, cx) {
+            return self.show_config_problems(window, cx);
+        }
+        if let Some(op) = nav::op(run, cx) {
+            return self.run_nav_op(op, window, cx);
+        }
+        if self.run_references_command(run, window, cx) {
+            return;
+        }
+        if let Some(op) = status_bar::op(run, cx) {
+            return self.run_status_op(op, window, cx);
+        }
+        if let Some(op) = lsp::op(run, cx) {
+            return self.run_lsp_op(op, window, cx);
+        }
+        if let Some(command) = git_commands::op(run, cx) {
+            return self.run_git_command(command, window, cx);
+        }
+        if let Some(op) = pane_group::op(run, cx) {
+            return self.run_pane_op(op, window, cx);
+        }
+        if let Some(op) = dock_layout::op(run, cx) {
+            return self.run_dock_layout_op(op, window, cx);
+        }
+        if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
+            return self.reveal_active(cx);
+        }
+        if pane_toolbar::toggles(run, cx) {
+            return self.toggle_breadcrumbs(cx);
+        }
+        if let Some(op) = terminal_panel::op(run, cx) {
+            return self.run_terminal_op(op, window, cx);
+        }
+        let op = if outline_panel::shows(run, cx) {
+            Some(DockOp::ShowOutline)
+        } else {
+            dock::op(run, cx)
         };
-        let result = self.active.update(cx, |pane, cx| {
-            let result = registry.dispatch(&mut (pane, window, &mut **cx), &run.0);
-            cx.notify();
-            result
-        });
-        if let Err(error) = result {
-            log::warn!("{error}");
+        // `problems.show` is the dock's; the other problems commands
+        // the workbench's.
+        if let Some(DockOp::Problems(op)) = op
+            && op != ProblemsOp::Show
+        {
+            return self.run_problems_op(op, window, cx);
+        }
+        let done = op.is_some_and(|op| self.run_dock_op(op, window, cx));
+        if !done {
+            cx.propagate();
         }
     }
 }
@@ -2603,7 +2595,8 @@ impl Render for Workbench {
         let drop_border = self.ui.accent;
         let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
-        div()
+        // The typed commands' handlers, in the workbench's key context.
+        Self::attach(div(), cx)
             .on_action(cx.listener(Self::on_run_command))
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.

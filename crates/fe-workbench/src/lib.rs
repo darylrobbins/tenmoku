@@ -5,11 +5,12 @@
 //!
 //! Its commands (`workbench.close_tab`, `workbench.next_tab`,
 //! `workbench.previous_tab`, on the active pane, and the `pane.*` ones) are
-//! `fe-command` commands in the [`KEY_CONTEXT`] context, registered by
-//! [`init`] and bound in
-//! `fe-keymap`'s default keymap, as are the project panel's. A keystroke reaches them as a
-//! [`fe_gpui::commands::RunCommand`] that the focused editor doesn't know
-//! and propagates.
+//! in the [`KEY_CONTEXT`] context, registered by [`init`] and bound in
+//! `fe-keymap`'s default keymap, as are the project panel's. The tab
+//! commands are typed commands, `#[kiln::command]` methods on [`Workbench`]
+//! that its root element handles; the others are `fe-command` commands,
+//! which a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that the
+//! focused editor doesn't know and propagates.
 
 mod auto_save;
 mod config_problems;
@@ -46,15 +47,12 @@ mod title_bar;
 mod toolbar_picker;
 mod trust;
 mod workbench;
+mod workbench_commands;
 mod workspace_edit;
 
-use std::rc::Rc;
-
-use fe_command::{
-    Actor, CommandMeta, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value,
-};
+use fe_command::{CommandMeta, Value};
 use fe_keymap::{CatalogError, CommandCatalog};
-use gpui::{App, Global, Window};
+use gpui::App;
 
 pub use dock::{Dock, DockPanel};
 pub use git_panel::{GitPanel, GitPanelEvent};
@@ -79,25 +77,20 @@ pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch, win
 /// The key context the workbench's root element sets.
 pub const KEY_CONTEXT: &str = "workbench";
 
-/// The [`CommandTarget`] of workbench commands: the pane, in its window.
-pub struct WorkbenchCommands;
+// The crate's typed commands (`#[kiln::command]`), which `init` registers.
+kiln::module!(pub(crate) fn module);
 
-impl CommandTarget for WorkbenchCommands {
-    type Tx = ();
-    type Target<'a> = PaneTarget<'a>;
-}
-
-type PaneTarget<'a> = (&'a mut Pane, &'a mut Window, &'a mut App);
-
-type PaneCommand = fn(&mut Pane, &mut Window, &mut App);
-
-struct Commands(Rc<Registry<WorkbenchCommands>>);
-
-impl Global for Commands {}
+/// The global the tests that set up once (`tests/lsp.rs`,
+/// `tests/lsp_quit.rs`) look for to tell whether [`init`] has run: kiln's
+/// contributions, which [`module`], its first call, sets.
+#[cfg(test)]
+pub(crate) use kiln::Contributions as Commands;
 
 /// Registers the workbench's commands. Call after [`fe_gpui::init`].
 pub fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(new_registry())));
+    // The typed commands first, registered at once whether or not
+    // `kiln::init` has run: the test apps never run it.
+    module(cx);
     picker::init(cx);
     config_problems::init(cx);
     dock::init(cx);
@@ -126,44 +119,19 @@ pub fn init(cx: &mut App) {
     trust::init(cx);
 }
 
-fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
-    cx.try_global::<Commands>()
-        .map(|commands| commands.0.clone())
-}
-
-fn new_registry() -> Registry<WorkbenchCommands> {
-    let mut registry = Registry::new();
-    let commands: [(&str, &str, PaneCommand); 3] = [
-        ("workbench.close_tab", "Close Tab", |pane, window, cx| {
-            pane.close_active(window, cx)
-        }),
-        ("workbench.next_tab", "Next Tab", |pane, window, cx| {
-            pane.cycle(false, window, cx)
-        }),
-        (
-            "workbench.previous_tab",
-            "Previous Tab",
-            |pane, window, cx| pane.cycle(true, window, cx),
-        ),
-    ];
-    for (id, title, run) in commands {
-        registry
-            .register(id, title, move |target: &mut PaneTarget, _: &Actor| {
-                let (pane, window, cx) = target;
-                run(pane, window, cx);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("workbench command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(KEY_CONTEXT));
-    }
-    registry
-}
-
 /// The workbench's, the editor's and the app's commands, to check keymap
 /// bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
-    Box::new(Catalog(vec![
-        Box::new(new_registry()),
+    // The typed commands, with no app to have registered them.
+    let mut catalogs = vec![kiln::recorded_catalog("fe_workbench")];
+    catalogs.extend(registry_catalogs());
+    Box::new(Catalog(catalogs))
+}
+
+/// The catalogs of the commands that live in registries, the workbench's,
+/// the editor's and the app's.
+fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
+    vec![
         Box::new(picker::registry()),
         kiln_shell::picker::catalog(),
         Box::new(config_problems::registry()),
@@ -185,14 +153,14 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(terminal_panel::registry()),
         Box::new(trust::registry()),
         fe_gpui::commands::command_catalog(),
-    ]))
+    ]
 }
 
 /// The workbench's commands and the editor's, for the command palette,
-/// which lists each where its context holds.
+/// which lists each where its context holds; it lists the typed commands
+/// itself.
 fn command_list() -> Vec<CommandMeta> {
-    let mut list: Vec<CommandMeta> = new_registry().commands().cloned().collect();
-    list.extend(picker::registry().commands().cloned());
+    let mut list: Vec<CommandMeta> = picker::registry().commands().cloned().collect();
     list.extend(config_problems::registry().commands().cloned());
     list.extend(dock::registry().commands().cloned());
     list.extend(dock_layout::registry().commands().cloned());
@@ -232,3 +200,7 @@ impl CommandCatalog for Catalog {
 mod panel_width_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod typed_command_ids_tests;
+#[cfg(test)]
+mod workbench_commands_tests;

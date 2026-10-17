@@ -28,6 +28,8 @@ fe-text.workspace = true
 # The bottom dock's terminal.
 fe-terminal-view.workspace = true
 fe-ui.workspace = true
+# The workbench's typed commands: `#[kiln::command]` expands to `::kiln::..` paths.
+kiln.workspace = true
 kiln-platform.workspace = true
 # The window's chrome: the title bar, the frame and the menu bar.
 kiln-shell.workspace = true
