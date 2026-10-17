@@ -1,8 +1,10 @@
 //! The Changes panel on the right dock: the project's files that differ
 //! from git's HEAD, each with a one-letter status, its name and its
 //! directory, sorted by path. Clicking a row, or Enter on the selected one,
-//! opens the file in the active pane; a deleted file's row is dimmed and
-//! opens nothing.
+//! opens the file's diff against HEAD in the active pane, as VS Code's
+//! Source Control does (`git_diff`); a deleted file's row is dimmed, and
+//! its diff compares HEAD's text with nothing. Alt-Enter, or the row's
+//! "Open File" button, opens the file itself, which a deleted one can't.
 //!
 //! The workbench's [`GitState`] reads the status of the repository
 //! containing the project root, on the background executor, one run at a
@@ -25,12 +27,13 @@ use std::{
 };
 
 use fe_git::{ChangeKind, FileStatus, GitError};
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::{Icon, IconButton, ROW_HEIGHT, Tooltip, UiTheme};
 use gpui::{
-    AnyElement, App, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable,
+    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Modifiers, ParentElement as _,
+    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
 
 use crate::git::GitState;
@@ -45,8 +48,8 @@ const ADDED_HUE: f32 = 130. / 360.;
 /// What the panel asks of the workbench.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitPanelEvent {
-    /// A row was clicked, or Enter pressed on it: open this file in the
-    /// active pane.
+    /// Alt-Enter was pressed on a row, or its "Open File" button clicked:
+    /// open this file in the active pane.
     OpenFile(PathBuf),
     /// The files listed, or their statuses, changed: see
     /// [`GitPanel::statuses`].
@@ -294,8 +297,26 @@ impl GitPanel {
         cx.notify();
     }
 
+    /// Selects row `ix` and opens its file's diff against HEAD, through the
+    /// workbench the git state gives bases to.
+    fn open_diff(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.entries.get(ix) else {
+            return;
+        };
+        // Whether it's on disk is looked at as it opens: a staged deletion
+        // may have left it there.
+        let path = entry.path.clone();
+        self.select(ix, cx);
+        let workbench = (self.git.upgrade()).map(|git| git.read(cx).workbench());
+        if let Some(workbench) = workbench.and_then(|workbench| workbench.upgrade()) {
+            workbench.update(cx, |workbench, cx| {
+                workbench.open_change_diff(path, window, cx)
+            });
+        }
+    }
+
     /// Selects row `ix` and opens its file, unless it's deleted.
-    fn open(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn open_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get(ix) else {
             return;
         };
@@ -307,9 +328,16 @@ impl GitPanel {
     }
 
     /// Up and down move the selection, the first press selecting the first
-    /// row; Enter opens the selected row.
-    fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    /// row; Enter opens the selected row's diff, and Alt-Enter its file.
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
+        if keystroke.key == "enter" && keystroke.modifiers == Modifiers::alt() {
+            if let Some(ix) = self.selected {
+                self.open_file(ix, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         if keystroke.modifiers.modified() || self.entries.is_empty() {
             return;
         }
@@ -324,7 +352,7 @@ impl GitPanel {
                 self.select(ix, cx);
             }
             "enter" => match self.selected {
-                Some(ix) => self.open(ix, cx),
+                Some(ix) => self.open_diff(ix, window, cx),
                 None => return,
             },
             _ => return,
@@ -347,6 +375,7 @@ impl GitPanel {
         // Each list shown has its own IDs, so a row pressed before the list
         // changed isn't clicked as the row that replaced it.
         let name = SharedString::from(format!("change-{}", self.shown));
+        let panel = cx.weak_entity();
         range
             .filter_map(|ix| {
                 let entry = self.entries.get(ix)?;
@@ -361,6 +390,16 @@ impl GitPanel {
                     .map(|dir| dir.display().to_string())
                     .unwrap_or_default();
                 let deleted = entry.kind == ChangeKind::Deleted;
+                let panel = panel.clone();
+                let open_file = IconButton::new(format!("{name}-open-{ix}"), Icon::File, &ui)
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| Tooltip::new("Open File", None::<&str>, &ui))
+                            .into()
+                    })
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        (panel.update(cx, |panel, cx| panel.open_file(ix, cx))).ok();
+                    });
                 Some(
                     div()
                         .id(ElementId::NamedInteger(name.clone(), ix as u64))
@@ -375,7 +414,11 @@ impl GitPanel {
                         .when(deleted, |row| row.opacity(0.5))
                         .when(self.selected == Some(ix), |row| row.bg(selected_bg))
                         .hover(move |row| row.bg(ui.row_hover))
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.open(ix, cx)))
+                        .on_click(
+                            cx.listener(move |panel, _, window, cx| {
+                                panel.open_diff(ix, window, cx)
+                            }),
+                        )
                         .child(
                             div()
                                 .flex_none()
@@ -393,6 +436,9 @@ impl GitPanel {
                                 .text_color(ui.muted_text)
                                 .child(directory),
                         )
+                        .when(!deleted, |row| {
+                            row.child(div().flex_none().child(open_file))
+                        })
                         .into_any_element(),
                 )
             })

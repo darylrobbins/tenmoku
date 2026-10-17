@@ -11,6 +11,9 @@
 //! results for text the input no longer holds are dropped. Until the input's
 //! text has results, the rows shown are another query's, and picking one is
 //! refused; opening clears them.
+//!
+//! A quick open made to pick a file for something else ([`QuickOpen::set_pick`])
+//! hands the file picked to it instead of opening it.
 
 use std::{
     fmt::Write as _,
@@ -37,6 +40,10 @@ use crate::{
 
 /// The most matches a query shows.
 pub(crate) const LIMIT: usize = 50;
+
+/// What picking a file does in place of opening it: see
+/// [`QuickOpen::set_pick`].
+pub(crate) type Pick = Box<dyn FnOnce(PathBuf, &mut Window, &mut App)>;
 
 /// `None` until the walk's thread has created it.
 type SharedIndex = Arc<Mutex<Option<FinderIndex>>>;
@@ -74,6 +81,8 @@ pub struct QuickOpen {
     previous_focus: Option<FocusHandle>,
     /// Stops the walk when the workbench goes.
     cancel: Arc<AtomicBool>,
+    /// Takes the file picked, if set, in place of opening it.
+    pick: Option<Pick>,
     #[cfg(test)]
     pub(crate) walks: usize,
     #[cfg(test)]
@@ -99,6 +108,7 @@ impl QuickOpen {
             querying: None,
             previous_focus: None,
             cancel: Arc::default(),
+            pick: None,
             #[cfg(test)]
             walks: 0,
             #[cfg(test)]
@@ -116,6 +126,11 @@ impl QuickOpen {
         if matches!(self.build, Build::NotStarted) {
             self.walk(cx);
         }
+    }
+
+    /// Hands the next file picked to `pick` rather than opening it.
+    pub(crate) fn set_pick(&mut self, pick: Pick) {
+        self.pick = Some(pick);
     }
 
     /// Opens paths in `pane` from now on: the active one, as it changes.
@@ -329,8 +344,8 @@ impl PickerDelegate for QuickOpen {
     }
 
     /// Opens the file as a tree click does: in a focused tab, or by
-    /// activating its tab if it's open. Refused while the rows are another
-    /// query's than the input's.
+    /// activating its tab if it's open; or hands it to the pick set. Refused
+    /// while the rows are another query's than the input's.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let (Some(root), Some(found)) = (&self.root, self.matches.get(ix)) else {
             return false;
@@ -339,6 +354,11 @@ impl PickerDelegate for QuickOpen {
             return false;
         }
         let path = root.join(&found.relative);
+        if let Some(pick) = self.pick.take() {
+            self.previous_focus = None;
+            pick(path, window, cx);
+            return true;
+        }
         let reveal = split_location(&self.query).1.map(|(row, column)| Reveal {
             row,
             columns: column..column,

@@ -252,6 +252,36 @@ impl Repo {
         commit_text(&commit, rela_path)
     }
 
+    /// The size in bytes of `path`'s blob in HEAD's tree, read from the
+    /// object's header without loading it, so a caller can refuse one too
+    /// large before [`Repo::head_text`] reads it whole. `None` where
+    /// `head_text` finds no blob.
+    pub fn head_blob_size(&self, path: &Path) -> Result<Option<u64>, GitError> {
+        let Some(rela_path) = self.rela_path(path) else {
+            return Ok(None);
+        };
+        let repo = self.repo.to_thread_local();
+        let mut head = repo.head().map_err(GitError::from_gix)?;
+        if head.is_unborn() {
+            return Ok(None);
+        }
+        let commit = head.peel_to_commit().map_err(GitError::from_gix)?;
+        let tree = commit.tree().map_err(GitError::from_gix)?;
+        let Some(entry) = tree
+            .lookup_entry_by_path(rela_path)
+            .map_err(GitError::from_gix)?
+        else {
+            return Ok(None);
+        };
+        if !entry.mode().is_blob_or_symlink() {
+            return Ok(None);
+        }
+        let header = repo
+            .find_header(entry.object_id())
+            .map_err(GitError::from_gix)?;
+        Ok(Some(header.size()))
+    }
+
     /// `path` relative to the working tree, `None` outside it or for the
     /// working tree itself.
     fn rela_path<'a>(&self, path: &'a Path) -> Option<&'a Path> {

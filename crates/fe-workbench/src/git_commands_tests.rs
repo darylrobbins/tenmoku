@@ -1,5 +1,5 @@
-//! The git and diff commands routed to their features' stubs: listed in
-//! the palette and answered `Not supported yet`; typed as fugitive's and
+//! The git and diff commands routed to their features: listed in the
+//! palette, the stubs answering `Not supported yet`; typed as fugitive's and
 //! gitsigns' ex commands; host commands from the editors a feature shows
 //! outside the tabs handed to it; and a diff view's focused side taken for
 //! the active editor.
@@ -213,9 +213,16 @@ fn ex_routes(cx: &mut TestAppContext) {
     ];
     for (line, op) in lines {
         ex(line, cx);
-        // The branch commands are implemented; the root isn't a repository.
-        let answer = match op.command.feature() {
-            Feature::Branch => "Not in a git repository".to_owned(),
+        // The branch and diff commands are implemented; the root isn't a
+        // repository.
+        let answer = match op.command {
+            DiffIndex | DiffHead => "Not in a git repository".to_owned(),
+            NextChange => "No changes".to_owned(),
+            CompareFile => {
+                let path = dir.path().join("b.txt");
+                format!("Can't open {}: No such file", path.display())
+            }
+            _ if op.command.feature() == Feature::Branch => "Not in a git repository".to_owned(),
             _ => format!("Not supported yet: {}", op.command.title()),
         };
         assert_eq!(routed(&workbench, cx), [Routed::Op(op)], ":{line}");
@@ -328,7 +335,8 @@ fn owned_editors(cx: &mut TestAppContext) {
     for command in [write.clone(), get.clone()] {
         host_command(&workbench, &left, command.clone(), cx);
         assert_eq!(routed(&workbench, cx), [Routed::DiffView(command)]);
-        let answer = "Not supported yet: this command in a diff view";
+        // The left side is read-only.
+        let answer = "E21: Cannot make changes, 'modifiable' is off";
         assert_eq!(message(&left, cx).as_deref(), Some(answer));
     }
     host_command(&workbench, &commit_box, write.clone(), cx);

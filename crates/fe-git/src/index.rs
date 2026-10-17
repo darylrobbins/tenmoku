@@ -24,6 +24,38 @@ pub struct SplitStatus {
 }
 
 impl Repo {
+    /// The size in bytes of `path`'s stage-0 blob in the index, read from
+    /// the object's header without loading it, so a caller can refuse one
+    /// too large before [`Repo::index_text`] reads it whole. `None` when
+    /// `path` isn't in the index (or is only marked intent-to-add) or is
+    /// outside the working tree.
+    pub fn index_blob_size(&self, path: &std::path::Path) -> Result<Option<u64>, GitError> {
+        let Ok(rela_path) = path.strip_prefix(&self.workdir) else {
+            return Ok(None);
+        };
+        let Ok(rela_path) = gix::path::os_str_into_bstr(rela_path.as_os_str()) else {
+            return Ok(None);
+        };
+        if rela_path.is_empty() {
+            return Ok(None);
+        }
+        let repo = self.repo.to_thread_local();
+        let index = repo.index_or_empty().map_err(GitError::from_gix)?;
+        let Some(entry) = index
+            .entry_by_path_and_stage(rela_path.as_bstr(), gix::index::entry::Stage::Unconflicted)
+        else {
+            return Ok(None);
+        };
+        if entry
+            .flags
+            .contains(gix::index::entry::Flags::INTENT_TO_ADD)
+        {
+            return Ok(None);
+        }
+        let header = repo.find_header(entry.id).map_err(GitError::from_gix)?;
+        Ok(Some(header.size()))
+    }
+
     /// The text of `path`'s stage-0 blob in the index, decoded as UTF-8
     /// (lossily). `None` when `path` isn't in the index (or is only marked
     /// intent-to-add), is outside the working tree, or the blob is binary.

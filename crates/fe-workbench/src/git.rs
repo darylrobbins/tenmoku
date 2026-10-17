@@ -18,6 +18,10 @@
 //! each open editor whose file's status changed, or of every one if HEAD
 //! moved.
 //!
+//! A refresh that finds the repository also has each open diff view's git
+//! side read again (`git_diff`'s [`Workbench::refresh_git_diffs`]). A click on an editor's change bar opens its file's diff
+//! against HEAD there.
+//!
 //! Each refresh that finds the repository also reads where HEAD points,
 //! which the status bar's branch item shows (`git_branch`), with whether
 //! anything changed; one that finds none hides the item.
@@ -48,9 +52,9 @@ use std::{
 };
 
 use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo};
-use fe_gpui::EditorView;
+use fe_gpui::{EditorView, commands::EditorViewEvent};
 use fe_project::FsChange;
-use gpui::{App, AppContext as _, Context, Entity, EntityId, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
 
 use crate::{
     GitPanel, Workbench,
@@ -126,6 +130,8 @@ pub(crate) struct GitState {
     /// The editors whose base couldn't be read, and the path it's for: the
     /// next refresh reads it again.
     failed: HashMap<EntityId, PathBuf>,
+    /// Hears each tracked editor's change bar clicked.
+    bar_clicks: HashMap<EntityId, Subscription>,
     /// The refresh due after the last watcher batch.
     debounce: Option<Task<()>>,
     /// Whether `debounce` is still to run out.
@@ -164,6 +170,7 @@ impl GitState {
             snapshot: None,
             based: HashMap::new(),
             failed: HashMap::new(),
+            bar_clicks: HashMap::new(),
             debounce: None,
             due: false,
             running: None,
@@ -183,6 +190,11 @@ impl GitState {
         self.due = false;
         self.running = None;
         self.again = false;
+    }
+
+    /// The workbench whose editors are given bases.
+    pub(crate) fn workbench(&self) -> WeakEntity<Workbench> {
+        self.workbench.clone()
     }
 
     /// Starts another branch listing, superseding those before: its number.
@@ -263,11 +275,18 @@ impl GitState {
     /// one, and forgets closed ones: from HEAD in the background, or a
     /// refresh now for files HEAD doesn't have. While something runs,
     /// they wait for it to land; one whose base failed waits for a
-    /// refresh.
+    /// refresh. Each one's change bar clicked opens its file's diff.
     pub(crate) fn track(&mut self, editors: &[Entity<EditorView>], cx: &mut Context<Self>) {
         let open: Vec<EntityId> = editors.iter().map(Entity::entity_id).collect();
         self.based.retain(|editor, _| open.contains(editor));
         self.failed.retain(|editor, _| open.contains(editor));
+        self.bar_clicks.retain(|editor, _| open.contains(editor));
+        for editor in editors {
+            if !self.bar_clicks.contains_key(&editor.entity_id()) {
+                let clicks = self.hear_bar_clicks(editor, cx);
+                self.bar_clicks.insert(editor.entity_id(), clicks);
+            }
+        }
         if self.root.is_none() || self.running.is_some() {
             return;
         }
@@ -292,6 +311,16 @@ impl GitState {
             });
             bases.collect()
         });
+    }
+
+    /// Opens `editor`'s file against HEAD as its change bar is clicked.
+    fn hear_bar_clicks(&self, editor: &Entity<EditorView>, cx: &mut Context<Self>) -> Subscription {
+        let workbench = self.workbench.clone();
+        cx.subscribe(editor, move |_, editor, event: &EditorViewEvent, cx| {
+            if let EditorViewEvent::ChangeBarClicked { rows } = event {
+                Workbench::change_bar_clicked(workbench.clone(), editor, rows.clone(), cx);
+            }
+        })
     }
 
     /// `editors`' files, each marked new if it has no base for its path:
@@ -346,6 +375,7 @@ impl GitState {
                 let before = self.snapshot.replace(after.clone());
                 self.repo = Some(repo.clone());
                 self.no_repo = false;
+                self.refresh_diffs(cx);
                 let wanted = wanted(self, false, cx);
                 let located = repo.located.clone();
                 self.load_bases(cx, move || rebase(&repo, before, &after, wanted));
@@ -379,6 +409,14 @@ impl GitState {
         }
         if landed {
             self.finish(false, cx);
+        }
+    }
+
+    /// Has the workbench read its diff views' git sides again: see the
+    /// module docs.
+    fn refresh_diffs(&self, cx: &mut App) {
+        if let Some(workbench) = self.workbench.upgrade() {
+            workbench.update(cx, |workbench, cx| workbench.refresh_git_diffs(cx));
         }
     }
 
@@ -584,7 +622,7 @@ fn relative(repo: &Found, path: &Path) -> Option<PathBuf> {
 /// file's own, if it exists), joined with the rest of it (a new or deleted
 /// file, or directory). A symlink whose target is gone is followed to it
 /// all the same. As given if that fails, or past [`MAX_LINKS`] symlinks.
-fn resolve(path: &Path) -> PathBuf {
+pub(crate) fn resolve(path: &Path) -> PathBuf {
     let mut missing: Vec<OsString> = Vec::new();
     let mut at = path.to_owned();
     let mut links = 0;

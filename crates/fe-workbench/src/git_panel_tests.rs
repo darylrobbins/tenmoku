@@ -144,6 +144,23 @@ fn tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<PathBu
     })
 }
 
+/// The active pane's tabs' titles.
+fn titles(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    workbench.read_with(cx, |workbench, cx| {
+        (workbench.pane().read(cx).tabs().iter())
+            .map(|tab| tab.item().tab_title(cx).to_string())
+            .collect()
+    })
+}
+
+/// Clicks row `ix`'s "Open File" button, at the row's end.
+fn click_open_file(panel: &Entity<GitPanel>, ix: usize, cx: &mut VisualTestContext) {
+    let bounds = panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"));
+    let at = gpui::point(bounds.right() - gpui::px(20.), bounds.center().y);
+    cx.simulate_click(at, Modifiers::none());
+    draw(cx);
+}
+
 fn click(panel: &Entity<GitPanel>, ix: usize, cx: &mut VisualTestContext) {
     let bounds = panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"));
     cx.simulate_click(bounds.center(), Modifiers::none());
@@ -220,7 +237,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn clicking_a_row_opens_its_file_but_a_deleted_one_opens_nothing(cx: &mut TestAppContext) {
+fn clicking_a_row_opens_its_diff_and_its_button_its_file(cx: &mut TestAppContext) {
     let dir = changed();
     let (workbench, cx) = open(cx, Some(dir.path()));
     dispatch("git.show_changes", cx);
@@ -228,15 +245,21 @@ fn clicking_a_row_opens_its_file_but_a_deleted_one_opens_nothing(cx: &mut TestAp
     assert!(tabs(&workbench, cx).is_empty());
 
     click(&panel, 0, cx);
-    assert_eq!(tabs(&workbench, cx), [dir.path().join("a.rs")]);
+    assert_eq!(titles(&workbench, cx), ["a.rs (HEAD ↔ Working Tree)"]);
 
+    // A deleted file's compares HEAD with nothing.
     click(&panel, 1, cx);
     assert_eq!(panel.read_with(cx, |panel, _| panel.selected()), Some(1));
+    let both = ["a.rs (HEAD ↔ Working Tree)", "b.rs (HEAD ↔ Working Tree)"];
+    assert_eq!(titles(&workbench, cx), both);
+
+    click_open_file(&panel, 0, cx);
     assert_eq!(tabs(&workbench, cx), [dir.path().join("a.rs")]);
+    assert_eq!(titles(&workbench, cx).len(), 3);
 }
 
 #[gpui::test]
-fn enter_opens_the_selected_row_but_not_a_deleted_one(cx: &mut TestAppContext) {
+fn enter_opens_the_selected_rows_diff_and_alt_enter_its_file(cx: &mut TestAppContext) {
     let dir = changed();
     let (workbench, cx) = open(cx, Some(dir.path()));
     dispatch("git.show_changes", cx);
@@ -248,13 +271,19 @@ fn enter_opens_the_selected_row_but_not_a_deleted_one(cx: &mut TestAppContext) {
     assert_eq!(panel.read_with(cx, |panel, _| panel.selected()), Some(0));
     cx.simulate_keystrokes("enter");
     draw(cx);
+    assert_eq!(titles(&workbench, cx), ["a.rs (HEAD ↔ Working Tree)"]);
+
+    focus(&panel, cx);
+    cx.simulate_keystrokes("alt-enter");
+    draw(cx);
     assert_eq!(tabs(&workbench, cx), [dir.path().join("a.rs")]);
 
+    // A deleted file has none to open.
     focus(&panel, cx);
     cx.simulate_keystrokes("down");
     draw(cx);
     assert_eq!(panel.read_with(cx, |panel, _| panel.selected()), Some(1));
-    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("alt-enter");
     draw(cx);
     assert_eq!(tabs(&workbench, cx), [dir.path().join("a.rs")]);
 }
@@ -425,5 +454,19 @@ fn opening_another_folder_reads_its_repository(cx: &mut TestAppContext) {
     assert_eq!(rows(&new, cx), [("M", "x.rs".to_owned())]);
 
     click(&new, 0, cx);
-    assert_eq!(tabs(&workbench, cx), [second.path().join("x.rs")]);
+    assert_eq!(titles(&workbench, cx), ["x.rs (HEAD ↔ Working Tree)"]);
+    let diff = workbench.read_with(cx, |workbench, cx| {
+        let pane = workbench.pane().read(cx);
+        let diff = pane
+            .active_item()?
+            .downcast_ref::<fe_gpui::DiffView>()?
+            .clone();
+        let left = diff.read(cx).left().read(cx).model().text().to_string();
+        Some(left)
+    });
+    assert_eq!(
+        diff.as_deref(),
+        Some("x.rs\n"),
+        "HEAD's text in the new repository"
+    );
 }

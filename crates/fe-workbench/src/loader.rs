@@ -57,14 +57,24 @@ impl From<Buffer> for Opened {
 /// Opens `path`: a file of [`LARGE_FILE_BYTES`] or more as a view whose
 /// index starts building, anything else as [`read`] does.
 pub fn open(path: PathBuf) -> io::Result<Opened> {
-    let large =
-        std::fs::metadata(&path).is_ok_and(|meta| meta.is_file() && meta.len() >= threshold(&path));
-    if !large {
+    if !is_large(&path) {
         return read(path).map(Opened::Text);
     }
     let view = Arc::new(FileView::open(&path)?);
     let index = Arc::new(build_index(view.clone()));
     Ok(Opened::Large { view, index })
+}
+
+/// Whether `path` is a file of [`LARGE_FILE_BYTES`] or more (lower in
+/// tests that lower it), which [`open`] opens in a viewer, unread.
+pub(crate) fn is_large(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() >= large_bytes(path))
+}
+
+/// How many bytes make `path` a file too large to edit:
+/// [`LARGE_FILE_BYTES`], or less in a test that lowers it.
+pub(crate) fn large_bytes(path: &Path) -> u64 {
+    threshold(path)
 }
 
 #[cfg(not(test))]

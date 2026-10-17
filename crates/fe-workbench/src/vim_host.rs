@@ -15,7 +15,8 @@
 //!
 //! The other commands named with a capital, fugitive's and gitsigns', and
 //! `:diffsplit`, run as [`super::git_commands`] says; so do the host
-//! commands typed in an editor a git feature shows outside the tabs.
+//! commands typed in an editor a git feature shows outside the tabs, which
+//! a diff view's sides run with the helpers here.
 //!
 //! Closing a tab here never asks (no [`kiln_shell::close::confirm`], no
 //! Discard/Cancel prompt): `:q` refuses a dirty tab with `E37`, and `:q!`
@@ -41,9 +42,9 @@ use crate::dock::{DockOp, DockPanel, ProblemsOp};
 
 const E32: &str = "E32: No file name";
 pub(crate) const E13: &str = "E13: File exists (add ! to override)";
-const E37: &str = "E37: No write since last change (add ! to override)";
+pub(super) const E37: &str = "E37: No write since last change (add ! to override)";
 const E99: &str = "E99: Current buffer is not in diff mode";
-const RELOAD: &str = "Not supported yet: reloading a file from disk";
+pub(super) const RELOAD: &str = "Not supported yet: reloading a file from disk";
 const NO_SEARCH: &str = "No search to replace";
 
 impl Workbench {
@@ -328,10 +329,11 @@ impl Workbench {
         }
     }
 
-    /// `:qa`: closes the window, unless a tab of it is dirty: `E37` for
-    /// `editor`'s, else `E162` naming the first in pane order. With
+    /// `:qa`: closes the window, unless a tab of it, or a diff view's
+    /// working side, is dirty: `E37` for `editor`'s, else `E162` naming the
+    /// first in pane order. With
     /// `force` (`:qa!`) it closes discarding them.
-    fn vim_quit_all(
+    pub(super) fn vim_quit_all(
         &mut self,
         editor: &Entity<EditorView>,
         force: bool,
@@ -343,7 +345,7 @@ impl Workbench {
                 return message(editor, E37, cx);
             }
             let dirty = self
-                .open_editors(cx)
+                .file_editors(cx)
                 .into_iter()
                 .find(|tab| tab.is_dirty(cx));
             if let Some(dirty) = dirty {
@@ -355,17 +357,18 @@ impl Workbench {
         window.remove_window();
     }
 
-    /// `:wa`: saves every dirty tab of the window, each buffer once. The
+    /// `:wa`: saves every dirty tab of the window, and diff view's working
+    /// side, each buffer once. The
     /// first failure in pane order is the message, once every other tab is
     /// saved.
-    fn vim_write_all(
+    pub(super) fn vim_write_all(
         &mut self,
         editor: &Entity<EditorView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut saving: Vec<Entity<EditorView>> = Vec::new();
-        for tab in self.open_editors(cx) {
+        for tab in self.file_editors(cx) {
             let shared = (saving.iter()).any(|saved| saved.shares_document(&tab, cx));
             if tab.is_dirty(cx) && !shared {
                 saving.push(tab);
@@ -414,7 +417,7 @@ impl Workbench {
         // A tab already on this file keeps its spelling of the path, so it
         // is reused, not opened a second time.
         let wanted = identity(&resolved);
-        let resolved = (self.open_editors(cx).iter())
+        let resolved = (self.file_editors(cx).iter())
             .filter_map(|open| open.path(cx).map(|path| path.to_path_buf()))
             .find(|open| *open == resolved || (wanted.is_some() && identity(open) == wanted))
             .unwrap_or(resolved);
@@ -451,13 +454,13 @@ mod write_no_clobber_tests;
 mod day_one_tests;
 
 /// Leaves `text` as `editor`'s vim message.
-fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {
+pub(super) fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {
     editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));
 }
 
 /// Saves `editor` through its [`kiln_shell::PaneItem::save`], resolving to
 /// the error to show, if any: `untitled` for a buffer with no file.
-fn save(
+pub(super) fn save(
     editor: &Entity<EditorView>,
     untitled: String,
     window: &mut Window,
@@ -479,7 +482,7 @@ fn save(
 /// folder a symlink leads to, not the one it is in. What comes before a
 /// `..`, a `.` or a trailing slash must be a directory, or that is the
 /// error: only the final file may be missing.
-fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, String> {
+pub(super) fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, String> {
     let cant = |why: &dyn std::fmt::Display| format!("Can't open {path}: {why}");
     let joined = match path.strip_prefix('~') {
         Some("") => std::env::home_dir(),
@@ -527,7 +530,7 @@ fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, String> {
 
 /// Where `path` is, whatever its symlinks are spelled like: its real path,
 /// or its real folder's with its own name while the file is missing.
-fn identity(path: &Path) -> Option<PathBuf> {
+pub(super) fn identity(path: &Path) -> Option<PathBuf> {
     match std::fs::canonicalize(path) {
         Ok(real) => Some(real),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(

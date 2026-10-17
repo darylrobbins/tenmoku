@@ -1,5 +1,6 @@
-//! Open files kept in step with disk: a watcher batch naming an open
-//! editor's file, a rescan, or the window becoming active checks the
+//! Open files kept in step with disk, a diff view's working side among
+//! them (`git_diff`'s [`Workbench::file_editors`]): a watcher batch naming
+//! an open editor's file, a rescan, or the window becoming active checks the
 //! buffers shown. A file changed on disk reloads into a clean buffer, and
 //! asks first (Reload or Keep Mine) over unsaved changes, one prompt at a
 //! time. Stats and reads run on the background executor.
@@ -126,7 +127,7 @@ impl Workbench {
             self.check_open_files(window, cx);
             return;
         }
-        let editors = self.open_editors(cx);
+        let editors = self.file_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
         let canonical = &mut self.disk_sync.canonical;
         canonical.retain(|editor, _| open.contains(editor));
@@ -157,7 +158,7 @@ impl Workbench {
                         let canonical = (path, canonical);
                         workbench.disk_sync.canonical.insert(editor, canonical);
                     }
-                    let editors = (workbench.open_editors(cx).into_iter())
+                    let editors = (workbench.file_editors(cx).into_iter())
                         .filter(|editor| matched.contains(&editor.entity_id()));
                     workbench.check_buffers(editors, window, cx);
                 })
@@ -166,9 +167,16 @@ impl Workbench {
         .detach();
     }
 
+    /// The editors showing `buffer`, a diff view's working side among them.
+    fn buffer_editors(&self, buffer: BufferId, cx: &gpui::App) -> Vec<Entity<EditorView>> {
+        let mut editors = self.file_editors(cx);
+        editors.retain(|editor| editor.read(cx).model().buffer().id() == buffer);
+        editors
+    }
+
     /// Checks every open buffer that has a file.
     pub(crate) fn check_open_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let editors = self.open_editors(cx);
+        let editors = self.file_editors(cx);
         self.check_buffers(editors.into_iter(), window, cx);
     }
 
@@ -272,7 +280,7 @@ impl Workbench {
         if self.disk_sync.after_save.contains_key(&buffer) {
             return;
         }
-        let observed = (self.editors_of(buffer, cx).iter())
+        let observed = (self.buffer_editors(buffer, cx).iter())
             .map(|editor| {
                 cx.observe_in(editor, window, move |workbench, _, window, cx| {
                     workbench.save_maybe_over(buffer, window, cx)
@@ -309,7 +317,7 @@ impl Workbench {
         if !self.disk_sync.after_save.contains_key(&buffer) {
             return;
         }
-        let editor = self.editors_of(buffer, cx).into_iter().next();
+        let editor = self.buffer_editors(buffer, cx).into_iter().next();
         if editor
             .as_ref()
             .is_some_and(|editor| editor.read(cx).is_saving())
@@ -333,7 +341,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<EditorView>> {
-        let Some(editor) = self.editors_of(check.buffer, cx).into_iter().next() else {
+        let Some(editor) = self.buffer_editors(check.buffer, cx).into_iter().next() else {
             self.disk_sync.checks.remove(&check.buffer);
             return None;
         };
@@ -484,7 +492,7 @@ impl Workbench {
     /// meanwhile.
     fn finish_check(&mut self, buffer: BufferId, window: &mut Window, cx: &mut Context<Self>) {
         if self.disk_sync.checks.remove(&buffer) == Some(true)
-            && let Some(editor) = self.editors_of(buffer, cx).into_iter().next()
+            && let Some(editor) = self.buffer_editors(buffer, cx).into_iter().next()
         {
             self.check_file(&editor, window, cx);
         }

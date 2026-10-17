@@ -816,13 +816,17 @@ impl Pane {
     }
 
     /// A model over the buffer of another pane's editor for `path`, if one
-    /// has it open. A viewer has no buffer to share.
+    /// has it open; or else over the working buffer of a diff view of the
+    /// file, found by its real path, which `git_diff` may have read for the
+    /// diff alone. A viewer has no buffer to share.
     fn peer_model(&self, path: &Path, cx: &App) -> Option<EditorModel> {
         let item = self.state.peer_item(cx, |item| {
             item.downcast_ref::<EditorView>().is_some() && item.path(cx).as_deref() == Some(path)
-        })?;
-        let editor = item.downcast::<EditorView>()?;
-        Some(editor.read(cx).model().split())
+        });
+        match item.and_then(|item| item.downcast::<EditorView>()) {
+            Some(editor) => Some(editor.read(cx).model().split()),
+            None => crate::Workbench::diff_source(path, cx),
+        }
     }
 
     /// Applies reloaded settings to the open editors and to editors yet to
