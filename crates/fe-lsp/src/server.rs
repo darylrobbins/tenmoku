@@ -1249,7 +1249,11 @@ impl Actor {
     /// Decodes a publication for the URI's current incarnation, or drops it
     /// (diagnostics.rs).
     fn published(&mut self, params: PublishDiagnosticsParams) {
-        let path = params.uri.to_file_path().ok();
+        // `to_file_path` ignores the scheme, so a `custom:` URI of an open file's
+        // path would otherwise match it.
+        let path = (params.uri.scheme() == "file")
+            .then(|| params.uri.to_file_path().ok())
+            .flatten();
         let mut current = (self.documents.values_mut()).filter(|document| {
             document.is_synced() && same_file(document.uri(), &params.uri, &path)
         });

@@ -16,6 +16,7 @@ use super::{Events, Started};
 use crate::fake::{InitializeReply, Record, Script, initialize_result};
 use crate::{Diagnostic, DiagnosticTag, IncarnationId, LspEvent, SessionId, Severity};
 
+mod uri_scheme;
 mod uri_spelling;
 
 /// What a [`LspEvent::Diagnostics`] carried.
