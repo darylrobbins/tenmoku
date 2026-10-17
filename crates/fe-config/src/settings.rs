@@ -95,6 +95,17 @@ pub struct ThemeSettings {
     /// colours go in theme.toml beside this file; its appearance says whether
     /// it replaces the dark or the light theme.
     pub mode: ThemeModeSetting,
+    /// The installed theme the dark theme is, by ID: an extension's
+    /// theme file, as in "acme.solarized/solarized-dark". Unset is the
+    /// built-in one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub dark: Option<String>,
+    /// The installed theme the light theme is, by ID. Unset is the
+    /// built-in one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub light: Option<String>,
 }
 
 /// `theme.mode`.

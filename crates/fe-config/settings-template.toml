@@ -60,6 +60,12 @@
 # go in theme.toml beside this file; its appearance says whether it replaces
 # the dark or the light theme.
 # mode = "dark"
+# The installed theme the dark theme is, by ID: an extension's theme file, as
+# in "acme.solarized/solarized-dark". Unset is the built-in one. Your
+# theme.toml goes over it.
+# dark = "acme.solarized/solarized-dark"
+# The installed theme the light theme is, by ID. Unset is the built-in one.
+# light = "acme.solarized/solarized-light"
 
 [terminal]
 # The program the terminal runs. Empty runs your login shell. A project file

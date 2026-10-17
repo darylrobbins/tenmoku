@@ -84,25 +84,37 @@ impl ThemeData {
         }
     }
 
-    /// `file` laid over the base for its appearance (dark if it doesn't
-    /// say). A file without a name takes its file's stem.
+    /// `file` laid over the bundled base for its appearance (dark if it
+    /// doesn't say): [`ThemeData::from_file_over`].
     pub fn from_file(file: &ThemeFile) -> ThemeData {
-        let appearance = file.appearance.unwrap_or_default();
-        let base = Self::base(appearance);
+        Self::from_file_over(file, Self::base(file.appearance.unwrap_or_default()))
+    }
+
+    /// `file` laid over `base`, such as an installed theme the user chose:
+    /// a token it leaves out keeps `base`'s colour ([`resolve`]), and each
+    /// app table it has adds its keys to `base`'s, replacing those both
+    /// set. A file without an appearance takes `base`'s, and one without
+    /// a name its file's stem.
+    pub fn from_file_over(file: &ThemeFile, base: &ThemeData) -> ThemeData {
         let name = file.name.clone().or_else(|| {
             file.path
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .filter(|stem| !stem.is_empty())
         });
+        let mut extensions = base.extensions.clone();
+        for (table, keys) in &file.extensions {
+            let merged = extensions.entry(table.clone()).or_default();
+            merged.extend(keys.iter().map(|(key, value)| (key.clone(), value.clone())));
+        }
         ThemeData {
             name: name.unwrap_or_else(|| base.name.clone()),
-            appearance,
+            appearance: file.appearance.unwrap_or(base.appearance),
             tokens: resolve(
                 file.tokens.iter().map(|(key, color)| (*key, *color)),
                 Some(&base.tokens),
             ),
-            extensions: file.extensions.clone(),
+            extensions,
         }
     }
 

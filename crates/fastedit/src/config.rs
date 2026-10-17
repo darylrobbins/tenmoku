@@ -1,10 +1,12 @@
 //! What [`kiln::init`] sets up for fastedit: [`shipped`] is everything the
 //! app owns, [`config`] adds the user's files.
 
+use std::path::PathBuf;
+
 use fe_config::SettingsStore;
 use fe_gpui::fe_keymap;
 use gpui::App;
-use kiln::Config;
+use kiln::{Config, core::ApiVersion};
 
 use crate::theme;
 
@@ -46,10 +48,15 @@ pub(crate) fn shipped(settings: SettingsStore) -> Config {
 
 /// [`shipped`] with the user's `theme.toml` and `keymap.toml` (in the XDG
 /// layout, as they've always been), each watched and reloaded when it
-/// changes, and `settings` from the user's file and the project's (which
-/// may only turn language servers off).
+/// changes, `settings` from the user's file and the project's (which may
+/// only turn language servers off), and the user's extensions
+/// ([`with_extensions`]).
 pub(crate) fn config(settings: SettingsStore) -> Config {
     let config = shipped(settings);
+    let config = match fe_config::paths::app_paths().extensions_dir() {
+        Some(dir) => with_extensions(config, dir),
+        None => config,
+    };
     let config = match fe_config::paths::user_theme_path() {
         Some(path) => config.user_theme(path),
         None => config,
@@ -58,6 +65,15 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
         Some(path) => config.user_keymap(path),
         None => config,
     }
+}
+
+/// `config` with the user's extensions, a directory each under `dir`,
+/// loaded and reloaded by kiln: their manifests name
+/// `[engine] fastedit = "1.0"`. Their themes are chosen by the settings'
+/// `theme.dark` and `theme.light` ([`theme::init`]).
+pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
+    let api = ApiVersion { major: 1, minor: 0 };
+    config.extensions(dir, &fe_config::paths::app_id().short, api)
 }
 
 /// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.

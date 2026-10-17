@@ -64,7 +64,7 @@ use kiln_platform::{
 use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 
 use crate::{
-    config::UserTheme,
+    config::{Layers, SelectionSource, UserTheme},
     contributions::{self, Shipped},
     extensions::{self, ExtensionSource},
     settings::{SettingsSection, section_store},
@@ -323,9 +323,11 @@ impl Config {
         self
     }
 
-    /// The user's theme file, reloaded when it changes. Laid over kiln's
-    /// dark or light base, as its `appearance` says, it takes that one's
-    /// place, so [`Config::theme_mode`] and `cx.set_theme_mode` still pick
+    /// The user's theme file, reloaded when it changes. Laid over the
+    /// dark or light theme, as its `appearance` says (kiln's base, or the
+    /// installed theme chosen for it with
+    /// [`crate::extensions::select_themes`]), it takes that one's place,
+    /// so [`Config::theme_mode`] and `cx.set_theme_mode` still pick
     /// between dark and light. A missing file is no theme of the user's,
     /// and one with errors keeps its last good version.
     pub fn user_theme(mut self, path: impl Into<PathBuf>) -> Self {
@@ -336,10 +338,10 @@ impl Config {
     /// The app's own tables the user's theme file may have, such as an
     /// editor's colours: kept as written, for the app to read with
     /// `cx.theme().data().extension(name)`. A change to one alone is a
-    /// theme change. Only the user's file has them, so with kiln's own
-    /// themes (no file, or the other appearance's) `extension` is `None`
-    /// and the app uses its defaults. Without this, such a table is an
-    /// unknown key.
+    /// theme change. Extensions' themes may have them too, and the user's
+    /// file's keys go over theirs. kiln's own themes have none, so with
+    /// those alone `extension` is `None` and the app uses its defaults.
+    /// Without this, such a table is an unknown key.
     ///
     /// # Panics
     ///
@@ -576,7 +578,8 @@ impl Global for Watching {}
 ///    ([`kiln_platform::config`]); a user theme applies at once;
 /// 7. the user's extensions ([`Config::extensions`]), their directory
 ///    watched from now on, and [`Config::on_extensions`] called with them
-///    once the service starts.
+///    once the service starts; their themes are installed, for
+///    [`crate::extensions::select_themes`] to choose.
 ///
 /// Returns the keymap's, menus', settings', theme's and extensions' diagnostics, which
 /// it has also logged: errors and warnings at those levels. Those the
@@ -656,16 +659,23 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         (service, found) = (section.add)(service, settings_file.clone(), &names);
         diagnostics.extend(found);
     }
+    let layers = Layers::get(cx);
     if let Some(path) = config.user_theme.take() {
-        let theme = UserTheme::load(path, config.theme_extensions);
+        let theme = UserTheme::load(path, config.theme_extensions, layers.clone());
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
     let setup = std::mem::take(&mut config.extensions);
-    if let Some(source) = ExtensionSource::load(setup, command_namespaces(cx)) {
+    let namespaces = command_namespaces(cx);
+    if let Some(source) =
+        ExtensionSource::load(setup, namespaces, config.theme_extensions, layers.clone())
+    {
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }
+    // Last, so a choice made between batches can put its diagnostics in
+    // place of the last ones at the end ([`Layers::select`]).
+    service = service.source(SelectionSource(layers));
     let target = config.log_target.unwrap_or(DEFAULT_LOG_TARGET);
     log_diagnostics_as(target, &diagnostics);
     let shared_keymap = service.keymap_store().expect("the service has the keymap");

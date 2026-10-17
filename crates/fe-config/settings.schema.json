@@ -372,6 +372,22 @@
     "ThemeSettings": {
       "description": "Settings for the colour theme. The theme is the app's, not a window's,\nso a project file may not set them.",
       "properties": {
+        "dark": {
+          "description": "The installed theme the dark theme is, by ID: an extension's\ntheme file, as in \"acme.solarized/solarized-dark\". Unset is the\nbuilt-in one.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "light": {
+          "description": "The installed theme the light theme is, by ID. Unset is the\nbuilt-in one.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mode": {
           "$ref": "#/$defs/ThemeModeSetting",
           "default": "dark",
