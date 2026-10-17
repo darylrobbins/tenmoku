@@ -58,7 +58,7 @@ pub struct CommitInfo {
     pub time: i64,
     /// The author time's offset from UTC, in minutes.
     pub offset_minutes: i32,
-    /// The message's first line.
+    /// The message's first line with text, as `git blame` gives it.
     pub summary: String,
     /// The whole message.
     pub message: String,
@@ -197,8 +197,9 @@ pub(crate) fn commit_info(repo: &gix::Repository, id: ObjectId) -> Result<Commit
     let message = commit.message_raw_sloppy();
     let summary = message
         .split(|&byte| byte == b'\n')
-        .next()
-        .map(|line| String::from_utf8_lossy(line).trim_end().to_owned())
+        .map(String::from_utf8_lossy)
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim_end().to_owned())
         .unwrap_or_default();
     Ok(CommitInfo {
         id: id.to_string(),
