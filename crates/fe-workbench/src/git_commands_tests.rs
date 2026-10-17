@@ -211,11 +211,12 @@ fn ex_routes(cx: &mut TestAppContext) {
     ];
     for (line, op) in lines {
         ex(line, cx);
-        // The branch, diff and file staging commands are implemented; the
-        // root isn't a repository.
+        // The branch, diff and staging commands are implemented; the root
+        // isn't a repository.
         let answer = match op.command {
             DiffIndex | DiffHead | StageFile | ResetBuffer => "Not in a git repository".to_owned(),
             NextChange => "No changes".to_owned(),
+            RevertHunk => "No change to revert at this line".to_owned(),
             CompareFile => {
                 let path = dir.path().join("b.txt");
                 format!("Can't open {}: No such file", path.display())
@@ -236,7 +237,7 @@ fn ex_routes(cx: &mut TestAppContext) {
     draw(cx);
     let staged = op(StageHunk, "", Some(1..3));
     assert_eq!(routed(&workbench, cx), [Routed::Op(staged)]);
-    let answer = "Not supported yet: Git: Stage Change";
+    let answer = "Not in a git repository";
     assert_eq!(message(&editor, cx).as_deref(), Some(answer));
 
     let answers = [

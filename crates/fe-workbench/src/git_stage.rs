@@ -2,8 +2,7 @@
 //! `git.stage_file`, `git.unstage_file`, `git.discard_file`,
 //! `git.reset_buffer`, `git.stage_hunk`, `git.unstage_hunk` and
 //! `git.revert_hunk`, routed here by `git_commands`, and the Changes
-//! panel's buttons and keys for its rows. The hunk commands aren't
-//! supported yet.
+//! panel's buttons and keys for its rows.
 //!
 //! `git.stage_file`, `git.unstage_file` and `git.discard_file` act on the
 //! Changes panel's selected file while the panel has focus (on nothing if
@@ -16,6 +15,40 @@
 //! the file's text in the index, as an undo step of its own, left unsaved;
 //! a read-only editor answers `E21`, and a read overtaken by a later one,
 //! or landing after the editor moved to another file, is dropped.
+//!
+//! `git.stage_hunk` (`:Gitsigns stage_hunk`) stages a change of the
+//! editor's text, saved or not, as VS Code stages from the editor: the
+//! file's text in the index diffed against the buffer's, the changes
+//! meeting the caret's row staged whole; with a selection, a visual one or
+//! an ex range (`:'<,'>Gitsigns stage_hunk`), just the rows in it, as
+//! gitsigns stages part of a hunk. The buffer and the file stay as they
+//! are. With nothing to stage there it answers `No change to stage at this
+//! line`. Through a symlink it stages the file the link points to, whose
+//! text the buffer has; a file whose buffer or blob in the index isn't
+//! UTF-8 answers `Can't stage part of a file that isn't UTF-8`, as
+//! rewriting the blob as UTF-8 would change its other rows. In a diff view it stages from the working side, the one with
+//! the file; `dp` and `:diffput` there, in a diff against the index, stage
+//! the changes in their rows whole, as fugitive's `:Gdiffsplit` puts into
+//! the index, and the left side then shows the index's new text.
+//!
+//! `git.unstage_hunk` (`:Gitsigns undo_stage_hunk`) is gitsigns' undo:
+//! each file's stages this session are a stack, and it puts back the
+//! index entry from before the last one, the very blob, unless the entry
+//! has changed since, or gone, from what that stage left (`Index changed
+//! since; not undone`), which then can't be undone. What a stage left is
+//! the blob git wrote, after the clean filters `git add` runs.
+//!
+//! `git.revert_hunk` (`:Gitsigns reset_hunk`) puts the editor's diff
+//! base's rows back over each change meeting the caret's row, the
+//! selection's or the range's: HEAD's in a tab, what its change bar shows,
+//! and the left side's in a diff view. The engine reverts whole changes,
+//! so a range over part of one reverts all of it. It's one undo step, so it
+//! asks nothing, as VS Code's Revert Change asks nothing; discarding a
+//! whole file still asks.
+//!
+//! The commands act on the caret's row, so a click on a change bar, which
+//! moves the caret there, picks the change they act on. (There are no
+//! buttons in the gutter.)
 //!
 //! Discarding reads the files' status first, so it knows which are
 //! untracked whatever the panel last listed; files with nothing to discard
@@ -39,10 +72,14 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::{OsStr, OsString},
+    ops::Range,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
 };
 
-use fe_buffer::{Buffer, BufferId, Origin};
+use fe_buffer::{Buffer, BufferId, FileEncoding, Origin};
+use fe_editor::text_diff::{Hunk, TextDiff};
 use fe_git::{ChangeKind, GitError, Repo};
 use fe_gpui::EditorView;
 use gpui::{
@@ -57,7 +94,7 @@ use super::{
     toast::{self, Toast},
     vim_host,
 };
-use crate::git::GitState;
+use crate::git::{self, GitState};
 
 /// What deleting an untracked file adds to its question.
 const IRREVERSIBLE: &str = "This is IRREVERSIBLE! This file will be FOREVER LOST if you proceed.";
@@ -68,6 +105,21 @@ const SOME_IRREVERSIBLE: &str =
 
 /// What discarding files with no changes answers.
 const NOTHING_TO_DISCARD: &str = "No changes to discard";
+
+/// What staging a change answers with none there.
+const NO_CHANGE_TO_STAGE: &str = "No change to stage at this line";
+
+/// What reverting a change answers with none there.
+const NO_CHANGE_TO_REVERT: &str = "No change to revert at this line";
+
+/// What staging from a diff view's git side answers.
+const GIT_SIDE: &str = "Stage from the Working Tree side";
+
+/// What undoing a stage answers with none of the file's to undo.
+const NOTHING_STAGED: &str = "No staged change to undo";
+
+/// What undoing a stage answers when the index has changed since.
+const INDEX_CHANGED: &str = "Index changed since; not undone";
 
 /// Why git work didn't happen.
 enum Failed {
@@ -121,6 +173,41 @@ struct ResetReads {
 
 impl Global for ResetReads {}
 
+/// What staging part of a file that isn't UTF-8 answers.
+const NOT_UTF8: &str = "Can't stage part of a file that isn't UTF-8";
+
+/// A file's entry in the index: its mode and its blob's id, as `git
+/// ls-files --stage` gives them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Entry {
+    mode: String,
+    id: String,
+}
+
+/// What a change staged did: the file's index entry before, and the one
+/// git wrote, filtered as `git add` filters.
+struct Staged {
+    before: Entry,
+    after: Entry,
+}
+
+/// Each file's changes staged this session, by its real path, the last
+/// on top: what `git.unstage_hunk` undoes. Shared with the git work, which
+/// runs one at a time.
+#[derive(Clone, Default)]
+struct StagedChanges(Arc<Mutex<HashMap<PathBuf, Vec<Staged>>>>);
+
+impl Global for StagedChanges {}
+
+/// Which of an editor's changes to stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Pick {
+    /// Each change meeting these rows of its text, whole.
+    Changes(Range<u32>),
+    /// Just these rows.
+    Rows(Range<u32>),
+}
+
 /// Runs `op`, a staging command.
 pub(super) fn run(
     workbench: &mut Workbench,
@@ -159,11 +246,88 @@ pub(super) fn run(
             }
         }
         GitCommand::ResetBuffer => workbench.reset_buffer(op, cx),
+        GitCommand::StageHunk => {
+            let Some(editor) = op.editor.clone() else {
+                return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
+            };
+            let pick = picked(&op, &editor, cx);
+            workbench.stage_change(&editor, pick, op, cx);
+        }
+        GitCommand::UnstageHunk => workbench.undo_stage(op, cx),
+        GitCommand::RevertHunk => workbench.revert_change(op, cx),
         _ => {
             let text = format!("Not supported yet: {}", command.title());
             workbench.answer_git_op(&op, text, cx);
         }
     }
+}
+
+/// The rows `op` acts on in `editor`: its ex range's, else a selection's,
+/// else the changes meeting the caret's row. In vim, only a visual
+/// selection counts, every row from its anchor's through its cursor's.
+fn picked(op: &GitOp, editor: &Entity<EditorView>, cx: &App) -> Pick {
+    if let Some(range) = op.range.clone() {
+        return Pick::Rows(range);
+    }
+    let view = editor.read(cx);
+    let model = view.model();
+    let text = model.text();
+    let row = |offset| text.offset_to_point(offset).row;
+    let selection = model.primary_selection();
+    let range = selection.range.clone();
+    let ends = match view.vim_state() {
+        Some(vim) => (vim.visual_anchor(model)).zip(vim.visual_cursor(model)),
+        // A selection ending at a row's start leaves that row out.
+        None if !range.is_empty() => {
+            let end = text.offset_to_point(range.end);
+            let last = match end.column == 0 {
+                true => end.row.saturating_sub(1).max(row(range.start)),
+                false => end.row,
+            };
+            return Pick::Rows(row(range.start)..last + 1);
+        }
+        None => None,
+    };
+    match ends {
+        Some((anchor, cursor)) => {
+            let (anchor, cursor) = (row(anchor), row(cursor));
+            Pick::Rows(anchor.min(cursor)..anchor.max(cursor) + 1)
+        }
+        None => {
+            let at = row(selection.head());
+            Pick::Changes(at..at + 1)
+        }
+    }
+}
+
+/// Whether `hunk`'s rows of the new text meet `rows`: a deletion's when
+/// they hold the row it sits above or the row above that.
+fn meets(hunk: &Hunk, rows: &Range<u32>) -> bool {
+    let picked = |row: u32| rows.contains(&row);
+    match hunk.right.is_empty() {
+        true => picked(hunk.right.start) || hunk.right.start.checked_sub(1).is_some_and(picked),
+        false => rows.start.max(hunk.right.start) < rows.end.min(hunk.right.end),
+    }
+}
+
+/// `index` with `pick` of `text`'s changes against it staged, or `None`
+/// if that stages nothing.
+fn staged_text(index: &str, text: &str, pick: &Pick) -> Option<String> {
+    let diff = TextDiff::new(index, text);
+    let staged = match pick {
+        Pick::Changes(rows) => {
+            let chosen: Vec<usize> = (diff.hunks().iter().enumerate())
+                .filter(|(_, hunk)| meets(hunk, rows))
+                .map(|(ix, _)| ix)
+                .collect();
+            if chosen.is_empty() {
+                return None;
+            }
+            diff.apply(index, text, &chosen)
+        }
+        Pick::Rows(rows) => diff.apply_rows(index, text, rows.clone()),
+    };
+    (staged != index).then_some(staged)
 }
 
 impl Workbench {
@@ -457,6 +621,198 @@ impl Workbench {
         })
         .detach();
     }
+
+    /// Stages `pick` of `editor`'s text into the index, for `op`: see the
+    /// module docs. The text is taken now; the index's is read as the
+    /// work's turn comes.
+    pub(super) fn stage_change(
+        &mut self,
+        editor: &Entity<EditorView>,
+        pick: Pick,
+        op: GitOp,
+        cx: &mut Context<Self>,
+    ) {
+        let view = editor.read(cx);
+        let Some(path) = view.model().path().map(Path::to_owned) else {
+            // A diff view's git side, or an editor with no file.
+            let answer = match self.diff_of(editor) {
+                Some(_) => GIT_SIDE,
+                None => NO_FILE,
+            };
+            return self.answer_git_op(&op, answer.to_owned(), cx);
+        };
+        // The text as the file has it: a UTF-8 BOM is the buffer's, not
+        // its text's. Another encoding's bytes aren't the text's.
+        let encoding = view.model().buffer().encoding();
+        if encoding.encoding != FileEncoding::UTF8.encoding {
+            return self.answer_git_op(&op, NOT_UTF8.to_owned(), cx);
+        }
+        let bom = if encoding.bom { "\u{feff}" } else { "" };
+        let text = format!("{bom}{}", view.model().text());
+        let staged = cx.default_global::<StagedChanges>().clone();
+        // The file a symlink points to is the one the buffer has.
+        let real = git::resolve(&path);
+        self.run_git(vec![real], Some(op), None, cx, move |repo, real| {
+            let (real, rela) = (&real[0], relative(repo, &real[0])?);
+            let before = file_entry(repo, real, &rela)?;
+            let index = blob(repo, &before.id)?;
+            let index = String::from_utf8(index).map_err(|_| Failed::Answer(NOT_UTF8.into()))?;
+            let Some(text) = staged_text(&index, &text, &pick) else {
+                return Err(Failed::Answer(NO_CHANGE_TO_STAGE.to_owned()));
+            };
+            repo.set_index_text(real, &text).map_err(git_failed)?;
+            let Some(after) = index_entry(repo, &rela)? else {
+                return Err(not_in_index(real));
+            };
+            // Filtered to what was there already, it staged nothing.
+            if after != before {
+                let mut stacks = staged.0.lock().unwrap_or_else(PoisonError::into_inner);
+                let staged = Staged { before, after };
+                stacks.entry(real.clone()).or_default().push(staged);
+            }
+            Ok(())
+        });
+    }
+
+    /// `git.unstage_hunk`: puts back the index's text from before the last
+    /// change of the file staged this session, if the index still has what
+    /// that wrote: see the module docs.
+    fn undo_stage(&mut self, op: GitOp, cx: &mut Context<Self>) {
+        let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
+        let Some(path) = path else {
+            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+        };
+        let staged = cx.default_global::<StagedChanges>().clone();
+        let real = git::resolve(&path);
+        self.run_git(vec![real], Some(op), None, cx, move |repo, real| {
+            let (real, rela) = (&real[0], relative(repo, &real[0])?);
+            let mut stacks = staged.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let stack = stacks.entry(real.clone()).or_default();
+            let Some(last) = stack.last() else {
+                return Err(Failed::Answer(NOTHING_STAGED.to_owned()));
+            };
+            // Changed, or gone, since: it can never be undone now.
+            if index_entry(repo, &rela)?.as_ref() != Some(&last.after) {
+                stack.pop();
+                return Err(Failed::Answer(INDEX_CHANGED.to_owned()));
+            }
+            // The blob that was there, as it was: not filtered again.
+            let Entry { mode, id } = &last.before;
+            let mut entry = OsString::from(format!("{mode},{id},"));
+            entry.push(&rela);
+            git_output(
+                repo,
+                &["update-index".as_ref(), "--cacheinfo".as_ref(), &entry],
+            )?;
+            stack.pop();
+            Ok(())
+        });
+    }
+
+    /// `git.revert_hunk`: puts the editor's diff base's rows back over the
+    /// changes meeting `op`'s rows, as one undo step: see the module docs.
+    fn revert_change(&mut self, op: GitOp, cx: &mut Context<Self>) {
+        let Some(editor) = op.editor.clone() else {
+            return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
+        };
+        if editor.read(cx).is_read_only() {
+            return self.answer_git_op(&op, E21.to_owned(), cx);
+        }
+        let rows = match picked(&op, &editor, cx) {
+            Pick::Changes(rows) | Pick::Rows(rows) => rows,
+        };
+        let reverted = editor.update(cx, |view, cx| {
+            let reverted = view.model_mut().revert_changes(rows);
+            cx.notify();
+            reverted
+        });
+        if reverted == 0 {
+            self.answer_git_op(&op, NO_CHANGE_TO_REVERT.to_owned(), cx);
+        }
+    }
+}
+
+/// What a file not in the index answers.
+fn not_in_index(real: &Path) -> Failed {
+    Failed::Answer(format!("{} is not in the index", file_name(real)))
+}
+
+/// `real`'s path in `repo`'s working tree.
+fn relative(repo: &Repo, real: &Path) -> Result<PathBuf, Failed> {
+    match real.strip_prefix(repo.workdir()) {
+        Ok(rela) if !rela.as_os_str().is_empty() => Ok(rela.to_owned()),
+        _ => Err(not_in_index(real)),
+    }
+}
+
+/// What `git args` prints in `repo`'s working tree, its pathspecs taken
+/// literally, or what it said as it failed. Blocks until `git` exits.
+fn git_output(repo: &Repo, args: &[&OsStr]) -> Result<Vec<u8>, Failed> {
+    let output = std::process::Command::new("git")
+        .current_dir(repo.workdir())
+        .arg("--literal-pathspecs")
+        .args(args)
+        .output()
+        .map_err(|error| Failed::Git(format!("git: {error}")))?;
+    match output.status.success() {
+        true => Ok(output.stdout),
+        false => Err(Failed::Git(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )),
+    }
+}
+
+/// The stage-0 index entry at `rela`, if there is one; an answer if the
+/// path has conflicts instead.
+fn index_entry(repo: &Repo, rela: &Path) -> Result<Option<Entry>, Failed> {
+    let args = [
+        "ls-files".as_ref(),
+        "--stage".as_ref(),
+        "-z".as_ref(),
+        "--".as_ref(),
+    ];
+    let listed = git_output(repo, &[&args[..], &[rela.as_os_str()]].concat())?;
+    let mut conflicted = false;
+    // Each `<mode> <id> <stage>\t<path>`, NUL-ended.
+    for record in listed
+        .split(|&byte| byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let record = String::from_utf8_lossy(record);
+        let fields = record.split('\t').next().unwrap_or_default();
+        match fields.split(' ').collect::<Vec<_>>()[..] {
+            [mode, id, "0"] => {
+                let (mode, id) = (mode.to_owned(), id.to_owned());
+                return Ok(Some(Entry { mode, id }));
+            }
+            _ => conflicted = true,
+        }
+    }
+    match conflicted {
+        true => Err(Failed::Answer(format!(
+            "{} has unresolved conflicts",
+            file_name(rela)
+        ))),
+        false => Ok(None),
+    }
+}
+
+/// The index entry of `real`, at `rela`, a file's: an answer if it's
+/// missing, or a symlink's or a submodule's.
+fn file_entry(repo: &Repo, real: &Path, rela: &Path) -> Result<Entry, Failed> {
+    let entry = index_entry(repo, rela)?.ok_or_else(|| not_in_index(real))?;
+    match entry.mode.as_str() {
+        "100644" | "100755" => Ok(entry),
+        _ => Err(Failed::Answer(format!(
+            "{} is not a file in the index",
+            file_name(real)
+        ))),
+    }
+}
+
+/// The bytes of blob `id`.
+fn blob(repo: &Repo, id: &str) -> Result<Vec<u8>, Failed> {
+    git_output(repo, &["cat-file".as_ref(), "blob".as_ref(), id.as_ref()])
 }
 
 /// Queues `start`, work that changes a repository, to start once the work
@@ -659,3 +1015,7 @@ pub(super) fn test_gate(cx: &mut App) -> impl std::future::Future<Output = ()> +
         gate.await.ok();
     }
 }
+
+#[cfg(test)]
+#[path = "git_stage_hunk_tests.rs"]
+mod git_stage_hunk_tests;

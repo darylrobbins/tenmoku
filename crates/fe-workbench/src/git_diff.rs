@@ -47,10 +47,12 @@
 //! In a side, vim's `do` (`:diffget`) on the right side reverts the
 //! changes in its rows to the left text, as one undo step, and `dp`
 //! (`:diffput`) on the left side does the same to the right side's
-//! changes there; a read-only side answers `E21` to `do` and `:w`, and
-//! putting into a read-only left side `E793`. `:w` on the right side saves
-//! the file; `:q` closes the diff tab, refused with `E37` while the right
-//! side is dirty and no other editor shows its buffer.
+//! changes there. On the right side of a diff against the index, `dp`
+//! stages the changes in its rows, as `git_stage` does; a read-only side
+//! answers `E21` to `do` and `:w`, and putting into a read-only left side,
+//! or into HEAD, `E793`. `:w` on the right side saves the file; `:q`
+//! closes the diff tab, refused with `E37` while the right side is dirty
+//! and no other editor shows its buffer.
 
 use std::{
     ops::Range,
@@ -79,6 +81,7 @@ use kiln_shell::{ItemHandle as _, PaneView as _};
 use super::{
     Palette, Workbench,
     git_commands::{self, GitCommand, GitOp, Owner},
+    git_stage,
     vim_host::{self, E37, RELOAD, message},
 };
 use crate::{Pane, Picker, QuickOpen, git, loader, quick_open::Pick};
@@ -94,9 +97,6 @@ pub(super) const E21: &str = "E21: Cannot make changes, 'modifiable' is off";
 
 /// What putting into a read-only side answers.
 const E793: &str = "E793: No other buffer in diff mode is modifiable";
-
-/// What putting into the index answers: the hunk-staging card's.
-const PUT_INDEX: &str = "Not supported yet: putting a change into the index";
 
 /// The compare picker's placeholder.
 const COMPARE_WITH: &str = "Compare with…";
@@ -309,6 +309,15 @@ pub(super) fn host_command(
         HostCommand::Quit { force } => workbench.close_diff(&diff, &editor, force, window, cx),
         HostCommand::DiffGet { .. } if read_only => message(&editor, E21, cx),
         HostCommand::DiffGet { rows } => revert(&editor, rows, cx),
+        HostCommand::DiffPut { rows } if puts_into_index(&diff, &editor, cx) => {
+            let op = typed(
+                GitCommand::StageHunk,
+                String::new(),
+                Some(rows.clone()),
+                &editor,
+            );
+            workbench.stage_change(&editor, git_stage::Pick::Changes(rows), op, cx);
+        }
         HostCommand::DiffPut { rows } => put(&diff, &editor, rows, cx),
         HostCommand::DiffSplit { path } => {
             let op = typed(GitCommand::CompareFile, path, None, &editor);
@@ -371,20 +380,22 @@ fn revert(editor: &Entity<EditorView>, rows: Range<u32>, cx: &mut App) {
     });
 }
 
+/// Whether `dp` in `editor`, a side of `diff`, puts into the index: it's
+/// the right side, the file's, of a diff against the index.
+fn puts_into_index(diff: &Entity<DiffView>, editor: &Entity<EditorView>, cx: &mut App) -> bool {
+    let working = editor == diff.read(cx).right() && !editor.read(cx).is_read_only();
+    working
+        && compared(&diff.downgrade(), cx)
+            .is_some_and(|compared| compared.base == Some(Base::Index))
+}
+
 /// `dp`: from the left side, reverts the right side's changes in the
 /// hunks meeting `rows` (left rows, as `do` picks them); from the right
-/// side, the left one takes nothing.
+/// side of a diff not against the index, the left one takes nothing.
 fn put(diff: &Entity<DiffView>, editor: &Entity<EditorView>, rows: Range<u32>, cx: &mut App) {
     let right = diff.read(cx).right().clone();
     if editor != diff.read(cx).left() {
-        let base = (diff_views(cx).iter())
-            .find(|compared| compared.view == diff.downgrade())
-            .and_then(|compared| compared.base);
-        let answer = match base {
-            Some(Base::Index) => PUT_INDEX,
-            _ => E793,
-        };
-        return message(editor, answer, cx);
+        return message(editor, E793, cx);
     }
     if right.read(cx).is_read_only() {
         return message(editor, E793, cx);
