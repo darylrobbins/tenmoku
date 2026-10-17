@@ -332,7 +332,7 @@ through Mesa's software Vulkan driver, and drive it with `xdotool`.
 
 What differs from macOS:
 
-- **Keys** come from `fe-keymap/keymaps/default-linux.toml`: ctrl where
+- **Keys** come from `fe-keymap/keymaps/fastedit.toml`, resolved on Linux: ctrl where
   macOS has cmd, and PC keys (ctrl-left by word, home and end, ctrl-home)
   where macOS has its own. A user `keymap.toml` layers over it as on macOS.
   Shifted punctuation is named by what it types: `ctrl-{`, not
@@ -346,7 +346,7 @@ What differs from macOS:
   resize it (`kiln/crates/kiln-shell/src/window_frame.rs`). The unified title bar is
   macOS's.
 - **The menu bar is drawn in the window**, above the panes, from
-  `fe-keymap/menus/default-linux.toml`: GPUI has no native menu bar on
+  `fe-keymap/menus/fastedit.toml`, resolved on Linux: GPUI has no native menu bar on
   Linux. F10 opens it. See `docs/decisions/linux-menu-bar.md`.
 - **Screenshots** render with Metal, so their examples only run on macOS;
   `cargo test` still runs their comparison's unit tests.

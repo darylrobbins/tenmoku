@@ -66,19 +66,22 @@ pub fn default_menus(catalog: Option<&dyn CommandCatalog>) -> (Option<MenuBar>, 
 pub const DEFAULT: &str = include_str!("../keymaps/fastedit.toml");
 
 /// [`DEFAULT`] as resolved on macOS, for tests that need macOS's bindings
-/// on any host. `tests/one_keymap.rs` checks the two agree.
-pub const DEFAULT_MACOS: &str = include_str!("../keymaps/default-macos.toml");
+/// on any host. Generated from [`DEFAULT`] by this crate's build script.
+pub const DEFAULT_MACOS: &str = include_str!(concat!(env!("OUT_DIR"), "/keymap-macos.toml"));
 
 /// [`DEFAULT`] as resolved on Linux and Windows, for tests that need those
-/// bindings on any host. `tests/one_keymap.rs` checks the two agree.
-pub const DEFAULT_LINUX: &str = include_str!("../keymaps/default-linux.toml");
+/// bindings on any host. Generated from [`DEFAULT`] by this crate's build
+/// script.
+pub const DEFAULT_LINUX: &str = include_str!(concat!(env!("OUT_DIR"), "/keymap-linux.toml"));
 
 /// fastedit's built-in menu bar, for every platform: native on macOS, drawn
 /// in the window elsewhere. See [`default_menus`].
 pub const MENUS: &str = include_str!("../menus/fastedit.toml");
 
-/// [`MENUS`] as resolved on macOS. `tests/one_keymap.rs` checks they agree.
-pub const DEFAULT_MACOS_MENUS: &str = include_str!("../menus/default-macos.toml");
+/// [`MENUS`] as resolved on macOS. Generated from [`MENUS`] by this crate's
+/// build script.
+pub const DEFAULT_MACOS_MENUS: &str = include_str!(concat!(env!("OUT_DIR"), "/menus-macos.toml"));
 
-/// [`MENUS`] as resolved on Linux. `tests/one_keymap.rs` checks they agree.
-pub const DEFAULT_LINUX_MENUS: &str = include_str!("../menus/default-linux.toml");
+/// [`MENUS`] as resolved on Linux. Generated from [`MENUS`] by this crate's
+/// build script.
+pub const DEFAULT_LINUX_MENUS: &str = include_str!(concat!(env!("OUT_DIR"), "/menus-linux.toml"));

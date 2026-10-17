@@ -10,8 +10,9 @@
 # A shifted punctuation key is named by what it types, without `shift`, as
 # GPUI on Linux reports it: ctrl-shift-[ is `ctrl-{`, ctrl-shift-- `ctrl-_`.
 #
-# fe-keymap's tests check this file resolves, on each platform, to exactly
-# the bindings of default-macos.toml and default-linux.toml.
+# fe-keymap's build script generates each platform's text from this file
+# (`DEFAULT_MACOS`, `DEFAULT_LINUX`), which tests use for a platform's
+# bindings on any host.
 
 [[bindings]]
 keys = "left"

@@ -5,8 +5,8 @@
 #
 # macOS has an app menu; elsewhere its Settings… and Quit are in File, and
 # macOS's Hide, Services, Minimize and Zoom are left out (`platform`).
-# fe-keymap's tests check this table resolves, on each platform, to exactly
-# default-macos.toml and default-linux.toml.
+# fe-keymap's build script generates each platform's text from this table
+# (`DEFAULT_MACOS_MENUS`, `DEFAULT_LINUX_MENUS`).
 
 [[menus]]
 name = "fastedit"

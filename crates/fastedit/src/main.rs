@@ -1,6 +1,7 @@
 //! Standalone fastedit host: `fastedit [--perf] [folder or file]`, a
 //! [`Workbench`] in a window.
 
+mod config;
 mod perf;
 mod theme;
 
@@ -12,11 +13,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use config::{config, log_keymap_report};
 use perf::Startup;
 
 use fe_buffer::Buffer;
 use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore, settings::VimClipboard};
-use fe_gpui::{EditorTheme, fe_keymap};
+use fe_gpui::EditorTheme;
 use fe_workbench::{
     Launch, RootChanged, Workbench,
     loader::{self, Opened},
@@ -26,7 +28,7 @@ use gpui::{
     WindowId, point, px,
 };
 use kiln::{
-    Config, GlobalSettings,
+    GlobalSettings,
     command::Value,
     core::layout::LayoutStore,
     prelude::{AppExt as _, WindowExt as _},
@@ -87,59 +89,6 @@ fn open_in_background(
 fn load_settings(root: Option<&Path>) -> SettingsStore {
     let project = root.map(fe_config::project_settings_path);
     SettingsStore::load(fe_config::user_settings_path(), project)
-}
-
-/// What [`kiln::init`] sets up for fastedit, from its config paths (in the
-/// XDG layout, as they've always been):
-///
-/// - the editor's, vim's and the workbench's commands, with vim as the key
-///   owner ([`fe_gpui::init_with_keymap`]);
-/// - the built-in keymap with the user's `keymap.toml` over it, and the
-///   built-in menus, checked against those commands
-///   ([`fe_workbench::command_catalog`]), the menus' shortcuts resolved
-///   with an editor focused in the workbench;
-/// - `settings`, from the user's file and the project's (which may only
-///   turn language servers off), and the user's keymap, each watched and
-///   reloaded when it changes, the keymap's issues logged after a reload;
-/// - kiln's dark and light themes in the settings' `theme.mode`, with the
-///   user's `theme.toml` (and its `editor` and `syntax` tables,
-///   [`fe_config::theme::EXTENSIONS`]) in place of the one of its
-///   appearance, watched and reloaded when it changes.
-///
-/// Diagnostics and reloads are logged as fastedit's own.
-fn config(settings: SettingsStore) -> Config {
-    let app = fe_config::paths::app_id();
-    let mode = theme::mode(settings.settings().theme.mode);
-    let config = Config::new(app.reverse_dns, app.display)
-        .log_target("fastedit")
-        .commands(|cx| {
-            // The keymap comes after, once every command is registered.
-            fe_gpui::init_with_keymap(cx, fe_keymap::Keymap::default());
-            fe_workbench::init(cx);
-        })
-        .catalog(fe_workbench::command_catalog())
-        .keymap(fe_keymap::DEFAULT_KEYMAP_PATH, fe_keymap::DEFAULT)
-        .on_keymap_reload(|cx| log_keymap_report(cx))
-        .menus(fe_keymap::menu::DEFAULT_MENUS_PATH, fe_keymap::MENUS)
-        .menu_shortcut_context(fe_keymap::MENU_SHORTCUT_CONTEXT)
-        .settings_store(settings.into_inner())
-        .theme_mode(mode)
-        .theme_extensions(fe_config::theme::EXTENSIONS);
-    let config = match fe_config::paths::user_theme_path() {
-        Some(path) => config.user_theme(path),
-        None => config,
-    };
-    match fe_keymap::user_keymap_path() {
-        Some(path) => config.user_keymap(path),
-        None => config,
-    }
-}
-
-/// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.
-fn log_keymap_report(cx: &App) {
-    for issue in fe_gpui::keymap_report(cx) {
-        log::info!("keymap: {issue}");
-    }
 }
 
 /// Each window's settings: the user's file under its root's project file
