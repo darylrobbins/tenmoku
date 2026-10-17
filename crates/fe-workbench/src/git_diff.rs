@@ -60,7 +60,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fe_buffer::{Buffer, Origin};
+use fe_buffer::{Bias, Buffer, Origin};
 use fe_editor::{
     EditorModel,
     row_changes::RowChange,
@@ -1355,9 +1355,15 @@ impl Workbench {
                         (None, Err(answer)) => return workbench.answer_git_op(&op, answer, cx),
                     };
                     let right = Ok((workbench.relative(&path).into(), model));
+                    // The left keeps its own file's language, not the right's.
+                    let text = buffer.text();
+                    let start = text.slice_to_string(0..text.clip_offset(512, Bias::Left));
+                    let language = fe_syntax::detect_language_name(Some(&other), &start);
                     let left = EditorModel::new(buffer, None);
                     let left = DiffSide::new(workbench.relative(&other), left).read_only();
                     let diff = workbench.new_diff((path, None, false), left, right, cx);
+                    let left = diff.read(cx).left().clone();
+                    left.update(cx, |left, cx| left.set_language(language, cx));
                     workbench.place_diff(&diff, &landing.pane, cx);
                     if workbench.may_show(&landing, cx) {
                         workbench.show_diff(&diff, window, cx);

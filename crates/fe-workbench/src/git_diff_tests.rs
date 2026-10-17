@@ -1381,3 +1381,6 @@ fn the_last_change_bar_click_wins_the_caret(cx: &mut TestAppContext) {
     assert_eq!(caret_row(&right, cx), 15);
     assert_eq!(tab_count(&workbench, cx), 2);
 }
+
+#[path = "git_diff_language_tests.rs"]
+mod language_tests;
