@@ -20,6 +20,7 @@ mod branch;
 mod cli;
 mod commit;
 mod commit_log;
+pub mod conflict_markers;
 pub mod graph;
 mod index;
 mod log;
