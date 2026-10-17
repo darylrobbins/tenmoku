@@ -63,7 +63,10 @@ impl Entry {
 }
 
 /// Every command in the table.
-pub(super) const COMMANDS: &[Entry] = &[];
+#[path = "put.rs"]
+mod put;
+
+pub(super) const COMMANDS: &[Entry] = &[put::COMMAND];
 
 /// The entry `name` names.
 pub(super) fn find(name: &str) -> Option<&'static Entry> {

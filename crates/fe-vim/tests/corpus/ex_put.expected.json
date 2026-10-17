@@ -1,0 +1,902 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "put_unnamed_below",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:pu<CR>",
+      "expect": {
+        "buffer": "a\na\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_bang_charwise_above",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yiw:pu!<CR>",
+      "expect": {
+        "buffer": "a\nb\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "put_line_zero",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy:0pu<CR>",
+      "expect": {
+        "buffer": "b\na\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_last_line",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:$pu<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\na",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_named_register_with_address",
+      "buffer": "a\n  b\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"ayy:3pu a<CR>",
+      "expect": {
+        "buffer": "a\n  b\nc\n  b",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_named_register_blank_before_name",
+      "buffer": "a\n  b\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"byy:1pu  b<CR>",
+      "expect": {
+        "buffer": "a\n  b\n  b\nc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n",
+            "linewise": true
+          },
+          "b": {
+            "text": "  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_bang_with_address",
+      "buffer": "a\n  b\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"ayy:3pu! a<CR>",
+      "expect": {
+        "buffer": "a\n  b\n  b\nc",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_bang_line_zero",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy:0pu!<CR>",
+      "expect": {
+        "buffer": "b\na\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_numbered_register",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddd:pu 3<CR>",
+      "expect": {
+        "buffer": "c\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_numbered_register_one",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dd:pu 1<CR>",
+      "expect": {
+        "buffer": "b\na\nc\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_multiline_register",
+      "buffer": "a\n  b\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2j:4pu<CR>",
+      "expect": {
+        "buffer": "a\n  b\nc\nd\na\n  b\nc",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n  b\nc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n  b\nc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_multiline_register_above",
+      "buffer": "a\n  b\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2j:3pu!<CR>",
+      "expect": {
+        "buffer": "a\n  b\na\n  b\nc\nc\nd",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n  b\nc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n  b\nc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_block_register",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jl\"ay:$pu a<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nghi\nab\nde",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          },
+          "a": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "put_empty_register_fails",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":pu z<CR>",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "put_unset_unnamed_fails",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":pu<CR>",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "put_then_undo",
+      "buffer": "a\n  b\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy:3pu<CR>u",
+      "expect": {
+        "buffer": "a\n  b\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_undo_above",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "yy:0pu<CR>u",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_redo",
+      "buffer": "a\n  b\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy:3pu<CR>u<C-r>",
+      "expect": {
+        "buffer": "a\n  b\nc\n  b",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_redo_top",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "yy:0pu<CR>u<C-r>",
+      "expect": {
+        "buffer": "c\na\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_does_not_repeat",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:pu<CR>.",
+      "expect": {
+        "buffer": "\n\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "put_writes_no_register",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyj:pu<CR>\"1p",
+      "expect": {
+        "buffer": "a\nb\na\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_range_last_line",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:1,3pu<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\na\nd",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_search_address",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:/c/pu<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\na\nd",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_past_last_line_fails",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:9pu<CR>",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_from_global",
+      "buffer": "x1\ny\nx2",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"ayy:g/x/pu a<CR>",
+      "expect": {
+        "buffer": "x1\ny\ny\nx2\ny",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "a": {
+            "text": "y\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_from_global_undo",
+      "buffer": "x1\ny\nx2",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"ayy:g/x/pu a<CR>u",
+      "expect": {
+        "buffer": "x1\ny\nx2",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "a": {
+            "text": "y\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_search_register",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/bar<CR>:pu /<CR>",
+      "expect": {
+        "buffer": "foo\nbar\nbar",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "put_long_name",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:put<CR>",
+      "expect": {
+        "buffer": "a\na\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_redo_bang",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:3pu!<CR>u<C-r>",
+      "expect": {
+        "buffer": "a\nb\na\nc\nd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_redo_column",
+      "buffer": "aaaa\nbbbb\ncccc\ndddd",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": "yy:2pu<CR>u<C-r>",
+      "expect": {
+        "buffer": "aaaa\nbbbb\ndddd\ncccc\ndddd",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "dddd\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "dddd\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_undo_column",
+      "buffer": "aaaa\nbbbb\ncccc\ndddd",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": "yy:1pu<CR>u",
+      "expect": {
+        "buffer": "aaaa\nbbbb\ncccc\ndddd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "dddd\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "dddd\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_redo_multiline",
+      "buffer": "aaaa\nbbbb\ncccc\ndddd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "y2j:4pu<CR>u<C-r>",
+      "expect": {
+        "buffer": "aaaa\nbbbb\ncccc\ndddd\naaaa\nbbbb\ncccc",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "aaaa\nbbbb\ncccc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "aaaa\nbbbb\ncccc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_then_undo_bang_column",
+      "buffer": "aaaa\nbbbb\ncccc\ndddd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "yy:3pu!<CR>u",
+      "expect": {
+        "buffer": "aaaa\nbbbb\ncccc\ndddd",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "aaaa\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "aaaa\n",
+            "linewise": true
+          }
+        }
+      }
+    }
+  ]
+}
