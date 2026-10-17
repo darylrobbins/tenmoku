@@ -426,7 +426,12 @@ impl<'a> Indents<'a> {
             let first = n.start_position().row;
             let last = n.end_position().row;
             let begins_at_all = mark.begin || mark.begin_at_line;
-            if !begins_at_all && (mark.auto || mark.ignore) && first < row && row <= last {
+            if !begins_at_all
+                && (mark.auto || mark.ignore)
+                && first < row
+                && row <= last
+                && !self.opens_on_previous_row(n, row)
+            {
                 return Level::Keep;
             }
             let ended = last < row;
@@ -617,6 +622,15 @@ impl<'a> Indents<'a> {
 
     fn is_blank(&self, row: usize) -> bool {
         self.text.row_to_string(row as u32).trim().is_empty()
+    }
+
+    /// Whether `n` is an error with an opener on `row`'s previous non-blank
+    /// row still open at `row`: its `{` is indented even inside an auto error.
+    fn opens_on_previous_row(&self, n: Node, row: usize) -> bool {
+        n.is_error()
+            && self.prev_nonblank(row).is_some_and(|prev| {
+                error_open_rows(n, self.text.row_start(row as u32)).contains(&prev)
+            })
     }
 
     fn prev_nonblank(&self, row: usize) -> Option<usize> {
