@@ -311,7 +311,22 @@ impl Repo {
         if rela.as_os_str().is_empty() || !plain || metadata {
             return Err(outside());
         }
-        Ok(rela.as_os_str().to_owned())
+        let name = rela.as_os_str();
+        // git precomposes the paths on its command line, but not the ones read
+        // from `--pathspec-from-file`, so do it here for the index's NFC names.
+        if cfg!(target_os = "macos") && self.precompose_unicode() {
+            return Ok(gix::utils::str::precompose_os_string(name.into()).into_owned());
+        }
+        Ok(name.to_owned())
+    }
+
+    /// `core.precomposeUnicode`, false when unset as git reads it.
+    fn precompose_unicode(&self) -> bool {
+        self.repo
+            .to_thread_local()
+            .config_snapshot()
+            .boolean("core.precomposeUnicode")
+            .unwrap_or(false)
     }
 }
 
