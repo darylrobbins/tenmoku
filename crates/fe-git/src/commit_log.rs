@@ -1,6 +1,7 @@
 //! A branch's or every branch's commits with their parents and ref names, and
 //! the files a commit changed, for the repository log.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -101,9 +102,10 @@ impl Repo {
         }
         let stdout = cli::run(&self.workdir, Access::Read, &args, None)?;
         let stdout = String::from_utf8_lossy(&stdout);
+        let mut seen: HashSet<&str> = HashSet::new();
         let mut tips: Vec<String> = Vec::new();
         for tip in stdout.split_whitespace() {
-            if !tips.iter().any(|seen| seen == tip) {
+            if seen.insert(tip) {
                 tips.push(tip.to_owned());
             }
         }
@@ -157,14 +159,26 @@ impl Repo {
             "--decorate-refs=refs/remotes/",
             "--decorate-refs=refs/tags/",
             "--format=%H%x1f%P%x1f%D",
+            "--stdin",
         ]
         .map(OsString::from)
         .into();
         args.push(format!("--skip={skip}").into());
         args.push(format!("--max-count={limit}").into());
-        args.extend(revisions.iter().map(OsString::from));
+        // Revisions go on stdin, past the argument-list limit; pseudo-options
+        // (`--branches`, ...) stay on the command line, which `--stdin` takes
+        // only from git 2.42.
+        let mut stdin = String::new();
+        for revision in revisions {
+            if revision.starts_with("--") {
+                args.push(revision.into());
+            } else {
+                stdin.push_str(revision);
+                stdin.push('\n');
+            }
+        }
         args.push("--".into());
-        let stdout = match cli::run(&self.workdir, Access::Read, &args, None) {
+        let stdout = match cli::run(&self.workdir, Access::Read, &args, Some(stdin.as_bytes())) {
             Ok(stdout) => stdout,
             Err(GitError::Command { stderr, .. })
                 if stderr.contains("does not have any commits") =>
