@@ -9,7 +9,10 @@ use kiln::Cx;
 
 use kiln_shell::DockPosition;
 
-use crate::{Axis, Direction, Pane, Workbench, dock_layout, persist};
+use crate::{
+    Axis, Direction, Pane, Workbench, dock_layout, nav::NavOp, persist,
+    workbench::recent_picker::RecentOp,
+};
 
 #[kiln::command(context = "workbench")]
 impl Workbench {
@@ -218,6 +221,48 @@ impl Workbench {
     fn select_language_mode(&mut self, cx: &mut Cx<Self>) {
         self.select_language(cx.window, cx.cx);
     }
+
+    /// Go to Definition
+    #[command(id = "nav.goto_definition")]
+    fn go_to_definition(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::GotoDefinition, cx);
+    }
+
+    /// Go to Symbol in Workspace…
+    #[command(id = "nav.workspace_symbols")]
+    fn workspace_symbols(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::WorkspaceSymbols, cx);
+    }
+
+    /// Go Back
+    #[command(id = "nav.back")]
+    fn go_back(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::Back, cx);
+    }
+
+    /// Go Forward
+    #[command(id = "nav.forward")]
+    fn go_forward(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::Forward, cx);
+    }
+
+    /// Open Recent…
+    #[command(id = "workbench.open_recent")]
+    fn open_recent(&mut self, cx: &mut Cx<Self>) {
+        self.recent_command(RecentOp::Open, cx);
+    }
+
+    /// Clear Recently Opened
+    #[command(id = "workbench.clear_recent")]
+    fn clear_recent(&mut self, cx: &mut Cx<Self>) {
+        self.recent_command(RecentOp::Clear, cx);
+    }
+
+    /// Open Recent in New Window
+    #[command(id = "recent.open_in_new_window", context = "picker")]
+    fn open_recent_in_new_window(&mut self, cx: &mut Cx<Self>) {
+        self.recent_command(RecentOp::OpenInNewWindow, cx);
+    }
 }
 
 impl Workbench {
@@ -233,6 +278,18 @@ impl Workbench {
             run(pane, window, cx);
             cx.notify();
         });
+    }
+
+    /// Runs the nav command `op`.
+    fn nav_command(&mut self, op: NavOp, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.run_nav_op(op, cx.window, cx.cx);
+    }
+
+    /// Runs the recent command `op`.
+    fn recent_command(&mut self, op: RecentOp, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.run_recent_op(op, cx.window, cx.cx);
     }
 
     /// Notes the command running in `commands_run`, for tests.

@@ -108,7 +108,6 @@ pub fn init(cx: &mut App) {
     kiln_shell::layout::register_item::<fe_gpui::FileViewer>(cx);
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
-    nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
     pane_toolbar::init(cx);
@@ -141,7 +140,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
         Box::new(workbench::git_commands::registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
-        Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),
         Box::new(pane_toolbar::registry()),
@@ -164,7 +162,6 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(find_bar::registry().commands().cloned());
     list.extend(lsp::registry().commands().cloned());
     list.extend(workbench::git_commands::registry().commands().cloned());
-    list.extend(nav::registry().commands().cloned());
     list.extend(open::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
     list.extend(pane_toolbar::registry().commands().cloned());

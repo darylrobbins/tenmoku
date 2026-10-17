@@ -61,6 +61,25 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("view.toggle_status_bar", "Toggle Status Bar", "workbench"),
     ("language.select", "Change Language Mode…", "workbench"),
+    ("nav.goto_definition", "Go to Definition", "workbench"),
+    (
+        "nav.workspace_symbols",
+        "Go to Symbol in Workspace…",
+        "workbench",
+    ),
+    ("nav.back", "Go Back", "workbench"),
+    ("nav.forward", "Go Forward", "workbench"),
+    ("workbench.open_recent", "Open Recent…", "workbench"),
+    (
+        "workbench.clear_recent",
+        "Clear Recently Opened",
+        "workbench",
+    ),
+    (
+        "recent.open_in_new_window",
+        "Open Recent in New Window",
+        "picker",
+    ),
 ];
 
 #[gpui::test]

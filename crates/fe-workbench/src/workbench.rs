@@ -41,7 +41,7 @@ use crate::{
     language_picker::LanguagePicker,
     loader::{self, Opened},
     lsp::{self, Lsp},
-    nav::{self, Nav},
+    nav::Nav,
     open::{self, OpenOp},
     outline_panel,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
@@ -456,7 +456,6 @@ impl Workbench {
             let delegate = ToolbarPicker::new(outline.downgrade(), ui);
             Picker::new(delegate, "Filter…", ui, cx)
         });
-        recent_picker::init(cx);
         let recent = cx.weak_entity();
         let recent_picker = cx.new(|cx| {
             let delegate = RecentPicker::new(recent, ui);
@@ -2078,7 +2077,12 @@ impl Workbench {
     /// other palette, or afresh if it shows; empties the list; or, while
     /// the picker shows, opens its selected folder in a new window, or its
     /// selected file as confirming it would.
-    fn run_recent_op(&mut self, op: RecentOp, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_recent_op(
+        &mut self,
+        op: RecentOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let picker = self.recent_picker.clone();
         match op {
             RecentOp::Open => {
@@ -2503,14 +2507,8 @@ impl Workbench {
         if toast::dismisses_all(run, cx) {
             return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
         }
-        if let Some(op) = recent_picker::op(run, cx) {
-            return self.run_recent_op(op, window, cx);
-        }
         if config_problems::shows(run, cx) {
             return self.show_config_problems(window, cx);
-        }
-        if let Some(op) = nav::op(run, cx) {
-            return self.run_nav_op(op, window, cx);
         }
         if self.run_references_command(run, window, cx) {
             return;
@@ -2824,7 +2822,7 @@ mod git_branch;
 mod external_drop;
 
 #[path = "recent_picker.rs"]
-mod recent_picker;
+pub(crate) mod recent_picker;
 
 #[path = "hot_exit.rs"]
 mod hot_exit;

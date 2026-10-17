@@ -18,22 +18,14 @@
 //! and in the order asked, on one background queue per app, so a list
 //! read for the picker sees every record made before it opened.
 //!
-//! The commands are registered by the first workbench ([`init`]), which
-//! lists `workbench.open_recent` and `workbench.clear_recent` in the
-//! command palette: not `recent.open_in_new_window`, which acts on the
-//! picker the palette would replace. Like `toast.dismiss_all`, they have no
-//! key and aren't in [`crate::command_catalog`] yet: the keys card adds
-//! them.
+//! The commands are typed: `#[kiln::command]` methods of the workbench
+//! (`workbench_commands.rs`), `recent.open_in_new_window` in the picker's
+//! context. They have no key yet: the keys card adds them.
 
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::path::{Path, PathBuf};
 
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_config::recent::{self, Entry, RecentList};
 use fe_gpui::EditorView;
-use fe_gpui::commands::RunCommand;
 use fe_ui::{
     HighlightedLabel, Icon, IconButton, Tooltip, UiTheme, char_ranges, file_icon, folder_icon,
 };
@@ -49,94 +41,17 @@ use crate::{
     toolbar_picker::subsequence,
 };
 
-/// Shows the picker.
-pub(crate) const OPEN_RECENT: &str = "workbench.open_recent";
-
-/// Empties the list.
-pub(crate) const CLEAR_RECENT: &str = "workbench.clear_recent";
-
 /// Opens the picker's selected folder in a new window.
+#[cfg(test)]
 pub(crate) const OPEN_IN_NEW_WINDOW: &str = "recent.open_in_new_window";
 
-/// What a recent command asks for.
+/// What a recent command asks for: its `#[kiln::command]` method, or vim's
+/// `:oldfiles`, runs it with [`Workbench::run_recent_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecentOp {
     Open,
     Clear,
     OpenInNewWindow,
-}
-
-/// The [`CommandTarget`] of the recent commands: the op to do.
-pub(crate) struct RecentCommands;
-
-impl CommandTarget for RecentCommands {
-    type Tx = ();
-    type Target<'a> = Option<RecentOp>;
-}
-
-struct Commands(Rc<Registry<RecentCommands>>);
-
-impl gpui::Global for Commands {}
-
-/// Registers the recent commands and lists the workbench's in the command
-/// palette, once.
-pub(crate) fn init(cx: &mut App) {
-    if cx.has_global::<Commands>() {
-        return;
-    }
-    let registry = registry();
-    let listed = (registry.commands()).filter(|meta| meta.id.as_str() != OPEN_IN_NEW_WINDOW);
-    kiln_shell::command_palette::add_commands(cx, listed.cloned());
-    cx.set_global(Commands(Rc::new(registry)));
-}
-
-pub(crate) fn registry() -> Registry<RecentCommands> {
-    let commands = [
-        (
-            OPEN_RECENT,
-            "Open Recent…",
-            crate::KEY_CONTEXT,
-            RecentOp::Open,
-        ),
-        (
-            CLEAR_RECENT,
-            "Clear Recently Opened",
-            crate::KEY_CONTEXT,
-            RecentOp::Clear,
-        ),
-        (
-            OPEN_IN_NEW_WINDOW,
-            "Open Recent in New Window",
-            kiln_shell::picker::KEY_CONTEXT,
-            RecentOp::OpenInNewWindow,
-        ),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
-        registry
-            .register(
-                id,
-                title,
-                move |target: &mut Option<RecentOp>, _: &Actor| {
-                    *target = Some(op);
-                    Ok(Dispatched::new(Effect::Notify))
-                },
-            )
-            .expect("recent command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
-    registry
-}
-
-/// The op of `run`, if it's a recent command applying in its context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<RecentOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 /// Where the list is kept, if not [`recent::recent_path`].

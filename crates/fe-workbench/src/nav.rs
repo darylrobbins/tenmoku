@@ -26,7 +26,6 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, Ordering},
@@ -35,15 +34,13 @@ use std::{
 
 use async_channel::{Receiver, Sender};
 use fe_buffer::Bias;
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::commands::RunCommand;
 use fe_nav::{
     Answer, BuildOptions, Definitions, Location, MAX_BATCH_FILES, NavError, NavRequest, Navigation,
     Precision, SearchNavigation, SymbolIndex,
 };
 use fe_project::FsChange;
 use fe_ui::UiTheme;
-use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Global, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Task, Window};
 
 use crate::{
     Picker, StatusBar, StatusItem, StatusSide, Workbench,
@@ -782,64 +779,12 @@ impl Workbench {
     }
 }
 
-/// What a nav command asks for.
+/// What a nav command asks for: its `#[kiln::command]` method runs it
+/// with [`Workbench::run_nav_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NavOp {
     GotoDefinition,
     WorkspaceSymbols,
     Back,
     Forward,
-}
-
-/// The [`CommandTarget`] of nav commands: the op to do.
-pub(crate) struct NavCommands;
-
-impl CommandTarget for NavCommands {
-    type Tx = ();
-    type Target<'a> = Option<NavOp>;
-}
-
-struct Commands(Rc<Registry<NavCommands>>);
-
-impl Global for Commands {}
-
-/// Registers the nav commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<NavCommands> {
-    use NavOp::*;
-    let commands = [
-        ("nav.goto_definition", "Go to Definition", GotoDefinition),
-        (
-            "nav.workspace_symbols",
-            "Go to Symbol in Workspace…",
-            WorkspaceSymbols,
-        ),
-        ("nav.back", "Go Back", Back),
-        ("nav.forward", "Go Forward", Forward),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, op) in commands {
-        registry
-            .register(id, title, move |target: &mut Option<NavOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("nav command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    }
-    registry
-}
-
-/// The op of `run`, if it's a nav command that applies in its context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<NavOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
