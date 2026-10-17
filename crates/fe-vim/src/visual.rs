@@ -472,6 +472,12 @@ pub(crate) fn leave_for_ex(target: &mut VimTarget<'_>) -> bool {
     true
 }
 
+/// The goal a cursor set afresh takes before the anchor: the first column of
+/// the character it is on, as nvim shows it there; none after the anchor.
+fn before_anchor_goal(cursor: &Cursor<'_>, anchor: usize, tab: usize) -> Option<usize> {
+    (cursor.offset() < anchor).then(|| cursor.line.start_column(cursor.ix, tab))
+}
+
 /// `vim.visual_swap`: the cursor goes to the other end; in a block with
 /// `same_row` (`O`), to the other corner on its row, the anchor taking the
 /// cursor's column.
@@ -487,7 +493,11 @@ pub(crate) fn swap(
     let mut swapped = Ends {
         anchor: ends.cursor,
         cursor: ends.anchor,
-        goal: None,
+        goal: before_anchor_goal(
+            &cursor_at(model.text(), ends.anchor),
+            ends.cursor,
+            model.tab_size().max(1),
+        ),
         ..ends
     };
     if ends.kind == VisualKind::Block && args.same_row {
@@ -670,10 +680,7 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
     // A goal set afresh on a tab is its first column if the cursor is
     // before the anchor, as nvim shows it there, else its last.
     let goal = moved.unwrap_or_else(|kept| kept).or_else(|| {
-        Some(match cursor.offset() < ends.anchor {
-            true => cursor.line.start_column(cursor.ix, tab),
-            false => goal_of(&cursor, tab),
-        })
+        Some(before_anchor_goal(&cursor, ends.anchor, tab).unwrap_or_else(|| goal_of(&cursor, tab)))
     });
     state.failed |= motion::word_fails(&text, ends.cursor, args, tab);
     let moved_to = Ends {
