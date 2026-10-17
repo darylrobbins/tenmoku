@@ -612,6 +612,13 @@ pub trait PaneView:
     /// An empty pane like this one, for a split, made in `cx`.
     fn new_peer(&self, cx: &mut Context<Self>) -> Self;
 
+    /// The item the pane shows: its active item, unless the host draws
+    /// something else over it (a file still loading, say). A split copies
+    /// it, and focus goes to it, or to the pane while there's none.
+    fn shown_item(&self) -> Option<&dyn ItemHandle> {
+        self.pane().active_item()
+    }
+
     /// Item `ix` was made the active one and focused.
     fn activated(&mut self, _ix: usize, _window: &mut Window, _cx: &mut App) {}
 

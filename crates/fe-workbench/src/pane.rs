@@ -1225,6 +1225,12 @@ impl PaneView for Pane {
         Pane::new_peer(self, cx)
     }
 
+    /// None while a file is being read in, or its read failed: the pane
+    /// shows that over its tab.
+    fn shown_item(&self) -> Option<&dyn ItemHandle> {
+        self.active_item()
+    }
+
     fn activated(&mut self, _: usize, _: &mut Window, cx: &mut App) {
         if !self.landing {
             self.navigations += 1;

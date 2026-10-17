@@ -387,8 +387,8 @@ impl<P: PaneView> Workspace<P> {
     }
 
     /// Splits a new pane off the active one, `direction` of it, showing a
-    /// second view of the active item ([`ItemHandle::split`]), and makes it
-    /// the active pane, focused.
+    /// second view of the item it shows ([`PaneView::shown_item`],
+    /// [`ItemHandle::split`]), and makes it the active pane, focused.
     pub fn split(
         &mut self,
         direction: Direction,
@@ -396,7 +396,7 @@ impl<P: PaneView> Workspace<P> {
         cx: &mut Context<Self>,
     ) -> Entity<P> {
         let old = self.active.clone();
-        let item = (old.read(cx).pane().active_item()).map(ItemHandle::boxed_clone);
+        let item = (old.read(cx).shown_item()).map(ItemHandle::boxed_clone);
         let copy = item.and_then(|item| item.split(window, cx));
         let new = old.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)));
         self.group.split(&old, new.clone(), direction);
@@ -479,16 +479,16 @@ impl<P: PaneView> Workspace<P> {
         Some(pane)
     }
 
-    /// What has focus when the active pane does: its active item, or the
-    /// pane itself while it's empty.
+    /// What has focus when the active pane does: the item it shows
+    /// ([`PaneView::shown_item`]), or the pane itself while there's none.
     fn active_focus(&self, cx: &App) -> FocusHandle {
-        match self.active_item(cx) {
+        match self.active.read(cx).shown_item() {
             Some(item) => item.item_focus_handle(cx),
             None => self.active.focus_handle(cx),
         }
     }
 
-    /// Focuses the active item, or the active pane while it's empty.
+    /// Focuses the item the active pane shows, or the pane while there's none.
     pub fn focus_active(&mut self, window: &mut Window, cx: &mut App) {
         window.focus(&self.active_focus(cx), cx);
     }
@@ -589,16 +589,7 @@ impl<P: PaneView> Workspace<P> {
         let ours = window.window_handle().window_id();
         self.layout = Some((layout, ours));
         self.saved_items.clear();
-        let at_quit = cx.on_app_quit(|workspace, cx| {
-            let entry = workspace.full_entry(cx);
-            let saved =
-                (workspace.layout.as_mut()).map(|(layout, _)| layout.save_at_quit(entry, cx));
-            async move {
-                if let Some(saved) = saved {
-                    saved.await;
-                }
-            }
-        });
+        let at_quit = cx.on_app_quit(|workspace, cx| workspace.save_at_quit(cx));
         let this = cx.weak_entity();
         let closed = cx.on_window_closed(move |cx, closed| {
             if closed == ours {
@@ -661,7 +652,8 @@ impl<P: PaneView> Workspace<P> {
 
     /// The workspace's saved entry: the app's keys ([`Workspace::on_save`]),
     /// `panes` ([`layout::save_panes`]) and `docks`, each dock's state
-    /// ([`DockState::save`]) by its position, `left`, `right` or `bottom`.
+    /// ([`DockState::save`]) by its position, `left`, `right` or `bottom`,
+    /// beside any keys the app gave under `docks` itself.
     pub fn entry(&self, cx: &App) -> Value {
         let mut entry = serde_json::Map::new();
         for save in &self.on_save {
@@ -669,13 +661,18 @@ impl<P: PaneView> Workspace<P> {
                 entry.insert(key.into(), value);
             }
         }
-        let docks = (DOCKS.iter()).filter_map(|(position, name)| {
-            let dock = self.docks.get(position)?;
-            Some((*name, dock.read(cx).dock().save()))
-        });
+        let mut docks = match entry.remove("docks") {
+            Some(Value::Object(docks)) => docks,
+            _ => serde_json::Map::new(),
+        };
+        for (position, name) in DOCKS {
+            if let Some(dock) = self.docks.get(&position) {
+                docks.insert(name.into(), dock.read(cx).dock().save());
+            }
+        }
         let panes = layout::save_panes(&self.group, &self.active, cx);
         entry.insert("panes".into(), panes);
-        entry.insert("docks".into(), Value::from_iter(docks));
+        entry.insert("docks".into(), Value::Object(docks));
         Value::Object(entry)
     }
 
@@ -766,19 +763,40 @@ impl<P: PaneView> Workspace<P> {
         }
     }
 
+    /// Saves the entry now, in full, unless a restore is reading: for a
+    /// change its shape doesn't show, as an item's state that has to be
+    /// on disk.
+    pub fn save(&mut self, cx: &mut App) {
+        if self.layout.is_none() || self.restoring.is_some() {
+            return;
+        }
+        let entry = self.entry(cx);
+        self.saved_items = self.items(cx);
+        if let Some((layout, _)) = &mut self.layout {
+            layout.save(entry, cx);
+        }
+    }
+
+    /// Saves the entry in full as the app quits (while a restore reads,
+    /// the one it restores), resolving once it's written: what the
+    /// workspace does at quit itself, for an app quitting its own way.
+    pub fn save_at_quit(&mut self, cx: &mut App) -> impl Future<Output = ()> + use<P> {
+        let entry = self.full_entry(cx);
+        let saved = (self.layout.as_mut()).map(|(layout, _)| layout.save_at_quit(entry, cx));
+        async move {
+            if let Some(saved) = saved {
+                saved.await;
+            }
+        }
+    }
+
     /// Saves the entry if its shape changed, unless a restore is reading.
     fn save_layout(&mut self, cx: &mut App) {
         if self.layout.is_none() || self.restoring.is_some() {
             return;
         }
         let entry = self.entry(cx);
-        let items: Vec<Vec<ItemId>> = (self.group.panes().into_iter())
-            .map(|pane| {
-                (pane.read(cx).pane().items().iter())
-                    .map(|item| item.id())
-                    .collect()
-            })
-            .collect();
+        let items = self.items(cx);
         let Some((layout, _)) = &mut self.layout else {
             return;
         };
@@ -788,6 +806,17 @@ impl<P: PaneView> Workspace<P> {
         } else {
             layout.save_if_changed(entry, cx);
         }
+    }
+
+    /// Each pane's items, by id.
+    fn items(&self, cx: &App) -> Vec<Vec<ItemId>> {
+        (self.group.panes().into_iter())
+            .map(|pane| {
+                (pane.read(cx).pane().items().iter())
+                    .map(|item| item.id())
+                    .collect()
+            })
+            .collect()
     }
 
     /// The window has closed: its entry is kept if no other window is open,

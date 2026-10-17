@@ -3,7 +3,7 @@
 //! right and the terminal below.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
@@ -270,8 +270,9 @@ pub struct Workbench {
     /// editors' diff bases: replaced on a new root.
     git: Entity<GitState>,
     _rail: Subscription,
-    /// To the sidebar's dock and the terminal's: a drag of an edge changes
-    /// only the dock, so the layout saves from here too.
+    /// To the sidebar's dock and the terminal's: their changes (a toggle, a
+    /// drag of an edge, another panel shown) ask the workspace to save the
+    /// layout, as its own docks do.
     _docks: [Subscription; 2],
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
@@ -300,16 +301,17 @@ pub struct Workbench {
     /// Every command the workbench was dispatched, oldest first.
     #[cfg(test)]
     pub(crate) commands_run: Vec<fe_command::Invocation>,
-    /// The window's saved layout, once the host gives it one.
-    layout: Option<WindowLayout>,
-    /// A saved layout's items are still being restored: nothing is saved
-    /// until they're in.
+    /// The id of the window's saved layout, once the host gives it one:
+    /// the workspace saves it ([`Workspace::set_layout`]).
+    layout_id: Option<u64>,
+    /// A restored layout's items are still being read, as the workspace's
+    /// are ([`Workspace::restoring`]): the workbench takes up its editors
+    /// once they're in.
     restoring: bool,
-    /// The window's bounds as last drawn, for the layout saved at quit.
-    bounds: Option<WindowBounds>,
-    /// Saves the layout at quit, and keeps or deletes it as the window
-    /// closes.
-    _layout_hooks: Vec<Subscription>,
+    /// fastedit's own keys in the saved layout.
+    layout_keys: Rc<LayoutKeys>,
+    /// Keeps the window's bounds in [`LayoutKeys`].
+    _bounds: Subscription,
     /// The open buffers' backups, once the window has a layout.
     hot_exit: hot_exit::HotExit,
     /// Keeps the open buffers in step with their files on disk.
@@ -506,13 +508,27 @@ impl Workbench {
             cx.notify();
         });
         let docks = [
-            cx.observe_in(&dock, window, |workbench, _, window, cx| {
-                workbench.save_layout(window, cx)
-            }),
-            cx.observe_in(&terminal_dock, window, |workbench, _, window, cx| {
-                workbench.save_layout(window, cx)
+            cx.observe(&dock, |workbench, _, cx| workbench.layout_keys_changed(cx)),
+            cx.observe(&terminal_dock, |workbench, _, cx| {
+                workbench.layout_keys_changed(cx)
             }),
         ];
+        let layout_keys = Rc::new(LayoutKeys {
+            sidebar: dock.clone(),
+            terminal: terminal_dock.clone(),
+            shell: shell.clone(),
+            breadcrumbs: Cell::new(true),
+            bounds: Cell::new(Some(window.window_bounds())),
+        });
+        workspace.update(cx, |workspace, _| {
+            let keys = layout_keys.clone();
+            workspace.on_save(move |cx| keys.save(cx));
+            let keys = layout_keys.clone();
+            workspace.on_restore(move |entry, _, cx| keys.restore(entry, cx));
+        });
+        let bounds = cx.observe_window_bounds(window, |workbench, window, _| {
+            (workbench.layout_keys.bounds).set(Some(window.window_bounds()))
+        });
         let mut workbench = Self {
             panel,
             dock,
@@ -582,10 +598,10 @@ impl Workbench {
             nav_pushes: 0,
             #[cfg(test)]
             commands_run: Vec::new(),
-            layout: None,
+            layout_id: None,
             restoring: false,
-            bounds: None,
-            _layout_hooks: Vec::new(),
+            layout_keys,
+            _bounds: bounds,
             hot_exit: Default::default(),
             disk_sync: DiskSync::new(window, cx),
             auto_save,
@@ -1516,7 +1532,12 @@ impl Workbench {
     /// editors.
     fn follow_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if *self.workspace.read(cx).active_pane() != self.active {
+            // The workspace made it active itself (a click on it, a close,
+            // a file read into it): focus goes where the workbench's own
+            // activation puts it ([`Pane::focus_target`]).
             self.follow_active_pane(cx);
+            let focus = self.active.read(cx).focus_target(cx);
+            window.focus(&focus, cx);
         }
         if self.restoring && !self.workspace.read(cx).restoring() {
             self.restoring = false;
@@ -1639,39 +1660,16 @@ impl Workbench {
         self.place_docks(to, terminal, cx);
     }
 
-    /// Puts the sidebar at `sidebar` and the terminal's dock at `terminal`,
-    /// two edges, the sidebar's a side: each dock's state moves, and its
-    /// view moves in the shell.
+    /// Puts the sidebar at `sidebar` and the terminal's dock at `terminal`
+    /// ([`place_docks`]).
     fn place_docks(
         &mut self,
         sidebar: DockPosition,
         terminal: DockPosition,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(sidebar != terminal && sidebar != DockPosition::Bottom);
-        let (was_sidebar, was_terminal) = self.dock_positions(cx);
-        if (was_sidebar, was_terminal) == (sidebar, terminal) {
-            return;
-        }
-        self.dock.update(cx, |dock, cx| {
-            dock.dock_mut().set_position(sidebar);
-            cx.notify();
-        });
-        self.terminal_dock.update(cx, |dock, cx| {
-            dock.dock_mut().set_position(terminal);
-            cx.notify();
-        });
-        let views: [(DockPosition, AnyView); 2] = [
-            (sidebar, self.dock.clone().into()),
-            (terminal, self.terminal_dock.clone().into()),
-        ];
-        self.shell.update(cx, |shell, cx| {
-            shell.set_dock(was_sidebar, None, cx);
-            shell.set_dock(was_terminal, None, cx);
-            for (position, view) in views {
-                shell.set_dock(position, Some(view), cx);
-            }
-        });
+        let docks = (&self.dock, &self.terminal_dock, &self.shell);
+        place_docks(docks, sidebar, terminal, cx);
     }
 
     /// Opens a pane in `direction` of the active one and activates it. If
@@ -1860,61 +1858,50 @@ impl Workbench {
         }
     }
 
-    /// Saves the window's layout from now on, in `layout`, as it changes
-    /// (a split, a close, a move, a dock toggle, a tab opening or
-    /// closing, a divider's drag, a buffer's backup written or removed),
-    /// and in full as the app quits, once its buffers are backed up. As the
-    /// window closes, its entry is kept if it's the last window, else
-    /// deleted ([`kiln_shell::layout`]). Its unsaved buffers are backed up
-    /// beside it from now on, for hot exit ([`hot_exit`]).
+    /// Saves the window's layout from now on, in `layout`, through the
+    /// workspace ([`Workspace::set_layout`]): as its shape changes (a
+    /// split, a close, a move, a dock toggled, moved or resized, a tab
+    /// opening or closing, a divider's drag), in full as a buffer's backup
+    /// is written or removed, and as the app quits, once its buffers are
+    /// backed up. As the window closes, its entry is kept if it's the last
+    /// window, else deleted ([`kiln_shell::layout`]). Its unsaved buffers
+    /// are backed up beside it from now on, for hot exit ([`hot_exit`]).
     pub fn set_layout(&mut self, layout: WindowLayout, window: &Window, cx: &mut Context<Self>) {
+        // First, so the backups are written before the workspace saves the
+        // layout at quit.
         self.start_hot_exit(layout.store(), window, cx);
-        self.layout = Some(layout);
-        let at_quit = cx.on_app_quit(|workbench, cx| workbench.save_layout_at_quit(cx));
-        // The window closes, or the workbench goes: whichever is first.
-        let ours = window.window_handle().window_id();
-        let workbench = cx.weak_entity();
-        let closed = cx.on_window_closed(move |cx, closed| {
-            if closed == ours {
-                workbench
-                    .update(cx, |workbench, cx| workbench.close_layout(cx))
-                    .ok();
-            }
-        });
-        let released = cx.on_release(|workbench, cx| workbench.close_layout(cx));
-        self._layout_hooks = vec![at_quit, closed, released];
+        self.layout_id = layout.id();
+        (self.workspace).update(cx, |workspace, cx| workspace.set_layout(layout, window, cx));
     }
 
     /// Saves the layout as the app quits, once every buffer's backup is
-    /// written, and resolves once it's written.
+    /// written, and resolves once it's written: what quitting does, through
+    /// the hooks of hot exit and the workspace.
+    #[cfg(test)]
     pub(crate) fn save_layout_at_quit(
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> + use<> {
         self.flush_backups(cx);
-        let entry = self.layout_entry(cx);
-        let saved = (self.layout.as_mut()).map(|layout| layout.save_at_quit(entry, cx));
-        async move {
-            if let Some(saved) = saved {
-                saved.await;
-            }
-        }
+        (self.workspace).update(cx, |workspace, cx| workspace.save_at_quit(cx))
     }
 
-    /// The window has closed: its entry is kept if no other window is open,
-    /// else deleted, and its backups go unless the app is quitting.
-    fn close_layout(&mut self, cx: &mut App) {
-        if let Some(layout) = self.layout.take() {
-            let entry = self.layout_entry(cx);
-            let others_open = !cx.windows().is_empty();
-            layout.close(entry, others_open, cx);
-        }
-        self.end_hot_exit(cx);
+    /// Has the workspace save the layout if its shape changed: fastedit's
+    /// keys changed ([`LayoutKeys`]).
+    fn layout_keys_changed(&mut self, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Has the workspace save the layout now, in full: a buffer's backup
+    /// was written or removed, which the entry's shape doesn't show.
+    pub(crate) fn save_layout_in_full(&mut self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.save(cx));
     }
 
     /// The window's layout id, once it has a layout.
     pub fn layout_id(&self) -> Option<u64> {
-        self.layout.as_ref().and_then(WindowLayout::id)
+        self.layout_id
     }
 
     /// Whether a restored layout's files are still being read.
@@ -1922,70 +1909,35 @@ impl Workbench {
         self.restoring
     }
 
-    /// The window's layout, as saved: its bounds, its panes and their
-    /// files, the docks' positions, the dock, the terminal's dock's sizes
-    /// and whether the breadcrumbs show.
+    /// The window's layout, as saved ([`Workspace::entry`]): its panes and
+    /// their files, and fastedit's keys ([`LayoutKeys`]).
     pub fn layout_entry(&self, cx: &App) -> Value {
-        let terminal_dock = self.terminal_dock.read(cx).dock().save();
-        let terminal_dock = terminal_dock_sizes(&terminal_dock);
-        let (sidebar, terminal) = self.dock_positions(cx);
-        let docks = Value::from_iter([
-            ("sidebar", dock_layout::position_name(sidebar)),
-            ("terminal", dock_layout::position_name(terminal)),
-        ]);
-        let mut entry = Value::from_iter([
-            (
-                "panes",
-                layout::save_panes(self.pane_group(cx), &self.active, cx),
-            ),
-            ("docks", docks),
-            ("dock", self.dock.read(cx).state().save()),
-            ("terminal_dock", terminal_dock),
-            ("breadcrumbs", Value::from(self.breadcrumbs)),
-        ]);
-        if let (Some(bounds), Some(object)) = (self.bounds, entry.as_object_mut()) {
-            object.insert("bounds".into(), layout::save_bounds(bounds));
-        }
-        entry
+        self.workspace.read(cx).entry(cx)
     }
 
-    /// Puts the window back as `entry` saved it: the docks' positions, if
-    /// two edges with the sidebar at a side, then the dock and the
-    /// terminal's dock's sizes (it stays hidden, with no session) and the
-    /// breadcrumbs at once; the panes, split as they were, with their
+    /// Puts the window back as `entry` saved it, through the workspace
+    /// ([`Workspace::restore`]): the panes, split as they were, with their
     /// files read in the background, the views of one file sharing its
-    /// buffer, each with its caret. A file that's gone is left out, and a
-    /// pane left empty closes, unless it's the only one.
+    /// buffer, each with its caret, and fastedit's keys ([`LayoutKeys`])
+    /// at once. A file that's gone is left out, and a pane left empty
+    /// closes, unless it's the only one. An entry without panes puts back
+    /// fastedit's keys alone.
     pub fn restore_layout(&mut self, entry: &Value, window: &mut Window, cx: &mut Context<Self>) {
-        let position = |dock| {
-            let name = entry.get("docks")?.get(dock)?.as_str()?;
-            dock_layout::position_named(name)
-        };
-        if let (Some(sidebar), Some(terminal)) = (position("sidebar"), position("terminal"))
-            && sidebar != terminal
-            && sidebar != DockPosition::Bottom
-        {
-            self.place_docks(sidebar, terminal, cx);
-        }
-        if let Some(saved) = entry.get("dock") {
-            self.dock.update(cx, |dock, cx| dock.restore(saved, cx));
-        }
-        if let Some(saved) = entry.get("terminal_dock") {
-            self.terminal_dock.update(cx, |dock, cx| {
-                restore_terminal_dock_sizes(dock.dock_mut(), saved);
-                cx.notify();
-            });
-        }
-        let breadcrumbs = entry.get("breadcrumbs").and_then(Value::as_bool);
-        if breadcrumbs.is_some_and(|shown| shown != self.breadcrumbs) {
-            self.toggle_breadcrumbs(cx);
-        }
-        // The workspace restores the panes ([`Workspace::restore`]), made
-        // like the active one; once their files are in, the workbench
-        // follows it ([`Workbench::follow_workspace`]).
+        // The workspace restores the panes, made like the active one; once
+        // their files are in, the workbench follows it
+        // ([`Workbench::follow_workspace`]).
         *self.template.borrow_mut() = self.active.downgrade();
         let restored =
             (self.workspace).update(cx, |workspace, cx| workspace.restore(entry, window, cx));
+        if !restored {
+            // Without panes, the workspace hands back none of fastedit's
+            // keys, but an entry saved before it kept both the terminal
+            // dock's sizes still puts them back.
+            self.layout_keys.restore(entry, cx);
+        }
+        if self.layout_keys.breadcrumbs.get() != self.breadcrumbs {
+            self.toggle_breadcrumbs(cx);
+        }
         if !restored {
             return;
         }
@@ -1994,29 +1946,6 @@ impl Workbench {
         self.restoring = true;
         self.track_editors(cx);
         cx.notify();
-    }
-
-    /// Saves the layout if its shape changed, unless it's still being
-    /// restored.
-    fn save_layout(&mut self, window: &Window, cx: &mut Context<Self>) {
-        self.bounds = Some(window.window_bounds());
-        self.write_layout(false, cx);
-    }
-
-    /// Saves the layout, with `full` or if the backups it names changed,
-    /// else if its shape changed, unless it's still being restored.
-    fn write_layout(&mut self, full: bool, cx: &mut Context<Self>) {
-        if self.layout.is_none() || self.restoring {
-            return;
-        }
-        let entry = self.layout_entry(cx);
-        let full = self.backups_changed(&entry) || full;
-        if let Some(layout) = self.layout.as_mut() {
-            match full {
-                true => layout.save(entry, cx),
-                false => layout.save_if_changed(entry, cx),
-            }
-        }
     }
 
     /// The quick-open palette, shown while [`Workbench::palette_open`].
@@ -2199,6 +2128,8 @@ impl Workbench {
     /// does.
     fn toggle_breadcrumbs(&mut self, cx: &mut Context<Self>) {
         self.breadcrumbs = !self.breadcrumbs;
+        self.layout_keys.breadcrumbs.set(self.breadcrumbs);
+        self.layout_keys_changed(cx);
         self.chain_key = None;
         let visible = self.breadcrumbs;
         for pane in self.panes(cx) {
@@ -2636,7 +2567,6 @@ impl Render for Workbench {
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
         self.land_problem(window, cx);
-        self.save_layout(window, cx);
         let name = title_bar::name(self.root.as_deref());
         self.shell.update(cx, |shell, cx| {
             // Not from its cache in a frame that gave it another editor: a
@@ -2746,6 +2676,109 @@ fn restore_terminal_dock_sizes(dock: &mut DockState, saved: &Value) {
         }
     }
     dock.set_position(position);
+}
+
+/// Puts the sidebar at `sidebar` and the terminal's dock at `terminal`,
+/// two edges, the sidebar's a side: each dock's state moves, and its view
+/// moves in the shell.
+fn place_docks(
+    (dock, terminal_dock, shell): (&Entity<Dock>, &Entity<kiln_shell::Dock>, &Entity<Shell>),
+    sidebar: DockPosition,
+    terminal: DockPosition,
+    cx: &mut App,
+) {
+    debug_assert!(sidebar != terminal && sidebar != DockPosition::Bottom);
+    let was_sidebar = dock.read(cx).state().position();
+    let was_terminal = terminal_dock.read(cx).dock().position();
+    if (was_sidebar, was_terminal) == (sidebar, terminal) {
+        return;
+    }
+    dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_position(sidebar);
+        cx.notify();
+    });
+    terminal_dock.update(cx, |dock, cx| {
+        dock.dock_mut().set_position(terminal);
+        cx.notify();
+    });
+    let views: [(DockPosition, AnyView); 2] = [
+        (sidebar, dock.clone().into()),
+        (terminal, terminal_dock.clone().into()),
+    ];
+    shell.update(cx, |shell, cx| {
+        shell.set_dock(was_sidebar, None, cx);
+        shell.set_dock(was_terminal, None, cx);
+        for (position, view) in views {
+            shell.set_dock(position, Some(view), cx);
+        }
+    });
+}
+
+/// fastedit's own keys in the window's saved layout, beside the
+/// workspace's panes ([`Workspace::on_save`]): the docks' places under
+/// `docks` (`sidebar` and `terminal`, where a layout saved before the
+/// workspace saved it kept them too), the sidebar's state (`dock`), the
+/// terminal dock's sizes (`terminal_dock`), whether the breadcrumbs show
+/// and the window's `bounds`.
+struct LayoutKeys {
+    sidebar: Entity<Dock>,
+    terminal: Entity<kiln_shell::Dock>,
+    shell: Entity<Shell>,
+    /// Whether the breadcrumbs show, as [`Workbench::breadcrumbs`]; or as
+    /// a restored entry has them, for the workbench to follow.
+    breadcrumbs: Cell<bool>,
+    /// The window's bounds, as they last changed.
+    bounds: Cell<Option<WindowBounds>>,
+}
+
+impl LayoutKeys {
+    fn save(&self, cx: &App) -> Vec<(&'static str, Value)> {
+        let sidebar = self.sidebar.read(cx).state();
+        let terminal = self.terminal.read(cx).dock();
+        let docks = Value::from_iter([
+            ("sidebar", dock_layout::position_name(sidebar.position())),
+            ("terminal", dock_layout::position_name(terminal.position())),
+        ]);
+        let mut keys = vec![
+            ("docks", docks),
+            ("dock", sidebar.save()),
+            ("terminal_dock", terminal_dock_sizes(&terminal.save())),
+            ("breadcrumbs", Value::from(self.breadcrumbs.get())),
+        ];
+        if let Some(bounds) = self.bounds.get() {
+            keys.push(("bounds", layout::save_bounds(bounds)));
+        }
+        keys
+    }
+
+    /// Puts back the docks' places, if two edges with the sidebar at a
+    /// side, then the sidebar's state and the terminal's dock's sizes (it
+    /// stays hidden, with no session), and notes the breadcrumbs.
+    fn restore(&self, entry: &Value, cx: &mut App) {
+        let position = |dock| {
+            let name = entry.get("docks")?.get(dock)?.as_str()?;
+            dock_layout::position_named(name)
+        };
+        if let (Some(sidebar), Some(terminal)) = (position("sidebar"), position("terminal"))
+            && sidebar != terminal
+            && sidebar != DockPosition::Bottom
+        {
+            let docks = (&self.sidebar, &self.terminal, &self.shell);
+            place_docks(docks, sidebar, terminal, cx);
+        }
+        if let Some(saved) = entry.get("dock") {
+            self.sidebar.update(cx, |dock, cx| dock.restore(saved, cx));
+        }
+        if let Some(saved) = entry.get("terminal_dock") {
+            self.terminal.update(cx, |dock, cx| {
+                restore_terminal_dock_sizes(dock.dock_mut(), saved);
+                cx.notify();
+            });
+        }
+        if let Some(shown) = entry.get("breadcrumbs").and_then(Value::as_bool) {
+            self.breadcrumbs.set(shown);
+        }
+    }
 }
 
 /// The active item of `pane`, if it's a diff view.
@@ -3013,3 +3046,7 @@ mod focus_tests {
         assert_eq!(head(cx), 2 * "line 00\n".len());
     }
 }
+
+#[cfg(test)]
+#[path = "layout_compat_tests.rs"]
+mod layout_compat_tests;

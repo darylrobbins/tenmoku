@@ -81,8 +81,8 @@ pub(super) struct HotExit {
     window: Option<WindowId>,
     store: Option<BackupStore>,
     buffers: HashMap<BufferId, Tracked>,
-    /// The backups the layout last saved named.
-    saved: HashSet<String>,
+    /// Back up the buffers at quit, and end hot exit as the window closes.
+    hooks: Vec<Subscription>,
     /// The root's backups to open as tabs, read, once the layout is in.
     orphans: Option<Orphans>,
 }
@@ -132,8 +132,9 @@ impl Global for HotExitApp {}
 
 impl Workbench {
     /// Keeps the window's backups in the store beside `layouts` from now
-    /// on; the first window on its root in the process takes its orphans.
-    /// See the module docs.
+    /// on, writing them as the app quits, until the window closes; the
+    /// first window on its root in the process takes its orphans. See the
+    /// module docs.
     pub(super) fn start_hot_exit(
         &mut self,
         layouts: &LayoutStore,
@@ -148,6 +149,19 @@ impl Workbench {
         pane_item::set_window_backups(id, Some(store.clone()), cx);
         self.hot_exit.window = Some(id);
         self.hot_exit.store = Some(store.clone());
+        let at_quit = cx.on_app_quit(|workbench, cx| {
+            workbench.flush_backups(cx);
+            async {}
+        });
+        // The window closes, or the workbench goes: whichever is first.
+        let workbench = cx.weak_entity();
+        let closed = cx.on_window_closed(move |cx, closed| {
+            if closed == id {
+                (workbench.update(cx, |workbench, cx| workbench.end_hot_exit(cx))).ok();
+            }
+        });
+        let released = cx.on_release(|workbench, cx| workbench.end_hot_exit(cx));
+        self.hot_exit.hooks = vec![at_quit, closed, released];
         take_quits(cx);
         if cx.default_global::<HotExitApp>().started.insert(dir) {
             let named: HashSet<BackupId> = (layouts.entries().iter())
@@ -300,15 +314,6 @@ impl Workbench {
             }
         }
     }
-
-    /// Whether `entry`, about to be saved, names other backups than the
-    /// layout last saved did; noting them as saved if so.
-    pub(super) fn backups_changed(&mut self, entry: &Value) -> bool {
-        let named = named(entry);
-        let changed = named != self.hot_exit.saved;
-        self.hot_exit.saved = named;
-        changed
-    }
 }
 
 /// Writes `backup` of `editor`'s buffer [`BACKUP_DELAY`] from now, if it's
@@ -339,7 +344,7 @@ fn write_later(
             }
             wait = (wait * 2).min(RETRY_MAX);
         }
-        (workbench.update(cx, |workbench, cx| workbench.write_layout(true, cx))).ok();
+        (workbench.update(cx, |workbench, cx| workbench.save_layout_in_full(cx))).ok();
     })
 }
 
@@ -349,7 +354,7 @@ fn remove_now(backup: &BufferBackup, cx: &mut Context<Workbench>) -> Task<()> {
     let backup = backup.clone();
     cx.spawn(async move |workbench, cx| {
         remove(&backup, cx.background_executor()).await;
-        (workbench.update(cx, |workbench, cx| workbench.write_layout(true, cx))).ok();
+        (workbench.update(cx, |workbench, cx| workbench.save_layout_in_full(cx))).ok();
     })
 }
 
