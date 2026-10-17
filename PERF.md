@@ -498,6 +498,41 @@ than the display work (see the decision file).
   shifted by each edit's wrap-row delta. Details in
   `docs/decisions/ez74dvmwrv-fold-rows-one-cursor-pass.md`.
 
+### Folds' rows kept across edits (T181)
+
+T159's follow-up: a sync re-resolves only the hidden runs its edits touch
+and shifts the rest, so a keystroke no longer reads every fold's rows from
+the wrap tree. `fold`, `unfold` and the rest still rebuild.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release builds in private `CARGO_TARGET_DIR`s.
+- **Commit:** base `cd378d8` (T159 in it); candidate `42ccce6`.
+  **Date:** 2026-10-17, 22:20–22:25 UTC.
+- **Load average** (`/proc/loadavg`, 1 minute): 10.84 at the start, 10.34
+  at the end (9.2–19.2 between runs), from other lanes.
+- Measured as for T159: alternately for 3 rounds, base first, `--warm-up-time
+  1 --measurement-time 3 'sync/|fold/'`; "fastest" over all 3 rounds,
+  "median" the lowest of the 3 criterion medians. The card compares `fold/`
+  like-for-like (rev 2, lead decision): the same way with only `'fold/'`.
+
+| Case | Base median | Base fastest | Candidate median | Candidate fastest | Budget | Verdict |
+|---|---|---|---|---|---|---|
+| `sync/keystroke, 1M lines unwrapped` | 4.4 µs | 3.9 µs | 3.7 µs | 3.6 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines wrapped` | 16.9 µs | 14.9 µs | 14.9 µs | 14.6 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines unwrapped, 10k folds` | 81.9 µs | 78.6 µs | 11.8 µs | 11.6 µs | not over 10% slower than base | meets (6.8x faster) |
+| `sync/keystroke, 1M lines wrapped, 10k folds` | 903 µs | 797 µs | 25.1 µs | 23.2 µs | at most 0.5 ms | meets |
+| `sync/keystroke, 1M lines wrapped, 200k folds` | 10.0 ms | 9.81 ms | 185 µs | 182 µs | at most 5.2 ms | meets (slowest sample 404 µs, inside 8 ms) |
+| `fold/one more fold among 200k, wrapped`, only `'fold/'` run | 4.17 ms | 4.09 ms | 4.25 ms | 3.96 ms | not over 10% slower than base | meets |
+| `fold/one more fold among 200k, wrapped`, full run | 10.0 ms | 9.81 ms | 22.2 ms | 20.1 ms | recorded only | 2x slower in this run, see below |
+
+- `fold/` rebuilds, and a rebuild's cost grows with the edits the wrap
+  tree has taken. With keystrokes 30-54x cheaper, the candidate's earlier
+  cases in the full run type 85k–152k times on the tree per round against
+  base's 1.6k–5.4k. In one process the same `fold` takes 4.1 ms on a
+  fresh tree, 7.3 ms after 5k keystrokes and 16.0 ms after 170k. Keeping
+  the tree compact under edits is a separate card. Details in
+  `docs/decisions/fgw53sd0zv-fold-rows-across-edits.md`.
+
 ## Syntax (`cargo bench -p fe-syntax`)
 
 Corpora are generated: Rust items, pretty-printed JSON objects, and Markdown

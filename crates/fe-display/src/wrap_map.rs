@@ -107,6 +107,30 @@ pub(crate) struct WrapSegment {
     pub(crate) range: Range<usize>,
 }
 
+/// Rows `start..start + old_rows` replaced by `new_rows` rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Splice {
+    pub(crate) start: usize,
+    pub(crate) old_rows: usize,
+    pub(crate) new_rows: usize,
+}
+
+impl Splice {
+    /// How many rows it adds, or with a negative count removes.
+    pub(crate) fn delta(&self) -> isize {
+        self.new_rows as isize - self.old_rows as isize
+    }
+}
+
+/// What a [`WrapMap::splice`] replaced: its buffer rows, and the wrap rows
+/// they had and have. `wrap.start` is in the same coordinates as
+/// `buffer.start`: rows before either are untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WrapEdit {
+    pub(crate) buffer: Splice,
+    pub(crate) wrap: Splice,
+}
+
 pub(crate) struct WrapMap {
     /// `None` doesn't wrap: every buffer row is one wrap row, `lines` is
     /// empty and nothing is pending.
@@ -173,7 +197,8 @@ impl WrapMap {
     }
 
     /// Replaces `old_rows` rows starting at `start` with `new_rows` rows of
-    /// `text`, which is the text after the edit, wrapping them.
+    /// `text`, which is the text after the edit, wrapping them. Returns the
+    /// wrap rows replaced.
     pub(crate) fn splice(
         &mut self,
         text: &dyn TextSource,
@@ -181,18 +206,41 @@ impl WrapMap {
         old_rows: usize,
         new_rows: usize,
         widths: &mut dyn CharWidth,
-    ) {
+    ) -> WrapEdit {
+        let buffer = Splice {
+            start,
+            old_rows,
+            new_rows,
+        };
         self.line_count = self.line_count + new_rows - old_rows;
         let Some(width) = self.width else {
-            return;
+            return WrapEdit {
+                buffer,
+                wrap: buffer,
+            };
         };
+        let wrap_start = self.first_row(start);
+        let wrap_old_rows = self.first_row(start + old_rows) - wrap_start;
+        let mut wrap_new_rows = 0;
         let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
         let mut rows = RowReader::new(text, start as u32..(start + new_rows) as u32);
-        let new_lines = (0..new_rows).map(|_| wrapper.wrap_next(&mut rows).0);
+        let new_lines = (0..new_rows).map(|_| {
+            let line = wrapper.wrap_next(&mut rows).0;
+            wrap_new_rows += line.summary(()).wrap_rows;
+            line
+        });
         replace_rows(&mut self.lines, start..start + old_rows, new_lines);
         self.pending
             .splice(start as u32, old_rows as u32, new_rows as u32);
         debug_assert_eq!(self.lines.summary().buffer_rows, self.line_count);
+        WrapEdit {
+            buffer,
+            wrap: Splice {
+                start: wrap_start,
+                old_rows: wrap_old_rows,
+                new_rows: wrap_new_rows,
+            },
+        }
     }
 
     pub(crate) fn is_pending(&self) -> bool {
@@ -778,6 +826,38 @@ mod tests {
             fresh.rebuild(&after, Some(width), 4, &mut Monospace);
             wrap_all(&mut fresh, &after);
             prop_assert_eq!(rows(&map, &after), rows(&fresh, &after));
+        }
+
+        /// A splice returns the wrap rows it replaced and those replacing
+        /// them, as the maps before and after it number them.
+        #[test]
+        fn splices_return_the_wrap_rows_replaced(
+            text in "[ab \n]{0,60}",
+            width in prop::option::of(1usize..8),
+            edit in (0usize..60, 0usize..10, "[ab \n]{0,8}"),
+        ) {
+            let before = Text::new(&text);
+            let mut map = WrapMap::new(&before, 4);
+            map.rebuild(&before, width.map(|width| width as f32), 4, &mut Monospace);
+            wrap_all(&mut map, &before);
+            let (at, len, insert) = edit;
+            let start = at.min(before.len());
+            let end = (start + len).min(before.len());
+            let mut after = before.clone();
+            after.replace(start..end, &insert);
+            let first_row = before.offset_to_point(start).row as usize;
+            let old_rows = before.offset_to_point(end).row as usize - first_row + 1;
+            let new_rows = after.offset_to_point(start + insert.len()).row as usize - first_row + 1;
+            let wrap_start = map.first_row(first_row);
+            let wrap_end = map.first_row(first_row + old_rows);
+            let edit = map.splice(&after, first_row, old_rows, new_rows, &mut Monospace);
+            let buffer = Splice { start: first_row, old_rows, new_rows };
+            let wrap = Splice {
+                start: wrap_start,
+                old_rows: wrap_end - wrap_start,
+                new_rows: map.first_row(first_row + new_rows) - wrap_start,
+            };
+            prop_assert_eq!(edit, WrapEdit { buffer, wrap });
         }
 
         /// Wrapping with the cached ASCII widths, skipping rows that fit,

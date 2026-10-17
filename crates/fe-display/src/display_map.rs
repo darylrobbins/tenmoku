@@ -166,18 +166,20 @@ impl DisplayMap {
             self.rebuild_folds();
             return;
         }
+        let mut wrap_edits = Vec::new();
         for edit in row_edits(ours.text(), snapshot, ours.version()) {
-            self.wrap.splice(
+            wrap_edits.push(self.wrap.splice(
                 snapshot.text(),
                 edit.start as usize,
                 edit.old_rows as usize,
                 edit.new_rows as usize,
                 widths,
-            );
+            ));
             self.folds.edit(edit.start, edit.old_rows, edit.new_rows);
         }
         self.source = Source::Buffer(snapshot.clone());
-        self.rebuild_folds();
+        self.folds
+            .sync(&self.wrap, self.text().row_count(), &wrap_edits);
     }
 
     pub fn wrap_width(&self) -> Option<f32> {

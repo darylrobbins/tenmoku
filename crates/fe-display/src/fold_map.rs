@@ -13,14 +13,15 @@
 //!
 //! The rows folds hide are kept as sorted, merged runs of wrap rows, each
 //! with the number of rows hidden before it, so rebuilding costs the number
-//! of folds and mapping either way is a binary search.
+//! of folds and mapping either way is a binary search. An edit re-resolves
+//! only the runs it touches and shifts the rest.
 
 use std::{
     iter, mem,
     ops::{Range, RangeInclusive},
 };
 
-use crate::wrap_map::WrapMap;
+use crate::wrap_map::{Splice, WrapEdit, WrapMap};
 
 /// Buffer rows `start + 1..=end` hidden behind header row `start`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,6 +35,8 @@ struct HiddenRows {
     wrap_rows: Range<usize>,
     /// How many wrap rows the runs before this one hide.
     hidden_before: usize,
+    /// The buffer rows `wrap_rows` are of.
+    buffer_rows: Range<u32>,
 }
 
 impl HiddenRows {
@@ -194,22 +197,134 @@ impl FoldMap {
     pub(crate) fn rebuild(&mut self, wrap_map: &WrapMap, buffer_rows: u32) {
         self.folds.retain(|fold| fold.end < buffer_rows);
         let folds = mem::take(&mut self.folds);
-        // Every buffer row has at least one wrap row, in order, so the
-        // buffer rows folds hide merge into runs as their wrap rows would.
-        // Merged first, the runs' bounds ascend, and one cursor finds them.
-        let mut rest = folds.iter().peekable();
-        let buffer_runs = iter::from_fn(move || {
-            let fold = rest.next()?;
-            let mut end = fold.end;
-            while let Some(next) = rest.next_if(|next| next.start <= end) {
-                end = end.max(next.end);
-            }
-            Some([fold.start as usize + 1, end as usize + 1])
-        });
-        let mut bounds = wrap_map.first_rows(buffer_runs.flatten());
-        let runs = iter::from_fn(move || Some(bounds.next()?..bounds.next()?));
+        let runs = resolve(wrap_map, buffer_runs(&folds));
         self.set_sorted_hidden_rows(wrap_map.row_count(), runs);
         self.folds = folds;
+    }
+
+    /// Follows `edits`, which `wrap_map` has made since the last sync or
+    /// rebuild, each in the coordinates the ones before it left, after
+    /// [`FoldMap::edit`] has followed each of them. The same as
+    /// [`FoldMap::rebuild`], but only runs the edits touch, and the folds in
+    /// them, are found in `wrap_map` again: the others shift.
+    pub(crate) fn sync(&mut self, wrap_map: &WrapMap, buffer_rows: u32, edits: &[WrapEdit]) {
+        let fold_count = self.folds.len();
+        self.folds.retain(|fold| fold.end < buffer_rows);
+        if self.folds.len() != fold_count {
+            self.rebuild(wrap_map, buffer_rows);
+            return;
+        }
+        self.wrap_row_count = wrap_map.row_count();
+        let edits = compose(edits);
+        // The runs to find again, and what replaces them, in order.
+        let mut windows: Vec<Window> = Vec::new();
+        let mut fresh = Vec::new();
+        let mut window_runs = Vec::new();
+        let mut shift = Shift::default();
+        let mut edits = edits.iter().peekable();
+        while let Some(edit) = edits.next() {
+            // The old buffer rows to find again: the edits, and the runs
+            // overlapping or touching them, transitively.
+            let (mut lo, mut hi) = (edit.old.start, edit.old.end);
+            let mut group = Shift::default();
+            group.add(edit);
+            let next = windows.last().map_or(0, |window| window.runs.end);
+            let first = next + self.hidden[next..].partition_point(|run| run.buffer_rows.end < lo);
+            let mut end = first;
+            loop {
+                while let Some(run) = self.hidden.get(end)
+                    && run.buffer_rows.start <= hi
+                {
+                    lo = lo.min(run.buffer_rows.start);
+                    hi = hi.max(run.buffer_rows.end);
+                    end += 1;
+                }
+                let Some(edit) = edits.next_if(|edit| edit.old.start <= hi) else {
+                    break;
+                };
+                hi = hi.max(edit.old.end);
+                group.add(edit);
+            }
+
+            let hidden_before = self.hidden_before(first).wrapping_add_signed(shift.hidden);
+            // Both bounds are outside the edits, where rows only shift.
+            let lo = lo.wrapping_add_signed(shift.buffer as i32);
+            let hi = hi.wrapping_add_signed((shift.buffer + group.buffer) as i32);
+            let folds = &self.folds[self.folds.partition_point(|fold| fold.start + 1 < lo)
+                ..self.folds.partition_point(|fold| fold.start < hi)];
+            let mut total_hidden = hidden_before;
+            for (buffer_rows, wrap_rows) in resolve(wrap_map, buffer_runs(folds)) {
+                push_run(
+                    &mut window_runs,
+                    &mut total_hidden,
+                    self.wrap_row_count,
+                    buffer_rows,
+                    wrap_rows,
+                );
+            }
+            let old_hidden: usize = self.hidden[first..end]
+                .iter()
+                .map(|run| run.wrap_rows.len())
+                .sum();
+            shift.buffer += group.buffer;
+            shift.wrap += group.wrap;
+            shift.hidden += (total_hidden - hidden_before) as isize - old_hidden as isize;
+            windows.push(Window {
+                runs: first..end,
+                fresh: fresh.len()..fresh.len() + window_runs.len(),
+                shift_after: shift,
+            });
+            fresh.append(&mut window_runs);
+        }
+        self.apply_windows(&windows, fresh);
+        debug_assert!(self.hidden.windows(2).all(|pair| {
+            pair[0].wrap_rows.end < pair[1].wrap_rows.start
+                && pair[0].buffer_rows.end < pair[1].buffer_rows.start
+        }));
+        self.total_hidden = self
+            .hidden
+            .last()
+            .map_or(0, |run| run.hidden_before + run.wrap_rows.len());
+    }
+
+    /// Replaces each of `windows`' runs with its runs of `fresh`, shifting
+    /// the runs after it, in one pass over the runs: in place if no window
+    /// changes the number of runs, otherwise copying each run once.
+    fn apply_windows(&mut self, windows: &[Window], fresh: Vec<HiddenRows>) {
+        let Some(last) = windows.last() else {
+            return;
+        };
+        let fresh_runs = |window: &Window| &fresh[window.fresh.clone()];
+        if windows
+            .iter()
+            .all(|window| window.runs.len() == window.fresh.len())
+        {
+            let mut shift = &Shift::default();
+            let mut next = 0;
+            for window in windows {
+                shift.apply(&mut self.hidden[next..window.runs.start]);
+                self.hidden[window.runs.clone()].clone_from_slice(fresh_runs(window));
+                (shift, next) = (&window.shift_after, window.runs.end);
+            }
+            last.shift_after.apply(&mut self.hidden[next..]);
+            return;
+        }
+        let added: usize = windows.iter().map(|window| window.fresh.len()).sum();
+        let removed: usize = windows.iter().map(|window| window.runs.len()).sum();
+        let mut runs = Vec::with_capacity(self.hidden.len() + added - removed);
+        let mut shift = &Shift::default();
+        let mut next = 0;
+        for window in windows {
+            runs.extend(
+                self.hidden[next..window.runs.start]
+                    .iter()
+                    .map(|run| shift.shifted(run)),
+            );
+            runs.extend_from_slice(fresh_runs(window));
+            (shift, next) = (&window.shift_after, window.runs.end);
+        }
+        runs.extend(self.hidden[next..].iter().map(|run| shift.shifted(run)));
+        self.hidden = runs;
     }
 
     /// Installs the projection for `wrap_row_count` wrap rows with
@@ -217,37 +332,204 @@ impl FoldMap {
     #[cfg(test)]
     fn set_hidden_rows(&mut self, wrap_row_count: usize, mut hidden_ranges: Vec<Range<usize>>) {
         hidden_ranges.sort_by_key(|range| range.start);
-        self.set_sorted_hidden_rows(wrap_row_count, hidden_ranges);
+        let runs = hidden_ranges
+            .into_iter()
+            .map(|range| (range.start as u32..range.end as u32, range));
+        self.set_sorted_hidden_rows(wrap_row_count, runs);
     }
 
-    /// [`FoldMap::set_hidden_rows`] for ranges sorted by start.
+    /// [`FoldMap::set_hidden_rows`] for runs of buffer rows and their wrap
+    /// rows, sorted by start.
     fn set_sorted_hidden_rows(
         &mut self,
         wrap_row_count: usize,
-        hidden_ranges: impl IntoIterator<Item = Range<usize>>,
+        runs: impl IntoIterator<Item = (Range<u32>, Range<usize>)>,
     ) {
         self.hidden.clear();
         self.total_hidden = 0;
         self.wrap_row_count = wrap_row_count;
-        for range in hidden_ranges {
-            let range = range.start..range.end.min(wrap_row_count);
-            if range.is_empty() {
-                continue;
+        for (buffer_rows, wrap_rows) in runs {
+            push_run(
+                &mut self.hidden,
+                &mut self.total_hidden,
+                wrap_row_count,
+                buffer_rows,
+                wrap_rows,
+            );
+        }
+    }
+}
+
+/// Appends `wrap_rows`, which show `buffer_rows`, to `runs` as a hidden run,
+/// clipped to `wrap_row_count` and merged with the last run if they overlap
+/// or touch. `total_hidden` counts the rows `runs` hide.
+fn push_run(
+    runs: &mut Vec<HiddenRows>,
+    total_hidden: &mut usize,
+    wrap_row_count: usize,
+    buffer_rows: Range<u32>,
+    wrap_rows: Range<usize>,
+) {
+    let wrap_rows = wrap_rows.start..wrap_rows.end.min(wrap_row_count);
+    if wrap_rows.is_empty() {
+        return;
+    }
+    if let Some(last) = runs.last_mut()
+        && wrap_rows.start <= last.wrap_rows.end
+    {
+        if wrap_rows.end > last.wrap_rows.end {
+            *total_hidden += wrap_rows.end - last.wrap_rows.end;
+            last.wrap_rows.end = wrap_rows.end;
+            last.buffer_rows.end = last.buffer_rows.end.max(buffer_rows.end);
+        }
+        return;
+    }
+    *total_hidden += wrap_rows.len();
+    runs.push(HiddenRows {
+        hidden_before: *total_hidden - wrap_rows.len(),
+        wrap_rows,
+        buffer_rows,
+    });
+}
+
+/// The buffer rows `folds`, sorted by start, hide, merged into runs.
+///
+/// Every buffer row has at least one wrap row, in order, so the buffer rows
+/// folds hide merge into runs as their wrap rows would. Merged first, the
+/// runs' bounds ascend, and one cursor finds them.
+fn buffer_runs(folds: &[Fold]) -> impl Iterator<Item = Range<u32>> + Clone {
+    let mut rest = folds.iter().peekable();
+    iter::from_fn(move || {
+        let fold = rest.next()?;
+        let mut end = fold.end;
+        while let Some(next) = rest.next_if(|next| next.start <= end) {
+            end = end.max(next.end);
+        }
+        Some(fold.start + 1..end + 1)
+    })
+}
+
+/// Each of `buffer_runs`, which ascend, with its wrap rows in `wrap_map`.
+fn resolve(
+    wrap_map: &WrapMap,
+    buffer_runs: impl Iterator<Item = Range<u32>> + Clone,
+) -> impl Iterator<Item = (Range<u32>, Range<usize>)> {
+    let bounds = buffer_runs
+        .clone()
+        .flat_map(|rows| [rows.start as usize, rows.end as usize]);
+    let mut bounds = wrap_map.first_rows(bounds);
+    buffer_runs.map(move |rows| {
+        let start = bounds.next().expect("a start per run");
+        (rows, start..bounds.next().expect("an end per run"))
+    })
+}
+
+/// One edit, or several merged: buffer rows `old`, before any of the
+/// edits, are rows `new` after them all, and have `wrap_delta` more wrap
+/// rows.
+#[derive(Debug)]
+struct ComposedEdit {
+    old: Range<u32>,
+    new: Range<u32>,
+    wrap_delta: isize,
+}
+
+/// `edits`, each in the coordinates the ones before it left, as disjoint
+/// edits of the rows before them all, sorted. Edits that overlap or touch
+/// merge.
+///
+/// Edits in order, as a batch's are, touch only the last few composed so
+/// far, so composing them costs their number.
+fn compose(edits: &[WrapEdit]) -> Vec<ComposedEdit> {
+    let delta = |c: &ComposedEdit| c.new.len() as i32 - c.old.len() as i32;
+    let mut composed: Vec<ComposedEdit> = Vec::new();
+    // The rows all of `composed` add.
+    let mut total = 0;
+    for edit in edits {
+        let Splice {
+            start, old_rows, ..
+        } = edit.buffer;
+        let (start, end) = (start as u32, (start + old_rows) as u32);
+        let edit_delta = edit.buffer.delta() as i32;
+        // Those overlapping or touching `start..end` in the rows so far.
+        let first = composed.partition_point(|c| c.new.end < start);
+        let last = composed.partition_point(|c| c.new.start <= end);
+        let before = total - composed[first..].iter().map(delta).sum::<i32>();
+        let mut merged = ComposedEdit {
+            old: start.wrapping_add_signed(-before)..end.wrapping_add_signed(-before),
+            new: start..end,
+            wrap_delta: edit.wrap.delta(),
+        };
+        let mut inner = before;
+        for c in &composed[first..last] {
+            if c.new.start < merged.new.start {
+                merged.old.start = c.old.start;
+                merged.new.start = c.new.start;
             }
-            if let Some(last) = self.hidden.last_mut()
-                && range.start <= last.wrap_rows.end
-            {
-                if range.end > last.wrap_rows.end {
-                    self.total_hidden += range.end - last.wrap_rows.end;
-                    last.wrap_rows.end = range.end;
-                }
-                continue;
+            inner += delta(c);
+            if c.new.end >= merged.new.end {
+                merged.new.end = c.new.end;
+                merged.old.end = c.old.end;
+            } else {
+                // Rows after `c` up to the end only shift.
+                merged.old.end = merged.new.end.wrapping_add_signed(-inner);
             }
-            self.total_hidden += range.len();
-            self.hidden.push(HiddenRows {
-                hidden_before: self.total_hidden - range.len(),
-                wrap_rows: range,
-            });
+            merged.wrap_delta += c.wrap_delta;
+        }
+        merged.new.end = merged.new.end.wrapping_add_signed(edit_delta);
+        for c in &mut composed[last..] {
+            c.new = c.new.start.wrapping_add_signed(edit_delta)
+                ..c.new.end.wrapping_add_signed(edit_delta);
+        }
+        composed.splice(first..last, [merged]);
+        total += edit_delta;
+    }
+    composed
+}
+
+/// Old runs `runs` to replace with `fresh` (indices into a list of new
+/// runs), the runs after them to move by `shift_after`.
+struct Window {
+    runs: Range<usize>,
+    fresh: Range<usize>,
+    shift_after: Shift,
+}
+
+/// How far runs move: by the edits before them.
+#[derive(Clone, Copy, Default)]
+struct Shift {
+    buffer: isize,
+    wrap: isize,
+    hidden: isize,
+}
+
+impl Shift {
+    fn add(&mut self, edit: &ComposedEdit) {
+        self.buffer += edit.new.len() as isize - edit.old.len() as isize;
+        self.wrap += edit.wrap_delta;
+    }
+
+    fn is_zero(&self) -> bool {
+        self.buffer == 0 && self.wrap == 0 && self.hidden == 0
+    }
+
+    fn apply(&self, runs: &mut [HiddenRows]) {
+        if self.is_zero() {
+            return;
+        }
+        for run in runs {
+            *run = self.shifted(run);
+        }
+    }
+
+    fn shifted(&self, run: &HiddenRows) -> HiddenRows {
+        let buffer = self.buffer as i32;
+        HiddenRows {
+            buffer_rows: run.buffer_rows.start.wrapping_add_signed(buffer)
+                ..run.buffer_rows.end.wrapping_add_signed(buffer),
+            wrap_rows: run.wrap_rows.start.wrapping_add_signed(self.wrap)
+                ..run.wrap_rows.end.wrapping_add_signed(self.wrap),
+            hidden_before: run.hidden_before.wrapping_add_signed(self.hidden),
         }
     }
 }
@@ -341,6 +623,55 @@ mod tests {
             let got = fold_map.folds().first().map(|fold| (fold.start, fold.end));
             assert_eq!(got, want, "edit at {start}, {old_rows} => {new_rows} rows");
         }
+    }
+
+    /// One sync of a large batch of edits, each dropping a different fold,
+    /// costs about the number of runs plus edits: no run moves once per
+    /// edit, and no edit rescans those before it. Done per edit, this many
+    /// would take minutes in a debug build.
+    #[test]
+    fn a_sync_of_many_edits_is_one_pass_over_the_runs() {
+        use fe_text::Text;
+
+        let rows = 1_000_000;
+        let text = Text::new(&"\n".repeat(rows as usize - 1));
+        let wrap_map = WrapMap::new(&text, 4);
+        let mut fold_map = FoldMap::default();
+        fold_map.fold_many((0..rows).step_by(5).map(|row| row..=row + 3));
+        fold_map.rebuild(&wrap_map, rows);
+        assert_eq!(fold_map.hidden.len(), 200_000);
+
+        // Typing on a hidden row of every fourth fold: no rows move, and
+        // each edit drops its fold and with it a run.
+        let edits: Vec<WrapEdit> = (0..rows)
+            .step_by(20)
+            .map(|row| {
+                let splice = Splice {
+                    start: row as usize + 2,
+                    old_rows: 1,
+                    new_rows: 1,
+                };
+                WrapEdit {
+                    buffer: splice,
+                    wrap: splice,
+                }
+            })
+            .collect();
+        // What `FoldMap::edit` leaves of the folds, without its pass over
+        // them per edit.
+        fold_map.folds.retain(|fold| fold.start % 20 != 0);
+        assert_eq!(fold_map.folds().len(), 150_000);
+
+        let started = std::time::Instant::now();
+        fold_map.sync(&wrap_map, rows, &edits);
+        let elapsed = started.elapsed();
+        let synced = fold_map.hidden.clone();
+        fold_map.rebuild(&wrap_map, rows);
+        assert_eq!(synced, fold_map.hidden);
+        assert!(
+            elapsed.as_secs_f64() < 2.,
+            "50k edits synced in {elapsed:?}"
+        );
     }
 
     #[test]
