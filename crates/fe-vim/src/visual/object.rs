@@ -126,8 +126,10 @@ pub(crate) fn select_object(
         }
     } else if matches!(
         args.text_object,
-        InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag | InnerBacktick | ABacktick
-    ) {
+        InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag
+    ) || (matches!(args.text_object, InnerBacktick | ABacktick)
+        && !(ends.kind == VisualKind::Char && ends.anchor != ends.cursor))
+    {
         match crate::delimiters::select_visual(
             &text,
             ends.anchor,
@@ -142,14 +144,20 @@ pub(crate) fn select_object(
         && ends.anchor != ends.cursor
         && matches!(
             args.text_object,
-            InnerDoubleQuote | ADoubleQuote | InnerSingleQuote | ASingleQuote
+            InnerDoubleQuote
+                | ADoubleQuote
+                | InnerSingleQuote
+                | ASingleQuote
+                | InnerBacktick
+                | ABacktick
         )
     {
         let quote = match args.text_object {
             InnerDoubleQuote | ADoubleQuote => b'"',
+            InnerBacktick | ABacktick => b'`',
             _ => b'\'',
         };
-        let include = matches!(args.text_object, ADoubleQuote | ASingleQuote);
+        let include = matches!(args.text_object, ADoubleQuote | ASingleQuote | ABacktick);
         match quote::select(&text, &ends, quote, include, count) {
             Some(found) => found,
             None => return failed(state),
