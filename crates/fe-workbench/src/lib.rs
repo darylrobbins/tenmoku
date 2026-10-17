@@ -18,6 +18,7 @@ mod disk_sync;
 mod dock;
 mod dock_layout;
 mod find_bar;
+mod find_commands;
 mod git;
 mod git_panel;
 mod go_to_line;
@@ -130,7 +131,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     vec![
         kiln_shell::picker::catalog(),
         Box::new(dock::registry()),
-        Box::new(find_bar::registry()),
         Box::new(workbench::git_commands::registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
@@ -148,7 +148,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
 /// itself.
 fn command_list() -> Vec<CommandMeta> {
     let mut list: Vec<CommandMeta> = dock::registry().commands().cloned().collect();
-    list.extend(find_bar::registry().commands().cloned());
     list.extend(workbench::git_commands::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());

@@ -19,15 +19,14 @@
 //! it all back. The replacement is literal unless the regex option is on,
 //! when `$1` and the like expand ([`Replacement::parse`]).
 //!
-//! The commands are in [`registry`]; the pane runs them on its root
-//! ([`crate::Pane::run_find`]). The bar's element sets [`KEY_CONTEXT`] and
-//! its inputs `text_input`, the replace input [`REPLACE_KEY_CONTEXT`] too,
-//! and none carries `vim.mode`, so with vim on keys typed there only type.
+//! The commands are the pane's typed commands ([`crate::find_commands`]),
+//! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
+//! [`KEY_CONTEXT`] and its inputs `text_input`, the replace input
+//! [`REPLACE_KEY_CONTEXT`] too, and none carries `vim.mode`, so with vim on keys typed there only type.
 
-use std::{ops::Range, rc::Rc};
+use std::ops::Range;
 
 use fe_buffer::{Anchor, BufferId, Origin, Text};
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_editor::Movement;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{TextInput, TextInputEvent, ToggleButton, UiTheme};
@@ -36,9 +35,9 @@ use fe_vim::search::{
     replace::{Replacement, replace_all},
 };
 use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, Global, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, SharedString, Styled as _, Subscription,
-    WeakEntity, Window, div, px,
+    App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
+    div, px,
 };
 
 use crate::{
@@ -823,13 +822,17 @@ fn resolve(buffer: BufferId, anchor: &Anchor, editor: &EditorView) -> Option<usi
         .then(|| snapshot.resolve(anchor))
 }
 
-/// The focused input's editing commands; others go on to the pane.
+/// A typed command, as its action, the find commands among them; the
+/// focused input's editing commands; others go on.
 fn on_input_command(
     pane: &mut Pane,
     run: &RunCommand,
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
+    if kiln::commands::dispatch_typed(run, window, cx) {
+        return;
+    }
     let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
         Some(PaletteOp::Backspace) => TextInput::backspace,
         Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
@@ -841,78 +844,6 @@ fn on_input_command(
         |bar, _, cx| bar.focused_input(window, cx).clone().update(cx, edit),
         cx,
     );
-}
-
-/// The [`CommandTarget`] of find commands: the op to do.
-pub(crate) struct FindCommands;
-
-impl CommandTarget for FindCommands {
-    type Tx = ();
-    type Target<'a> = Option<FindOp>;
-}
-
-struct Commands(Rc<Registry<FindCommands>>);
-
-impl Global for Commands {}
-
-pub(crate) fn registry() -> Registry<FindCommands> {
-    use FindOp::*;
-    let editor = "editor";
-    let either = "editor || find_bar";
-    let commands = [
-        ("find.show", "Find", editor, Show),
-        ("find.show_replace", "Replace…", either, ShowReplace),
-        ("find.next", "Find Next", either, Next),
-        ("find.previous", "Find Previous", either, Previous),
-        ("find.close", "Close Find", KEY_CONTEXT, Close),
-        ("find.toggle_case", "Match Case", KEY_CONTEXT, ToggleCase),
-        (
-            "find.toggle_whole_word",
-            "Match Whole Word",
-            KEY_CONTEXT,
-            ToggleWholeWord,
-        ),
-        (
-            "find.toggle_regex",
-            "Use Regular Expression",
-            KEY_CONTEXT,
-            ToggleRegex,
-        ),
-        (
-            "find.toggle_replace",
-            "Toggle Replace",
-            KEY_CONTEXT,
-            ToggleReplace,
-        ),
-        ("find.replace_next", "Replace", KEY_CONTEXT, ReplaceNext),
-        ("find.replace_all", "Replace All", KEY_CONTEXT, ReplaceAll),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
-        registry
-            .register(id, title, move |target: &mut Option<FindOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("find command IDs are valid and distinct")
-            .context(ContextPredicate::parse(context).expect("find contexts parse"));
-    }
-    registry
-}
-
-/// The op `run` asks for, if it's a find command in a context where it
-/// applies.
-pub(crate) fn op(run: &RunCommand, cx: &mut App) -> Option<FindOp> {
-    if !cx.has_global::<Commands>() {
-        cx.set_global(Commands(Rc::new(registry())));
-    }
-    let registry = cx.global::<Commands>().0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 #[cfg(test)]

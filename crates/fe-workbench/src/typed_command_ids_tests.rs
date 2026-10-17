@@ -116,6 +116,17 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Untrust This Folder",
         "workbench",
     ),
+    ("find.show", "Find", "editor"),
+    ("find.show_replace", "Replace…", "editor || find_bar"),
+    ("find.next", "Find Next", "editor || find_bar"),
+    ("find.previous", "Find Previous", "editor || find_bar"),
+    ("find.close", "Close Find", "find_bar"),
+    ("find.toggle_case", "Match Case", "find_bar"),
+    ("find.toggle_whole_word", "Match Whole Word", "find_bar"),
+    ("find.toggle_regex", "Use Regular Expression", "find_bar"),
+    ("find.toggle_replace", "Toggle Replace", "find_bar"),
+    ("find.replace_next", "Replace", "find_bar"),
+    ("find.replace_all", "Replace All", "find_bar"),
 ];
 
 #[gpui::test]
@@ -131,7 +142,7 @@ fn moved_commands_keep_their_ids_titles_and_contexts(cx: &mut TestAppContext) {
             assert_eq!(command.title, title, "{id}");
             assert_eq!(
                 command.context,
-                Some(ContextPredicate::identifier(context)),
+                Some(ContextPredicate::parse(context).unwrap()),
                 "{id}"
             );
         }
@@ -229,4 +240,57 @@ fn editor_lsp_commands_run_only_in_the_editors_context(cx: &mut TestAppContext) 
         ran += 1;
         assert_eq!(toasts(cx), vec![(no_formatter.clone(), ran)], "{id}");
     }
+}
+
+/// The find commands run only where their context holds, as their
+/// registry's dispatch checked: Close Find with the editor focused, or
+/// Find with the find bar, does nothing.
+#[gpui::test]
+fn find_commands_run_only_where_their_context_holds(cx: &mut TestAppContext) {
+    use crate::tests::find_bar::{draw, open, opened, pane};
+
+    let (_dir, workbench, cx) = opened(cx, &[("a.txt", "foo bar foo\n")]);
+    let pane = pane(&workbench, cx);
+    let run = |id: &str, frames: &[&'static str], cx: &mut VisualTestContext| {
+        let stack = (frames.iter()).fold(ContextStack::new(), |stack, frame| {
+            stack.with(ContextFrame::new(*frame))
+        });
+        let run = RunCommand(Invocation::of(id).unwrap().context(stack));
+        cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+        draw(cx);
+    };
+    let editor = &["workbench", fe_editor::commands::CONTEXT];
+    let find_bar = &["workbench", "find_bar", "text_input"];
+
+    run("find.show", find_bar, cx);
+    assert!(!open(&pane, cx), "find.show in the find bar");
+    run("find.show", editor, cx);
+    assert!(open(&pane, cx), "find.show in the editor");
+    run("find.close", editor, cx);
+    assert!(open(&pane, cx), "find.close in the editor");
+    run("find.close", find_bar, cx);
+    assert!(!open(&pane, cx), "find.close in the find bar");
+}
+
+/// The pane's root attaches its commands without putting the pane in the
+/// find bar's key context: with the bar open and the editor focused, the
+/// editor's keys aren't the bar's, so `escape` collapses the editor's
+/// selections and leaves the bar open.
+#[gpui::test]
+fn the_find_bar_keys_stay_in_the_find_bar(cx: &mut TestAppContext) {
+    use crate::tests::find_bar::{draw, editor, focus, open, opened, pane, run};
+
+    let (_dir, workbench, cx) = opened(cx, &[("a.txt", "foo bar foo\n")]);
+    let pane = pane(&workbench, cx);
+    let editor = editor(&pane, cx);
+    run("find.show", cx);
+    assert!(open(&pane, cx));
+    focus(&editor, cx);
+    let in_find_bar = cx.update(|window, _| {
+        (window.context_stack().iter()).any(|context| context.contains("find_bar"))
+    });
+    assert!(!in_find_bar);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(open(&pane, cx));
 }

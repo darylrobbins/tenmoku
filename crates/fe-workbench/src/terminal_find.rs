@@ -12,8 +12,8 @@
 //! active terminal.
 //!
 //! The row's element sets [`find_bar::KEY_CONTEXT`], so the pane's find bar
-//! keys apply; it runs the find commands itself and stops them there, so
-//! the pane's find bar never sees them.
+//! keys apply; it runs the find commands itself
+//! ([`find_commands::handle_in`]) and stops them there.
 
 use fe_gpui::commands::RunCommand;
 use fe_terminal_view::{QueryError, TerminalQuery, TerminalView};
@@ -27,6 +27,7 @@ use gpui::{
 use crate::{
     TerminalPanel,
     find_bar::{self, FindOp},
+    find_commands,
     picker::{self, PaletteOp},
 };
 
@@ -277,7 +278,7 @@ impl TerminalFind {
                 .text_color(color)
                 .child(text)
         });
-        let row = div()
+        let row = find_commands::handle_in(div(), cx, TerminalPanel::run_find)
             .key_context(find_bar::KEY_CONTEXT)
             .on_action(cx.listener(on_run_command))
             .flex_none()
@@ -307,15 +308,16 @@ impl TerminalFind {
     }
 }
 
-/// The find commands and the input's editing commands; others go on.
+/// A typed command, as its action, the find commands among them; the
+/// input's editing commands; others go on.
 fn on_run_command(
     panel: &mut TerminalPanel,
     run: &RunCommand,
     window: &mut Window,
     cx: &mut Context<TerminalPanel>,
 ) {
-    if let Some(op) = find_bar::op(run, cx) {
-        return panel.run_find(op, window, cx);
+    if kiln::commands::dispatch_typed(run, window, cx) {
+        return;
     }
     let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
         Some(PaletteOp::Backspace) => TextInput::backspace,

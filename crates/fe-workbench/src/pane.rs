@@ -21,7 +21,6 @@ use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
-    commands::RunCommand,
 };
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
@@ -32,11 +31,12 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
     Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity, Window, div,
 };
+use kiln::ViewCommands as _;
 pub use kiln_shell::PaneEvent;
 use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
 
 use crate::{
-    find_bar::{self, FindBar, FindOp},
+    find_bar::{FindBar, FindOp},
     loader::{self, Opened},
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
@@ -1279,7 +1279,7 @@ impl Render for Pane {
             self.message("No open files".into())
         };
         let drop_layer = self.state.drop_layer(cx);
-        div()
+        Self::attach(div(), cx)
             .track_focus(self.state.focus())
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
             .on_drag_move(
@@ -1297,7 +1297,6 @@ impl Render for Pane {
             .flex_col()
             .bg(self.ui.background)
             .child(self.state.record_bounds())
-            .on_action(cx.listener(Self::on_run_command))
             .child(self.tab_row(tab_bar, cx))
             .children(self.toolbar_row(cx))
             .children(self.find_row(cx))
@@ -1316,14 +1315,6 @@ impl Render for Pane {
 
 /// The find bar: see [`crate::find_bar`].
 impl Pane {
-    /// Runs a `find.*` command; anything else goes on.
-    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
-        match find_bar::op(run, cx) {
-            Some(op) => self.run_find(op, window, cx),
-            None => cx.propagate(),
-        }
-    }
-
     /// Does `op` in the find bar, made by the first `find.show` or
     /// `find.show_replace`: before that, nothing else does anything.
     /// Closing it focuses the active editor.
