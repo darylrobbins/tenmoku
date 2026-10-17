@@ -781,7 +781,8 @@ mod freedesktop {
 /// path. A folder is copied with everything in it; a symlink is copied as a
 /// link, never followed. Duplicating a copy counts on from its number.
 ///
-/// Contents and permission bits are copied, and a file's modification time.
+/// Contents, permission bits, extended attributes (macOS) and a file's
+/// modification time are copied. Elsewhere extended attributes are left out.
 /// Inside a folder, anything but a file, a folder or a symlink (a FIFO or a
 /// socket) is left out. Should copying fail, the partial copy is removed:
 /// what it made, not what another process put in it or in its place.
@@ -1016,6 +1017,7 @@ fn copy_new(
             let result = (|| {
                 copying.owned.insert(listing::identity(&copy)?);
                 io::copy(&mut source, &mut copy)?;
+                copy_xattrs(&source, &copy, name);
                 copy.set_permissions(Permissions::from_mode(metadata.mode() & 0o777))?;
                 copy.set_modified(metadata.modified()?)
             })();
@@ -1041,6 +1043,7 @@ fn copy_new(
                 let copy = own_dir(to, to_name, Some(id))?;
                 reach(Point::Made)?;
                 let source = open_dir_at(from, name, Access::Read)?;
+                copy_xattrs(&source, &copy, name);
                 let mode = source.metadata()?.mode() & 0o777;
                 let mut children = listing::read_dir(&source)?;
                 children.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -1073,6 +1076,28 @@ fn copy_new(
     }
     Ok(Copied::Done)
 }
+
+/// Copies the extended attributes of `source` to `copy`, through the handles
+/// alone. A failure is logged, naming the entry: the copy is kept.
+#[cfg(target_os = "macos")]
+fn copy_xattrs(source: &File, copy: &File, name: &OsStr) {
+    // SAFETY: both are open descriptors; no state is passed.
+    let status = unsafe {
+        libc::fcopyfile(
+            source.as_raw_fd(),
+            copy.as_raw_fd(),
+            std::ptr::null_mut(),
+            libc::COPYFILE_XATTR,
+        )
+    };
+    if status != 0 {
+        let err = io::Error::last_os_error();
+        log::warn!("duplicate: extended attributes of {name:?} not copied: {err}");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_xattrs(_source: &File, _copy: &File, _name: &OsStr) {}
 
 /// Removes entry `name` in `dir` should it be one of `owned`, with, for a
 /// folder, whatever in it is: anything else, there or put in its place, is
