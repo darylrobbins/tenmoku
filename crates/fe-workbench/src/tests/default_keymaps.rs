@@ -80,7 +80,7 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         ("ctrl-p", "quick_open.toggle"),
         ("ctrl-w", "workbench.close_tab"),
         ("ctrl-q", "app.quit"),
-        // Shifted punctuation, by what it types (see default-linux.toml).
+        // Shifted punctuation, by what it types (see fe-keymap/keymaps/fastedit.toml).
         ("ctrl-{", "editor.fold"),
         ("ctrl-}", "editor.unfold"),
         ("ctrl-_", "nav.forward"),
