@@ -253,20 +253,28 @@ fn stale_missing_and_slow(cx: &mut TestAppContext) {
 /// dropped: its edits were for the old file's document.
 #[gpui::test]
 fn a_format_across_a_save_as(cx: &mut TestAppContext) {
-    let (mut s, editor) = setup(cx, formatter());
+    let (mut s, editor) = setup_on(cx, formatter(), Lsp::with_fake_clock);
+    // The fake holds the reply on the test's clock: the test sees the
+    // request, saves under another name, then releases the reply.
+    let delay = Duration::from_millis(300);
     s.fake.set_reply(
         FORMATTING,
         Scripted {
             reply: Reply::Result(json!([edit(1, 1, 2, "ff")])),
-            delay: Duration::from_millis(300),
+            delay,
         },
     );
     let task = (s.workbench).update(&mut s.cx, |w, cx| w.format_buffer(&editor, cx));
     s.until("the request", |s| !requests(s, FORMATTING).is_empty());
+    s.clock.wait_for_sleep(delay);
     let moved = s.path("src/moved.rs");
     s.cx.update(|window, cx| {
-        (s.workbench.clone()).update(cx, |w, cx| w.save_editor_as(&editor, moved, window, cx))
+        (s.workbench.clone()).update(cx, |w, cx| {
+            w.save_editor_as(&editor, moved.clone(), window, cx)
+        })
     });
+    s.until("the save as", |_| moved.exists());
+    s.clock.advance(delay);
     assert_eq!(block(&mut s, task), Ok(FormatOutcome::Unchanged));
     assert_eq!(text(&s, &editor), TABS);
 }
