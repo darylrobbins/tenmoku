@@ -274,15 +274,32 @@ fn case_matches(want: char, ch: char) -> bool {
     matches!(other[..], [other] if other.len_utf8() == want.len_utf8() && other == ch)
 }
 
-/// A query word as VS Code's quick open reads it: `\` is `/`, and `*` and `…`
-/// are dropped. `None` when nothing is left.
-fn normalize_word(word: &str) -> Option<String> {
+/// A query word as VS Code's quick open reads it: `\` is `/`, and `*`, `…`
+/// and `"` are dropped. `None` when nothing is left. The flag is whether the
+/// raw word was wrapped in `"`, which asks for its text unbroken.
+fn normalize_word(word: &str) -> Option<(String, bool)> {
+    let exact = word.chars().count() >= 2 && word.starts_with('"') && word.ends_with('"');
     let word: String = word
         .chars()
-        .filter(|&c| c != '*' && c != '\u{2026}')
+        .filter(|&c| c != '*' && c != '\u{2026}' && c != '"')
         .map(|c| if c == '\\' { '/' } else { c })
         .collect();
-    (!word.is_empty()).then_some(word)
+    (!word.is_empty()).then_some((word, exact))
+}
+
+/// The char index in `haystack` where `text` first appears unbroken, ignoring
+/// case as [`case_matches`] does.
+fn unbroken(haystack: &str, text: &str) -> Option<usize> {
+    let hay: Vec<char> = haystack.chars().collect();
+    let want: Vec<char> = text.chars().collect();
+    if want.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - want.len()).find(|&at| {
+        want.iter()
+            .zip(&hay[at..])
+            .all(|(&w, &c)| case_matches(w, c))
+    })
 }
 
 fn to_u32(n: usize) -> u32 {
@@ -477,8 +494,9 @@ impl FinderIndex {
         if limit == 0 {
             return Vec::new();
         }
-        let normalized: Vec<String> = text.split_whitespace().filter_map(normalize_word).collect();
-        let words: Vec<&str> = normalized.iter().map(String::as_str).collect();
+        let normalized: Vec<(String, bool)> =
+            text.split_whitespace().filter_map(normalize_word).collect();
+        let words: Vec<(&str, bool)> = normalized.iter().map(|(w, e)| (w.as_str(), *e)).collect();
         if words.is_empty() {
             return self
                 .keys
@@ -487,7 +505,8 @@ impl FinderIndex {
                 .map(|&item| self.result(item, 0, Vec::new()))
                 .collect();
         }
-        let mut matchers: Vec<Matcher> = words.iter().map(|word| word_matcher(word)).collect();
+        let mut matchers: Vec<Matcher> =
+            words.iter().map(|&(word, _)| word_matcher(word)).collect();
         let rank = |a: &Candidate, b: &Candidate| {
             let (x, y) = (&self.items[a.item as usize], &self.items[b.item as usize]);
             b.score
@@ -495,9 +514,9 @@ impl FinderIndex {
                 .then(x.chars.cmp(&y.chars))
                 .then_with(|| x.order().cmp(&y.order()))
         };
-        if let [word] = words[..] {
+        if let [(word, exact)] = words[..] {
             // With enough file name matches, nothing else can make the cut.
-            let mut candidates = self.word_candidates(&mut matchers[0], word, limit);
+            let mut candidates = self.word_candidates(&mut matchers[0], word, exact, limit);
             if candidates.len() > limit {
                 candidates.select_nth_unstable_by(limit - 1, rank);
                 candidates.truncate(limit);
@@ -506,15 +525,15 @@ impl FinderIndex {
             return candidates
                 .into_iter()
                 .map(|candidate| {
-                    let indices = self.indices(&mut matchers[0], word, candidate);
+                    let indices = self.indices(&mut matchers[0], word, exact, candidate);
                     self.result(candidate.item, candidate.score, indices)
                 })
                 .collect();
         }
         // item -> (summed score, whether each word matched in the file name)
         let mut joint: HashMap<u32, (u32, Vec<bool>)> = HashMap::new();
-        for (ix, word) in words.iter().enumerate() {
-            let found = self.word_candidates(&mut matchers[ix], word, usize::MAX);
+        for (ix, &(word, exact)) in words.iter().enumerate() {
+            let found = self.word_candidates(&mut matchers[ix], word, exact, usize::MAX);
             if ix == 0 {
                 joint.extend(found.iter().map(|c| (c.item, (c.score, vec![c.in_name]))));
                 continue;
@@ -546,12 +565,12 @@ impl FinderIndex {
             .into_iter()
             .map(|candidate| {
                 let mut indices = Vec::new();
-                for (ix, word) in words.iter().enumerate() {
+                for (ix, &(word, exact)) in words.iter().enumerate() {
                     let one = Candidate {
                         in_name: joint[&candidate.item].1[ix],
                         ..candidate
                     };
-                    indices.extend(self.indices(&mut matchers[ix], word, one));
+                    indices.extend(self.indices(&mut matchers[ix], word, exact, one));
                 }
                 indices.sort_unstable();
                 indices.dedup();
@@ -563,16 +582,32 @@ impl FinderIndex {
     /// The paths that match one `word`: those whose file name does (unless
     /// the word holds a `/`), then, if fewer than `limit` of those, the
     /// others that match across the path.
-    fn word_candidates(&self, matcher: &mut Matcher, word: &str, limit: usize) -> Vec<Candidate> {
+    ///
+    /// An `exact` word keeps only the paths that hold its text unbroken, in
+    /// the file name for the first tier, in the path for the second.
+    fn word_candidates(
+        &self,
+        matcher: &mut Matcher,
+        word: &str,
+        exact: bool,
+        limit: usize,
+    ) -> Vec<Candidate> {
+        let keeps = |haystack: &str| !exact || unbroken(haystack, word).is_some();
         let mut candidates = Vec::new();
         // A file name never holds a `/`.
         if !word.contains('/') {
             let names: Vec<&str> = self.items.iter().map(Item::file_name).collect();
-            candidates.extend(matcher.match_list(&names).into_iter().map(|m| Candidate {
-                score: NAME_TIER + u32::from(m.score),
-                item: m.index,
-                in_name: true,
-            }));
+            candidates.extend(
+                matcher
+                    .match_list(&names)
+                    .into_iter()
+                    .filter(|m| keeps(names[m.index as usize]))
+                    .map(|m| Candidate {
+                        score: NAME_TIER + u32::from(m.score),
+                        item: m.index,
+                        in_name: true,
+                    }),
+            );
         }
         if candidates.len() < limit {
             let named: HashSet<u32> = candidates.iter().map(|c| c.item).collect();
@@ -581,6 +616,7 @@ impl FinderIndex {
                     .match_list(&self.items)
                     .into_iter()
                     .filter(|m| !named.contains(&m.index))
+                    .filter(|m| keeps(&self.items[m.index as usize].path))
                     .map(|m| Candidate {
                         score: u32::from(m.score),
                         item: m.index,
@@ -598,7 +634,16 @@ impl FinderIndex {
     /// multi-byte char. When its alignment is cut short (it can be, for a
     /// match spread over a long path), the first chars that spell `text` are
     /// taken instead, matched as frizbee matches them.
-    fn indices(&mut self, matcher: &mut Matcher, text: &str, candidate: Candidate) -> Vec<usize> {
+    ///
+    /// For an `exact` word, the first unbroken run of `text` in the tier's
+    /// haystack.
+    fn indices(
+        &mut self,
+        matcher: &mut Matcher,
+        text: &str,
+        exact: bool,
+        candidate: Candidate,
+    ) -> Vec<usize> {
         self.stats.indices_computed += 1;
         let item = &self.items[candidate.item as usize];
         let (haystack, offset) = if candidate.in_name {
@@ -606,6 +651,10 @@ impl FinderIndex {
         } else {
             (item.path.as_str(), 0)
         };
+        if exact && let Some(at) = unbroken(haystack, text) {
+            let start = item.path[..offset].chars().count() + at;
+            return (start..start + text.chars().count()).collect();
+        }
         let bytes = matcher
             .match_one_indices(haystack, candidate.item)
             .map(|found| found.indices)
