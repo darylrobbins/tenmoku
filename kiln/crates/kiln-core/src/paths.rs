@@ -20,6 +20,10 @@ pub const KEYMAP_FILE: &str = "keymap.toml";
 /// The themes directory's name, in the user config directory.
 pub const THEMES_DIR: &str = "themes";
 
+/// The extensions directory's name: installed extensions in the state
+/// directory, a project's own in its config directory.
+pub const EXTENSIONS_DIR: &str = "extensions";
+
 /// The workspace trust file's name, in the state directory.
 pub const TRUST_FILE: &str = "trust.toml";
 
@@ -214,6 +218,12 @@ impl AppPaths {
         self.state.as_ref().map(|dir| dir.join("layouts"))
     }
 
+    /// `<state>/extensions`: the installed extensions, a directory each
+    /// ([`crate::extension`]).
+    pub fn extensions_dir(&self) -> Option<PathBuf> {
+        self.state.as_ref().map(|dir| dir.join(EXTENSIONS_DIR))
+    }
+
     /// `<root>/.<short>`: a project's own config directory.
     pub fn project_dir(&self, root: &Path) -> PathBuf {
         root.join(format!(".{}", self.short))
@@ -222,5 +232,10 @@ impl AppPaths {
     /// `<root>/.<short>/settings.toml`.
     pub fn project_settings_file(&self, root: &Path) -> PathBuf {
         self.project_dir(root).join(SETTINGS_FILE)
+    }
+
+    /// `<root>/.<short>/extensions`: a project's own extensions.
+    pub fn project_extensions_dir(&self, root: &Path) -> PathBuf {
+        self.project_dir(root).join(EXTENSIONS_DIR)
     }
 }

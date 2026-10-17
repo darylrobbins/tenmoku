@@ -26,6 +26,7 @@
 //! bundled dark or light base.
 
 pub mod diagnostic;
+pub mod extension;
 mod keymap;
 mod keystroke;
 mod label;
@@ -45,6 +46,9 @@ pub mod watch;
 pub mod write;
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use extension::{
+    ApiVersion, AppKind, ExtensionApi, License, LicenseClass, Manifest, load_manifest,
+};
 pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
 pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
 pub use label::{macos_label, pc_label, shortcut_label};
