@@ -74,6 +74,8 @@ pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, title
 pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch, window_layouts};
 
+use workbench::git_commands::git_history::HistoryPanel;
+
 /// The key context the workbench's root element sets.
 pub const KEY_CONTEXT: &str = "workbench";
 

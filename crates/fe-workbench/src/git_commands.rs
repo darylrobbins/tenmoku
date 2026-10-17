@@ -3,15 +3,17 @@
 //! [`crate::KEY_CONTEXT`] and listed in the palette, and its ex forms in
 //! [`EX_FORMS`], typed on the vim line. Either way it becomes a [`GitOp`]
 //! that [`Workbench::run_git_op`] hands to its feature's module:
-//! `git_diff`, `git_stage`, `git_commit`, `git_blame` or `git_branch`, each
-//! with a `run` that answers `Not supported yet: <title>` until its card
-//! fills it in.
+//! `git_diff`, `git_stage`, `git_commit`, `git_blame`, `git_branch` or
+//! [`git_history`], each with a `run` that answers `Not supported yet:
+//! <title>` until its card fills it in.
 //!
 //! The ex forms follow the plugins vim users know them from: fugitive's
 //! `:Git` (or `:G`) subcommands, as `:Git commit --amend`, and its `:G…`
 //! commands for the file and the repository (`:Gdiffsplit`, `:Gwrite`,
-//! `:Gread`); gitsigns' `:Gitsigns <action>` for changes and line blame,
-//! the only forms that take a range (`:'<,'>Gitsigns stage_hunk`); and
+//! `:Gread`, `:Gclog`, which takes a range and any arguments, for
+//! [`git_history`] to pick its forms from); gitsigns' `:Gitsigns <action>`
+//! for changes and line blame, the only others that take a range
+//! (`:'<,'>Gitsigns stage_hunk`); and
 //! Vim's own `:diff…` commands, which fe-vim parses itself
 //! (`:diffsplit {file}`). A name none of them has is `E492`; a known name
 //! with a subcommand, arguments or `!` none of its forms takes is
@@ -35,6 +37,9 @@ use super::{
     toast::{self, Toast},
 };
 
+#[path = "git_history.rs"]
+pub(crate) mod git_history;
+
 /// A git or diff command: see [`COMMANDS`] for each one's id and title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GitCommand {
@@ -57,12 +62,13 @@ pub(crate) enum GitCommand {
     OpenLineCommit,
     SwitchBranch,
     CreateBranch,
+    FileHistory,
 }
 
 use GitCommand::*;
 
 /// Each command's id and palette title.
-pub(crate) const COMMANDS: [(GitCommand, &str, &str); 19] = [
+pub(crate) const COMMANDS: [(GitCommand, &str, &str); 20] = [
     (DiffIndex, "git.diff_index", "Git: Compare with Index"),
     (DiffHead, "git.diff_head", "Git: Compare with HEAD"),
     (
@@ -106,6 +112,7 @@ pub(crate) const COMMANDS: [(GitCommand, &str, &str); 19] = [
     ),
     (SwitchBranch, "git.switch_branch", "Git: Switch Branch…"),
     (CreateBranch, "git.create_branch", "Git: Create Branch…"),
+    (FileHistory, "git.file_history", "Git: File History"),
 ];
 
 /// The module a command runs in.
@@ -116,6 +123,7 @@ pub(crate) enum Feature {
     Commit,
     Blame,
     Branch,
+    History,
 }
 
 impl GitCommand {
@@ -135,6 +143,7 @@ impl GitCommand {
             Commit | CommitAmend => Feature::Commit,
             ToggleLineBlame | BlameLine | OpenLineCommit => Feature::Blame,
             SwitchBranch | CreateBranch => Feature::Branch,
+            FileHistory => Feature::History,
         }
     }
 }
@@ -163,12 +172,15 @@ enum Takes {
     /// A name, or nothing.
     MaybeName,
     Name,
+    /// Any words, which the feature's module picks its forms from.
+    Anything,
 }
 
 /// The ex commands' names: fugitive's `:Git` and its short form.
 const GIT: &[&str] = &["Git", "G"];
 const GDIFFSPLIT: &[&str] = &["Gdiffsplit", "Gvdiffsplit"];
 const GITSIGNS: &str = "Gitsigns";
+const GCLOG: &str = "Gclog";
 
 /// Each ex form: the command names it's typed with, the words that follow
 /// the name, what it takes after them, and the command it runs.
@@ -216,11 +228,12 @@ const EX_FORMS: &[(&[&str], &[&str], Takes, GitCommand)] = &[
     (GIT, &["checkout"], Takes::MaybeName, SwitchBranch),
     (GIT, &["switch", "-c"], Takes::Name, CreateBranch),
     (GIT, &["checkout", "-b"], Takes::Name, CreateBranch),
+    (&[GCLOG], &[], Takes::Anything, FileHistory),
 ];
 
 /// The command `:{name}{bang} {args}` runs, typed with `range`, and what
 /// follows its form's words; or the answer: `E492` for a name no form has,
-/// `E481` for a range on a form other than `:Gitsigns`', else
+/// `E481` for a range on a form other than `:Gitsigns`' and `:Gclog`, else
 /// `Not supported: :<line>`.
 pub(crate) fn ex_command(
     name: &str,
@@ -236,7 +249,7 @@ pub(crate) fn ex_command(
     if forms.is_empty() {
         return Err(format!("E492: Not an editor command: {line}"));
     }
-    if range && name != GITSIGNS {
+    if range && name != GITSIGNS && name != GCLOG {
         return Err("E481: No range allowed".to_owned());
     }
     let unsupported = || format!("Not supported: :{line}");
@@ -254,6 +267,7 @@ pub(crate) fn ex_command(
         Takes::Nothing => rest.is_empty(),
         Takes::MaybeName => rest.len() <= 1,
         Takes::Name => rest.len() == 1,
+        Takes::Anything => true,
     };
     if !fits {
         return Err(unsupported());
@@ -362,6 +376,7 @@ impl Workbench {
             Feature::Commit => git_commit::run(self, op, window, cx),
             Feature::Blame => git_blame::run(self, op, window, cx),
             Feature::Branch => git_branch::run(self, op, window, cx),
+            Feature::History => git_history::run(self, op, window, cx),
         }
     }
 

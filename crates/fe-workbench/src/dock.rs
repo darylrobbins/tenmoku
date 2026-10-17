@@ -1,9 +1,11 @@
 //! The right dock: one panel at a time, the project tree, project search,
-//! the outline, the git changes, find references' results or the problems,
-//! under a title row naming it, and picked from the activity rail on the
-//! window's right edge, which stays when the dock hides. Switching keeps each
-//! panel's state. The References and Problems buttons join the rail once
-//! their panel has shown.
+//! the outline, the git changes, find references' results, the problems or
+//! a file's git history, under a title row naming it, and picked from the
+//! activity rail on the window's right edge, which stays when the dock
+//! hides. Switching keeps each panel's state. The References, Problems and
+//! History buttons join the rail once their panel has shown; the History
+//! panel is made the first time `git.file_history` runs
+//! ([`Dock::set_history`]).
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
 //! the dock's in the workbench's [`crate::KEY_CONTEXT`] (with
@@ -23,7 +25,7 @@ use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, Shar
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
 use crate::{
-    GitPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
+    GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -42,11 +44,12 @@ pub enum DockPanel {
     Changes,
     References,
     Problems,
+    History,
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References and
-    /// Problems follow once they have shown.
+    /// The panels the rail always has, in its order; References, Problems
+    /// and History follow once they have shown.
     pub const ALL: [DockPanel; 4] = [
         DockPanel::Project,
         DockPanel::Search,
@@ -62,6 +65,7 @@ impl DockPanel {
             DockPanel::Changes => "Changes",
             DockPanel::References => "References",
             DockPanel::Problems => "Problems",
+            DockPanel::History => "History",
         }
     }
 
@@ -74,15 +78,20 @@ impl DockPanel {
             DockPanel::Changes => "changes",
             DockPanel::References => "references",
             DockPanel::Problems => "problems",
+            DockPanel::History => "history",
         })
     }
 
     /// The panel registered as `id`.
     fn of(id: PanelId) -> Option<Self> {
-        [DockPanel::References, DockPanel::Problems]
-            .into_iter()
-            .chain(DockPanel::ALL)
-            .find(|panel| panel.id() == id)
+        [
+            DockPanel::References,
+            DockPanel::Problems,
+            DockPanel::History,
+        ]
+        .into_iter()
+        .chain(DockPanel::ALL)
+        .find(|panel| panel.id() == id)
     }
 
     /// The command that shows it.
@@ -94,6 +103,7 @@ impl DockPanel {
             DockPanel::Changes => "git.show_changes",
             DockPanel::References => "nav.find_references",
             DockPanel::Problems => problems_panel::SHOW,
+            DockPanel::History => "git.file_history",
         }
     }
 
@@ -106,6 +116,7 @@ impl DockPanel {
             DockPanel::Changes => DockOp::ShowChanges,
             DockPanel::References => DockOp::ShowReferences,
             DockPanel::Problems => DockOp::Problems(ProblemsOp::Show),
+            DockPanel::History => DockOp::ShowHistory,
         }
     }
 }
@@ -120,20 +131,27 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
         DockPanel::References => Icon::FileSymlink,
         // The bundle has no warning sign: an error's cross.
         DockPanel::Problems => Icon::X,
+        DockPanel::History => Icon::FileDiff,
     }
 }
 
 /// fastedit's panels in kiln-shell's dock: each names itself, its icon and
-/// its show command.
+/// its show command. Its title row has its name, or what `$title`, a method
+/// of the panel's, gives.
 macro_rules! dock_item {
     ($panel:ty, $which:expr, $on_rail:expr, $focus:expr) => {
+        dock_item!($panel, $which, $on_rail, $focus, |_: &$panel, _: &App| {
+            $which.name().into()
+        });
+    };
+    ($panel:ty, $which:expr, $on_rail:expr, $focus:expr, $title:expr) => {
         impl DockItem for $panel {
             fn id(&self) -> PanelId {
                 $which.id()
             }
 
-            fn title(&self, _: &App) -> SharedString {
-                $which.name().into()
+            fn title(&self, cx: &App) -> SharedString {
+                $title(self, cx)
             }
 
             fn icon(&self, _: &App) -> Icon {
@@ -164,6 +182,15 @@ dock_item!(GitPanel, DockPanel::Changes, true, true);
 dock_item!(ReferencesPanel, DockPanel::References, false, false);
 // On the rail once it has shown; focused when shown, for its commands.
 dock_item!(ProblemsPanel, DockPanel::Problems, false, true);
+// On the rail once it has shown; focused when shown, as its rows take keys;
+// titled with the file it lists.
+dock_item!(
+    HistoryPanel,
+    DockPanel::History,
+    false,
+    true,
+    HistoryPanel::title
+);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,8 +198,9 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's six panels,
-/// whose rail clicks run the op the panel's key would.
+/// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
+/// whose rail clicks run the op the panel's key would; the History panel's
+/// shows the history last listed.
 pub struct Dock {
     state: DockState,
     project: Entity<ProjectPanel>,
@@ -181,6 +209,8 @@ pub struct Dock {
     changes: Entity<GitPanel>,
     references: Entity<ReferencesPanel>,
     problems: Entity<ProblemsPanel>,
+    /// Made the first time it's asked for.
+    history: Option<Entity<HistoryPanel>>,
     #[cfg(test)]
     ops: Vec<DockOp>,
 }
@@ -213,6 +243,7 @@ impl Dock {
             changes,
             references,
             problems,
+            history: None,
             #[cfg(test)]
             ops: Vec::new(),
         }
@@ -256,6 +287,18 @@ impl Dock {
 
     pub(crate) fn problems(&self) -> &Entity<ProblemsPanel> {
         &self.problems
+    }
+
+    pub(crate) fn history(&self) -> Option<&Entity<HistoryPanel>> {
+        self.history.as_ref()
+    }
+
+    /// Registers `history`, the History panel made on first use, in the
+    /// place of any before it, as [`Dock::set_project`] does.
+    pub(crate) fn set_history(&mut self, history: Entity<HistoryPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(history.clone(), cx);
+        self.history = Some(history);
+        cx.notify();
     }
 
     /// The dock's state, in kiln-shell.
@@ -306,6 +349,8 @@ impl Dock {
             DockOp::ShowReferences => DockPanel::References,
             DockOp::ShowChanges => DockPanel::Changes,
             DockOp::Problems(ProblemsOp::Show) => DockPanel::Problems,
+            // Nothing until it has been made.
+            DockOp::ShowHistory => DockPanel::History,
             // The workbench's to do.
             DockOp::Problems(_) => return false,
             DockOp::RefreshChanges => {
@@ -458,6 +503,8 @@ pub(crate) enum DockOp {
     ShowReferences,
     /// `git.show_changes`.
     ShowChanges,
+    /// The History button: shows the history last listed.
+    ShowHistory,
     /// `git.refresh`: reads the git status again, shown or not.
     RefreshChanges,
     Toggle,
