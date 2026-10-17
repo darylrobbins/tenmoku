@@ -23,6 +23,18 @@ target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; 
 Close CPU-heavy jobs first (soak runs, builds): with the machine loaded,
 numbers come out several times worse and noisy.
 
+To check a change against a base for regressions, run the **Bench** workflow
+(`.github/workflows/bench.yml`, manual only: Actions → Bench → Run workflow,
+or `gh workflow run bench.yml -f base=<ref>`). It builds the fe-buffer,
+fe-display, fe-syntax (`syntax`, 10k cases) and fe-gpui `keystroke` bench
+binaries for the base ref (default `origin/main~1`) and HEAD, runs them
+alternately for three rounds, uploads every `sample.json`, and fails if a
+case's fastest sample is more than 15% slower than base. The comparison is
+`scripts/bench-compare.sh <base-dir> <head-dir> [threshold-percent]`, which
+also works locally on criterion output dirs (`CRITERION_HOME`, one per round);
+its fixture test is `scripts/test-bench-compare.sh`. Means swing too much on
+a shared runner; the fastest sample doesn't.
+
 `--perf` opens a real window and prints:
 
 - **open:** the [startup phases](#startup), one line each, timed from the

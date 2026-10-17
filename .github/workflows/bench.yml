@@ -1,0 +1,117 @@
+name: Bench
+
+# A base ref against HEAD on the benches of the keystroke and load paths, so
+# a regression shows up without someone re-running a bench by hand (PERF.md's
+# "Measuring"). A shared runner is noisy: means swing several times between
+# runs of one binary. So both sides' binaries are built first, run
+# alternately for three rounds, and compared by each case's fastest sample
+# (scripts/bench-compare.sh), the way T272 got stable answers. On demand only
+# for now.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Ref to compare HEAD against
+        default: origin/main~1
+      threshold:
+        description: Percent slower than base, by fastest sample, that fails the run
+        default: "15"
+
+env:
+  CARGO_TERM_COLOR: always
+  # Both checkouts build into one target dir, sharing their dependencies.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        # -o pipefail, so a failed build fails its pipeline.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check out base
+        env:
+          BASE: ${{ inputs.base || 'origin/main~1' }}
+        run: |
+          echo "BENCH=$RUNNER_TEMP/bench" >>"$GITHUB_ENV"
+          git worktree add --detach "$RUNNER_TEMP/bench/base-src" "$BASE"
+      - name: Install toolchains from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          cd "$BENCH/base-src" && rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # fe-buffer and fe-display whole; fe-syntax's syntax bench, whose 10k
+      # cases run below (flat has none and tree_ratio measures memory, not
+      # time); fe-gpui's keystroke. Each binary is copied out with the
+      # package dir it runs in, as `cargo bench` would run it.
+      - name: Build base and HEAD bench binaries
+        run: |
+          build() { # <side> <checkout>
+            mkdir -p "$BENCH/bin/$1"
+            : >"$BENCH/bin/$1/list"
+            cd "$2"
+            {
+              cargo bench --no-run --message-format=json -p fe-buffer -p fe-display --benches
+              cargo bench --no-run --message-format=json -p fe-syntax --bench syntax
+              cargo bench --no-run --message-format=json -p fe-gpui --bench keystroke
+            } | jq -r 'select(.reason == "compiler-artifact" and .executable != null
+                        and (.target.kind | index("bench")))
+                      | [.target.name, .manifest_path, .executable] | @tsv' |
+              while IFS="$(printf '\t')" read -r target manifest exe; do
+                dir=$(dirname "$manifest")
+                name="$(basename "$dir")-$target"
+                cp "$exe" "$BENCH/bin/$1/$name"
+                printf '%s\t%s\n' "$name" "$dir" >>"$BENCH/bin/$1/list"
+              done
+            cat "$BENCH/bin/$1/list"
+          }
+          build base "$BENCH/base-src"
+          build head "$GITHUB_WORKSPACE"
+      # Each round runs every bench on base, then on HEAD, so drift in the
+      # runner's speed lands on both. Each side's round gets its own
+      # CRITERION_HOME, so no run compares itself with an earlier one.
+      - name: Run base and HEAD alternately
+        run: |
+          run() { # <side> <name> <round>
+            dir=$(awk -F '\t' -v name="$2" '$1 == name { print $2 }' "$BENCH/bin/$1/list")
+            if [ -z "$dir" ]; then
+              echo "::notice::$2 isn't on $1"
+              return
+            fi
+            filter=
+            [ "$2" = fe-syntax-syntax ] && filter=10k
+            echo "::group::$1 $2, round $3"
+            (cd "$dir" && CRITERION_HOME="$BENCH/results/$1/r$3" \
+              "$BENCH/bin/$1/$2" --bench --warm-up-time 1 --measurement-time 3 $filter </dev/null)
+            echo "::endgroup::"
+          }
+          for round in 1 2 3; do
+            cut -f1 "$BENCH/bin/head/list" | while read -r name; do
+              run base "$name" "$round"
+              run head "$name" "$round"
+            done
+          done
+      - name: Upload samples
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-samples
+          path: |
+            ${{ runner.temp }}/bench/results/**/new/sample.json
+            ${{ runner.temp }}/bench/results/**/new/benchmark.json
+          if-no-files-found: ignore
+      - name: Compare by fastest sample
+        env:
+          THRESHOLD: ${{ inputs.threshold || '15' }}
+        run: |
+          status=0
+          scripts/bench-compare.sh "$BENCH/results/base" "$BENCH/results/head" "$THRESHOLD" \
+            >"$BENCH/compare.txt" || status=$?
+          cat "$BENCH/compare.txt"
+          { echo '```'; cat "$BENCH/compare.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
