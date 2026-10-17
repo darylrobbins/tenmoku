@@ -429,9 +429,22 @@ pub(crate) fn quotes(text: &Text, offset: usize, quote: u8, count: u32, inner: b
         .collect();
     let before = real.partition_point(|&ix| ix < caret);
     let pair = match real.binary_search(&caret) {
-        // On a quote, the real quotes before it say whether it opens.
-        Ok(ix) if ix % 2 == 0 => real.get(ix + 1).map(|&close| (caret, close)),
-        Ok(ix) => Some((real[ix - 1], caret)),
+        // On a quote, the row walked from its start says whether it opens: an
+        // escaped quote only escapes inside a string, outside one it opens.
+        Ok(ix) => {
+            let mut open = None;
+            for at in (0..caret).filter(|&at| bytes[at] == quote) {
+                match open {
+                    None => open = Some(at),
+                    Some(_) if !scan.escaped[at] => open = None,
+                    Some(_) => {}
+                }
+            }
+            match open {
+                Some(open) => Some((open, caret)),
+                None => real.get(ix + 1).map(|&close| (caret, close)),
+            }
+        }
         Err(after) => match (before.checked_sub(1).map(|ix| real[ix]), real.get(after)) {
             (Some(open), Some(&close)) => Some((open, close)),
             // The row's first string, opening at its first quote, escaped or
