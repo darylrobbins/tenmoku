@@ -317,6 +317,15 @@ pub(crate) fn registry() -> Registry<GitCommands> {
             .expect("git command IDs are valid and distinct")
             .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
     }
+    // The commit box's key: the Changes panel runs it, in its own context.
+    registry
+        .register(
+            crate::git_panel::COMMIT_COMMAND,
+            "Commit from the Message Box",
+            |_: &mut Option<GitCommand>, _: &Actor| Ok(Dispatched::new(Effect::Notify)),
+        )
+        .expect("git command IDs are valid and distinct")
+        .context(ContextPredicate::identifier(crate::git_panel::KEY_CONTEXT));
     registry
 }
 

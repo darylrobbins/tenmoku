@@ -49,6 +49,9 @@ fn go_menu_lists_navigation_commands() {
             "pane.focus_down",
             "-",
             "project_panel.reveal_active",
+            "-",
+            "git.next_change",
+            "git.previous_change",
         ]
     );
 }

@@ -85,6 +85,14 @@ command = "workbench.save_as"
 [[menus.items]]
 separator = true
 
+# VS Code's File > Compare Active File With… (Zed has none).
+[[menus.items]]
+title = "Compare Active File With…"
+command = "diff.compare_file"
+
+[[menus.items]]
+separator = true
+
 [[menus.items]]
 title = "Settings…"
 command = "workbench.open_settings"
@@ -284,6 +292,18 @@ command = "lsp.show_log"
 [[menus.items]]
 separator = true
 
+# The git views' toggles; Toggle Inline Diff is enabled in a diff view.
+[[menus.items]]
+title = "Toggle Line Blame"
+command = "git.toggle_line_blame"
+
+[[menus.items]]
+title = "Toggle Inline Diff"
+command = "diff.toggle_inline"
+
+[[menus.items]]
+separator = true
+
 [[menus.items]]
 title = "Toggle Full Screen"
 command = "window.toggle_fullscreen"
@@ -361,6 +381,19 @@ separator = true
 [[menus.items]]
 title = "Reveal Active File in Project"
 command = "project_panel.reveal_active"
+
+[[menus.items]]
+separator = true
+
+# VS Code's Go > Next Problem / Previous Change group (git.next_change runs
+# in a diff view too).
+[[menus.items]]
+title = "Next Change"
+command = "git.next_change"
+
+[[menus.items]]
+title = "Previous Change"
+command = "git.previous_change"
 
 [[menus]]
 name = "Window"

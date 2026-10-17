@@ -425,6 +425,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         let context = bindings[index].context.as_ref().map(ToString::to_string);
         assert!(
             crate::keymap_tests::is_window_key(&bindings[index])
+                || bindings[index].command.as_str().starts_with("git.")
                 || matches!(
                     context.as_deref(),
                     Some(
@@ -490,7 +491,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
     // but for the workbench's Go Back and Go Forward (ctrl-minus and
     // ctrl-shift-minus) and Toggle Terminal (ctrl-`), which vim doesn't
     // bind, and `ctrl-space`, which asks for completions only where text is
-    // typed: in insert mode.
+    // typed: in insert mode, and Show Changes (ctrl-shift-g), which the
+    // reducer reads as `<C-g>`, a key vim leaves unbound.
     let stack = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(ContextFrame::new("editor").set("vim.mode", "normal"));
@@ -513,7 +515,14 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         .collect();
     assert_eq!(
         ctrl,
-        ["ctrl--", "ctrl-shift--", "ctrl-`", "ctrl-space", "ctrl-g"]
+        [
+            "ctrl--",
+            "ctrl-shift--",
+            "ctrl-`",
+            "ctrl-space",
+            "ctrl-g",
+            "ctrl-shift-g"
+        ]
     );
 }
 

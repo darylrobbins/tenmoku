@@ -59,7 +59,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // 75 for the editor and the app, 98 for fe-workbench (32 of them vim's
     // `<C-w>` keys), 24 for vim, 5 for the completion menu, 2 for the ghost
     // text.
-    assert_eq!(bindings.len(), 209);
+    assert_eq!(bindings.len(), 219);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
@@ -114,6 +114,18 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
         let keys = fe_keymap::KeySequence::parse(keys).unwrap().to_string();
         (keys, command, true)
     });
+    // The git keys outside `editor`: the Changes panel's, and the diff view's.
+    let context_free: Vec<_> = context_free
+        .into_iter()
+        .chain([
+            ("ctrl-shift-g".to_string(), "git.show_changes", true),
+            ("f7".to_string(), "diff.next_change", false),
+            ("shift-f7".to_string(), "diff.previous_change", false),
+            ("alt-f5".to_string(), "diff.next_change", false),
+            ("alt-shift-f5".to_string(), "diff.previous_change", false),
+            ("cmd-enter".to_string(), "git.commit_box.commit", false),
+        ])
+        .collect();
     assert_eq!(others, context_free);
     for binding in bindings {
         assert_eq!(binding.invocation(&editor).source, Source::Keyboard);

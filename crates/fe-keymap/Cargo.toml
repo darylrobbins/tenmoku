@@ -20,6 +20,7 @@ toml_edit.workspace = true
 
 [dev-dependencies]
 fe-command.workspace = true
+fe-vim.workspace = true
 schemars.workspace = true
 tempfile.workspace = true
 

@@ -214,7 +214,8 @@ const CASES: &[Case] = &[
 /// comment keys (`cmd-]`, `cmd-[`, `cmd-shift-k`, `cmd-/`) are checked to resolve to their commands by
 /// fe-keymap's `editing_bindings`, and the language-server keys (`f2`,
 /// `cmd-.`, `cmd-k cmd-f`, `cmd-shift-space`) by its
-/// `lsp_bindings`.
+/// `lsp_bindings`. The git keys (`alt-f3`, `shift-alt-f3`, `cmd-alt-z`) are
+/// checked by its `git_keys`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
     "cmd-alt-]",
@@ -229,6 +230,9 @@ const DEDICATED: &[&str] = &[
     "cmd-.",
     "cmd-k cmd-f",
     "cmd-shift-space",
+    "alt-f3",
+    "shift-alt-f3",
+    "cmd-alt-z",
 ];
 
 fn run_case(case: &Case) {

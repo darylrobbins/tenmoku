@@ -1109,6 +1109,92 @@ command = "proposal.reject_all"
 context = "editor && proposal"
 platform = "!macos"
 
+# The git and diff commands. Each key is one fe-vim never takes in normal,
+# visual or operator-pending mode: a function key, or a cmd or ctrl-alt chord
+# (vim has no such key), never plain ctrl-y, ctrl-e, ctrl-d or ctrl-u.
+# Show Source Control: VS Code's ctrl-shift-g.
+[[bindings]]
+keys = "ctrl-shift-g"
+command = "git.show_changes"
+
+# Next and previous change in a diff view: VS Code's diff editor f7 and
+# shift-f7, and alt-f5, shift-alt-f5 (its Go to Next Change).
+[[bindings]]
+keys = "f7"
+command = "diff.next_change"
+context = "DiffView"
+
+[[bindings]]
+keys = "shift-f7"
+command = "diff.previous_change"
+context = "DiffView"
+
+[[bindings]]
+keys = "alt-f5"
+command = "diff.next_change"
+context = "DiffView"
+
+[[bindings]]
+keys = "shift-alt-f5"
+command = "diff.previous_change"
+context = "DiffView"
+
+# Next and previous change in an editor: VS Code's dirty-diff alt-f3 and
+# shift-alt-f3.
+[[bindings]]
+keys = "alt-f3"
+command = "git.next_change"
+context = "editor"
+
+[[bindings]]
+keys = "shift-alt-f3"
+command = "git.previous_change"
+context = "editor"
+
+# Stage and revert the change at the caret: Zed's git::StageAndNext (cmd-y,
+# without the "and next") and git::Restore (cmd-alt-z). Off macOS they are
+# ctrl-alt chords, which the editor reads as vim's <C-y> and <C-z>, so they
+# stay out of vim's normal, visual and operator-pending modes. A proposed change keeps
+# cmd-y and ctrl-alt-y for its own accept.
+[[bindings]]
+keys = "cmd-y"
+command = "git.stage_hunk"
+context = "editor && !proposal"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-alt-z"
+command = "git.revert_hunk"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-y"
+command = "git.stage_hunk"
+context = "editor && !proposal && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-alt-z"
+command = "git.revert_hunk"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+# Commit from the Changes panel's message box: VS Code's cmd-enter and
+# ctrl-enter. Without cmd, ctrl-enter stays out of vim's normal, visual and
+# operator-pending modes.
+[[bindings]]
+keys = "cmd-enter"
+command = "git.commit_box.commit"
+context = "git_panel"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-enter"
+command = "git.commit_box.commit"
+context = "git_panel && editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
 # Vim's <C-w> window keys, in normal mode: they run the pane commands. Off
 # macOS `ctrl-w` alone closes the tab in the `workbench` context, which these
 # longer bindings take over in vim normal mode; with vim off it still does.

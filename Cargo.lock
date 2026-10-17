@@ -2004,6 +2004,7 @@ name = "fe-keymap"
 version = "0.1.0"
 dependencies = [
  "fe-config",
+ "fe-vim",
  "kiln-command",
  "kiln-core",
  "schemars",

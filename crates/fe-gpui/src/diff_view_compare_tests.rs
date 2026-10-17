@@ -164,13 +164,13 @@ fn catalog(app: &mut TestAppContext) {
     );
     assert_eq!(title(TOGGLE_INLINE).as_deref(), Some("Toggle Inline Diff"));
 
-    // A user keymap binding f7 to the next change, checked against it.
+    // A user keymap binding f8 to the next change, checked against it.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("keymap.toml");
     let user = format!(
         r#"
         [[bindings]]
-        keys = "f7"
+        keys = "f8"
         command = "{NEXT_CHANGE}"
         context = "{KEY_CONTEXT}"
         "#
@@ -186,17 +186,20 @@ fn catalog(app: &mut TestAppContext) {
         .collect();
     assert!(theirs.is_empty(), "{theirs:?}");
     let id = CommandId::parse(NEXT_CHANGE).unwrap();
-    assert_eq!(store.keymap().bindings_for(&id).len(), 1);
+    let user_keys = (store.keymap().bindings_for(&id).into_iter())
+        .filter(|binding| binding.keys.to_string() == "f8")
+        .count();
+    assert_eq!(user_keys, 1);
 
     let (head, working, index) = texts(20);
     let (_, diff, cx) = opened(&head, &working, &index, app);
     let keymap = fe_keymap::Keymap::clone(store.keymap());
     cx.update(|_, cx| crate::set_user_keymap(cx, keymap));
     let right = sides(&diff, cx)[1].clone();
-    cx.simulate_keystrokes("f7");
+    cx.simulate_keystrokes("f8");
     draw(cx);
     assert_eq!(caret(&right, cx), 5);
-    cx.simulate_keystrokes("f7");
+    cx.simulate_keystrokes("f8");
     draw(cx);
     assert_eq!(caret(&right, cx), 8);
 }
