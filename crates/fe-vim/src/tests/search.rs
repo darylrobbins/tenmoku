@@ -69,8 +69,8 @@ fn motion_register_and_visual() {
         ("/zzz<CR>", "E486: Pattern not found: zzz", "zzz"),
         ("d/zzz<CR>", "E486: Pattern not found: zzz", "zzz"),
         // A pattern fe-vim can't search isn't kept.
-        ("/\\zs<CR>", "pattern not supported: \\zs", "zzz"),
-        ("y?\\zs<CR>", "pattern not supported: \\zs", "zzz"),
+        ("/\\zy<CR>", "pattern not supported: \\zy", "zzz"),
+        ("y?\\zy<CR>", "pattern not supported: \\zy", "zzz"),
     ] {
         vim.feed(keys).unwrap();
         assert_eq!(vim.state().message(), Some(message), "{keys}");
@@ -156,7 +156,7 @@ fn search_commands_check_their_pattern() {
     let mut vim = HeadlessVim::new("abc x", (0, 0));
     vim.feed("/x<CR>0").unwrap();
     for (pattern, message, last) in [
-        ("\\zs", "pattern not supported: \\zs", "x"),
+        ("\\zy", "pattern not supported: \\zy", "x"),
         ("zzz", "E486: Pattern not found: zzz", "zzz"),
         ("a\\(", "invalid pattern: unmatched \\(", "zzz"),
     ] {

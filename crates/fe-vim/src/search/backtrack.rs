@@ -38,7 +38,10 @@ const MAX_STEPS: u64 = 20_000_000;
 const CLOCK_EVERY: u64 = 4096;
 
 /// One slot for each end of each group; group 0 is the whole match.
-const SLOTS: usize = 2 * (MAX_GROUPS + 1);
+const SLOTS: usize = 2 * (MAX_GROUPS + 1) + 2;
+/// The slots `\zs` and `\ze` record where they matched in.
+pub(super) const ZS: usize = 2 * (MAX_GROUPS + 1);
+pub(super) const ZE: usize = ZS + 1;
 const NONE: usize = usize::MAX;
 
 /// A pattern's tree, before it is a program.
@@ -48,6 +51,8 @@ enum Node {
     Leaf([(usize, bool); 2]),
     /// `^`, `$`, `\<` and `\>`.
     Look(Look),
+    /// `\zs` (`true`) or `\ze`.
+    Mark(bool),
     Seq(Vec<Node>),
     Alt(Vec<Node>),
     Group(Option<usize>, Box<Node>),
@@ -105,6 +110,11 @@ pub(super) type Slots = [usize; SLOTS];
 
 pub(super) fn empty_slots() -> Slots {
     [NONE; SLOTS]
+}
+
+/// Where `\zs` (`slot` [`ZS`]) or `\ze` ([`ZE`]) last matched, if one did.
+pub(super) fn mark(slots: &Slots, slot: usize) -> Option<usize> {
+    Some(slots[slot]).filter(|&at| at != NONE)
 }
 
 /// Group `n`'s range in `slots`, if it took part.
@@ -265,6 +275,10 @@ impl Builder<'_> {
                 self.tr.next += 1;
                 Ok((Node::Look(Look::WordEnd), false))
             }
+            Token::MatchStart | Token::MatchEnd => {
+                self.tr.next += 1;
+                Ok((Node::Mark(token == Token::MatchStart), false))
+            }
             Token::Caret { anywhere } if anywhere || first => {
                 self.tr.next += 1;
                 Ok((Node::Look(Look::LineStart), true))
@@ -351,6 +365,9 @@ impl Program {
             }
             Node::Look(look) => {
                 self.push(Inst::Look(*look))?;
+            }
+            Node::Mark(start) => {
+                self.push(Inst::Save(if *start { ZS } else { ZE }))?;
             }
             Node::Seq(nodes) => {
                 for node in nodes {

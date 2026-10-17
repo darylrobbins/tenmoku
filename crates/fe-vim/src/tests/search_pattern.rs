@@ -122,7 +122,7 @@ fn translates_or_fails() {
     assert_eq!(all("a~b", "ab a~b"), [3..6]);
 
     for (pattern, atom) in [
-        ("a\\zsb", "\\zs"),
+        ("a\\zyb", "\\zy"),
         ("a\\_sb", "\\_s"),
         ("a\\nb", "\\n"),
         ("\\%Va", "\\%V"),

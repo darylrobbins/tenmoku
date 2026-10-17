@@ -1,0 +1,592 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "slash_zs",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo\\zsbar<CR>",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_n",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo\\zsbar<CR>n",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_zs",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "?foo\\zsbar<CR>",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_ze",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo\\zebar<CR>",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zebar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_ze_n",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo\\zebar<CR>n",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zebar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_past_cursor",
+      "buffer": "xfoobar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "/xfoo\\zsbar<CR>",
+      "expect": {
+        "buffer": "xfoobar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "xfoo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_N",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "/foo\\zsbar<CR>N",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_slash_zs",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/foo\\zsbar<CR>",
+      "expect": {
+        "buffer": "bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo\\zsbar/X/g<CR>",
+      "expect": {
+        "buffer": "fooX fooX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_ze",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo\\zebar/X/g<CR>",
+      "expect": {
+        "buffer": "Xbar Xbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zebar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_overlap_zs",
+      "buffer": "aaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\zsa/X/g<CR>",
+      "expect": {
+        "buffer": "aXa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\zsa",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs_leading",
+      "buffer": "abab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\zsb/X/g<CR>",
+      "expect": {
+        "buffer": "aXaX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\zsb",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_empty_zs_g",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\zs/X/g<CR>",
+      "expect": {
+        "buffer": "XfXoXo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\zs",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_group_beside_zs",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(foo\\)\\zsbar/[\\1]/<CR>",
+      "expect": {
+        "buffer": "foo[foo]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(foo\\)\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_amp_zs",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo\\zsbar/<&>/<CR>",
+      "expect": {
+        "buffer": "foo<bar>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_branch",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\(foo\\zsbar\\|foo\\)<CR>",
+      "expect": {
+        "buffer": "foobar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(foo\\zsbar\\|foo\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_repeated_group",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\(foo\\zs\\)*bar<CR>",
+      "expect": {
+        "buffer": "foobar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(foo\\zs\\)*bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs_branch",
+      "buffer": "foobar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(foo\\zsbar\\|foo\\)/X/g<CR>",
+      "expect": {
+        "buffer": "fooX X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(foo\\zsbar\\|foo\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_very_magic",
+      "buffer": "foobar foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\vfoo\\zsbar<CR>",
+      "expect": {
+        "buffer": "foobar foobar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\vfoo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs_very_magic",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\vfoo\\zsbar/X/<CR>",
+      "expect": {
+        "buffer": "fooX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\vfoo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs_and_ze",
+      "buffer": "foobarbaz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo\\zsbar\\zebaz/X/<CR>",
+      "expect": {
+        "buffer": "fooXbaz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar\\zebaz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_second_row",
+      "buffer": "one\nfoobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo\\zsbar<CR>",
+      "expect": {
+        "buffer": "one\nfoobar",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_backtrack",
+      "buffer": "xfoobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\%(a\\|.\\)\\{1,3}foo\\zsbar<CR>",
+      "expect": {
+        "buffer": "xfoobar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{1,3}foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sub_zs_backtrack",
+      "buffer": "xfoobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{1,3}foo\\zsbar/X/<CR>",
+      "expect": {
+        "buffer": "xfooX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{1,3}foo\\zsbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_zs_not_found",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/xyz\\zsq<CR>",
+      "expect": {
+        "buffer": "foobar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "xyz\\zsq",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

@@ -205,6 +205,11 @@ enum Engine {
         /// translation had to write more than once (see [`Translator`]) has
         /// a group for each copy, in the order written.
         slots: Vec<Vec<usize>>,
+        /// The capture groups behind each `\zs` and `\ze` written (a
+        /// copy for each time the translation wrote one), in the order
+        /// written.
+        zs: Vec<usize>,
+        ze: Vec<usize>,
     },
     /// A pattern whose match priority one regex can't write
     /// ([`Translator::inexact`]).
@@ -290,7 +295,13 @@ impl Pattern {
         })?;
         let mut slots = vec![vec![1]];
         slots.resize(MAX_GROUPS + 1, Vec::new());
+        let (mut zs, mut ze) = (Vec::new(), Vec::new());
         for (at, name) in regex.capture_names().enumerate() {
+            match name {
+                Some(name) if name.starts_with("zs_") => zs.push(at),
+                Some(name) if name.starts_with("ze_") => ze.push(at),
+                _ => {}
+            }
             let number = name
                 .and_then(|name| name.strip_prefix('v'))
                 .and_then(|name| name.split('_').next())
@@ -300,7 +311,12 @@ impl Pattern {
             }
         }
         Ok(Self {
-            engine: Engine::Regex { regex, slots },
+            engine: Engine::Regex {
+                regex,
+                slots,
+                zs,
+                ze,
+            },
             word,
             whole: false,
             key: format!("{source}\0{ignore_case}\0{word:?}"),
@@ -329,7 +345,12 @@ impl Pattern {
         })?;
         let slots = (0..regex.captures_len()).map(|at| vec![at]).collect();
         Ok(Self {
-            engine: Engine::Regex { regex, slots },
+            engine: Engine::Regex {
+                regex,
+                slots,
+                zs: Vec::new(),
+                ze: Vec::new(),
+            },
             word: (false, false),
             whole: query.whole_word,
             key: format!("{source}\0{}\0{}", query.match_case, query.whole_word),
@@ -559,6 +580,8 @@ impl Pattern {
             },
             groups: false,
             last_end: None,
+            emitted: 0,
+            bounds: 0..0,
         }
     }
 
@@ -1085,6 +1108,11 @@ pub(crate) struct RowMatches<'a> {
     groups: bool,
     /// For `:s`: where the last non-empty match ended, if one did.
     last_end: Option<Option<usize>>,
+    /// Where the last match returned ended, for `\zs` and `\ze` to keep
+    /// the matches from overlapping.
+    emitted: usize,
+    /// The last match returned, which is group 0.
+    bounds: Range<usize>,
 }
 
 impl RowMatches<'_> {
@@ -1093,6 +1121,9 @@ impl RowMatches<'_> {
     pub(crate) fn group(&self, n: usize) -> Option<Range<usize>> {
         if !self.groups {
             return None;
+        }
+        if n == 0 {
+            return Some(self.bounds.clone());
         }
         let (Engine::Regex { slots, .. }, Found::Regex(locs)) = (self.engine, &self.found) else {
             let Found::Backtrack { slots, .. } = &self.found else {
@@ -1122,6 +1153,39 @@ enum Found {
     },
 }
 
+impl RowMatches<'_> {
+    /// `whole`, the last match, as `\zs` and `\ze` bound it: from where the
+    /// last `\zs` passed matched (else its start) to where `\ze` did (else
+    /// its end), and never before the last match returned ended.
+    fn bounded(&mut self, whole: Range<usize>) -> Range<usize> {
+        let (zs, ze) = match (self.engine, &self.found) {
+            (Engine::Regex { zs, ze, .. }, Found::Regex(locs)) => {
+                // Of copies that took part, the one latest in the row.
+                let last = |groups: &[usize]| {
+                    groups
+                        .iter()
+                        .filter_map(|&at| locs.get(at))
+                        .map(|(start, _)| start)
+                        .max()
+                };
+                (last(zs), last(ze))
+            }
+            (Engine::Backtrack(_), Found::Backtrack { slots, .. }) => (
+                backtrack::mark(slots, backtrack::ZS),
+                backtrack::mark(slots, backtrack::ZE),
+            ),
+            _ => unreachable!("an engine's own state"),
+        };
+        if zs.is_none() && ze.is_none() {
+            return whole;
+        }
+        let start = zs.unwrap_or(whole.start).max(self.emitted);
+        let end = ze.unwrap_or(whole.end).max(start);
+        self.emitted = end;
+        start..end
+    }
+}
+
 impl Iterator for RowMatches<'_> {
     type Item = Range<usize>;
 
@@ -1133,7 +1197,7 @@ impl Iterator for RowMatches<'_> {
             }
             REGEX_CALLS.fetch_add(1, Ordering::Relaxed);
             let found = match (self.engine, &mut self.found) {
-                (Engine::Regex { regex, slots }, Found::Regex(locs)) => {
+                (Engine::Regex { regex, slots, .. }, Found::Regex(locs)) => {
                     regex.captures_read_at(locs, self.hay, at)?;
                     let (start, end) = locs.get(slots[0][0]).expect("a match has its group");
                     start..end
@@ -1152,6 +1216,7 @@ impl Iterator for RowMatches<'_> {
                 found.end
             };
             let (start, end) = (self.word.0, self.word.1);
+            let whole_match = found.clone();
             let skipped = found.is_empty() && self.last_end == Some(Some(found.start));
             if skipped
                 || (start && !word_starts(self.hay, found.start))
@@ -1176,7 +1241,8 @@ impl Iterator for RowMatches<'_> {
                 *last_end = (!found.is_empty()).then_some(found.end);
             }
             self.at = (next < self.hay.len()).then_some(next);
-            return Some(found);
+            self.bounds = self.bounded(whole_match);
+            return Some(self.bounds.clone());
         }
     }
 }
@@ -1326,6 +1392,10 @@ enum Token {
     Set(Collection),
     WordStart,
     WordEnd,
+    /// `\zs`: where the match starts, as the search reports it.
+    MatchStart,
+    /// `\ze`: where the match ends, as the search reports it.
+    MatchEnd,
     /// A special `^`: start-of-line anywhere (`\v`, `\V`), or only at the
     /// start of a branch and else itself.
     Caret {
@@ -1494,6 +1564,10 @@ impl<'a> Lexer<'a> {
                 Token::Flag
             }
             // `\_x` and `\zx` name their atom with the character after.
+            'z' if matches!(self.peek(), Some('s' | 'e')) => match self.bump() {
+                Some('s') => Token::MatchStart,
+                _ => Token::MatchEnd,
+            },
             '_' | 'z' => {
                 self.bump();
                 return Err(self.unsupported(start));
@@ -2504,6 +2578,10 @@ impl Translator<'_> {
             )?,
             Token::WordStart => r"\b{start}".into(),
             Token::WordEnd => r"\b{end}".into(),
+            // Empty groups the matcher reads the match's bounds from; they
+            // have names, not numbers, so `\1` to `\9` stay as written.
+            Token::MatchStart => "(?P<vimzs>)".into(),
+            Token::MatchEnd => "(?P<vimze>)".into(),
             Token::Caret { anywhere } if anywhere || first => {
                 start_of_line = true;
                 "^".into()
@@ -2608,7 +2686,27 @@ fn unique_names(source: &str) -> String {
     const OPEN: &str = "(?P<vimgroup";
     let mut seen = [0usize; MAX_GROUPS + 1];
     let mut out = String::with_capacity(source.len());
-    let mut rest = source;
+    let marks = source
+        .replace("(?P<vimzs>", "(?P<zs>")
+        .replace("(?P<vimze>", "(?P<ze>");
+    let (mut zs, mut ze) = (0, 0);
+    let source = {
+        let mut named = String::with_capacity(marks.len());
+        let mut rest = marks.as_str();
+        while let Some(at) = rest.find("(?P<z") {
+            let (kind, count) = match &rest[at + 5..at + 6] {
+                "s" => ("zs", &mut zs),
+                _ => ("ze", &mut ze),
+            };
+            named.push_str(&rest[..at]);
+            named.push_str(&format!("(?P<{kind}_{count}>"));
+            *count += 1;
+            rest = &rest[at + 7..];
+        }
+        named.push_str(rest);
+        named
+    };
+    let mut rest = source.as_str();
     while let Some(at) = rest.find(OPEN) {
         out.push_str(&rest[..at]);
         let digits = &rest[at + OPEN.len()..];

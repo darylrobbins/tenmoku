@@ -1,0 +1,158 @@
+# \zs and \ze in a search or :s pattern: / ? n N and d/ landing on a match's
+# \zs start or \ze-bounded range, and :s replacing only that range (with \1
+# beside \zs, overlapping a\zsa, an empty \zs with g, a branch, a repeated
+# group, very magic, and a pattern the backtracking matcher takes). A key that
+# fails is a case's last key. Hand-written: name, buffer, cursor = [row, byte
+# column], keys in vim notation. What nvim does with each is recorded in
+# search_match_bounds.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+[[case]]
+name = "slash_zs"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = "/foo\\zsbar<CR>"
+
+[[case]]
+name = "slash_zs_n"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = "/foo\\zsbar<CR>n"
+
+[[case]]
+name = "question_zs"
+buffer = "foobar foobar"
+cursor = [0, 12]
+keys = "?foo\\zsbar<CR>"
+
+[[case]]
+name = "slash_ze"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = "/foo\\zebar<CR>"
+
+[[case]]
+name = "slash_ze_n"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = "/foo\\zebar<CR>n"
+
+[[case]]
+name = "slash_zs_past_cursor"
+buffer = "xfoobar"
+cursor = [0, 2]
+keys = "/xfoo\\zsbar<CR>"
+
+[[case]]
+name = "slash_zs_N"
+buffer = "foobar foobar"
+cursor = [0, 10]
+keys = "/foo\\zsbar<CR>N"
+
+[[case]]
+name = "d_slash_zs"
+buffer = "foobar"
+cursor = [0, 0]
+keys = "d/foo\\zsbar<CR>"
+
+[[case]]
+name = "sub_zs"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = ":s/foo\\zsbar/X/g<CR>"
+
+[[case]]
+name = "sub_ze"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = ":s/foo\\zebar/X/g<CR>"
+
+[[case]]
+name = "sub_overlap_zs"
+buffer = "aaa"
+cursor = [0, 0]
+keys = ":s/a\\zsa/X/g<CR>"
+
+[[case]]
+name = "sub_zs_leading"
+buffer = "abab"
+cursor = [0, 0]
+keys = ":s/\\zsb/X/g<CR>"
+
+[[case]]
+name = "sub_empty_zs_g"
+buffer = "foo"
+cursor = [0, 0]
+keys = ":s/\\zs/X/g<CR>"
+
+[[case]]
+name = "sub_group_beside_zs"
+buffer = "foobar"
+cursor = [0, 0]
+keys = ":s/\\(foo\\)\\zsbar/[\\1]/<CR>"
+
+[[case]]
+name = "sub_amp_zs"
+buffer = "foobar"
+cursor = [0, 0]
+keys = ":s/foo\\zsbar/<&>/<CR>"
+
+[[case]]
+name = "slash_zs_branch"
+buffer = "foobar"
+cursor = [0, 0]
+keys = "/\\(foo\\zsbar\\|foo\\)<CR>"
+
+[[case]]
+name = "slash_zs_repeated_group"
+buffer = "foobar"
+cursor = [0, 0]
+keys = "/\\(foo\\zs\\)*bar<CR>"
+
+[[case]]
+name = "sub_zs_branch"
+buffer = "foobar foo"
+cursor = [0, 0]
+keys = ":s/\\(foo\\zsbar\\|foo\\)/X/g<CR>"
+
+[[case]]
+name = "slash_zs_very_magic"
+buffer = "foobar foobar"
+cursor = [0, 0]
+keys = "/\\vfoo\\zsbar<CR>"
+
+[[case]]
+name = "sub_zs_very_magic"
+buffer = "foobar"
+cursor = [0, 0]
+keys = ":s/\\vfoo\\zsbar/X/<CR>"
+
+[[case]]
+name = "sub_zs_and_ze"
+buffer = "foobarbaz"
+cursor = [0, 0]
+keys = ":s/foo\\zsbar\\zebaz/X/<CR>"
+
+[[case]]
+name = "slash_zs_second_row"
+buffer = "one\nfoobar"
+cursor = [0, 0]
+keys = "/foo\\zsbar<CR>"
+
+[[case]]
+name = "slash_zs_backtrack"
+buffer = "xfoobar"
+cursor = [0, 0]
+keys = "/\\%(a\\|.\\)\\{1,3}foo\\zsbar<CR>"
+
+[[case]]
+name = "sub_zs_backtrack"
+buffer = "xfoobar"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{1,3}foo\\zsbar/X/<CR>"
+
+[[case]]
+name = "slash_zs_not_found"
+buffer = "foobar"
+cursor = [0, 0]
+keys = "/xyz\\zsq<CR>"
