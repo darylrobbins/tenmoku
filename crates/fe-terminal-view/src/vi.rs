@@ -188,6 +188,8 @@ impl ViKeys {
         let motion = |to: ViMove| Some(ViCommand::Move(to, times));
         match (pending, key) {
             (Some('g'), ViKey::Char('g')) => return Some(ViCommand::Move(ViMove::Top, 1)),
+            (Some('g'), ViKey::Char('e')) => return motion(ViMove::WordEndPrevious),
+            (Some('g'), ViKey::Char('E')) => return motion(ViMove::BigWordEndPrevious),
             (Some('['), ViKey::Char('[')) => {
                 return Some(ViCommand::Prompt {
                     forward: false,

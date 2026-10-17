@@ -33,12 +33,16 @@ pub enum ViMove {
     WordPrevious,
     /// `e`: the end of this word or the next.
     WordEnd,
+    /// `ge`: the end of the word before this one.
+    WordEndPrevious,
     /// `W`: the start of the next whitespace-separated WORD.
     BigWordNext,
     /// `B`
     BigWordPrevious,
     /// `E`
     BigWordEnd,
+    /// `gE`
+    BigWordEndPrevious,
     /// `0`: the line's first column.
     LineStart,
     /// `^`: the line's first non-blank cell.
@@ -74,9 +78,11 @@ impl ViMove {
             ViMove::WordNext => ViMotion::SemanticRight,
             ViMove::WordPrevious => ViMotion::SemanticLeft,
             ViMove::WordEnd => ViMotion::SemanticRightEnd,
+            ViMove::WordEndPrevious => ViMotion::SemanticLeftEnd,
             ViMove::BigWordNext => ViMotion::WordRight,
             ViMove::BigWordPrevious => ViMotion::WordLeft,
             ViMove::BigWordEnd => ViMotion::WordRightEnd,
+            ViMove::BigWordEndPrevious => ViMotion::WordLeftEnd,
             ViMove::LineStart => ViMotion::First,
             ViMove::FirstNonBlank => ViMotion::FirstOccupied,
             ViMove::LineEnd => ViMotion::Last,
