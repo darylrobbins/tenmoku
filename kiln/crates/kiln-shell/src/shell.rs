@@ -352,7 +352,7 @@ impl Render for Shell {
                         div()
                             .relative()
                             .flex_1()
-                            .min_h_0()
+                            .min_h(MIN_PANE_HEIGHT)
                             .flex()
                             .child(center)
                             .child(dock::track_centre())
