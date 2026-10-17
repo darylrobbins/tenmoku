@@ -5,6 +5,14 @@
 //! pane and this window. Every answer, such as `E37`, is the editor's vim
 //! message, which the status bar shows.
 //!
+//! The day-one features' commands run as their own commands do: `:Ex`
+//! shows the project tree, focused, with the editor's file revealed and
+//! selected; `:oldfiles` opens the Open Recent picker, whose dismissal
+//! focuses the editor again; `:copen` shows and focuses the Problems panel
+//! and `:cclose` hides it if shown; and `:Replace {text}` runs the project
+//! search's Replace All with `text`, through its question, saying "No
+//! search to replace" when its query is empty.
+//!
 //! The other commands named with a capital, fugitive's and gitsigns', and
 //! `:diffsplit`, run as [`super::git_commands`] says; so do the host
 //! commands typed in an editor a git feature shows outside the tabs.
@@ -26,14 +34,17 @@ use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use kiln_shell::{ItemHandle, PaneView as _};
 
 use super::git_commands::{self, GitCommand, GitOp};
+use super::recent_picker::RecentOp;
 use super::{Workbench, open};
 use crate::Pane;
+use crate::dock::{DockOp, DockPanel, ProblemsOp};
 
 const E32: &str = "E32: No file name";
 pub(crate) const E13: &str = "E13: File exists (add ! to override)";
 const E37: &str = "E37: No write since last change (add ! to override)";
 const E99: &str = "E99: Current buffer is not in diff mode";
 const RELOAD: &str = "Not supported yet: reloading a file from disk";
+const NO_SEARCH: &str = "No search to replace";
 
 impl Workbench {
     /// Runs `command`, typed on the line in `editor`: see the module docs.
@@ -105,6 +116,34 @@ impl Workbench {
                 };
                 self.run_git_op(op, window, cx);
             }
+            HostCommand::Explore => self.vim_explore(&editor, window, cx),
+            HostCommand::OldFiles => self.run_recent_op(RecentOp::Open, window, cx),
+            HostCommand::OpenProblems => {
+                self.run_dock_op(DockOp::Problems(ProblemsOp::Show), window, cx);
+            }
+            HostCommand::CloseProblems => {
+                let dock = self.dock.read(cx);
+                if dock.is_visible() && dock.active() == DockPanel::Problems {
+                    self.run_dock_op(DockOp::Toggle, window, cx);
+                }
+            }
+            HostCommand::ReplaceInFiles { text } => {
+                self.vim_replace_in_files(&editor, text, window, cx)
+            }
+        }
+    }
+
+    /// `:Ex`: shows the project tree, focused, and reveals `editor`'s file
+    /// there, selected.
+    fn vim_explore(
+        &mut self,
+        editor: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_dock_op(DockOp::ShowProject, window, cx);
+        if let Some(path) = editor.path(cx) {
+            self.panel.update(cx, |panel, cx| panel.reveal(path, cx));
         }
     }
 
@@ -129,6 +168,25 @@ impl Workbench {
                 }
             });
             (editor.entity_id(), keys)
+        });
+    }
+
+    /// `:Replace {text}`: the project search's Replace All with `text` for
+    /// its replacement, which asks first; "No search to replace" with an
+    /// empty query.
+    fn vim_replace_in_files(
+        &mut self,
+        editor: &Entity<EditorView>,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let search = self.dock.read(cx).search().clone();
+        if search.read(cx).query(cx).pattern.is_empty() {
+            return message(editor, NO_SEARCH, cx);
+        }
+        search.update(cx, |search, cx| {
+            search.confirm_replace_all_with(text, window, cx)
         });
     }
 
@@ -387,6 +445,10 @@ mod write_path_tests;
 #[cfg(test)]
 #[path = "vim_write_no_clobber_tests.rs"]
 mod write_no_clobber_tests;
+
+#[cfg(test)]
+#[path = "vim_day_one_tests.rs"]
+mod day_one_tests;
 
 /// Leaves `text` as `editor`'s vim message.
 fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {

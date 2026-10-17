@@ -601,6 +601,24 @@ impl SearchPanel {
         .detach();
     }
 
+    /// Puts `template` in the replace field, shown, then asks and replaces
+    /// as [`SearchPanel::confirm_replace_all`] does: vim's `:Replace`.
+    /// Nothing while a replacement runs.
+    pub(crate) fn confirm_replace_all_with(
+        &mut self,
+        template: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.replacing.is_some() {
+            return;
+        }
+        self.replace
+            .update(cx, |input, cx| input.set_text(template, cx));
+        self.replace_shown = true;
+        self.confirm_replace_all(window, cx);
+    }
+
     /// Replaces the matches in the `file`th file of the results, if the
     /// rows are still `layout`'s, without asking.
     fn replace_in_file(&mut self, layout: u64, file: usize, cx: &mut Context<Self>) {

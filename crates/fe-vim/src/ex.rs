@@ -273,6 +273,22 @@ pub enum HostCommand {
     DiffPut { rows: Range<u32> },
     /// `:diffs[plit] {file}`: diff against `path` in a split.
     DiffSplit { path: String },
+    /// `:Ex[plore]`: the project tree, focused, with the buffer's file
+    /// revealed and selected, as netrw opens the file's folder.
+    Explore,
+    /// `:ol[dfiles]` and `:bro[wse] ol[dfiles]`: the host's recent files,
+    /// to choose one from, rather than a list printed.
+    OldFiles,
+    /// `:cope[n]` and `:lop[en]`: the problems list, shown and focused, as
+    /// the quickfix and location windows are.
+    OpenProblems,
+    /// `:ccl[ose]` and `:lcl[ose]`: the problems list hidden, if shown.
+    CloseProblems,
+    /// `:Replace {text}`, capitalised as Vim's user commands are: the
+    /// project search's matches replaced with `text` in every file, as
+    /// its Replace All does and with its question. `text` is the rest of
+    /// the line, trimmed; none is `E471`.
+    ReplaceInFiles { text: String },
 }
 
 impl crate::VimState {
@@ -433,8 +449,21 @@ fn command(
         check(false)?;
         return Ok(ExCommand::Goto);
     }
+    if name.len() >= 3 && "browse".starts_with(name) {
+        // A modifier, which a terminal ignores but for `:oldfiles`, whose
+        // list is the host's picker either way.
+        let command = after.trim_start_matches([' ', '\t']);
+        return match command.len() < after.len() {
+            _ if command.is_empty() => Err(ExError::ArgumentRequired),
+            true => self::command(line, range, command, check),
+            false => Err(not_a_command()),
+        };
+    }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
+    }
+    if name == "Replace" && !after.starts_with(|ch: char| ch.is_ascii_alphanumeric()) {
+        return replace_in_files(range, after);
     }
     if is_diff(name) {
         return diff_command(name, range, after, check);
@@ -532,7 +561,8 @@ fn register_and_count(
 type Build = fn(bool, &str) -> HostCommand;
 
 /// The host command `name` abbreviates (`:help :w`, `:q`, `:x`, `:exi`,
-/// `:e`, `:qa`, `:wa`), with its `!` still to read.
+/// `:e`, `:qa`, `:wa`, `:ol`, `:cope`, `:ccl`, `:lop`, `:lcl`, and netrw's
+/// `:Ex`), with its `!` still to read.
 fn host(name: &str) -> Option<Build> {
     let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
     Some(match name {
@@ -559,6 +589,10 @@ fn host(name: &str) -> Option<Build> {
         },
         _ if is("qall", 2) || is("quitall", 5) => |force, _| HostCommand::QuitAll { force },
         _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
+        _ if is("Explore", 2) => |_, _| HostCommand::Explore,
+        _ if is("oldfiles", 2) => |_, _| HostCommand::OldFiles,
+        _ if is("copen", 4) || is("lopen", 3) => |_, _| HostCommand::OpenProblems,
+        _ if is("cclose", 3) || is("lclose", 3) => |_, _| HostCommand::CloseProblems,
         _ => return None,
     })
 }
@@ -632,7 +666,8 @@ fn user_command(
 }
 
 /// A host command's line: no range, and an argument only `:e`, `:w` and
-/// `:sav` take (`:sav` needs one).
+/// `:sav` take (`:sav` needs one). The day-one commands (`:Ex`, `:ol`,
+/// `:cope`, `:ccl`) take no `!`.
 fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExCommand, ExError> {
     if !range.is_empty() {
         return Err(ExError::NoRange);
@@ -644,6 +679,16 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
     let args = args.trim_start_matches([' ', '\t']);
     let args = trim_unescaped_end(args);
     let command = build(force, &unescape(args));
+    let bangless = matches!(
+        command,
+        HostCommand::Explore
+            | HostCommand::OldFiles
+            | HostCommand::OpenProblems
+            | HostCommand::CloseProblems
+    );
+    if force && bangless {
+        return Err(ExError::NoBang);
+    }
     match (&command, args.is_empty()) {
         (HostCommand::SaveAs { .. }, true) => Err(ExError::ArgumentRequired),
         (_, true)
@@ -651,6 +696,22 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
             Ok(ExCommand::Host(command))
         }
         (_, false) => Err(ExError::Trailing(args.to_string())),
+    }
+}
+
+/// `:Replace {text}`: no range or `!`, and some text.
+fn replace_in_files(range: &[Address], after: &str) -> Result<ExCommand, ExError> {
+    if !range.is_empty() {
+        return Err(ExError::NoRange);
+    }
+    if after.starts_with('!') {
+        return Err(ExError::NoBang);
+    }
+    match after.trim_matches([' ', '\t']) {
+        "" => Err(ExError::ArgumentRequired),
+        text => Ok(ExCommand::Host(HostCommand::ReplaceInFiles {
+            text: text.to_string(),
+        })),
     }
 }
 
