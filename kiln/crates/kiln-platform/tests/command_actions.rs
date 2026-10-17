@@ -89,6 +89,7 @@ fn notes_window(
             CommandInfo {
                 title: "Open Note".into(),
                 context: None,
+                unlisted: false,
             },
         );
         let sink = seen.clone();

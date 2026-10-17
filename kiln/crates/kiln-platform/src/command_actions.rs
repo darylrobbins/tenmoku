@@ -61,6 +61,9 @@ pub struct CommandInfo {
     /// Where it applies, as a key context predicate (`notes_list`); `None`
     /// is everywhere.
     pub context: Option<&'static str>,
+    /// Whether the command palette leaves it out. It still dispatches by
+    /// ID and key.
+    pub unlisted: bool,
 }
 
 /// One typed command.
@@ -71,6 +74,8 @@ pub struct TypedCommand {
     pub action_name: &'static str,
     pub title: String,
     pub context: Option<ContextPredicate>,
+    /// Whether the command palette leaves it out.
+    pub unlisted: bool,
     build: fn(serde_json::Value) -> gpui::Result<Box<dyn Action>>,
 }
 
@@ -111,6 +116,7 @@ pub fn register_command<A: Action>(cx: &mut App, info: CommandInfo) {
         action_name,
         title: info.title,
         context,
+        unlisted: info.unlisted,
         build: A::build,
     };
     cx.default_global::<TypedCommands>()
@@ -392,6 +398,7 @@ macro_rules! commands {
                     $crate::command_actions::CommandInfo {
                         title: $crate::command_actions::title_from_doc(&[$($doc),*], ::std::stringify!($name)),
                         context: ::std::option::Option::None $(.or(::std::option::Option::Some($context)))?,
+                        unlisted: false,
                     },
                 );
             )*

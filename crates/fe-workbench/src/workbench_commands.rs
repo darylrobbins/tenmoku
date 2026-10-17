@@ -260,7 +260,7 @@ impl Workbench {
     }
 
     /// Open Recent in New Window
-    #[command(id = "recent.open_in_new_window", context = "picker")]
+    #[command(id = "recent.open_in_new_window", context = "picker", palette = false)]
     fn open_recent_in_new_window(&mut self, cx: &mut Cx<Self>) {
         self.recent_command(RecentOp::OpenInNewWindow, cx);
     }

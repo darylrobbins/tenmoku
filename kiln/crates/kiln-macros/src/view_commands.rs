@@ -11,7 +11,7 @@ use quote::{quote, quote_spanned};
 use syn::{Attribute, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta};
 
 use crate::command::{
-    Args, Names, check_order, doc_lines, names, option, order, parse_args, title,
+    Args, Names, check_order, doc_lines, names, option, order, palette, parse_args, title,
 };
 
 /// The impl, its `#[command]` marks taken off, then the commands it
@@ -132,11 +132,13 @@ fn impl_context(args: TokenStream) -> syn::Result<LitStr> {
         order,
         id,
         context,
+        palette,
     } = parse_args(args, "#[kiln::command] on an impl")?;
     let method_only = (key.map(|key| ("key", key.span())))
         .or(menu.map(|menu| ("menu", menu.span())))
         .or(order.map(|order| ("order", order.span())))
-        .or(id.map(|id| ("id", id.span())));
+        .or(id.map(|id| ("id", id.span())))
+        .or(palette.map(|palette| ("palette", palette.span())));
     if let Some((name, span)) = method_only {
         return Err(syn::Error::new(
             span,
@@ -179,7 +181,12 @@ fn command(
     } = names(&method.sig.ident, args, "method")?;
     let context = args.context.as_ref().unwrap_or(impl_context);
     let context = quote!(::std::option::Option::Some(#context));
-    let (keys, menu, order) = (option(&args.key), option(&args.menu), order(args));
+    let (keys, menu, order, palette) = (
+        option(&args.key),
+        option(&args.menu),
+        order(args),
+        palette(args),
+    );
     let vis = &method.vis;
     let ident = &method.sig.ident;
     // Spanned on the method's name, so a signature other than
@@ -203,6 +210,7 @@ fn command(
                 keys: #keys,
                 menu: #menu,
                 order: #order,
+                palette: #palette,
                 file: #file,
                 line: #line,
                 krate: ::std::env!("CARGO_CRATE_NAME"),

@@ -29,6 +29,7 @@ mod open_folder;
 mod open_settings;
 mod outline_panel;
 mod outline_panel_followups;
+mod palette_recent;
 mod pane_cycle;
 mod pane_drag;
 mod pane_toolbar;

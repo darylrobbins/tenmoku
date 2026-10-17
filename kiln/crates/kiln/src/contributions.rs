@@ -164,6 +164,8 @@ pub struct CommandSpec {
     pub context: Option<&'static str>,
     pub keys: Keys,
     pub menu: Option<MenuSpec>,
+    /// Whether the command palette leaves it out: `palette = false`.
+    pub unlisted: bool,
     pub register: RegisterCommand,
 }
 
@@ -177,6 +179,7 @@ impl CommandSpec {
             context: None,
             keys: Keys::None,
             menu: None,
+            unlisted: false,
             register: register_command::<A>,
         }
     }
@@ -204,6 +207,7 @@ impl CommandSpec {
         CommandInfo {
             title: self.title.clone(),
             context: self.context,
+            unlisted: self.unlisted,
         }
     }
 }
@@ -291,6 +295,8 @@ pub struct CommandRecord {
     pub keys: Option<&'static str>,
     pub menu: Option<&'static str>,
     pub order: i32,
+    /// `false` for `palette = false`: the palette leaves it out.
+    pub palette: bool,
     pub file: &'static str,
     pub line: u32,
     /// `CARGO_CRATE_NAME`.
@@ -329,6 +335,7 @@ impl CommandRecord {
                 order: self.order,
                 declared: Some((self.file, self.line)),
             }),
+            unlisted: !self.palette,
             register: self.register,
         }
     }
@@ -1061,6 +1068,7 @@ impl Contributions {
                     order: spec.order,
                     declared,
                 }),
+                unlisted: false,
                 // Registered in the app's registry by `register_early`.
                 register: |_, _| {},
             }),
@@ -1828,6 +1836,7 @@ mod tests {
             keys: None,
             menu: None,
             order: 0,
+            palette: true,
             file,
             line,
             krate,

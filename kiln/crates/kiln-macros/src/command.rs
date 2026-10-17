@@ -11,8 +11,8 @@ use heck::ToUpperCamelCase as _;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    Attribute, Expr, ExprLit, Ident, ItemFn, Lit, LitInt, LitStr, Meta, MetaNameValue, Token,
-    ext::IdentExt as _, parse::Parser as _, punctuated::Punctuated,
+    Attribute, Expr, ExprLit, Ident, ItemFn, Lit, LitBool, LitInt, LitStr, Meta, MetaNameValue,
+    Token, ext::IdentExt as _, parse::Parser as _, punctuated::Punctuated,
 };
 
 /// The arguments: `key = "secondary-n"`, `menu = "File"`, `order = 10`,
@@ -24,9 +24,11 @@ pub(crate) struct Args {
     pub(crate) order: Option<LitInt>,
     pub(crate) id: Option<LitStr>,
     pub(crate) context: Option<LitStr>,
+    /// `palette = false` keeps the command out of the command palette.
+    pub(crate) palette: Option<LitBool>,
 }
 
-const ARGUMENTS: &str = "key, menu, order, id and context";
+const ARGUMENTS: &str = "key, menu, order, id, context and palette";
 
 /// The fn, then the command it makes; the fn and the errors, spanned on
 /// the user's tokens, if it can't.
@@ -74,11 +76,12 @@ fn command(args: TokenStream, function: &ItemFn) -> syn::Result<TokenStream> {
         id,
         action_name,
     } = names(&function.sig.ident, &args, "fn")?;
-    let (context, keys, menu, order) = (
+    let (context, keys, menu, order, palette) = (
         option(&args.context),
         option(&args.key),
         option(&args.menu),
         order(&args),
+        palette(&args),
     );
     let vis = &function.vis;
     let ident = &function.sig.ident;
@@ -111,6 +114,7 @@ fn command(args: TokenStream, function: &ItemFn) -> syn::Result<TokenStream> {
                     keys: #keys,
                     menu: #menu,
                     order: #order,
+                    palette: #palette,
                     file: ::std::file!(),
                     line: ::std::line!(),
                     krate: ::std::env!("CARGO_CRATE_NAME"),
@@ -167,6 +171,14 @@ pub(crate) fn order(args: &Args) -> TokenStream {
     match &args.order {
         Some(order) => quote!(#order),
         None => quote!(0),
+    }
+}
+
+/// `palette`, `true` unless `palette = false`.
+pub(crate) fn palette(args: &Args) -> TokenStream {
+    match &args.palette {
+        Some(palette) => quote!(#palette),
+        None => quote!(true),
     }
 }
 
@@ -262,6 +274,24 @@ pub(crate) fn parse_args(args: TokenStream, attribute: &str) -> syn::Result<Args
             "menu" => &mut parsed.menu,
             "id" => &mut parsed.id,
             "context" => &mut parsed.context,
+            "palette" => {
+                if parsed.palette.is_some() {
+                    return Err(syn::Error::new_spanned(&path, "`palette` is given twice"));
+                }
+                parsed.palette = Some(match value {
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Bool(palette),
+                        ..
+                    }) => palette,
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            other,
+                            "`palette` takes a bool: `palette = false`",
+                        ));
+                    }
+                });
+                continue;
+            }
             "order" => {
                 if parsed.order.is_some() {
                     return Err(syn::Error::new_spanned(&path, "`order` is given twice"));

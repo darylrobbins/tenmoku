@@ -86,6 +86,9 @@ pub struct Entry {
 pub fn commands_in(stack: &ContextStack, cx: &App) -> Vec<Entry> {
     let app = kiln_platform::commands::app_command_list(cx);
     let typed = typed_commands(cx).into_iter().filter_map(|typed| {
+        if typed.unlisted {
+            return None;
+        }
         typed.build(&Value::Null).ok()?;
         Some((typed.id, typed.title, typed.context))
     });

@@ -210,6 +210,7 @@ pub use kiln_core::{SettingsType, settings::SettingsEvent};
 ///   a fn's. Its context is the impl's, so its keys, its menu item and
 ///   its palette entry hold only while focus is inside the view, unless
 ///   `context = ".."` on the method gives another.
+///   `palette = false` on the method keeps it out of the command palette.
 /// - Unmarked methods are left alone.
 ///
 /// A marked method's signature is `fn(&mut self, &mut Cx<Self>)`, or the
