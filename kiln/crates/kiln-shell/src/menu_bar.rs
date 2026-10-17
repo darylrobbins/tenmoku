@@ -57,12 +57,58 @@ impl CommandCatalog for Catalog {
     }
 }
 
-/// The open menu, and the item highlighted in it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The open menu, and the item highlighted in it. The indices are where
+/// they were last found; the name and command are what they are found by
+/// when the installed menus change.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct OpenMenu {
     menu: usize,
+    name: String,
     /// An index into the menu's items; never a separator's.
     item: Option<usize>,
+    /// The command at `item`.
+    command: Option<String>,
+}
+
+impl OpenMenu {
+    /// Menu `menu` of `bar` open, with its item `item` highlighted if that
+    /// is a command.
+    fn at(bar: &MenuBar, menu: usize, item: Option<usize>) -> Option<Self> {
+        let name = bar.menus.get(menu)?.name.clone();
+        let command = item.and_then(|item| command_at(bar, menu, item));
+        let item = item.filter(|_| command.is_some());
+        Some(Self {
+            menu,
+            name,
+            item,
+            command,
+        })
+    }
+
+    /// This, found again in `bar` by its menu's name and its item's
+    /// command: the first menu of that name, and the first command item in
+    /// it of that ID. `None` if the menu is gone; no highlight if the
+    /// command is.
+    fn locate(&self, bar: &MenuBar) -> Option<Self> {
+        let menu = bar.menus.iter().position(|menu| menu.name == self.name)?;
+        let item = self.command.as_ref().and_then(|id| {
+            bar.menus[menu]
+                .items
+                .iter()
+                .position(|item| item.command().is_some_and(|command| command.id == *id))
+        });
+        Some(Self {
+            menu,
+            name: self.name.clone(),
+            item,
+            command: item.and(self.command.clone()),
+        })
+    }
+}
+
+fn command_at(bar: &MenuBar, menu: usize, item: usize) -> Option<String> {
+    let item = bar.menus.get(menu)?.items.get(item)?;
+    Some(item.command()?.id.clone())
 }
 
 /// The in-window menu bar's view: the installed menus' names, and the open
@@ -91,7 +137,7 @@ impl MenuBarView {
 
     /// The open menu's index, and its highlighted item's, if any.
     pub fn open_menu(&self) -> Option<(usize, Option<usize>)> {
-        self.open.map(|open| (open.menu, open.item))
+        self.open.as_ref().map(|open| (open.menu, open.item))
     }
 
     fn bar(cx: &App) -> Option<MenuBar> {
@@ -122,7 +168,7 @@ impl MenuBarView {
             }));
         }
         let item = highlight.then(|| next_item(&bar, menu, None, 1)).flatten();
-        self.open = Some(OpenMenu { menu, item });
+        self.open = OpenMenu::at(&bar, menu, item);
         cx.notify();
     }
 
@@ -155,35 +201,30 @@ impl MenuBarView {
     }
 
     /// The open menu, reconciled with `bar`, which may have changed since
-    /// it opened (as when a command is contributed): closed, giving focus
-    /// back, if `bar` has no menu at its index; its highlight dropped if
-    /// that's no longer a command item.
+    /// it opened (as when a command is contributed): found again by its
+    /// menu's name and its highlight's command, closed, giving focus back,
+    /// if `bar` has no such menu; its highlight dropped if the menu has no
+    /// such command.
     fn reconcile(
         &mut self,
         bar: &MenuBar,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<OpenMenu> {
-        let open = self.open?;
-        let Some(menu) = bar.menus.get(open.menu) else {
+        let open = self.open.as_ref()?;
+        let Some(located) = open.locate(bar) else {
             self.close(window, cx);
             return None;
         };
-        let item = open.item.filter(|&item| {
-            menu.items
-                .get(item)
-                .and_then(|item| item.command())
-                .is_some()
-        });
-        if item != open.item {
-            self.open = Some(OpenMenu { item, ..open });
+        if located != *open {
+            self.open = Some(located);
             cx.notify();
         }
-        self.open
+        self.open.clone()
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(_), Some(bar)) = (self.open, Self::bar(cx)) else {
+        let (true, Some(bar)) = (self.open.is_some(), Self::bar(cx)) else {
             return;
         };
         if event.keystroke.modifiers.modified() {
@@ -201,10 +242,8 @@ impl MenuBarView {
             "right" => self.open((open.menu + 1) % menus, true, window, cx),
             step @ ("up" | "down") => {
                 let step = if step == "up" { -1 } else { 1 };
-                self.open = Some(OpenMenu {
-                    item: next_item(&bar, open.menu, open.item, step),
-                    ..open
-                });
+                self.open =
+                    OpenMenu::at(&bar, open.menu, next_item(&bar, open.menu, open.item, step));
                 cx.notify();
             }
             "enter" => match open.item {
@@ -249,7 +288,7 @@ impl Render for MenuBarView {
             .on_click({
                 let entity = entity.clone();
                 move |ix, window, cx| {
-                    entity.update(cx, |bar, cx| match bar.open {
+                    entity.update(cx, |bar, cx| match &bar.open {
                         Some(open) if open.menu == ix => bar.close(window, cx),
                         _ => bar.open(ix, false, window, cx),
                     })
@@ -259,32 +298,28 @@ impl Render for MenuBarView {
                 let entity = entity.clone();
                 move |ix, window, cx| {
                     entity.update(cx, |bar, cx| {
-                        if bar.open.is_some_and(|open| open.menu != ix) {
+                        if bar.open.as_ref().is_some_and(|open| open.menu != ix) {
                             bar.open(ix, false, window, cx);
                         }
                     })
                 }
             });
-        if self
-            .open
-            .is_some_and(|open| bar.menus.get(open.menu).is_none())
+        let located = self.open.as_ref().map(|open| open.locate(&bar));
+        if located
+            .as_ref()
+            .is_some_and(|located| *located != self.open)
         {
-            // The installed menus changed under it: close it once drawn,
-            // when focus can move.
+            // The installed menus changed under it: reconcile it once
+            // drawn, closing it if its menu went, when focus can move.
             cx.defer_in(window, |this, window, cx| {
                 let bar = Self::bar(cx).unwrap_or_default();
                 this.reconcile(&bar, window, cx);
             });
         }
-        if let Some(open) = self.open
+        if let Some(open) = located.flatten()
             && let Some(menu) = bar.menus.get(open.menu)
         {
-            let highlighted = open.item.filter(|&item| {
-                menu.items
-                    .get(item)
-                    .and_then(|item| item.command())
-                    .is_some()
-            });
+            let highlighted = open.item;
             let keymap = keys::current_keymap(cx);
             let entries = menu
                 .items
@@ -310,10 +345,14 @@ impl Render for MenuBarView {
                 })
                 .on_hover(move |item, _, cx| {
                     entity.update(cx, |bar, cx| {
-                        if let Some(open) = &mut bar.open
-                            && open.item != Some(item)
+                        let Some(open) = &bar.open else {
+                            return;
+                        };
+                        if open.item != Some(item)
+                            && let Some(open) = Self::bar(cx)
+                                .and_then(|menus| OpenMenu::at(&menus, open.menu, Some(item)))
                         {
-                            open.item = Some(item);
+                            bar.open = Some(open);
                             cx.notify();
                         }
                     })
