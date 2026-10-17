@@ -33,7 +33,7 @@ pub use app_builder::{AppBuilder, AppWindow, Started, app};
 pub use contributions::{AnyDockPanel, MakePanel, Module, PanelSpec, StatusSpec};
 pub use contributions::{
     CONTRIBUTED_KEYS_PATH, CONTRIBUTED_MENUS_PATH, CommandSpec, Contributions, Keys, MenuSpec,
-    RegisterCommand, workspace_handler,
+    RegisterCommand, recorded_catalog, workspace_handler,
 };
 pub use cx::{Cx, with_cx};
 pub use ext::binding_label_for;

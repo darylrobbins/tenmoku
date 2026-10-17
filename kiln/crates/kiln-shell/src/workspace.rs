@@ -36,8 +36,8 @@ use kiln_platform::Capabilities;
 use kiln_ui::ui_theme;
 
 use crate::{
-    Direction, Dock, DockItem, DockPosition, DockState, DockView as _, ItemHandle, ItemId,
-    ItemPane, MenuBarView, PaneEvent, PaneGroup, PaneView, Shell, StatusItem, StatusItems,
+    Destination, Direction, Dock, DockItem, DockPosition, DockState, DockView as _, ItemHandle,
+    ItemId, ItemPane, MenuBarView, PaneEvent, PaneGroup, PaneView, Shell, StatusItem, StatusItems,
     close::{self, WindowItems},
     dock::DockEvent,
     layout::{self, WindowLayout},
@@ -437,6 +437,48 @@ impl<P: PaneView> Workspace<P> {
         self.follow_active(window, cx);
     }
 
+    /// Makes `pane`, already in the group, the active pane, focusing its
+    /// active item, or the pane while it's empty; the titles follow, and
+    /// the host hears [`WorkspaceEvent::ActiveChanged`] if it's another.
+    /// Nothing for a pane not in the group.
+    pub fn activate(&mut self, pane: Entity<P>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.group.panes().contains(&&pane) {
+            return;
+        }
+        self.active = pane;
+        self.focus_active(window, cx);
+        self.follow_active(window, cx);
+    }
+
+    /// Moves item `item` from `source` to `destination`, as a tab dropped
+    /// there moves ([`PaneGroup::move_tab`]), for a key: a pane split off
+    /// for it joins the workspace's panes, watched as a split's is, and the
+    /// host hears [`WorkspaceEvent::PaneAdded`]; the pane it went to is
+    /// made active, and `source` closes if the move emptied it, unless it's
+    /// the last. Returns the pane it went to, or none if it didn't move
+    /// (a pane not in the group, or an item `source` doesn't have).
+    pub fn move_tab(
+        &mut self,
+        source: &Entity<P>,
+        item: ItemId,
+        destination: Destination<P>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<P>> {
+        let (pane, split_off) = (self.group).move_tab(source, item, destination, window, cx)?;
+        if split_off {
+            self.watch(&pane, window, cx);
+            cx.emit(WorkspaceEvent::PaneAdded(pane.clone()));
+        }
+        self.active = pane.clone();
+        self.follow_active(window, cx);
+        let emptied = source.update(cx, |source, _| source.pane_mut().take_emptied());
+        if emptied && *source != pane {
+            self.close_pane(source, window, cx);
+        }
+        Some(pane)
+    }
+
     /// What has focus when the active pane does: its active item, or the
     /// pane itself while it's empty.
     fn active_focus(&self, cx: &App) -> FocusHandle {
@@ -503,15 +545,7 @@ impl<P: PaneView> Workspace<P> {
             return;
         };
         let (item, destination) = (dropped.dragged.item, dropped.destination.clone());
-        let moved = (self.group).move_tab(&source, item, destination, window, cx);
-        if let Some((pane, split_off)) = moved {
-            if split_off {
-                self.watch(&pane, window, cx);
-                cx.emit(WorkspaceEvent::PaneAdded(pane.clone()));
-            }
-            self.active = pane;
-            self.follow_active(window, cx);
-        }
+        self.move_tab(&source, item, destination, window, cx);
     }
 
     /// The window's title and the shell's follow the active item, and the

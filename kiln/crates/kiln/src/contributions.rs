@@ -640,6 +640,34 @@ pub fn workspace_handler<A: Command>(
     }
 }
 
+/// A catalog of the `#[kiln::command]`s the crate `krate`
+/// (`CARGO_CRATE_NAME`) declared, as `inventory` recorded them, needing no
+/// app: for checking a library's keymaps and menus against its commands
+/// without starting one. It knows their IDs, and accepts them with no args
+/// (`Value::Null`), as their unit actions take none.
+pub fn recorded_catalog(krate: &'static str) -> Box<dyn CommandCatalog> {
+    let ids = (linked::<CommandRecord>().into_iter())
+        .filter(|record| record.krate == krate)
+        .filter_map(|record| CommandId::parse(record.id).ok())
+        .collect();
+    Box::new(RecordedCatalog(ids))
+}
+
+/// [`recorded_catalog`]'s commands.
+struct RecordedCatalog(HashSet<CommandId>);
+
+impl CommandCatalog for RecordedCatalog {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        if !self.0.contains(command) {
+            return Err(CatalogError::UnknownCommand);
+        }
+        match args {
+            Value::Null => Ok(()),
+            _ => Err(CatalogError::BadArgs(format!("{command} takes no args"))),
+        }
+    }
+}
+
 /// Adds the records the library crate `krate` linked in, as its
 /// `kiln::module!` does, and has it claimed: see [`unclaimed`].
 #[doc(hidden)]
@@ -790,8 +818,11 @@ impl Contributions {
     /// Adds `spec`'s command, replacing one contributed before with its
     /// ID. Before [`crate::init`], it's registered when `init` registers
     /// the app's commands, and its keys and menu item are resolved with
-    /// the app's. After, it's registered now, and the keymap and menus are
-    /// resolved again once the current update is over.
+    /// the app's; but if kiln-platform's commands are set up already
+    /// ([`kiln_platform::commands::init`]), as in a test app that never
+    /// runs `init`, it's registered now, and `init` doesn't register it
+    /// again. After `init`, it's registered now, and the keymap and menus
+    /// are resolved again once the current update is over.
     ///
     /// What `#[kiln::command]` writes, by hand:
     ///
@@ -891,13 +922,19 @@ impl Contributions {
         let started = cx
             .try_global::<Self>()
             .is_some_and(|this| this.resolver.is_some());
+        // An app whose commands can run without `init`, such as a test
+        // app that sets up kiln-platform's commands alone, has them
+        // registered now, and `init` doesn't register them again.
+        let register_now = started || kiln_platform::commands::initialized(cx);
         for spec in specs {
-            if started {
+            if register_now {
                 (spec.register)(cx, spec.info());
             }
             let this = cx.default_global::<Self>();
             this.commands.retain(|added| added.id != spec.id);
-            if !started {
+            if register_now {
+                this.unregistered.retain(|added| added.id != spec.id);
+            } else {
                 this.unregistered.retain(|added| added.id != spec.id);
                 this.unregistered.push(spec.clone());
             }

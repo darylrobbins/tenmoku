@@ -168,6 +168,43 @@ pub fn init(cx: &mut App, app_name: impl Into<SharedString>) {
     }
 }
 
+/// Whether [`init`] has run: from then on, a command can be dispatched.
+pub fn initialized(cx: &App) -> bool {
+    cx.has_global::<Commands>()
+}
+
+/// Runs `run`'s command as its typed command's action, if `run.0` names a
+/// registered one ([`crate::command_actions::typed_command`]), through
+/// [`crate::command_actions::dispatch_invocation`] in `window`, keeping
+/// its context and source, and returns true; false otherwise, running
+/// nothing, for the caller to go on with it. For a view's or the app's
+/// [`RunCommand`] handler: a raw `RunCommand` naming a typed command, as a
+/// test dispatches with [`Window::dispatch_action`], never reaches its
+/// action otherwise.
+///
+/// The action is dispatched once the current dispatch is over, from the
+/// window's focused element: the view whose handler calls this is being
+/// updated until then, so its own handler of the action couldn't run.
+pub fn dispatch_typed(run: &RunCommand, window: &mut Window, cx: &mut App) -> bool {
+    let Some(typed) = crate::command_actions::typed_command(&run.0.command, cx) else {
+        return false;
+    };
+    if let Err(message) = typed.build(&run.0.args) {
+        log::warn!("{}: {message}", run.0.command);
+        return true;
+    }
+    let (invocation, handle) = (run.0.clone(), window.window_handle());
+    cx.defer(move |cx| {
+        let dispatched = handle.update(cx, |_, window, cx| {
+            crate::command_actions::dispatch_invocation(invocation, window, cx)
+        });
+        if let Ok(Err(error)) = dispatched {
+            log::warn!("{error}");
+        }
+    });
+    true
+}
+
 /// Adds a host's own app commands beside `app.*` and `window.*`. Call
 /// after [`init`].
 pub fn register_app_commands(cx: &mut App, f: impl FnOnce(&mut Registry<AppCommands>)) {
