@@ -274,6 +274,17 @@ fn case_matches(want: char, ch: char) -> bool {
     matches!(other[..], [other] if other.len_utf8() == want.len_utf8() && other == ch)
 }
 
+/// A query word as VS Code's quick open reads it: `\` is `/`, and `*` and `…`
+/// are dropped. `None` when nothing is left.
+fn normalize_word(word: &str) -> Option<String> {
+    let word: String = word
+        .chars()
+        .filter(|&c| c != '*' && c != '\u{2026}')
+        .map(|c| if c == '\\' { '/' } else { c })
+        .collect();
+    (!word.is_empty()).then_some(word)
+}
+
 fn to_u32(n: usize) -> u32 {
     u32::try_from(n).expect("paths and indexes fit in a u32")
 }
@@ -466,7 +477,8 @@ impl FinderIndex {
         if limit == 0 {
             return Vec::new();
         }
-        let words: Vec<&str> = text.split_whitespace().collect();
+        let normalized: Vec<String> = text.split_whitespace().filter_map(normalize_word).collect();
+        let words: Vec<&str> = normalized.iter().map(String::as_str).collect();
         if words.is_empty() {
             return self
                 .keys
