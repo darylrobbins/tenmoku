@@ -461,6 +461,7 @@ pub(crate) fn type_as_keys(
             }
             match key {
                 Some('\n') => state.line_break_in(model, host),
+                Some(_) if state.is_virtual_replace() => state.replace_text(model, "\t"),
                 Some(_) => model.tab(),
                 None => {}
             }

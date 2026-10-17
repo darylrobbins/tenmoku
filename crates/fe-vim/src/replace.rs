@@ -18,6 +18,7 @@
 //! ([`repeat_typed`]), as `.` does ([`retype`]).
 
 use std::{
+    collections::VecDeque,
     fmt,
     ops::Range,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -34,6 +35,7 @@ use crate::{
     insert::{self, Session},
     motion::Line,
     operator::{MAX_PUT, apply, caret, sync},
+    visual::width_from,
 };
 
 #[cfg(test)]
@@ -59,6 +61,8 @@ const CONTEXT: usize = 16;
 #[derive(Clone, Debug)]
 pub(crate) struct Replace {
     record: Arc<Mutex<Record>>,
+    /// A virtual session (`gR`): typed characters replace screen columns.
+    virtual_: bool,
 }
 
 struct Record {
@@ -99,6 +103,13 @@ struct Entry {
     then: String,
     /// Another origin's edit, an undo or a redo touched what it put in.
     touched: bool,
+    /// Spaces right after `made` that a virtual session's character left
+    /// of a wide one it only partly covered, which `<BS>` takes out too.
+    trail: usize,
+    /// The first of this many entries a typed tab became in a virtual
+    /// session (spaces), or one of the rest of them.
+    tab: usize,
+    tab_rest: bool,
 }
 
 impl Entry {
@@ -109,6 +120,9 @@ impl Entry {
             was,
             then: String::new(),
             touched: false,
+            trail: 0,
+            tab: 0,
+            tab_rest: false,
         }
     }
 
@@ -234,7 +248,7 @@ fn map(edits: &[Edit], at: usize, after: bool) -> usize {
 }
 
 impl Replace {
-    fn new(model: &mut EditorModel, origin: Origin) -> Self {
+    fn new(model: &mut EditorModel, origin: Origin, virtual_: bool) -> Self {
         let events = model.buffer_mut().subscribe();
         Self {
             record: Arc::new(Mutex::new(Record {
@@ -242,7 +256,13 @@ impl Replace {
                 origin,
                 typed: Vec::new(),
             })),
+            virtual_,
         }
+    }
+
+    /// Whether it's a virtual session (`gR`).
+    pub(crate) fn is_virtual(&self) -> bool {
+        self.virtual_
     }
 
     fn record(&self) -> MutexGuard<'_, Record> {
@@ -271,9 +291,7 @@ impl Replace {
         let mut keys_at = |head: usize| {
             let mut keys = String::new();
             if let Some(ix) = record.find(&text, head) {
-                for entry in &record.typed[ix] {
-                    entry.keys(&mut keys);
-                }
+                keys_of(&record.typed[ix], &mut keys);
             }
             keys
         };
@@ -285,6 +303,27 @@ impl Replace {
     }
 }
 
+/// The keys that typed `entries`, a typed tab whole as the one key.
+fn keys_of(entries: &[Entry], out: &mut String) {
+    let mut at = 0;
+    while let Some(entry) = entries.get(at) {
+        let whole = entry.tab > 0
+            && entries
+                .get(at + 1..at + entry.tab)
+                .is_some_and(|rest| rest.iter().all(|entry| entry.tab_rest));
+        match whole {
+            true => {
+                out.push('\t');
+                at += entry.tab;
+            }
+            false => {
+                entry.keys(out);
+                at += 1;
+            }
+        }
+    }
+}
+
 /// `vim.replace_mode`: an insert session at each caret, as `i` opens one,
 /// whose typing overwrites; `count` is how many times the text goes in.
 pub(crate) fn replace(
@@ -292,33 +331,59 @@ pub(crate) fn replace(
     actor: &Actor,
     args: CountArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    open(target, actor, args, false)
+}
+
+/// `vim.virtual_replace_mode`: [`replace`], whose typed characters replace
+/// the screen columns they take.
+pub(crate) fn virtual_replace(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: CountArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    open(target, actor, args, true)
+}
+
+fn open(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: CountArgs,
+    virtual_: bool,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     let insert = InsertArgs {
         at: InsertAt::Before,
         count: args.count,
     };
     let dispatched = insert::insert(target, actor, insert)?;
     if let Some(session) = &mut target.state.session {
-        session.change = Change::Replace(args);
+        session.change = match virtual_ {
+            true => Change::VirtualReplace(args),
+            false => Change::Replace(args),
+        };
     }
-    enter(target.state, target.model, origin(actor));
+    enter(target.state, target.model, origin(actor), virtual_);
     Ok(dispatched)
 }
 
 /// Turns the open insert session into a replace session with nothing
 /// typed yet, after a split resumed one ([`VimState::split_session`]),
-/// which `.` repeats as `R`.
-pub(crate) fn resumed(state: &mut VimState, model: &mut EditorModel) {
+/// which `.` repeats as `R`, or `gR` if it was one.
+pub(crate) fn resumed(state: &mut VimState, model: &mut EditorModel, virtual_: bool) {
     let Some(session) = &mut state.session else {
         return;
     };
-    session.change = Change::Replace(CountArgs { count: None });
+    let args = CountArgs { count: None };
+    session.change = match virtual_ {
+        true => Change::VirtualReplace(args),
+        false => Change::Replace(args),
+    };
     let origin = session.origin.clone();
-    enter(state, model, origin);
+    enter(state, model, origin, virtual_);
 }
 
-fn enter(state: &mut VimState, model: &mut EditorModel, origin: Origin) {
+fn enter(state: &mut VimState, model: &mut EditorModel, origin: Origin, virtual_: bool) {
     state.mode = Mode::Replace;
-    state.replace = Some(Replace::new(model, origin));
+    state.replace = Some(Replace::new(model, origin, virtual_));
 }
 
 /// The carets' heads, in order and once each.
@@ -535,6 +600,12 @@ impl VimState {
         }
     }
 
+    /// Whether the open session is a virtual replace one (`gR`), whose
+    /// `Tab` the host types through [`VimState::replace_text`].
+    pub fn is_virtual_replace(&self) -> bool {
+        self.mode == Mode::Replace && self.replace.as_ref().is_some_and(Replace::is_virtual)
+    }
+
     /// Types `row`, holding no line break, over every caret's row.
     fn overwrite(&self, model: &mut EditorModel, row: &str) {
         let (Some(replace), Some(session)) = (&self.replace, &self.session) else {
@@ -545,10 +616,21 @@ impl VimState {
         let heads = sorted_heads(model);
         let records = replace.at_carets(&text, &heads);
         let mut planned: Vec<Vec<Entry>> = Vec::with_capacity(heads.len());
+        let tab = model.tab_size().max(1);
         let acts = heads
             .iter()
             .map(|&head| {
                 let (line, mut ix) = rest_of_row(&text, head);
+                if replace.virtual_ {
+                    let column = width_from(&line.text[..head - line.start], 0, tab);
+                    let typed = virtual_over(&line, ix, column, row, 1, tab, true);
+                    planned.push(typed.entries);
+                    return Act {
+                        range: head..past(&line, ix, typed.over),
+                        text: typed.text,
+                        land: typed.land,
+                    };
+                }
                 let mut entries = Vec::new();
                 for (at, ch) in row.char_indices() {
                     let was = match ix < line.len() {
@@ -618,6 +700,25 @@ impl VimState {
                             undone.push(None);
                             return Act::stay(head);
                         }
+                        (false, _) if entry.tab_rest => {
+                            // Back through the spaces of the typed tab.
+                            let mut first = last;
+                            while typed[first].tab == 0 {
+                                let Some(below) = first.checked_sub(1).map(|ix| &typed[ix]) else {
+                                    break;
+                                };
+                                if below.made.end != typed[first].made.start || !below.live(&text) {
+                                    break;
+                                }
+                                first -= 1;
+                            }
+                            let was: String = typed[first..]
+                                .iter()
+                                .map(|entry| entry.was.as_str())
+                                .collect();
+                            let range = typed[first].made.start..head;
+                            (range, was, Undo::Take { first, keep: None })
+                        }
                         (false, _) => {
                             let (line, at) = rest_of_row(&text, head);
                             let grapheme = past(&line, at.saturating_sub(1), 0);
@@ -661,6 +762,16 @@ impl VimState {
                             },
                         ),
                         (true, _) => (made.start + 1..made.end, String::new(), Undo::Trim),
+                    };
+                    // The spaces a wide grapheme left go with the character.
+                    let range = match entry.trail {
+                        0 => range,
+                        trail => {
+                            let end = head + trail;
+                            let spaces = end <= text.len()
+                                && text.slice_to_string(head..end) == " ".repeat(trail);
+                            range.start..range.end + if spaces { trail } else { 0 }
+                        }
                     };
                     undone.push(Some((ix, undo)));
                     Act {
@@ -707,9 +818,7 @@ impl Undo {
         };
         let taken: Vec<Entry> = typed.drain(first..).collect();
         let mut keys = String::new();
-        for entry in &taken {
-            entry.keys(&mut keys);
-        }
+        keys_of(&taken, &mut keys);
         keys.push(BACKSPACE);
         let at = taken.first().map_or(0, |entry| entry.made.start);
         match (keep, typed.last_mut()) {
@@ -734,8 +843,180 @@ impl Undo {
                 was: String::new(),
                 then: keys,
                 touched: false,
+                trail: 0,
+                tab: 0,
+                tab_rest: false,
             }),
         }
+    }
+}
+
+/// The display width of `text` at `column`, without building a row for the
+/// printable ASCII that most of it is.
+fn columns_of(text: &str, column: usize, tab: usize) -> usize {
+    match text.as_bytes() {
+        [b' '..=b'~'] => 1,
+        _ => width_from(text, column, tab),
+    }
+}
+
+/// What one character typed in a virtual session did to the row after the
+/// caret, for a `<BS>` to undo.
+struct Step {
+    at: usize,
+    tab_rest: bool,
+    width: usize,
+    taken: Vec<(String, bool)>,
+    trail: usize,
+}
+
+/// What typing in a virtual session does at one caret.
+struct Virtual {
+    /// What goes in: the characters, and the spaces left of a wide
+    /// grapheme their last only partly covered.
+    text: String,
+    /// How far into `text` the caret lands.
+    land: usize,
+    /// How many of the row's graphemes from the caret it replaces.
+    over: usize,
+    entries: Vec<Entry>,
+}
+
+/// Types `row` (no line break) in a virtual session at display `column`,
+/// before grapheme `ix` of `line`, as nvim's `gR` does: each character
+/// replaces the graphemes covering the columns it takes, a tab as the
+/// spaces to its next stop. A tab only partly covered stays, as it still
+/// reaches its stop; a wide grapheme partly covered leaves spaces for its
+/// other columns; past the row's end characters go in.
+fn virtual_over(
+    line: &Line,
+    ix: usize,
+    mut column: usize,
+    row: &str,
+    copies: usize,
+    tab: usize,
+    history: bool,
+) -> Virtual {
+    // The graphemes after the caret, whether they're the row's own (the
+    // ones that leave the row), the leftover spaces being the others.
+    let mut rest: VecDeque<(String, bool)> = (ix..line.len())
+        .map(|ix| (line.grapheme(ix).to_string(), true))
+        .collect();
+    let (mut text, mut over) = (String::new(), 0);
+    let mut entries: Vec<Entry> = Vec::new();
+    // What each character took, for a `<BS>` in the keys to put back.
+    let mut steps: Vec<Step> = Vec::new();
+    let mut keys = String::new();
+    let track = history || row.contains(BACKSPACE);
+    for key in std::iter::repeat_n(row, copies).flat_map(|row| row.chars().chain(['\u{0}'])) {
+        if key == '\u{0}' {
+            // A copy's `<BS>`s take back only what it typed.
+            if !history {
+                steps.clear();
+            }
+            continue;
+        }
+        let spaces = match key {
+            BACKSPACE => {
+                // The grapheme before the caret goes, and the whole of a
+                // typed tab.
+                let start = text
+                    .grapheme_indices(true)
+                    .next_back()
+                    .map_or(0, |(at, _)| at);
+                while let Some(step) = steps.pop() {
+                    for _ in 0..step.trail {
+                        rest.pop_front();
+                    }
+                    over -= step.taken.iter().filter(|(_, own)| *own).count();
+                    for grapheme in step.taken.into_iter().rev() {
+                        rest.push_front(grapheme);
+                    }
+                    text.truncate(step.at);
+                    if history {
+                        entries.pop();
+                    }
+                    column -= step.width;
+                    // On while inside a typed tab, or the grapheme goes on.
+                    if !step.tab_rest && step.at <= start {
+                        break;
+                    }
+                }
+                continue;
+            }
+            '\t' => tab - column % tab,
+            _ => 0,
+        };
+        keys.clear();
+        match spaces {
+            0 => keys.push(key),
+            n => keys.extend(std::iter::repeat_n(' ', n)),
+        }
+        for (nth, ch) in keys.chars().enumerate() {
+            let width = columns_of(ch.encode_utf8(&mut [0; 4]), column, tab);
+            let (mut need, mut was, mut trail) = (width, String::new(), 0);
+            let mut taken = Vec::new();
+            while need > 0 {
+                let Some((grapheme, _)) = rest.front() else {
+                    break;
+                };
+                let covered = width - need;
+                let columns = columns_of(grapheme, column + covered, tab);
+                if columns > need && grapheme == "\t" {
+                    break;
+                }
+                let Some(next) = rest.pop_front() else {
+                    break;
+                };
+                if history {
+                    was.push_str(&next.0);
+                }
+                over += usize::from(next.1);
+                if track {
+                    taken.push(next);
+                }
+                if columns > need {
+                    trail = columns - need;
+                    for _ in 0..trail {
+                        rest.push_front((" ".to_string(), false));
+                    }
+                    break;
+                }
+                need -= columns;
+            }
+            let at = text.len();
+            text.push(ch);
+            if history {
+                let mut entry = Entry::new(at..text.len(), ch.to_string(), was);
+                entry.trail = trail;
+                // A typed tab is one key: `.` types it again where it lands.
+                if spaces > 0 {
+                    match nth {
+                        0 => entry.tab = spaces,
+                        _ => entry.tab_rest = true,
+                    }
+                }
+                entries.push(entry);
+            }
+            if track {
+                steps.push(Step {
+                    at,
+                    tab_rest: spaces > 0 && nth > 0,
+                    width,
+                    taken,
+                    trail,
+                });
+            }
+            column += width;
+        }
+    }
+    let land = text.len();
+    text.extend(rest.iter().take_while(|(_, own)| !own).map(|_| ' '));
+    Virtual {
+        text,
+        land,
+        over,
+        entries,
     }
 }
 
@@ -765,6 +1046,8 @@ pub(crate) fn repeat_typed(
         }
     }
     let budget = MAX_PUT / keys.len().max(1);
+    let virtual_ = matches!(session.change, Change::VirtualReplace(_));
+    let tab = model.tab_size().max(1);
     let acts = sorted_heads(model)
         .iter()
         .map(|&head| {
@@ -776,6 +1059,16 @@ pub(crate) fn repeat_typed(
                 return Act::stay(head);
             }
             let (line, ix) = rest_of_row(&text, head);
+            if virtual_ && !typed.contains('\n') {
+                let column = width_from(&line.text[..head - line.start], 0, tab);
+                let copies = more.min(MAX_PUT / keys.len().max(1) / typed.len());
+                let typed = virtual_over(&line, ix, column, typed, copies, tab, false);
+                return Act {
+                    range: head..past(&line, ix, typed.over),
+                    text: typed.text,
+                    land: typed.land,
+                };
+            }
             let rest: Vec<&str> = (ix..line.len()).map(|ix| line.grapheme(ix)).collect();
             let before = &line.text[..head - line.start];
             let (copied, over) = copies(before, &rest, typed, more, budget);

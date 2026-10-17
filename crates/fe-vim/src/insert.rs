@@ -651,12 +651,13 @@ impl VimState {
         };
         // A replace session resumes as one.
         let replacing = self.mode == Mode::Replace;
+        let virtual_ = self.replace.as_ref().is_some_and(|r| r.is_virtual());
         if splits == Splits::Edits {
             end(model, self, Ending::Split, None);
             let result = command(model);
             resume(model, self, origin, block);
             if replacing {
-                crate::replace::resumed(self, model);
+                crate::replace::resumed(self, model, virtual_);
             }
             return result;
         }
@@ -670,7 +671,7 @@ impl VimState {
             end(model, self, Ending::Moved(primary), None);
             resume(model, self, origin, block);
             if replacing {
-                crate::replace::resumed(self, model);
+                crate::replace::resumed(self, model, virtual_);
             }
         }
         result

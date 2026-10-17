@@ -1,0 +1,194 @@
+# Virtual-replace cases for fe-vim's oracle: `gR` types characters that
+# replace the screen columns they take (tabstop 4, 'expandtab'): over a tab
+# (kept while it still reaches its stop, then consumed), a typed tab, over a
+# wide character, past the row's end, `<BS>` putting back, with a count, `.`
+# and `u`. No `<CR>`. Hand-written: name, buffer (rows joined with \n, no
+# trailing newline), cursor = [row, byte column] and keys in vim notation.
+# What nvim does with each is recorded in virtual_replace.expected.json by
+# the ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "over_row"
+buffer = "abcd"
+cursor = [0, 0]
+keys = "gRxy<Esc>"
+
+[[case]]
+name = "tab_kept"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxy<Esc>"
+
+[[case]]
+name = "tab_consumed"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxyzw<Esc>"
+
+[[case]]
+name = "tab_consumed_then_next"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxyzwv<Esc>"
+
+[[case]]
+name = "tab_from_col_1"
+buffer = "a\tbc"
+cursor = [0, 1]
+keys = "gRx<Esc>"
+
+[[case]]
+name = "typed_tab"
+buffer = "abc"
+cursor = [0, 0]
+keys = "gR<Tab>x<Esc>"
+
+[[case]]
+name = "typed_tab_midrow"
+buffer = "abcdefgh"
+cursor = [0, 1]
+keys = "gR<Tab>x<Esc>"
+
+[[case]]
+name = "over_wide"
+buffer = "日本語"
+cursor = [0, 0]
+keys = "gRab<Esc>"
+
+[[case]]
+name = "over_wide_odd"
+buffer = "日本語"
+cursor = [0, 0]
+keys = "gRa<Esc>"
+
+[[case]]
+name = "wide_over_narrow"
+buffer = "abcd"
+cursor = [0, 0]
+keys = "gR日<Esc>"
+
+[[case]]
+name = "wide_over_wide_offset"
+buffer = "a日本"
+cursor = [0, 1]
+keys = "gRxy<Esc>"
+
+[[case]]
+name = "past_end"
+buffer = "abc"
+cursor = [0, 2]
+keys = "gRxyz<Esc>"
+
+[[case]]
+name = "bs_puts_back_tab"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxyz<BS><BS><Esc>"
+
+[[case]]
+name = "bs_puts_back"
+buffer = "abc"
+cursor = [0, 1]
+keys = "gRxyz<BS><BS><Esc>"
+
+[[case]]
+name = "bs_wide"
+buffer = "日本語"
+cursor = [0, 0]
+keys = "gRab<BS><BS><Esc>"
+
+[[case]]
+name = "bs_wide_one"
+buffer = "日本語"
+cursor = [0, 0]
+keys = "gRa<BS><Esc>"
+
+[[case]]
+name = "bs_consumed_tab"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxyzw<BS><Esc>"
+
+[[case]]
+name = "count"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "2gRxy<Esc>"
+
+[[case]]
+name = "count_tab"
+buffer = "a\tbc def"
+cursor = [0, 0]
+keys = "3gRx<Esc>"
+
+[[case]]
+name = "dot"
+buffer = "abc def\nmno"
+cursor = [0, 0]
+keys = "gRxy<Esc>j0."
+
+[[case]]
+name = "dot_count"
+buffer = "abcdefgh\nmnopqrst"
+cursor = [0, 0]
+keys = "gRxy<Esc>j03."
+
+[[case]]
+name = "undo"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "gRxy<Esc>u"
+
+[[case]]
+name = "undo_tab"
+buffer = "a\tbc"
+cursor = [0, 0]
+keys = "gRxyzw<Esc>u"
+
+[[case]]
+name = "tab_dot_other_column"
+buffer = "abcdefgh\nabcdefgh"
+cursor = [0, 0]
+keys = "gR<Tab><Esc>j0l."
+
+[[case]]
+name = "count_bs_wide"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "2gRa<BS>日<Esc>"
+
+[[case]]
+name = "dot_bs_wide"
+buffer = "abcdef\nabcdef"
+cursor = [0, 0]
+keys = "gRa<BS>日<Esc>j0."
+
+[[case]]
+name = "count_typed_tab"
+buffer = "abcdefghijkl"
+cursor = [0, 1]
+keys = "2gR<Tab>x<Esc>"
+
+[[case]]
+name = "tab_bs"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "gR<Tab><BS><Esc>"
+
+[[case]]
+name = "tab_bs_then_type"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "gR<Tab><BS>xy<Esc>"
+
+[[case]]
+name = "count_bs_combining"
+buffer = "abcdefghijkl"
+cursor = [0, 0]
+keys = "2gRá<BS>日<Esc>"
+
+[[case]]
+name = "dot_bs_combining"
+buffer = "abcdefghijkl\nabcdefghijkl"
+cursor = [0, 0]
+keys = "2gRá<BS>日<Esc>j0."

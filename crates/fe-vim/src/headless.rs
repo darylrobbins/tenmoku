@@ -188,6 +188,7 @@ impl HeadlessVim {
             VimKey::Char(ch) => self
                 .state
                 .replace_text(&mut self.model, ch.encode_utf8(&mut [0; 4])),
+            VimKey::Tab => self.state.replace_text(&mut self.model, "\t"),
             VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
             VimKey::Backspace => self.state.replace_backspace(&mut self.model),
             VimKey::Esc => {

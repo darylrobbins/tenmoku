@@ -64,7 +64,7 @@ impl CommandTarget for VimCommands {
 }
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
-/// `vim.normal_mode`, `vim.replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
+/// `vim.normal_mode`, `vim.replace_mode`, `vim.virtual_replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, the
 /// macros' `vim.record`, `vim.record_stop` and `vim.play`, and for
 /// the visual modes
@@ -185,6 +185,22 @@ pub fn registry() -> Registry<VimCommands> {
         .expect("vim command IDs are valid and distinct")
         .description(
             "Enters replace mode at the caret: typed text overwrites the row and goes on past its end, backspace puts back what it overwrote; one transaction until normal mode, typed text going in `count` times.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.virtual_replace_mode",
+            "Vim Virtual Replace Mode",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                follow(target);
+                insert::adopt_closing(target.state);
+                replace::virtual_replace(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Enters virtual replace mode (`gR`) at the caret: like replace mode, but each typed character replaces the screen columns it takes, a tab as the spaces to its next stop; typed text overwrites the row and goes on past its end, backspace puts back what it overwrote; one transaction until normal mode, typed text going in `count` times.",
         )
         .context(normal.clone())
         .mutates_buffer(true);

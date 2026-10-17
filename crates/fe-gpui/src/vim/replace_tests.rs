@@ -72,11 +72,26 @@ fn shown_rows(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<u32>
 fn replace_mode_typing(cx: &mut TestAppContext) {
     cx.update(init);
     overwrite_typing(cx);
+    virtual_tab(cx);
     caret_shapes(cx);
     increment(cx);
     folds(cx);
     mark_jump_scrolls(cx);
     mark_jump_scrolls_within_a_wrapped_row(cx);
+}
+
+/// `Tab` in `gR`, pressed or committed with text, types the spaces to the
+/// next stop over the columns they take; in `R` it is as before.
+fn virtual_tab(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "abcdefgh", (0, 0));
+    cx.simulate_keystrokes("g shift-r tab");
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(text(&view, cx), "    xfgh");
+    cx.simulate_keystrokes("u g shift-r");
+    cx.simulate_input("\t");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(text(&view, cx), "    efgh");
 }
 
 /// `R` overwrites as typed, `<BS>` puts back, and `u` undoes it all.

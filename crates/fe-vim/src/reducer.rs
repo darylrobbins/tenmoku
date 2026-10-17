@@ -420,6 +420,11 @@ impl Pending {
                 self.end_count();
                 invocation("vim.insert_last", CountArgs { count: self.count })
             }
+            // `gR`, which cancels after an operator or in a visual mode.
+            Prefix::G if ch == 'R' && self.operator.is_none() && !self.visual => {
+                self.end_count();
+                invocation("vim.virtual_replace_mode", CountArgs { count: self.count })
+            }
             Prefix::Find(motion) => self.commit(Target::Motion(match motion {
                 Motion::FindForward(_) => Motion::FindForward(ch),
                 Motion::FindBackward(_) => Motion::FindBackward(ch),

@@ -1,0 +1,563 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "over_row",
+      "buffer": "abcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxy<Esc>",
+      "expect": {
+        "buffer": "xycd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_kept",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxy<Esc>",
+      "expect": {
+        "buffer": "xy\tbc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_consumed",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxyzw<Esc>",
+      "expect": {
+        "buffer": "xyzwbc",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_consumed_then_next",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxyzwv<Esc>",
+      "expect": {
+        "buffer": "xyzwvc",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_from_col_1",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<Esc>",
+      "expect": {
+        "buffer": "ax\tbc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "typed_tab",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab>x<Esc>",
+      "expect": {
+        "buffer": "    x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "typed_tab_midrow",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gR<Tab>x<Esc>",
+      "expect": {
+        "buffer": "a   xfgh",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "over_wide",
+      "buffer": "日本語",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRab<Esc>",
+      "expect": {
+        "buffer": "ab本語",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "over_wide_odd",
+      "buffer": "日本語",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRa<Esc>",
+      "expect": {
+        "buffer": "a 本語",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_over_narrow",
+      "buffer": "abcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR日<Esc>",
+      "expect": {
+        "buffer": "日cd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_over_wide_offset",
+      "buffer": "a日本",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRxy<Esc>",
+      "expect": {
+        "buffer": "axy本",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "past_end",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "gRxyz<Esc>",
+      "expect": {
+        "buffer": "abxyz",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_puts_back_tab",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxyz<BS><BS><Esc>",
+      "expect": {
+        "buffer": "x\tbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_puts_back",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRxyz<BS><BS><Esc>",
+      "expect": {
+        "buffer": "axc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_wide",
+      "buffer": "日本語",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRab<BS><BS><Esc>",
+      "expect": {
+        "buffer": "日本語",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_wide_one",
+      "buffer": "日本語",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRa<BS><Esc>",
+      "expect": {
+        "buffer": "日本語",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_consumed_tab",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxyzw<BS><Esc>",
+      "expect": {
+        "buffer": "xyz\tbc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "2gRxy<Esc>",
+      "expect": {
+        "buffer": "axyxyef",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_tab",
+      "buffer": "a\tbc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gRx<Esc>",
+      "expect": {
+        "buffer": "xxx\tbc def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot",
+      "buffer": "abc def\nmno",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxy<Esc>j0.",
+      "expect": {
+        "buffer": "xyc def\nxyo",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count",
+      "buffer": "abcdefgh\nmnopqrst",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxy<Esc>j03.",
+      "expect": {
+        "buffer": "xycdefgh\nxyxyxyst",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRxy<Esc>u",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_tab",
+      "buffer": "a\tbc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRxyzw<Esc>u",
+      "expect": {
+        "buffer": "a\tbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_dot_other_column",
+      "buffer": "abcdefgh\nabcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab><Esc>j0l.",
+      "expect": {
+        "buffer": "    efgh\na   efgh",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_bs_wide",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gRa<BS>日<Esc>",
+      "expect": {
+        "buffer": "日日ef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_bs_wide",
+      "buffer": "abcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRa<BS>日<Esc>j0.",
+      "expect": {
+        "buffer": "日cdef\n日cdef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_typed_tab",
+      "buffer": "abcdefghijkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "2gR<Tab>x<Esc>",
+      "expect": {
+        "buffer": "a   x   xjkl",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_bs",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab><BS><Esc>",
+      "expect": {
+        "buffer": "abcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_bs_then_type",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab><BS>xy<Esc>",
+      "expect": {
+        "buffer": "xycdefgh",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_bs_combining",
+      "buffer": "abcdefghijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gRá<BS>日<Esc>",
+      "expect": {
+        "buffer": "日日efghijkl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_bs_combining",
+      "buffer": "abcdefghijkl\nabcdefghijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gRá<BS>日<Esc>j0.",
+      "expect": {
+        "buffer": "日日efghijkl\n日日efghijkl",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -542,6 +542,16 @@ impl EditorView {
                         vim::BACKSPACE if replace == Some(true) => {
                             vim::replace_backspace(state, &mut self.model, &invocation)
                         }
+                        // `Tab` in a virtual session is typed as spaces over
+                        // the columns they take.
+                        "editor.tab" if state.is_virtual_replace() => vim::type_as_keys(
+                            state,
+                            &mut self.model,
+                            &host,
+                            &invocation,
+                            "\t",
+                            true,
+                        ),
                         // Edit nothing, or as typing does, so the session
                         // goes on.
                         SHOW_HOVER | signature_help::SHOW => dispatch(&mut self.model),
