@@ -3,7 +3,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
     io,
@@ -452,16 +452,22 @@ impl FinderIndex {
     /// The best `limit` paths for `text`, best first: by score, then shorter
     /// path (in chars), then path order. A match within the file name beats
     /// any match that spans directories. Matching ignores case, and every
-    /// character of `text` must appear in the path, in order.
+    /// character of a word must appear in the path, in order.
+    ///
+    /// `text` splits on whitespace into words, as VS Code's quick open
+    /// splits its query. A path matches when every word matches it, and its
+    /// score is the saturating sum of the words' scores; its indices are the
+    /// union of the words'. No word (empty or whitespace-only `text`) gives
+    /// the first `limit` paths in path order.
     ///
     /// Runs over the paths indexed so far. Only the results' match indices
-    /// are computed. An empty `text` gives the first `limit` paths in path
-    /// order.
+    /// are computed.
     pub fn query(&mut self, text: &str, limit: usize) -> Vec<FinderMatch> {
         if limit == 0 {
             return Vec::new();
         }
-        if text.is_empty() {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.is_empty() {
             return self
                 .keys
                 .values()
@@ -469,14 +475,86 @@ impl FinderIndex {
                 .map(|&item| self.result(item, 0, Vec::new()))
                 .collect();
         }
-        // Results are ranked here, so frizbee needn't sort.
-        let config = Config::default()
-            .casing(CaseMatching::Ignore)
-            .sort(SortStrategy::IndexAsc);
-        let mut matcher = Matcher::new(text, &config);
+        let mut matchers: Vec<Matcher> = words.iter().map(|word| word_matcher(word)).collect();
+        let rank = |a: &Candidate, b: &Candidate| {
+            let (x, y) = (&self.items[a.item as usize], &self.items[b.item as usize]);
+            b.score
+                .cmp(&a.score)
+                .then(x.chars.cmp(&y.chars))
+                .then_with(|| x.order().cmp(&y.order()))
+        };
+        if let [word] = words[..] {
+            // With enough file name matches, nothing else can make the cut.
+            let mut candidates = self.word_candidates(&mut matchers[0], word, limit);
+            if candidates.len() > limit {
+                candidates.select_nth_unstable_by(limit - 1, rank);
+                candidates.truncate(limit);
+            }
+            candidates.sort_unstable_by(rank);
+            return candidates
+                .into_iter()
+                .map(|candidate| {
+                    let indices = self.indices(&mut matchers[0], word, candidate);
+                    self.result(candidate.item, candidate.score, indices)
+                })
+                .collect();
+        }
+        // item -> (summed score, whether each word matched in the file name)
+        let mut joint: HashMap<u32, (u32, Vec<bool>)> = HashMap::new();
+        for (ix, word) in words.iter().enumerate() {
+            let found = self.word_candidates(&mut matchers[ix], word, usize::MAX);
+            if ix == 0 {
+                joint.extend(found.iter().map(|c| (c.item, (c.score, vec![c.in_name]))));
+                continue;
+            }
+            let found: HashMap<u32, Candidate> = found.into_iter().map(|c| (c.item, c)).collect();
+            joint.retain(|item, (score, in_name)| match found.get(item) {
+                Some(c) => {
+                    *score = score.saturating_add(c.score);
+                    in_name.push(c.in_name);
+                    true
+                }
+                None => false,
+            });
+        }
+        let mut candidates: Vec<Candidate> = joint
+            .iter()
+            .map(|(&item, &(score, _))| Candidate {
+                score,
+                item,
+                in_name: false,
+            })
+            .collect();
+        if candidates.len() > limit {
+            candidates.select_nth_unstable_by(limit - 1, rank);
+            candidates.truncate(limit);
+        }
+        candidates.sort_unstable_by(rank);
+        candidates
+            .into_iter()
+            .map(|candidate| {
+                let mut indices = Vec::new();
+                for (ix, word) in words.iter().enumerate() {
+                    let one = Candidate {
+                        in_name: joint[&candidate.item].1[ix],
+                        ..candidate
+                    };
+                    indices.extend(self.indices(&mut matchers[ix], word, one));
+                }
+                indices.sort_unstable();
+                indices.dedup();
+                self.result(candidate.item, candidate.score, indices)
+            })
+            .collect()
+    }
+
+    /// The paths that match one `word`: those whose file name does (unless
+    /// the word holds a `/`), then, if fewer than `limit` of those, the
+    /// others that match across the path.
+    fn word_candidates(&self, matcher: &mut Matcher, word: &str, limit: usize) -> Vec<Candidate> {
         let mut candidates = Vec::new();
         // A file name never holds a `/`.
-        if !text.contains('/') {
+        if !word.contains('/') {
             let names: Vec<&str> = self.items.iter().map(Item::file_name).collect();
             candidates.extend(matcher.match_list(&names).into_iter().map(|m| Candidate {
                 score: NAME_TIER + u32::from(m.score),
@@ -484,7 +562,6 @@ impl FinderIndex {
                 in_name: true,
             }));
         }
-        // With enough file name matches, nothing else can make the cut.
         if candidates.len() < limit {
             let named: HashSet<u32> = candidates.iter().map(|c| c.item).collect();
             candidates.extend(
@@ -499,25 +576,7 @@ impl FinderIndex {
                     }),
             );
         }
-        let rank = |a: &Candidate, b: &Candidate| {
-            let (x, y) = (&self.items[a.item as usize], &self.items[b.item as usize]);
-            b.score
-                .cmp(&a.score)
-                .then(x.chars.cmp(&y.chars))
-                .then_with(|| x.order().cmp(&y.order()))
-        };
-        if candidates.len() > limit {
-            candidates.select_nth_unstable_by(limit - 1, rank);
-            candidates.truncate(limit);
-        }
-        candidates.sort_unstable_by(rank);
         candidates
-            .into_iter()
-            .map(|candidate| {
-                let indices = self.indices(&mut matcher, text, candidate);
-                self.result(candidate.item, candidate.score, indices)
-            })
-            .collect()
     }
 
     /// The match indices of a candidate, as ascending char indices into its
@@ -1414,4 +1473,13 @@ impl Chain {
         }
         Reached::Yes
     }
+}
+
+/// A matcher for one query word. Results are ranked by the caller, so frizbee
+/// needn't sort.
+fn word_matcher(word: &str) -> Matcher {
+    let config = Config::default()
+        .casing(CaseMatching::Ignore)
+        .sort(SortStrategy::IndexAsc);
+    Matcher::new(word, &config)
 }
