@@ -162,6 +162,25 @@ impl Terminal {
         lock(&self.shell).view_moved(offset, &term);
     }
 
+    /// Scrolls the view by `lines` (negative back into history) with the vi
+    /// cursor staying on its line, as vim's ctrl-e and ctrl-y do; it moves
+    /// only to the view's top or bottom row when its line would leave the
+    /// view. Nothing outside vi mode.
+    pub fn vi_scroll_view(&self, lines: i32) {
+        let mut term = self.term.lock();
+        if !term.mode().contains(TermMode::VI) {
+            return;
+        }
+        let offset = term.grid().display_offset();
+        let point = term.vi_mode_cursor.point;
+        term.scroll_display(Scroll::Delta(lines.saturating_neg()));
+        let top = -(term.grid().display_offset() as i32);
+        let bottom = top + term.screen_lines() as i32 - 1;
+        let line = point.line.0.clamp(top, bottom);
+        term.vi_goto_point(Point::new(Line(line), point.column));
+        lock(&self.shell).view_moved(offset, &term);
+    }
+
     /// Starts a selection of `kind` at the vi cursor, as v, V and ctrl-v
     /// do: the same kind again clears it, and another changes its kind,
     /// keeping where it started. `None` clears it. Motions move its end.

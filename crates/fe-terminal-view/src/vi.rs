@@ -97,6 +97,8 @@ pub(crate) enum ViCommand {
     Move(ViMove, usize),
     /// [`fe_terminal::Terminal::vi_scroll`] by this many lines.
     Scroll(i32),
+    /// [`fe_terminal::Terminal::vi_scroll_view`] by this many lines.
+    ScrollView(i32),
     Select(SelectionKind),
     /// Copies the selection and leaves.
     Yank,
@@ -232,8 +234,8 @@ impl ViKeys {
             ViKey::Char('{') => motion(ViMove::ParagraphUp),
             ViKey::Char('}') => motion(ViMove::ParagraphDown),
             ViKey::Char('G') => Some(ViCommand::Move(ViMove::Bottom, 1)),
-            ViKey::Ctrl('e') => Some(ViCommand::Scroll(lines(1))),
-            ViKey::Ctrl('y') => Some(ViCommand::Scroll(-lines(1))),
+            ViKey::Ctrl('e') => Some(ViCommand::ScrollView(lines(1))),
+            ViKey::Ctrl('y') => Some(ViCommand::ScrollView(-lines(1))),
             ViKey::Ctrl('d') => Some(ViCommand::Scroll(lines(half))),
             ViKey::Ctrl('u') => Some(ViCommand::Scroll(-lines(half))),
             ViKey::Ctrl('f') | ViKey::PageDown => Some(ViCommand::Scroll(lines(page))),
@@ -342,6 +344,7 @@ impl TerminalView {
                 }
             }
             ViCommand::Scroll(lines) => terminal.vi_scroll(lines),
+            ViCommand::ScrollView(lines) => terminal.vi_scroll_view(lines),
             ViCommand::Select(kind) => terminal.vi_select(Some(kind)),
             ViCommand::Yank => {
                 if let Some(text) = terminal.selected_text() {
@@ -492,8 +495,8 @@ mod tests {
                 Some(Scroll(-10)),
                 Some(Scroll(10)),
                 Some(Scroll(-10)),
-                Some(Scroll(1)),
-                Some(Scroll(-1)),
+                Some(ScrollView(1)),
+                Some(ScrollView(-1)),
             ]
         );
         assert_eq!(keys.key(key("z"), 10), None);
