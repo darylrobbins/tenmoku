@@ -1399,6 +1399,92 @@ impl LspManager {
         }
     }
 
+    /// As [`document_request`](Self::document_request), but the request is
+    /// queued only once the capabilities of the server `buffer` is on are
+    /// known, and only if `provides` says it has `feature`: otherwise
+    /// nothing is sent and the answer is `Unavailable(feature)`. (A server
+    /// still initializing is waited for, on the manager's clock, so a
+    /// request isn't queued for one that turns out not to have the
+    /// feature; the method's timeout covers the wait too.) The buffer's
+    /// `version` is checked when the request is queued, not before.
+    pub(crate) fn document_request_if_provided<R: Request>(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        feature: &'static str,
+        provides: fn(&ServerCapabilities) -> bool,
+        params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
+        /// How often the capabilities are looked at while unknown.
+        const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+        let (answer, answered) = oneshot::channel();
+        let target = self
+            .server_of(buffer)
+            .and_then(|server| self.servers.get(&server))
+            .map(|handle| (handle.session.clone(), handle.commands.clone()));
+        let clock = self.clock.clone();
+        let mut send = Some(move |commands: mpsc::UnboundedSender<Command>| {
+            let admit: Admit = Box::new(move |admission| {
+                let admitted = match admission {
+                    Ok(admitted) => admitted,
+                    Err(err) => {
+                        let _ = answer.send(Err(err));
+                        return Vec::new();
+                    }
+                };
+                let params = params(&admitted);
+                vec![call::<R, _>(answer, params, move |_, reply| {
+                    reply.map(|reply| (reply, admitted))
+                })]
+            });
+            // A server that has gone drops the command, and `answer` with it.
+            let _ = commands.unbounded_send(Command::Admit {
+                buffer,
+                version,
+                admit,
+            });
+        });
+        let known = |session: &Mutex<Session>| {
+            (session.lock().unwrap_or_else(PoisonError::into_inner))
+                .capabilities
+                .clone()
+        };
+        // Known now: queued now, as `document_request` queues, polled or
+        // not. Otherwise queued by the first poll to find them known.
+        let mut waiting = None;
+        let mut refused = None;
+        match target {
+            None => refused = Some(LspError::Unavailable(NOT_OPEN.into())),
+            Some((session, commands)) => match known(&session) {
+                Some(capabilities) if provides(&capabilities) => send.take().unwrap()(commands),
+                Some(_) => refused = Some(LspError::Unavailable(feature.into())),
+                None => waiting = Some((session, commands)),
+            },
+        }
+        let gated = async move {
+            if let Some(err) = refused {
+                return Err(err);
+            }
+            if let Some((session, commands)) = waiting {
+                loop {
+                    match known(&session) {
+                        Some(capabilities) if provides(&capabilities) => break,
+                        Some(_) => return Err(LspError::Unavailable(feature.into())),
+                        None => clock.sleep(POLL).await,
+                    }
+                }
+                send.take().unwrap()(commands);
+            }
+            answered.await.unwrap_or(Err(LspError::ServerDown))
+        };
+        within(
+            gated,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
+    }
+
     /// What `server` said it can do, once it has initialized.
     pub fn capabilities(&self, server: ServerId) -> Option<ServerCapabilities> {
         self.session(server, |session| session.capabilities.clone())

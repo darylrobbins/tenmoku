@@ -282,3 +282,6 @@ fn rename_edits() {
         assert!(s.requests(Rename::METHOD).is_empty());
     }
 }
+
+#[path = "document_highlight_tests.rs"]
+mod document_highlight;
