@@ -37,28 +37,42 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 
 impl EditorModel {
     /// Comments out the rows selections touch, or uncomments them if all
-    /// are commented already, skipping blank rows. A line token is
-    /// preferred to a block pair, which wraps each row on its own. Does
-    /// nothing with neither.
+    /// are commented already, skipping blank rows. When every touched row
+    /// is blank, a line token is put at the end of each, as VS Code does. A
+    /// line token is preferred to a block pair, which wraps each row on its
+    /// own and leaves blank rows alone. Does nothing with neither.
     pub fn toggle_comment(&mut self, tokens: CommentTokens) {
         self.sync_display();
         let text = self.text();
         // Each non-blank row: where its text starts, where it ends without
         // trailing whitespace, and where the row ends, as offsets.
-        let rows: Vec<(usize, usize, usize)> = self
+        let mut rows = Vec::new();
+        // Where each blank row's content ends.
+        let mut blanks = Vec::new();
+        for row in self
             .blocks(false)
             .iter()
             .flat_map(|block| block.rows.clone())
-            .filter_map(|row| {
-                let content = text.row_to_string(row);
-                let content = content.trim_end_matches(['\n', '\r']);
-                let trimmed = content.trim_start();
-                let code = trimmed.trim_end();
-                let start = text.row_start(row) + (content.len() - trimmed.len());
-                (!code.is_empty()).then(|| (start, start + code.len(), start + trimmed.len()))
-            })
-            .collect();
+        {
+            let content = text.row_to_string(row);
+            let content = content.trim_end_matches(['\n', '\r']);
+            let trimmed = content.trim_start();
+            let code = trimmed.trim_end();
+            let start = text.row_start(row) + (content.len() - trimmed.len());
+            if code.is_empty() {
+                blanks.push(text.row_start(row) + content.len());
+            } else {
+                rows.push((start, start + code.len(), start + trimmed.len()));
+            }
+        }
         if rows.is_empty() {
+            if let Some(token) = tokens.line {
+                let edits = blanks
+                    .into_iter()
+                    .map(|at| (at..at, format!("{token} ")))
+                    .collect();
+                self.edit_rows_in_place(edits);
+            }
             return;
         }
         let slice = |range: (usize, usize)| text.slice_to_string(range.0..range.1);
