@@ -9,7 +9,7 @@
 
 use std::ops::Range;
 
-use imara_diff::{Algorithm, Diff, InternedInput};
+use imara_diff::InternedInput;
 
 use crate::row_changes::{self, rows};
 
@@ -70,8 +70,9 @@ pub struct TextDiff {
 }
 
 impl TextDiff {
-    /// Diffs `left` and `right` by row with imara-diff's Histogram, as
-    /// [`row_changes`] does. Either over [`MAX_DIFF_BYTES`] gives no hunks.
+    /// Diffs `left` and `right` by row as [`row_changes`] does: with
+    /// imara-diff's Histogram when the region between the common prefix and
+    /// suffix is small, else its Myers (see `row_changes::row_diff`). Either over [`MAX_DIFF_BYTES`] gives no hunks.
     pub fn new(left: &str, right: &str) -> Self {
         if left.len() > MAX_DIFF_BYTES || right.len() > MAX_DIFF_BYTES {
             return Self {
@@ -84,7 +85,7 @@ impl TextDiff {
             rows(left, &mut left_scratch),
             rows(right, &mut right_scratch),
         );
-        let mut diff = Diff::compute(Algorithm::Histogram, &input);
+        let mut diff = row_changes::row_diff(&input);
         diff.postprocess_lines(&input);
         let hunks = diff
             .hunks()

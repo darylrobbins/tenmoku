@@ -197,7 +197,37 @@ pub(crate) fn rows<'a>(text: &'a str, scratch: &'a mut String) -> Rows<'a> {
     Rows(text.split('\n').collect())
 }
 
+/// Histogram's work bound: it runs while `min(b, a) * (b + a)` is at most this
+/// for the `b` and `a` rows left on each side after the common prefix and
+/// suffix (about 4 ms worst case); past it, Myers runs.
+pub(crate) const HISTOGRAM_WORK: u64 = 1 << 21;
+
+/// Diffs the rows of `input`: with imara-diff's Histogram when the region left
+/// after stripping the common prefix and suffix is within [`HISTOGRAM_WORK`],
+/// else with its Myers (non-minimal). Histogram re-scans the whole remaining
+/// region once per hunk, so thousands of interleaved changes cost seconds;
+/// Myers drops rows only one side has and stays near linear.
+pub(crate) fn row_diff(input: &InternedInput<&str>) -> Diff {
+    let (before, after) = (&input.before, &input.after);
+    let limit = before.len().min(after.len());
+    let prefix = (0..limit).take_while(|&i| before[i] == after[i]).count();
+    let suffix = (0..limit - prefix)
+        .take_while(|&i| before[before.len() - 1 - i] == after[after.len() - 1 - i])
+        .count();
+    let (b, a) = (
+        (before.len() - prefix - suffix) as u64,
+        (after.len() - prefix - suffix) as u64,
+    );
+    let algorithm = if b.min(a) * (b + a) <= HISTOGRAM_WORK {
+        Algorithm::Histogram
+    } else {
+        Algorithm::Myers
+    };
+    Diff::compute(algorithm, input)
+}
+
 /// The rows of `text` (LF-normalised or not) that differ from `base`, sorted.
+/// Diffed by [`row_diff`]: Histogram for a small changed region, else Myers.
 /// Empty when either is over 5 MiB. An empty base has no rows: against it,
 /// every row of `text` is added.
 pub(crate) fn diff_rows(base: &str, text: &str) -> Arc<[RowChange]> {
@@ -222,7 +252,7 @@ pub(crate) fn diff_rows(base: &str, text: &str) -> Arc<[RowChange]> {
     }
     let (old, new) = (rows(base, &mut base_scratch), rows(text, &mut text_scratch));
     let input = InternedInput::new(old, new);
-    let mut diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut diff = row_diff(&input);
     diff.postprocess_lines(&input);
     diff.hunks()
         .map(|hunk| {
