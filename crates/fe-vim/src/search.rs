@@ -1594,7 +1594,8 @@ fn class(letter: char) -> Option<&'static str> {
     })
 }
 
-/// The ranges `[:name:]` stands for in a collection: the ASCII ones only.
+/// The ranges `[:name:]` stands for in a collection: the ASCII ones only;
+/// `upper` and `lower` are Unicode, and handled by [`case_class`].
 fn named_class(name: &str) -> Option<&'static [(char, char)]> {
     Some(match name {
         "alnum" => &[('0', '9'), ('A', 'Z'), ('a', 'z')],
@@ -1614,6 +1615,43 @@ fn named_class(name: &str) -> Option<&'static [(char, char)]> {
     })
 }
 
+/// The ranges `[:upper:]` (`upper`) or `[:lower:]` stands for, as nvim has
+/// them: a character with a case mapping to a different character, or
+/// another character's one-character mapping, built once over all `char`s.
+fn case_class(upper: bool) -> &'static [(char, char)] {
+    static TABLES: OnceLock<[Vec<(char, char)>; 2]> = OnceLock::new();
+    &TABLES.get_or_init(|| {
+        let mut member = [vec![false; 0x110000], vec![false; 0x110000]];
+        for ch in '\0'..=char::MAX {
+            let up = single(ch.to_uppercase());
+            let low = single(ch.to_lowercase());
+            if low != Some(ch) {
+                member[0][ch as usize] = true;
+            }
+            if let Some(up) = up.filter(|&up| up != ch) {
+                member[0][up as usize] = true;
+                member[1][ch as usize] = true;
+            }
+            if let Some(low) = low.filter(|&low| low != ch) {
+                member[1][low as usize] = true;
+            }
+        }
+        member.map(|member| {
+            let mut ranges: Vec<(char, char)> = Vec::new();
+            for ch in '\0'..=char::MAX {
+                if !member[ch as usize] {
+                    continue;
+                }
+                match ranges.last_mut() {
+                    Some(last) if last.1 as u32 + 1 == ch as u32 => last.1 = ch,
+                    _ => ranges.push((ch, ch)),
+                }
+            }
+            ranges
+        })
+    })[usize::from(!upper)]
+}
+
 /// The collection from byte `at` (just after its `[`) to its `]`, as a
 /// `regex` class, and the offset after the `]`; `None` if no `]` ends it,
 /// when Vim takes the `[` as itself. Errors inside count only once a `]`
@@ -1628,6 +1666,7 @@ fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, P
         negated,
         ascii: Vec::new(),
         folded: Vec::new(),
+        cased: Vec::new(),
     };
     // Which of `a-z A-Z 0-9 _` the members are, or `None` once one isn't.
     let mut shape = Some(0u8);
@@ -1649,6 +1688,11 @@ fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, P
                 // A class can't start a range.
                 Some((name, after)) if after.starts_with('-') && !after.starts_with("-]") => {
                     return Err(PatternError::Unsupported(format!("[:{name}:]-")));
+                }
+                Some((name @ ("upper" | "lower"), after)) => {
+                    shape = None;
+                    set.cased.extend_from_slice(case_class(name == "upper"));
+                    rest = after;
                 }
                 Some((name, after)) if named_class(name).is_some() => {
                     shape = None;
@@ -1750,6 +1794,8 @@ struct Collection {
     ascii: Vec<(char, char)>,
     /// Other members, which `\c` folds as it folds literals.
     folded: Vec<(char, char)>,
+    /// `[:upper:]` and `[:lower:]`, which neither `\c` nor 'ignorecase' folds.
+    cased: Vec<(char, char)>,
 }
 
 impl Collection {
@@ -1757,8 +1803,13 @@ impl Collection {
     /// them, and isn't one); or, if `marks`, only those, for a mark after a
     /// bare base.
     fn syntax(&self, ignore_case: bool, marks: bool) -> String {
-        let mut ranges: Vec<(char, char)> =
-            self.ascii.iter().chain(&self.folded).copied().collect();
+        let mut ranges: Vec<(char, char)> = self
+            .ascii
+            .iter()
+            .chain(&self.folded)
+            .chain(&self.cased)
+            .copied()
+            .collect();
         if ignore_case {
             for &(low, high) in &self.ascii {
                 for ch in (low..=high).take_while(char::is_ascii) {
