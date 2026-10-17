@@ -2,7 +2,10 @@
 
 use fe_buffer::{TransactionId, Version};
 use fe_command::{ContextFrame, ContextStack, Dispatched, Effect, Invocation, Source};
-use fe_editor::{EditorModel, commands::CONTEXT};
+use fe_editor::{
+    EditorModel,
+    commands::{CONTEXT, EditorHost},
+};
 
 use crate::ex::HostCommand;
 use crate::search::Pattern;
@@ -215,28 +218,43 @@ impl VimState {
         self.last_find
     }
 
-    /// Types a line break at every caret, as `Enter` does in insert mode:
-    /// `EditorModel::newline`, which copies each row's indentation. An open
-    /// insert session is told the edit was a typed line break, so the
-    /// indentation it copied is 'autoindent', which `Esc` drops if nothing
-    /// is typed after it on its row. Any other input, `EditorModel::newline`
-    /// called directly included, is typed text, whatever it holds: only the
-    /// host knows which keys typed what, so it calls this for `Enter` while
-    /// the mode is insert or replace. In replace mode the line break
+    /// Types a line break at every caret, as `Enter` does in insert mode
+    /// for a host without syntax: `EditorModel::newline`, which copies each
+    /// row's indentation ([`VimState::line_break_in`] indents by the host's
+    /// language). An open insert session is told the edit was a typed line
+    /// break, so the indentation it made is 'autoindent', which `Esc` drops
+    /// if nothing is typed after it on its row. Any other input,
+    /// `EditorModel::newline` called directly included, is typed text,
+    /// whatever it holds: only the host knows which keys typed what, so it
+    /// calls this for `Enter` while the mode is insert or replace. In replace mode the line break
     /// overwrites nothing and drops the blanks it moves to the new row, as
     /// nvim's 'autoindent' does, and [`VimState::replace_backspace`] takes
     /// it out again, putting them back.
     ///
-    /// It catches the model up first, so `newline`'s edit is the batch from
-    /// the version it then reads, whatever measuring text edits around it
-    /// (see `EditorModel`'s char widths). The session is told before
-    /// `newline` runs, since measuring may stamp the context through a clone
-    /// of this state while it does, which follows the batch.
+    /// It catches the model up first, so `newline`'s edits are the batches
+    /// from the version it then reads to the one it leaves, whatever
+    /// measuring text edits around them (see `EditorModel`'s char widths).
+    /// The session is told before `newline` runs, since measuring may stamp
+    /// the context through a clone of this state while it does, which
+    /// follows the batches.
     pub fn line_break(&self, model: &mut EditorModel) {
         if self.mode == Mode::Replace {
             return crate::replace::line_break(self, model);
         }
         self.line_break_with(model, EditorModel::newline);
+    }
+
+    /// [`VimState::line_break`], indenting each new row as `host` suggests
+    /// for the buffer's language (`EditorModel::newline_in`), as nvim's
+    /// `Enter` does with a filetype's 'indentexpr', and copying the row's
+    /// indentation where it has no suggestion. The indentation is the line
+    /// break's, in every batch `newline_in` makes, for `Esc` to drop if it
+    /// goes unused. Replace mode doesn't indent by language.
+    pub fn line_break_in(&self, model: &mut EditorModel, host: &dyn EditorHost) {
+        if self.mode == Mode::Replace {
+            return crate::replace::line_break(self, model);
+        }
+        self.line_break_with(model, |model| model.newline_in(host));
     }
 
     /// [`VimState::line_break`], with `newline` typing the line break:
@@ -250,14 +268,15 @@ impl VimState {
         model.sync_display();
         let from = model.buffer().version();
         if let Some(session) = &self.session {
-            session.typed_line_break(from);
+            session.typing_line_break(from);
         }
         newline(model);
-        // With no caret to type at, it typed nothing: no batch is its.
-        if let Some(session) = &self.session
-            && model.buffer().version() == from
-        {
-            session.forget_line_break(from);
+        if let Some(session) = &self.session {
+            // With no caret to type at, it typed nothing: no batch is its.
+            match model.buffer().version() {
+                to if to == from => session.forget_line_break(from),
+                to => session.line_break_typed(from, to),
+            }
         }
     }
 

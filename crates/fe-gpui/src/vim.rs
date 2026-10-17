@@ -62,7 +62,7 @@ use std::{collections::VecDeque, rc::Rc};
 
 use fe_buffer::TransactionId;
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
-use fe_editor::EditorModel;
+use fe_editor::{EditorModel, commands::EditorHost};
 use fe_vim::{Registers, Step, VimCommands, VimKey, VimState, VimTarget};
 use gpui::{
     App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, WeakEntity,
@@ -387,16 +387,18 @@ pub(crate) fn add_to_key_context(context: &mut KeyContext, state: &VimState) {
 }
 
 /// Runs `invocation`, an `editor.newline`, in insert mode: the line break
-/// goes in through [`VimState::line_break`], acting as the invocation's
-/// actor, so the session knows the indentation it copies is
-/// 'autoindent', which `Esc` drops if nothing is typed after it.
+/// goes in through [`VimState::line_break_in`], indenting the new row as
+/// `host` suggests for the view's language, acting as the invocation's
+/// actor, so the session knows the indentation it makes is 'autoindent',
+/// which `Esc` drops if nothing is typed after it.
 pub(crate) fn line_break(
     state: &VimState,
     model: &mut EditorModel,
+    host: &dyn EditorHost,
     invocation: &Invocation,
 ) -> Result<Dispatched<TransactionId>, DispatchError> {
     let origin = fe_editor::commands::origin(&invocation.actor);
-    let ((), transactions) = model.run_as(origin, |model| state.line_break(model));
+    let ((), transactions) = model.run_as(origin, |model| state.line_break_in(model, host));
     Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
 }
 
@@ -428,7 +430,7 @@ pub(crate) fn types_keys(text: Option<&str>) -> bool {
 /// Types `text`, committed at once in insert or replace mode, as its keys
 /// go in one at a time and as a macro's replay of them does, acting as
 /// `invocation`'s actor, as [`line_break`] does: a line break as `Enter`
-/// ([`VimState::line_break`], which copies the row's indentation), a tab
+/// ([`VimState::line_break_in`], which indents as `host` suggests), a tab
 /// as `Tab` (`editor.tab`), and the rest as typed, in replace mode a
 /// character at a time ([`VimState::replace_text`]) when `overwrite`, so
 /// even where a joiner joins the text after it, it overwrites what its
@@ -436,6 +438,7 @@ pub(crate) fn types_keys(text: Option<&str>) -> bool {
 pub(crate) fn type_as_keys(
     state: &VimState,
     model: &mut EditorModel,
+    host: &dyn EditorHost,
     invocation: &Invocation,
     text: &str,
     overwrite: bool,
@@ -457,7 +460,7 @@ pub(crate) fn type_as_keys(
                 false => {}
             }
             match key {
-                Some('\n') => state.line_break(model),
+                Some('\n') => state.line_break_in(model, host),
                 Some(_) => model.tab(),
                 None => {}
             }
@@ -1057,3 +1060,6 @@ mod macro_tests;
 
 #[cfg(test)]
 mod replace_tests;
+
+#[cfg(test)]
+mod auto_indent_tests;

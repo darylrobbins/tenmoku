@@ -48,6 +48,29 @@ pub(crate) fn apply<S: Into<Arc<str>>>(
     applied
 }
 
+/// [`apply`] for the edits `plan` makes from the buffer's text as it is
+/// when they go in, with no catch-up between, so nothing measuring text
+/// edits meanwhile can move what they replace. The snapshot right after
+/// them, if `plan` made any.
+pub(crate) fn apply_planned(
+    model: &mut EditorModel,
+    origin: Origin,
+    plan: impl FnOnce(&BufferSnapshot) -> Vec<(Range<usize>, String)>,
+) -> Option<BufferSnapshot> {
+    let applied = {
+        let mut buffer = model.buffer_mut();
+        let edits = plan(&buffer.snapshot());
+        if edits.is_empty() {
+            return None;
+        }
+        buffer.edit(edits, origin);
+        buffer.snapshot()
+    };
+    #[cfg(test)]
+    measured(model, true);
+    Some(applied)
+}
+
 /// [`apply`] for edits in `steps`, each in the text the one before leaves,
 /// as one transaction: the model catches up (measuring text) only once the
 /// last is in, so nothing edits the buffer between them. Returns the

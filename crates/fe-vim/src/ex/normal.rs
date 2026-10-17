@@ -174,7 +174,7 @@ impl Runner {
             (Mode::CmdLine(_), _) => return Err(()),
             // Typed as the `:normal`'s actor, in its transaction.
             (_, VimKey::Char(_) | VimKey::Enter | VimKey::Ctrl('j') | VimKey::Backspace) => {
-                let state = &mut *target.state;
+                let (state, host) = (&mut *target.state, &*target.host);
                 target.model.run_as(origin(&self.actor), |model| match key {
                     VimKey::Char(ch) if replace => {
                         state.replace_text(model, ch.encode_utf8(&mut [0; 4]));
@@ -182,7 +182,7 @@ impl Runner {
                     VimKey::Char(ch) => model.insert(ch.encode_utf8(&mut [0; 4])),
                     VimKey::Backspace if replace => state.replace_backspace(model),
                     VimKey::Backspace => model.backspace(),
-                    _ => state.line_break(model),
+                    _ => state.line_break_in(model, host),
                 });
             }
             (_, VimKey::Esc) if replace => {

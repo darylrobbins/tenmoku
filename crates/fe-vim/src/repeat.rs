@@ -157,7 +157,7 @@ fn replay(
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
             match target.state.mode {
                 Mode::Replace => replace::retype(target.state, target.model, text),
-                _ => insert::type_at_carets(target.model, text, origin(actor)),
+                _ => insert::type_at_carets(target.model, &*target.host, text, origin(actor)),
             }
         }
         if let Some(session) = target.state.session.as_ref().filter(|_| last.typed_first) {

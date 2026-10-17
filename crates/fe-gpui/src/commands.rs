@@ -349,10 +349,7 @@ impl EditorHost for ViewHost<'_> {
     }
 
     fn closer_outdents(&self, snapshot: &BufferSnapshot, row: u32) -> Option<u32> {
-        // Vim types what's typed, as it doesn't pair.
-        if self.vim {
-            return None;
-        }
+        // Vim outdents too, as nvim's 'indentkeys' do.
         (self.language.as_ref()?).caught_up(snapshot, |syntax| {
             fe_syntax::closer_outdents(syntax, snapshot.text(), row)
         })
@@ -525,7 +522,7 @@ impl EditorView {
                 match registry.validate(&invocation) {
                     Err(error) => Err(error),
                     Ok(_) => match invocation.command.as_str() {
-                        vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
+                        vim::NEWLINE => vim::line_break(state, &mut self.model, &host, &invocation),
                         vim::INSERT
                             if replace == Some(true)
                                 || vim::types_keys(
@@ -535,7 +532,8 @@ impl EditorView {
                             let text = invocation.args.get("text").and_then(Value::as_str);
                             let text = text.unwrap_or_default();
                             let overwrite = replace == Some(true);
-                            vim::type_as_keys(state, &mut self.model, &invocation, text, overwrite)
+                            let model = &mut self.model;
+                            vim::type_as_keys(state, model, &host, &invocation, text, overwrite)
                         }
                         vim::BACKSPACE if replace == Some(true) => {
                             vim::replace_backspace(state, &mut self.model, &invocation)
