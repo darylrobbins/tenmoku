@@ -331,7 +331,7 @@ fn brackets_at(text: &Text, open: usize, pair: (u8, u8), inner: bool) -> Span {
         return Span::Lines {
             rows,
             first_non_blank: true,
-            from: None,
+            from: Some(start),
         };
     }
     // An empty inside is an empty range at its start: `di(` moves there,
