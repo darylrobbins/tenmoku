@@ -25,17 +25,26 @@
 //! selection; with vim on, `j` and `k` move, `g g` and `G` go to the first
 //! and last row loaded and `q` hides the dock, focusing the active editor.
 //! `G` reads no further page: none is read until the selection moves or the
-//! list is scrolled (by the wheel, even at its end, or to other rows). Enter, `o` and a click only select:
-//! opening a commit is a later card's.
+//! list is scrolled (by the wheel, even at its end, or to other rows).
+//!
+//! Enter, `o` and a click on a commit expand it: its files
+//! ([`Repo::commit_files`], against its first parent, read on the background
+//! executor, a `Loading…` row under it until they arrive and a muted row for
+//! an error) are listed under it, indented, as `A`, `M` or `D` and the path
+//! from the root, or `R old → new`; doing it again collapses it. Enter, `o`
+//! or a click on a file opens its change at that commit as the History panel
+//! opens one ([`Workbench::open_commit`]), so the same one is the same tab.
+//! The selection moves over commit and file rows alike.
 
 use std::{
+    collections::BTreeMap,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use fe_git::{
-    Head, LogCommit, LogScope, RefKind, RefLabel, Repo,
+    ChangeKind, CommitFile, FileCommit, Head, LogCommit, LogScope, RefKind, RefLabel, Repo,
     graph::{GraphLayout, GraphRow},
 };
 use fe_ui::{ROW_HEIGHT, UiTheme};
@@ -108,6 +117,45 @@ fn lanes(row: &GraphRow) -> usize {
     widest.unwrap_or(0).max(row.column) + 1
 }
 
+/// What a row of the list is: a commit (by its index), one of its files
+/// (the commit's, then the file's index), or the row under a commit saying
+/// its files are loading or couldn't be read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Line {
+    Commit(usize),
+    File(usize, usize),
+    Note(usize),
+}
+
+impl Line {
+    /// An identity for the row's element that holds whatever rows are
+    /// listed before it.
+    fn id(self) -> u64 {
+        const ROW: u64 = 1 << 24;
+        match self {
+            Line::Commit(ix) => ix as u64 * ROW,
+            Line::File(ix, file) => ix as u64 * ROW + file as u64 + 1,
+            Line::Note(ix) => ix as u64 * ROW + ROW - 1,
+        }
+    }
+
+    /// The index of the commit the row is or is under.
+    fn commit(self) -> usize {
+        match self {
+            Line::Commit(ix) | Line::File(ix, _) | Line::Note(ix) => ix,
+        }
+    }
+}
+
+/// A commit's files, once it's expanded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Listing {
+    /// Being read by the request with this number.
+    Loading(u64),
+    Files(Vec<CommitFile>),
+    Failed(String),
+}
+
 /// What reading a log's first page found: its repository, where HEAD is,
 /// the commits the log starts from and the first page; none outside a
 /// repository; or the error's message.
@@ -154,7 +202,8 @@ impl Workbench {
                 panel
             }
         };
-        panel.update(cx, |panel, cx| panel.list(at, scope, op, cx));
+        let root = self.root.clone();
+        panel.update(cx, |panel, cx| panel.list(at, root, scope, op, cx));
         self.run_dock_op(DockOp::ShowGitLog, window, cx);
     }
 }
@@ -205,6 +254,17 @@ pub(crate) struct GitLogPanel {
     more: bool,
     /// When the first page landed, for how long ago each commit was.
     now: i64,
+    /// The expanded commits' files, by commit index.
+    expanded: BTreeMap<usize, Listing>,
+    /// The last expansion request's number: only the one a commit's
+    /// `Loading` names lands.
+    requests: u64,
+    /// The rows of the list: each commit, and under the expanded ones their
+    /// files.
+    lines: Vec<Line>,
+    /// What file paths show relative to, if they're under it.
+    root: Option<PathBuf>,
+    /// The selected row of `lines`.
     selected: Option<usize>,
     /// Whether `G` holds the next page back.
     hold: Hold,
@@ -232,6 +292,10 @@ impl GitLogPanel {
             tail: Tail::None,
             more: false,
             now: 0,
+            expanded: BTreeMap::new(),
+            requests: 0,
+            lines: Vec::new(),
+            root: None,
             selected: None,
             hold: Hold::None,
             keys: ListKeys::default(),
@@ -256,7 +320,14 @@ impl GitLogPanel {
     /// Reads the first page of the `scope` log of `at`'s repository on the
     /// background executor, showing it loading until it lands; `op` is
     /// answered if it's outside a repository.
-    fn list(&mut self, at: PathBuf, scope: LogScope, op: GitOp, cx: &mut Context<Self>) {
+    fn list(
+        &mut self,
+        at: PathBuf,
+        root: Option<PathBuf>,
+        scope: LogScope,
+        op: GitOp,
+        cx: &mut Context<Self>,
+    ) {
         self.read += 1;
         let read = self.read;
         self.scope = scope;
@@ -266,6 +337,9 @@ impl GitLogPanel {
         self.tips = Arc::from([]);
         self.commits.clear();
         self.rows.clear();
+        self.expanded.clear();
+        self.lines.clear();
+        self.root = root;
         self.layout = GraphLayout::new();
         self.lanes = 0;
         self.tail = Tail::Loading;
@@ -293,8 +367,8 @@ impl GitLogPanel {
                 self.repo = Some(repo);
                 self.tips = tips;
                 self.head = Some(head);
-                self.selected = (!commits.is_empty()).then_some(0);
                 self.append(commits);
+                self.selected = (!self.lines.is_empty()).then_some(0);
                 self.scroll.scroll_to_item(0, ScrollStrategy::Top);
             }
             Ok(None) => {
@@ -319,6 +393,152 @@ impl GitLogPanel {
             self.rows.push(row);
         }
         self.commits.extend(page);
+        self.relayout();
+    }
+
+    /// Lists the rows again, the selection staying on its row, or else the
+    /// commit it was under.
+    fn relayout(&mut self) {
+        let was = self.selected.and_then(|ix| self.lines.get(ix).copied());
+        self.lines.clear();
+        for ix in 0..self.commits.len() {
+            self.lines.push(Line::Commit(ix));
+            match self.expanded.get(&ix) {
+                None => {}
+                Some(Listing::Files(files)) => {
+                    (self.lines).extend((0..files.len()).map(|file| Line::File(ix, file)));
+                }
+                Some(_) => self.lines.push(Line::Note(ix)),
+            }
+        }
+        if let Some(was) = was {
+            let find = |line: Line| self.lines.iter().position(|other| *other == line);
+            self.selected = find(was).or_else(|| find(Line::Commit(was.commit())));
+        }
+    }
+
+    /// `path` as a file row shows it: from the root, if it's under it, else
+    /// from the repository's working tree.
+    fn display_path(&self, path: &Path) -> String {
+        let root = self.root.as_deref();
+        let bases = [root.map(Path::to_owned), root.map(git::resolve)];
+        let workdir = self.repo.as_deref().map(|repo| repo.workdir().to_owned());
+        let relative = (bases.into_iter().chain([workdir]).flatten())
+            .find_map(|base| Some(path.strip_prefix(base).ok()?.to_owned()));
+        relative.as_deref().unwrap_or(path).display().to_string()
+    }
+
+    /// The text of file `file` of commit `commit`: `M path`, `R old → new`.
+    fn file_text(&self, commit: usize, file: usize) -> Option<String> {
+        let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
+            return None;
+        };
+        let file = files.get(file)?;
+        let path = self.display_path(&file.path);
+        Some(match (&file.from, file.kind) {
+            (Some(from), _) => format!("R {} → {path}", self.display_path(from)),
+            (None, ChangeKind::Added) => format!("A {path}"),
+            (None, ChangeKind::Deleted) => format!("D {path}"),
+            (None, _) => format!("M {path}"),
+        })
+    }
+
+    /// Expands commit `ix`, reading its files on the background executor, or
+    /// collapses it.
+    fn toggle(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.expanded.remove(&ix).is_some() {
+            self.relayout();
+            return cx.notify();
+        }
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.commits.get(ix)) else {
+            return;
+        };
+        let (read, id) = (self.read, entry.commit.id.clone());
+        self.requests += 1;
+        let request = self.requests;
+        self.expanded.insert(ix, Listing::Loading(request));
+        self.relayout();
+        let files = cx.background_spawn(async move {
+            (repo.commit_files(&id)).map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |panel, cx| {
+            let files = files.await;
+            (panel.update(cx, |panel, cx| {
+                panel.land_files(read, (ix, request), files, cx)
+            }))
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Lists the files read for commit `ix`, if it's still expanded in the
+    /// list they were read for.
+    fn land_files(
+        &mut self,
+        read: u64,
+        (ix, request): (usize, u64),
+        files: Result<Vec<CommitFile>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if read != self.read || self.expanded.get(&ix) != Some(&Listing::Loading(request)) {
+            return;
+        }
+        let listing = match files {
+            Ok(files) => Listing::Files(files),
+            Err(error) => Listing::Failed(error),
+        };
+        self.expanded.insert(ix, listing);
+        self.relayout();
+        cx.notify();
+    }
+
+    /// Opens file `file` of commit `commit`'s change.
+    fn open_file(&mut self, commit: usize, file: usize, window: &mut Window, cx: &mut App) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.commits.get(commit)) else {
+            return;
+        };
+        let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
+            return;
+        };
+        let Some(file) = files.get(file) else {
+            return;
+        };
+        let commit = FileCommit {
+            commit: entry.commit.clone(),
+            path: file.path.clone(),
+            from: file.from.clone(),
+        };
+        let workbench = self.workbench.clone();
+        // Once this update is over: the workbench moves focus.
+        window.defer(cx, move |window, cx| {
+            let open = |workbench: &mut Workbench, cx: &mut Context<Workbench>| {
+                workbench.open_commit(repo, commit, window, cx)
+            };
+            workbench.update(cx, open).ok();
+        });
+    }
+
+    /// A click on `line`, wherever its row is by now: selects it and, if
+    /// `open`, opens it.
+    fn click(&mut self, line: Line, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.lines.iter().position(|other| *other == line) else {
+            return;
+        };
+        self.select(ix, cx);
+        if open {
+            self.open(ix, window, cx);
+        }
+    }
+
+    /// Enter, `o` or a click on row `ix`: expands or collapses a commit,
+    /// opens a file.
+    fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        match self.lines.get(ix).copied() {
+            Some(Line::Commit(commit)) => self.toggle(commit, cx),
+            Some(Line::File(commit, file)) => self.open_file(commit, file, window, cx),
+            Some(Line::Note(_)) | None => {}
+        }
     }
 
     /// Whether row `ix` is within [`NEAR`] rows of the end of those loaded.
@@ -391,7 +611,7 @@ impl GitLogPanel {
     }
 
     fn row_count(&self) -> usize {
-        self.commits.len() + usize::from(self.tail_text().is_some())
+        self.lines.len() + usize::from(self.tail_text().is_some())
     }
 
     /// Selects row `ix`, reading the next page if it's near the end.
@@ -399,7 +619,11 @@ impl GitLogPanel {
         self.selected = Some(ix);
         self.hold = Hold::None;
         self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-        if self.near_end(ix) {
+        if self
+            .lines
+            .get(ix)
+            .is_some_and(|line| self.near_end(line.commit()))
+        {
             self.load_more(cx);
         }
         cx.notify();
@@ -408,7 +632,7 @@ impl GitLogPanel {
     /// `G`: selects the last row loaded, reading no further page until the
     /// selection moves or the list scrolls.
     fn select_last(&mut self, cx: &mut Context<Self>) {
-        let Some(last) = self.commits.len().checked_sub(1) else {
+        let Some(last) = self.lines.len().checked_sub(1) else {
             return;
         };
         self.selected = Some(last);
@@ -433,11 +657,14 @@ impl GitLogPanel {
         };
         match key {
             Key::Quit => commit_rows::leave(self.workbench.clone(), window, cx),
-            // Opening a commit is a later card's.
-            Key::Open => {}
+            Key::Open => {
+                if let Some(ix) = self.selected {
+                    self.open(ix, window, cx);
+                }
+            }
             Key::Last => self.select_last(cx),
             _ => {
-                if let Some(ix) = key.moved(self.selected, self.commits.len()) {
+                if let Some(ix) = key.moved(self.selected, self.lines.len()) {
                     self.select(ix, cx);
                 }
             }
@@ -459,7 +686,8 @@ impl GitLogPanel {
             _ => {}
         }
         // Drawn near the end: the next page, once the frame is over.
-        let near = range.end > 0 && self.near_end(range.end - 1);
+        let last = (range.end.checked_sub(1)).and_then(|ix| self.lines.get(ix));
+        let near = last.is_some_and(|line| self.near_end(line.commit()));
         if near && self.hold == Hold::None && self.more && self.tail == Tail::None {
             cx.spawn(async move |panel, cx| panel.update(cx, |panel, cx| panel.load_more(cx)).ok())
                 .detach();
@@ -475,8 +703,9 @@ impl GitLogPanel {
         let name = SharedString::from(format!("git-log-{}", self.read));
         range
             .filter_map(|ix| {
+                let line_id = self.lines.get(ix).map_or(u64::MAX, |line| line.id());
                 let row = div()
-                    .id(ElementId::NamedInteger(name.clone(), ix as u64))
+                    .id(ElementId::NamedInteger(name.clone(), line_id))
                     .h(ROW_HEIGHT)
                     .w_full()
                     .pl_2()
@@ -486,20 +715,62 @@ impl GitLogPanel {
                     .gap_2()
                     .overflow_hidden()
                     .whitespace_nowrap();
-                let Some(entry) = self.commits.get(ix) else {
-                    let error = matches!(self.tail, Tail::Failed(_));
-                    let color = if error { ui.error_text } else { ui.muted_text };
-                    let text = self.tail_text()?.to_owned();
-                    return Some(row.text_color(color).child(text).into_any_element());
-                };
                 let selected = self.selected == Some(ix);
+                let line = match self.lines.get(ix) {
+                    Some(line) => *line,
+                    None => {
+                        let error = matches!(self.tail, Tail::Failed(_));
+                        let color = if error { ui.error_text } else { ui.muted_text };
+                        let text = self.tail_text()?.to_owned();
+                        return Some(row.text_color(color).child(text).into_any_element());
+                    }
+                };
+                let indent = LANE_WIDTH * self.lanes as f32 + px(24.);
+                let row = match line {
+                    Line::Commit(_) => row,
+                    Line::File(commit, file) => {
+                        let text = self.file_text(commit, file).unwrap_or_default();
+                        return Some(
+                            row.pl(indent)
+                                .when(selected, |row| row.bg(selected_bg))
+                                .hover(move |row| row.bg(ui.row_hover))
+                                .on_click(cx.listener(move |panel, _, window, cx| {
+                                    panel.click(line, true, window, cx)
+                                }))
+                                .child(text)
+                                .into_any_element(),
+                        );
+                    }
+                    Line::Note(commit) => {
+                        let (text, color) = match self.expanded.get(&commit) {
+                            Some(Listing::Failed(error)) => (error.clone(), ui.error_text),
+                            _ => (LOADING.to_owned(), ui.muted_text),
+                        };
+                        return Some(
+                            row.pl(indent)
+                                .when(selected, |row| row.bg(selected_bg))
+                                .text_color(color)
+                                .on_click(cx.listener(move |panel, _, window, cx| {
+                                    panel.click(line, false, window, cx)
+                                }))
+                                .child(text)
+                                .into_any_element(),
+                        );
+                    }
+                };
+                let Line::Commit(ix_commit) = line else {
+                    return None;
+                };
+                let entry = self.commits.get(ix_commit)?;
                 let merge = entry.parents.len() > 1;
-                let graph = graph_cell(self.rows[ix].clone(), merge, self.lanes);
+                let graph = graph_cell(self.rows[ix_commit].clone(), merge, self.lanes);
                 let [summary, when] = commit_rows::texts(&entry.commit, self.now);
                 Some(
                     row.when(selected, |row| row.bg(selected_bg))
                         .hover(move |row| row.bg(ui.row_hover))
-                        .on_click(cx.listener(move |panel, _, _, cx| panel.select(ix, cx)))
+                        .on_click(cx.listener(move |panel, _, window, cx| {
+                            panel.click(line, true, window, cx)
+                        }))
                         .child(graph)
                         .children(entry.refs.iter().map(|label| ref_label(label, ui)))
                         .child(
@@ -669,6 +940,27 @@ impl GitLogPanel {
         commits.chain(tail).collect()
     }
 
+    /// Each row's text, files and notes under their commits included.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        (self.lines.iter())
+            .map(|line| match *line {
+                Line::Commit(ix) => {
+                    commit_rows::texts(&self.commits[ix].commit, self.now)[0].clone()
+                }
+                Line::File(ix, file) => self.file_text(ix, file).unwrap_or_default(),
+                Line::Note(ix) => match self.expanded.get(&ix) {
+                    Some(Listing::Failed(error)) => error.clone(),
+                    _ => LOADING.to_owned(),
+                },
+            })
+            .collect()
+    }
+
+    /// Asks for row `ix` to be opened, as Enter does.
+    pub(crate) fn open_row(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.open(ix, window, cx);
+    }
+
     /// Each commit's id and graph row.
     pub(crate) fn graph(&self) -> Vec<(String, GraphRow)> {
         let ids = self.commits.iter().map(|entry| entry.commit.id.clone());
@@ -688,3 +980,7 @@ impl GitLogPanel {
 #[cfg(test)]
 #[path = "git_log_tests.rs"]
 mod git_log_tests;
+
+#[cfg(test)]
+#[path = "git_log_open_tests.rs"]
+mod git_log_open_tests;

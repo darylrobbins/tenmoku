@@ -244,7 +244,7 @@ impl Workbench {
 
     /// Opens `commit`'s change to its file, read from `repo`, in a diff view
     /// tab of the active pane, or shows the one open: see the module docs.
-    fn open_commit(
+    pub(super) fn open_commit(
         &mut self,
         repo: Arc<Repo>,
         commit: FileCommit,
