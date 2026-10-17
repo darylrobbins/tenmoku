@@ -5,6 +5,7 @@
 //! real project folder, so search can answer and unopened files be read.
 
 mod encoding;
+mod uri_spelling;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

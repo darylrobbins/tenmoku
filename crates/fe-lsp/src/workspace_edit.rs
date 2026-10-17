@@ -298,7 +298,7 @@ fn text_edit(edit: OneOf<TextEdit, lsp_types::AnnotatedTextEdit>) -> TextEdit {
 }
 
 /// The local path `uri` names, or why it names none.
-fn file_path(uri: &Url) -> Result<PathBuf, String> {
+pub(crate) fn file_path(uri: &Url) -> Result<PathBuf, String> {
     if uri.scheme() != "file" {
         return Err(format!("{uri} isn't a file"));
     }

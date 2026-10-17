@@ -51,6 +51,7 @@ use crate::document::{Admitted, SentDocument};
 use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
 use crate::event::{LspError, ServerStatus};
 use crate::manager::LspManager;
+use crate::workspace_edit::file_path;
 
 /// How often a blocked call checks its cancel flag.
 pub(crate) const POLL: Duration = Duration::from_millis(10);
@@ -644,14 +645,19 @@ impl<'a> Decoder<'a> {
         if self.cancel.load(Ordering::Relaxed) {
             return None;
         }
+        // A server may spell the same file with other percent-escapes than
+        // ours (`%5Bslug%5D` for `[slug]`), so files match by decoded path
+        // as well as by URI.
+        let decoded = file_path(uri);
+        let same_path = |other: &Url| matches!((&decoded, file_path(other)), (Ok(path), Ok(other)) if *path == other);
         let (rel, text, snapshot, tier) = match self.own {
-            Some((own, rel, text, snapshot)) if own == uri => {
+            Some((own, rel, text, snapshot)) if own == uri || same_path(own) => {
                 (rel.to_owned(), text.clone(), Some(snapshot), Tier::SameFile)
             }
             _ => {
-                let path = match uri.to_file_path() {
+                let path = match decoded.clone() {
                     Ok(path) => path,
-                    Err(()) => {
+                    Err(_) => {
                         self.dropped.push((uri.clone(), "not a file".into()));
                         return None;
                     }
@@ -659,7 +665,9 @@ impl<'a> Decoder<'a> {
                 let rel = path
                     .strip_prefix(self.root)
                     .map_or_else(|_| path.clone(), Path::to_owned);
-                match self.open.iter().find(|document| document.uri == *uri) {
+                let found = (self.open.iter())
+                    .find(|document| document.uri == *uri || same_path(&document.uri));
+                match found {
                     Some(document) => {
                         let snapshot = (document.buffer, document.sent.version);
                         (
