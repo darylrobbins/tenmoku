@@ -6,7 +6,8 @@
 //!
 //! Offsets are byte offsets into UTF-8 text. Text is stored with `\n` line
 //! endings only; [`LineEnding`] records what the file used so it can be saved
-//! back the same way.
+//! back the same way. The ending is picked by majority of the file's line
+//! breaks, as VS Code does.
 
 use std::ops::Range;
 
@@ -72,11 +73,40 @@ impl LineEnding {
         }
     }
 
-    /// Guess from the first line break; files mixing styles are normalised anyway.
+    /// Guess by majority, as VS Code does: CRLF when the CR-ended breaks (CRLF
+    /// and lone CR) are strictly more than half of all breaks, else LF. A text
+    /// with no break is LF; files mixing styles are normalised anyway.
     pub fn detect(text: &str) -> Self {
-        match text.find('\n') {
-            Some(ix) if ix > 0 && text.as_bytes()[ix - 1] == b'\r' => LineEnding::CrLf,
-            _ => LineEnding::Lf,
+        let mut counts = BreakCounts::default();
+        counts.add(text);
+        counts.line_ending()
+    }
+}
+
+/// Line breaks seen so far: those ending in `\r` (CRLF or lone CR) and lone LFs.
+#[derive(Default)]
+struct BreakCounts {
+    cr_ended: usize,
+    lf: usize,
+}
+
+impl BreakCounts {
+    /// Counts the breaks in `text`. A `\n` at its start is not counted as a
+    /// lone LF; the caller drops one that follows a `\r` ending the previous text.
+    fn add(&mut self, text: &str) {
+        let bytes = text.as_bytes();
+        let cr = bytes.iter().filter(|&&b| b == b'\r').count();
+        let lf = bytes.iter().filter(|&&b| b == b'\n').count();
+        let crlf = bytes.windows(2).filter(|w| w == b"\r\n").count();
+        self.cr_ended += cr;
+        self.lf += lf - crlf;
+    }
+
+    fn line_ending(&self) -> LineEnding {
+        if self.cr_ended > self.lf {
+            LineEnding::CrLf
+        } else {
+            LineEnding::Lf
         }
     }
 }
@@ -153,7 +183,7 @@ impl Text {
         let text = Self {
             rope: builder.finish(),
         };
-        Ok((text, normalizer.line_ending.unwrap_or_default()))
+        Ok((text, normalizer.counts.line_ending()))
     }
 
     /// Length in bytes.
@@ -410,12 +440,12 @@ fn decode_lossy(bytes: &[u8], eof: bool, out: &mut String, replaced: &mut bool) 
 }
 
 /// Normalises line endings across streamed chunks, including a `\r\n` split
-/// between two chunks, and detects the file's line ending like
+/// between two chunks, and counts breaks to pick the file's line ending like
 /// [`LineEnding::detect`].
 #[derive(Default)]
 struct Normalizer {
     ended_with_cr: bool,
-    line_ending: Option<LineEnding>,
+    counts: BreakCounts,
 }
 
 impl Normalizer {
@@ -423,26 +453,12 @@ impl Normalizer {
         if chunk.is_empty() {
             return;
         }
-        if self.line_ending.is_none()
-            && let Some(ix) = chunk.find('\n')
-        {
-            let after_cr = if ix == 0 {
-                self.ended_with_cr
-            } else {
-                chunk.as_bytes()[ix - 1] == b'\r'
-            };
-            self.line_ending = Some(if after_cr {
-                LineEnding::CrLf
-            } else {
-                LineEnding::Lf
-            });
-        }
-
         let mut chunk = chunk;
         if self.ended_with_cr && chunk.starts_with('\n') {
             // The '\r' that ended the previous chunk already became this '\n'.
             chunk = &chunk[1..];
         }
+        self.counts.add(chunk);
         self.ended_with_cr = chunk.ends_with('\r');
         if !chunk.contains('\r') {
             builder.append(chunk);
