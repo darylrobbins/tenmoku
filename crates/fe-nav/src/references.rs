@@ -974,7 +974,8 @@ fn is_whole_word(text: &str, at: usize, len: usize) -> bool {
 /// at `hit` in it: the line, or a window of it of at most
 /// [`PREVIEW_BYTES`] on char boundaries around the hit; and the hit in it,
 /// if the window holds it whole. No more than [`PREVIEW_BYTES`] either side
-/// of the hit is looked at, however long the line.
+/// of the hit is looked at, however long the line. A hit near the line's end
+/// gets the rest of the window before it, as `fe_project::LineMatch::preview`.
 pub(crate) fn preview(
     source: &str,
     line_start: usize,
@@ -993,6 +994,11 @@ pub(crate) fn preview(
     let context = PREVIEW_BYTES.saturating_sub(hit.len()) / 2;
     let start = line.floor_char_boundary(hit.start.saturating_sub(context));
     let end = line.floor_char_boundary((start + PREVIEW_BYTES).min(line.len()));
+    // What the after side didn't use goes to the before side, as in
+    // `fe_project`'s previews.
+    let start = line
+        .ceil_char_boundary(end.saturating_sub(PREVIEW_BYTES))
+        .min(start);
     let window = line[start..end].to_owned();
     let in_window = (hit.end <= end).then(|| hit.start - start..hit.end - start);
     (window, in_window)

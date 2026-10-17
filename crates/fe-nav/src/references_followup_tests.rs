@@ -245,3 +245,6 @@ fn no_preview_is_read_through_a_directory_being_swapped() {
         }
     });
 }
+
+#[path = "references_preview_tests.rs"]
+mod preview_tests;
