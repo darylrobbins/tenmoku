@@ -8,7 +8,8 @@
 //!   hold is an empty range at the label's end.
 //! - **Active ones.** An active signature or parameter past the end is
 //!   clamped to the last; a signature with no parameters has no active
-//!   parameter.
+//!   parameter. A help's missing `activeParameter` is 0 (gopls leaves it
+//!   out for the first argument); a signature's own stays as given.
 //! - **Failures.** A timeout (`lsp.timeouts.hover`'s) is no help. Other
 //!   failures are errors.
 
@@ -231,9 +232,10 @@ fn convert(help: lsp_types::SignatureHelp) -> Option<SignatureHelp> {
     let last = help.signatures.len() - 1;
     let active_signature = (help.active_signature.unwrap_or(0) as usize).min(last);
     let signatures: Vec<Signature> = help.signatures.into_iter().map(signature).collect();
-    // The help's own is clamped against the active signature's parameters.
+    // The help's own is clamped against the active signature's parameters;
+    // a missing one is the first, as in the spec and VS Code.
     let count = signatures[active_signature].parameters.len();
-    let active_parameter = clamp(help.active_parameter, count);
+    let active_parameter = clamp(Some(help.active_parameter.unwrap_or(0)), count);
     Some(SignatureHelp {
         signatures,
         active_signature,

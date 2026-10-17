@@ -251,3 +251,6 @@ fn context_and_triggers() {
 
 #[path = "signature_help_label_tests.rs"]
 mod label_tests;
+
+#[path = "signature_help_active_default_tests.rs"]
+mod active_default_tests;
