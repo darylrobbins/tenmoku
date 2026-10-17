@@ -399,6 +399,8 @@ impl Pending {
         let ch = match key {
             VimKey::Char(ch) => ch,
             VimKey::Tab if matches!(prefix, Prefix::Find(_) | Prefix::Replace) => '\t',
+            // `r<CR>` and `r<C-j>` break the line; in a visual mode they cancel.
+            VimKey::Enter | VimKey::Ctrl('j') if prefix == Prefix::Replace && !self.visual => '\n',
             _ => return self.unmatched(prefix, key),
         };
         match prefix {
@@ -412,6 +414,11 @@ impl Pending {
             // `g&`, which is `:%s//~/&` and drops a count.
             Prefix::G if ch == '&' && self.operator.is_none() && !self.visual => {
                 invocation("vim.substitute_all_lines", ())
+            }
+            // `gi`, which cancels after an operator or in a visual mode.
+            Prefix::G if ch == 'i' && self.operator.is_none() && !self.visual => {
+                self.end_count();
+                invocation("vim.insert_last", CountArgs { count: self.count })
             }
             Prefix::Find(motion) => self.commit(Target::Motion(match motion {
                 Motion::FindForward(_) => Motion::FindForward(ch),

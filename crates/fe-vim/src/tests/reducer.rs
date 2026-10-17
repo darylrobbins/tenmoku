@@ -19,6 +19,12 @@ fn commits(keys: &str, command: &str, args: Value) {
         "vim.move" => {
             serde_json::to_value(serde_json::from_value::<MoveArgs>(args.clone()).unwrap())
         }
+        "vim.replace_char" => serde_json::to_value(
+            serde_json::from_value::<crate::ReplaceCharArgs>(args.clone()).unwrap(),
+        ),
+        "vim.insert_last" => {
+            serde_json::to_value(serde_json::from_value::<crate::CountArgs>(args.clone()).unwrap())
+        }
         _ => serde_json::to_value(serde_json::from_value::<OperateArgs>(args.clone()).unwrap()),
     };
     assert_eq!(again.unwrap(), args, "{keys} round-trips");
@@ -160,9 +166,22 @@ fn prefixes_targets_cancel_and_forward() {
     }
     assert_eq!(Pending::new().kind(), None);
 
+    // `r<CR>` and `r<C-j>` break the line, with the count; `gi` drops
+    // nothing but a register.
+    for keys in ["r<CR>", "r<C-j>"] {
+        commits(keys, "vim.replace_char", json!({"char": "\n"}));
+    }
+    commits(
+        "3r<CR>",
+        "vim.replace_char",
+        json!({"char": "\n", "count": 3}),
+    );
+    commits("gi", "vim.insert_last", json!({}));
+    commits("3gi", "vim.insert_last", json!({"count": 3}));
+
     for keys in [
         "d<Esc>", "3<Esc>", "dq", "\"!", "g<Esc>", "dy", "d\"", "di<Esc>", "dix", "3q", "f<Esc>",
-        "gx", "3Zx", "Zx", "r<Esc>", "r<CR>", "dr", "dJ", "di<C-r>",
+        "gx", "3Zx", "Zx", "r<Esc>", "dr", "dgi", "dJ", "di<C-r>",
     ] {
         assert_eq!(run(keys), Step::Cancel, "{keys}");
     }

@@ -45,8 +45,8 @@ use fe_editor::{
 use fe_text::Text;
 
 use crate::{
-    Change, InsertArgs, InsertAt, LastChange, Mode, Motion, OperateArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, history, marks,
+    Change, CountArgs, InsertArgs, InsertAt, LastChange, MarkMotion, Mode, Motion, OperateArgs,
+    RangeClass, Register, Registers, Target, VimState, VimTarget, Write, history, marks,
     motion::Cursor,
     operator::{
         MAX_PUT, Op, Span, apply, apply_planned, caret, grapheme_len, merge, row_end, sync,
@@ -1391,6 +1391,16 @@ pub(crate) fn insert(
     actor: &Actor,
     args: InsertArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    insert_as(target, actor, args, args)
+}
+
+/// [`insert`], with `recorded` as the change `.` repeats instead of `args`.
+fn insert_as(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: InsertArgs,
+    recorded: InsertArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget {
         model, state, host, ..
     } = target;
@@ -1480,13 +1490,46 @@ pub(crate) fn insert(
     let opening = Opening {
         origin,
         count: args.count.unwrap_or(1).max(1),
-        change: Change::Insert(args),
+        change: Change::Insert(recorded),
         opens,
         resumed: false,
         block: None,
     };
     enter(model, state, opening, carets, opened);
     Ok(Dispatched::new(Effect::Changed))
+}
+
+/// `vim.insert_last`: `gi`. Puts the caret at the `^` mark (the row's end if
+/// the mark is past its last character), then starts a session as `i` does
+/// with `count`, which `.` repeats as `i`; with the mark unset it is `i`.
+pub(crate) fn insert_last(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: CountArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    let before = InsertArgs {
+        at: InsertAt::Before,
+        count: args.count,
+    };
+    let mark = Motion::Mark(MarkMotion {
+        name: '^',
+        exact: true,
+    });
+    let mut opened = before;
+    if let Ok(Motion::MarkAt { offset, .. }) = marks::resolve(target, mark) {
+        let text = target.model.text().clone();
+        let row = text.offset_to_point(offset).row;
+        // A caret can't stand past a row's last character: insert after it.
+        let caret_at = match offset == row_end(&text, row) && text.row_len(row) > 0 {
+            true => {
+                opened.at = InsertAt::After;
+                Cursor::at(&text, offset).offset()
+            }
+            false => offset,
+        };
+        target.model.set_selections([caret(caret_at)]);
+    }
+    insert_as(target, actor, opened, before)
 }
 
 /// Opens a session over a block (`c`, `I` or `A`) for `change`, whose text

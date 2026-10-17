@@ -1,0 +1,140 @@
+# Cases for fe-vim's oracle: `r<CR>` and `r<C-j>` replacing characters with
+# one indented line break (the blank after it dropped, a count, a register,
+# `.` and `u`), and `gi` inserting where insert mode was last left (with no
+# insert yet, after `A`, with a count, after rows put in above, after `cw`
+# and `R`, and `.` after it). No case ends in insert mode; a key that fails
+# is a case's last key. What nvim does with each is recorded in
+# replace_break_and_gi.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+[[case]]
+name = "r_cr"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = "r<CR>"
+
+[[case]]
+name = "r_ctrl_j"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = "r<C-j>"
+
+[[case]]
+name = "r_register"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = '"ar<CR>'
+
+[[case]]
+name = "r_blank_after_dropped"
+buffer = "foo  bar"
+cursor = [0, 3]
+keys = "r<CR>"
+
+[[case]]
+name = "r_blank_before_kept"
+buffer = "foo  bar"
+cursor = [0, 4]
+keys = "r<CR>"
+
+[[case]]
+name = "r_indented"
+buffer = "    foo bar"
+cursor = [0, 7]
+keys = "r<CR>"
+
+[[case]]
+name = "r_tab_indented"
+buffer = "\tfoo bar"
+cursor = [0, 4]
+keys = "r<CR>"
+
+[[case]]
+name = "r_count"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "3r<CR>"
+
+[[case]]
+name = "r_last_char"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "r<CR>"
+
+[[case]]
+name = "r_dot"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "r<CR>w."
+
+[[case]]
+name = "r_undo"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "r<CR>u"
+
+[[case]]
+name = "r_count_too_few"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "9r<CR>"
+
+[[case]]
+name = "gi_no_insert_yet"
+buffer = "foo bar"
+cursor = [0, 2]
+keys = "giZ<Esc>"
+
+[[case]]
+name = "gi_after_A"
+buffer = "foo bar\nbaz"
+cursor = [0, 0]
+keys = "AX<Esc>jgiZ<Esc>"
+
+[[case]]
+name = "gi_count"
+buffer = "foo\nbaz"
+cursor = [1, 1]
+keys = "iX<Esc>gg3giZ<Esc>"
+
+[[case]]
+name = "gi_after_O"
+buffer = "foo\nbar"
+cursor = [1, 1]
+keys = "iX<Esc>ggOnew<Esc>giZ<Esc>"
+
+[[case]]
+name = "gi_after_rows_put_above"
+buffer = "foo\nbar"
+cursor = [1, 1]
+keys = "iX<Esc>ggyyPgiZ<Esc>"
+
+[[case]]
+name = "gi_after_cw"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = "cwQQ<Esc>giZ<Esc>"
+
+[[case]]
+name = "gi_after_R"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = "RQQ<Esc>giZ<Esc>"
+
+[[case]]
+name = "gi_dot"
+buffer = "foo bar\nbaz"
+cursor = [0, 0]
+keys = "giZ<Esc>j0."
+
+[[case]]
+name = "gi_after_o_then_moved"
+buffer = "foo\nbar"
+cursor = [0, 0]
+keys = "obaz<Esc>ggjgiZ<Esc>"
+
+[[case]]
+name = "gi_before_undo"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = "AX<Esc>ugiZ<Esc>"

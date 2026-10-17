@@ -1,0 +1,419 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "r_cr",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "foo\nbar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_ctrl_j",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<C-j>",
+      "expect": {
+        "buffer": "foo\nbar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_register",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "\"ar<CR>",
+      "expect": {
+        "buffer": "foo\nbar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_blank_after_dropped",
+      "buffer": "foo  bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "foo\nbar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_blank_before_kept",
+      "buffer": "foo  bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "foo \nbar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_indented",
+      "buffer": "    foo bar",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "    foo\n    bar",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_tab_indented",
+      "buffer": "\tfoo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "\tfoo\n    bar",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_count",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "3r<CR>",
+      "expect": {
+        "buffer": "foo\nr baz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_last_char",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "foo ba\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_dot",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<CR>w.",
+      "expect": {
+        "buffer": "foo\nbar \naz",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_undo",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<CR>u",
+      "expect": {
+        "buffer": "foo bar baz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_count_too_few",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "9r<CR>",
+      "expect": {
+        "buffer": "foo bar baz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_no_insert_yet",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "giZ<Esc>",
+      "expect": {
+        "buffer": "foZo bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_after_A",
+      "buffer": "foo bar\nbaz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "AX<Esc>jgiZ<Esc>",
+      "expect": {
+        "buffer": "foo barXZ\nbaz",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_count",
+      "buffer": "foo\nbaz",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "iX<Esc>gg3giZ<Esc>",
+      "expect": {
+        "buffer": "foo\nbXZZZaz",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_after_O",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "iX<Esc>ggOnew<Esc>giZ<Esc>",
+      "expect": {
+        "buffer": "newZ\nfoo\nbXar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_after_rows_put_above",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "iX<Esc>ggyyPgiZ<Esc>",
+      "expect": {
+        "buffer": "foo\nfoo\nbXZar",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gi_after_cw",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cwQQ<Esc>giZ<Esc>",
+      "expect": {
+        "buffer": "QQZ bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gi_after_R",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "RQQ<Esc>giZ<Esc>",
+      "expect": {
+        "buffer": "QQZo bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_dot",
+      "buffer": "foo bar\nbaz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "giZ<Esc>j0.",
+      "expect": {
+        "buffer": "Zfoo bar\nZbaz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_after_o_then_moved",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "obaz<Esc>ggjgiZ<Esc>",
+      "expect": {
+        "buffer": "foo\nbazZ\nbar",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gi_before_undo",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "AX<Esc>ugiZ<Esc>",
+      "expect": {
+        "buffer": "foo barZ",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -223,6 +223,22 @@ pub fn registry() -> Registry<VimCommands> {
         .mutates_buffer(true);
     registry
         .register_with_args(
+            "vim.insert_last",
+            "Vim Insert At Last Insert",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                follow(target);
+                insert::adopt_closing(target.state);
+                insert::insert_last(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Enters insert mode where insert mode was last left (the `^` mark), as `gi` does; at the caret if there is none.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
+        .register_with_args(
             "vim.replace_char",
             "Vim Replace Character",
             |target: &mut VimTarget<'_>, actor: &Actor, args: ReplaceCharArgs| {
