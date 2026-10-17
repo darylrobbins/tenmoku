@@ -954,6 +954,11 @@ fn operate_unless_failing(
                     (Some(rows), _) if args.target == Target::Motion(Motion::LineEnd) => {
                         (*rows.start(), Some(usize::MAX))
                     }
+                    // `|` asks for display column N-1; `on_row` clamps it to the row.
+                    (Some(rows), _) if args.target == Target::Motion(Motion::Column) => (
+                        *rows.start(),
+                        Some(args.count.unwrap_or(1).max(1) as usize - 1),
+                    ),
                     (Some(rows), _) => (*rows.start(), *goal),
                     // Where a failed target left it, at the same column.
                     (None, Span::Move(offset)) => {
