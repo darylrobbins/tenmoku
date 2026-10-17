@@ -107,8 +107,22 @@ fn listed() -> impl Iterator<Item = &'static Def> {
     DEFS.iter().filter(|def| !def.hidden)
 }
 
-/// Other names injections use for our languages, besides file extensions.
-const ALIASES: &[(&str, &str)] = &[("shell", "bash")];
+/// Other names injections use for our languages, besides file extensions: the
+/// fence names GitHub (linguist) and VS Code accept.
+const ALIASES: &[(&str, &str)] = &[
+    ("shell", "bash"),
+    ("shell-script", "bash"),
+    ("golang", "go"),
+    ("c#", "csharp"),
+    ("python3", "python"),
+    ("docker", "dockerfile"),
+    ("containerfile", "dockerfile"),
+    ("makefile", "make"),
+    ("node", "javascript"),
+    ("javascriptreact", "javascript"),
+    ("typescriptreact", "tsx"),
+    ("jsonc", "json"),
+];
 
 /// What an injection's language name refers to.
 pub(crate) enum Injected {
