@@ -270,8 +270,16 @@ pub(crate) fn motion_span(
         },
         RangeClass::Inclusive => Span::Chars(lo..hi + grapheme_len(text, hi)),
         // `w` with an operator stops at the end of the last word it moved
-        // over, not on the next row (`:help word`).
-        RangeClass::Exclusive if matches!(motion, Motion::WordForward | Motion::BigWordForward) => {
+        // over, not on the next row (`:help word`). A count that runs out
+        // onto the text's empty last row ends at its column 0 instead, which
+        // the exclusive rule below moves back to the end of the row before.
+        RangeClass::Exclusive
+            if matches!(motion, Motion::WordForward | Motion::BigWordForward)
+                && !(cursor.hit_end
+                    && target == text.len()
+                    && row(target) > row(head)
+                    && text.row_start(row(target)) == target) =>
+        {
             let word_row = cursor.word_row;
             if !cursor.hit_end && row(target) <= word_row {
                 return Span::Chars(head..target);
