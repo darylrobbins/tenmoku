@@ -46,7 +46,7 @@ fe-lsp = { workspace = true, features = ["test-support"] }
 lsp-types.workspace = true
 # The trusted settings tests' expected configuration values.
 serde_json.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
 # The screenshots example's harness: settling, comparison and goldens.

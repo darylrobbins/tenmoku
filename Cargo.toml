@@ -44,14 +44,14 @@ fe-terminal-view = { path = "crates/fe-terminal-view" }
 fe-git = { path = "crates/fe-git" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
-# 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
+# 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
 # a Zed git revision instead, add a `[patch.crates-io]` section.
-gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui = { package = "gpui-pre", version = "=0.3.9" }
 # `runtime_shaders` compiles Metal shaders at launch, so builds don't need Xcode's
 # separately downloaded Metal toolchain. Drop it for release builds once CI has
 # that toolchain (`xcodebuild -downloadComponent MetalToolchain`) to save startup time.
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
-sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "runtime_shaders"] }
+sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.9" }
 
 # Project tree: gitignore-aware directory listing and file watching.
 ignore = "0.4"

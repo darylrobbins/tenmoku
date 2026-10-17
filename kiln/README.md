@@ -258,7 +258,7 @@ bubble = "#7a3e9d"
 
 kiln is a Cargo workspace (`crates/*`), in edition 2024 with a minimum
 Rust of 1.98. The repository it lives in pins the toolchain to 1.98.1, the
-one gpui-pre 0.3.7's Zed revision uses; bump the two together.
+one gpui-pre 0.3.9's Zed revision uses; bump the two together.
 
 From kiln's own checkout (inside a host repository's workspace, run them
 from its root with `-p kiln-…` instead):
@@ -289,7 +289,7 @@ profile and runs them one at a time.
 ## GPUI version
 
 kiln pins `gpui-pre` (a published snapshot of Zed's GPUI) to exactly
-`=0.3.7`. A bump is a change of its own, tested on every platform. kiln
+`=0.3.9`. A bump is a change of its own, tested on every platform. kiln
 re-exports it as `kiln::gpui`, so an app uses the same version.
 
 kiln relies on a few GPUI items that are public but not a stable API:
@@ -301,7 +301,7 @@ kiln relies on a few GPUI items that are public but not a stable API:
   `gpui::private::inventory`. A bump that changes them fails to compile in
   kiln-platform; `the_macro_makes_gpui_actions` and
   `the_macro_needs_no_gpui_of_its_own` test the result.
-- GPUI 0.3.7 doesn't say whether the focused element was drawn in the last
+- GPUI 0.3.9 doesn't say whether the focused element was drawn in the last
   frame, so kiln-platform's `focus::is_drawn` asks with a probe action that
   only a global listener hears. A GPUI that exposes the dispatch tree, or a
   synchronous focus signal, would replace it (and lift the chord limit noted

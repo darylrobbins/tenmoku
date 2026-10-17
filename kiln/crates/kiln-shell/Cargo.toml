@@ -20,7 +20,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 kiln-platform = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 
 # The platform's real text system, which paints glyphs; on Linux the
 # windowing backends select it, as `kiln` has them.

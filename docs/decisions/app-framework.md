@@ -11,7 +11,7 @@ stays the source of truth here (card K6.3).
 
 ## 1. Decision
 
-A reusable application framework on top of GPUI (`gpui-pre` =0.3.7) that
+A reusable application framework on top of GPUI (`gpui-pre` =0.3.9) that
 hides per-platform differences and gives apps high-level widgets, written in
 GPUI's own idioms. It replaces the planned `fe-shell`: it covers everything
 `app-shell.md` planned for it (panes, docks, the modal layer, the palette,
@@ -99,7 +99,7 @@ the same commands, config and keymaps.
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit
   events (`cx.subscribe_in`). Widgets read `cx.theme()` while rendering.
-- **GPUI internals kiln relies on.** gpui-pre is pinned (`=0.3.7`), and a
+- **GPUI internals kiln relies on.** gpui-pre is pinned (`=0.3.9`), and a
   bump is its own card. `kiln::commands!` implements `gpui::Action` by hand
   rather than through GPUI's derive, so that an app needs no `gpui`
   dependency of its own: the derive writes bare `gpui::` paths. That impl

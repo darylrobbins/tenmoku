@@ -38,7 +38,7 @@ gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 # Test support for an app's own tests and examples: the golden-screenshot
 # harness, `kiln::platform::screenshots`, and `kiln::testing`, which opens
 # an app headless.
-test-support = ["kiln-platform/test-support", "gpui/test-support", "dep:tempfile"]
+test-support = ["kiln-platform/test-support", "gpui/test-support", "gpui/leak-detection", "dep:tempfile"]
 
 # The gallery example (examples/gallery) opens a real window, and its tests
 # (tests/gallery.rs) drive it headless. Its screenshots
@@ -46,7 +46,7 @@ test-support = ["kiln-platform/test-support", "gpui/test-support", "dep:tempfile
 # (examples/host), an app on kiln-shell, is driven by tests/host.rs the
 # same way.
 [dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 kiln-platform = { workspace = true, features = ["test-support"] }
 # kiln's own tests (tests/testing.rs) use kiln::testing: this turns its
 # `test-support` on for them, so the workspace gate builds and runs them.

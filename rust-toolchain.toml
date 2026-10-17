@@ -1,5 +1,5 @@
 # Match the toolchain of the Zed revision our gpui-pre snapshot comes from
-# (zed@1a28cff). Bump together with gpui-pre.
+# (zed@93d7456). Bump together with gpui-pre.
 [toolchain]
 channel = "1.98.1"
 profile = "minimal"

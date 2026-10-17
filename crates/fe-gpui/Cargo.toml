@@ -29,7 +29,7 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
 # The keystroke bench reads the drawn scene back as an image.
