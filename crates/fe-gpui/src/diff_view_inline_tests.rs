@@ -218,3 +218,6 @@ fn removed_rows_split_on_any_ending() {
     };
     assert_eq!(lines, &["b", "c"]);
 }
+
+#[path = "diff_view_inline_navigation_tests.rs"]
+mod inline_navigation_tests;
