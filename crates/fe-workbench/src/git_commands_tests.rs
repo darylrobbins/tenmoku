@@ -211,10 +211,12 @@ fn ex_routes(cx: &mut TestAppContext) {
     ];
     for (line, op) in lines {
         ex(line, cx);
-        // The branch, diff and staging commands are implemented; the root
-        // isn't a repository.
+        // The branch, commit, diff and staging commands are implemented;
+        // the root isn't a repository.
         let answer = match op.command {
-            DiffIndex | DiffHead | StageFile | ResetBuffer => "Not in a git repository".to_owned(),
+            DiffIndex | DiffHead | StageFile | ResetBuffer | Commit | CommitAmend => {
+                "Not in a git repository".to_owned()
+            }
             NextChange => "No changes".to_owned(),
             RevertHunk => "No change to revert at this line".to_owned(),
             CompareFile => {
@@ -342,7 +344,7 @@ fn owned_editors(cx: &mut TestAppContext) {
     }
     host_command(&workbench, &commit_box, write.clone(), cx);
     assert_eq!(routed(&workbench, cx), [Routed::CommitBox(write.clone())]);
-    let answer = "Not supported yet: this command in the commit box";
+    let answer = "Message kept; :wq commits";
     assert_eq!(message(&commit_box, cx).as_deref(), Some(answer));
 
     // The right side is no one's: ignored, as before.

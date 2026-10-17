@@ -39,23 +39,57 @@
 //! one status as [`fe_git::Repo::status`] combines them: whenever it
 //! changes the panel emits [`GitPanelEvent::Listed`], and the workbench
 //! hands [`GitPanel::statuses`] to the root's project panel.
+//!
+//! Above the list is the commit message box, an [`EditorView`] the
+//! workbench gives the panel once it's first drawn (`git_commit`): not a
+//! tab, so nothing saves, backs up or remembers it. It soft-wraps and grows
+//! from 1 to 10 rows with its text. While it's empty its placeholder
+//! names the branch, VS Code's `Message (ctrl-enter to commit on "main")`.
+//! Once its first row is over 50 characters, `<n>/50` shows after it,
+//! muted, in the warning colour over 72; a body row (after the first blank
+//! row) over 72 shows `<n>/72` in the warning colour. Below it are an
+//! "Amend" checkbox and a "Commit" button ("Amend" while checked),
+//! disabled while the message is blank and Amend isn't checked, and
+//! "Committing…" while a commit runs. Checking Amend into an empty box
+//! fills it with HEAD's message; unchecking it while that's untouched
+//! empties it again. `git.commit_box.commit` (a key in the box) commits as
+//! the button does.
+//!
+//! With vim on, the box edits in vim mode, starting in insert mode when
+//! it's focused empty. The status bar's command line follows the tabs, so
+//! the panel shows the box's own under it, and vim's messages there;
+//! the host commands its line and keys leave (`:wq`, `ZZ`, `:q!`) go to the
+//! workbench, which runs them in `git_commit`. `cc` in the panel focuses
+//! the box, and `ca` does with Amend checked, as fugitive's keys do.
 
 use std::{
+    cell::RefCell,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
-use fe_git::{ChangeKind, FileStatus, GitError, SplitStatus};
-use fe_ui::{Icon, IconButton, ROW_HEIGHT, Tooltip, UiTheme};
+use fe_buffer::{BufferSnapshot, Origin, Version};
+use fe_command::{Invocation, Value};
+use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps};
+use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo, SplitStatus};
+use fe_gpui::{EditorView, commands::RunCommand};
+use fe_text::Text;
+use fe_ui::{Button, Checkbox, Icon, IconButton, ROW_HEIGHT, TextInput, Tooltip, UiTheme};
+use fe_vim::{CommandLineKind, Mode};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Modifiers,
     ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
-    Styled as _, UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{Workbench, git::GitState};
+use crate::{
+    Workbench,
+    git::GitState,
+    picker::{self, PaletteOp},
+};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
@@ -63,6 +97,41 @@ pub(crate) const KEY_CONTEXT: &str = "git_panel";
 /// The hue of added and untracked files' letters: the accent's, turned
 /// green.
 const ADDED_HUE: f32 = 130. / 360.;
+
+/// What commits from the box, as its button does.
+pub(crate) const COMMIT_COMMAND: &str = "git.commit_box.commit";
+
+/// How long the first row of a message may be before its hint shows, and
+/// how long any row may be before it warns: VS Code's
+/// `git.inputValidationSubjectLength` and `git.inputValidationLength`.
+const SUBJECT_LENGTH: usize = 50;
+const LINE_LENGTH: usize = 72;
+
+/// The most rows the box grows to.
+const BOX_ROWS: u32 = 10;
+
+/// The ems the box's soft wrap leaves free, beyond its margin, for a
+/// length hint after a wrapped row: its gap and up to 7 characters.
+pub(crate) const HINT_ROOM: f32 = 6.;
+
+/// The key context of the box's command line, so the vim line's keys
+/// apply there: Enter submits, Escape cancels.
+const LINE_CONTEXT: &str = "vim_line";
+/// What Escape runs in the line.
+const LINE_CANCEL: &str = "vim_line.cancel";
+/// What Enter runs in the line's input.
+const LINE_SUBMIT: &str = "text_input.submit";
+
+/// The key that commits from the box, in its placeholder.
+pub(crate) const COMMIT_KEY: &str = if cfg!(target_os = "macos") {
+    "⌘⏎"
+} else {
+    "ctrl-enter"
+};
+
+/// What the placeholder says after a commit was refused for an empty
+/// message.
+const ENTER_A_MESSAGE: &str = "Enter a commit message";
 
 /// What the panel asks of the workbench.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -231,6 +300,136 @@ pub(crate) fn combined(status: &SplitStatus) -> Option<ChangeKind> {
     }
 }
 
+/// The commit message box and what goes with it.
+struct CommitBox {
+    editor: Entity<EditorView>,
+    /// Its placeholder and length hints, which its model paints.
+    hints: Rc<RefCell<CommitHints>>,
+    amend: bool,
+    /// What the box held before checking Amend filled it, and what it was
+    /// filled with: put back on unchecking if the text is still that.
+    filled: Option<(String, String)>,
+    /// HEAD-message reads started, the last the only one that may fill.
+    fills: u64,
+    /// The message being committed, and the box's version it was taken
+    /// at, while a commit runs.
+    committing: Option<(String, Version)>,
+    /// The box's version when a commit was refused for an empty message,
+    /// until it's edited.
+    refused_at: Option<Version>,
+    /// An explicit open (`git.commit`, `cc`) is to put the box in its
+    /// opening mode once it's drawn.
+    open_pending: bool,
+    /// The next focus is the box's own command line handing it back, which
+    /// leaves its mode be.
+    line_refocus: bool,
+    /// The box's vim command line's input, once made.
+    line: Option<Entity<TextInput>>,
+    /// The open line's prefix (`:`, `/`, `?`), while it's open.
+    line_open: Option<char>,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// What the workbench commits: the box's message, in the repository
+/// containing `root`.
+pub(crate) struct CommitRequest {
+    pub(crate) root: PathBuf,
+    pub(crate) message: String,
+    pub(crate) amend: bool,
+    /// The box's version the message was taken at.
+    pub(crate) version: Version,
+}
+
+/// The box's after-line text: while it's empty, its placeholder, or after
+/// a commit refused for an empty message the warning asking for one; else
+/// the rows over their length.
+struct CommitHints {
+    placeholder: String,
+    refused: bool,
+}
+
+impl DecorationProvider for CommitHints {
+    fn decorations(
+        &self,
+        snapshot: &BufferSnapshot,
+        range: Range<usize>,
+        out: &mut Vec<Decoration>,
+    ) {
+        let text = snapshot.text();
+        if text.is_empty() {
+            let (hint, tint) = match self.refused {
+                true => (ENTER_A_MESSAGE, Tint::Warning),
+                false => (self.placeholder.as_str(), Tint::Muted),
+            };
+            let kind = DecorationKind::AfterLine(hint.into());
+            out.push(Decoration::new(0..text.row_len(0) as usize, kind, tint));
+            return;
+        }
+        for (row, hint, tint) in length_hints(text) {
+            let start = text.row_start(row);
+            let row_range = start..start + text.row_len(row) as usize;
+            if overlaps(&row_range, &range) {
+                let kind = DecorationKind::AfterLine(hint.into());
+                out.push(Decoration::new(row_range, kind, tint));
+            }
+        }
+    }
+}
+
+/// Each row of a message over its length, with its hint and tint: the
+/// first over [`SUBJECT_LENGTH`], muted until it's over [`LINE_LENGTH`],
+/// and each after the first blank row over [`LINE_LENGTH`].
+fn length_hints(text: &Text) -> Vec<(u32, String, Tint)> {
+    let mut hints = Vec::new();
+    let mut body = false;
+    for row in 0..text.row_count() {
+        let start = text.row_start(row);
+        let end = start + text.row_len(row) as usize;
+        let chars = text.offset_to_char(end) - text.offset_to_char(start);
+        if row == 0 {
+            if chars > SUBJECT_LENGTH {
+                let tint = if chars > LINE_LENGTH {
+                    Tint::Warning
+                } else {
+                    Tint::Muted
+                };
+                hints.push((row, format!("{chars}/{SUBJECT_LENGTH}"), tint));
+            }
+        } else if body {
+            if chars > LINE_LENGTH {
+                hints.push((row, format!("{chars}/{LINE_LENGTH}"), Tint::Warning));
+            }
+        } else if text.row_to_string(row).trim().is_empty() {
+            body = true;
+        }
+    }
+    hints
+}
+
+/// The kind of command line `editor`'s vim has open, if any.
+fn open_line(editor: &EditorView) -> Option<CommandLineKind> {
+    match editor.vim_state()?.mode() {
+        Mode::CmdLine(kind) => Some(kind),
+        _ => None,
+    }
+}
+
+/// `editor`'s text.
+fn box_text(editor: &EditorView) -> String {
+    editor.model().text().to_string()
+}
+
+/// Replaces `editor`'s text with `text`, as an undo step of its own.
+pub(crate) fn set_box_text(editor: &Entity<EditorView>, text: &str, cx: &mut App) {
+    editor.update(cx, |view, cx| {
+        let len = view.model().text().len();
+        let mut buffer = view.model_mut().buffer_mut();
+        buffer.with_transaction_aside(|buffer| buffer.edit([(0..len, text)], Origin::User));
+        drop(buffer);
+        cx.notify();
+    });
+}
+
 pub struct GitPanel {
     root: Option<PathBuf>,
     /// What reads the status.
@@ -262,6 +461,16 @@ pub struct GitPanel {
     scroll: UniformListScrollHandle,
     ui: UiTheme,
     focus: FocusHandle,
+    /// The commit message box, once the workbench has given it.
+    commit: Option<CommitBox>,
+    /// Whether the workbench has been asked for the box.
+    box_asked: bool,
+    /// Where HEAD points, for the box's placeholder, once read.
+    head: Option<Head>,
+    /// Reads of where HEAD points started, the last the only one shown.
+    head_reads: u64,
+    /// With vim on, `c` was pressed: `c` or `a` follows.
+    pending_c: bool,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
 }
@@ -292,6 +501,11 @@ impl GitPanel {
             scroll: UniformListScrollHandle::new(),
             ui,
             focus: cx.focus_handle(),
+            commit: None,
+            box_asked: false,
+            head: None,
+            head_reads: 0,
+            pending_c: false,
             #[cfg(test)]
             test: Default::default(),
         }
@@ -345,6 +559,7 @@ impl GitPanel {
             Ok(Some((located, statuses))) => {
                 self.located = Some(located);
                 self.show(seq, statuses, cx);
+                self.read_head(cx);
             }
             Ok(None) => {
                 self.located = None;
@@ -517,8 +732,17 @@ impl GitPanel {
     /// `git.stage_file`, `git.unstage_file` and `git.discard_file` act on
     /// then. `None` if it hasn't focus.
     pub(crate) fn focused_selection(&self, window: &Window, cx: &App) -> Option<Option<PathBuf>> {
-        let focused = self.focus.contains_focused(window, cx);
+        let focused = self.focus.contains_focused(window, cx) && !self.box_focused(window, cx);
         focused.then(|| self.selected_entry().map(|entry| entry.path.clone()))
+    }
+
+    /// Whether the commit box, or its command line, has focus.
+    fn box_focused(&self, window: &Window, cx: &App) -> bool {
+        self.commit.as_ref().is_some_and(|commit| {
+            commit.editor.focus_handle(cx).contains_focused(window, cx)
+                || (commit.line.as_ref())
+                    .is_some_and(|line| line.focus_handle(cx).contains_focused(window, cx))
+        })
     }
 
     /// What shows in place of the list, if anything.
@@ -633,9 +857,26 @@ impl GitPanel {
 
     /// Up and down move the selection, the first press selecting the first
     /// row; Enter opens the selected row's diff, and Alt-Enter its file.
-    /// With vim on, so do fugitive's keys: see the module docs.
+    /// With vim on, so do fugitive's keys: see the module docs. Keys typed
+    /// in the commit box are the box's.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.box_focused(window, cx) {
+            return;
+        }
         let keystroke = &event.keystroke;
+        if fe_gpui::vim_enabled(cx) && !keystroke.modifiers.modified() {
+            let key = keystroke.key.as_str();
+            if std::mem::take(&mut self.pending_c) && matches!(key, "c" | "a") {
+                self.ask_to_focus_box(key == "a", window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "c" {
+                self.pending_c = true;
+                cx.stop_propagation();
+                return;
+            }
+        }
         if keystroke.key == "enter" && keystroke.modifiers == Modifiers::alt() {
             if let Some(ix) = self.selected {
                 self.open_file(ix, cx);
@@ -840,6 +1081,690 @@ impl GitPanel {
     }
 }
 
+/// The commit message box: see the module docs.
+impl GitPanel {
+    /// Whether the root's known not to be in a repository, or there's no
+    /// root.
+    pub(crate) fn not_a_repository(&self) -> bool {
+        self.status == Status::NotARepository
+    }
+
+    /// The commit message box, once the workbench has given it.
+    pub(crate) fn commit_box(&self) -> Option<&Entity<EditorView>> {
+        self.commit.as_ref().map(|commit| &commit.editor)
+    }
+
+    /// Takes `editor`, the commit box the workbench made, and shows it with
+    /// its placeholder and length hints.
+    pub(crate) fn set_commit_box(
+        &mut self,
+        editor: Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hints = Rc::new(RefCell::new(CommitHints {
+            placeholder: placeholder(None),
+            refused: false,
+        }));
+        let provider: Rc<RefCell<dyn DecorationProvider>> = hints.clone();
+        editor.update(cx, |editor, cx| {
+            editor.model_mut().add_decoration_provider(provider);
+            editor.set_wrap_reserve(HINT_ROOM, cx);
+        });
+        let focus = editor.focus_handle(cx);
+        let subscriptions = vec![
+            cx.observe_in(&editor, window, Self::box_changed),
+            cx.on_focus(&focus, window, Self::box_focused_in),
+        ];
+        self.commit = Some(CommitBox {
+            editor,
+            hints,
+            amend: false,
+            filled: None,
+            fills: 0,
+            committing: None,
+            refused_at: None,
+            open_pending: false,
+            line_refocus: false,
+            line: None,
+            line_open: None,
+            _subscriptions: subscriptions,
+        });
+        self.read_head(cx);
+        cx.notify();
+    }
+
+    /// Asks the workbench for the commit box, once: it makes the box with
+    /// the editors' theme and runs what's typed in it.
+    fn ask_for_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commit.is_some() || self.box_asked || self.root.is_none() {
+            return;
+        }
+        if self.workbench(cx).is_none() {
+            return;
+        }
+        self.box_asked = true;
+        let panel = cx.entity();
+        self.with_workbench(window, cx, move |workbench, window, cx| {
+            workbench.attach_commit_box(&panel, window, cx)
+        });
+    }
+
+    /// Runs `run` on the workbench once the panel's update is over: the
+    /// workbench reads the dock's panels as it runs.
+    fn with_workbench(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+        run: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+    ) {
+        let Some(workbench) = self.workbench(cx) else {
+            return;
+        };
+        window.defer(cx, move |window, cx| {
+            workbench.update(cx, |workbench, cx| run(workbench, window, cx));
+        });
+    }
+
+    /// Has the workbench focus the box, with `amend` Amend checked: `cc`
+    /// and `ca`.
+    fn ask_to_focus_box(&mut self, amend: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.with_workbench(window, cx, move |workbench, window, cx| {
+            workbench.focus_commit_box(amend, window, cx)
+        });
+    }
+
+    /// Focuses the box in its opening mode: see [`Self::open_mode`]. One
+    /// not drawn yet takes it once it's focused in the frame that draws it.
+    pub(crate) fn focus_commit_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        commit.open_pending = true;
+        window.focus(&commit.editor.focus_handle(cx), cx);
+        self.open_mode(window, cx);
+    }
+
+    /// Has the workbench commit the box's message: the button and
+    /// [`COMMIT_COMMAND`].
+    fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.with_workbench(window, cx, |workbench, window, cx| {
+            workbench.commit_from_box(window, cx)
+        });
+    }
+
+    /// Where the repository is: the working tree the root's in, once
+    /// found, else the root.
+    fn repo_root(&self) -> Option<PathBuf> {
+        (self.located.as_ref())
+            .map(|located| located.workdir.clone())
+            .or_else(|| self.root.clone())
+    }
+
+    /// Starts committing the box's message: what to commit, unless a
+    /// commit is running or there's no box.
+    pub(crate) fn begin_commit(&mut self, cx: &mut Context<Self>) -> Option<CommitRequest> {
+        let root = self.repo_root()?;
+        let commit = self
+            .commit
+            .as_mut()
+            .filter(|commit| commit.committing.is_none())?;
+        let editor = commit.editor.read(cx);
+        let message = box_text(editor);
+        let version = editor.model().snapshot().version();
+        commit.committing = Some((message.clone(), version));
+        cx.notify();
+        Some(CommitRequest {
+            root,
+            message,
+            amend: commit.amend,
+            version,
+        })
+    }
+
+    /// Commits `request` again, which was refused with nothing staged and
+    /// is to stage everything first: whether it may, as no commit is
+    /// running. What was typed since it was submitted stays once it's made.
+    pub(crate) fn resume_commit(
+        &mut self,
+        request: &CommitRequest,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(commit) = self
+            .commit
+            .as_mut()
+            .filter(|commit| commit.committing.is_none())
+        else {
+            return false;
+        };
+        commit.committing = Some((request.message.clone(), request.version));
+        cx.notify();
+        true
+    }
+
+    /// The commit started has been made: Amend is unchecked, the box
+    /// empties unless it was edited meanwhile, which keeps what was typed,
+    /// and where HEAD points is read again.
+    pub(crate) fn committed(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        let committed = commit.committing.take();
+        commit.refused_at = None;
+        if committed.is_some_and(|(message, _)| message == box_text(commit.editor.read(cx))) {
+            self.clear_box(cx);
+        } else {
+            commit.amend = false;
+            commit.filled = None;
+            commit.fills += 1;
+            cx.notify();
+        }
+        self.sync_hints(cx);
+        self.read_head(cx);
+    }
+
+    /// The commit started was refused, `empty` if for an empty message:
+    /// unless the box was edited meanwhile, it then asks for one until it
+    /// is. The message stays.
+    pub(crate) fn commit_refused(&mut self, empty: bool, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        let submitted = commit.committing.take().map(|(_, version)| version);
+        let version = commit.editor.read(cx).model().snapshot().version();
+        if empty && submitted == Some(version) {
+            commit.refused_at = Some(version);
+        }
+        self.sync_hints(cx);
+        cx.notify();
+    }
+
+    /// Empties the box and unchecks Amend: what a commit and fugitive's
+    /// abort (`:q!`) do.
+    pub(crate) fn clear_box(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        commit.amend = false;
+        commit.filled = None;
+        commit.fills += 1;
+        let editor = commit.editor.clone();
+        set_box_text(&editor, "", cx);
+        cx.notify();
+    }
+
+    /// Checks or unchecks Amend. Checking it into an empty box fills the
+    /// box with HEAD's message, read in the background; unchecking it puts
+    /// back what the box held if that's still untouched.
+    pub(crate) fn set_amend(&mut self, amend: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.repo_root();
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        if commit.amend == amend {
+            return;
+        }
+        commit.amend = amend;
+        commit.fills += 1;
+        cx.notify();
+        let editor = commit.editor.clone();
+        let text = box_text(editor.read(cx));
+        if !amend {
+            if let Some((before, filled)) = commit.filled.take()
+                && text == filled
+            {
+                set_box_text(&editor, &before, cx);
+            }
+            return;
+        }
+        let Some(root) = root.filter(|_| text.trim().is_empty()) else {
+            return;
+        };
+        let fill = commit.fills;
+        let read = cx.background_spawn(async move {
+            let repo = Repo::discover(&root).ok().flatten()?;
+            repo.head_message().ok().flatten()
+        });
+        cx.spawn_in(window, async move |panel, cx| {
+            let Some(message) = read.await else {
+                return;
+            };
+            (panel.update_in(cx, |panel, window, cx| {
+                panel.fill(fill, message, window, cx)
+            }))
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fills the box with `message`, HEAD's, if Amend's still checked as
+    /// fill `fill` was started and the box is still empty. A focused box
+    /// then takes the mode a box with a message opens in.
+    fn fill(&mut self, fill: u64, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        let before = box_text(commit.editor.read(cx));
+        if commit.fills != fill || !commit.amend || !before.trim().is_empty() {
+            return;
+        }
+        let message = message.trim_end().to_owned();
+        let editor = commit.editor.clone();
+        set_box_text(&editor, &message, cx);
+        commit.filled = Some((before, message));
+        if editor.focus_handle(cx).is_focused(window) {
+            self.open_mode(window, cx);
+        }
+    }
+
+    /// Reads where HEAD points in the background, for the placeholder.
+    fn read_head(&mut self, cx: &mut Context<Self>) {
+        if self.commit.is_none() {
+            return;
+        }
+        let Some(root) = self.repo_root() else {
+            return;
+        };
+        self.head_reads += 1;
+        let read = self.head_reads;
+        let head = cx.background_spawn(async move {
+            Repo::discover(&root).ok().flatten()?.current_branch().ok()
+        });
+        cx.spawn(async move |panel, cx| {
+            let head = head.await;
+            (panel.update(cx, |panel, cx| {
+                if panel.head_reads == read {
+                    panel.head = head;
+                    panel.sync_hints(cx);
+                }
+            }))
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Has the box's placeholder name where HEAD points, and the box ask
+    /// for a message while an empty one's refusal stands.
+    fn sync_hints(&mut self, cx: &mut Context<Self>) {
+        let Some(commit) = &self.commit else {
+            return;
+        };
+        let placeholder = placeholder(self.head.as_ref());
+        let refused = commit.refused_at.is_some();
+        let mut hints = commit.hints.borrow_mut();
+        if hints.placeholder != placeholder || hints.refused != refused {
+            *hints = CommitHints {
+                placeholder,
+                refused,
+            };
+            drop(hints);
+            commit.editor.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// The box notified: a host command its vim left (`:wq`, `ZZ`) goes to
+    /// the workbench, its command line opens or closes, a refused empty
+    /// message is forgotten once the box is edited, and the panel redraws
+    /// for its height and button.
+    fn box_changed(
+        &mut self,
+        editor: Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = editor.update(cx, |editor, _| editor.take_vim_host_command());
+        if let Some(command) = command {
+            let editor = editor.clone();
+            self.with_workbench(window, cx, move |workbench, window, cx| {
+                workbench.commit_box_host_command(editor, command, window, cx)
+            });
+        }
+        self.sync_line(&editor, window, cx);
+        let version = editor.read(cx).model().snapshot().version();
+        if let Some(commit) = &mut self.commit
+            && commit.refused_at.is_some_and(|at| at != version)
+        {
+            commit.refused_at = None;
+            self.sync_hints(cx);
+        }
+        cx.notify();
+    }
+
+    /// Focus is leaving the box for an editor (`:q!`, `:q`): the next focus
+    /// isn't its command line's handing it back, whichever frame sees it.
+    pub(crate) fn leave_box(&mut self) {
+        if let Some(commit) = &mut self.commit {
+            commit.line_refocus = false;
+        }
+    }
+
+    /// The box has focus: it takes its opening mode, unless its own command
+    /// line handed focus back.
+    fn box_focused_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        if std::mem::take(&mut commit.line_refocus) && !commit.open_pending {
+            return;
+        }
+        commit.open_pending = true;
+        self.open_mode(window, cx);
+    }
+
+    /// With vim on, puts the box in the mode it opens in: insert if it's
+    /// empty, else normal. Pending until the box is drawn to take it.
+    fn open_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        let editor = commit.editor.read(cx);
+        if !fe_gpui::vim_enabled(cx) || open_line(editor).is_some() {
+            commit.open_pending = false;
+            return;
+        }
+        let empty = editor.model().text().is_empty();
+        let in_mode = |mode: Option<&str>| match empty {
+            true => mode == Some("insert"),
+            false => mode.is_none_or(|mode| mode == "normal"),
+        };
+        if in_mode(editor.vim_mode()) {
+            commit.open_pending = false;
+            return;
+        }
+        let invocation = match empty {
+            true => Invocation::of("vim.insert")
+                .expect("a valid command ID")
+                .args(Value::from_iter([("at", "before")])),
+            false => Invocation::of("vim.normal_mode").expect("a valid command ID"),
+        };
+        let focus = commit.editor.focus_handle(cx);
+        // Nothing runs in a box the last frame didn't draw.
+        focus.dispatch_action(&RunCommand(invocation), window, cx);
+        commit.open_pending = !in_mode(commit.editor.read(cx).vim_mode());
+    }
+
+    /// Opens the box's command line when its vim has opened one, focusing
+    /// it, and closes it when vim's has closed some other way.
+    fn sync_line(
+        &mut self,
+        editor: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kind = open_line(editor.read(cx));
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        match (kind, commit.line_open) {
+            (Some(kind), None) => {
+                let input = match &commit.line {
+                    Some(input) => input.clone(),
+                    None => {
+                        let input = cx.new(|cx| TextInput::new("", &self.ui, cx));
+                        let focus = input.focus_handle(cx);
+                        (commit._subscriptions).push(cx.on_blur(
+                            &focus,
+                            window,
+                            Self::line_blurred,
+                        ));
+                        commit.line = Some(input.clone());
+                        input
+                    }
+                };
+                let prefill = (editor.read(cx).vim_state())
+                    .map_or("", |state| state.command_line_prefill())
+                    .to_owned();
+                input.update(cx, |input, cx| input.set_text(prefill, cx));
+                commit.line_open = Some(match kind {
+                    CommandLineKind::SearchForward => '/',
+                    CommandLineKind::SearchBackward => '?',
+                    CommandLineKind::Ex => ':',
+                });
+                window.focus(&input.focus_handle(cx), cx);
+            }
+            (None, Some(_)) => {
+                commit.line_open = None;
+                let focused = (commit.line.as_ref())
+                    .is_some_and(|input| input.focus_handle(cx).is_focused(window));
+                if focused {
+                    window.focus(&editor.focus_handle(cx), cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Focus left the box's command line for something else: the line is
+    /// cancelled, focus staying there. Not when the window goes inactive.
+    fn line_blurred(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.is_window_active() {
+            self.end_line(None, false, window, cx);
+        }
+    }
+
+    /// Ends the box's command line: submits `text` in the box's vim, or
+    /// cancels it with `None`, focusing the box again if `refocus`.
+    fn end_line(
+        &mut self,
+        text: Option<String>,
+        refocus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = &mut self.commit else {
+            return;
+        };
+        // Closed first, so neither the blur nor the box's notifying reads
+        // it as open.
+        if commit.line_open.take().is_none() {
+            return;
+        }
+        let editor = commit.editor.clone();
+        cx.notify();
+        if refocus {
+            commit.line_refocus = true;
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+        if open_line(editor.read(cx)).is_none() {
+            return;
+        }
+        let invocation = match text {
+            Some(text) => Invocation::of("vim.command_line_submit")
+                .expect("a valid command ID")
+                .args(Value::from_iter([("text", text)])),
+            None => Invocation::of("vim.command_line_cancel").expect("a valid command ID"),
+        };
+        // Vim's registry takes it in the box, so it goes no further.
+        let focus = editor.focus_handle(cx);
+        focus.dispatch_action(&RunCommand(invocation), window, cx);
+    }
+
+    /// The box's command line's commands: Enter submits it, Escape, and a
+    /// backspace on an empty line, cancel it, and the input's edits edit
+    /// it. Others go on.
+    fn on_line_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(input) = self.commit.as_ref().and_then(|commit| commit.line.clone()) else {
+            return cx.propagate();
+        };
+        match run.0.command.as_str() {
+            LINE_SUBMIT => {
+                let text = input.read(cx).text().to_owned();
+                return self.end_line(Some(text), true, window, cx);
+            }
+            LINE_CANCEL => return self.end_line(None, true, window, cx),
+            _ => {}
+        }
+        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
+            Some(PaletteOp::Backspace) if input.read(cx).text().is_empty() => {
+                return self.end_line(None, true, window, cx);
+            }
+            Some(PaletteOp::Backspace) => TextInput::backspace,
+            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
+            Some(PaletteOp::Clear) => TextInput::clear,
+            Some(PaletteOp::Paste) => TextInput::paste,
+            _ => return cx.propagate(),
+        };
+        input.update(cx, edit);
+    }
+
+    /// [`COMMIT_COMMAND`] commits; others go on.
+    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        if run.0.command.as_str() == COMMIT_COMMAND && self.commit.is_some() {
+            self.commit(window, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    /// The box, its command line or vim's message, and its Amend checkbox
+    /// and Commit button; nothing without a repository.
+    fn render_commit_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.status == Status::NotARepository {
+            return None;
+        }
+        let commit = self.commit.as_ref()?;
+        let ui = self.ui;
+        let editor = commit.editor.read(cx);
+        let theme = editor.theme();
+        let warning = theme.warning;
+        let line_height = (theme.font_size * theme.line_height).round();
+        let rows = editor.model().display().row_count().clamp(1, BOX_ROWS);
+        let height = line_height * box_rows(rows) + px(1.);
+        let message = (editor.vim_state())
+            .and_then(|state| state.message())
+            .map(str::to_owned);
+        let (label, enabled) = commit_button(commit, cx);
+        let line = commit.line_open.zip(commit.line.clone());
+        let (amend, committing) = (commit.amend, commit.committing.is_some());
+        let (checkbox_panel, button_panel) = (cx.weak_entity(), cx.weak_entity());
+        let below = match (line, message) {
+            (Some((prefix, input)), _) => Some(
+                div()
+                    .key_context(LINE_CONTEXT)
+                    .on_action(cx.listener(Self::on_line_command))
+                    .debug_selector(|| "commit-line".into())
+                    .flex()
+                    .items_center()
+                    .h(ROW_HEIGHT)
+                    .child(div().flex_none().child(prefix.to_string()))
+                    // The input pads its text; the line's follows the
+                    // prefix, as Vim's does.
+                    .child(div().flex_1().min_w_0().ml(px(-12.)).child(input))
+                    .into_any_element(),
+            ),
+            (None, Some(message)) => {
+                let error = message.starts_with('E');
+                let color = if error { ui.error_text } else { ui.muted_text };
+                Some(
+                    div()
+                        .debug_selector(|| "commit-message".into())
+                        .text_color(color)
+                        .child(message)
+                        .into_any_element(),
+                )
+            }
+            // Blanks or comments refused: wider than the room after a row.
+            (None, None) if commit_warning(commit, cx).is_some() => Some(
+                div()
+                    .debug_selector(|| "commit-message".into())
+                    .text_color(warning)
+                    .child(ENTER_A_MESSAGE)
+                    .into_any_element(),
+            ),
+            (None, None) => None,
+        };
+        let element = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_2()
+            .border_b_1()
+            .border_color(ui.border)
+            .child(
+                div()
+                    .debug_selector(|| "commit-box".into())
+                    .w_full()
+                    .h(height)
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(ui.border)
+                    .child(commit.editor.clone()),
+            )
+            .children(below)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        Checkbox::new("commit-amend")
+                            .checked(amend)
+                            .disabled(committing)
+                            .label("Amend")
+                            .on_change(move |checked, window, cx| {
+                                (checkbox_panel
+                                    .update(cx, |panel, cx| panel.set_amend(*checked, window, cx)))
+                                .ok();
+                            }),
+                    )
+                    .child(
+                        Button::new("commit-button", label)
+                            .primary()
+                            .small()
+                            .disabled(!enabled)
+                            .on_click(move |_, window, cx| {
+                                (button_panel.update(cx, |panel, cx| panel.commit(window, cx)))
+                                    .ok();
+                            }),
+                    ),
+            );
+        Some(element.into_any_element())
+    }
+}
+
+/// How many rows tall the box is to show `rows` of text unscrolled with
+/// the caret on the last: an editor scrolls to keep its caret a third of
+/// its height, or 3 rows if less, from the bottom edge.
+/// At most [`BOX_ROWS`], where a long message scrolls.
+fn box_rows(rows: u32) -> f32 {
+    let rows = rows as f32;
+    (rows * 1.5).min(rows + 3.).min(BOX_ROWS as f32)
+}
+
+/// The warning under the box after a commit was refused for a message of
+/// only blanks or comments, until the box is edited; the warning for an
+/// empty box is its placeholder.
+fn commit_warning(commit: &CommitBox, cx: &App) -> Option<&'static str> {
+    let empty = commit.editor.read(cx).model().text().is_empty();
+    (commit.refused_at.is_some() && !empty).then_some(ENTER_A_MESSAGE)
+}
+
+/// The Commit button's label, and whether it's enabled: not while the
+/// message is blank and Amend isn't checked, nor while committing.
+fn commit_button(commit: &CommitBox, cx: &App) -> (&'static str, bool) {
+    let blank = box_text(commit.editor.read(cx)).trim().is_empty();
+    let committing = commit.committing.is_some();
+    let enabled = !committing && (commit.amend || !blank);
+    let label = match (committing, commit.amend) {
+        (true, _) => "Committing…",
+        (false, true) => "Amend",
+        (false, false) => "Commit",
+    };
+    (label, enabled)
+}
+
+/// The box's placeholder, naming where `head` points if on a branch.
+fn placeholder(head: Option<&Head>) -> String {
+    match head {
+        Some(Head::Branch(name) | Head::Unborn(name)) => {
+            format!("Message ({COMMIT_KEY} to commit on \"{name}\")")
+        }
+        _ => format!("Message ({COMMIT_KEY} to commit)"),
+    }
+}
+
 /// Where `root` is in the working tree at `workdir`, through symlinks and
 /// `..`: `None` if it isn't in it. Spelled as given if either is gone.
 pub(crate) fn locate(root: &Path, workdir: &Path) -> Option<Located> {
@@ -906,11 +1831,13 @@ impl Focusable for GitPanel {
 }
 
 impl Render for GitPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Read when first shown, unless a run has started.
         if !self.read {
             self.refresh(cx);
         }
+        self.ask_for_box(window, cx);
+        let commit_box = self.render_commit_box(cx);
         let ui = self.ui;
         let list = uniform_list(
             "change-rows",
@@ -924,6 +1851,7 @@ impl Render for GitPanel {
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::on_run_command))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -935,6 +1863,7 @@ impl Render for GitPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
+            .children(commit_box)
             .when_some(self.message(), |panel, message| {
                 let color = if error { ui.error_text } else { ui.muted_text };
                 panel.child(
@@ -1122,6 +2051,44 @@ impl GitPanel {
             .iter()
             .map(|entry| entry.path.clone())
             .collect()
+    }
+
+    /// The commit box's after-line text: each row's, with its tint.
+    pub(crate) fn commit_hints(&self, cx: &App) -> Vec<(u32, String, Tint)> {
+        let Some(commit) = &self.commit else {
+            return Vec::new();
+        };
+        let model = commit.editor.read(cx).model();
+        let text = model.text();
+        (model.decorations(0..text.len()).into_iter())
+            .filter_map(|decoration| match decoration.kind {
+                DecorationKind::AfterLine(hint) => {
+                    let row = text.offset_to_point(decoration.range.start).row;
+                    Some((row, hint.to_string(), decoration.tint))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The warning under the box, if any.
+    pub(crate) fn commit_warning(&self, cx: &App) -> Option<&'static str> {
+        commit_warning(self.commit.as_ref()?, cx)
+    }
+
+    /// Whether Amend is checked.
+    pub(crate) fn amend_checked(&self) -> bool {
+        self.commit.as_ref().is_some_and(|commit| commit.amend)
+    }
+
+    /// The Commit button's label and whether it's enabled.
+    pub(crate) fn commit_button_state(&self, cx: &App) -> Option<(&'static str, bool)> {
+        Some(commit_button(self.commit.as_ref()?, cx))
+    }
+
+    /// Whether the box's command line is open.
+    pub(crate) fn commit_line_open(&self) -> bool {
+        (self.commit.as_ref()).is_some_and(|commit| commit.line_open.is_some())
     }
 
     /// What shows in place of the rows, if anything.

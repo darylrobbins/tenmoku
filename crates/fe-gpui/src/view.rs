@@ -46,6 +46,9 @@ pub struct EditorView {
     pub(crate) focus: FocusHandle,
     /// The colour of this editor's tab title, if set: its file's git status.
     pub(crate) tab_tint: Option<Hsla>,
+    /// How many ems soft wrap leaves free at the right, beyond its usual
+    /// margin, for text after a line ([`EditorView::set_wrap_reserve`]).
+    pub(crate) wrap_reserve: f32,
     /// How far the content is scrolled, in pixels (both ≥ 0).
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
@@ -239,6 +242,7 @@ impl EditorView {
             theme,
             focus: cx.focus_handle(),
             tab_tint: None,
+            wrap_reserve: 0.,
             scroll: Point::default(),
             autoscroll: true,
             reveal_hunk: None,
@@ -326,6 +330,23 @@ impl EditorView {
             self.tab_tint = tint;
             cx.notify();
         }
+    }
+
+    /// Has soft wrap leave `ems` more of the text area free at the right,
+    /// so text after a line (a decoration's
+    /// [`fe_editor::decorations::DecorationKind::AfterLine`]) up to that
+    /// wide shows whole after a wrapped row's last piece. None by default.
+    pub fn set_wrap_reserve(&mut self, ems: f32, cx: &mut Context<Self>) {
+        if self.wrap_reserve != ems {
+            self.wrap_reserve = ems;
+            cx.notify();
+        }
+    }
+
+    /// How many ems soft wrap leaves free for text after a line: see
+    /// [`EditorView::set_wrap_reserve`].
+    pub fn wrap_reserve(&self) -> f32 {
+        self.wrap_reserve
     }
 
     /// Turns the Linux primary selection on or off: while on, the selection
@@ -1431,3 +1452,100 @@ mod ghost_text_tests;
 
 #[cfg(test)]
 mod ghost_text_key_tests;
+
+/// Soft wrap leaving room for text after a line.
+#[cfg(test)]
+mod wrap_reserve_tests {
+    use std::{cell::RefCell, ops::Range, rc::Rc};
+
+    use fe_buffer::{Buffer, BufferSnapshot};
+    use fe_editor::{
+        EditorModel,
+        decorations::{Decoration, DecorationKind, DecorationProvider, Tint},
+    };
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+
+    use crate::{EditorTheme, EditorView, init};
+
+    /// A count after the first row, as a commit box shows a subject's length.
+    struct Count;
+
+    impl DecorationProvider for Count {
+        fn decorations(
+            &self,
+            snapshot: &BufferSnapshot,
+            _: Range<usize>,
+            out: &mut Vec<Decoration>,
+        ) {
+            let text = snapshot.text();
+            let row = 0..text.row_len(0) as usize;
+            out.push(Decoration::new(
+                row,
+                DecorationKind::AfterLine("120/72".into()),
+                Tint::Warning,
+            ));
+        }
+    }
+
+    /// A soft-wrapped editor with a [`Count`], drawn.
+    fn editor(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContext) {
+        cx.update(init);
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let mut model = EditorModel::new(Buffer::new("x"), None);
+            model.set_soft_wrap(true);
+            model.add_decoration_provider(Rc::new(RefCell::new(Count)));
+            EditorView::new(model, EditorTheme::default_dark(cx), cx)
+        });
+        draw(cx);
+        (view, cx)
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    /// Replaces `view`'s text with `text` and draws it.
+    fn set_text(view: &Entity<EditorView>, text: &str, cx: &mut VisualTestContext) {
+        view.update(cx, |view, cx| {
+            let len = view.model.text().len();
+            (view.model.buffer_mut()).edit([(0..len, text)], fe_buffer::Origin::User);
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    /// With `ems` reserved, fills the first row's pieces to the wrap width
+    /// and draws it: how far the count's right edge is inside the text
+    /// area's, in pixels (negative where it's cut off).
+    fn room(view: &Entity<EditorView>, ems: f32, cx: &mut VisualTestContext) -> f32 {
+        view.update(cx, |view, cx| view.set_wrap_reserve(ems, cx));
+        set_text(view, &"x".repeat(1000), cx);
+        // As many as a piece holds, twice.
+        let piece = view.read_with(cx, |view, _| {
+            let row = &view.layout.as_ref().expect("drawn").frame.rows[0];
+            row.end - row.start
+        });
+        set_text(view, &"x".repeat(piece * 2), cx);
+        view.read_with(cx, |view, _| {
+            let layout = view.layout.as_ref().expect("drawn");
+            assert_eq!(layout.frame.rows.len(), 2, "two full pieces");
+            let text = layout.frame.text_bounds();
+            let right = f32::from(layout.origin.x) + text.x + text.width;
+            let count = (layout.decorations.placed.iter())
+                .find(|placed| matches!(placed.kind, DecorationKind::AfterLine(_)))
+                .expect("the count is placed");
+            right - f32::from(count.bounds.origin.x + count.bounds.size.width)
+        })
+    }
+
+    #[gpui::test]
+    fn a_reserve_leaves_room_after_a_wrapped_row(cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx);
+        // By default a full row's count runs past the edge.
+        assert!(room(&view, 0., cx) < 0.);
+        // Six ems more fit its gap and six characters.
+        let room = room(&view, 6., cx);
+        assert!(room >= 0., "{room}");
+    }
+}

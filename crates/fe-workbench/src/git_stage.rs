@@ -817,8 +817,9 @@ fn blob(repo: &Repo, id: &str) -> Result<Vec<u8>, Failed> {
 
 /// Queues `start`, work that changes a repository, to start once the work
 /// queued before it is done: with none, once the current update is over,
-/// so that its save can update the window it was asked in.
-fn mutate(cx: &mut App, start: impl FnOnce(&mut App) -> Task<()> + 'static) {
+/// so that its save can update the window it was asked in. Commits
+/// (`git_commit`) queue here too.
+pub(super) fn mutate(cx: &mut App, start: impl FnOnce(&mut App) -> Task<()> + 'static) {
     let mutations = cx.default_global::<Mutations>();
     mutations.queued.push_back(Box::new(start));
     if !mutations.running {

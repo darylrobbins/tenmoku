@@ -574,8 +574,9 @@ impl Element for EditorElement {
         let width: f32 = bounds.size.width.into();
         self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
-            view.model
-                .fit_wrap_width(layout::wrap_width(width, rows, em));
+            // Less any room the view keeps for text after a line.
+            let wrap = layout::wrap_width(width, rows, em) - view.wrap_reserve * em;
+            view.model.fit_wrap_width(wrap.max(em));
             view.model.sync_display();
             view.sync_visual();
             // Caught up with edits made through another view of the buffer:
