@@ -342,15 +342,6 @@ fn operate_as_wide(
     let rows = [&marks.start, &marks.end].map(|pos| pos.position(snapshot).0);
     // The row a charwise change joins to the first: where what it takes ends.
     let joined = text.offset_to_point(end_of(&text, ends.hi())).row;
-    let landings = match args.operator {
-        Operator::Join | Operator::JoinRaw => join_landings(
-            &text,
-            first,
-            (last - first + 1).max(2),
-            args.operator == Operator::JoinRaw,
-        ),
-        _ => Vec::new(),
-    };
     let moved = |pos: &Pos, row: u32| {
         let past = |anchor| Pos {
             row: anchor,
@@ -376,16 +367,6 @@ fn operate_as_wide(
                 row: snapshot.anchor_after(text.row_start(last + 1)),
                 ..pos.clone()
             },
-            Operator::Join | Operator::JoinRaw
-                if first < row && row <= first + landings.len() as u32 =>
-            {
-                let landing = landings[(row - first - 1) as usize];
-                Pos {
-                    row: first_row,
-                    column: landing.column(pos.column),
-                    past_end: false,
-                }
-            }
             _ => return None,
         })
     };
@@ -429,11 +410,7 @@ fn operate_as_wide(
             recase(target, actor, args.operator, range, land, lines)
         }
     };
-    if let Some(marks) = target.state.last_visual.as_mut() {
-        let [start, end] = moved;
-        marks.start = start.unwrap_or_else(|| marks.start.clone());
-        marks.end = end.unwrap_or_else(|| marks.end.clone());
-    }
+    move_marks(target.state, moved);
     if args.operator != Operator::Yank {
         target.state.set_last_change(Change::Operate(args).into());
         if !target.state.replaying {
@@ -441,6 +418,52 @@ fn operate_as_wide(
         }
     }
     Ok(dispatched)
+}
+
+/// Where nvim leaves `'<` and `'>` after joins of `(first, rows)` (as
+/// `edit::join_rows` makes them, `raw` for `gJ`), read before they join: on
+/// a row joined to the first, where its text lands there. `move_marks`
+/// sets them after.
+pub(crate) fn joined_marks(
+    state: &VimState,
+    snapshot: &BufferSnapshot,
+    joins: &[(u32, u32)],
+    raw: bool,
+) -> [Option<Pos>; 2] {
+    let Some(marks) = state.last_visual.as_ref() else {
+        return [None, None];
+    };
+    let text = snapshot.text();
+    let landings = joins
+        .iter()
+        .map(|&(first, rows)| (first, join_landings(text, first, rows, raw)))
+        .collect::<Vec<_>>();
+    [&marks.start, &marks.end].map(|pos| {
+        if pos.past_end {
+            return None;
+        }
+        let row = pos.position(snapshot).0;
+        landings.iter().find_map(|(first, landings)| {
+            if !(*first < row && row <= first + landings.len() as u32) {
+                return None;
+            }
+            let landing = landings[(row - first - 1) as usize];
+            Some(Pos {
+                row: snapshot.anchor_after(text.row_start(*first)),
+                column: landing.column(pos.column),
+                past_end: false,
+            })
+        })
+    })
+}
+
+/// Sets `'<` and `'>` to what `joined_marks` read, where it found them.
+pub(crate) fn move_marks(state: &mut VimState, moved: [Option<Pos>; 2]) {
+    if let Some(marks) = state.last_visual.as_mut() {
+        let [start, end] = moved;
+        marks.start = start.unwrap_or_else(|| marks.start.clone());
+        marks.end = end.unwrap_or_else(|| marks.end.clone());
+    }
 }
 
 /// Where `J` puts a joined row's text on the first row.

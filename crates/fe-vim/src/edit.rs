@@ -11,6 +11,7 @@ use crate::{
     Change, CountArgs, JoinArgs, ReplaceCharArgs, VimTarget, history,
     motion::Cursor,
     operator::{self, row_end},
+    visual,
 };
 
 /// One caret's edits, sorted, and where it lands; `None` if it doesn't act
@@ -178,6 +179,7 @@ pub(crate) fn join_rows(
     let rows = args.count.unwrap_or(2).max(2);
     let last_row = text.row_count() - 1;
     let mut joined_to = None;
+    let mut joins = Vec::new();
     let acts = target
         .model
         .selections()
@@ -198,6 +200,7 @@ pub(crate) fn join_rows(
             }
             let last = first.saturating_add(rows - 1).min(last_row);
             joined_to = Some(last);
+            joins.push((first, last - first + 1));
             let line = text.row_to_string(first);
             let mut empty = line.is_empty();
             // Whether the row joined last ends in white space, once its
@@ -233,7 +236,8 @@ pub(crate) fn join_rows(
     target.state.failed |= acts
         .iter()
         .all(|acts| acts.edits.is_empty() && acts.land.is_none());
-    apply(
+    let marks = visual::joined_marks(target.state, target.model.snapshot(), &joins, args.raw);
+    let dispatched = apply(
         target,
         actor,
         acts,
@@ -241,7 +245,9 @@ pub(crate) fn join_rows(
             count,
             raw: args.raw,
         }),
-    )
+    );
+    visual::move_marks(target.state, marks);
+    dispatched
 }
 
 /// `vim.replace_char`: the `count` graphemes from each caret become `char`

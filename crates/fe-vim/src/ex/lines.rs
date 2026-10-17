@@ -17,6 +17,7 @@ use crate::{
     operator::{self, row_end},
     register::Write,
     search::{self, Deadline, Interrupted, Pattern},
+    visual,
 };
 
 /// The line command `name` names, given what follows it, or `None` if it's
@@ -318,7 +319,14 @@ pub(super) fn join(
             let edits = (first + 1..=last)
                 .map(|row| (row_end(&text, row - 1)..text.row_start(row), String::new()))
                 .collect();
+            let marks = visual::joined_marks(
+                target.state,
+                target.model.snapshot(),
+                &[(first, last - first + 1)],
+                true,
+            );
             let (transaction, snapshot) = apply(target, actor, edits);
+            visual::move_marks(target.state, marks);
             (
                 noted(
                     target,

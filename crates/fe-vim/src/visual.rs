@@ -39,7 +39,7 @@ use block::{Block, at_column, column_of, operate_block, recased_text};
 pub(crate) use block::{insertion, spaced, width_from};
 pub(crate) use object::select_object;
 use operate::{extent, recased};
-pub(crate) use operate::{live_area, operate, repeat, replay_area};
+pub(crate) use operate::{joined_marks, live_area, move_marks, operate, repeat, replay_area};
 pub(crate) use put::{put, put_block, put_size};
 
 /// A visual mode's ends, as anchors (see [`Ends`]).
