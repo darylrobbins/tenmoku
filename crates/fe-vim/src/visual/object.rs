@@ -8,15 +8,20 @@ fn object_ends(text: &Text, span: Span, object: TextObject) -> Option<(usize, us
         // An empty inside: nothing for `i(` and `i{`, the quotes for `i"`,
         // the position itself for a word object (an empty row).
         Span::Chars(range) if range.is_empty() => match object {
-            InnerParen | InnerBrace => None,
+            InnerParen | InnerBrace | InnerBracket | InnerAngle => None,
             InnerDoubleQuote | InnerSingleQuote => Some((range.start, range.start - 1)),
             _ => Some((range.start, range.start)),
         },
         // `i(` and `i{` end at a row's end when the bracket starts the next
         // row: a visual selection takes that row's end too.
         Span::Chars(range)
-            if matches!(object, TextObject::InnerParen | TextObject::InnerBrace)
-                && range.end < text.len()
+            if matches!(
+                object,
+                TextObject::InnerParen
+                    | TextObject::InnerBrace
+                    | TextObject::InnerBracket
+                    | TextObject::InnerAngle
+            ) && range.end < text.len()
                 && range.end == row_end(text, text.offset_to_point(range.end).row) =>
         {
             Some((range.start, range.end))
@@ -93,7 +98,33 @@ pub(crate) fn select_object(
         let at = cursor_at(&text, ends.cursor);
         at.ix > 0 && at.class_on_row(at.ix - 1, big) == Some(Class::Blank)
     };
-    let (anchor, cursor) = if matches!(
+    let charwise_selection = ends.kind == VisualKind::Char && ends.anchor != ends.cursor;
+    let (anchor, cursor) = if charwise_selection
+        && matches!(
+            args.text_object,
+            InnerParen
+                | AParen
+                | InnerBrace
+                | ABrace
+                | InnerBracket
+                | ABracket
+                | InnerAngle
+                | AAngle
+        ) {
+        let (inner, pair) = match args.text_object {
+            InnerParen | AParen => (args.text_object == InnerParen, b"()"),
+            InnerBrace | ABrace => (args.text_object == InnerBrace, b"{}"),
+            InnerBracket | ABracket => (args.text_object == InnerBracket, b"[]"),
+            _ => (args.text_object == InnerAngle, b"<>"),
+        };
+        let (lo, hi) = (ends.lo(), ends.hi());
+        match text_object::brackets_from(&text, lo, hi, (pair[0], pair[1]), count, inner, |span| {
+            object_ends(&text, span, args.text_object)
+        }) {
+            Some(found) => found,
+            None => return failed(state),
+        }
+    } else if matches!(
         args.text_object,
         InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag | InnerBacktick | ABacktick
     ) {

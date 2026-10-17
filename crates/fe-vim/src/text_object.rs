@@ -267,13 +267,6 @@ pub(crate) fn brackets(
         quotes: Quotes::Ignore,
         literals: false,
     };
-    let matching = |at: usize| {
-        let scan = Scan::new(text, text.offset_to_point(at).row);
-        Rules {
-            quotes: Quotes::from(scan.quoted.get(at - scan.start).copied().unwrap_or(false)),
-            ..around
-        }
-    };
     let byte = |at: usize| {
         let scan = Scan::new(text, text.offset_to_point(at).row);
         let ix = at - scan.start;
@@ -299,7 +292,18 @@ pub(crate) fn brackets(
             None => return Span::Failed,
         },
     };
-    let Some(close) = unmatched(text, open, true, pair, matching(open)) else {
+    brackets_at(text, open, pair, inner)
+}
+
+/// The pair opening at `open`: with its brackets, or `inner` its inside.
+fn brackets_at(text: &Text, open: usize, pair: (u8, u8), inner: bool) -> Span {
+    let scan = Scan::new(text, text.offset_to_point(open).row);
+    let rules = Rules {
+        escaped: false,
+        quotes: Quotes::from(scan.quoted.get(open - scan.start).copied().unwrap_or(false)),
+        literals: false,
+    };
+    let Some(close) = unmatched(text, open, true, pair, rules) else {
         return Span::Failed;
     };
     if !inner {
@@ -333,6 +337,50 @@ pub(crate) fn brackets(
     // An empty inside is an empty range at its start: `di(` moves there,
     // `>i(` shifts its row.
     Span::Chars(start..end.max(start))
+}
+
+/// `i(` or `a(` typed in a visual mode over a selection of more than one
+/// position, `lo` to `hi`: as nvim picks it, the pair from the selection's
+/// start rather than the cursor, whether or not it holds the selection.
+/// The opening bracket is the `count`th unclosed one before `lo` (the char
+/// at `lo` not counted) or, with none, the one `count` deep after it
+/// ([`next_bracket`]). An `a` object is the pair; an `inner` one its
+/// inside, stepping out to the pair around `lo` while that inside is more
+/// than one position and within the selection. `ends` gives the positions
+/// a span takes in a visual mode (`None` if it selects nothing), and the
+/// result is those, start first.
+pub(crate) fn brackets_from(
+    text: &Text,
+    lo: usize,
+    hi: usize,
+    pair: (u8, u8),
+    count: u32,
+    inner: bool,
+    ends: impl Fn(Span) -> Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let around = Rules {
+        escaped: false,
+        quotes: Quotes::Ignore,
+        literals: false,
+    };
+    let count = count.max(1);
+    let before = |from: usize, count: u32| match unmatched(text, from, false, pair, around) {
+        Some(_) => nth_unmatched(text, from, false, pair, around, count).map(Some),
+        None => Some(None),
+    };
+    let open = match before(lo, count)? {
+        Some(open) => open,
+        None => next_bracket(text, lo, pair, count)?,
+    };
+    let pick = |open: usize| ends(brackets_at(text, open, pair, inner));
+    let found = pick(open)?;
+    if !inner || found.0 < lo || found.1 > hi || found.1 == found.0 {
+        return Some(found);
+    }
+    // The inside is within the selection: the pair around its start.
+    let out = lo.checked_sub(1)?;
+    let open = unmatched(text, out, false, pair, around)?;
+    pick(open)
 }
 
 /// After `offset`, the unescaped opening bracket of `pair` that's `depth`
