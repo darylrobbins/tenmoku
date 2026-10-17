@@ -325,6 +325,23 @@ pub fn registry() -> Registry<VimCommands> {
         .context(normal.clone())
         .mutates_buffer(true);
     registry
+        .register(
+            "vim.substitute_all_lines",
+            "Vim Substitute All Lines",
+            |target: &mut VimTarget<'_>, actor: &Actor| {
+                follow(target);
+                let ran = crate::ex::run(target, actor, "%s//~/&");
+                marks::settle(target);
+                ran
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Repeats the last substitute with its flags on every line, with the last search pattern (`g&`, as nvim's `:%s//~/&`): one transaction, which `.` doesn't repeat.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
         .register_with_args(
             "vim.record",
             "Vim Record Macro",

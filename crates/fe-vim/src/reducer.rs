@@ -409,6 +409,10 @@ impl Pending {
             Prefix::G if ch == 'g' => self.commit(Target::Motion(Motion::DocumentStart)),
             // `gv`, which drops a count.
             Prefix::G if ch == 'v' && self.operator.is_none() => invocation("vim.reselect", ()),
+            // `g&`, which is `:%s//~/&` and drops a count.
+            Prefix::G if ch == '&' && self.operator.is_none() && !self.visual => {
+                invocation("vim.substitute_all_lines", ())
+            }
             Prefix::Find(motion) => self.commit(Target::Motion(match motion {
                 Motion::FindForward(_) => Motion::FindForward(ch),
                 Motion::FindBackward(_) => Motion::FindBackward(ch),
