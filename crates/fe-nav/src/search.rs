@@ -1022,7 +1022,7 @@ fn import_statement(language: &str, line: &str) -> Option<Statement> {
         }
         "go" => keyword(line, "import").map(|_| Statement::PAREN_LIST),
         "java" => keyword(line, "import").map(|_| Statement::LINE),
-        "c" => {
+        "c" | "cpp" => {
             let directive = line.strip_prefix('#')?.trim_start();
             keyword(directive, "include").map(|_| Statement::LINE)
         }
