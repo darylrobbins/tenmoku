@@ -196,6 +196,7 @@ impl SaveJob {
         let temp = builder.tempfile_in(dir)?;
         if let Some(permissions) = permissions {
             copy_xattrs(&target, temp.as_file());
+            keep_creation_date(&target, temp.as_file());
             temp.as_file().set_permissions(permissions)?;
         }
         let mut out = io::BufWriter::new(temp);
@@ -251,7 +252,35 @@ unsafe extern "C" {
         state: *mut std::ffi::c_void,
         flags: u32,
     ) -> std::ffi::c_int;
+    fn fsetattrlist(
+        fd: std::ffi::c_int,
+        attr_list: *mut AttrList,
+        attr_buf: *mut std::ffi::c_void,
+        attr_buf_size: usize,
+        options: u32,
+    ) -> std::ffi::c_int;
 }
+
+/// `struct attrlist` of `sys/attr.h`.
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct AttrList {
+    bitmapcount: u16,
+    reserved: u16,
+    commonattr: u32,
+    volattr: u32,
+    dirattr: u32,
+    fileattr: u32,
+    forkattr: u32,
+}
+
+/// `ATTR_BIT_MAP_COUNT` of `sys/attr.h`.
+#[cfg(target_os = "macos")]
+const ATTR_BIT_MAP_COUNT: u16 = 5;
+
+/// `ATTR_CMN_CRTIME` of `sys/attr.h`: the creation date.
+#[cfg(target_os = "macos")]
+const ATTR_CMN_CRTIME: u32 = 0x200;
 
 /// `COPYFILE_XATTR` of `copyfile.h`: extended attributes only.
 #[cfg(target_os = "macos")]
@@ -286,6 +315,63 @@ fn copy_xattrs(original: &Path, new: &std::fs::File) {
 
 #[cfg(not(target_os = "macos"))]
 fn copy_xattrs(_: &Path, _: &std::fs::File) {}
+
+/// Gives `new` the creation date of the file at `original` (macOS), as
+/// `FileManager.replaceItemAt` does. A failure is logged and the save goes on.
+#[cfg(target_os = "macos")]
+fn keep_creation_date(original: &Path, new: &std::fs::File) {
+    use std::os::fd::AsRawFd;
+    let set = std::fs::metadata(original).and_then(|metadata| {
+        let since = metadata
+            .created()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?;
+        let mut time = TimeSpec {
+            tv_sec: since.as_secs() as i64,
+            tv_nsec: since.subsec_nanos() as i64,
+        };
+        let mut list = AttrList {
+            bitmapcount: ATTR_BIT_MAP_COUNT,
+            reserved: 0,
+            commonattr: ATTR_CMN_CRTIME,
+            volattr: 0,
+            dirattr: 0,
+            fileattr: 0,
+            forkattr: 0,
+        };
+        // SAFETY: the descriptor is open, and the buffer holds the one
+        // `timespec` that `commonattr` names.
+        match unsafe {
+            fsetattrlist(
+                new.as_raw_fd(),
+                &mut list,
+                (&mut time as *mut TimeSpec).cast(),
+                std::mem::size_of::<TimeSpec>(),
+                0,
+            )
+        } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    });
+    if let Err(error) = set {
+        log::warn!(
+            "{}: its creation date wasn't kept: {error}",
+            original.display()
+        );
+    }
+}
+
+/// `struct timespec` on 64-bit macOS.
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct TimeSpec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_creation_date(_: &Path, _: &std::fs::File) {}
 
 /// Whether `error` says the file system has no exclusive rename (exFAT, FAT
 /// and some network shares), so a new file can't be committed by one.
