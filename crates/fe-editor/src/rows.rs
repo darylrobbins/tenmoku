@@ -66,33 +66,31 @@ impl Block {
 }
 
 impl EditorModel {
-    /// Inserts [`EditorModel::indent_unit`] at the start of each touched
-    /// row that isn't blank. Offsets at a row's start move right with it.
+    /// Moves each touched row's indentation to the next indent stop, as VS
+    /// Code's Indent Line does. Blank rows are left alone. Offsets at a
+    /// row's start move right with it.
     pub fn indent_rows(&mut self) {
-        self.sync_display();
-        let indent = self.indent_unit();
-        let text = self.text();
-        let edits = self
-            .blocks(false)
-            .iter()
-            .flat_map(|block| block.rows.clone())
-            .filter(|&row| !text.row_to_string(row).trim().is_empty())
-            .map(|row| {
-                let start = text.row_start(row);
-                (start..start, indent.clone())
-            })
-            .collect();
-        self.edit_rows_in_place(edits);
+        self.shift_rows(true);
     }
 
-    /// Removes a leading tab, or else up to the indent width in leading
-    /// spaces (`tab_size` with tabs or no style), from each touched row.
+    /// Moves each touched row's indentation to the previous indent stop,
+    /// as VS Code's Outdent Line does; a row with none is left alone.
     pub fn outdent_rows(&mut self) {
+        self.shift_rows(false);
+    }
+
+    /// The indent stops are multiples of the indent width (`tab_size` with
+    /// tabs or no style); the new indentation is written as
+    /// [`EditorModel::indent_unit`] would: spaces, or with tabs as many as
+    /// fit and then spaces.
+    fn shift_rows(&mut self, indent: bool) {
         self.sync_display();
-        let width = match self.indent_style {
+        let tab_size = self.tab_size;
+        let step = match self.indent_style {
             Some(IndentStyle::Spaces(n)) => usize::from(n),
-            Some(IndentStyle::Tabs) | None => self.tab_size,
+            Some(IndentStyle::Tabs) | None => tab_size,
         };
+        let tabs = self.indent_style == Some(IndentStyle::Tabs);
         let text = self.text();
         let edits = self
             .blocks(false)
@@ -100,17 +98,45 @@ impl EditorModel {
             .flat_map(|block| block.rows.clone())
             .filter_map(|row| {
                 let row_text = text.row_to_string(row);
-                let len = if row_text.starts_with('\t') {
-                    1
+                if indent && row_text.trim().is_empty() {
+                    return None;
+                }
+                let old = row_text
+                    .bytes()
+                    .take_while(|&byte| byte == b' ' || byte == b'\t')
+                    .count();
+                let mut column = 0;
+                for byte in row_text.bytes().take(old) {
+                    column = if byte == b'\t' {
+                        (column / tab_size + 1) * tab_size
+                    } else {
+                        column + 1
+                    };
+                }
+                let width = if indent {
+                    (column / step + 1) * step
+                } else if column == 0 {
+                    return None;
                 } else {
-                    row_text
-                        .bytes()
-                        .take(width)
-                        .take_while(|&byte| byte == b' ')
-                        .count()
+                    (column - 1) / step * step
                 };
+                let new = if tabs {
+                    "\t".repeat(width / tab_size) + &" ".repeat(width % tab_size)
+                } else {
+                    " ".repeat(width)
+                };
+                let old_text = &row_text[..old];
                 let start = text.row_start(row);
-                (len > 0).then(|| (start..start + len, String::new()))
+                if new == old_text {
+                    None
+                } else if new.ends_with(old_text) {
+                    let added = new.len() - old;
+                    Some((start..start, new[..added].to_owned()))
+                } else if old_text.starts_with(&new) {
+                    Some((start + new.len()..start + old, String::new()))
+                } else {
+                    Some((start..start + old, new))
+                }
             })
             .collect();
         self.edit_rows_in_place(edits);

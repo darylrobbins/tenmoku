@@ -81,7 +81,7 @@ fn editing_follows_it() {
     assert_eq!(edited(tabs, "[a\nb]", EditorModel::tab), "\t[a\n\tb]");
     assert_eq!(edited(tabs, "\t\t|a", EditorModel::outdent_rows), "\t|a");
     // Spaces still outdent by tab_size.
-    assert_eq!(edited(tabs, "      |a", EditorModel::outdent_rows), "  |a");
+    assert_eq!(edited(tabs, "      |a", EditorModel::outdent_rows), "\t|a");
 
     let two = Some(IndentStyle::Spaces(2));
     assert_eq!(edited(two, "a|b", EditorModel::tab), "a |b");
@@ -92,7 +92,10 @@ fn editing_follows_it() {
     // With no style, tab_size spaces as before.
     assert_eq!(edited(None, "a|b", EditorModel::tab), "a   |b");
     assert_eq!(edited(None, "|a", EditorModel::indent_rows), "    |a");
-    assert_eq!(edited(None, "      |a", EditorModel::outdent_rows), "  |a");
+    assert_eq!(
+        edited(None, "      |a", EditorModel::outdent_rows),
+        "    |a"
+    );
 
     // The unit, and a split keeping the style.
     let mut model = parse("|a");

@@ -50,12 +50,12 @@ fn one_step(marked: &str, name: &str, expected: &str) {
 fn indent_and_outdent() {
     // The selection ends at row 3's start, so row 3 isn't touched; the
     // blank row 1 isn't indented.
-    one_step("[a\n\n  b\n]c", "indent", "    [a\n\n      b\n]c");
-    one_step("    [a\n\n      b\n]c", "outdent", "[a\n\n  b\n]c");
+    one_step("[a\n\n  b\n]c", "indent", "    [a\n\n    b\n]c");
+    one_step("    [a\n\n      b\n]c", "outdent", "[a\n\n    b\n]c");
     // Fewer spaces than a level all go, a tab goes alone, and a row with
     // no leading whitespace is left alone.
-    one_step("[  a\n\t\tb\nc]", "outdent", "[a\n\tb\nc]");
-    one_step("    a\n\t  |b", "outdent", "    a\n  |b");
+    one_step("[  a\n\t\tb\nc]", "outdent", "[a\n    b\nc]");
+    one_step("    a\n\t  |b", "outdent", "    a\n    |b");
     let (model, effect) = dispatch("[a\nb]", "outdent");
     assert_eq!((render(&model), effect), ("[a\nb]".into(), Effect::Nothing));
 
@@ -65,7 +65,7 @@ fn indent_and_outdent() {
         ran("|ab\nc|d", EditorModel::indent_rows),
         "    |ab\n    c|d"
     );
-    assert_eq!(ran("  a|b", EditorModel::indent_rows), "      a|b");
+    assert_eq!(ran("  a|b", EditorModel::indent_rows), "    a|b");
     assert_eq!(ran("  |  ab", EditorModel::outdent_rows), "|ab");
     // A reversed selection stays reversed.
     let mut model = parse("[a\nb]");
