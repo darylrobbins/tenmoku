@@ -1,6 +1,7 @@
 //! The link under a terminal cell, for the view to underline and open: an OSC 8
 //! hyperlink, a URL in the text, or a path to a file that exists, with an
-//! optional line and column (`src/main.rs:12:5`, `src/main.rs(12,5)`).
+//! optional line and column (`src/main.rs:12:5`, `src/main.rs(12,5)`,
+//! `"src/main.py", line 12, column 5`).
 //!
 //! Links don't continue across rows: one the terminal soft-wrapped is found
 //! only up to the row's edge, and a path cut there may not exist.
@@ -236,7 +237,7 @@ fn is_path_char(c: char) -> bool {
 }
 
 /// The existing path covering character `at`, with its `:line[:column]` or
-/// `(line[,column])` suffix.
+/// `(line[,column])` suffix, or `", line N[, column M]` after a quoted one.
 fn path_at(text: &RowText, at: usize, cwd: &Path) -> Option<(Range<usize>, LinkTarget)> {
     let chars = &text.chars;
     let mut start = 0;
@@ -248,7 +249,8 @@ fn path_at(text: &RowText, at: usize, cwd: &Path) -> Option<(Range<usize>, LinkT
         let run_end = (start..chars.len())
             .find(|&i| !is_path_char(chars[i]))
             .unwrap_or(chars.len());
-        let (line, column, end) = location(chars, run_end);
+        let quoted = start > 0 && chars[start - 1] == '"';
+        let (line, column, end) = location(chars, run_end, quoted);
         if (start..end).contains(&at) {
             let (len, path) = existing_path(text, start..run_end, line, cwd)?;
             let span = if len == run_end - start {
@@ -264,9 +266,10 @@ fn path_at(text: &RowText, at: usize, cwd: &Path) -> Option<(Range<usize>, LinkT
     None
 }
 
-/// The `:line[:column]` or `(line[,column])` at `chars[at..]`, and where it
-/// ends (`at` when there is none).
-fn location(chars: &[char], at: usize) -> (Option<u32>, Option<u32>, usize) {
+/// The `:line[:column]` or `(line[,column])` at `chars[at..]`, or for a
+/// `quoted` path the `", line N[, column M]` there, and where it ends (`at`
+/// when there is none).
+fn location(chars: &[char], at: usize, quoted: bool) -> (Option<u32>, Option<u32>, usize) {
     let number = |from: usize| -> Option<(u32, usize)> {
         let end = (from..chars.len())
             .find(|&i| !chars[i].is_ascii_digit())
@@ -306,8 +309,47 @@ fn location(chars: &[char], at: usize) -> (Option<u32>, Option<u32>, usize) {
                 (None, None, at)
             }
         }
+        Some('"') if quoted => {
+            let Some((line, end)) = word_number(chars, at + 1, &["line"]) else {
+                return (None, None, at);
+            };
+            match word_number(chars, end, &["column", "col"]) {
+                Some((column, end)) => (Some(line), Some(column), end),
+                None => (Some(line), None, end),
+            }
+        }
         _ => (None, None, at),
     }
+}
+
+/// `, word N` at `chars[at..]` (`word` one of `words`, spaces allowed after
+/// the comma and required before the number), as `N` and where it ends.
+fn word_number(chars: &[char], at: usize, words: &[&str]) -> Option<(u32, usize)> {
+    let spaces = |from: usize| {
+        (from..chars.len())
+            .find(|&i| chars[i] != ' ')
+            .unwrap_or(chars.len())
+    };
+    if chars.get(at) != Some(&',') {
+        return None;
+    }
+    let word = spaces(at + 1);
+    words.iter().find_map(|w| {
+        let after = word + w.len();
+        let matches = w
+            .chars()
+            .enumerate()
+            .all(|(i, c)| chars.get(word + i) == Some(&c));
+        let from = spaces(after);
+        if !matches || from == after {
+            return None;
+        }
+        let end = (from..chars.len())
+            .find(|&i| !chars[i].is_ascii_digit())
+            .unwrap_or(chars.len());
+        let digits: String = chars[from..end].iter().collect();
+        Some((digits.parse().ok()?, end))
+    })
 }
 
 /// The resolved path of `run`, if it exists, and how many of its characters
