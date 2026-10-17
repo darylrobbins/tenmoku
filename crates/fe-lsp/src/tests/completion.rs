@@ -3,6 +3,8 @@
 //! the client advertises, resolve, the trigger characters, and the 3 s and
 //! 2 s timeouts.
 
+mod resolve_edits;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -112,7 +114,7 @@ fn items_convert_to_byte_edits() {
             json!({
                 "snippetSupport": false,
                 "insertReplaceSupport": false,
-                "resolveSupport": { "properties": ["documentation", "detail"] },
+                "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
                 "labelDetailsSupport": true,
             })
         );

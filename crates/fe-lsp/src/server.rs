@@ -2038,7 +2038,11 @@ fn client_capabilities() -> ClientCapabilities {
                     snippet_support: Some(false),
                     insert_replace_support: Some(false),
                     resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                        properties: vec!["documentation".into(), "detail".into()],
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                        ],
                     }),
                     label_details_support: Some(true),
                     ..Default::default()

@@ -9,10 +9,13 @@
 //!   or else its `label`, over the word before the offset (letters, digits
 //!   and `_`), as the protocol leaves to the client. Snippets aren't
 //!   advertised (`snippetSupport: false`), so text is inserted as it is.
-//! - **Resolve.** Only `documentation` and `detail` are resolved
-//!   (`resolveSupport`), only from a server with a `resolveProvider`, and
-//!   only by the session that gave the item, while it has that opening of
-//!   the document.
+//! - **Resolve.** Only `documentation`, `detail` and `additionalTextEdits`
+//!   are resolved (`resolveSupport`), only from a server with a
+//!   `resolveProvider`, and only by the session that gave the item, while
+//!   it has that opening of the document. Resolved `additionalTextEdits`
+//!   (a TypeScript auto-import) replace the listed ones, decoded against
+//!   the text of the request's version; a reply without them keeps the
+//!   listed ones. The main edit never changes.
 //! - **Failures.** A completion past `lsp.timeouts.completion` (3 s) is no
 //!   completions, and a resolve past `lsp.timeouts.resolve` (2 s) is the
 //!   item as it was: §3.5's "the menu closes". Both cancel the request.
@@ -32,7 +35,7 @@ use lsp_types::{
 };
 
 use crate::document::Admitted;
-use crate::encoding::{from_lsp, to_lsp};
+use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
 use crate::event::{LspError, ServerId};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
@@ -81,6 +84,48 @@ pub struct CompletionItem {
     raw: Arc<lsp_types::CompletionItem>,
     server: ServerId,
     from: (BufferId, (SessionId, IncarnationId)),
+    /// What resolved edits are decoded against.
+    decoded: Decoded,
+}
+
+/// The text of the request's version and the session's encoding: what an
+/// item's edits are decoded against, at list time and when resolved.
+#[derive(Clone)]
+struct Decoded {
+    text: Text,
+    encoding: PositionEncoding,
+}
+
+impl Decoded {
+    fn range(&self, range: lsp_types::Range) -> Range<usize> {
+        let start = from_lsp(&self.text, range.start, self.encoding);
+        let end = from_lsp(&self.text, range.end, self.encoding);
+        start.min(end)..end.max(start)
+    }
+
+    fn edits(&self, edits: &[lsp_types::TextEdit]) -> Vec<CompletionEdit> {
+        (edits.iter())
+            .map(|edit| CompletionEdit {
+                range: self.range(edit.range),
+                text: edit.new_text.clone(),
+            })
+            .collect()
+    }
+}
+
+impl std::fmt::Debug for Decoded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Decoded")
+            .field("len", &self.text.len())
+            .field("encoding", &self.encoding)
+            .finish()
+    }
+}
+
+impl PartialEq for Decoded {
+    fn eq(&self, other: &Self) -> bool {
+        self.encoding == other.encoding && self.text.len() == other.text.len()
+    }
 }
 
 /// What a server offers at an offset.
@@ -136,7 +181,8 @@ impl LspManager {
         })
     }
 
-    /// `item` with the `documentation` and `detail` its server resolves.
+    /// `item` with the `documentation`, `detail` and `additionalTextEdits`
+    /// its server resolves.
     ///
     /// The item as it is if its server can't resolve, or doesn't answer
     /// within `lsp.timeouts.resolve` (which also cancels the request).
@@ -177,6 +223,9 @@ impl LspManager {
                     }
                     if resolved.detail.is_some() {
                         item.detail = resolved.detail.clone();
+                    }
+                    if let Some(edits) = &resolved.additional_text_edits {
+                        item.additional_edits = item.decoded.edits(edits);
                     }
                     item.raw = Arc::new(resolved);
                     Ok(item)
@@ -224,11 +273,11 @@ fn convert(
     let text = &at.document.sent.text;
     let offset = text.clip_offset(offset, Bias::Left);
     let word = word_before(text, offset)..offset;
-    let range = |range: lsp_types::Range| {
-        let start = from_lsp(text, range.start, at.encoding);
-        let end = from_lsp(text, range.end, at.encoding);
-        start.min(end)..end.max(start)
+    let decoded = Decoded {
+        text: text.clone(),
+        encoding: at.encoding,
     };
+    let range = |range: lsp_types::Range| decoded.range(range);
     let items = (items.into_iter())
         .map(|item| {
             let edit = match &item.text_edit {
@@ -245,12 +294,8 @@ fn convert(
                     text: (item.insert_text.clone()).unwrap_or_else(|| item.label.clone()),
                 },
             };
-            let additional_edits = (item.additional_text_edits.iter().flatten())
-                .map(|edit| CompletionEdit {
-                    range: range(edit.range),
-                    text: edit.new_text.clone(),
-                })
-                .collect();
+            let additional_edits =
+                decoded.edits(item.additional_text_edits.as_deref().unwrap_or(&[]));
             let details = item.label_details.clone().unwrap_or_default();
             CompletionItem {
                 label: item.label.clone(),
@@ -266,6 +311,7 @@ fn convert(
                 raw: Arc::new(item),
                 server,
                 from: (at.document.buffer, at.document.identity),
+                decoded: decoded.clone(),
             }
         })
         .collect();
