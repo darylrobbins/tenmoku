@@ -1,7 +1,7 @@
 //! Reading text in any encoding a file might use, and writing it back the same way.
 //!
 //! [`Text::from_reader_detecting`] picks the encoding from a BOM, then from
-//! whether the start of the file is valid UTF-8, and otherwise from a
+//! the zero bytes of a BOM-less UTF-16 file, then from whether the start of the file is valid UTF-8, and otherwise from a
 //! `chardetng` guess. [`Text::write_encoded`] writes text back in a
 //! [`FileEncoding`], failing rather than substituting a char the encoding
 //! can't represent.
@@ -15,6 +15,8 @@ use crate::{LineEnding, Text, decode_lossy};
 
 /// How many bytes from the start of a file decide its encoding.
 const SNIFF_LEN: usize = 64 * 1024;
+/// How much of the start of a file is checked for BOM-less UTF-16, as VS Code does.
+const ZERO_BYTE_SNIFF_LEN: usize = 512;
 
 /// The encoding a file was read in, and whether it started with a BOM.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -108,7 +110,8 @@ impl From<io::Error> for EncodeError {
 
 impl FileEncoding {
     /// The encoding [`Text::from_reader_detecting`] would read `reader` in,
-    /// found the same way: by its BOM, then the validity of its first 64 KiB
+    /// found the same way: by its BOM, then the zero bytes in its first 512 bytes
+    /// (UTF-16 without a BOM), then the validity of its first 64 KiB
     /// as UTF-8, then `chardetng`. Reads at most those 64 KiB and a byte.
     pub fn detect(reader: impl Read) -> io::Result<FileEncoding> {
         let mut head = Vec::with_capacity(SNIFF_LEN + 1);
@@ -241,6 +244,14 @@ fn detect_head(head: &[u8]) -> (FileEncoding, usize) {
             },
             bom_len,
         )
+    } else if let Some(encoding) = utf16_by_zero_bytes(head) {
+        (
+            FileEncoding {
+                encoding,
+                bom: false,
+            },
+            0,
+        )
     } else if starts_with_utf8(sniffed, at_eof) {
         (FileEncoding::UTF8, 0)
     } else {
@@ -256,14 +267,38 @@ fn detect_head(head: &[u8]) -> (FileEncoding, usize) {
     }
 }
 
+/// UTF-16LE if the first 512 bytes hold a zero byte and exactly the odd-indexed
+/// bytes are zero, UTF-16BE if exactly the even-indexed ones are, else `None`.
+fn utf16_by_zero_bytes(head: &[u8]) -> Option<&'static Encoding> {
+    let window = &head[..head.len().min(ZERO_BYTE_SNIFF_LEN)];
+    if !window.contains(&0) {
+        return None;
+    }
+    let zero_at = |parity: usize| {
+        window
+            .iter()
+            .enumerate()
+            .all(|(i, &b)| (b == 0) == (i % 2 == parity))
+    };
+    if zero_at(1) {
+        Some(UTF_16LE)
+    } else if zero_at(0) {
+        Some(UTF_16BE)
+    } else {
+        None
+    }
+}
+
 impl Text {
     /// Like [`Text::from_reader`], but detects the file's encoding first:
     ///
     /// 1. a UTF-8, UTF-16LE or UTF-16BE BOM picks that encoding and is dropped;
-    /// 2. otherwise, if the first 64 KiB are valid UTF-8 (a sequence cut off at
+    /// 2. otherwise, if the first 512 bytes have zeros at exactly the odd (or
+    ///    exactly the even) indices, the file is BOM-less UTF-16LE (or BE);
+    /// 3. otherwise, if the first 64 KiB are valid UTF-8 (a sequence cut off at
     ///    64 KiB doesn't count against it), the file is UTF-8, and invalid bytes
     ///    later on become U+FFFD exactly as with [`Text::from_reader`];
-    /// 3. otherwise `chardetng` guesses from those 64 KiB.
+    /// 4. otherwise `chardetng` guesses from those 64 KiB.
     ///
     /// Only those first 64 KiB (and a byte) are held besides the text being built.
     /// [`DecodedFile::replaced`] reports whether any input was malformed.
