@@ -162,3 +162,6 @@ proptest! {
         prop_assert_eq!(rows(&map), rows(&fresh));
     }
 }
+
+#[path = "fold_rows_tests.rs"]
+mod fold_rows_tests;

@@ -275,6 +275,29 @@ impl WrapMap {
         }
     }
 
+    /// [`WrapMap::first_row`] of each of `buffer_rows`, which ascend, moving
+    /// one cursor forward rather than seeking from the root for each.
+    pub(crate) fn first_rows(
+        &self,
+        buffer_rows: impl Iterator<Item = usize>,
+    ) -> impl Iterator<Item = usize> {
+        let mut cursor = self
+            .width
+            .is_some()
+            .then(|| self.lines.cursor::<Dimensions<BufferRows, WrapRows>>(()));
+        buffer_rows.map(move |buffer_row| {
+            let Some(cursor) = &mut cursor else {
+                return buffer_row.min(self.line_count);
+            };
+            let buffer_row = buffer_row.min(self.line_count);
+            cursor.seek_forward(&BufferRows(buffer_row), Bias::Right);
+            // A wrapped item, or the end, starts at `buffer_row`, so this
+            // needn't read the item.
+            let (start, first) = (cursor.start().0.0, cursor.start().1.0);
+            first + buffer_row - start
+        })
+    }
+
     /// The wrap row showing byte `column` of `buffer_row`. A wrap point
     /// starts the row after it.
     pub(crate) fn row_for(&self, buffer_row: usize, column: usize) -> usize {

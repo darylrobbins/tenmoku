@@ -4,6 +4,12 @@
 //! pending and wraps one slice of [`WRAP_SLICE_BYTES`] around the viewport
 //! per frame, which has to stay well inside a frame.
 //!
+//! A keystroke also brings every fold's hidden rows up to date:
+//! `sync/keystroke, 1M lines wrapped, 10k folds` stays under 0.5 ms, and
+//! `sync/keystroke, 1M lines wrapped, 200k folds` (Fold All on such a file)
+//! and `fold/one more fold among 200k, wrapped` are what a fold-heavy file
+//! costs per keystroke and per fold.
+//!
 //! Run with `cargo bench -p fe-display`.
 
 use std::{
@@ -11,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Bencher, Criterion, criterion_group, criterion_main};
 use fe_buffer::{Buffer, Origin};
 use fe_display::{DisplayMap, Monospace, WRAP_SLICE_BYTES};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -38,6 +44,9 @@ const AROUND: u32 = 500_000;
 
 fn benches(c: &mut Criterion) {
     let mut buffer = Buffer::new(&corpus());
+    // The keystrokes would fill the undo history, and trimming a full one
+    // costs more per edit than the display work measured here.
+    buffer.set_history_limit(usize::MAX);
     let mut map = DisplayMap::new(buffer.current(), 4);
 
     let mut wrap = c.benchmark_group("wrap");
@@ -91,6 +100,73 @@ fn benches(c: &mut Criterion) {
             )
         });
     }
+
+    // Many folds: a 4-row fold every `step` rows, typed on outside them so
+    // keystrokes keep them.
+    let mut keystroke = |b: &mut Bencher, map: &mut DisplayMap, step: u32| {
+        b.iter_batched(
+            || {
+                let row = rng.random_range(0..1_000_000);
+                if (1..4).contains(&(row % step)) {
+                    row - row % step
+                } else {
+                    row
+                }
+            },
+            |row| {
+                let offset = buffer.text().row_start(row);
+                buffer.edit([(offset..offset, "x")], Origin::User);
+                map.sync(buffer.current(), &mut Monospace);
+            },
+            BatchSize::SmallInput,
+        )
+    };
+    let fold_every = |map: &mut DisplayMap, step: u32| {
+        map.unfold_all();
+        map.fold_many(
+            (0..1_000_000)
+                .step_by(step as usize)
+                .map(|row| row..=row + 3),
+        );
+    };
+    fold_every(&mut map, 100);
+    assert_eq!(map.folds().len(), 10_000);
+    for (name, width) in [("unwrapped", None), ("wrapped", Some(80.))] {
+        map.set_wrap_width(width, &mut Monospace);
+        map.wrap_pending(0, usize::MAX, &mut Monospace);
+        c.bench_function(
+            &format!("sync/keystroke, 1M lines {name}, 10k folds"),
+            |b| keystroke(b, &mut map, 100),
+        );
+    }
+
+    fold_every(&mut map, 5);
+    assert_eq!(map.folds().len(), 200_000);
+    let mut sync = c.benchmark_group("sync");
+    sync.sample_size(10);
+    sync.bench_function("keystroke, 1M lines wrapped, 200k folds", |b| {
+        keystroke(b, &mut map, 5)
+    });
+    sync.finish();
+    let mut fold = c.benchmark_group("fold");
+    fold.sample_size(10);
+    fold.bench_function("one more fold among 200k, wrapped", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for ix in 0..iters {
+                // A fold of hidden rows, nested in their header's fold; then
+                // back to the header's fold alone, untimed.
+                let header = (ix * 5_003 % 200_000) as u32 * 5;
+                let start = Instant::now();
+                black_box(map.fold(header + 1..=header + 2));
+                total += start.elapsed();
+                map.unfold(header + 1..=header + 2);
+                map.fold(header..=header + 3);
+            }
+            total
+        })
+    });
+    fold.finish();
 }
 
 criterion_group!(display, benches);

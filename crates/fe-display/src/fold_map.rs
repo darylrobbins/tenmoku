@@ -15,7 +15,10 @@
 //! with the number of rows hidden before it, so rebuilding costs the number
 //! of folds and mapping either way is a binary search.
 
-use std::ops::{Range, RangeInclusive};
+use std::{
+    iter, mem,
+    ops::{Range, RangeInclusive},
+};
 
 use crate::wrap_map::WrapMap;
 
@@ -190,19 +193,39 @@ impl FoldMap {
     /// Recomputes the hidden runs for `wrap_map`'s rows.
     pub(crate) fn rebuild(&mut self, wrap_map: &WrapMap, buffer_rows: u32) {
         self.folds.retain(|fold| fold.end < buffer_rows);
-        let hidden = self.folds.iter().map(|fold| {
-            let start = wrap_map.first_row(fold.start as usize + 1);
-            let end = wrap_map.first_row(fold.end as usize + 1);
-            start..end
+        let folds = mem::take(&mut self.folds);
+        // Every buffer row has at least one wrap row, in order, so the
+        // buffer rows folds hide merge into runs as their wrap rows would.
+        // Merged first, the runs' bounds ascend, and one cursor finds them.
+        let mut rest = folds.iter().peekable();
+        let buffer_runs = iter::from_fn(move || {
+            let fold = rest.next()?;
+            let mut end = fold.end;
+            while let Some(next) = rest.next_if(|next| next.start <= end) {
+                end = end.max(next.end);
+            }
+            Some([fold.start as usize + 1, end as usize + 1])
         });
-        self.set_hidden_rows(wrap_map.row_count(), hidden.collect());
+        let mut bounds = wrap_map.first_rows(buffer_runs.flatten());
+        let runs = iter::from_fn(move || Some(bounds.next()?..bounds.next()?));
+        self.set_sorted_hidden_rows(wrap_map.row_count(), runs);
+        self.folds = folds;
     }
 
     /// Installs the projection for `wrap_row_count` wrap rows with
     /// `hidden_ranges` hidden, merging overlapping and adjacent ranges.
+    #[cfg(test)]
     fn set_hidden_rows(&mut self, wrap_row_count: usize, mut hidden_ranges: Vec<Range<usize>>) {
         hidden_ranges.sort_by_key(|range| range.start);
+        self.set_sorted_hidden_rows(wrap_row_count, hidden_ranges);
+    }
 
+    /// [`FoldMap::set_hidden_rows`] for ranges sorted by start.
+    fn set_sorted_hidden_rows(
+        &mut self,
+        wrap_row_count: usize,
+        hidden_ranges: impl IntoIterator<Item = Range<usize>>,
+    ) {
         self.hidden.clear();
         self.total_hidden = 0;
         self.wrap_row_count = wrap_row_count;

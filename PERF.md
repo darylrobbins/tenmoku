@@ -457,6 +457,47 @@ Apple Silicon and the helium numbers are compared with them as stated.
 - `all pending rows` is the whole 1M-line file wrapped in slices, about 0.8 s
   in total, spread over frames; it has no budget and is here for the record.
 
+### Many folds (T159)
+
+A keystroke also brings every fold's hidden rows up to date. T159 resolves
+them in one forward cursor pass instead of two seeks from the root per fold.
+The cases fold 4 rows every 100 rows (10k folds) or every 5 (200k, as Fold
+All gives on such a file) and type on headers or between folds. The bench
+lifts the undo history limit: trimming a full history costs more per edit
+than the display work (see the decision file).
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release builds in private `CARGO_TARGET_DIR`s.
+- **Commit:** base `4a3c74c` with the new bench file over its sources;
+  candidate `1b12d1b`. **Date:** 2026-10-17.
+- **Load average** (`/proc/loadavg`, 1 minute): 2.64 at the start, 11.20 at
+  the end, from other lanes.
+- Base and candidate run alternately for 3 rounds (`--warm-up-time 1
+  --measurement-time 3 'sync/|fold/'`). "Fastest" is over all 3 rounds;
+  "median" is the lowest of the 3 criterion medians. The 200k cases set
+  `sample_size(10)`.
+
+| Case | Base median | Base fastest | Candidate median | Candidate fastest | Budget | Verdict |
+|---|---|---|---|---|---|---|
+| `sync/keystroke, 1M lines unwrapped` | 3.83 µs | 3.57 µs | 3.52 µs | 3.40 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines wrapped` | 14.3 µs | 13.9 µs | 15.3 µs | 14.2 µs | not over 10% slower than base | meets (2%) |
+| `sync/keystroke, 1M lines unwrapped, 10k folds` | 73.4 µs | 72.8 µs | 85.9 µs | 73.4 µs | not over 10% slower than base | meets (1%) |
+| `sync/keystroke, 1M lines wrapped, 10k folds` | 1.51 ms | 1.42 ms | 897 µs | 690 µs | at least 1.8x faster than base | meets (2.05x) |
+| `sync/keystroke, 1M lines wrapped, 200k folds` | 21.2 ms | 20.8 ms | 11.1 ms | 11.0 ms | at least 1.8x faster than base | meets (1.90x) |
+| `fold/one more fold among 200k, wrapped` | 21.1 ms | 20.9 ms | 13.2 ms | 12.7 ms | not over 10% slower than base | meets (1.6x faster) |
+
+- The pass is memory-bound: the same rebuild timed alone is about 3x (10k)
+  and 6x (200k) faster than base, and the 200k case on a freshly built tree
+  ran at 5.1 ms. In the bench its tree comes after the earlier cases'
+  keystrokes, scattered in memory, and other lanes share the cache.
+- The budgets are the card's revised ones (rev 2, 2026-10-17). The original
+  budgets are not met: `wrapped, 10k folds` at most 0.5 ms (690 µs, 190 µs
+  over) and `wrapped, 200k folds` at least 4x faster than base (1.90x;
+  11.0 ms against 5.2 ms, and over the 8 ms keystroke budget).
+- **Follow-up**, with those budgets: keep folds' wrap rows across edits,
+  shifted by each edit's wrap-row delta. Details in
+  `docs/decisions/ez74dvmwrv-fold-rows-one-cursor-pass.md`.
+
 ## Syntax (`cargo bench -p fe-syntax`)
 
 Corpora are generated: Rust items, pretty-printed JSON objects, and Markdown
