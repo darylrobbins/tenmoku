@@ -68,8 +68,14 @@ pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
     let extension = path.extension().and_then(|ext| ext.to_str());
     listed()
         .find(|def| {
-            def.file_names.contains(&file_name)
-                || extension.is_some_and(|ext| def.extensions.contains(&ext))
+            def.file_names
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(file_name))
+                || extension.is_some_and(|ext| {
+                    def.extensions
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(ext))
+                })
         })
         .map(|def| def.name)
 }
@@ -302,8 +308,23 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "bash")]
     Def {
         name: "bash",
-        extensions: &["sh", "bash", "zsh"],
-        file_names: &[".bashrc", ".bash_profile", ".zshrc", ".zshenv", ".profile"],
+        extensions: &["sh", "bash", "zsh", "ksh"],
+        file_names: &[
+            ".bashrc",
+            ".bash_profile",
+            ".zshrc",
+            ".zshenv",
+            ".profile",
+            ".zprofile",
+            ".zlogin",
+            ".zlogout",
+            ".bash_login",
+            ".bash_logout",
+            ".bash_aliases",
+            ".envrc",
+            "PKGBUILD",
+            "APKBUILD",
+        ],
         grammar: || tree_sitter_bash::LANGUAGE.into(),
         highlights: || &[tree_sitter_bash::HIGHLIGHT_QUERY],
         earlier_patterns_win: false,
@@ -388,8 +409,17 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "ruby")]
     Def {
         name: "ruby",
-        extensions: &["rb"],
-        file_names: &["Gemfile", "Rakefile"],
+        extensions: &["rb", "gemspec", "rake", "ru", "podspec"],
+        file_names: &[
+            "Gemfile",
+            "Rakefile",
+            "Podfile",
+            "Vagrantfile",
+            "Brewfile",
+            "Guardfile",
+            "Capfile",
+            "Fastfile",
+        ],
         grammar: || tree_sitter_ruby::LANGUAGE.into(),
         highlights: || {
             &[
@@ -514,7 +544,7 @@ const DEFS: &[Def] = &[
     #[cfg(feature = "make")]
     Def {
         name: "make",
-        extensions: &["mk"],
+        extensions: &["mk", "mak"],
         file_names: &["Makefile", "GNUmakefile"],
         grammar: || tree_sitter_make::LANGUAGE.into(),
         highlights: || &[tree_sitter_make::HIGHLIGHTS_QUERY],
