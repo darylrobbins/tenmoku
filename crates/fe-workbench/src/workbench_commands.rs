@@ -392,6 +392,72 @@ impl Workbench {
     fn untrust_folder(&mut self, cx: &mut Cx<Self>) {
         self.trust_command(false, cx);
     }
+
+    /// Toggle Terminal
+    #[command(id = "terminal.toggle")]
+    fn toggle_terminal_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_terminal(cx.window, cx.cx);
+    }
+
+    /// New Terminal
+    #[command(id = "terminal.new")]
+    fn new_terminal_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.new_terminal(cx.window, cx.cx);
+    }
+
+    /// Close Terminal
+    #[command(id = "terminal.close")]
+    fn close_terminal_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.close_terminal(cx.window, cx.cx);
+    }
+
+    /// Next Terminal
+    #[command(id = "terminal.next")]
+    fn next_terminal(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.cycle_terminal(1, cx.window, cx.cx);
+    }
+
+    /// Previous Terminal
+    #[command(id = "terminal.previous")]
+    fn previous_terminal(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.cycle_terminal(-1, cx.window, cx.cx);
+    }
+
+    /// Terminal: Find
+    #[command(id = "terminal.find")]
+    fn find_in_terminal_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.find_in_terminal(cx.window, cx.cx);
+    }
+
+    /// Terminal: Previous Prompt
+    #[command(id = "terminal.previous_prompt", context = "terminal")]
+    fn previous_prompt(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(fe_terminal_view::KEY_CONTEXT, cx, |this, _, cx| {
+            this.scroll_terminal_to_prompt(false, cx)
+        });
+    }
+
+    /// Terminal: Next Prompt
+    #[command(id = "terminal.next_prompt", context = "terminal")]
+    fn next_prompt(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(fe_terminal_view::KEY_CONTEXT, cx, |this, _, cx| {
+            this.scroll_terminal_to_prompt(true, cx)
+        });
+    }
+
+    /// Terminal: Vi Copy Mode
+    #[command(id = "terminal.vi_mode", context = "terminal")]
+    fn terminal_vi_mode(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(fe_terminal_view::KEY_CONTEXT, cx, |this, window, cx| {
+            this.toggle_terminal_vi_mode(window, cx)
+        });
+    }
 }
 
 impl Workbench {
@@ -422,22 +488,37 @@ impl Workbench {
     }
 
     /// Runs `run`, an editor command's, if the command was invoked where
-    /// the editor's context holds, as its `fe-command` registry checked:
-    /// kiln runs a typed command's handler wherever it's dispatched, so a
-    /// menu pick or a `RunCommand` with the project panel or terminal
-    /// focused would act on the active editor. One run with no invocation,
-    /// as a raw action, whose key binding checked its context, runs.
+    /// the editor's context holds ([`Self::in_context`]).
     fn in_editor(
         &mut self,
         cx: &mut Cx<Self>,
         run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) {
+        self.in_context(fe_editor::commands::CONTEXT, cx, run);
+    }
+
+    /// Runs `run`, the command's of a narrower context than the
+    /// workbench's, if the command was invoked where `context` holds, as
+    /// its `fe-command` registry checked: kiln runs a typed command's
+    /// handler wherever it's dispatched, so a menu pick or a `RunCommand`
+    /// with the project panel focused would act on the active editor or
+    /// terminal. One run with no invocation, as a raw action, whose key
+    /// binding checked its context, runs.
+    fn in_context(
+        &mut self,
+        context: &str,
+        cx: &mut Cx<Self>,
+        run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
+    ) {
         self.ran(cx);
-        let editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
+        let context = ContextPredicate::identifier(context);
         if let Some(invocation) = kiln::current_invocation(cx.cx)
-            && !editor.eval(&invocation.context)
+            && !context.eval(&invocation.context)
         {
-            log::warn!("{} doesn't apply here: not in {editor}", invocation.command);
+            log::warn!(
+                "{} doesn't apply here: not in {context}",
+                invocation.command
+            );
             return;
         }
         run(self, cx.window, cx.cx);

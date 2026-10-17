@@ -440,16 +440,20 @@ fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
     assert!(tab_shown(&workbench, last - 1, cx));
 }
 
-#[test]
-fn commands_are_in_the_palette() {
-    let list = crate::command_list();
+#[gpui::test]
+fn commands_are_in_the_palette(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
     for (id, title) in [
         ("terminal.new", "New Terminal"),
         ("terminal.close", "Close Terminal"),
         ("terminal.next", "Next Terminal"),
         ("terminal.previous", "Previous Terminal"),
     ] {
-        let command = list.iter().find(|command| command.id.as_str() == id);
+        let id = fe_command::CommandId::parse(id).unwrap();
+        let command = cx.read(|cx| kiln::platform::command_actions::typed_command(&id, cx));
         let command = command.unwrap_or_else(|| panic!("{id} is listed"));
         assert_eq!(command.title, title);
         let workbench = ContextPredicate::identifier(crate::KEY_CONTEXT);

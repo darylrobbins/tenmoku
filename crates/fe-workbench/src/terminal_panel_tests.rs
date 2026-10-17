@@ -264,10 +264,15 @@ fn terminal_keys() {
     }
 }
 
-#[test]
-fn toggle_is_in_the_palette() {
-    let listed = crate::command_list()
-        .iter()
-        .any(|command| command.id.as_str() == "terminal.toggle");
+#[gpui::test]
+fn toggle_is_in_the_palette(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    let id = fe_command::CommandId::parse("terminal.toggle").unwrap();
+    let listed = cx
+        .read(|cx| kiln::platform::command_actions::typed_command(&id, cx))
+        .is_some();
     assert!(listed);
 }

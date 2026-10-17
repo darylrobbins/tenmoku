@@ -112,7 +112,6 @@ pub fn init(cx: &mut App) {
     project_panel::init(cx);
     references_panel::init(cx);
     status_bar::init(cx);
-    terminal_panel::init(cx);
     trust::init(cx);
 }
 
@@ -138,7 +137,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
-        Box::new(terminal_panel::registry()),
         fe_gpui::commands::command_catalog(),
     ]
 }
@@ -153,7 +151,6 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
-    list.extend(terminal_panel::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
     list
 }

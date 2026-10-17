@@ -188,14 +188,18 @@ fn new_starts_in_the_panels_directory_when_the_reported_one_is_gone(cx: &mut Tes
     assert_eq!(started, [canonical(dir.path()), canonical(dir.path())]);
 }
 
-#[test]
-fn prompt_commands_are_in_the_palette_in_the_terminal() {
-    let list = crate::command_list();
+#[gpui::test]
+fn prompt_commands_are_in_the_palette_in_the_terminal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
     for (id, title) in [
         ("terminal.previous_prompt", "Terminal: Previous Prompt"),
         ("terminal.next_prompt", "Terminal: Next Prompt"),
     ] {
-        let command = list.iter().find(|command| command.id.as_str() == id);
+        let id = fe_command::CommandId::parse(id).unwrap();
+        let command = cx.read(|cx| kiln::platform::command_actions::typed_command(&id, cx));
         let command = command.unwrap_or_else(|| panic!("{id} is listed"));
         assert_eq!(command.title, title);
         let terminal = ContextPredicate::identifier(fe_terminal_view::KEY_CONTEXT);

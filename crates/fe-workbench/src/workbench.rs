@@ -47,7 +47,7 @@ use crate::{
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     project_panel::{self, PanelEvent, PanelOp},
-    terminal_panel::{self, TERMINAL, TerminalOp, TerminalPanel, TerminalPanelEvent},
+    terminal_panel::{TERMINAL, TerminalPanel, TerminalPanelEvent},
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
@@ -720,7 +720,7 @@ impl Workbench {
     /// starting a session if none runs; focuses the terminal if the dock
     /// shows but focus is elsewhere; hides the dock and focuses the active
     /// editor if the terminal has focus.
-    fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.terminal_dock.read(cx).is_visible();
         if shown && self.terminal.read(cx).is_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
@@ -736,56 +736,63 @@ impl Workbench {
             .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
     }
 
-    /// Runs a terminal command: `terminal.new` shows the bottom dock with a
-    /// new session, focused; `terminal.close` drops the active session;
-    /// `terminal.next` and `terminal.previous` show and focus the next or
-    /// previous one, if there's another; `terminal.find` shows the dock
-    /// with the active session's find row open, focused;
-    /// `terminal.previous_prompt` and `terminal.next_prompt` scroll the
-    /// active session between its shell's prompts; `terminal.vi_mode`
-    /// shows the dock and turns the active session's vi copy mode on or
-    /// off, focused.
-    fn run_terminal_op(&mut self, op: TerminalOp, window: &mut Window, cx: &mut Context<Self>) {
-        let terminal = self.terminal.clone();
-        let show = match op {
-            TerminalOp::Toggle => return self.toggle_terminal(window, cx),
-            TerminalOp::Find => {
-                terminal.update(cx, |terminal, cx| terminal.start(window, cx));
-                self.terminal_dock
-                    .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
-                terminal.update(cx, |terminal, cx| {
-                    terminal.run_find(FindOp::Show, window, cx)
-                });
-                return;
-            }
-            TerminalOp::New => {
-                terminal.update(cx, |terminal, cx| terminal.add(window, cx));
-                true
-            }
-            TerminalOp::Close => {
-                terminal.update(cx, |terminal, cx| terminal.close_active(window, cx));
-                false
-            }
-            TerminalOp::Next => terminal.update(cx, |terminal, cx| terminal.cycle(1, window, cx)),
-            TerminalOp::Previous => {
-                terminal.update(cx, |terminal, cx| terminal.cycle(-1, window, cx))
-            }
-            TerminalOp::PreviousPrompt | TerminalOp::NextPrompt => {
-                let forward = op == TerminalOp::NextPrompt;
-                terminal.update(cx, |terminal, cx| terminal.scroll_to_prompt(forward, cx));
-                return;
-            }
-            TerminalOp::ViMode => {
-                self.terminal_dock
-                    .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
-                terminal.update(cx, |terminal, cx| terminal.toggle_vi_mode(window, cx));
-                return;
-            }
-        };
-        if show {
-            self.terminal_dock
-                .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+    /// `terminal.new`: shows the bottom dock with a new session, focused.
+    pub(crate) fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |terminal, cx| terminal.add(window, cx));
+        self.show_terminal_dock(window, cx);
+    }
+
+    /// `terminal.close`: drops the active session.
+    pub(crate) fn close_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |terminal, cx| terminal.close_active(window, cx));
+    }
+
+    /// `terminal.next` and `terminal.previous`: shows and focuses the next
+    /// session, `by` 1, or the previous one, -1, if there's another.
+    pub(crate) fn cycle_terminal(
+        &mut self,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if (self.terminal).update(cx, |terminal, cx| terminal.cycle(by, window, cx)) {
+            self.show_terminal_dock(window, cx);
         }
+    }
+
+    /// `terminal.find`: shows the dock with the active session's find row
+    /// open, focused.
+    pub(crate) fn find_in_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.terminal.clone();
+        terminal.update(cx, |terminal, cx| terminal.start(window, cx));
+        self.show_terminal_dock(window, cx);
+        terminal.update(cx, |terminal, cx| {
+            terminal.run_find(FindOp::Show, window, cx)
+        });
+    }
+
+    /// `terminal.previous_prompt` and `terminal.next_prompt`: scrolls the
+    /// active session to its shell's previous prompt or, if `forward`, its
+    /// next.
+    pub(crate) fn scroll_terminal_to_prompt(&mut self, forward: bool, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |terminal, cx| terminal.scroll_to_prompt(forward, cx));
+    }
+
+    /// `terminal.vi_mode`: shows the dock and turns the active session's vi
+    /// copy mode on or off, focused.
+    pub(crate) fn toggle_terminal_vi_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_terminal_dock(window, cx);
+        self.terminal
+            .update(cx, |terminal, cx| terminal.toggle_vi_mode(window, cx));
+    }
+
+    /// Shows the bottom dock with the terminal.
+    fn show_terminal_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.terminal_dock
+            .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
     }
 
     /// Subscribes to a root's Changes panel: its rows open as the project
@@ -2499,9 +2506,6 @@ impl Workbench {
         }
         if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
             return self.reveal_active(cx);
-        }
-        if let Some(op) = terminal_panel::op(run, cx) {
-            return self.run_terminal_op(op, window, cx);
         }
         let op = if outline_panel::shows(run, cx) {
             Some(DockOp::ShowOutline)

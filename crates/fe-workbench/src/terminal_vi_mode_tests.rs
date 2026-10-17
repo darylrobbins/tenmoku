@@ -89,12 +89,15 @@ fn vi_mode(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> bool {
     view.read_with(cx, |view, _| view.is_vi_mode())
 }
 
-#[test]
-fn vi_mode_is_in_the_palette_in_the_terminal() {
-    let list = crate::command_list();
-    let command = list
-        .iter()
-        .find(|command| command.id.as_str() == "terminal.vi_mode")
+#[gpui::test]
+fn vi_mode_is_in_the_palette_in_the_terminal(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    let id = fe_command::CommandId::parse("terminal.vi_mode").unwrap();
+    let command = cx
+        .read(|cx| kiln::platform::command_actions::typed_command(&id, cx))
         .expect("terminal.vi_mode is listed");
     assert_eq!(command.title, "Terminal: Vi Copy Mode");
     let terminal = ContextPredicate::identifier(fe_terminal_view::KEY_CONTEXT);

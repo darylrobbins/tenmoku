@@ -17,18 +17,18 @@
 //! sessions, which hangs their shells up. `terminal.find` opens a find row
 //! above the active one ([`terminal_find`]).
 
-use std::{path::PathBuf, rc::Rc};
+use std::path::PathBuf;
 
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Source};
+use fe_command::Source;
 use fe_config::TerminalSettings;
-use fe_gpui::{EditorTheme, commands::RunCommand};
+use fe_gpui::EditorTheme;
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
 use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, TAB_HEIGHT};
 use gpui::{
     App, AppContext as _, Context, ElementId, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
-    div, prelude::FluentBuilder as _, px,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use kiln_shell::{DockItem, PanelId};
 
@@ -580,108 +580,6 @@ impl Render for TerminalPanel {
                     .children(self.view().cloned()),
             )
     }
-}
-
-/// What a terminal command asks of the workbench.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TerminalOp {
-    /// `terminal.toggle`.
-    Toggle,
-    /// `terminal.new`.
-    New,
-    /// `terminal.close`.
-    Close,
-    /// `terminal.next`.
-    Next,
-    /// `terminal.previous`.
-    Previous,
-    /// `terminal.find`.
-    Find,
-    /// `terminal.previous_prompt`.
-    PreviousPrompt,
-    /// `terminal.next_prompt`.
-    NextPrompt,
-    /// `terminal.vi_mode`.
-    ViMode,
-}
-
-/// The [`CommandTarget`] of the terminal's commands: the one that ran.
-pub(crate) struct TerminalCommands;
-
-impl CommandTarget for TerminalCommands {
-    type Tx = ();
-    type Target<'a> = Option<TerminalOp>;
-}
-
-struct Commands(Rc<Registry<TerminalCommands>>);
-
-impl Global for Commands {}
-
-/// Registers the terminal's commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<TerminalCommands> {
-    use TerminalOp::*;
-    let mut registry = Registry::new();
-    // The prompt and vi mode commands apply only in a focused terminal.
-    let (workbench, terminal) = (crate::KEY_CONTEXT, fe_terminal_view::KEY_CONTEXT);
-    for (id, title, op, context) in [
-        ("terminal.toggle", "Toggle Terminal", Toggle, workbench),
-        ("terminal.new", "New Terminal", New, workbench),
-        ("terminal.close", "Close Terminal", Close, workbench),
-        ("terminal.next", "Next Terminal", Next, workbench),
-        (
-            "terminal.previous",
-            "Previous Terminal",
-            Previous,
-            workbench,
-        ),
-        ("terminal.find", "Terminal: Find", Find, workbench),
-        (
-            "terminal.previous_prompt",
-            "Terminal: Previous Prompt",
-            PreviousPrompt,
-            terminal,
-        ),
-        (
-            "terminal.next_prompt",
-            "Terminal: Next Prompt",
-            NextPrompt,
-            terminal,
-        ),
-        (
-            "terminal.vi_mode",
-            "Terminal: Vi Copy Mode",
-            ViMode,
-            terminal,
-        ),
-    ] {
-        registry
-            .register(
-                id,
-                title,
-                move |target: &mut Option<TerminalOp>, _: &Actor| {
-                    *target = Some(op);
-                    Ok(Dispatched::new(Effect::Notify))
-                },
-            )
-            .expect("terminal command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
-    registry
-}
-
-/// The terminal command `run` is, in a context where it applies.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<TerminalOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 #[cfg(test)]

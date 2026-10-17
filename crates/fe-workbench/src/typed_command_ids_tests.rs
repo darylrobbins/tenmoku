@@ -127,6 +127,19 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("find.toggle_replace", "Toggle Replace", "find_bar"),
     ("find.replace_next", "Replace", "find_bar"),
     ("find.replace_all", "Replace All", "find_bar"),
+    ("terminal.toggle", "Toggle Terminal", "workbench"),
+    ("terminal.new", "New Terminal", "workbench"),
+    ("terminal.close", "Close Terminal", "workbench"),
+    ("terminal.next", "Next Terminal", "workbench"),
+    ("terminal.previous", "Previous Terminal", "workbench"),
+    ("terminal.find", "Terminal: Find", "workbench"),
+    (
+        "terminal.previous_prompt",
+        "Terminal: Previous Prompt",
+        "terminal",
+    ),
+    ("terminal.next_prompt", "Terminal: Next Prompt", "terminal"),
+    ("terminal.vi_mode", "Terminal: Vi Copy Mode", "terminal"),
 ];
 
 #[gpui::test]
@@ -293,4 +306,57 @@ fn the_find_bar_keys_stay_in_the_find_bar(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("escape");
     draw(cx);
     assert!(open(&pane, cx));
+}
+
+/// The terminal's vi mode command runs only where the terminal's context
+/// holds, as its registry's dispatch checked: a menu pick or `RunCommand`
+/// with the editor or the project panel focused doesn't show the terminal.
+#[gpui::test]
+fn terminal_commands_run_only_in_the_terminals_context(cx: &mut TestAppContext) {
+    // Shown, the terminal starts a session, whose pty's threads wake its
+    // event task.
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    let launch = Launch {
+        root: Some(dir.path().to_owned()),
+        file: None,
+    };
+    let (workbench, cx) = cx.add_window_view(move |window, cx| {
+        let theme = EditorTheme::default_dark(cx);
+        Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+    });
+    let terminal = workbench.read_with(cx, |workbench, _| workbench.terminal().clone());
+    terminal.update(cx, |terminal, _| {
+        terminal.set_shell("/bin/sh", &["-c", "read x"])
+    });
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    cx.run_until_parked();
+
+    let run = |id: &str, frames: &[&'static str], cx: &mut VisualTestContext| {
+        let stack = (frames.iter()).fold(ContextStack::new(), |stack, frame| {
+            stack.with(ContextFrame::new(*frame))
+        });
+        let run = RunCommand(Invocation::of(id).unwrap().context(stack));
+        cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+        cx.run_until_parked();
+    };
+    let shown = |cx: &mut VisualTestContext| {
+        let dock = workbench.read_with(cx, |workbench, _| workbench.terminal_dock().clone());
+        dock.read_with(cx, |dock, _| dock.is_visible())
+    };
+    let outside: [&[&'static str]; 3] = [
+        &["workbench"],
+        &["workbench", fe_editor::commands::CONTEXT],
+        &["workbench", "project_panel"],
+    ];
+    for frames in outside {
+        run("terminal.vi_mode", frames, cx);
+        assert!(!shown(cx), "terminal.vi_mode in {frames:?}");
+    }
+    run("terminal.vi_mode", &["workbench", "terminal"], cx);
+    assert!(shown(cx), "terminal.vi_mode in the terminal");
 }
