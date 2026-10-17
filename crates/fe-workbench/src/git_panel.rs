@@ -42,8 +42,9 @@
 //!
 //! Above the list is the commit message box, an [`EditorView`] the
 //! workbench gives the panel once it's first drawn (`git_commit`): not a
-//! tab, so nothing saves, backs up or remembers it. It soft-wraps and grows
-//! from 1 to 10 rows with its text. While it's empty its placeholder
+//! tab, so nothing saves, backs up or remembers it. It has no gutter,
+//! soft-wraps at its width and grows from 3 to 10 rows with its text, as VS
+//! Code's SCM input does from 1 to 10. While it's empty its placeholder
 //! names the branch, VS Code's `Message (ctrl-enter to commit on "main")`.
 //! Once its first row is over 50 characters, `<n>/50` shows after it,
 //! muted, in the warning colour over 72; a body row (after the first blank
@@ -120,6 +121,8 @@ pub(crate) const COMMIT_COMMAND: &str = "git.commit_box.commit";
 const SUBJECT_LENGTH: usize = 50;
 const LINE_LENGTH: usize = 72;
 
+/// The fewest rows the box shows, room to start a message in.
+const BOX_MIN_ROWS: u32 = 3;
 /// The most rows the box grows to.
 const BOX_ROWS: u32 = 10;
 
@@ -1740,10 +1743,13 @@ impl GitPanel {
 /// How many rows tall the box is to show `rows` of text unscrolled with
 /// the caret on the last: an editor scrolls to keep its caret a third of
 /// its height, or 3 rows if less, from the bottom edge.
-/// At most [`BOX_ROWS`], where a long message scrolls.
+/// At least [`BOX_MIN_ROWS`], and at most [`BOX_ROWS`], where a long
+/// message scrolls.
 fn box_rows(rows: u32) -> f32 {
     let rows = rows as f32;
-    (rows * 1.5).min(rows + 3.).min(BOX_ROWS as f32)
+    ((rows * 1.5).min(rows + 3.))
+        .max(BOX_MIN_ROWS as f32)
+        .min(BOX_ROWS as f32)
 }
 
 /// The warning under the box after a commit was refused for a message of

@@ -535,6 +535,18 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
     (available / em).floor().max(1.) * em
 }
 
+/// Where the text starts in a frame with no gutter
+/// ([`layout_frame_without_gutter`]), in ems from the left edge.
+pub const NO_GUTTER_LEFT_EMS: f32 = 0.5;
+
+/// The width to soft wrap at in an editor `width` wide with no gutter
+/// ([`layout_frame_without_gutter`]): what's right of the text's left
+/// padding, less an em for the caret, in whole ems, as [`wrap_width`].
+pub fn wrap_width_without_gutter(width: f32, em: f32) -> f32 {
+    let available = width - em * (NO_GUTTER_LEFT_EMS + 1.);
+    (available / em).floor().max(1.) * em
+}
+
 /// Lays out the rows visible in `input`, with no blocks: see
 /// [`layout_frame_with_blocks`].
 pub fn layout_frame<M: TextMeasure>(
@@ -597,6 +609,59 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     measure: &mut M,
     long_rows: &mut LongRows,
     widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
+    lay_out_frame(
+        input,
+        true,
+        blocks,
+        inlay,
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_inlay`], with no gutter: the text
+/// starts [`NO_GUTTER_LEFT_EMS`] in from the left, and the frame has no line
+/// numbers or fold toggles, and a fold column and change lane with no width,
+/// at the left edge. Wrap it at [`wrap_width_without_gutter`].
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_without_gutter<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+) -> Frame<M::Line> {
+    lay_out_frame(
+        input,
+        false,
+        blocks,
+        inlay,
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        |_| Vec::new(),
+    )
+}
+
+/// [`layout_frame_with_inlay`], with the gutter or without it.
+#[allow(clippy::too_many_arguments)]
+fn lay_out_frame<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    gutter: bool,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
     mut highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
     fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
@@ -619,13 +684,26 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
 
     let row_count = display.row_count();
     let screen_rows = row_count + blocks.block_rows();
-    let text_left = gutter_width(text.row_count(), em);
-    let fold_column_width = em * FOLD_COLUMN_EMS;
-    let fold_column_x = text_left - em * (CHANGE_LANE_EMS + FOLD_COLUMN_EMS);
+    // Left to right: the fold column, the change lane and the text; without
+    // a gutter, the column and lane are empty, at the left edge.
+    let (text_left, fold_column_width, change_lane_width) = match gutter {
+        true => (
+            gutter_width(text.row_count(), em),
+            em * FOLD_COLUMN_EMS,
+            em * CHANGE_LANE_EMS,
+        ),
+        false => (em * NO_GUTTER_LEFT_EMS, 0., 0.),
+    };
+    let lane_x = if gutter {
+        text_left - change_lane_width
+    } else {
+        0.
+    };
+    let fold_column_x = lane_x - fold_column_width;
     let change_lane = Rect {
-        x: text_left - em * CHANGE_LANE_EMS,
+        x: lane_x,
         y: 0.,
-        width: em * CHANGE_LANE_EMS,
+        width: change_lane_width,
         height,
     };
     let text_width = width - text_left;
@@ -1120,6 +1198,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             .filter(|row| row.start == text.row_start(row.buffer_row))
     };
     let line_numbers = first_rows()
+        .filter(|_| gutter)
         .map(|row| {
             let style = if active_buffer_rows.binary_search(&row.buffer_row).is_ok() {
                 &styles.active_line_number
@@ -1175,6 +1254,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
         buffer_row + 1 < text.row_count() && display.hidden_rows(buffer_row + 1).is_some()
     };
     let fold_toggles = first_rows()
+        .filter(|_| gutter)
         .filter_map(|row| {
             let folded = heads_fold(row.buffer_row);
             (folded || candidates.binary_search(&row.buffer_row).is_ok()).then(|| FoldToggle {
@@ -1376,3 +1456,85 @@ mod long_row_tests;
 mod slice_cap_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod no_gutter_tests {
+    use fe_buffer::Buffer;
+
+    use super::{
+        tests::{CELL, Line, Mono, WIDTH},
+        *,
+    };
+
+    fn lay_out(text: &str, gutter: bool) -> Frame<Line> {
+        let buffer = Buffer::new(text);
+        let display = DisplayMap::new(buffer.current(), 4);
+        let selections = [ResolvedSelection {
+            range: 0..0,
+            reversed: false,
+        }];
+        let input = FrameInput {
+            display: &display,
+            tab_size: 4,
+            selections: &selections,
+            primary_head: 0,
+            scroll: Vec2::default(),
+            autoscroll: false,
+            width: WIDTH,
+            height: 200.,
+            line_height: 20.,
+            em: CELL,
+            styles: FrameStyles {
+                text: "text",
+                line_number: "number",
+                active_line_number: "active",
+            },
+        };
+        let (blocks, mut long_rows) = (BlockMap::default(), LongRows::default());
+        let candidates = |rows: Range<u32>| rows.collect();
+        match gutter {
+            true => layout_frame_with_inlay(
+                &input,
+                &blocks,
+                None,
+                &mut Mono,
+                &mut long_rows,
+                &mut Mono,
+                |_| Vec::new(),
+                candidates,
+            ),
+            false => layout_frame_without_gutter(
+                &input,
+                &blocks,
+                None,
+                &mut Mono,
+                &mut long_rows,
+                &mut Mono,
+                |_| Vec::new(),
+            ),
+        }
+    }
+
+    #[test]
+    fn the_text_starts_half_an_em_in_with_nothing_left_of_it() {
+        let with = lay_out("a {\n}\nb", true);
+        assert!(!with.line_numbers.is_empty() && !with.fold_toggles.is_empty());
+
+        let frame = lay_out("a {\n}\nb", false);
+        assert_eq!(frame.text_left, CELL * NO_GUTTER_LEFT_EMS);
+        assert!(frame.line_numbers.is_empty());
+        assert!(frame.fold_toggles.is_empty());
+        assert_eq!(frame.fold_column.width, 0.);
+        assert_eq!(frame.change_lane.width, 0.);
+        assert_eq!(frame.rows.len(), 3);
+        assert_eq!(frame.text_bounds().x, frame.text_left);
+    }
+
+    #[test]
+    fn the_wrap_width_leaves_the_padding_and_an_em() {
+        // 400 wide, em 10: 400 - 5 - 10, in whole ems.
+        assert_eq!(wrap_width_without_gutter(400., 10.), 380.);
+        assert_eq!(wrap_width_without_gutter(0., 10.), 10.);
+        assert!(wrap_width_without_gutter(400., 10.) > wrap_width(400., 1, 10.));
+    }
+}

@@ -163,8 +163,8 @@ pub(super) fn host_command(
 
 impl Workbench {
     /// Gives `changes`, the Changes panel, its commit box, unless it has
-    /// one: an editor over a path-less buffer, soft-wrapped, in the
-    /// editors' theme, whose host commands come here.
+    /// one: an editor over a path-less buffer, soft-wrapped, with no
+    /// gutter, in the editors' theme, whose host commands come here.
     pub(crate) fn attach_commit_box(
         &mut self,
         changes: &Entity<GitPanel>,
@@ -178,7 +178,9 @@ impl Workbench {
         let editor = cx.new(|cx| {
             let mut model = EditorModel::new(Buffer::new(""), None);
             model.set_soft_wrap(true);
-            EditorView::new(model, theme, cx)
+            let mut view = EditorView::new(model, theme, cx);
+            view.set_gutter(false, cx);
+            view
         });
         self.own_editor(&editor, Owner::CommitBox);
         changes.update(cx, |changes, cx| changes.set_commit_box(editor, window, cx));

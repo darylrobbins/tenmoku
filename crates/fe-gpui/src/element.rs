@@ -575,7 +575,10 @@ impl Element for EditorElement {
         self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
             // Less any room the view keeps for text after a line.
-            let wrap = layout::wrap_width(width, rows, em) - view.wrap_reserve * em;
+            let wrap = match view.gutter {
+                true => layout::wrap_width(width, rows, em),
+                false => layout::wrap_width_without_gutter(width, em),
+            } - view.wrap_reserve * em;
             view.model.fit_wrap_width(wrap.max(em));
             view.model.sync_display();
             view.sync_visual();
@@ -676,8 +679,9 @@ impl Element for EditorElement {
         });
         let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
         let blocks = block_map(view, &hunks, ghost.as_ref());
-        let mut lay_out = |input: &FrameInput<Hsla>| {
-            layout::layout_frame_with_inlay(
+        let gutter = view.gutter;
+        let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
+            true => layout::layout_frame_with_inlay(
                 input,
                 &blocks,
                 inlay.as_ref(),
@@ -686,7 +690,16 @@ impl Element for EditorElement {
                 &mut glyph_widths,
                 |range| styled_highlights(syntax, theme, range),
                 |rows| fold_headers(syntax, rows),
-            )
+            ),
+            false => layout::layout_frame_without_gutter(
+                input,
+                &blocks,
+                inlay.as_ref(),
+                &mut shaper,
+                &mut long_rows,
+                &mut glyph_widths,
+                |range| styled_highlights(syntax, theme, range),
+            ),
         };
         let mut frame = lay_out(&input);
         // Next or previous hunk: its block comes into view too, though that
@@ -875,6 +888,11 @@ impl Element for EditorElement {
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, em, window);
+        // Without a gutter, its marks aren't drawn, nor can be clicked.
+        if !gutter {
+            (layout.decorations.placed)
+                .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
+        }
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
         // A hand over each change mark, across the whole change lane.
         let lane = layout.bounds(layout.frame.change_lane);
@@ -1022,10 +1040,14 @@ impl Element for EditorElement {
         let selections = selection_rects(&mut layout, view);
         let matches = mem::take(&mut layout.matches);
         let brackets = mem::take(&mut layout.brackets);
-        let (squiggles, marks) = {
+        let (squiggles, mut marks) = {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
         };
+        // The marks go in the gutter.
+        if !view.gutter {
+            marks.clear();
+        }
         let jump = layout.jump.as_ref().map(|jump| {
             let labels: Vec<_> = (jump.labels.iter())
                 .map(|label| (layout.bounds(label.rect), label.text.clone(), label.state))

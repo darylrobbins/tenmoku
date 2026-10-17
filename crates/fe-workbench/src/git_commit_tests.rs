@@ -262,10 +262,10 @@ fn commits(cx: &mut TestAppContext) {
     let reserve = commit_box.read_with(cx, |editor, _| editor.wrap_reserve());
     assert_eq!(reserve, HINT_ROOM);
 
-    // The box grows with its text, to at most 10 rows.
+    // The box grows with its text, from 3 rows to at most 10.
     set_text(&commit_box, "One row", cx);
     let one = box_height(&commit_box, cx);
-    assert!((1.5..1.6).contains(&one), "{one}");
+    assert!((3.0..3.1).contains(&one), "{one}");
     let long = vec!["row"; 30].join("\n");
     set_text(&commit_box, &long, cx);
     let most = box_height(&commit_box, cx);
@@ -677,3 +677,6 @@ fn panel_button(
         changes.read(cx).commit_button_state(cx)
     })
 }
+
+#[path = "git_commit_box_tests.rs"]
+mod commit_box_tests;

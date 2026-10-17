@@ -49,6 +49,8 @@ pub struct EditorView {
     /// How many ems soft wrap leaves free at the right, beyond its usual
     /// margin, for text after a line ([`EditorView::set_wrap_reserve`]).
     pub(crate) wrap_reserve: f32,
+    /// Whether the gutter shows ([`EditorView::set_gutter`]).
+    pub(crate) gutter: bool,
     /// How far the content is scrolled, in pixels (both ≥ 0).
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
@@ -243,6 +245,7 @@ impl EditorView {
             focus: cx.focus_handle(),
             tab_tint: None,
             wrap_reserve: 0.,
+            gutter: true,
             scroll: Point::default(),
             autoscroll: true,
             reveal_hunk: None,
@@ -347,6 +350,18 @@ impl EditorView {
     /// [`EditorView::set_wrap_reserve`].
     pub fn wrap_reserve(&self) -> f32 {
         self.wrap_reserve
+    }
+
+    /// Shows or hides the gutter: its line numbers, fold column, change lane
+    /// and diagnostics' marks. Without it, the text starts half an em in
+    /// from the left and soft wraps over the room it leaves
+    /// ([`fe_display::layout::layout_frame_without_gutter`]). Shown by
+    /// default.
+    pub fn set_gutter(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if self.gutter != shown {
+            self.gutter = shown;
+            cx.notify();
+        }
     }
 
     /// Turns the Linux primary selection on or off: while on, the selection
@@ -1547,5 +1562,51 @@ mod wrap_reserve_tests {
         // Six ems more fit its gap and six characters.
         let room = room(&view, 6., cx);
         assert!(room >= 0., "{room}");
+    }
+}
+
+/// An editor with its gutter hidden.
+#[cfg(test)]
+mod gutter_tests {
+    use fe_buffer::Buffer;
+    use fe_editor::EditorModel;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    use crate::{EditorTheme, EditorView, init};
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    #[gpui::test]
+    fn without_a_gutter_the_text_starts_at_the_left_and_wraps_wider(cx: &mut TestAppContext) {
+        cx.update(init);
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let mut model = EditorModel::new(Buffer::new("a\nb"), None);
+            model.set_soft_wrap(true);
+            EditorView::new(model, EditorTheme::default_dark(cx), cx)
+        });
+        draw(cx);
+        let shown = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |view, _| {
+                let frame = &view.layout.as_ref().expect("drawn").frame;
+                let wrap = view.model.display().wrap_width().expect("soft wrap is on");
+                (frame.text_left, frame.line_numbers.len(), wrap)
+            })
+        };
+        let (gutter_left, numbers, gutter_wrap) = shown(cx);
+        assert_eq!(numbers, 2);
+
+        view.update(cx, |view, cx| view.set_gutter(false, cx));
+        draw(cx);
+        let (left, numbers, wrap) = shown(cx);
+        assert_eq!(numbers, 0);
+        assert!(left < gutter_left / 4., "{left} vs {gutter_left}");
+        // The gutter's room goes to the text.
+        assert!(
+            wrap >= gutter_wrap + (gutter_left - left),
+            "{wrap} vs {gutter_wrap}"
+        );
     }
 }
