@@ -301,8 +301,8 @@ fn split(
     cx: &mut VisualTestContext,
 ) -> (Entity<Pane>, Entity<Pane>) {
     run("pane.split_right", cx);
-    let panes: Vec<Entity<Pane>> = workbench.read_with(cx, |workbench, _| {
-        (workbench.pane_group().panes().into_iter().cloned()).collect()
+    let panes: Vec<Entity<Pane>> = workbench.read_with(cx, |workbench, cx| {
+        (workbench.pane_group(cx).panes().into_iter().cloned()).collect()
     });
     let [a, b] = <[_; 2]>::try_from(panes).expect("two panes");
     let (left, right) = (editor(&a, cx), editor(&b, cx));

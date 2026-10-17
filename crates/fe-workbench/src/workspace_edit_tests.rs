@@ -598,7 +598,7 @@ fn the_launch_read_after_its_pane_closed(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.simulate_keystrokes("cmd-k cmd-left cmd-k cmd-w");
     cx.run_until_parked();
-    let panes = launched.read_with(&cx, |w, _| w.pane_group().panes().len());
+    let panes = launched.read_with(&cx, |w, cx| w.pane_group(cx).panes().len());
     assert_eq!(panes, 1);
 
     let edits = s.decode(

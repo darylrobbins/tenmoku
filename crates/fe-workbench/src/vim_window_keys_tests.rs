@@ -45,7 +45,7 @@ fn press(keys: &str, cx: &mut VisualTestContext) {
 fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<usize> {
     workbench.read_with(cx, |workbench, cx| {
         let editor = workbench.active_editor(cx)?;
-        (workbench.pane_group().panes().iter()).position(|pane| {
+        (workbench.pane_group(cx).panes().iter()).position(|pane| {
             let pane = pane.read(cx);
             (pane.active()).is_some_and(|ix| pane.tabs()[ix].editor() == Some(editor))
         })
@@ -53,12 +53,12 @@ fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<u
 }
 
 fn pane_count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
-    workbench.read_with(cx, |workbench, _| workbench.pane_group().panes().len())
+    workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len())
 }
 
 fn widths(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<f32> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| f32::from(pane.read(cx).bounds().size.width))
             .collect()
     })

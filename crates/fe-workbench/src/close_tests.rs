@@ -46,7 +46,7 @@ fn run(id: &str, cx: &mut VisualTestContext) {
 
 fn tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<usize> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| pane.read(cx).tabs().len())
             .collect()
     })

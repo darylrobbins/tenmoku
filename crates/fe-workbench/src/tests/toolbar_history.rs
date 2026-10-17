@@ -69,9 +69,9 @@ fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<P
 }
 
 fn panes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<Pane>> {
-    workbench.read_with(cx, |workbench, _| {
+    workbench.read_with(cx, |workbench, cx| {
         workbench
-            .pane_group()
+            .pane_group(cx)
             .panes()
             .into_iter()
             .cloned()

@@ -88,10 +88,6 @@ impl Tab {
     }
 }
 
-/// Every pane of a workbench, each pane included, so a pane can see what
-/// the others show.
-pub(crate) type Peers = kiln_shell::pane::Peers<Pane>;
-
 pub struct Pane {
     /// The tabs' items, the active one, focus and layout: kiln-shell's.
     state: PaneState<Pane>,
@@ -208,23 +204,9 @@ impl Pane {
         cx.notify();
     }
 
-    /// Joins the workbench's panes, `peers`.
-    pub(crate) fn set_peers(&mut self, peers: Peers) {
-        self.state.set_peers(peers);
-    }
-
     /// Where the last frame laid the pane out; zero-sized before that.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.state.bounds()
-    }
-
-    /// Whether the pane's last tab closed, and no file has opened in it
-    /// since or is being read into it. Asking clears it once it's true.
-    pub(crate) fn take_emptied(&mut self) -> bool {
-        if self.opening.is_some() && self.state.items().is_empty() {
-            return false;
-        }
-        self.state.take_emptied()
     }
 
     /// Whether the pane is reading `path` to show it.
@@ -1255,6 +1237,11 @@ impl PaneView for Pane {
     }
 
     fn items_changed(&mut self, cx: &mut App) {
+        // A pane whose last tab went while a file is being read into it
+        // isn't emptied: the file lands there, so the workspace keeps it.
+        if self.opening.is_some() && self.state.items().is_empty() {
+            self.state.take_emptied();
+        }
         let before = self.tabs.len();
         self.sync_tabs(cx);
         if self.tabs.len() < before {
@@ -1650,7 +1637,7 @@ mod auto_close_tests {
     /// Each editor's model's [`EditorModel::auto_close`], pane by pane.
     fn auto_close(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<bool> {
         workbench.read_with(cx, |workbench, cx| {
-            (workbench.pane_group().panes().iter())
+            (workbench.pane_group(cx).panes().iter())
                 .flat_map(|pane| pane.read(cx).tabs().to_vec())
                 .filter_map(|tab| Some(tab.editor()?.read(cx).model().auto_close()))
                 .collect()
@@ -1673,8 +1660,9 @@ mod auto_close_tests {
         reload(&workbench, false, cx);
         assert_eq!(auto_close(&workbench, cx), [false]);
         // A file opened since opens as the settings now say.
-        let pane =
-            workbench.read_with(cx, |workbench, _| workbench.pane_group().panes()[0].clone());
+        let pane = workbench.read_with(cx, |workbench, cx| {
+            workbench.pane_group(cx).panes()[0].clone()
+        });
         let b = dir.path().join("b.rs");
         cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(b, window, cx)));
         cx.run_until_parked();

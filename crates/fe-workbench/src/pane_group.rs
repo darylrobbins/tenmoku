@@ -7,20 +7,16 @@
 //! workbench's [`crate::KEY_CONTEXT`]. Their handlers only name an op: the
 //! workbench does it with the window at hand.
 
-use std::{
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::rc::Rc;
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
-use fe_ui::UiTheme;
-use gpui::{AnyElement, App, Context, Entity, Global, Window};
+use gpui::{App, Global};
 pub use kiln_shell::pane_group::{Axis, Direction};
 #[cfg(test)]
 pub(crate) use kiln_shell::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
 
-use crate::{Pane, Workbench, pane::TabId};
+use crate::Pane;
 
 /// A member of the tree: one of fastedit's panes, or an axis of members.
 pub type Member = kiln_shell::Member<Pane>;
@@ -31,61 +27,9 @@ pub type Members = kiln_shell::Members<Pane>;
 /// Where a tab moves to.
 pub(crate) type Destination = kiln_shell::Destination<Pane>;
 
-/// The tree of panes, kiln-shell's over fastedit's [`Pane`]s. It always has
-/// one at least.
-pub struct PaneGroup {
-    group: kiln_shell::PaneGroup<Pane>,
-    /// Calls of [`PaneGroup::move_tab`].
-    #[cfg(test)]
-    pub(crate) moves: usize,
-}
-
-impl Deref for PaneGroup {
-    type Target = kiln_shell::PaneGroup<Pane>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.group
-    }
-}
-
-impl DerefMut for PaneGroup {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.group
-    }
-}
-
-impl PaneGroup {
-    pub fn new(pane: Entity<Pane>) -> Self {
-        Self {
-            group: kiln_shell::PaneGroup::new(pane),
-            #[cfg(test)]
-            moves: 0,
-        }
-    }
-
-    /// Moves `tab` from `source` to `destination`: see
-    /// [`kiln_shell::PaneGroup::move_tab`].
-    pub(crate) fn move_tab(
-        &mut self,
-        source: &Entity<Pane>,
-        tab: TabId,
-        destination: Destination,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(Entity<Pane>, bool)> {
-        #[cfg(test)]
-        {
-            self.moves += 1;
-        }
-        self.group.move_tab(source, tab, destination, window, cx)
-    }
-
-    /// The tree, its dividers dragged through the workbench's group.
-    pub(crate) fn render(&self, ui: &UiTheme, cx: &mut Context<Workbench>) -> AnyElement {
-        self.group
-            .render(ui, |workbench| &mut workbench.pane_group_mut().group, cx)
-    }
-}
+/// The tree of panes, kiln-shell's over fastedit's [`Pane`]s, which the
+/// workbench's workspace holds and draws. It always has one at least.
+pub type PaneGroup = kiln_shell::PaneGroup<Pane>;
 
 /// What a pane command does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

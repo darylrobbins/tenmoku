@@ -120,7 +120,7 @@ fn setup(cx: &mut TestAppContext) -> Lsp {
 
 fn panes(s: &mut Lsp) -> usize {
     s.workbench
-        .read_with(&s.cx, |w, _| w.pane_group().panes().len())
+        .read_with(&s.cx, |w, cx| w.pane_group(cx).panes().len())
 }
 
 fn panel(s: &mut Lsp) -> Entity<ProblemsPanel> {
@@ -416,7 +416,7 @@ fn vim(cx: &mut TestAppContext) {
     // it's drawn, then in normal mode with its caret at `g`.
     let left = s
         .workbench
-        .read_with(&s.cx, |w, _| w.pane_group().panes()[0].clone());
+        .read_with(&s.cx, |w, cx| w.pane_group(cx).panes()[0].clone());
     let workbench = s.workbench.clone();
     let show = |s: &mut Lsp, tab| {
         s.cx.update(|window, cx| {

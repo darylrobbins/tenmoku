@@ -575,7 +575,7 @@ fn being_read(path: &Path, cx: &App) -> bool {
         .any(|saving| lsp::resolve(&saving).unwrap_or(saving) == path);
     saving
         || workbenches(cx).any(|workbench| {
-            let panes = workbench.pane_group().panes();
+            let panes = workbench.pane_group(cx).panes();
             let reading = (panes.iter())
                 .flat_map(|pane| {
                     pane.read(cx)
@@ -583,7 +583,7 @@ fn being_read(path: &Path, cx: &App) -> bool {
                         .map(Path::to_owned)
                         .collect::<Vec<_>>()
                 })
-                .chain(workbench.launch_reading().map(Path::to_owned));
+                .chain(workbench.launch_reading(cx).map(Path::to_owned));
             reading
                 .map(|reading| lsp::resolve(&reading).unwrap_or(reading))
                 .any(|reading| reading == path)

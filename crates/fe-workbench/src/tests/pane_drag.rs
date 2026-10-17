@@ -28,8 +28,8 @@ fn project() -> tempfile::TempDir {
 }
 
 fn panes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<Pane>> {
-    workbench.read_with(cx, |workbench, _| {
-        let group = workbench.pane_group();
+    workbench.read_with(cx, |workbench, cx| {
+        let group = workbench.pane_group(cx);
         group.panes().into_iter().cloned().collect()
     })
 }
@@ -66,18 +66,18 @@ fn shape(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
             }
         }
     }
-    workbench.read_with(cx, |workbench, _| member(workbench.pane_group().root()))
+    workbench.read_with(cx, |workbench, cx| member(workbench.pane_group(cx).root()))
 }
 
 fn ratios(workbench: &Entity<Workbench>, path: &[usize], cx: &mut VisualTestContext) -> Vec<f32> {
-    workbench.update(cx, |workbench, _| {
-        let ratios = workbench.pane_group_mut().ratios(path);
+    workbench.update(cx, |workbench, cx| {
+        let ratios = workbench.pane_group(cx).ratios(path);
         ratios.expect("an axis there")
     })
 }
 
 fn moves(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
-    workbench.read_with(cx, |workbench, _| workbench.pane_group().moves)
+    workbench.read_with(cx, |workbench, _| workbench.moves)
 }
 
 fn bounds(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Bounds<Pixels> {

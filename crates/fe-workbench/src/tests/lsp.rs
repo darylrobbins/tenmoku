@@ -564,7 +564,7 @@ fn opening_a_file_starts_its_server(cx: &mut TestAppContext) {
     s.draw();
     let panes = s
         .workbench
-        .read_with(&s.cx, |w, _| w.pane_group().panes().len());
+        .read_with(&s.cx, |w, cx| w.pane_group(cx).panes().len());
     assert_eq!(panes, 2);
     assert_eq!(s.active_path(), Some(s.path("src/main.rs")));
     // Anything sent for the split goes before this.
@@ -665,7 +665,7 @@ fn edits_and_saves_reach_the_server(cx: &mut TestAppContext) {
     s.draw();
     let panes = s
         .workbench
-        .read_with(&s.cx, |w, _| w.pane_group().panes().len());
+        .read_with(&s.cx, |w, cx| w.pane_group(cx).panes().len());
     assert_eq!(panes, 1);
     // Anything sent for that close goes before this.
     s.open("src/lib.rs");

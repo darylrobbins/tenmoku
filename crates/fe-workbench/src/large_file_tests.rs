@@ -301,8 +301,8 @@ fn viewer_and_editor_tabs_together(cx: &mut TestAppContext) {
 
     // Splitting the viewer opens another viewer of the file beside it.
     run("pane.split_right", cx);
-    let panes = workbench.read_with(cx, |workbench, _| {
-        (workbench.pane_group().panes().into_iter().cloned()).collect::<Vec<_>>()
+    let panes = workbench.read_with(cx, |workbench, cx| {
+        (workbench.pane_group(cx).panes().into_iter().cloned()).collect::<Vec<_>>()
     });
     assert_eq!(panes.len(), 2);
     assert_eq!(tabs(&panes[1], cx), [(big.clone(), true)]);
@@ -320,7 +320,7 @@ fn viewer_and_editor_tabs_together(cx: &mut TestAppContext) {
     assert_eq!(tabs(&panes[1], cx), [(big.clone(), true), (a, false)]);
     run("workbench.close_tab", cx);
     run("workbench.close_tab", cx);
-    let panes = workbench.read_with(cx, |workbench, _| workbench.pane_group().panes().len());
+    let panes = workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len());
     assert_eq!(panes, 1, "the emptied pane closes");
 
     // A vim host command in an editor: `:e` of the viewer's path shows its

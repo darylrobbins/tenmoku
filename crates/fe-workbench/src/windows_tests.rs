@@ -75,7 +75,7 @@ fn run(id: &str, cx: &mut VisualTestContext) {
 fn files(window: WindowHandle<Workbench>, cx: &mut TestAppContext) -> Vec<Vec<String>> {
     let workbench: Entity<Workbench> = window.root(cx).unwrap();
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| {
                 (pane.read(cx).tabs().iter())
                     .map(|tab| {

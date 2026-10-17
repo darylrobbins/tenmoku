@@ -331,9 +331,9 @@ fn close_tabs_and_panes(cx: &mut TestAppContext) {
     let files = [("a.txt", "x foo\nfoo\n"), ("b.txt", "foo b foo\n")];
     let (_dir, workbench, cx) = opened(cx, &files);
     run("pane.split_right", cx);
-    let panes: Vec<Entity<Pane>> = workbench.read_with(cx, |workbench, _| {
+    let panes: Vec<Entity<Pane>> = workbench.read_with(cx, |workbench, cx| {
         workbench
-            .pane_group()
+            .pane_group(cx)
             .panes()
             .into_iter()
             .cloned()

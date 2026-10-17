@@ -127,10 +127,10 @@ fn overlapping_navigation_opens_in_two_splits(cx: &mut TestAppContext) {
     let (workbench, cx) = jumped(cx, &root);
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);
-    let (first, second) = workbench.read_with(cx, |workbench, _| {
+    let (first, second) = workbench.read_with(cx, |workbench, cx| {
         let active = workbench.pane().clone();
         let other = workbench
-            .pane_group()
+            .pane_group(cx)
             .panes()
             .into_iter()
             .find(|p| **p != active);

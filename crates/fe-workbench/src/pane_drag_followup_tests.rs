@@ -48,9 +48,9 @@ fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<P
 }
 
 fn panes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<Pane>> {
-    workbench.read_with(cx, |workbench, _| {
+    workbench.read_with(cx, |workbench, cx| {
         workbench
-            .pane_group()
+            .pane_group(cx)
             .panes()
             .into_iter()
             .cloned()
@@ -73,7 +73,7 @@ fn shape(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
             }
         }
     }
-    workbench.read_with(cx, |workbench, _| member(workbench.pane_group().root()))
+    workbench.read_with(cx, |workbench, cx| member(workbench.pane_group(cx).root()))
 }
 
 fn tab(pane: &Entity<Pane>, ix: usize, cx: &mut VisualTestContext) -> Bounds<Pixels> {
@@ -130,8 +130,8 @@ fn collapsed_axis_ignores_divider_drag(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(shape(&workbench, cx), "V[P, P]");
     let ratios = |cx: &mut VisualTestContext| {
-        workbench.update(cx, |workbench, _| {
-            workbench.pane_group_mut().ratios(&[]).unwrap()
+        workbench.update(cx, |workbench, cx| {
+            workbench.pane_group(cx).ratios(&[]).unwrap()
         })
     };
     let before = ratios(cx);

@@ -51,8 +51,8 @@ fn run(id: &str, cx: &mut VisualTestContext) {
 }
 
 fn ratios(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<f32> {
-    workbench.read_with(cx, |workbench, _| {
-        workbench.pane_group().ratios(&[]).unwrap_or_default()
+    workbench.read_with(cx, |workbench, cx| {
+        workbench.pane_group(cx).ratios(&[]).unwrap_or_default()
     })
 }
 
@@ -60,7 +60,7 @@ fn ratios(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<f32>
 fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<usize> {
     workbench.read_with(cx, |workbench, cx| {
         let editor = workbench.active_editor(cx)?;
-        (workbench.pane_group().panes().iter()).position(|pane| {
+        (workbench.pane_group(cx).panes().iter()).position(|pane| {
             let pane = pane.read(cx);
             (pane.active()).is_some_and(|ix| pane.tabs()[ix].editor() == Some(editor))
         })
@@ -68,13 +68,13 @@ fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<u
 }
 
 fn pane_count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
-    workbench.read_with(cx, |workbench, _| workbench.pane_group().panes().len())
+    workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len())
 }
 
 /// Each pane's size in pixels, in the panes' order.
 fn sizes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(f32, f32)> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| {
                 let size = pane.read(cx).bounds().size;
                 (f32::from(size.width), f32::from(size.height))
@@ -155,7 +155,7 @@ fn resize_and_equalize_commands_move_the_borders(cx: &mut TestAppContext) {
 
     run("pane.equalize", cx);
     assert_eq!(ratios(&workbench, cx), vec![0.5, 0.5]);
-    let inner = workbench.read_with(cx, |workbench, _| workbench.pane_group().ratios(&[1]));
+    let inner = workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).ratios(&[1]));
     assert_eq!(inner, Some(vec![0.5, 0.5]));
 }
 

@@ -187,7 +187,7 @@ fn follows_the_active_editor(cx: &mut TestAppContext) {
     click_row(&panel(&workbench, cx), "b.md", cx);
     draw(cx);
     assert_eq!(language(&workbench, cx).as_deref(), Some("Markdown"));
-    let panes = workbench.read_with(cx, |workbench, _| workbench.pane_group().panes().len());
+    let panes = workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len());
     assert_eq!(panes, 2);
 
     cx.simulate_keystrokes("cmd-k cmd-left");

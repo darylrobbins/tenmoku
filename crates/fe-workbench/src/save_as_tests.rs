@@ -177,10 +177,10 @@ fn save_as_moves_the_tab(cx: &mut TestAppContext) {
         );
         assert_eq!(language(view, cx), Some("python"));
     }
-    let panes = workbench.read_with(cx, |w, _| w.pane_group().panes().len());
+    let panes = workbench.read_with(cx, |w, cx| w.pane_group(cx).panes().len());
     assert_eq!(panes, 2);
     let titles: Vec<_> = workbench.read_with(cx, |w, cx| {
-        (w.pane_group().panes().iter())
+        (w.pane_group(cx).panes().iter())
             .map(|pane| pane.read(cx).title(cx))
             .collect()
     });

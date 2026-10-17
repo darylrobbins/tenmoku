@@ -208,7 +208,7 @@ impl Workbench {
         let shown = (self.open_editors(cx).iter())
             .filter_map(|editor| editor.read(cx).model().path().map(Path::to_owned))
             .collect::<Vec<_>>();
-        let reading = (self.pane_group().panes().iter())
+        let reading = (self.pane_group(cx).panes().iter())
             .flat_map(|pane| {
                 pane.read(cx)
                     .reading()
@@ -216,7 +216,7 @@ impl Workbench {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let launch = self.launch_reading().map(Path::to_owned);
+        let launch = self.launch_reading(cx).map(Path::to_owned);
         let saving = crate::open::reserved_paths();
         (shown.into_iter().chain(reading).chain(launch).chain(saving))
             .flat_map(|path| [lsp::resolve(&path), Some(path)])

@@ -925,8 +925,8 @@ fn a_landing_is_followed_in_its_own_pane(cx: &mut TestAppContext) {
     // Two panes on main.rs; the right one, active, is where references open.
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);
-    let panes = workbench.read_with(cx, |workbench, _| {
-        let panes = workbench.pane_group().panes();
+    let panes = workbench.read_with(cx, |workbench, cx| {
+        let panes = workbench.pane_group(cx).panes();
         panes.into_iter().cloned().collect::<Vec<_>>()
     });
     let [left, right] = [panes[0].clone(), panes[1].clone()];
@@ -1026,7 +1026,9 @@ fn a_reference_landing_in_another_pane_meanwhile(cx: &mut TestAppContext) {
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);
-    let left = workbench.read_with(cx, |workbench, _| workbench.pane_group().panes()[0].clone());
+    let left = workbench.read_with(cx, |workbench, cx| {
+        workbench.pane_group(cx).panes()[0].clone()
+    });
     caret_on(&workbench, "helper", cx);
     cx.simulate_keystrokes("shift-f12");
     settle(cx);
@@ -1054,7 +1056,7 @@ fn a_reference_landing_in_another_pane_meanwhile(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         let workbench = workbench.read(cx);
         assert_eq!(*workbench.pane(), left);
-        let right = workbench.pane_group().panes()[1].clone();
+        let right = workbench.pane_group(cx).panes()[1].clone();
         assert!(right.read(cx).is_opening(&root.join("src/a.rs")));
         click_now(main_at.center(), window, cx);
     });

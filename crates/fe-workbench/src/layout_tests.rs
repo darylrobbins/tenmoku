@@ -46,7 +46,7 @@ fn editors(
     cx: &mut VisualTestContext,
 ) -> Vec<Vec<Entity<EditorView>>> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| {
                 pane.read(cx)
                     .tabs()

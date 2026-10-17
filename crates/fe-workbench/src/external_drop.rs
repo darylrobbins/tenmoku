@@ -49,7 +49,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let dropped = classify(paths.paths());
-        let pane = (self.panes.panes().into_iter())
+        let pane = (self.pane_group(cx).panes().into_iter())
             .find(|pane| pane.read(cx).bounds().contains(&position))
             .unwrap_or(&self.active)
             .clone();
@@ -85,7 +85,9 @@ impl Workbench {
             let _watches = (watch_pane, watch_workbench);
             let in_workbench = |cx: &mut gpui::AsyncWindowContext| {
                 workbench
-                    .read_with(cx, |workbench, _| workbench.panes.panes().contains(&&pane))
+                    .read_with(cx, |workbench, cx| {
+                        workbench.pane_group(cx).panes().contains(&&pane)
+                    })
                     .unwrap_or(false)
             };
             for path in files {

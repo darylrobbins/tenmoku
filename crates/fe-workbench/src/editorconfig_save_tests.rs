@@ -38,7 +38,7 @@ fn opened<'a>(
     });
     cx.run_until_parked();
     let editor = workbench.read_with(cx, |workbench, cx| {
-        let pane = workbench.pane_group().panes()[0].read(cx);
+        let pane = workbench.pane_group(cx).panes()[0].read(cx);
         pane.tabs()[0].editor().unwrap().clone()
     });
     editor.update(cx, |editor, _| {

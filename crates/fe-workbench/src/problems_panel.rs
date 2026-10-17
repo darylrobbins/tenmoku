@@ -627,7 +627,7 @@ impl Workbench {
         let pane = Some(self.pane().clone())
             .filter(|pane| shows(pane, cx))
             .or_else(|| {
-                (self.pane_group().panes().into_iter())
+                (self.pane_group(cx).panes().into_iter())
                     .find(|pane| shows(pane, cx))
                     .cloned()
             });

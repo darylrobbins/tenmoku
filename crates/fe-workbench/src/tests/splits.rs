@@ -32,8 +32,8 @@ fn project() -> (tempfile::TempDir, Vec<PathBuf>) {
 }
 
 fn panes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<Pane>> {
-    workbench.read_with(cx, |workbench, _| {
-        let group = workbench.pane_group();
+    workbench.read_with(cx, |workbench, cx| {
+        let group = workbench.pane_group(cx);
         group.panes().into_iter().cloned().collect()
     })
 }
@@ -78,7 +78,7 @@ fn shape(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
             }
         }
     }
-    workbench.read_with(cx, |workbench, _| member(workbench.pane_group().root()))
+    workbench.read_with(cx, |workbench, cx| member(workbench.pane_group(cx).root()))
 }
 
 fn editor_focused(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> bool {

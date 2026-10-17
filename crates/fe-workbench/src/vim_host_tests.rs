@@ -109,7 +109,7 @@ pub(super) fn dirty(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> 
 /// Each pane's tabs, by file name.
 fn tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Vec<String>> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .map(|pane| {
                 (pane.read(cx).tabs().iter())
                     .map(|tab| fe_gpui::pane_item::file_name(tab.path.as_deref()))
@@ -540,7 +540,7 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     // Buffers, not tabs: sub/c.txt is shown in both panes.
     let dirty_buffers = workbench.read_with(cx, |workbench, cx| {
         let mut dirty = std::collections::BTreeSet::new();
-        for pane in workbench.pane_group().panes() {
+        for pane in workbench.pane_group(cx).panes() {
             for tab in pane.read(cx).tabs() {
                 if tab.editor().unwrap().read(cx).model().is_dirty() {
                     dirty.insert(tab.path.clone());

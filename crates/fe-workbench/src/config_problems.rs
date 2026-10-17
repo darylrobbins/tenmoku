@@ -249,7 +249,7 @@ impl ConfigProblemsPicker {
             return;
         };
         let pane = pane.upgrade().filter(|pane| {
-            let panes = workbench.read(cx).pane_group().panes();
+            let panes = workbench.read(cx).pane_group(cx).panes();
             panes.contains(&pane)
         });
         let Some(pane) = pane else {

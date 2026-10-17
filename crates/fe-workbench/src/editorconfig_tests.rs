@@ -52,7 +52,7 @@ fn opened<'a>(
 
 fn editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
     workbench.read_with(cx, |workbench, cx| {
-        let pane = workbench.pane_group().panes()[0].read(cx);
+        let pane = workbench.pane_group(cx).panes()[0].read(cx);
         pane.tabs()[0].editor().unwrap().clone()
     })
 }
@@ -124,7 +124,7 @@ fn run(id: &str, cx: &mut VisualTestContext) {
 
 fn tab_sizes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<usize> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .flat_map(|pane| pane.read(cx).tabs().to_vec())
             .map(|tab| tab.editor().unwrap().read(cx).model().tab_size())
             .collect()

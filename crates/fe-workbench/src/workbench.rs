@@ -3,6 +3,7 @@
 //! right and the terminal below.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
@@ -43,8 +44,6 @@ use crate::{
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
-    pane::{PaneEvent, Peers, TabId},
-    pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     persist,
@@ -60,7 +59,7 @@ use fe_command::Value;
 use fe_ui::Icon;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
-    ModalEvent, ModalId, ModalLayer, PaneView as _, Shell,
+    ModalEvent, ModalId, ModalLayer, PaneView as _, Shell, Workspace, WorkspaceEvent,
     close::{self, Items, LiveItems},
     layout::{self, WindowLayout},
 };
@@ -187,14 +186,25 @@ pub struct Workbench {
     /// focus in it, and to the bottom dock showing or hiding, which the
     /// sidebar's Terminal button follows.
     _terminal: [Subscription; 3],
-    panes: PaneGroup,
-    /// The pane files open in; its active tab is the active editor.
+    /// The window's shell around the panes, which it keeps in step: their
+    /// group, the active one, a pane emptied closing, tabs dropped moving.
+    workspace: Entity<Workspace<Pane>>,
+    /// The workspace's active pane, which files open in, as last followed;
+    /// its active tab is the active editor.
     active: Entity<Pane>,
-    /// `panes`' panes, which each of them sees.
-    peers: Peers,
-    /// Per pane: its notifications, its events, tabs dropped on it and its
-    /// toolbar's requests.
-    pane_subscriptions: HashMap<EntityId, [Subscription; 4]>,
+    /// The pane the workspace makes a restored layout's panes like.
+    template: Rc<RefCell<WeakEntity<Pane>>>,
+    /// To the workspace's events and its notifications.
+    _workspace: [Subscription; 2],
+    /// Per pane: its toolbar's requests.
+    toolbar_requests: HashMap<EntityId, Subscription>,
+    /// Calls of [`Workbench::move_tab`] and tabs dropped on a pane, which
+    /// the workspace moves.
+    #[cfg(test)]
+    pub(crate) moves: usize,
+    /// Per pane: tabs dropped on it, counted in `moves`.
+    #[cfg(test)]
+    drops: HashMap<EntityId, Subscription>,
     /// Per open editor: the editor, held until its tab's close is seen
     /// here, and its notifications, passed on to the editors that share its
     /// buffer.
@@ -218,7 +228,7 @@ pub struct Workbench {
     go_to_line: Entity<Picker<GoToLine>>,
     /// The recent folders and files, shown by `workbench.open_recent`.
     recent_picker: Entity<Picker<RecentPicker>>,
-    /// The window's shell: the chrome, the dock, the status bar and the
+    /// The workspace's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
     /// The shell's modal layer, which shows the palettes.
@@ -450,20 +460,32 @@ impl Workbench {
         let status_bar = cx.new(|_| StatusBar::new(ui));
         toast::init(cx);
         let toasts = cx.new(|cx| toast::ToastLayer::new(ui, window, cx));
-        let shell = cx.new(|cx| {
-            let mut shell = Shell::new(KEY_CONTEXT, window, cx).text_size(px(12.));
+        // A restored layout's panes are made like a pane of the workbench's.
+        let template = Rc::new(RefCell::new(pane.downgrade()));
+        let workspace = cx.new(|cx| {
+            let template = template.clone();
+            let new_pane = move |_: &mut Window, cx: &mut App| {
+                let template = (template.borrow().upgrade()).expect("a pane to restore beside");
+                template.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)))
+            };
+            Workspace::new(KEY_CONTEXT, pane.clone(), new_pane, window, cx).title("fastedit")
+        });
+        let shell = workspace.read(cx).shell().clone();
+        shell.update(cx, |shell, cx| {
+            // The chrome is the host's to turn on (`set_title_bar` and the
+            // like); the text size is set around the workspace as it draws.
+            shell.set_title_bar(false, cx);
+            shell.set_menu_bar(None, cx);
+            shell.set_window_frame(false, cx);
             shell.set_title(title_bar::name(launch_root.as_deref()), cx);
             shell.set_dock(DockPosition::Right, Some(dock.clone().into()), cx);
             shell.set_dock(DockPosition::Bottom, Some(terminal_dock.clone().into()), cx);
             shell.set_status_bar(Some(status_bar.clone().into()), cx);
-            shell
         });
-        let centre = cx.weak_entity();
-        let centre = cx.new(|cx| PaneArea {
-            workbench: centre,
-            focus: cx.focus_handle(),
+        let workspace_events = cx.subscribe_in(&workspace, window, Self::workspace_event);
+        let workspace_changed = cx.observe_in(&workspace, window, |workbench, _, window, cx| {
+            workbench.follow_workspace(window, cx)
         });
-        shell.update(cx, |shell, cx| shell.set_center(centre, cx));
         let modals = shell.read(cx).modals().clone();
         let status_bar_changed = cx.observe(&status_bar, |workbench, _, cx| {
             workbench.show_status_bar(cx);
@@ -497,10 +519,15 @@ impl Workbench {
             terminal_dock,
             terminal,
             _terminal: terminal_subscriptions,
-            panes: PaneGroup::new(pane.clone()),
+            workspace,
             active: pane.clone(),
-            peers: Peers::default(),
-            pane_subscriptions: HashMap::new(),
+            template,
+            _workspace: [workspace_events, workspace_changed],
+            toolbar_requests: HashMap::new(),
+            #[cfg(test)]
+            moves: 0,
+            #[cfg(test)]
+            drops: HashMap::new(),
             editors: HashMap::new(),
             tree_opens: HashMap::new(),
             _release: cx.on_release(|workbench, cx| {
@@ -572,9 +599,8 @@ impl Workbench {
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
         title_bar::record_requests(cx);
-        workbench.watch(&pane, window, cx);
+        workbench.pane_added(&pane, window, cx);
         workbench.track_editors(cx);
-        Self::follow_window_items(window, cx);
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench.lsp.format_on_save.set(format_on_save);
@@ -847,7 +873,7 @@ impl Workbench {
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
         self.root = Some(root.clone());
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             let root = Some(root.clone());
             pane.update(cx, |pane, cx| {
                 pane.update_toolbar(|toolbar| toolbar.root = root, cx)
@@ -1112,7 +1138,7 @@ impl Workbench {
     /// buffer: shown in a tab (a read-only viewer's too), being read into
     /// one, or the launch file the host is reading.
     fn uses_file(&self, same: &dyn Fn(&Path) -> bool, model: &EditorModel, cx: &App) -> bool {
-        let panes = self.panes.panes();
+        let panes = self.pane_group(cx).panes();
         let shown = (panes.iter())
             .flat_map(|pane| pane.read(cx).tabs())
             .any(|tab| {
@@ -1121,7 +1147,7 @@ impl Workbench {
                 !ours && tab.item().path(cx).is_some_and(|other| same(&other))
             });
         let reading = (panes.iter()).any(|pane| pane.read(cx).reading().any(same));
-        shown || reading || self.launch_reading().is_some_and(same)
+        shown || reading || self.launch_reading(cx).is_some_and(same)
     }
 
     /// After a Save As of `editor`'s buffer: the tabs take its path as it
@@ -1134,7 +1160,7 @@ impl Workbench {
                 other.update(cx, |other, cx| other.detect_language(cx));
             }
         }
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| pane.sync_paths(cx));
         }
         self.track_editors(cx);
@@ -1243,9 +1269,9 @@ impl Workbench {
             if workbench.open_editors(cx).iter().any(saving_under) {
                 return Some(Busy::Saving);
             }
-            let panes = workbench.panes.panes();
+            let panes = workbench.pane_group(cx).panes();
             let reading = (panes.iter()).any(|pane| pane.read(cx).reading().any(under));
-            if reading || workbench.launch_reading().is_some_and(under) {
+            if reading || workbench.launch_reading(cx).is_some_and(under) {
                 return Some(Busy::Opening);
             }
         }
@@ -1341,7 +1367,7 @@ impl Workbench {
         for (editor, _) in &moved {
             editor.update(cx, |editor, cx| editor.detect_language(cx));
         }
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| pane.sync_paths(cx));
         }
         self.track_editors(cx);
@@ -1417,20 +1443,25 @@ impl Workbench {
         &self.active
     }
 
-    /// Every pane, as laid out.
-    pub fn pane_group(&self) -> &PaneGroup {
-        &self.panes
+    /// Every pane, as laid out: the workspace's group.
+    pub fn pane_group<'a>(&self, cx: &'a App) -> &'a PaneGroup {
+        self.workspace.read(cx).group()
     }
 
-    pub(crate) fn pane_group_mut(&mut self) -> &mut PaneGroup {
-        &mut self.panes
+    /// Every pane, as laid out, to update in turn.
+    pub(crate) fn panes(&self, cx: &App) -> Vec<Entity<Pane>> {
+        self.pane_group(cx).panes().into_iter().cloned().collect()
     }
 
-    /// Joins `pane` to the workbench's: it sees the others, and retitles
-    /// the window, closes once emptied and becomes active on a click.
-    fn watch(&mut self, pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
+    /// The window's workspace, around the panes.
+    pub fn workspace(&self) -> &Entity<Workspace<Pane>> {
+        &self.workspace
+    }
+
+    /// A pane joined the workspace, the first or split off since: its
+    /// toolbar shows as the others' do, and its requests are heard.
+    fn pane_added(&mut self, pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
         pane.update(cx, |pane, cx| {
-            pane.set_peers(self.peers.clone());
             pane.update_toolbar(
                 |toolbar| {
                     toolbar.visible = self.breadcrumbs;
@@ -1440,28 +1471,6 @@ impl Workbench {
                 cx,
             );
         });
-        let changed = cx.observe_in(pane, window, Self::pane_changed);
-        let events = cx.subscribe_in(
-            pane,
-            window,
-            |workbench, pane, event, window, cx| match event {
-                PaneEvent::Activated if *pane != workbench.active => {
-                    workbench.activate(pane.clone(), window, cx)
-                }
-                PaneEvent::Activated => {}
-            },
-        );
-        let dropped = cx.subscribe_in(
-            pane,
-            window,
-            |workbench, _, dropped: &TabDropped, window, cx| {
-                let Some(source) = dropped.dragged.pane.upgrade() else {
-                    return;
-                };
-                let (tab, destination) = (dropped.dragged.item, dropped.destination.clone());
-                workbench.move_tab_to(&source, tab, destination, window, cx);
-            },
-        );
         let requested = cx.subscribe_in(
             pane,
             window,
@@ -1469,28 +1478,66 @@ impl Workbench {
                 workbench.open_toolbar_picker(pane, request.clone(), window, cx)
             },
         );
-        self.pane_subscriptions
-            .insert(pane.entity_id(), [changed, events, dropped, requested]);
-        self.sync_peers();
+        self.toolbar_requests.insert(pane.entity_id(), requested);
+        #[cfg(test)]
+        {
+            let dropped = cx
+                .subscribe(pane, |workbench, _, _: &crate::pane_drag::TabDropped, _| {
+                    workbench.moves += 1
+                });
+            self.drops.insert(pane.entity_id(), dropped);
+        }
     }
 
-    fn sync_peers(&self) {
-        *self.peers.borrow_mut() = self
-            .panes
-            .panes()
-            .into_iter()
-            .map(Entity::downgrade)
-            .collect();
+    fn workspace_event(
+        &mut self,
+        _: &Entity<Workspace<Pane>>,
+        event: &WorkspaceEvent<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WorkspaceEvent::PaneAdded(pane) => self.pane_added(pane, window, cx),
+            WorkspaceEvent::PaneRemoved(id) => {
+                self.toolbar_requests.remove(id);
+                #[cfg(test)]
+                self.drops.remove(id);
+            }
+            // The workspace notifies as it changes, so the workbench follows
+            // it then ([`Workbench::follow_workspace`]).
+            WorkspaceEvent::ActiveChanged => {}
+        }
     }
 
-    /// A tab opened, closed or changed in `pane`: retitles the window, and
-    /// closes the pane if its last tab closed.
-    fn pane_changed(&mut self, pane: Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
-        if pane.update(cx, |pane, _| pane.take_emptied()) {
-            self.close_pane(&pane, window, cx);
+    /// The workspace changed: a tab opened, closed or changed, a pane came
+    /// or went, or another is active, by a click, a close or the workspace
+    /// activating one itself. The workbench follows its active pane and its
+    /// editors, and once a restored layout's files are in, takes up their
+    /// editors.
+    fn follow_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if *self.workspace.read(cx).active_pane() != self.active {
+            self.follow_active_pane(cx);
+        }
+        if self.restoring && !self.workspace.read(cx).restoring() {
+            self.restoring = false;
+            let active = self.workspace.read(cx).active_pane().clone();
+            self.activate(active, window, cx);
+            self.adopt_orphans(cx);
         }
         self.track_editors(cx);
         cx.notify();
+    }
+
+    /// Takes the workspace's active pane as the one files open in, quick
+    /// open's and search's.
+    fn follow_active_pane(&mut self, cx: &mut Context<Self>) {
+        let pane = self.workspace.read(cx).active_pane().clone();
+        let weak = pane.downgrade();
+        self.quick_open
+            .update(cx, |picker, _| picker.delegate.set_pane(weak.clone()));
+        let search = self.dock.read(cx).search().clone();
+        search.update(cx, |search, _| search.set_pane(weak));
+        self.active = pane;
     }
 
     /// Makes `pane` the active pane, which files open in, and focuses it.
@@ -1500,13 +1547,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let weak = pane.downgrade();
-        self.quick_open
-            .update(cx, |picker, _| picker.delegate.set_pane(weak.clone()));
-        let search = self.dock.read(cx).search().clone();
-        search.update(cx, |search, _| search.set_pane(weak));
-        let focus = pane.read(cx).focus_target(cx);
-        self.active = pane;
+        (self.workspace).update(cx, |workspace, cx| workspace.activate(pane, window, cx));
+        self.follow_active_pane(cx);
+        let focus = self.active.read(cx).focus_target(cx);
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -1516,7 +1559,7 @@ impl Workbench {
         match op {
             PaneOp::Split(direction) => self.split(direction, window, cx),
             PaneOp::Focus(direction) => {
-                if let Some(pane) = self.panes.neighbour(&self.active, direction, cx) {
+                if let Some(pane) = self.pane_group(cx).neighbour(&self.active, direction, cx) {
                     self.activate(pane, window, cx);
                 }
             }
@@ -1524,16 +1567,21 @@ impl Workbench {
             PaneOp::Close => self.close_active_pane(window, cx),
             PaneOp::Resize(axis, grow) => {
                 let delta = if grow { RESIZE_STEP } else { -RESIZE_STEP };
-                if self.panes.resize(&self.active, axis, delta) {
-                    cx.notify();
-                }
+                let active = self.active.clone();
+                self.workspace.update(cx, |workspace, cx| {
+                    if workspace.group_mut().resize(&active, axis, delta) {
+                        cx.notify();
+                    }
+                });
             }
             PaneOp::Equalize => {
-                self.panes.equalize();
-                cx.notify();
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.group_mut().equalize();
+                    cx.notify();
+                });
             }
             PaneOp::FocusNext(forward) => {
-                if let Some(pane) = self.panes.next(&self.active, forward) {
+                if let Some(pane) = self.pane_group(cx).next(&self.active, forward) {
                     self.activate(pane, window, cx);
                 }
             }
@@ -1630,32 +1678,16 @@ impl Workbench {
     /// the active pane shows a tab, the new pane gets one for the same file,
     /// sharing its buffer.
     fn split(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
-        let item = (self.active.read(cx).active_item()).map(ItemHandle::boxed_clone);
-        let split = item.and_then(|item| item.split(window, cx));
-        let new = self.new_pane(direction, window, cx);
-        if let Some(split) = split {
-            new.update(cx, |pane, cx| pane.add_item(split, cx));
-        }
+        let new =
+            (self.workspace).update(cx, |workspace, cx| workspace.split(direction, window, cx));
         self.activate(new, window, cx);
         self.track_editors(cx);
     }
 
-    /// An empty pane in `direction` of the active one.
-    fn new_pane(
-        &mut self,
-        direction: Direction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<Pane> {
-        let active = self.active.clone();
-        let new = active.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)));
-        self.panes.split(&active, new.clone(), direction);
-        self.watch(&new, window, cx);
-        new
-    }
-
     /// Moves the active tab to the pane in `direction`, or to a pane split
-    /// that way if there's none: see [`PaneGroup::move_tab`].
+    /// that way if there's none ([`Workspace::move_tab`]), then activates
+    /// the pane it went to; the workspace closes the active pane if that
+    /// emptied it.
     fn move_tab(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let source = self.active.clone();
         let pane = source.read(cx);
@@ -1667,35 +1699,22 @@ impl Workbench {
             return;
         }
         let tab = pane.tabs()[ix].id();
-        let destination = match self.panes.neighbour(&source, direction, cx) {
+        let destination = match self.pane_group(cx).neighbour(&source, direction, cx) {
             Some(pane) => Destination::Pane { pane, index: None },
             None => Destination::Split {
                 pane: source.clone(),
                 direction,
             },
         };
-        self.move_tab_to(&source, tab, destination, window, cx);
-    }
-
-    /// Moves `tab` from `source` to `destination`, by key or drop, then
-    /// activates the pane it went to and closes `source` if that emptied it.
-    fn move_tab_to(
-        &mut self,
-        source: &Entity<Pane>,
-        tab: TabId,
-        destination: Destination,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((target, new)) = self.panes.move_tab(source, tab, destination, window, cx) else {
-            return;
-        };
-        if new {
-            self.watch(&target, window, cx);
+        #[cfg(test)]
+        {
+            self.moves += 1;
         }
-        self.activate(target, window, cx);
-        if source.update(cx, |pane, _| pane.take_emptied()) {
-            self.close_pane(source, window, cx);
+        let target = self.workspace.update(cx, |workspace, cx| {
+            workspace.move_tab(&source, tab, destination, window, cx)
+        });
+        if let Some(target) = target {
+            self.activate(target, window, cx);
         }
         self.track_editors(cx);
     }
@@ -1705,13 +1724,13 @@ impl Workbench {
     /// pane shows its file, and a dirty one asks whether to discard its
     /// changes.
     fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.panes.panes().len() < 2 {
+        if self.pane_group(cx).panes().len() < 2 {
             return;
         }
         let pane = self.active.clone();
         let now = Items {
             closing: pane.read(cx).pane().items().to_vec(),
-            open: self.panes.items(cx),
+            open: self.pane_group(cx).items(cx),
         };
         let (weak, workbench) = (pane.downgrade(), cx.weak_entity());
         let live: LiveItems = Rc::new(move |cx| {
@@ -1719,57 +1738,27 @@ impl Workbench {
             let workbench = workbench.upgrade()?;
             Some(Items {
                 closing: pane.read(cx).pane().items().to_vec(),
-                open: workbench.read(cx).panes.items(cx),
+                open: workbench.read(cx).pane_group(cx).items(cx),
             })
         });
         let request =
             CloseRequest::new(CloseKind::Pane).scope(window.window_handle(), Some(now), live);
-        let (closed, workbench) = (pane.clone(), cx.weak_entity());
+        let (closed, workspace) = (pane.clone(), self.workspace.downgrade());
         let commit = move |window: Option<&mut Window>, cx: &mut App| {
             if let Some(window) = window {
-                (workbench.update(cx, |workbench, cx| {
-                    workbench.close_pane(&closed, window, cx)
+                (workspace.update(cx, |workspace, cx| {
+                    workspace.close_pane(&closed, window, cx)
                 }))
                 .ok();
             }
         };
         match close::confirm(request, commit, Some(window), cx) {
-            Closing::Now => self.close_pane(&pane, window, cx),
+            Closing::Now => {
+                (self.workspace).update(cx, |workspace, cx| workspace.close_pane(&pane, window, cx))
+            }
             Closing::Refused => {}
             Closing::Later(closing) => closing.detach(),
         }
-    }
-
-    /// Every editor of every pane, for the window's close and quitting to
-    /// ask.
-    fn follow_window_items(window: &mut Window, cx: &mut Context<Self>) {
-        let workbench = cx.weak_entity();
-        let items: kiln_shell::close::WindowItems = Rc::new(move |cx| {
-            workbench
-                .upgrade()
-                .map(|workbench| workbench.read(cx).panes.items(cx))
-                .unwrap_or_default()
-        });
-        close::set_window_items(window, items, cx);
-    }
-
-    /// Closes `pane`, unless it's the last, activating the nearest pane if it
-    /// was active.
-    fn close_pane(&mut self, pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.panes.panes().len() < 2 {
-            return;
-        }
-        let nearest = self.panes.nearest(pane, cx);
-        self.panes.remove(pane);
-        self.pane_subscriptions.remove(&pane.entity_id());
-        self.sync_peers();
-        if *pane == self.active
-            && let Some(nearest) = nearest
-        {
-            self.activate(nearest, window, cx);
-        }
-        self.track_editors(cx);
-        cx.notify();
     }
 
     /// Observes each open editor, and stops observing closed ones. A newly
@@ -1830,7 +1819,7 @@ impl Workbench {
     }
 
     pub(crate) fn open_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
-        self.panes
+        self.pane_group(cx)
             .panes()
             .into_iter()
             .flat_map(|pane| {
@@ -1945,7 +1934,10 @@ impl Workbench {
             ("terminal", dock_layout::position_name(terminal)),
         ]);
         let mut entry = Value::from_iter([
-            ("panes", layout::save_panes(&self.panes, &self.active, cx)),
+            (
+                "panes",
+                layout::save_panes(self.pane_group(cx), &self.active, cx),
+            ),
             ("docks", docks),
             ("dock", self.dock.read(cx).state().save()),
             ("terminal_dock", terminal_dock),
@@ -1988,48 +1980,18 @@ impl Workbench {
         if breadcrumbs.is_some_and(|shown| shown != self.breadcrumbs) {
             self.toggle_breadcrumbs(cx);
         }
-        let Some(saved) = entry.get("panes") else {
+        // The workspace restores the panes ([`Workspace::restore`]), made
+        // like the active one; once their files are in, the workbench
+        // follows it ([`Workbench::follow_workspace`]).
+        *self.template.borrow_mut() = self.active.downgrade();
+        let restored =
+            (self.workspace).update(cx, |workspace, cx| workspace.restore(entry, window, cx));
+        if !restored {
             return;
-        };
-        let template = self.active.clone();
-        let mut new_pane = |_: &mut Window, cx: &mut App| {
-            template.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)))
-        };
-        let Some(restored) = layout::restore_panes(saved, &mut new_pane, window, cx) else {
-            return;
-        };
-        for pane in self.panes.panes() {
-            self.pane_subscriptions.remove(&pane.entity_id());
         }
-        self.panes.set_root(restored.root);
-        let panes: Vec<_> = self.panes.panes().into_iter().cloned().collect();
-        for pane in &panes {
-            self.watch(pane, window, cx);
-        }
-        let active = restored.active;
-        self.activate(active.clone(), window, cx);
+        let active = self.workspace.read(cx).active_pane().clone();
+        self.activate(active, window, cx);
         self.restoring = true;
-        let filled = restored.filled;
-        cx.spawn_in(window, async move |workbench, cx| {
-            let empty = filled.await;
-            workbench
-                .update_in(cx, |workbench, window, cx| {
-                    workbench.restoring = false;
-                    for pane in &empty {
-                        workbench.close_pane(pane, window, cx);
-                    }
-                    let open = workbench.panes.panes();
-                    let active = match open.contains(&&active) {
-                        true => active,
-                        false => open[0].clone(),
-                    };
-                    workbench.activate(active, window, cx);
-                    workbench.track_editors(cx);
-                    workbench.adopt_orphans(cx);
-                })
-                .ok();
-        })
-        .detach();
         self.track_editors(cx);
         cx.notify();
     }
@@ -2239,7 +2201,7 @@ impl Workbench {
         self.breadcrumbs = !self.breadcrumbs;
         self.chain_key = None;
         let visible = self.breadcrumbs;
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| {
                 pane.update_toolbar(|toolbar| toolbar.visible = visible, cx)
             });
@@ -2255,7 +2217,7 @@ impl Workbench {
         {
             self.nav_pushes += 1;
         }
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| {
                 pane.update_toolbar(|toolbar| toolbar.nav = nav, cx)
             });
@@ -2501,10 +2463,10 @@ impl Workbench {
     /// tab then, whatever the pane has shown since.
     /// Nothing once its pane has closed: [`Workbench::file_read`] drops it
     /// then.
-    pub(crate) fn launch_reading(&self) -> Option<&Path> {
+    pub(crate) fn launch_reading(&self, cx: &App) -> Option<&Path> {
         let (path, pane) = self.launch_read.as_ref()?;
         let pane = pane.upgrade()?;
-        self.panes
+        self.pane_group(cx)
             .panes()
             .contains(&&pane)
             .then_some(path.as_path())
@@ -2524,7 +2486,7 @@ impl Workbench {
     ) {
         let pane = match self.launch_read.take_if(|(launched, _)| *launched == path) {
             Some((_, pane)) => {
-                let open = self.panes.panes();
+                let open = self.pane_group(cx).panes();
                 let pane = pane.upgrade().filter(|pane| open.contains(&pane));
                 let Some(pane) = pane else {
                     log::info!("not opening {}: its pane closed", path.display());
@@ -2533,7 +2495,7 @@ impl Workbench {
                 pane
             }
             None => self
-                .panes
+                .pane_group(cx)
                 .panes()
                 .into_iter()
                 .find(|pane| pane.read(cx).is_opening(&path))
@@ -2554,7 +2516,7 @@ impl Workbench {
         if event.settings.terminal != event.previous.terminal {
             self.set_terminal_settings(&event.settings.terminal, cx);
         }
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));
         }
         // Editors restored from a saved layout open as the panes' do.
@@ -2675,12 +2637,18 @@ impl Render for Workbench {
         let followed = self.follow_active_editor(window, cx);
         self.land_problem(window, cx);
         self.save_layout(window, cx);
-        self.shell.update(cx, |shell, _| {
+        let name = title_bar::name(self.root.as_deref());
+        self.shell.update(cx, |shell, cx| {
             // Not from its cache in a frame that gave it another editor: a
             // notification during a draw doesn't reach this frame's cache,
             // nor ask for another frame.
             if followed {
                 shell.redraw_status_bar();
+            }
+            // The chrome names the root, not the active item, as the
+            // workspace would have it.
+            if *shell.title() != name {
+                shell.set_title(name, cx);
             }
             #[cfg(test)]
             shell.set_client_tiling(self.client_tiling);
@@ -2696,7 +2664,12 @@ impl Render for Workbench {
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)
             .size_full()
-            .child(self.shell.clone())
+            .child(
+                div()
+                    .size_full()
+                    .text_size(px(12.))
+                    .child(self.workspace.clone()),
+            )
             .child(
                 // Over the panes, so an editor's mouse-up doesn't swallow the
                 // drop; without occluding, so nothing else loses the mouse.
@@ -2726,34 +2699,6 @@ impl Render for Workbench {
                     .items_end()
                     .child(self.toasts.clone()),
             )
-    }
-}
-
-/// The shell's centre: the panes, which the workbench holds and lays out.
-/// Its focus is the workbench's, the active editor's.
-struct PaneArea {
-    workbench: WeakEntity<Workbench>,
-    /// Focused only once the workbench has gone.
-    focus: FocusHandle,
-}
-
-impl Render for PaneArea {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(workbench) = self.workbench.upgrade() else {
-            return div().into_any_element();
-        };
-        workbench.update(cx, |workbench, cx| {
-            workbench.panes.render(&workbench.ui, cx)
-        })
-    }
-}
-
-impl Focusable for PaneArea {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.workbench.upgrade() {
-            Some(workbench) => workbench.read(cx).focus_handle(cx),
-            None => self.focus.clone(),
-        }
     }
 }
 
@@ -2996,6 +2941,10 @@ mod tab_git_status_tests;
 #[cfg(test)]
 #[path = "windows_tests.rs"]
 mod windows_tests;
+
+#[cfg(test)]
+#[path = "workspace_embed_tests.rs"]
+mod workspace_embed_tests;
 
 #[cfg(test)]
 mod focus_tests {

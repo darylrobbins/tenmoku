@@ -95,7 +95,7 @@ fn the_palette_runs_a_command_in_the_editor(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     draw(cx);
     assert!(palette(&workbench, cx).is_none());
-    let panes = workbench.read_with(cx, |workbench, _| workbench.pane_group().panes().len());
+    let panes = workbench.read_with(cx, |workbench, cx| workbench.pane_group(cx).panes().len());
     assert_eq!(panes, 2);
     let run = workbench.read_with(cx, |workbench, _| workbench.commands_run.last().cloned());
     let run = run.unwrap();

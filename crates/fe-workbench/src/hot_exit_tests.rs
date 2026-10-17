@@ -172,7 +172,7 @@ fn answer(button: &str, cx: &mut VisualTestContext) {
 /// Every pane's editors, in order.
 fn editors(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<EditorView>> {
     workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane_group().panes().iter())
+        (workbench.pane_group(cx).panes().iter())
             .flat_map(|pane| {
                 (pane.read(cx).tabs().iter())
                     .filter_map(|tab| tab.editor().cloned())
