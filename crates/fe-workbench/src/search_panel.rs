@@ -64,6 +64,18 @@ use crate::{
 };
 use search_replace::{Boundary, Target, count};
 
+/// Project search in the sidebar: focused when shown, for its input.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("search"),
+    name: "Search",
+    icon: fe_ui::Icon::Search,
+    show_command: "search.show",
+    show_op: crate::dock::DockOp::ShowSearch,
+    order: 20,
+    always_on_rail: true,
+    focus_on_show: true,
+};
+
 /// The key context the search panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "search_panel";
 

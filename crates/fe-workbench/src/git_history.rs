@@ -54,6 +54,19 @@ use super::{
 };
 use crate::{Pane, Workbench, dock::DockOp, git};
 
+/// A file's git history in the sidebar: on the rail once it has shown; focused
+/// when shown, as its rows take keys.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("history"),
+    name: "History",
+    icon: fe_ui::Icon::FileDiff,
+    show_command: "git.file_history",
+    show_op: crate::dock::DockOp::ShowHistory,
+    order: 70,
+    always_on_rail: false,
+    focus_on_show: true,
+};
+
 /// The most commits listed.
 pub(crate) const LIMIT: usize = 1000;
 

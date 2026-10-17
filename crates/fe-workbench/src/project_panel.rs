@@ -39,6 +39,18 @@ use crate::git_panel;
 use crate::workbench::toast::{self, Toast};
 use ops::EditKind;
 
+/// The project tree in the sidebar.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("project"),
+    name: "Project",
+    icon: fe_ui::Icon::Files,
+    show_command: "dock.show_project",
+    show_op: crate::dock::DockOp::ShowProject,
+    order: 10,
+    always_on_rail: true,
+    focus_on_show: false,
+};
+
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "project_panel";
 

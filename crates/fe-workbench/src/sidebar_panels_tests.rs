@@ -1,0 +1,307 @@
+//! The sidebar's panels as their modules declare them ([`SidebarPanel`]):
+//! the rail's order, icons and titles, the panels that join it once shown,
+//! and each panel's show command, on repositories built with the `git` CLI
+//! in temporary directories.
+
+use std::{fs, path::Path, process::Command};
+
+use fe_buffer::Buffer;
+use fe_command::{ContextFrame, ContextStack, Invocation};
+use fe_gpui::commands::RunCommand;
+use fe_ui::Icon;
+use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use kiln_shell::PanelId;
+
+use super::{DockOp, DockPanel, PANELS, ProblemsOp, SidebarPanel, panel_icon};
+use crate::{Launch, Workbench, tests::open};
+
+/// Each panel as it was before its module declared it: its name, id, rail
+/// icon, show command and that command's op.
+const BASE: [(DockPanel, &str, &str, Icon, &str, DockOp); 8] = [
+    (
+        DockPanel::Project,
+        "Project",
+        "project",
+        Icon::Files,
+        "dock.show_project",
+        DockOp::ShowProject,
+    ),
+    (
+        DockPanel::Search,
+        "Search",
+        "search",
+        Icon::Search,
+        "search.show",
+        DockOp::ShowSearch,
+    ),
+    (
+        DockPanel::Outline,
+        "Outline",
+        "outline",
+        Icon::ListTree,
+        "outline.show",
+        DockOp::ShowOutline,
+    ),
+    (
+        DockPanel::Changes,
+        "Changes",
+        "changes",
+        Icon::GitBranch,
+        "git.show_changes",
+        DockOp::ShowChanges,
+    ),
+    (
+        DockPanel::References,
+        "References",
+        "references",
+        Icon::FileSymlink,
+        "nav.find_references",
+        DockOp::ShowReferences,
+    ),
+    (
+        DockPanel::Problems,
+        "Problems",
+        "problems",
+        Icon::X,
+        "problems.show",
+        DockOp::Problems(ProblemsOp::Show),
+    ),
+    (
+        DockPanel::History,
+        "History",
+        "history",
+        Icon::FileDiff,
+        "git.file_history",
+        DockOp::ShowHistory,
+    ),
+    (
+        DockPanel::GitLog,
+        "Git Log",
+        "git_log",
+        Icon::GitBranch,
+        "git.log",
+        DockOp::ShowGitLog,
+    ),
+];
+
+/// `git` in `dir`, with the developer's own config shut out.
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A repository of one commit, `a.rs`.
+fn repo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "init"]);
+    dir
+}
+
+/// A workbench on `root` showing its `a.rs`, focused as the app focuses it.
+fn opened<'a>(
+    cx: &'a mut TestAppContext,
+    root: &Path,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let launch = Launch {
+        root: Some(root.to_owned()),
+        file: Some((root.join("a.rs"), Some(Buffer::new("fn a() {}\n").into()))),
+    };
+    let (workbench, cx, _) = open(cx, launch);
+    cx.update(|window, _| window.activate_window());
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    draw(cx);
+    (workbench, cx)
+}
+
+/// Lets background work land, then draws a frame.
+fn draw(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+}
+
+/// Runs workbench command `id` as an unbound key would.
+fn dispatch(id: &str, cx: &mut VisualTestContext) {
+    let run = RunCommand(
+        Invocation::of(id)
+            .unwrap()
+            .context(ContextStack::new().with(ContextFrame::new(crate::KEY_CONTEXT))),
+    );
+    cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    draw(cx);
+}
+
+/// The rail's panels, top to bottom, with the icons the last frame drew.
+fn rail(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(DockPanel, Icon)> {
+    workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.dock().read(cx);
+        let state = dock.state();
+        let on_rail = (state.panel_ids().into_iter())
+            .filter(|id| state.on_rail(*id, cx))
+            .map(|id| DockPanel::of(id).expect("a sidebar panel"));
+        on_rail.zip(state.drawn().rail_icons()).collect()
+    })
+}
+
+/// Whether the dock shows, the panel it shows and its title row.
+fn shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (bool, DockPanel, String) {
+    workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.dock().read(cx);
+        let title = dock.state().title(cx).unwrap_or_default().to_string();
+        (dock.is_visible(), dock.active(), title)
+    })
+}
+
+#[test]
+fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
+    for (panel, name, id, icon, command, op) in BASE {
+        assert_eq!(panel.name(), name);
+        assert_eq!(panel.id(), PanelId(id));
+        assert_eq!(DockPanel::of(PanelId(id)), Some(panel));
+        assert_eq!(panel_icon(panel), icon, "{name}");
+        assert_eq!(panel.show_command(), command);
+        assert_eq!(panel.show_op(), op);
+    }
+    let declared: Vec<DockPanel> = PANELS.iter().map(|sidebar| sidebar.panel).collect();
+    let base: Vec<DockPanel> = BASE.iter().map(|(panel, ..)| *panel).collect();
+    assert_eq!(declared, base, "PANELS is in the base's rail order");
+    assert_eq!(DockPanel::of(PanelId("terminal")), None);
+}
+
+#[test]
+fn the_rail_always_has_the_base_four() {
+    assert_eq!(
+        DockPanel::ALL,
+        [
+            DockPanel::Project,
+            DockPanel::Search,
+            DockPanel::Outline,
+            DockPanel::Changes,
+        ]
+    );
+    let on_rail: Vec<DockPanel> = (PANELS.iter())
+        .filter(|sidebar| sidebar.always_on_rail)
+        .map(|sidebar| sidebar.panel)
+        .collect();
+    assert_eq!(on_rail, DockPanel::ALL);
+    let orders: Vec<i32> = PANELS.iter().map(|sidebar| sidebar.order).collect();
+    assert!(orders.is_sorted(), "{orders:?}");
+    // What each declares of focus.
+    let focused = |sidebar: &&&SidebarPanel| sidebar.focus_on_show;
+    let focused: Vec<DockPanel> = (PANELS.iter().filter(focused))
+        .map(|sidebar| sidebar.panel)
+        .collect();
+    assert_eq!(
+        focused,
+        [
+            DockPanel::Search,
+            DockPanel::Changes,
+            DockPanel::Problems,
+            DockPanel::History,
+            DockPanel::GitLog,
+        ]
+    );
+}
+
+#[gpui::test]
+fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut TestAppContext) {
+    let dir = repo();
+    let (workbench, cx) = opened(cx, dir.path());
+    let base = [
+        (DockPanel::Project, Icon::Files),
+        (DockPanel::Search, Icon::Search),
+        (DockPanel::Outline, Icon::ListTree),
+        (DockPanel::Changes, Icon::GitBranch),
+    ];
+    assert_eq!(rail(&workbench, cx), base);
+    assert_eq!(
+        shown(&workbench, cx),
+        (true, DockPanel::Project, "Project".to_owned())
+    );
+
+    dispatch("problems.show", cx);
+    let with_problems = [base.as_slice(), &[(DockPanel::Problems, Icon::X)]].concat();
+    assert_eq!(rail(&workbench, cx), with_problems);
+
+    dispatch("nav.find_references", cx);
+    // In registration order: References before Problems.
+    let both = [
+        base.as_slice(),
+        &[
+            (DockPanel::References, Icon::FileSymlink),
+            (DockPanel::Problems, Icon::X),
+        ],
+    ]
+    .concat();
+    assert_eq!(rail(&workbench, cx), both);
+
+    dispatch("git.log", cx);
+    let with_log = [both.as_slice(), &[(DockPanel::GitLog, Icon::GitBranch)]].concat();
+    assert_eq!(rail(&workbench, cx), with_log);
+    assert_eq!(
+        shown(&workbench, cx),
+        (true, DockPanel::GitLog, "Git Log: main".to_owned())
+    );
+
+    dispatch("git.file_history", cx);
+    let with_history = [with_log.as_slice(), &[(DockPanel::History, Icon::FileDiff)]].concat();
+    assert_eq!(rail(&workbench, cx), with_history);
+    assert_eq!(
+        shown(&workbench, cx),
+        (true, DockPanel::History, "History: a.rs".to_owned())
+    );
+}
+
+#[gpui::test]
+fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
+    let dir = repo();
+    let (workbench, cx) = opened(cx, dir.path());
+    // Project shows first: another before it, so its command has work.
+    let order = [
+        DockPanel::Search,
+        DockPanel::Project,
+        DockPanel::Outline,
+        DockPanel::Changes,
+        DockPanel::References,
+        DockPanel::Problems,
+        DockPanel::GitLog,
+        DockPanel::History,
+    ];
+    for panel in order {
+        dispatch(panel.show_command(), cx);
+        let (visible, active, title) = shown(&workbench, cx);
+        assert_eq!((visible, active), (true, panel), "{}", panel.show_command());
+        assert!(title.starts_with(panel.name()), "{title}");
+        // Hidden, it shows again.
+        dispatch("dock.toggle", cx);
+        assert!(!shown(&workbench, cx).0);
+        dispatch(panel.show_command(), cx);
+        assert_eq!(shown(&workbench, cx).1, panel);
+    }
+    // Every show command was tried.
+    assert_eq!(order.len(), PANELS.len());
+}

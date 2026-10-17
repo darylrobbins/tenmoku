@@ -63,6 +63,19 @@ use super::{
 };
 use crate::{Workbench, dock::DockOp, git};
 
+/// The repository's log in the sidebar: on the rail once it has shown; focused
+/// when shown, as its rows take keys.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("git_log"),
+    name: "Git Log",
+    icon: fe_ui::Icon::GitBranch,
+    show_command: "git.log",
+    show_op: crate::dock::DockOp::ShowGitLog,
+    order: 80,
+    always_on_rail: false,
+    focus_on_show: true,
+};
+
 /// The commits a page reads.
 pub(crate) const PAGE: usize = 200;
 

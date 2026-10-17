@@ -65,6 +65,20 @@ pub(crate) const WARNINGS_ITEM: &str = "problems.warnings";
 /// The command that shows the panel, which the status item runs.
 pub(crate) const SHOW: &str = "problems.show";
 
+/// The problems in the sidebar: on the rail once it has shown; focused when
+/// shown, for its commands. The icon bundle has no warning sign: an error's
+/// cross.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("problems"),
+    name: "Problems",
+    icon: fe_ui::Icon::X,
+    show_command: SHOW,
+    show_op: crate::dock::DockOp::Problems(ProblemsOp::Show),
+    order: 60,
+    always_on_rail: false,
+    focus_on_show: true,
+};
+
 /// The errors' item's priority: on the left, after the config problems'; the
 /// warnings' is the next.
 const PRIORITY: i32 = 60;

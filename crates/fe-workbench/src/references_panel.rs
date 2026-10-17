@@ -44,6 +44,18 @@ use gpui::{
 
 use crate::{DockPanel, Workbench};
 
+/// Find references' results in the sidebar: on the rail once it has shown.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("references"),
+    name: "References",
+    icon: fe_ui::Icon::FileSymlink,
+    show_command: "nav.find_references",
+    show_op: crate::dock::DockOp::ShowReferences,
+    order: 50,
+    always_on_rail: false,
+    focus_on_show: false,
+};
+
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "ReferencesPanel";
 

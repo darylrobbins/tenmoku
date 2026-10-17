@@ -30,6 +30,18 @@ use gpui::{
     uniform_list,
 };
 
+/// The outline in the sidebar.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("outline"),
+    name: "Outline",
+    icon: fe_ui::Icon::ListTree,
+    show_command: "outline.show",
+    show_op: crate::dock::DockOp::ShowOutline,
+    order: 30,
+    always_on_rail: true,
+    focus_on_show: false,
+};
+
 /// What the panel says in place of, or under, the outline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {

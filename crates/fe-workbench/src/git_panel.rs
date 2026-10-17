@@ -91,6 +91,19 @@ use crate::{
     picker::{self, PaletteOp},
 };
 
+/// The git changes in the sidebar: focused when shown, as its rows take Enter
+/// and the arrows.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("changes"),
+    name: "Changes",
+    icon: fe_ui::Icon::GitBranch,
+    show_command: "git.show_changes",
+    show_op: crate::dock::DockOp::ShowChanges,
+    order: 40,
+    always_on_rail: true,
+    focus_on_show: true,
+};
+
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
 

@@ -36,126 +36,143 @@ pub(crate) mod problems_panel;
 pub(crate) use problems_panel::{ProblemsOp, ProblemsPanel};
 
 /// A panel the dock shows: fastedit's name for the [`PanelId`]s it
-/// registers.
+/// registers, one per [`SidebarPanel`] in [`PANELS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DockPanel {
-    Project,
-    Search,
-    Outline,
-    Changes,
-    References,
-    Problems,
-    History,
-    GitLog,
+pub struct DockPanel(PanelId);
+
+/// The panels each module declares, spelled as they were when `DockPanel`
+/// was an enum.
+#[allow(non_upper_case_globals)]
+impl DockPanel {
+    pub const Project: DockPanel = crate::project_panel::SIDEBAR.panel;
+    pub const Search: DockPanel = search_panel::SIDEBAR.panel;
+    pub const Outline: DockPanel = crate::outline_panel::SIDEBAR.panel;
+    pub const Changes: DockPanel = crate::git_panel::SIDEBAR.panel;
+    pub const References: DockPanel = crate::references_panel::SIDEBAR.panel;
+    pub const Problems: DockPanel = problems_panel::SIDEBAR.panel;
+    pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
+    pub const GitLog: DockPanel = crate::workbench::git_commands::git_log::SIDEBAR.panel;
 }
 
 impl DockPanel {
     /// The panels the rail always has, in its order; References, Problems,
     /// History and Git Log follow once they have shown.
-    pub const ALL: [DockPanel; 4] = [
-        DockPanel::Project,
-        DockPanel::Search,
-        DockPanel::Outline,
-        DockPanel::Changes,
-    ];
+    pub const ALL: [DockPanel; 4] = always_on_rail();
+
+    /// The panel registered as `id`, for a module's [`SidebarPanel`].
+    pub(crate) const fn new(id: &'static str) -> Self {
+        DockPanel(PanelId(id))
+    }
+
+    /// What its module declares of it.
+    fn sidebar(self) -> &'static SidebarPanel {
+        PANELS
+            .iter()
+            .find(|sidebar| sidebar.panel == self)
+            .expect("every DockPanel is in PANELS")
+    }
 
     pub fn name(self) -> &'static str {
-        match self {
-            DockPanel::Project => "Project",
-            DockPanel::Search => "Search",
-            DockPanel::Outline => "Outline",
-            DockPanel::Changes => "Changes",
-            DockPanel::References => "References",
-            DockPanel::Problems => "Problems",
-            DockPanel::History => "History",
-            DockPanel::GitLog => "Git Log",
-        }
+        self.sidebar().name
     }
 
     /// Its id in the dock.
     pub fn id(self) -> PanelId {
-        PanelId(match self {
-            DockPanel::Project => "project",
-            DockPanel::Search => "search",
-            DockPanel::Outline => "outline",
-            DockPanel::Changes => "changes",
-            DockPanel::References => "references",
-            DockPanel::Problems => "problems",
-            DockPanel::History => "history",
-            DockPanel::GitLog => "git_log",
-        })
+        self.0
     }
 
     /// The panel registered as `id`.
     fn of(id: PanelId) -> Option<Self> {
-        [
-            DockPanel::References,
-            DockPanel::Problems,
-            DockPanel::History,
-            DockPanel::GitLog,
-        ]
-        .into_iter()
-        .chain(DockPanel::ALL)
-        .find(|panel| panel.id() == id)
+        PANELS
+            .iter()
+            .map(|sidebar| sidebar.panel)
+            .find(|panel| panel.id() == id)
     }
 
     /// The command that shows it.
     fn show_command(self) -> &'static str {
-        match self {
-            DockPanel::Project => "dock.show_project",
-            DockPanel::Search => "search.show",
-            DockPanel::Outline => "outline.show",
-            DockPanel::Changes => "git.show_changes",
-            DockPanel::References => "nav.find_references",
-            DockPanel::Problems => problems_panel::SHOW,
-            DockPanel::History => "git.file_history",
-            DockPanel::GitLog => "git.log",
-        }
+        self.sidebar().show_command
     }
 
     /// The op of [`DockPanel::show_command`].
     fn show_op(self) -> DockOp {
-        match self {
-            DockPanel::Project => DockOp::ShowProject,
-            DockPanel::Search => DockOp::ShowSearch,
-            DockPanel::Outline => DockOp::ShowOutline,
-            DockPanel::Changes => DockOp::ShowChanges,
-            DockPanel::References => DockOp::ShowReferences,
-            DockPanel::Problems => DockOp::Problems(ProblemsOp::Show),
-            DockPanel::History => DockOp::ShowHistory,
-            DockPanel::GitLog => DockOp::ShowGitLog,
-        }
+        self.sidebar().show_op
     }
+}
+
+/// A panel of the sidebar, as the module that makes it declares it (its
+/// `SIDEBAR`): its id, name, rail icon, show command and that command's op,
+/// its place on the rail, whether the rail always has it or it joins once
+/// it has shown, and whether showing it focuses it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SidebarPanel {
+    pub(crate) panel: DockPanel,
+    pub(crate) name: &'static str,
+    pub(crate) icon: Icon,
+    pub(crate) show_command: &'static str,
+    pub(crate) show_op: DockOp,
+    /// Lower is higher on the rail.
+    pub(crate) order: i32,
+    pub(crate) always_on_rail: bool,
+    pub(crate) focus_on_show: bool,
+}
+
+/// The sidebar's panels, by [`SidebarPanel::order`].
+const PANELS: &[&SidebarPanel] = &[
+    &crate::project_panel::SIDEBAR,
+    &search_panel::SIDEBAR,
+    &crate::outline_panel::SIDEBAR,
+    &crate::git_panel::SIDEBAR,
+    &crate::references_panel::SIDEBAR,
+    &problems_panel::SIDEBAR,
+    &crate::workbench::git_commands::git_history::SIDEBAR,
+    &crate::workbench::git_commands::git_log::SIDEBAR,
+];
+
+const _: () = {
+    let mut ix = 1;
+    while ix < PANELS.len() {
+        assert!(
+            PANELS[ix - 1].order < PANELS[ix].order,
+            "PANELS is in rail order"
+        );
+        ix += 1;
+    }
+};
+
+/// The [`SidebarPanel::always_on_rail`] panels of [`PANELS`], in its order.
+const fn always_on_rail<const N: usize>() -> [DockPanel; N] {
+    let mut panels = [PANELS[0].panel; N];
+    let (mut ix, mut on_rail) = (0, 0);
+    while ix < PANELS.len() {
+        if PANELS[ix].always_on_rail {
+            panels[on_rail] = PANELS[ix].panel;
+            on_rail += 1;
+        }
+        ix += 1;
+    }
+    assert!(on_rail == N, "DockPanel::ALL has every always-on panel");
+    panels
 }
 
 /// Its rail button's icon.
 pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
-    match panel {
-        DockPanel::Project => Icon::Files,
-        DockPanel::Search => Icon::Search,
-        DockPanel::Outline => Icon::ListTree,
-        DockPanel::Changes => Icon::GitBranch,
-        DockPanel::References => Icon::FileSymlink,
-        // The bundle has no warning sign: an error's cross.
-        DockPanel::Problems => Icon::X,
-        DockPanel::History => Icon::FileDiff,
-        DockPanel::GitLog => Icon::GitBranch,
-    }
+    panel.sidebar().icon
 }
 
-/// fastedit's panels in kiln-shell's dock: each names itself, its icon and
-/// its show command. Its title row has its name, or what `$title`, a method
-/// of the panel's, gives.
+/// fastedit's panels in kiln-shell's dock: each is what its module's
+/// [`SidebarPanel`] declares. Its title row has its name, or what `$title`,
+/// a method of the panel's, gives.
 macro_rules! dock_item {
-    ($panel:ty, $which:expr, $on_rail:expr, $focus:expr) => {
-        dock_item!($panel, $which, $on_rail, $focus, |_: &$panel, _: &App| {
-            $which.name().into()
+    ($panel:ty, $sidebar:expr) => {
+        dock_item!($panel, $sidebar, |_: &$panel, _: &App| {
+            $sidebar.name.into()
         });
     };
-    ($panel:ty, $which:expr, $on_rail:expr, $focus:expr, $title:expr) => {
+    ($panel:ty, $sidebar:expr, $title:expr) => {
         impl DockItem for $panel {
             fn id(&self) -> PanelId {
-                $which.id()
+                $sidebar.panel.id()
             }
 
             fn title(&self, cx: &App) -> SharedString {
@@ -163,49 +180,40 @@ macro_rules! dock_item {
             }
 
             fn icon(&self, _: &App) -> Icon {
-                panel_icon($which)
+                panel_icon($sidebar.panel)
             }
 
             fn show_command(&self) -> Option<&'static str> {
-                Some($which.show_command())
+                Some($sidebar.panel.show_command())
             }
 
             fn always_on_rail(&self) -> bool {
-                $on_rail
+                $sidebar.always_on_rail
             }
 
             fn focus_on_show(&self) -> bool {
-                $focus
+                $sidebar.focus_on_show
             }
         }
     };
 }
 
-dock_item!(ProjectPanel, DockPanel::Project, true, false);
-dock_item!(SearchPanel, DockPanel::Search, true, true);
-dock_item!(OutlinePanel, DockPanel::Outline, true, false);
-// Focused when shown, as its rows take Enter and the arrows.
-dock_item!(GitPanel, DockPanel::Changes, true, true);
-// On the rail once it has shown.
-dock_item!(ReferencesPanel, DockPanel::References, false, false);
-// On the rail once it has shown; focused when shown, for its commands.
-dock_item!(ProblemsPanel, DockPanel::Problems, false, true);
-// On the rail once it has shown; focused when shown, as its rows take keys;
-// titled with the file it lists.
+dock_item!(ProjectPanel, crate::project_panel::SIDEBAR);
+dock_item!(SearchPanel, search_panel::SIDEBAR);
+dock_item!(OutlinePanel, crate::outline_panel::SIDEBAR);
+dock_item!(GitPanel, crate::git_panel::SIDEBAR);
+dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
+dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
+// Titled with the file it lists.
 dock_item!(
     HistoryPanel,
-    DockPanel::History,
-    false,
-    true,
+    crate::workbench::git_commands::git_history::SIDEBAR,
     HistoryPanel::title
 );
-// On the rail once it has shown; focused when shown, as its rows take keys;
-// titled with the branch it lists.
+// Titled with the branch it lists.
 dock_item!(
     GitLogPanel,
-    DockPanel::GitLog,
-    false,
-    true,
+    crate::workbench::git_commands::git_log::SIDEBAR,
     GitLogPanel::title
 );
 
@@ -374,52 +382,38 @@ impl Dock {
     pub(crate) fn run(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
         #[cfg(test)]
         self.ops.push(op);
-        let panel = match op {
-            DockOp::ShowSearch => DockPanel::Search,
-            DockOp::ShowProject => DockPanel::Project,
-            DockOp::ShowOutline => DockPanel::Outline,
-            DockOp::ShowReferences => DockPanel::References,
-            DockOp::ShowChanges => DockPanel::Changes,
-            DockOp::Problems(ProblemsOp::Show) => DockPanel::Problems,
-            // Nothing until it has been made.
-            DockOp::ShowHistory => DockPanel::History,
-            DockOp::ShowGitLog => DockPanel::GitLog,
+        // A panel's show op shows it: History and Git Log nothing until
+        // they have been made.
+        if let Some(sidebar) = PANELS.iter().find(|sidebar| sidebar.show_op == op) {
+            self.show(sidebar.panel, window, cx);
+            return true;
+        }
+        match op {
             // The workbench's to do.
-            DockOp::Problems(_) => return false,
+            DockOp::Problems(_) => false,
             DockOp::RefreshChanges => {
                 self.changes.update(cx, GitPanel::refresh);
-                return true;
+                true
             }
             DockOp::Toggle => {
                 self.state.toggle();
                 cx.notify();
-                return true;
+                true
             }
             DockOp::ShowReplace => {
                 self.show(DockPanel::Search, window, cx);
                 self.search
                     .update(cx, |search, cx| search.show_replace(true, window, cx));
-                return true;
+                true
             }
             DockOp::ReplaceAll => {
                 self.search
                     .update(cx, |search, cx| search.confirm_replace_all(window, cx));
-                return true;
+                true
             }
-            DockOp::ToggleRegex
-            | DockOp::ToggleCase
-            | DockOp::ToggleWholeWord
-            | DockOp::Submit
-            | DockOp::ToggleReplace
-            | DockOp::FocusResults
-            | DockOp::SelectNext
-            | DockOp::SelectPrevious
-            | DockOp::OpenSelected => {
-                return false;
-            }
-        };
-        self.show(panel, window, cx);
-        true
+            // The search panel's, and the panels' show ops, done above.
+            _ => false,
+        }
     }
 
     /// Shows the dock with `panel`; search focuses its input.
@@ -524,6 +518,10 @@ impl Render for Dock {
         self.state.render(cx)
     }
 }
+
+#[cfg(test)]
+#[path = "sidebar_panels_tests.rs"]
+mod sidebar_panels_tests;
 
 /// What a dock or search command asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -249,8 +249,14 @@ fn the_move_commands_are_in_the_palette_with_no_default_key() {
 /// Shows each of the sidebar's panels in turn: each fills its column,
 /// `width` across.
 fn assert_panels_fill(width: Pixels, workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
-    use DockPanel::*;
-    for panel in [Project, Search, Outline, Changes, References, Problems] {
+    for panel in [
+        DockPanel::Project,
+        DockPanel::Search,
+        DockPanel::Outline,
+        DockPanel::Changes,
+        DockPanel::References,
+        DockPanel::Problems,
+    ] {
         workbench.update_in(cx, |workbench, window, cx| {
             (workbench.dock()).update(cx, |dock, cx| dock.show(panel, window, cx))
         });
