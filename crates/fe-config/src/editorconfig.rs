@@ -88,6 +88,72 @@ pub fn editorconfig_for(path: &Path) -> EditorConfig {
     from_properties(&props)
 }
 
+/// Adds a NUL member to every one-member negated class (`[!x]`, `[!\x]`) in
+/// the section header lines of `text`; other lines are left as they are.
+fn widen_single_negated_classes(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for line in text.split_inclusive(|&b| b == b'\n') {
+        if line.trim_ascii_start().starts_with(b"[") {
+            widen_header(line, &mut out);
+        } else {
+            out.extend_from_slice(line);
+        }
+    }
+    out
+}
+
+fn widen_header(line: &[u8], out: &mut Vec<u8>) {
+    let char_len = |at: usize| match line[at] {
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 1,
+    };
+    // The glob sits between the header's own brackets, which are not a class.
+    let open = line.iter().position(|&b| b == b'[').unwrap_or(0) + 1;
+    let Some(close) = line.iter().rposition(|&b| b == b']').filter(|&c| c >= open) else {
+        out.extend_from_slice(line);
+        return;
+    };
+    out.extend_from_slice(&line[..open]);
+    let mut i = open;
+    while i < close {
+        if line[i] == b'\\' {
+            let end = (i + 1 + line.get(i + 1).map_or(0, |_| char_len(i + 1))).min(close);
+            out.extend_from_slice(&line[i..end]);
+            i = end;
+        } else if line[i] == b'[' {
+            // A whole class, up to its first unescaped `]`: a `[` or `!` inside
+            // it is a member, not the start of another class.
+            let start = i;
+            i += 1;
+            let negated = line.get(i) == Some(&b'!');
+            if negated {
+                i += 1;
+            }
+            let mut members = 0;
+            while i < close && line[i] != b']' {
+                i += if line[i] == b'\\' && i + 1 < close {
+                    1 + char_len(i + 1)
+                } else {
+                    char_len(i)
+                };
+                members += 1;
+            }
+            let i_end = i.min(close);
+            out.extend_from_slice(&line[start..i_end]);
+            if negated && members == 1 && i_end < close {
+                out.push(0);
+            }
+            i = i_end;
+        } else {
+            out.push(line[i]);
+            i += 1;
+        }
+    }
+    out.extend_from_slice(&line[close..]);
+}
+
 /// Reads and fully parses `dir/.editorconfig`: the sections and whether it is
 /// a root. `None` if there is none, or it was skipped.
 fn read_file(dir: &Path) -> Option<(Parsed, bool)> {
@@ -109,6 +175,10 @@ fn read_file(dir: &Path) -> Option<(Parsed, bool)> {
     // ec4rs keeps the byte order mark on a first-line section header and then
     // fails to reparse it, so it never sees the mark.
     let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    // ec4rs turns a negated class with one member, `[!x]`, into the literal
+    // `x`, dropping the `!`. A second member, NUL, which no path holds, keeps
+    // it a negated class.
+    let text = &widen_single_negated_classes(text);
     let mut config =
         match ConfigParser::new_with_path(std::io::Cursor::new(text), Some(file.as_path())) {
             Ok(config) => config,
