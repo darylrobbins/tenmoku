@@ -143,3 +143,6 @@ fn formats_when_on(cx: &mut TestAppContext) {
     });
     assert!(!python, "nothing asked of the other server");
 }
+
+#[path = "lsp_format_overlap_tests.rs"]
+mod overlap_tests;

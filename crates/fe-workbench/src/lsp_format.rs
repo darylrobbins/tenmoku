@@ -58,7 +58,7 @@ impl Workbench {
         let language = (editor.read(cx).syntax())
             .map(|syntax| language_label(syntax.language().name()))
             .unwrap_or_else(|| PLAIN_TEXT.into());
-        let task = self.format_range(&editor, selection, cx);
+        let task = self.format_range(&editor, selection, false, cx);
         cx.spawn(async move |_, cx| {
             let message = match task.await {
                 Ok(FormatOutcome::Formatted | FormatOutcome::Unchanged) => return,
@@ -76,14 +76,17 @@ impl Workbench {
         editor: &Entity<EditorView>,
         cx: &mut Context<Self>,
     ) -> Task<Result<FormatOutcome, String>> {
-        self.format_range(editor, false, cx)
+        self.format_range(editor, false, true, cx)
     }
 
     /// Formats `editor`'s buffer, or its selection's rows if `selection`.
+    /// `for_save` if a save asked: only its reply answers to the save's
+    /// rules for editing the text.
     fn format_range(
         &mut self,
         editor: &Entity<EditorView>,
         selection: bool,
+        for_save: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<FormatOutcome, String>> {
         let Some(manager) = self.lsp.manager() else {
@@ -125,7 +128,7 @@ impl Workbench {
                     return FormatOutcome::Unchanged;
                 }
                 // Format on save, with a vim insert opened since the request.
-                if !view.save_edits_allowed(cx) {
+                if for_save && !view.save_edits_allowed(cx) {
                     return FormatOutcome::Unchanged;
                 }
                 let model = view.model_mut();
