@@ -1,6 +1,8 @@
 //! The link under a terminal cell, for the view to underline and open: an OSC 8
 //! hyperlink, a URL in the text, or a path to a file that exists, with an
-//! optional line and column (`src/main.rs:12:5`, `src/main.rs(12,5)`,
+//! optional line and column (`src/main.rs:12:5`, `src/main.rs:12.5`,
+//! `src/main.rs(12,5)`, `src/main.rs(12, 5)`, `src/main.rs(12:5)`, `src/main.rs[12]`,
+//! `src/main.rs[12,5]`, `src/main.rs[12, 5]`, `src/main.rs[12:5]`,
 //! `"src/main.py", line 12, column 5`, `file:///src/main.rs:12:5`).
 //!
 //! Links don't continue across rows: one the terminal soft-wrapped is found
@@ -290,7 +292,8 @@ fn path_at(text: &RowText, at: usize, cwd: &Path) -> Option<(Range<usize>, LinkT
     None
 }
 
-/// The `:line[:column]` or `(line[,column])` at `chars[at..]`, or for a
+/// The `:line[:column]`, `:line.column`, `(line[,column])` or `[line[,column]]`
+/// (the column after `,`, `, ` or `:`) at `chars[at..]`, or for a
 /// `quoted` path the `", line N[, column M]` there, and where it ends (`at`
 /// when there is none).
 fn location(chars: &[char], at: usize, quoted: bool) -> (Option<u32>, Option<u32>, usize) {
@@ -308,26 +311,31 @@ fn location(chars: &[char], at: usize, quoted: bool) -> (Option<u32>, Option<u32
             };
             match chars
                 .get(end)
-                .filter(|&&c| c == ':')
+                .filter(|&&c| c == ':' || c == '.')
                 .and_then(|_| number(end + 1))
             {
                 Some((column, end)) => (Some(line), Some(column), end),
                 None => (Some(line), None, end),
             }
         }
-        Some('(') => {
+        Some(&open @ ('(' | '[')) => {
+            let close = if open == '(' { ')' } else { ']' };
             let Some((line, end)) = number(at + 1) else {
                 return (None, None, at);
             };
+            let after_comma = |sep: usize| {
+                // `, ` takes exactly one blank.
+                number(sep + usize::from(chars.get(sep) == Some(&' ')))
+            };
             let (column, end) = match chars
                 .get(end)
-                .filter(|&&c| c == ',')
-                .and_then(|_| number(end + 1))
+                .filter(|&&c| matches!(c, ',' | ':'))
+                .and_then(|_| after_comma(end + 1))
             {
                 Some((column, end)) => (Some(column), end),
                 None => (None, end),
             };
-            if chars.get(end) == Some(&')') {
+            if chars.get(end) == Some(&close) {
                 (Some(line), column, end + 1)
             } else {
                 (None, None, at)
