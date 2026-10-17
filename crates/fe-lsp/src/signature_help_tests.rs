@@ -248,3 +248,6 @@ fn context_and_triggers() {
     let (_fake, manager, buffer) = started(None, "f(");
     assert_eq!(manager.signature_help_triggers(buffer.id()), None);
 }
+
+#[path = "signature_help_label_tests.rs"]
+mod label_tests;

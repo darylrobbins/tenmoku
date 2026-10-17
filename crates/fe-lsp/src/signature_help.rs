@@ -251,10 +251,9 @@ fn signature(info: SignatureInformation) -> Signature {
                     let start = byte_of(&label, start);
                     start..byte_of(&label, end).max(start)
                 }
-                ParameterLabel::Simple(text) => (label[from..].find(&text))
-                    .map_or(label.len()..label.len(), |at| {
-                        from + at..from + at + text.len()
-                    }),
+                ParameterLabel::Simple(text) => (find_word(&label, from, &text))
+                    .or_else(|| label[from..].find(&text).map(|at| from + at))
+                    .map_or(label.len()..label.len(), |at| at..at + text.len()),
             };
             from = range.end;
             range
@@ -270,6 +269,28 @@ fn signature(info: SignatureInformation) -> Signature {
         parameters,
         active_parameter,
     }
+}
+
+/// The first byte at or after `from` where `text` occurs bounded as a word:
+/// no word character just before it unless `text` starts with a non-word
+/// one, none just after unless `text` ends with one.
+fn find_word(label: &str, from: usize, text: &str) -> Option<usize> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let (first, last) = (text.chars().next()?, text.chars().next_back()?);
+    let mut start = from;
+    while let Some(found) = label[start..].find(text) {
+        let at = start + found;
+        let end = at + text.len();
+        let before = label[..at].chars().next_back();
+        let after = label[end..].chars().next();
+        if !(is_word(first) && before.is_some_and(is_word))
+            && !(is_word(last) && after.is_some_and(is_word))
+        {
+            return Some(at);
+        }
+        start = at + label[at..].chars().next()?.len_utf8();
+    }
+    None
 }
 
 /// `active` as an index of `count` things: the last if it's past the end.
