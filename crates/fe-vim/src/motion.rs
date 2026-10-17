@@ -16,7 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, jump, line_motions, marks, prose, search,
-    state::Goals, visual,
+    state::Goals, unmatched, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
@@ -268,6 +268,9 @@ pub(crate) fn motion(
             }
             None => return Err(goal),
         },
+        Motion::Unmatched { brace, forward } => {
+            return unmatched::motion(cursor, brace, forward, count, goal);
+        }
         Motion::LineStart => cursor.ix = 0,
         Motion::FirstNonBlank => cursor.ix = line.first_non_blank(),
         // Vim fails a `{count}$` from the last row (still aiming at line
@@ -943,6 +946,10 @@ pub(crate) fn nth_unmatched(
         }
         let scan = Scan::new(text, row);
         let len = scan.bytes.len();
+        // A search starting on a char literal's quote counts its bracket.
+        let touches = |ix: usize| {
+            row == first && (from - scan.start + 1 == ix || from - scan.start == ix + 1)
+        };
         let ixs: Box<dyn Iterator<Item = usize>> = match (row == first, forward) {
             (true, true) => Box::new(from - scan.start + 1..len),
             (true, false) => Box::new((0..(from - scan.start).min(len)).rev()),
@@ -957,7 +964,7 @@ pub(crate) fn nth_unmatched(
             if (byte != want && byte != other)
                 || scan.escaped[ix] != rules.escaped
                 || (rules.quotes == Quotes::Skip && scan.quoted[ix])
-                || (rules.literals && scan.char_literal(ix))
+                || (rules.literals && scan.char_literal(ix) && !touches(ix))
             {
                 continue;
             }

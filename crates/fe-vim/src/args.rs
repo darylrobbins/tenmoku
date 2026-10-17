@@ -95,6 +95,12 @@ pub enum Motion {
     RepeatFind,
     RepeatFindReverse,
     MatchPair,
+    /// `[(` `[{` `])` `]}` (`unmatched.rs`): the unmatched `(` or `{`
+    /// (`brace`) before the caret, or `)` or `}` after it (`forward`).
+    Unmatched {
+        brace: bool,
+        forward: bool,
+    },
     Line,
     Search(Search),
     /// `*` and `#` once resolved: `search` from the start of the keyword
@@ -305,7 +311,8 @@ impl Motion {
             | Self::SearchNext
             | Self::SearchPrevious
             | Self::SearchWordForward
-            | Self::SearchWordBackward => RangeClass::Exclusive,
+            | Self::SearchWordBackward
+            | Self::Unmatched { .. } => RangeClass::Exclusive,
             Self::WordEnd
             | Self::BigWordEnd
             | Self::LineEnd
@@ -341,7 +348,7 @@ impl Motion {
 
     /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
     /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
-    /// and `gs` and `gS`.
+    /// `[( [{ ]) ]}`, and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
         if self.is_prose() {
             return prose::is_jump(self);
@@ -354,6 +361,7 @@ impl Motion {
             Self::DocumentStart
                 | Self::DocumentEnd
                 | Self::MatchPair
+                | Self::Unmatched { .. }
                 | Self::Search(_)
                 | Self::SearchWord(_)
                 | Self::SearchNext

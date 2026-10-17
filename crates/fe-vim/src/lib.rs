@@ -757,6 +757,7 @@ pub mod search;
 mod state;
 mod substitute;
 mod text_object;
+mod unmatched;
 mod visual;
 
 pub use args::{

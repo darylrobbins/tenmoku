@@ -1,0 +1,372 @@
+# Unmatched bracket cases for fe-vim's oracle: [( [{ ]) ]} with and without
+# a count, across rows, from inside nested pairs, skipping a bracket inside a
+# double-quoted string, with none unmatched (failing, leaving the jump mark
+# unset), back with `` and '' after a jump, and in charwise and linewise
+# visual mode. A key that fails is a case's last key. Operator cases wait
+# for Mac T805.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in unmatched_brackets.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "open_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "[("
+
+[[case]]
+name = "open_paren_count"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "2[("
+
+[[case]]
+name = "close_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 2]
+keys = "])"
+
+[[case]]
+name = "close_paren_nested"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 6]
+keys = "])"
+
+[[case]]
+name = "close_paren_count"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 6]
+keys = "2])"
+
+[[case]]
+name = "open_brace"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "[{"
+
+[[case]]
+name = "open_brace_count"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "2[{"
+
+[[case]]
+name = "close_brace"
+buffer = "a { b { c } d } e"
+cursor = [0, 6]
+keys = "]}"
+
+[[case]]
+name = "close_brace_count"
+buffer = "a { b { c } d } e"
+cursor = [0, 6]
+keys = "2]}"
+
+[[case]]
+name = "open_paren_across_rows"
+buffer = "f(x,\n  y)"
+cursor = [1, 2]
+keys = "[("
+
+[[case]]
+name = "close_paren_across_rows"
+buffer = "f(x,\n  y)"
+cursor = [0, 2]
+keys = "])"
+
+[[case]]
+name = "open_brace_across_rows"
+buffer = "f{x,\n  y}"
+cursor = [1, 2]
+keys = "[{"
+
+[[case]]
+name = "close_brace_across_rows"
+buffer = "f{x,\n  y}"
+cursor = [0, 2]
+keys = "]}"
+
+[[case]]
+name = "open_paren_inside_nested"
+buffer = "(a (b) c (d e) f)"
+cursor = [0, 12]
+keys = "[("
+
+[[case]]
+name = "close_paren_inside_nested"
+buffer = "(a (b) c (d e) f)"
+cursor = [0, 3]
+keys = "])"
+
+[[case]]
+name = "open_brace_inside_nested"
+buffer = "{a {b} c {d e} f}"
+cursor = [0, 12]
+keys = "[{"
+
+[[case]]
+name = "close_brace_inside_nested"
+buffer = "{a {b} c {d e} f}"
+cursor = [0, 3]
+keys = "]}"
+
+[[case]]
+name = "open_paren_skips_pair"
+buffer = "(a (b) c)"
+cursor = [0, 7]
+keys = "[("
+
+[[case]]
+name = "close_paren_skips_string"
+buffer = "f(x, \")\", y)"
+cursor = [0, 3]
+keys = "])"
+
+[[case]]
+name = "open_paren_skips_string"
+buffer = "f(x, \"(\", y)"
+cursor = [0, 11]
+keys = "[("
+
+[[case]]
+name = "close_brace_skips_string"
+buffer = "f{x, \"}\", y}"
+cursor = [0, 3]
+keys = "]}"
+
+[[case]]
+name = "open_brace_skips_string"
+buffer = "f{x, \"{\", y}"
+cursor = [0, 11]
+keys = "[{"
+
+[[case]]
+name = "open_paren_none_fails"
+buffer = "a ( b ) c"
+cursor = [0, 0]
+keys = "[("
+
+[[case]]
+name = "close_paren_none_fails"
+buffer = "a ( b ) c"
+cursor = [0, 8]
+keys = "])"
+
+[[case]]
+name = "open_brace_none_fails"
+buffer = "a { b } c"
+cursor = [0, 0]
+keys = "[{"
+
+[[case]]
+name = "close_brace_none_fails"
+buffer = "a { b } c"
+cursor = [0, 8]
+keys = "]}"
+
+[[case]]
+name = "open_paren_count_past_outermost"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "3[("
+
+
+
+[[case]]
+name = "open_paren_backtick_back"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "[(``"
+
+[[case]]
+name = "open_paren_quote_back"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "[(''"
+
+[[case]]
+name = "close_paren_backtick_back"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 2]
+keys = "])``"
+
+[[case]]
+name = "open_brace_backtick_back"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "[{``"
+
+[[case]]
+name = "close_brace_backtick_back"
+buffer = "a { b { c } d } e"
+cursor = [0, 6]
+keys = "]}``"
+
+[[case]]
+name = "v_open_paren_d"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "v[(d"
+
+[[case]]
+name = "v_close_paren_d"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 2]
+keys = "v])d"
+
+[[case]]
+name = "v_open_brace_d"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "v[{d"
+
+[[case]]
+name = "v_close_brace_d"
+buffer = "a { b { c } d } e"
+cursor = [0, 6]
+keys = "v]}d"
+
+[[case]]
+name = "v_open_paren_count"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "v2[("
+
+[[case]]
+name = "v_close_paren_count"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 6]
+keys = "v2])"
+
+[[case]]
+name = "V_open_paren_d"
+buffer = "a\n( b\n  c\n)"
+cursor = [2, 2]
+keys = "V[(d"
+
+[[case]]
+name = "V_close_paren_d"
+buffer = "(\n b\n  c\n)"
+cursor = [1, 1]
+keys = "V])d"
+
+[[case]]
+name = "V_open_brace_d"
+buffer = "a\n{ b\n  c\n}"
+cursor = [2, 2]
+keys = "V[{d"
+
+[[case]]
+name = "V_close_brace_d"
+buffer = "{\n b\n  c\n}"
+cursor = [1, 1]
+keys = "V]}d"
+
+[[case]]
+name = "v_open_paren_none_fails"
+buffer = "a ( b ) c"
+cursor = [0, 0]
+keys = "v[("
+
+[[case]]
+name = "v_close_brace_none_fails"
+buffer = "a { b } c"
+cursor = [0, 8]
+keys = "v]}"
+
+[[case]]
+name = "v_dollar_open_paren"
+buffer = "a ( b ) c"
+cursor = [0, 0]
+keys = "v$[("
+
+[[case]]
+name = "v_dollar_open_paren_trailing"
+buffer = "(a b"
+cursor = [0, 0]
+keys = "v$[("
+
+[[case]]
+name = "v_dollar_close_paren_trailing"
+buffer = "a (b)"
+cursor = [0, 2]
+keys = "v$])"
+
+[[case]]
+name = "v_dollar_open_brace_trailing"
+buffer = "x {a b"
+cursor = [0, 0]
+keys = "v$[{"
+
+[[case]]
+name = "v_dollar_open_paren_after"
+buffer = "(ab"
+cursor = [0, 2]
+keys = "v$[("
+
+[[case]]
+name = "v_dollar_close_brace"
+buffer = "{ab}"
+cursor = [0, 3]
+keys = "v$]}"
+
+[[case]]
+name = "close_paren_from_opening_quote"
+buffer = "f(x, \"a)b\", y)"
+cursor = [0, 5]
+keys = "])"
+
+[[case]]
+name = "close_paren_from_opening_quote_count"
+buffer = "f(x, \"a)b\", y)"
+cursor = [0, 5]
+keys = "2])"
+
+[[case]]
+name = "close_brace_from_opening_quote"
+buffer = "f{x, \"a}b\", y}"
+cursor = [0, 5]
+keys = "]}"
+
+[[case]]
+name = "open_paren_from_opening_quote"
+buffer = "f(x, \"a(b\", y)"
+cursor = [0, 5]
+keys = "[("
+
+[[case]]
+name = "open_paren_from_closing_quote"
+buffer = "f(x, \"a(b\", y)"
+cursor = [0, 9]
+keys = "[("
+
+[[case]]
+name = "close_paren_from_literal_quote"
+buffer = "(a ')' b)"
+cursor = [0, 3]
+keys = "])"
+
+[[case]]
+name = "open_paren_from_literal_quote"
+buffer = "(a ')' b)"
+cursor = [0, 5]
+keys = "[("
+
+[[case]]
+name = "close_brace_from_literal_quote"
+buffer = "{a '}' b}"
+cursor = [0, 3]
+keys = "]}"
+
+[[case]]
+name = "open_brace_from_literal_quote"
+buffer = "{a '{' b}"
+cursor = [0, 5]
+keys = "[{"
+
+[[case]]
+name = "close_paren_skips_literal"
+buffer = "(a ')' b)"
+cursor = [0, 1]
+keys = "])"

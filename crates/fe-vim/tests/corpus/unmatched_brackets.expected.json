@@ -1,0 +1,1277 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "open_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_count",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2[(",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_nested",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_count",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2])",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_count",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2[{",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_count",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2]}",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_across_rows",
+      "buffer": "f(x,\n  y)",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "f(x,\n  y)",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_across_rows",
+      "buffer": "f(x,\n  y)",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "f(x,\n  y)",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_across_rows",
+      "buffer": "f{x,\n  y}",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "f{x,\n  y}",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_across_rows",
+      "buffer": "f{x,\n  y}",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "f{x,\n  y}",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_inside_nested",
+      "buffer": "(a (b) c (d e) f)",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "(a (b) c (d e) f)",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_inside_nested",
+      "buffer": "(a (b) c (d e) f)",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "(a (b) c (d e) f)",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_inside_nested",
+      "buffer": "{a {b} c {d e} f}",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "{a {b} c {d e} f}",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_inside_nested",
+      "buffer": "{a {b} c {d e} f}",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "{a {b} c {d e} f}",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_skips_pair",
+      "buffer": "(a (b) c)",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "(a (b) c)",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_skips_string",
+      "buffer": "f(x, \")\", y)",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "f(x, \")\", y)",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_skips_string",
+      "buffer": "f(x, \"(\", y)",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "f(x, \"(\", y)",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_skips_string",
+      "buffer": "f{x, \"}\", y}",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "f{x, \"}\", y}",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_skips_string",
+      "buffer": "f{x, \"{\", y}",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "f{x, \"{\", y}",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_none_fails",
+      "buffer": "a ( b ) c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "a ( b ) c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_none_fails",
+      "buffer": "a ( b ) c",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "a ( b ) c",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_none_fails",
+      "buffer": "a { b } c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "a { b } c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_none_fails",
+      "buffer": "a { b } c",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "a { b } c",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_count_past_outermost",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3[(",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_backtick_back",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "[(``",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_quote_back",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "[(''",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_backtick_back",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "])``",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_backtick_back",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "[{``",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_backtick_back",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "]}``",
+      "expect": {
+        "buffer": "a { b { c } d } e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_open_paren_d",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "v[(d",
+      "expect": {
+        "buffer": "a ( b  ) d ) e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( c",
+            "linewise": false
+          },
+          "-": {
+            "text": "( c",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_close_paren_d",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v])d",
+      "expect": {
+        "buffer": "a  e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( b ( c ) d )",
+            "linewise": false
+          },
+          "-": {
+            "text": "( b ( c ) d )",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            14
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_open_brace_d",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "v[{d",
+      "expect": {
+        "buffer": "a { b  } d } e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{ c",
+            "linewise": false
+          },
+          "-": {
+            "text": "{ c",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_close_brace_d",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "v]}d",
+      "expect": {
+        "buffer": "a { b  d } e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{ c }",
+            "linewise": false
+          },
+          "-": {
+            "text": "{ c }",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_open_paren_count",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "v2[(",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          8
+        ]
+      }
+    },
+    {
+      "name": "v_close_paren_count",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "v2])",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          6
+        ]
+      }
+    },
+    {
+      "name": "V_open_paren_d",
+      "buffer": "a\n( b\n  c\n)",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "V[(d",
+      "expect": {
+        "buffer": "a\n)",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( b\n  c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "( b\n  c\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_close_paren_d",
+      "buffer": "(\n b\n  c\n)",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "V])d",
+      "expect": {
+        "buffer": "(",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " b\n  c\n)\n",
+            "linewise": true
+          },
+          "1": {
+            "text": " b\n  c\n)\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_open_brace_d",
+      "buffer": "a\n{ b\n  c\n}",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "V[{d",
+      "expect": {
+        "buffer": "a\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{ b\n  c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "{ b\n  c\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_close_brace_d",
+      "buffer": "{\n b\n  c\n}",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "V]}d",
+      "expect": {
+        "buffer": "{",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " b\n  c\n}\n",
+            "linewise": true
+          },
+          "1": {
+            "text": " b\n  c\n}\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_open_paren_none_fails",
+      "buffer": "a ( b ) c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v[(",
+      "expect": {
+        "buffer": "a ( b ) c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_close_brace_none_fails",
+      "buffer": "a { b } c",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "v]}",
+      "expect": {
+        "buffer": "a { b } c",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          8
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_open_paren",
+      "buffer": "a ( b ) c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$[(",
+      "expect": {
+        "buffer": "a ( b ) c",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_open_paren_trailing",
+      "buffer": "(a b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$[(",
+      "expect": {
+        "buffer": "(a b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_close_paren_trailing",
+      "buffer": "a (b)",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v$])",
+      "expect": {
+        "buffer": "a (b)",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_open_brace_trailing",
+      "buffer": "x {a b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$[{",
+      "expect": {
+        "buffer": "x {a b",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_open_paren_after",
+      "buffer": "(ab",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v$[(",
+      "expect": {
+        "buffer": "(ab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_close_brace",
+      "buffer": "{ab}",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "v$]}",
+      "expect": {
+        "buffer": "{ab}",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "close_paren_from_opening_quote",
+      "buffer": "f(x, \"a)b\", y)",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "f(x, \"a)b\", y)",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_from_opening_quote_count",
+      "buffer": "f(x, \"a)b\", y)",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "2])",
+      "expect": {
+        "buffer": "f(x, \"a)b\", y)",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_from_opening_quote",
+      "buffer": "f{x, \"a}b\", y}",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "f{x, \"a}b\", y}",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_from_opening_quote",
+      "buffer": "f(x, \"a(b\", y)",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "f(x, \"a(b\", y)",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_from_closing_quote",
+      "buffer": "f(x, \"a(b\", y)",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "f(x, \"a(b\", y)",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_from_literal_quote",
+      "buffer": "(a ')' b)",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "(a ')' b)",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_paren_from_literal_quote",
+      "buffer": "(a ')' b)",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "[(",
+      "expect": {
+        "buffer": "(a ')' b)",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_brace_from_literal_quote",
+      "buffer": "{a '}' b}",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "]}",
+      "expect": {
+        "buffer": "{a '}' b}",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "open_brace_from_literal_quote",
+      "buffer": "{a '{' b}",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "[{",
+      "expect": {
+        "buffer": "{a '{' b}",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_paren_skips_literal",
+      "buffer": "(a ')' b)",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "])",
+      "expect": {
+        "buffer": "(a ')' b)",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}
