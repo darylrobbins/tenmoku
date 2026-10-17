@@ -145,6 +145,12 @@ pub struct EditorView {
     /// hunk, the button, and the part of its box shown, in window
     /// coordinates. A click there presses it.
     pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
+    /// Where lens rows come from ([`crate::lens`]).
+    lens_providers: Vec<std::rc::Rc<std::cell::RefCell<dyn crate::LensProvider>>>,
+    /// The lens rows the last frame painted: the part of each in view, and
+    /// of each of its items, in window coordinates. A click on an item runs
+    /// its command; elsewhere on the row, nothing.
+    pub(crate) lens_rows: Vec<crate::lens::PaintedRow>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
     /// The suggestion losing focus dropped, with the buffer's version then,
@@ -292,6 +298,8 @@ impl EditorView {
             blocks: Vec::new(),
             proposals: Vec::new(),
             proposal_buttons: Vec::new(),
+            lens_providers: Vec::new(),
+            lens_rows: Vec::new(),
             ghost_text: None,
             blurred_ghost_text: None,
             ghost_text_subscriptions: Vec::new(),
@@ -672,8 +680,9 @@ impl EditorView {
         window.focus(&self.focus, cx);
         // A click ends a composition, typing nothing.
         self.composition = None;
-        // A proposal's button leaves the carets where they are.
-        if self.press_proposal_button(event.position, cx) {
+        // A proposal's button leaves the carets where they are, as a lens
+        // row does.
+        if self.press_proposal_button(event.position, cx) || self.press_lens(event, window, cx) {
             self.drag = None;
             return;
         }
@@ -764,6 +773,45 @@ impl EditorView {
         });
         self.sync_completion(cx);
         self.changed(cx);
+    }
+
+    /// A click on a lens row the last frame painted: on an item, runs its
+    /// command from the view once this listener is done, as a bound
+    /// click's; elsewhere on the row, nothing. False off the lens rows.
+    fn press_lens(&self, event: &MouseDownEvent, window: &mut Window, cx: &mut App) -> bool {
+        let position = event.position;
+        let Some(row) = (self.lens_rows.iter()).find(|row| row.bounds.contains(&position)) else {
+            return false;
+        };
+        let item = (row.items.iter()).find(|(_, bounds)| bounds.contains(&position));
+        if let Some((item, _)) = item {
+            let action = RunCommand(item.invocation.clone().source(Source::Mouse));
+            let focus = self.focus.clone();
+            window.defer(cx, move |window, cx| {
+                focus.dispatch_action(&action, window, cx)
+            });
+        }
+        true
+    }
+
+    /// Adds a source of lens rows, shown from the next frame.
+    pub fn add_lens_provider(
+        &mut self,
+        provider: std::rc::Rc<std::cell::RefCell<dyn crate::LensProvider>>,
+    ) {
+        self.lens_providers.push(provider);
+    }
+
+    /// Removes `provider`, if added, from the next frame.
+    pub fn remove_lens_provider(
+        &mut self,
+        provider: &std::rc::Rc<std::cell::RefCell<dyn crate::LensProvider>>,
+    ) {
+        (self.lens_providers).retain(|added| !std::rc::Rc::ptr_eq(added, provider));
+    }
+
+    pub fn lens_providers(&self) -> &[std::rc::Rc<std::cell::RefCell<dyn crate::LensProvider>>] {
+        &self.lens_providers
     }
 
     /// What a click with `modifiers` held runs here: the command its

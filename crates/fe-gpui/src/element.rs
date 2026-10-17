@@ -43,18 +43,19 @@ mod indent_guides;
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
 
-/// The frame's blocks: the host's ([`host_blocks`]), the proposals' hunks
+/// The frame's blocks: the lens rows and the host's ([`host_blocks`]), a
+/// lens before a host's block above the same row, the proposals' hunks
 /// ([`proposal`]) and the ghost text's lines after its first
 /// ([`ghost_text`]).
 fn block_map(
     view: &EditorView,
+    lenses: &[crate::Lens],
     hunks: &[proposal::Hunk],
     ghost: Option<&ghost_text::Ghost>,
 ) -> fe_display::BlockMap {
     let ghost = ghost.and_then(|ghost| ghost_text::block(ghost, view));
-    fe_display::BlockMap::new(
-        (host_blocks::blocks(view).chain(proposal::blocks(hunks, view))).chain(ghost),
-    )
+    let host = host_blocks::lens_blocks(lenses, view).chain(host_blocks::blocks(view));
+    fe_display::BlockMap::new((host.chain(proposal::blocks(hunks, view))).chain(ghost))
 }
 
 /// What one frame laid out: kept by the view for hit testing and IME.
@@ -101,6 +102,8 @@ pub(crate) struct FrameLayout {
     pub(crate) indent_guides: Vec<indent_guides::Placed>,
     /// The host's blocks in view ([`host_blocks`]).
     host_blocks: Vec<host_blocks::Placed>,
+    /// The lens rows in view ([`host_blocks::lens_layout`]).
+    lens_rows: Vec<host_blocks::PlacedLens>,
     /// The proposals' hunks in view ([`proposal`]).
     pub(crate) proposals: proposal::Layout,
     /// Their new texts, indexed, kept from frame to frame.
@@ -604,6 +607,7 @@ impl Element for EditorElement {
         let proposal_texts = proposal_texts.get_or_insert_default();
         let hunks = proposal::hunks(self.view.read(cx), proposal_texts);
         let ghost = ghost_text::shown(self.view.read(cx));
+        let lenses = host_blocks::lenses(self.view.read(cx));
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
         // to be scrolled into view, and ask for another frame to continue.
@@ -629,12 +633,13 @@ impl Element for EditorElement {
             // after the wrap place. A top inside a block keeps its place
             // above the display row below it.
             let screen_top = f32::from(view.scroll.y) / line_height_f32;
-            let blocks = block_map(view, &hunks, ghost.as_ref());
+            let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
             let display_top = blocks.to_display_top(screen_top);
             let in_block = screen_top - blocks.to_screen_top(display_top);
             let (pending, top) = view.model.wrap_pending_at(display_top);
             if !view.autoscroll {
-                let top = block_map(view, &hunks, ghost.as_ref()).to_screen_top(top) + in_block;
+                let top =
+                    block_map(view, &lenses, &hunks, ghost.as_ref()).to_screen_top(top) + in_block;
                 view.scroll.y = px(top.max(0.) * line_height_f32);
             }
             pending
@@ -689,7 +694,7 @@ impl Element for EditorElement {
             style: theme.foreground,
         });
         let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
-        let blocks = block_map(view, &hunks, ghost.as_ref());
+        let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
         let gutter = view.gutter;
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
             true => layout::layout_frame_with_annotation_column(
@@ -823,6 +828,13 @@ impl Element for EditorElement {
             }
         }
         let placed = host_blocks::layout(&frame, view, &mut shaper, &mut glyph_widths, host_x);
+        let mut small = Shaper {
+            text_system: shaper.text_system.clone(),
+            font: shaper.font.clone(),
+            font_size: font_size * host_blocks::LENS_SCALE,
+        };
+        let mut lens_rows =
+            host_blocks::lens_layout(&frame, &lenses, view, &mut shaper, &mut small);
         let mut proposals = proposal::layout(
             &frame,
             &hunks,
@@ -856,6 +868,7 @@ impl Element for EditorElement {
             .collect();
         let text = window.insert_hitbox(to_window(frame.text_bounds()), HitboxBehavior::Normal);
         proposal::insert_hitboxes(&mut proposals, to_window, window);
+        host_blocks::insert_lens_hitboxes(&mut lens_rows, to_window, window);
 
         let kept = kept_scroll.unwrap_or(frame.scroll);
         let scroll = point(px(kept.x), px(kept.y));
@@ -893,6 +906,7 @@ impl Element for EditorElement {
             decorations: Decorations::default(),
             indent_guides: Vec::new(),
             host_blocks: placed,
+            lens_rows,
             proposals,
             proposal_texts: mem::take(proposal_texts),
             ghost,
@@ -1102,6 +1116,7 @@ impl Element for EditorElement {
         #[cfg(test)]
         let mut painted_annotations = Vec::new();
         let mut proposal_buttons = Vec::new();
+        let mut lens_rows = Vec::new();
         #[cfg(test)]
         let mut painted_proposals = Vec::new();
         #[cfg(test)]
@@ -1136,6 +1151,13 @@ impl Element for EditorElement {
                         cx,
                         #[cfg(test)]
                         &mut painted_blocks,
+                    );
+                    host_blocks::paint_lenses(
+                        &layout.lens_rows,
+                        &layout,
+                        window,
+                        cx,
+                        &mut lens_rows,
                     );
                     proposal::paint(
                         &layout.proposals,
@@ -1357,6 +1379,7 @@ impl Element for EditorElement {
             view.frame_timings.record(timing);
             view.drop_stale_hover(hover_shown);
             view.proposal_buttons = proposal_buttons;
+            view.lens_rows = lens_rows;
             #[cfg(test)]
             {
                 view.painted_carets = painted;

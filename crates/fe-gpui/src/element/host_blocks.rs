@@ -3,21 +3,40 @@
 //! ([`block_map`]), then painted across the text area: a filler's faint
 //! diagonal hatch, or a band of text on its tint. Positions down the frame
 //! go by screen row, so a block's rows push the text's down ([`row_at`]).
+//!
+//! The view's lens rows ([`crate::lens`]) are blocks too, a row each above
+//! their rows ([`lens_blocks`]), with their items from the row's first
+//! non-blank column ([`lens_layout`]).
 
 use std::ops::Range;
 
 use fe_display::{
-    Block, CharWidth, ExpandedRow, MAX_CLUSTER_BYTES, ScreenRow,
+    Block, CharWidth, DisplayMap, ExpandedRow, MAX_CLUSTER_BYTES, ScreenRow,
     layout::{
         Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, RowLayout, StyleRun, TextMeasure,
         Vec2,
     },
 };
 use fe_editor::decorations::Tint;
-use gpui::{App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Window, fill, point, px};
+use gpui::{
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, Hsla,
+    MouseMoveEvent, PathBuilder, Pixels, Window, fill, point, px, size,
+};
 
 use super::{FrameLayout, Line, Shaper};
-use crate::{EditorTheme, EditorView, view::HostBlockKind};
+use crate::{
+    EditorTheme, EditorView,
+    lens::{self, Lens, LensItem, PaintedRow},
+    view::HostBlockKind,
+};
+
+/// Lens rows' block ids: this plus the lens's index in the frame's
+/// [`lenses`]. Below are the host's and the proposals'.
+const LENS_IDS: u64 = 1 << 40;
+/// A lens row's text size, of the editor font's.
+pub(super) const LENS_SCALE: f32 = 0.9;
+/// Between a lens row's items.
+const LENS_SEPARATOR: &str = " | ";
 
 /// How opaque a text block's band is over its tint.
 const BAND_ALPHA: f32 = 0.15;
@@ -51,6 +70,206 @@ pub(super) fn blocks(view: &EditorView) -> impl Iterator<Item = Block> + '_ {
                 id: ix as u64,
             })
         })
+}
+
+/// The display row a buffer row starts, unless a fold hides it.
+fn first_display_row(display: &DisplayMap, row: u32) -> Option<u32> {
+    let at = display.row_for_buffer_row(row);
+    let shown = display.row(at);
+    (shown.buffer_row == row && shown.first).then_some(at)
+}
+
+/// The lenses the view's providers have for its snapshot, joined by row in
+/// provider order ([`lens::join`]), but those past the last row or inside a
+/// fold.
+pub(super) fn lenses(view: &EditorView) -> Vec<Lens> {
+    let snapshot = view.model.snapshot();
+    let (rows, display) = (view.model.text().row_count(), view.model.display());
+    let all =
+        (view.lens_providers().iter()).flat_map(|provider| provider.borrow_mut().lenses(snapshot));
+    (lens::join(all).into_iter())
+        .filter(|lens| lens.row < rows && first_display_row(display, lens.row).is_some())
+        .collect()
+}
+
+/// A row's block for each of `lenses`, above its row's first display row.
+pub(super) fn lens_blocks<'a>(
+    lenses: &'a [Lens],
+    view: &'a EditorView,
+) -> impl Iterator<Item = Block> + 'a {
+    let display = view.model.display();
+    lenses.iter().enumerate().filter_map(move |(ix, lens)| {
+        Some(Block {
+            above: first_display_row(display, lens.row)?,
+            rows: 1,
+            id: LENS_IDS + ix as u64,
+        })
+    })
+}
+
+/// A lens row laid out in a frame, to paint.
+pub(super) struct PlacedLens {
+    /// In the frame.
+    rect: Rect,
+    items: Vec<PlacedItem>,
+    /// The separators between them, and where each is painted.
+    separators: Vec<(Vec2, Line)>,
+}
+
+/// A lens row's item, shaped.
+struct PlacedItem {
+    item: LensItem,
+    /// Where its text is painted.
+    at: Vec2,
+    line: Line,
+    /// The part of its box in view, inside its row and the text area, which
+    /// a click runs.
+    shown: Option<Rect>,
+    /// Over `shown`, for its underline and pointing hand.
+    hitbox: Option<Hitbox>,
+}
+
+/// The lens rows in view, each item shaped by `small` in the muted text
+/// colour from its row's first non-blank column, as `shaper` measures the
+/// row's indentation, then ` | ` between them.
+pub(super) fn lens_layout(
+    frame: &Frame<Line>,
+    lenses: &[Lens],
+    view: &EditorView,
+    shaper: &mut Shaper,
+    small: &mut Shaper,
+) -> Vec<PlacedLens> {
+    let (text, tab_size) = (view.model.text(), view.model.tab_size());
+    let color = view.theme.gutter_foreground;
+    let run = |text: &str| {
+        [StyleRun {
+            len: text.len(),
+            style: color,
+        }]
+    };
+    let text_area = frame.text_bounds();
+    let mut out = Vec::new();
+    for laid in &frame.blocks {
+        let ix = laid
+            .id
+            .checked_sub(LENS_IDS)
+            .and_then(|ix| usize::try_from(ix).ok());
+        let Some(lens) = ix.and_then(|ix| lenses.get(ix)) else {
+            continue;
+        };
+        if laid.rect.y + laid.rect.height <= 0. || laid.rect.y >= frame.height {
+            continue;
+        }
+        let start = text.row_start(lens.row);
+        let row = start..start + text.row_len(lens.row) as usize;
+        let indent: String = (text.chunks_in_range(row).flat_map(str::chars))
+            .take_while(|&ch| ch == ' ' || ch == '\t')
+            .collect();
+        let indent = ExpandedRow::new(&indent, tab_size);
+        let mut x = frame.view_x(f64::from(shaper.shape(indent.text(), &run("")).width()));
+        let y = laid.rect.y;
+        let mut placed = PlacedLens {
+            rect: laid.rect,
+            items: Vec::new(),
+            separators: Vec::new(),
+        };
+        for (n, item) in lens.items.iter().enumerate() {
+            if n > 0 {
+                let line = small.shape(LENS_SEPARATOR, &run(LENS_SEPARATOR));
+                let width = line.width();
+                placed.separators.push((Vec2 { x, y }, line));
+                x += width;
+            }
+            let line = small.shape(&item.title, &run(&item.title));
+            let rect = Rect {
+                x,
+                y,
+                width: line.width(),
+                height: frame.line_height,
+            };
+            x += rect.width;
+            placed.items.push(PlacedItem {
+                item: item.clone(),
+                at: Vec2 { x: rect.x, y },
+                line,
+                shown: (rect.intersect(laid.rect)).and_then(|rect| rect.intersect(text_area)),
+                hitbox: None,
+            });
+        }
+        out.push(placed);
+    }
+    out
+}
+
+/// Puts a hitbox over the part of each lens item in view.
+pub(super) fn insert_lens_hitboxes(
+    placed: &mut [PlacedLens],
+    to_window: impl Fn(Rect) -> Bounds<Pixels>,
+    window: &mut Window,
+) {
+    for item in placed.iter_mut().flat_map(|lens| &mut lens.items) {
+        item.hitbox =
+            (item.shown).map(|rect| window.insert_hitbox(to_window(rect), HitboxBehavior::Normal));
+    }
+}
+
+/// Paints the lens rows, each clipped to its row inside the text area, the
+/// item under the pointer underlined with a pointing hand, noting in
+/// `painted` the part of each row and item in view, which a click goes by.
+/// The pointer moving onto or off an item redraws.
+pub(super) fn paint_lenses(
+    placed: &[PlacedLens],
+    layout: &FrameLayout,
+    window: &mut Window,
+    cx: &mut App,
+    painted: &mut Vec<PaintedRow>,
+) {
+    let line_height = px(layout.frame.line_height);
+    let text_area = layout.frame.text_bounds();
+    let mut hovered = Vec::new();
+    for lens in placed {
+        let bounds = layout.bounds(lens.rect);
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            for (at, line) in &lens.separators {
+                line.paint(layout.to_window(*at), line_height, window, cx);
+            }
+            for item in &lens.items {
+                let origin = layout.to_window(item.at);
+                item.line.paint(origin, line_height, window, cx);
+                let Some(hitbox) = &item.hitbox else {
+                    continue;
+                };
+                let over = hitbox.is_hovered(window);
+                hovered.push((hitbox.clone(), over));
+                if over {
+                    let line = &item.line.layout;
+                    let (ascent, descent) = (line.ascent, line.descent);
+                    let baseline = origin.y + (line_height - ascent - descent) / 2. + ascent;
+                    let underline =
+                        Bounds::new(point(origin.x, baseline + px(1.)), size(line.width, px(1.)));
+                    let color = item.line.color_at(0).unwrap_or_default();
+                    window.paint_quad(fill(underline, color));
+                    window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                }
+            }
+        });
+        if let Some(shown) = lens.rect.intersect(text_area) {
+            painted.push(PaintedRow {
+                bounds: layout.bounds(shown),
+                items: (lens.items.iter())
+                    .filter_map(|item| Some((item.item.clone(), layout.bounds(item.shown?))))
+                    .collect(),
+            });
+        }
+    }
+    if !hovered.is_empty() {
+        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _| {
+            let moved = (hovered.iter()).any(|(hitbox, over)| hitbox.is_hovered(window) != *over);
+            if phase == DispatchPhase::Bubble && moved {
+                window.refresh();
+            }
+        });
+    }
 }
 
 /// The view's block a frame's block of `id` is, if it's one of the host's.

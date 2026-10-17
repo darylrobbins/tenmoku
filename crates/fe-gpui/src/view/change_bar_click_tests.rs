@@ -259,3 +259,6 @@ fn a_wrapped_rows_continuation_has_no_deletion_mark(cx: &mut TestAppContext) {
         [EditorViewEvent::ChangeBarClicked { rows: 3..3 }]
     );
 }
+
+#[path = "lens_tests.rs"]
+mod lens;
