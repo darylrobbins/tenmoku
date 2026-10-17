@@ -214,6 +214,9 @@ pub struct PaneState<V> {
     /// Focused when there's no item, so the pane's commands still apply.
     focus: FocusHandle,
     tab_scroll: ScrollHandle,
+    /// The active tab the strip last scrolled into view, so a scroll by hand
+    /// stays until the active tab changes.
+    revealed: Cell<Option<(usize, ItemId)>>,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     content_bounds: Rc<Cell<Bounds<Pixels>>>,
     tab_bar_bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -236,6 +239,7 @@ impl<V: PaneView> PaneState<V> {
             observed: HashMap::new(),
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
+            revealed: Cell::new(None),
             bounds: Rc::default(),
             content_bounds: Rc::default(),
             tab_bar_bounds: Rc::default(),
@@ -515,6 +519,15 @@ impl<V: PaneView> PaneState<V> {
     pub fn tab_bar(&self, cx: &mut Context<V>) -> TabBar {
         let pane = cx.entity().downgrade();
         let ui = ui_theme(cx);
+        let active = self
+            .items
+            .get(self.active)
+            .map(|item| (self.active, item.id()));
+        if active != self.revealed.replace(active)
+            && let Some((ix, _)) = active
+        {
+            self.tab_scroll.scroll_to_item(ix);
+        }
         let tabs: Vec<_> = (self.tabs(cx).into_iter().zip(&self.items))
             .enumerate()
             .map(|(ix, (tab, item))| {
