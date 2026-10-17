@@ -140,6 +140,48 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("terminal.next_prompt", "Terminal: Next Prompt", "terminal"),
     ("terminal.vi_mode", "Terminal: Vi Copy Mode", "terminal"),
+    ("git.diff_index", "Git: Compare with Index", "workbench"),
+    ("git.diff_head", "Git: Compare with HEAD", "workbench"),
+    (
+        "diff.compare_file",
+        "Compare Active File With…",
+        "workbench",
+    ),
+    ("git.next_change", "Go to Next Change", "workbench"),
+    ("git.previous_change", "Go to Previous Change", "workbench"),
+    ("git.stage_file", "Git: Stage File", "workbench"),
+    ("git.unstage_file", "Git: Unstage File", "workbench"),
+    ("git.discard_file", "Git: Discard File Changes", "workbench"),
+    (
+        "git.reset_buffer",
+        "Git: Revert Editor to Index",
+        "workbench",
+    ),
+    ("git.stage_hunk", "Git: Stage Change", "workbench"),
+    ("git.unstage_hunk", "Git: Undo Stage Change", "workbench"),
+    ("git.revert_hunk", "Git: Revert Change", "workbench"),
+    ("git.commit", "Git: Commit Staged", "workbench"),
+    (
+        "git.commit_amend",
+        "Git: Commit Staged (Amend)",
+        "workbench",
+    ),
+    (
+        "git.toggle_line_blame",
+        "Git: Toggle Line Blame",
+        "workbench",
+    ),
+    ("git.blame_line", "Git: Show Line Blame", "workbench"),
+    (
+        "git.open_line_commit",
+        "Git: Open Line's Commit Change",
+        "workbench",
+    ),
+    ("git.switch_branch", "Git: Switch Branch…", "workbench"),
+    ("git.create_branch", "Git: Create Branch…", "workbench"),
+    ("git.file_history", "Git: File History", "workbench"),
+    ("git.log", "Git: Log", "workbench"),
+    ("git.log_all", "Git: Log (All Branches)", "workbench"),
 ];
 
 #[gpui::test]

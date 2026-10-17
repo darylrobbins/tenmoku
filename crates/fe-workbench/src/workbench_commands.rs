@@ -12,7 +12,7 @@ use kiln_shell::DockPosition;
 
 use crate::{
     Axis, Direction, Pane, Workbench, dock_layout, nav::NavOp, open::OpenOp, persist,
-    workbench::recent_picker::RecentOp,
+    workbench::git_commands::GitCommand, workbench::recent_picker::RecentOp,
 };
 
 #[kiln::command(context = "workbench")]
@@ -110,6 +110,138 @@ impl Workbench {
     fn close_pane(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.close_active_pane(cx.window, cx.cx);
+    }
+
+    /// Git: Compare with Index
+    #[command(id = "git.diff_index")]
+    fn git_diff_index(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::DiffIndex, cx);
+    }
+
+    /// Git: Compare with HEAD
+    #[command(id = "git.diff_head")]
+    fn git_diff_head(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::DiffHead, cx);
+    }
+
+    /// Compare Active File With…
+    #[command(id = "diff.compare_file")]
+    fn diff_compare_file(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::CompareFile, cx);
+    }
+
+    /// Go to Next Change
+    #[command(id = "git.next_change")]
+    fn git_next_change(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::NextChange, cx);
+    }
+
+    /// Go to Previous Change
+    #[command(id = "git.previous_change")]
+    fn git_previous_change(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::PreviousChange, cx);
+    }
+
+    /// Git: Stage File
+    #[command(id = "git.stage_file")]
+    fn git_stage_file(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::StageFile, cx);
+    }
+
+    /// Git: Unstage File
+    #[command(id = "git.unstage_file")]
+    fn git_unstage_file(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::UnstageFile, cx);
+    }
+
+    /// Git: Discard File Changes
+    #[command(id = "git.discard_file")]
+    fn git_discard_file(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::DiscardFile, cx);
+    }
+
+    /// Git: Revert Editor to Index
+    #[command(id = "git.reset_buffer")]
+    fn git_reset_buffer(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::ResetBuffer, cx);
+    }
+
+    /// Git: Stage Change
+    #[command(id = "git.stage_hunk")]
+    fn git_stage_hunk(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::StageHunk, cx);
+    }
+
+    /// Git: Undo Stage Change
+    #[command(id = "git.unstage_hunk")]
+    fn git_unstage_hunk(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::UnstageHunk, cx);
+    }
+
+    /// Git: Revert Change
+    #[command(id = "git.revert_hunk")]
+    fn git_revert_hunk(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::RevertHunk, cx);
+    }
+
+    /// Git: Commit Staged
+    #[command(id = "git.commit")]
+    fn git_commit(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Commit, cx);
+    }
+
+    /// Git: Commit Staged (Amend)
+    #[command(id = "git.commit_amend")]
+    fn git_commit_amend(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::CommitAmend, cx);
+    }
+
+    /// Git: Toggle Line Blame
+    #[command(id = "git.toggle_line_blame")]
+    fn git_toggle_line_blame(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::ToggleLineBlame, cx);
+    }
+
+    /// Git: Show Line Blame
+    #[command(id = "git.blame_line")]
+    fn git_blame_line(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::BlameLine, cx);
+    }
+
+    /// Git: Open Line's Commit Change
+    #[command(id = "git.open_line_commit")]
+    fn git_open_line_commit(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::OpenLineCommit, cx);
+    }
+
+    /// Git: Switch Branch…
+    #[command(id = "git.switch_branch")]
+    fn git_switch_branch(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::SwitchBranch, cx);
+    }
+
+    /// Git: Create Branch…
+    #[command(id = "git.create_branch")]
+    fn git_create_branch(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::CreateBranch, cx);
+    }
+
+    /// Git: File History
+    #[command(id = "git.file_history")]
+    fn git_file_history(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::FileHistory, cx);
+    }
+
+    /// Git: Log
+    #[command(id = "git.log")]
+    fn git_log(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Log, cx);
+    }
+
+    /// Git: Log (All Branches)
+    #[command(id = "git.log_all")]
+    fn git_log_all(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::LogAll, cx);
     }
 
     /// Grow Pane Width
@@ -534,6 +666,13 @@ impl Workbench {
     fn trust_command(&mut self, trusted: bool, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.set_root_trust(trusted, cx.cx);
+    }
+
+    /// Runs the git or diff `command` for the active editor, as
+    /// [`crate::workbench::git_commands`] says.
+    fn run_typed_git(&mut self, command: GitCommand, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.run_git_command(command, cx.window, cx.cx);
     }
 
     /// Notes the command running in `commands_run`, for tests.

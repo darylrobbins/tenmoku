@@ -1,11 +1,12 @@
-//! The git and diff commands, each once: a [`GitCommand`] with its id and
-//! palette title in [`COMMANDS`], registered in the workbench's
-//! [`crate::KEY_CONTEXT`] and listed in the palette, and its ex forms in
-//! [`EX_FORMS`], typed on the vim line. Either way it becomes a [`GitOp`]
-//! that [`Workbench::run_git_op`] hands to its feature's module:
-//! `git_diff`, `git_stage`, `git_commit`, `git_blame`, `git_branch`,
-//! [`git_history`] or [`git_log`], each with a `run` that answers `Not supported yet:
-//! <title>` until its card fills it in.
+//! The git and diff commands, each once: a [`GitCommand`], run as a typed
+//! command of the workbench's (a method in `workbench_commands.rs`, with its
+//! id and palette title, in [`crate::KEY_CONTEXT`]) through
+//! [`Workbench::run_git_command`], and its ex forms in [`EX_FORMS`], typed
+//! on the vim line and routed here by fe-vim's host commands. Either way it
+//! becomes a [`GitOp`] that [`Workbench::run_git_op`] hands to its
+//! feature's module: `git_diff`, `git_stage`, `git_commit`, `git_blame`,
+//! `git_branch`, [`git_history`] or [`git_log`], each with a `run` that
+//! answers `Not supported yet: <title>` until its card fills it in.
 //!
 //! The ex forms follow the plugins vim users know them from: fugitive's
 //! `:Git` (or `:G`) subcommands, as `:Git commit --amend`, and its `:G…`
@@ -25,12 +26,10 @@
 //! [`owned_host_command`].
 
 use std::ops::Range;
-use std::rc::Rc;
 
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::{DiffView, EditorView, commands::RunCommand};
+use fe_gpui::{DiffView, EditorView};
 use fe_vim::HostCommand;
-use gpui::{App, Context, Entity, Global, WeakEntity, Window};
+use gpui::{App, Context, Entity, WeakEntity, Window};
 
 use super::{
     Workbench, git_blame, git_branch, git_commit, git_diff, git_stage,
@@ -44,7 +43,8 @@ pub(crate) mod git_history;
 #[path = "git_log.rs"]
 pub(crate) mod git_log;
 
-/// A git or diff command: see [`COMMANDS`] for each one's id and title.
+/// A git or diff command: each is a typed command of the workbench's, a
+/// method in `workbench_commands.rs` with its id and title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GitCommand {
     DiffIndex,
@@ -73,56 +73,6 @@ pub(crate) enum GitCommand {
 
 use GitCommand::*;
 
-/// Each command's id and palette title.
-pub(crate) const COMMANDS: [(GitCommand, &str, &str); 22] = [
-    (DiffIndex, "git.diff_index", "Git: Compare with Index"),
-    (DiffHead, "git.diff_head", "Git: Compare with HEAD"),
-    (
-        CompareFile,
-        "diff.compare_file",
-        "Compare Active File With…",
-    ),
-    (NextChange, "git.next_change", "Go to Next Change"),
-    (
-        PreviousChange,
-        "git.previous_change",
-        "Go to Previous Change",
-    ),
-    (StageFile, "git.stage_file", "Git: Stage File"),
-    (UnstageFile, "git.unstage_file", "Git: Unstage File"),
-    (DiscardFile, "git.discard_file", "Git: Discard File Changes"),
-    (
-        ResetBuffer,
-        "git.reset_buffer",
-        "Git: Revert Editor to Index",
-    ),
-    (StageHunk, "git.stage_hunk", "Git: Stage Change"),
-    (UnstageHunk, "git.unstage_hunk", "Git: Undo Stage Change"),
-    (RevertHunk, "git.revert_hunk", "Git: Revert Change"),
-    (Commit, "git.commit", "Git: Commit Staged"),
-    (
-        CommitAmend,
-        "git.commit_amend",
-        "Git: Commit Staged (Amend)",
-    ),
-    (
-        ToggleLineBlame,
-        "git.toggle_line_blame",
-        "Git: Toggle Line Blame",
-    ),
-    (BlameLine, "git.blame_line", "Git: Show Line Blame"),
-    (
-        OpenLineCommit,
-        "git.open_line_commit",
-        "Git: Open Line's Commit Change",
-    ),
-    (SwitchBranch, "git.switch_branch", "Git: Switch Branch…"),
-    (CreateBranch, "git.create_branch", "Git: Create Branch…"),
-    (FileHistory, "git.file_history", "Git: File History"),
-    (Log, "git.log", "Git: Log"),
-    (LogAll, "git.log_all", "Git: Log (All Branches)"),
-];
-
 /// The module a command runs in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Feature {
@@ -136,12 +86,33 @@ pub(crate) enum Feature {
 }
 
 impl GitCommand {
-    /// Its palette title, which its `Not supported yet` answer names.
+    /// Its palette title, its method's in `workbench_commands.rs`, which
+    /// its `Not supported yet` answer names.
     pub(crate) fn title(self) -> &'static str {
-        let (_, _, title) = (COMMANDS.iter())
-            .find(|(command, ..)| *command == self)
-            .expect("every command is listed");
-        title
+        match self {
+            DiffIndex => "Git: Compare with Index",
+            DiffHead => "Git: Compare with HEAD",
+            CompareFile => "Compare Active File With…",
+            NextChange => "Go to Next Change",
+            PreviousChange => "Go to Previous Change",
+            StageFile => "Git: Stage File",
+            UnstageFile => "Git: Unstage File",
+            DiscardFile => "Git: Discard File Changes",
+            ResetBuffer => "Git: Revert Editor to Index",
+            StageHunk => "Git: Stage Change",
+            UnstageHunk => "Git: Undo Stage Change",
+            RevertHunk => "Git: Revert Change",
+            Commit => "Git: Commit Staged",
+            CommitAmend => "Git: Commit Staged (Amend)",
+            ToggleLineBlame => "Git: Toggle Line Blame",
+            BlameLine => "Git: Show Line Blame",
+            OpenLineCommit => "Git: Open Line's Commit Change",
+            SwitchBranch => "Git: Switch Branch…",
+            CreateBranch => "Git: Create Branch…",
+            FileHistory => "Git: File History",
+            Log => "Git: Log",
+            LogAll => "Git: Log (All Branches)",
+        }
     }
 
     pub(crate) fn feature(self) -> Feature {
@@ -285,62 +256,6 @@ pub(crate) fn ex_command(
     Ok((*command, rest.join(" ")))
 }
 
-/// The [`CommandTarget`] of the git commands: the command run.
-pub(crate) struct GitCommands;
-
-impl CommandTarget for GitCommands {
-    type Tx = ();
-    type Target<'a> = Option<GitCommand>;
-}
-
-struct Commands(Rc<Registry<GitCommands>>);
-
-impl Global for Commands {}
-
-/// Registers the git commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<GitCommands> {
-    let mut registry = Registry::new();
-    for (command, id, title) in COMMANDS {
-        registry
-            .register(
-                id,
-                title,
-                move |target: &mut Option<GitCommand>, _: &Actor| {
-                    *target = Some(command);
-                    Ok(Dispatched::new(Effect::Notify))
-                },
-            )
-            .expect("git command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    }
-    // The commit box's key: the Changes panel runs it, in its own context.
-    registry
-        .register(
-            crate::git_panel::COMMIT_COMMAND,
-            "Commit from the Message Box",
-            |_: &mut Option<GitCommand>, _: &Actor| Ok(Dispatched::new(Effect::Notify)),
-        )
-        .expect("git command IDs are valid and distinct")
-        .context(ContextPredicate::identifier(crate::git_panel::KEY_CONTEXT));
-    registry
-}
-
-/// The command `run` names, if it's a git command that applies in its
-/// context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<GitCommand> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut command = None;
-    if let Err(error) = registry.dispatch(&mut command, &run.0) {
-        log::warn!("{error}");
-    }
-    command
-}
-
 /// What shows an editor that isn't a tab's, registered with
 /// [`Workbench::own_editor`].
 #[derive(Clone, Debug)]
@@ -369,7 +284,7 @@ pub(crate) enum Routed {
 
 impl Workbench {
     /// Runs `command` from the palette or a key, for the active editor.
-    pub(super) fn run_git_command(
+    pub(crate) fn run_git_command(
         &mut self,
         command: GitCommand,
         window: &mut Window,

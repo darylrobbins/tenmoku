@@ -2501,9 +2501,6 @@ impl Workbench {
         if self.run_references_command(run, window, cx) {
             return;
         }
-        if let Some(command) = git_commands::op(run, cx) {
-            return self.run_git_command(command, window, cx);
-        }
         if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
             return self.reveal_active(cx);
         }

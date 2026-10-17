@@ -51,7 +51,9 @@ mod workbench;
 mod workbench_commands;
 mod workspace_edit;
 
-use fe_command::{CommandMeta, Value};
+use fe_command::{
+    Actor, CommandMeta, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value,
+};
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::App;
 
@@ -97,7 +99,6 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     dock::init(cx);
     lsp::init(cx);
-    workbench::git_commands::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
@@ -130,7 +131,7 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     vec![
         kiln_shell::picker::catalog(),
         Box::new(dock::registry()),
-        Box::new(workbench::git_commands::registry()),
+        Box::new(commit_box_registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
         Box::new(outline_panel::registry()),
@@ -146,13 +147,39 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
 /// itself.
 fn command_list() -> Vec<CommandMeta> {
     let mut list: Vec<CommandMeta> = dock::registry().commands().cloned().collect();
-    list.extend(workbench::git_commands::registry().commands().cloned());
+    list.extend(commit_box_registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
     list
+}
+
+/// The [`CommandTarget`] of the Changes panel's commit box key: nothing,
+/// as the panel runs it itself.
+struct CommitBoxCommands;
+
+impl CommandTarget for CommitBoxCommands {
+    type Tx = ();
+    type Target<'a> = ();
+}
+
+/// The commit box's key, [`git_panel::COMMIT_COMMAND`], in the Changes
+/// panel's own context: the panel takes the [`fe_gpui::commands::RunCommand`]
+/// it sends, so it stays a registry command, here for the keymap and the
+/// palette. The workbench's git commands are typed.
+fn commit_box_registry() -> Registry<CommitBoxCommands> {
+    let mut registry = Registry::new();
+    registry
+        .register(
+            git_panel::COMMIT_COMMAND,
+            "Commit from the Message Box",
+            |_: &mut (), _: &Actor| Ok(Dispatched::new(Effect::Notify)),
+        )
+        .expect("the commit box's command ID is valid")
+        .context(ContextPredicate::identifier(git_panel::KEY_CONTEXT));
+    registry
 }
 
 /// Each catalog in turn, until one knows the command.
