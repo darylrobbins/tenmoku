@@ -35,15 +35,20 @@ use std::time::Duration;
 use fe_buffer::{BufferId, Version};
 use fe_nav::{
     Definition, Definitions, FileReferences, Location, NavError, NavRequest, NavigationProvider,
-    OutlineKind, Precision, Readiness, Reference, ReferencesSummary, Tier, WorkspaceSymbol,
+    OutlineKind, Precision, Readiness, Reference, ReferencesSummary, Related, Tier,
+    WorkspaceSymbol,
 };
 use fe_text::{Bias, Text};
 use futures::FutureExt;
 use futures::future::{self, Either};
-use lsp_types::request::{GotoDefinition, References, WorkspaceSymbolRequest};
+use lsp_types::request::{
+    GotoDeclaration, GotoDefinition, GotoImplementation, GotoTypeDefinition, References, Request,
+    WorkspaceSymbolRequest,
+};
 use lsp_types::{
-    GotoDefinitionParams, GotoDefinitionResponse, OneOf, ReferenceContext, ReferenceParams,
-    SymbolKind, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    DeclarationCapability, GotoDefinitionParams, GotoDefinitionResponse,
+    ImplementationProviderCapability, OneOf, ReferenceContext, ReferenceParams, SymbolKind,
+    TypeDefinitionProviderCapability, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 
 use crate::document::{Admitted, SentDocument};
@@ -90,6 +95,57 @@ impl LspNavigation {
         }
     }
 
+    /// A definition-shaped request `R`, decoded as definitions are.
+    fn goto<R>(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError>
+    where
+        R: Request<Params = GotoDefinitionParams, Result = Option<GotoDefinitionResponse>>,
+    {
+        let (buffer, version) = request_buffer(req)?;
+        let offset = req.offset;
+        let sent = self.with_manager(|manager| {
+            let reply =
+                manager.document_request::<R>(buffer, version, move |at| GotoDefinitionParams {
+                    text_document_position_params: at.position(offset),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                });
+            (reply.boxed(), manager.max_file_bytes())
+        });
+        let (reply, max_bytes) = sent.ok_or_else(gone)?;
+        let (reply, admitted) = wait(reply, cancel)?;
+        let targets = targets(reply.result);
+        if targets.is_empty() && !reply.empty_is_final {
+            return Err(NavError::Unavailable(NOT_FINAL.into()));
+        }
+        let word = req.word();
+        let mut decoder = Decoder::new(&self.root, admitted.encoding, max_bytes, cancel)
+            .with_request(req, &admitted)
+            .with_open(&admitted.others);
+        let items: Vec<Definition> = (targets.into_iter())
+            .filter_map(|(uri, range)| decoder.decode(&uri, range))
+            .map(|found| {
+                let name = found.name().or_else(|| word.clone()).unwrap_or_default();
+                Definition {
+                    location: found.location,
+                    name,
+                    kind: None,
+                    container: None,
+                    tier: found.tier,
+                }
+            })
+            .collect();
+        check(cancel)?;
+        if items.is_empty() && !decoder.dropped.is_empty() {
+            return Err(NavError::Unavailable(decoder.dropped_why()));
+        }
+        Ok(Definitions {
+            word,
+            unambiguous: items.len() == 1,
+            items,
+            partial: false,
+        })
+    }
+
     /// `read` of the manager, if the host still has it. A request's future
     /// leaves it boxed: its type borrows the manager, though it doesn't.
     fn with_manager<T>(&self, read: impl FnOnce(&LspManager) -> T) -> Option<T> {
@@ -132,51 +188,47 @@ impl NavigationProvider for LspNavigation {
     }
 
     fn definitions(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError> {
-        let (buffer, version) = request_buffer(req)?;
-        let offset = req.offset;
-        let sent = self.with_manager(|manager| {
-            let reply = manager.document_request::<GotoDefinition>(buffer, version, move |at| {
-                GotoDefinitionParams {
-                    text_document_position_params: at.position(offset),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                }
-            });
-            (reply.boxed(), manager.max_file_bytes())
+        self.goto::<GotoDefinition>(req, cancel)
+    }
+
+    /// The server's declarations, type definitions or implementations, if
+    /// it provides them; one that doesn't is asked nothing.
+    fn related(
+        &self,
+        kind: Related,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+    ) -> Result<Definitions, NavError> {
+        let (buffer, _) = request_buffer(req)?;
+        let provided = self.with_manager(|manager| match kind {
+            Related::Declaration => manager.provider_capabilities(buffer, "declaration", |caps| {
+                caps.declaration_provider.as_ref().is_some_and(|provider| {
+                    !matches!(provider, DeclarationCapability::Simple(false))
+                })
+            }),
+            Related::TypeDefinition => {
+                manager.provider_capabilities(buffer, "typeDefinition", |caps| {
+                    (caps.type_definition_provider.as_ref()).is_some_and(|provider| {
+                        !matches!(provider, TypeDefinitionProviderCapability::Simple(false))
+                    })
+                })
+            }
+            Related::Implementation => {
+                manager.provider_capabilities(buffer, "implementation", |caps| {
+                    (caps.implementation_provider.as_ref()).is_some_and(|provider| {
+                        !matches!(provider, ImplementationProviderCapability::Simple(false))
+                    })
+                })
+            }
         });
-        let (reply, max_bytes) = sent.ok_or_else(gone)?;
-        let (reply, admitted) = wait(reply, cancel)?;
-        let targets = targets(reply.result);
-        if targets.is_empty() && !reply.empty_is_final {
-            return Err(NavError::Unavailable(NOT_FINAL.into()));
+        if provided.ok_or_else(gone)?.is_err() {
+            return Err(NavError::Unsupported);
         }
-        let word = req.word();
-        let mut decoder = Decoder::new(&self.root, admitted.encoding, max_bytes, cancel)
-            .with_request(req, &admitted)
-            .with_open(&admitted.others);
-        let items: Vec<Definition> = (targets.into_iter())
-            .filter_map(|(uri, range)| decoder.decode(&uri, range))
-            .map(|found| {
-                let name = found.name().or_else(|| word.clone()).unwrap_or_default();
-                Definition {
-                    location: found.location,
-                    name,
-                    kind: None,
-                    container: None,
-                    tier: found.tier,
-                }
-            })
-            .collect();
-        check(cancel)?;
-        if items.is_empty() && !decoder.dropped.is_empty() {
-            return Err(NavError::Unavailable(decoder.dropped_why()));
+        match kind {
+            Related::Declaration => self.goto::<GotoDeclaration>(req, cancel),
+            Related::TypeDefinition => self.goto::<GotoTypeDefinition>(req, cancel),
+            Related::Implementation => self.goto::<GotoImplementation>(req, cancel),
         }
-        Ok(Definitions {
-            word,
-            unambiguous: items.len() == 1,
-            items,
-            partial: false,
-        })
     }
 
     /// The server's references, with a definition request alongside to

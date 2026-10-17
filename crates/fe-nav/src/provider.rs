@@ -285,6 +285,14 @@ impl fmt::Display for NavError {
 
 impl std::error::Error for NavError {}
 
+/// Which place related to a symbol [`NavigationProvider::related`] asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Related {
+    Declaration,
+    TypeDefinition,
+    Implementation,
+}
+
 /// Answers navigation requests for a project.
 ///
 /// Calls block, and run on a background thread the caller owns. `cancel` is
@@ -301,6 +309,20 @@ pub trait NavigationProvider: Send + Sync {
     fn readiness(&self, language: Option<&str>) -> Readiness;
 
     fn definitions(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError>;
+
+    /// The declarations, type definitions or implementations of the word at
+    /// the request's caret, answered as [`definitions`](Self::definitions)
+    /// are. A provider that can't keeps this default,
+    /// [`NavError::Unsupported`], and the next provider is asked.
+    fn related(
+        &self,
+        kind: Related,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+    ) -> Result<Definitions, NavError> {
+        let _ = (kind, req, cancel);
+        Err(NavError::Unsupported)
+    }
 
     /// The uses of the word at the request's caret, handed to `sink` a batch
     /// of whole files at a time as they're found; the summary comes once
@@ -414,6 +436,22 @@ impl Navigation {
             req.language,
             cancel,
             |provider| provider.definitions(req, cancel),
+            || false,
+        )
+    }
+
+    /// The declarations, type definitions or implementations the word at
+    /// the request's caret may mean.
+    pub fn related(
+        &self,
+        kind: Related,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+    ) -> Result<Answer<Definitions>, NavError> {
+        self.route(
+            req.language,
+            cancel,
+            |provider| provider.related(kind, req, cancel),
             || false,
         )
     }

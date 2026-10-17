@@ -51,7 +51,8 @@ pub use fe_syntax::OutlineKind;
 pub use index::{IndexStats, Reindex, SymbolIndex, SymbolMatch, SymbolRef};
 pub use provider::{
     Answer, Definition, Definitions, FileReferences, Location, NavError, NavRequest, Navigation,
-    NavigationProvider, Precision, Readiness, Reference, ReferencesSummary, Tier, WorkspaceSymbol,
+    NavigationProvider, Precision, Readiness, Reference, ReferencesSummary, Related, Tier,
+    WorkspaceSymbol,
 };
 pub use references::ReferenceOptions;
 pub use scip::{ScipEncoding, ScipError, ScipIndex, ScipOccurrence, ScipSite, ScipSymbolInfo};

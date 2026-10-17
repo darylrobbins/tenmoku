@@ -17,8 +17,8 @@ use fe_buffer::{Buffer, Origin};
 use fe_config::settings::LspSettings;
 use fe_nav::{
     Definitions, FileReferences, FileSymbols, Location, NavError, NavRequest, Navigation,
-    NavigationProvider, OutlineKind, Precision, Readiness, ReferencesSummary, SearchNavigation,
-    Symbol, SymbolIndex, Tier, WorkspaceSymbol,
+    NavigationProvider, OutlineKind, Precision, Readiness, ReferencesSummary, Related,
+    SearchNavigation, Symbol, SymbolIndex, Tier, WorkspaceSymbol,
 };
 use lsp_types::{NumberOrString, PositionEncodingKind, Url};
 use serde_json::{Value, json};
@@ -973,4 +973,112 @@ fn definitions_alongside_references_time_out_on_their_own() {
         .map(|reference| (reference.location.range.clone(), reference.is_definition))
         .collect();
     assert_eq!(marked, [(3..9, false)]);
+}
+
+/// A server whose capabilities provide `provides` (and no more).
+fn nav_providing(provides: impl FnOnce(&mut lsp_types::ServerCapabilities)) -> Nav {
+    let mut initialize = initialize_result(None);
+    provides(&mut initialize.capabilities);
+    let script = Script {
+        initialize: InitializeReply::Result(Box::new(initialize)),
+        ..Script::default()
+    };
+    let s = Nav::with(ReadinessMode::Progress, script, None);
+    s.settle();
+    assert_eq!(s.events.status(s.server), ServerStatus::Ready);
+    s
+}
+
+fn requests_of(s: &Nav, method: &str) -> Vec<Value> {
+    (s.fake.records().into_iter())
+        .filter_map(|record| match record {
+            Record::Request {
+                method: sent,
+                params,
+                ..
+            } if sent == method => Some(params),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn related_requests_decode_as_definitions() {
+    use lsp_types::{
+        DeclarationCapability, ImplementationProviderCapability, TypeDefinitionProviderCapability,
+    };
+    let s = nav_providing(|caps| {
+        caps.declaration_provider = Some(DeclarationCapability::Simple(true));
+        caps.type_definition_provider = Some(TypeDefinitionProviderCapability::Simple(true));
+        caps.implementation_provider = Some(ImplementationProviderCapability::Simple(true));
+    });
+    let main = s.uri("src/main.rs");
+    let other = s.uri("src/other.rs");
+    let other_name = bytes_of(OTHER, "other");
+    let req = s.request();
+    let cases = [
+        (
+            Related::Declaration,
+            "textDocument/declaration",
+            json!([link(&main, 0, 3..9)]),
+        ),
+        (
+            Related::TypeDefinition,
+            "textDocument/typeDefinition",
+            json!([
+                location(&main, range(0, 3, 9)),
+                location(&other, range(0, other_name.start, other_name.end)),
+            ]),
+        ),
+        (
+            Related::Implementation,
+            "textDocument/implementation",
+            location(&main, range(0, 3, 9)),
+        ),
+    ];
+    for (kind, method, reply) in cases {
+        // The same reply, as a definition's.
+        s.reply("textDocument/definition", reply.clone());
+        let expected = s.definitions(&req).value;
+        s.reply(method, reply);
+        let answer = s.navigation.related(kind, &req, &AtomicBool::new(false));
+        let answer = answer.unwrap();
+        assert_eq!(answer.provider, LspNavigation::NAME, "{kind:?}");
+        assert_eq!(answer.value, expected, "{kind:?}");
+        assert!(!answer.value.items.is_empty(), "{kind:?}");
+        let sent = requests_of(&s, method);
+        assert_eq!(sent.len(), 1, "{kind:?}");
+        assert_eq!(
+            sent[0]["textDocument"]["uri"],
+            json!(main),
+            "{kind:?}: {:?}",
+            sent[0]
+        );
+        assert_eq!(sent[0]["position"], json!({ "line": 3, "character": 6 }));
+    }
+}
+
+#[test]
+fn related_without_a_provider_sends_nothing() {
+    use lsp_types::DeclarationCapability;
+    let s = nav_providing(|caps| {
+        caps.declaration_provider = Some(DeclarationCapability::Simple(true));
+    });
+    s.reply("textDocument/typeDefinition", helper_definition(&s));
+    let answer = s.lsp.related(
+        Related::TypeDefinition,
+        &s.request(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(answer, Err(NavError::Unsupported));
+    let answer = (s.navigation).related(
+        Related::TypeDefinition,
+        &s.request(),
+        &AtomicBool::new(false),
+    );
+    assert_eq!(answer, Err(NavError::Unsupported));
+    assert_eq!(
+        requests_of(&s, "textDocument/typeDefinition"),
+        Vec::<Value>::new()
+    );
 }
