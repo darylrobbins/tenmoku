@@ -59,6 +59,27 @@ fn benches(c: &mut Criterion) {
         )
     });
 
+    // Fill the default history so every edit past here trims one entry.
+    let mut last = buffer.history_bytes(&Origin::User);
+    loop {
+        for _ in 0..1000 {
+            let offset = rng.random_range(0..len);
+            buffer.edit([(offset..offset, "x")], Origin::User);
+        }
+        let held = buffer.history_bytes(&Origin::User);
+        if held <= last {
+            break;
+        }
+        last = held;
+    }
+    c.bench_function("edit/keystroke with a full undo history in 100MB", |b| {
+        b.iter_batched(
+            || rng.random_range(0..len),
+            |offset| buffer.edit([(offset..offset, "x")], Origin::User),
+            BatchSize::SmallInput,
+        )
+    });
+
     c.bench_function("edit/100 cursors in 100MB", |b| {
         b.iter_batched(
             || {

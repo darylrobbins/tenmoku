@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs::{File, Metadata},
     io,
     ops::Range,
@@ -223,7 +223,7 @@ pub struct Buffer {
     /// Whether reading decoded malformed bytes to U+FFFD; see
     /// [`Buffer::write_to`].
     replaced_on_read: bool,
-    history: Vec<HistoryEntry>,
+    history: VecDeque<HistoryEntry>,
     open: Option<OpenTransaction>,
     /// The caller's transaction while [`Buffer::with_transaction_aside`] has
     /// it set aside; still protected from history trimming.
@@ -420,7 +420,7 @@ impl Buffer {
         debug_assert!(self.open.is_none() && self.history.is_empty());
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
-        self.history.push(HistoryEntry {
+        self.history.push_back(HistoryEntry {
             id,
             origin,
             batches: Vec::new(),
@@ -479,7 +479,7 @@ impl Buffer {
             line_ending,
             encoding: FileEncoding::UTF8,
             replaced_on_read: false,
-            history: Vec::new(),
+            history: VecDeque::new(),
             open: None,
             aside: None,
             next_transaction: 0,
@@ -917,7 +917,7 @@ impl Buffer {
         }
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
-        self.history.push(HistoryEntry {
+        self.history.push_back(HistoryEntry {
             id,
             origin: origin.clone(),
             batches: Vec::new(),
@@ -972,7 +972,7 @@ impl Buffer {
     fn finish_transaction(&mut self, id: TransactionId) -> Option<TransactionId> {
         let ix = self.history.iter().rposition(|entry| entry.id == id)?;
         if self.history[ix].batches.is_empty() {
-            let entry = self.history.remove(ix);
+            let entry = self.history.remove(ix).expect("index is in range");
             if let Some(held) = self.history_bytes.get_mut(&entry.origin) {
                 *held -= ENTRY_OVERHEAD;
             }
@@ -1116,7 +1116,7 @@ impl Buffer {
         }
         let id = self.next_transaction_id();
         *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
-        self.history.push(HistoryEntry {
+        self.history.push_back(HistoryEntry {
             id,
             origin: origin.clone(),
             batches: vec![batch],
@@ -1137,46 +1137,50 @@ impl Buffer {
         }
         let open = self.open.as_ref().map(|open| open.id);
         let aside = self.aside;
-        // Indices of the origin's closed entries, oldest first; the last
-        // is never dropped.
-        let mut droppable: Vec<usize> = self
-            .history
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                entry.origin == *origin
-                    && Some(entry.id) != open
-                    && Some(entry.id) != aside
-                    && Some(entry.id) != keep
-            })
-            .map(|(ix, _)| ix)
-            .collect();
-        droppable.pop();
+        let droppable = |entry: &HistoryEntry| {
+            entry.origin == *origin
+                && Some(entry.id) != open
+                && Some(entry.id) != aside
+                && Some(entry.id) != keep
+        };
+        // The origin's newest closed entry is never dropped; it is found
+        // from the back, so this stops at once in practice.
+        let Some(newest) = self.history.iter().rposition(&droppable) else {
+            return;
+        };
         let mut held = held;
-        let mut drop_ids = Vec::new();
         let mut undone = 0;
-        for ix in droppable {
+        let mut last = None;
+        for (ix, entry) in self.history.iter().enumerate().take(newest) {
             if held <= self.history_limit {
                 break;
             }
-            let entry = &self.history[ix];
-            held -= entry_bytes(entry);
-            undone += usize::from(entry.undone.is_some());
-            drop_ids.push(entry.id);
-        }
-        if drop_ids.is_empty() {
-            return;
-        }
-        // `drop_ids` is in history order, so one ordered pass finds them.
-        let mut next = drop_ids.iter().peekable();
-        self.history.retain(|entry| {
-            if next.peek() == Some(&&entry.id) {
-                next.next();
-                false
-            } else {
-                true
+            if droppable(entry) {
+                held -= entry_bytes(entry);
+                undone += usize::from(entry.undone.is_some());
+                last = Some(ix);
             }
-        });
+        }
+        let Some(last) = last else {
+            return;
+        };
+        // Only the prefix up to the last dropped entry is touched; every
+        // droppable entry of the origin in it is dropped.
+        let mut prefix = last + 1;
+        while prefix > 0 && self.history.front().is_some_and(&droppable) {
+            self.history.pop_front();
+            prefix -= 1;
+        }
+        if prefix > 0 {
+            let kept: Vec<HistoryEntry> = self
+                .history
+                .drain(..prefix)
+                .filter(|entry| !droppable(entry))
+                .collect();
+            for entry in kept.into_iter().rev() {
+                self.history.push_front(entry);
+            }
+        }
         self.history_bytes.insert(origin.clone(), held);
         if undone > 0
             && let Some(count) = self.redoable.get_mut(origin)
