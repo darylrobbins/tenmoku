@@ -124,6 +124,11 @@ impl Workbench {
                 if model.path() != path.as_deref() {
                     return FormatOutcome::Unchanged;
                 }
+                // Format on save, with a vim insert opened since the request.
+                if !view.save_edits_allowed(cx) {
+                    return FormatOutcome::Unchanged;
+                }
+                let model = view.model_mut();
                 let mut buffer = model.buffer_mut();
                 if buffer.version() != version {
                     return FormatOutcome::Unchanged;

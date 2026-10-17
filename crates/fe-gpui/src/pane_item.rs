@@ -20,15 +20,15 @@ use std::{
 };
 
 use fe_buffer::{Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, Version};
-use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved};
+use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved, auto_save::SaveReason};
 
 use fe_command::{Invocation, Value};
 use fe_text::Text;
 use fe_vim::VimState;
 use futures::{FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, Global, Hsla,
-    PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, WindowId,
+    AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global,
+    Hsla, PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, WindowId,
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
@@ -254,6 +254,39 @@ impl Drop for SaveGuard {
     }
 }
 
+thread_local! {
+    /// The reason of the save whose hook runs, per editor.
+    static HOOK_REASONS: RefCell<HashMap<EntityId, SaveReason>> = RefCell::default();
+}
+
+/// Ends an editor's entry in [`HOOK_REASONS`] when its hook is over or the
+/// save is dropped.
+struct HookReason(EntityId);
+
+impl Drop for HookReason {
+    fn drop(&mut self) {
+        HOOK_REASONS
+            .try_with(|reasons| reasons.borrow_mut().remove(&self.0))
+            .ok();
+    }
+}
+
+impl EditorView {
+    /// Whether `reason` lets a save edit the text now: see
+    /// [`SaveReason::edits_allowed`], with this editor's vim mode as it is.
+    fn edits_allowed(&self, reason: SaveReason) -> bool {
+        reason.edits_allowed(self.typing_mode().is_some())
+    }
+
+    /// For a [`SaveHook`] to ask before it applies an edit it asked for
+    /// earlier: false if the save it runs for doesn't allow edits now, such
+    /// as with vim in insert mode since. True with no save running a hook.
+    pub fn save_edits_allowed(&self, cx: &Context<Self>) -> bool {
+        let reason = HOOK_REASONS.with_borrow(|reasons| reasons.get(&cx.entity_id()).copied());
+        reason.is_none_or(|reason| self.edits_allowed(reason))
+    }
+}
+
 /// How long a save waits for its [`SaveHook`] before saving anyway.
 const SAVE_HOOK_LIMIT: Duration = Duration::from_secs(1);
 
@@ -368,12 +401,32 @@ impl EditorView {
     /// error. The save goes on if the task is dropped. Its prompts show in
     /// `window`.
     pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<gpui::Result<()>> {
+        self.save_with(SaveReason::Explicit, window, cx)
+    }
+
+    /// [`EditorView::save`] for `reason`. Where [`SaveReason::edits_allowed`]
+    /// says no (an auto-save after a delay, or during a vim insert), the
+    /// save hook and the [`SaveFixes`] don't run: the file is saved as it
+    /// is. An auto reason never prompts: a file changed on disk fails the
+    /// task with an error that downcasts to
+    /// [`SaveError::ChangedOnDisk`](fe_editor::SaveError), and any other
+    /// failure is the I/O error.
+    pub fn save_with(
+        &mut self,
+        reason: SaveReason,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
         let (previous, guard) = self.queue_save();
+        let edits = self.edits_allowed(reason);
+        let ask = reason == SaveReason::Explicit;
         // With none running, the text as it is now, or as the hook leaves
         // it; typing from here on is unsaved.
-        let hook = self.save_hook.clone();
+        let hook = self.save_hook.clone().filter(|_| edits);
         let job = (previous.is_none() && hook.is_none()).then(|| {
-            self.apply_save_fixes(cx);
+            if edits {
+                self.apply_save_fixes(cx);
+            }
             self.model.prepare_save(false)
         });
         let editor = cx.entity();
@@ -382,7 +435,16 @@ impl EditorView {
             if let Some(previous) = previous {
                 previous.over.await.ok();
             }
+            // Asked again: a save that waited, or a hook that took its time,
+            // may have met a vim insert.
+            let hook = match hook {
+                Some(hook) if this.update(cx, |view, _| view.edits_allowed(reason))? => Some(hook),
+                _ => None,
+            };
             if let Some(hook) = hook {
+                let id = editor.entity_id();
+                HOOK_REASONS.with_borrow_mut(|reasons| reasons.insert(id, reason));
+                let _over = HookReason(id);
                 let task = cx.update(|cx| hook.before_save(&editor, cx));
                 let limit = cx.background_executor().timer(SAVE_HOOK_LIMIT);
                 if let futures::future::Either::Right(_) =
@@ -392,9 +454,13 @@ impl EditorView {
                 }
             }
             if job.is_none() {
-                this.update(cx, |view, cx| view.apply_save_fixes(cx))?;
+                this.update(cx, |view, cx| {
+                    if view.edits_allowed(reason) {
+                        view.apply_save_fixes(cx);
+                    }
+                })?;
             }
-            let saved = save_asking(this, job, window, cx).await;
+            let saved = save_asking(this, job, ask.then_some(window), cx).await;
             drop(guard);
             saved
         })
@@ -584,11 +650,12 @@ impl EditorView {
 /// A save of `this`'s buffer, from `job` if it was prepared, else of the
 /// text as it is now. If the file changed on disk and the user, asked in
 /// `window`, says to overwrite it, the same text is saved over it: what was
-/// typed since stays unsaved.
+/// typed since stays unsaved. With no `window` it doesn't ask: the conflict
+/// is the error.
 async fn save_asking(
     this: &WeakEntity<EditorView>,
     job: Option<io::Result<SaveJob>>,
-    window: AnyWindowHandle,
+    window: Option<AnyWindowHandle>,
     cx: &mut AsyncApp,
 ) -> gpui::Result<()> {
     let job = match job {
@@ -597,7 +664,7 @@ async fn save_asking(
     }?;
     let name = file_name(Some(job.path()));
     let saved = match run(job.clone(), cx).await {
-        Err(SaveError::ChangedOnDisk) => {
+        Err(SaveError::ChangedOnDisk) if let Some(window) = window => {
             let answer = cx.update_window(window, |_, window, cx| {
                 window.prompt(
                     PromptLevel::Warning,
@@ -1381,6 +1448,10 @@ mod save_fixes_tests;
 #[cfg(test)]
 #[path = "save_hook_tests.rs"]
 mod save_hook_tests;
+
+#[cfg(test)]
+#[path = "save_reason_tests.rs"]
+mod save_reason_tests;
 
 #[cfg(test)]
 #[path = "indent_status_tests.rs"]
