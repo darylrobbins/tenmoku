@@ -381,12 +381,6 @@ pub(crate) fn toggle_case(
                 false => toggled[..toggled.len() - 1].iter().map(String::len).sum(),
             };
             let toggled = toggled.concat();
-            if text.slice_to_string(range.clone()) == toggled {
-                return Acts {
-                    edits: Vec::new(),
-                    land: Some(Land::At(range.start + land)),
-                };
-            }
             Acts {
                 edits: vec![(range, toggled)],
                 land: Some(Land::Edit(0, land)),
