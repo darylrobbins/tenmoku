@@ -248,7 +248,7 @@ fn shares_both_ways(app: &mut TestAppContext) {
     });
     assert!(diff.read_with(cx, |diff, cx| diff.is_dirty(cx)));
     for first in [0, 1] {
-        let pane = cx.update(|_, cx| cx.new(|cx| ItemPane::new(Default::default(), cx)));
+        let pane = cx.update(|_, cx| cx.new(ItemPane::new));
         pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(editor.clone()), cx);
             pane.add_item(Box::new(diff.clone()), cx);

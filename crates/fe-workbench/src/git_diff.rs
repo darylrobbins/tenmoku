@@ -52,7 +52,8 @@
 //! answers `E21` to `do` and `:w`, and putting into a read-only left side,
 //! or into HEAD, `E793`. `:w` on the right side saves the file; `:q`
 //! closes the diff tab, refused with `E37` while the right side is dirty
-//! and no other editor shows its buffer.
+//! and no other editor shows its buffer. `:w {path}` and `:sav[eas]` in
+//! either side answer `Not supported yet` for now.
 
 use std::{
     ops::Range,
@@ -106,6 +107,9 @@ const WORKING_TREE: &str = "Working Tree";
 
 /// What a file too large to edit answers, before its name.
 const TOO_LARGE: &str = "Too large to compare";
+
+/// What `:w {path}` and `:sav[eas]` answer in a diff view's side.
+const NOT_IN_DIFF: &str = "Not supported yet: writing a diff side to another file";
 
 /// What a git diff's left side is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +300,9 @@ pub(super) fn host_command(
     };
     let read_only = editor.read(cx).is_read_only();
     match command {
+        HostCommand::Write { path: Some(_), .. } | HostCommand::SaveAs { .. } => {
+            message(&editor, NOT_IN_DIFF, cx)
+        }
         HostCommand::Write { .. }
         | HostCommand::WriteQuit {
             only_if_modified: false,
@@ -341,6 +348,13 @@ pub(super) fn host_command(
             path: Some(path), ..
         } => workbench.edit_from_diff(&diff, &editor, &path, window, cx),
         HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
+        HostCommand::Explore
+        | HostCommand::OldFiles
+        | HostCommand::OpenProblems
+        | HostCommand::CloseProblems
+        | HostCommand::ReplaceInFiles { .. } => {
+            workbench.run_window_command(&editor, command, window, cx)
+        }
     }
 }
 
@@ -674,7 +688,7 @@ impl Workbench {
     /// side that has a file. A buffer may show in several.
     pub(crate) fn file_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
         let mut editors = self.open_editors(cx);
-        for pane in self.panes.panes() {
+        for pane in self.panes(cx) {
             for tab in pane.read(cx).tabs() {
                 let Some(diff) = tab.item().downcast_ref::<DiffView>() else {
                     continue;
@@ -756,7 +770,7 @@ impl Workbench {
 
     /// The pane showing `diff`, and its tab's index there.
     fn diff_tab(&self, diff: &Entity<DiffView>, cx: &App) -> Option<(Entity<Pane>, usize)> {
-        self.panes.panes().into_iter().find_map(|pane| {
+        self.panes(cx).into_iter().find_map(|pane| {
             let tabs = pane.read(cx).tabs();
             let ix = (tabs.iter()).position(|tab| tab.item().downcast_ref() == Some(diff))?;
             Some((pane.clone(), ix))
@@ -890,7 +904,7 @@ impl Workbench {
     /// gone, without showing it.
     fn place_diff(&mut self, diff: &Entity<DiffView>, pane: &WeakEntity<Pane>, cx: &mut App) {
         let pane = (pane.upgrade())
-            .filter(|pane| self.panes.panes().contains(&pane))
+            .filter(|pane| self.panes(cx).contains(pane))
             .unwrap_or_else(|| self.active.clone());
         pane.update(cx, |pane, cx| {
             pane.pane_mut().push(Box::new(diff.clone()), cx);
@@ -1461,7 +1475,7 @@ impl Workbench {
             pane.take_item(ix, window, cx);
             cx.notify();
         });
-        let empty = (self.panes.panes().iter()).all(|pane| pane.read(cx).tabs().is_empty());
+        let empty = (self.panes(cx).iter()).all(|pane| pane.read(cx).tabs().is_empty());
         if empty {
             window.remove_window();
         }

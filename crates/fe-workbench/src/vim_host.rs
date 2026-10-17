@@ -117,7 +117,29 @@ impl Workbench {
                 };
                 self.run_git_op(op, window, cx);
             }
-            HostCommand::Explore => self.vim_explore(&editor, window, cx),
+            command @ (HostCommand::Explore
+            | HostCommand::OldFiles
+            | HostCommand::OpenProblems
+            | HostCommand::CloseProblems
+            | HostCommand::ReplaceInFiles { .. }) => {
+                self.run_window_command(&editor, command, window, cx)
+            }
+        }
+    }
+
+    /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
+    /// `:cclose` and `:Replace`, typed in `editor`, which act on the window
+    /// whichever editor they are typed in: a tab's, a diff view's side or the
+    /// commit box. Any other command runs nothing.
+    pub(super) fn run_window_command(
+        &mut self,
+        editor: &Entity<EditorView>,
+        command: HostCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            HostCommand::Explore => self.vim_explore(editor, window, cx),
             HostCommand::OldFiles => self.run_recent_op(RecentOp::Open, window, cx),
             HostCommand::OpenProblems => {
                 self.run_dock_op(DockOp::Problems(ProblemsOp::Show), window, cx);
@@ -129,8 +151,9 @@ impl Workbench {
                 }
             }
             HostCommand::ReplaceInFiles { text } => {
-                self.vim_replace_in_files(&editor, text, window, cx)
+                self.vim_replace_in_files(editor, text, window, cx)
             }
+            _ => {}
         }
     }
 

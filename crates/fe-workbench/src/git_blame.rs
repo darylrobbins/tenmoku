@@ -1175,7 +1175,7 @@ fn commit_tab(
         .filter_map(|(diff, ..)| diff.upgrade())
         .collect();
     views.into_iter().find_map(|diff| {
-        workbench.panes.panes().into_iter().find_map(|pane| {
+        workbench.panes(cx).into_iter().find_map(|pane| {
             let tabs = pane.read(cx).tabs();
             let ix = (tabs.iter()).position(|tab| tab.item().downcast_ref() == Some(&diff))?;
             Some((diff.clone(), pane.clone(), ix))

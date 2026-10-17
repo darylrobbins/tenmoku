@@ -151,6 +151,13 @@ pub(super) fn host_command(
             }
         }
         HostCommand::DiffSplit { .. } => message(&editor, NOT_IN_THE_BOX, cx),
+        HostCommand::Explore
+        | HostCommand::OldFiles
+        | HostCommand::OpenProblems
+        | HostCommand::CloseProblems
+        | HostCommand::ReplaceInFiles { .. } => {
+            workbench.run_window_command(&editor, command, window, cx)
+        }
     }
 }
 

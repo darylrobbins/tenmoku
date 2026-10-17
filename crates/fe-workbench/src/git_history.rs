@@ -222,7 +222,7 @@ impl Workbench {
             .filter_map(|(.., view)| view.upgrade())
             .collect();
         views.into_iter().find_map(|view| {
-            self.panes.panes().into_iter().find_map(|pane| {
+            self.panes(cx).into_iter().find_map(|pane| {
                 let tabs = pane.read(cx).tabs();
                 let ix = (tabs.iter()).position(|tab| tab.item().downcast_ref() == Some(&view))?;
                 Some((pane.clone(), ix))
@@ -335,7 +335,7 @@ impl Workbench {
         let opened = &mut cx.default_global::<Opened>().views;
         opened.push((commit.commit.id.clone(), commit.path, diff.downgrade()));
         let pane = (landing.pane.upgrade())
-            .filter(|pane| self.panes.panes().contains(&pane))
+            .filter(|pane| self.panes(cx).contains(pane))
             .unwrap_or_else(|| self.active.clone());
         let ix = pane.update(cx, |pane, cx| {
             let ix = pane.pane_mut().push(Box::new(diff.clone()), cx);
