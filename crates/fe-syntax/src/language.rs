@@ -108,7 +108,8 @@ fn listed() -> impl Iterator<Item = &'static Def> {
 }
 
 /// Other names injections use for our languages, besides file extensions: the
-/// fence names GitHub (linguist) and VS Code accept.
+/// fence names GitHub (linguist) accepts and those VS Code's Markdown
+/// grammar does too.
 const ALIASES: &[(&str, &str)] = &[
     ("shell", "bash"),
     ("shell-script", "bash"),
@@ -122,6 +123,46 @@ const ALIASES: &[(&str, &str)] = &[
     ("javascriptreact", "javascript"),
     ("typescriptreact", "tsx"),
     ("jsonc", "json"),
+    ("xhtml", "html"),
+    ("shtml", "html"),
+    ("php3", "php"),
+    ("php4", "php"),
+    ("php5", "php"),
+    ("phpt", "php"),
+    ("phtml", "php"),
+    ("ctp", "php"),
+    ("ddl", "sql"),
+    ("dml", "sql"),
+    ("xsd", "xml"),
+    ("tld", "xml"),
+    ("rss", "xml"),
+    ("opml", "xml"),
+    ("xsl", "xml"),
+    ("xslt", "xml"),
+    ("es6", "javascript"),
+    ("json5", "json"),
+    ("py3", "python"),
+    ("rpy", "python"),
+    ("cpy", "python"),
+    ("gyp", "python"),
+    ("gypi", "python"),
+    ("sconstruct", "python"),
+    ("sconscript", "python"),
+    ("sbt", "scala"),
+    ("bashrc", "bash"),
+    ("bash_profile", "bash"),
+    ("bash_login", "bash"),
+    ("bash_logout", "bash"),
+    ("profile", "bash"),
+    ("rbx", "ruby"),
+    ("rjs", "ruby"),
+    ("gemfile", "ruby"),
+    ("rakefile", "ruby"),
+    ("irbrc", "ruby"),
+    ("capfile", "ruby"),
+    ("vagrantfile", "ruby"),
+    ("bsh", "java"),
+    ("gnumakefile", "make"),
 ];
 
 /// What an injection's language name refers to.
@@ -136,9 +177,10 @@ pub(crate) enum Injected {
 
 /// The language an injection names, ignoring case: by its name, a file
 /// extension (`js`, `py`, `c++`) or an alias such as `shell`. Anything after
-/// a comma is ignored, as in a ```` ```rust,ignore ```` fence.
+/// a comma or colon is ignored, as in ```` ```rust,ignore ```` or
+/// ```` ```js:app.js ```` fences.
 pub(crate) fn injected_language(name: &str) -> Injected {
-    let name = name.split(',').next().unwrap_or_default().trim();
+    let name = name.split([',', ':']).next().unwrap_or_default().trim();
     let name = name.to_ascii_lowercase();
     let name = ALIASES
         .iter()
