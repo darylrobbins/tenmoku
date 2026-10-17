@@ -334,17 +334,16 @@ fn a_broken_settings_file_shows_and_clears(cx: &mut TestAppContext) {
     assert_eq!(tab_size(cx), 4);
 }
 
-#[test]
-fn the_command_is_in_the_catalog_and_the_palette() {
+#[gpui::test]
+fn the_command_is_in_the_catalog_and_the_palette(cx: &mut TestAppContext) {
     let command = fe_command::CommandId::parse(super::SHOW).unwrap();
     let catalog = crate::command_catalog();
     assert_eq!(catalog.check(&command, &fe_command::Value::Null), Ok(()));
-    let listed = crate::command_list();
-    let listed = listed
-        .iter()
-        .find(|meta| meta.id == command)
-        .expect("listed");
-    assert_eq!(listed.title, "Show Config Problems");
+    init(cx);
+    let typed = cx.read(|cx| {
+        kiln::platform::command_actions::typed_command(&command, cx).expect("a typed command")
+    });
+    assert_eq!(typed.title, "Show Config Problems");
 }
 
 /// The active editor's file, if a file shows.

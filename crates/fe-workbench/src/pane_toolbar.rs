@@ -9,19 +9,15 @@
 //! generation moved, and pushes it into the active pane
 //! ([`Toolbar::symbols`]). An inactive pane keeps the chain it showed last.
 //!
-//! `view.toggle_breadcrumbs` hides or shows every pane's toolbar; it's in
-//! [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`], and its
-//! handler only says it ran: the workbench does it.
+//! `view.toggle_breadcrumbs` hides or shows every pane's toolbar; it's a
+//! typed command on the workbench.
 
-use std::{ffi::OsString, path::PathBuf, rc::Rc};
+use std::{ffi::OsString, path::PathBuf};
 
-use fe_command::{
-    Actor, CommandId, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
-    Effect, Invocation, Registry, Source, Value,
-};
+use fe_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_syntax::Outline;
-use gpui::{App, EntityId, Global, SharedString, WeakEntity, Window};
+use gpui::{App, EntityId, SharedString, WeakEntity, Window};
 
 /// Which of back and forward can run. The workbench pushes it into each
 /// pane; both are off until there's a navigation history.
@@ -137,54 +133,4 @@ pub(crate) fn dispatch(command: &str, source: Source, window: &mut Window, cx: &
         .collect();
     let invocation = invocation.source(source).context(context);
     window.dispatch_action(Box::new(RunCommand(invocation)), cx);
-}
-
-/// The [`CommandTarget`] of the toolbar's command: whether it ran.
-pub(crate) struct ToolbarCommands;
-
-impl CommandTarget for ToolbarCommands {
-    type Tx = ();
-    type Target<'a> = bool;
-}
-
-struct Commands(Rc<Registry<ToolbarCommands>>);
-
-impl Global for Commands {}
-
-/// Registers `view.toggle_breadcrumbs`.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<ToolbarCommands> {
-    let mut registry = Registry::new();
-    registry
-        .register(
-            "view.toggle_breadcrumbs",
-            "Toggle Breadcrumbs",
-            |ran: &mut bool, _: &Actor| {
-                *ran = true;
-                Ok(Dispatched::new(Effect::Notify))
-            },
-        )
-        .expect("the toolbar command ID is valid")
-        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    registry
-}
-
-/// Whether `run` is `view.toggle_breadcrumbs`, in a context where it
-/// applies.
-pub(crate) fn toggles(run: &RunCommand, cx: &App) -> bool {
-    let Some(commands) = cx.try_global::<Commands>() else {
-        return false;
-    };
-    let registry = commands.0.clone();
-    if registry.get(&run.0.command).is_none() {
-        return false;
-    }
-    let mut ran = false;
-    if let Err(error) = registry.dispatch(&mut ran, &run.0) {
-        log::warn!("{error}");
-    }
-    ran
 }

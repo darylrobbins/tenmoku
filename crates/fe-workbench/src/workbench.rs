@@ -30,7 +30,7 @@ use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     auto_save::AutoSave,
-    config_problems::{self, ConfigProblemsPicker},
+    config_problems::ConfigProblemsPicker,
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
     dock_layout,
@@ -46,7 +46,6 @@ use crate::{
     outline_panel,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
-    picker::{self, Toggle},
     project_panel::{self, PanelEvent, PanelOp},
     terminal_panel::{self, TERMINAL, TerminalOp, TerminalPanel, TerminalPanelEvent},
     title_bar,
@@ -288,7 +287,7 @@ pub struct Workbench {
     /// it's hidden, and gives the host commands typed on it.
     _status_bar: [Subscription; 2],
     /// The window's toasts, over the panes at the bottom right.
-    toasts: Entity<toast::ToastLayer>,
+    pub(crate) toasts: Entity<toast::ToastLayer>,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -467,7 +466,6 @@ impl Workbench {
         }
         let nav_state = Nav::new(launch_root.clone(), ui, cx);
         let status_bar = cx.new(|_| StatusBar::new(ui));
-        toast::init(cx);
         let toasts = cx.new(|cx| toast::ToastLayer::new(ui, window, cx));
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
@@ -1985,7 +1983,7 @@ impl Workbench {
 
     /// Shows the quick-open palette, focused, in place of any other, or
     /// dismisses it.
-    fn toggle_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let show = !self.palette_open();
         if show {
             self.dismiss_palette(window, cx);
@@ -2050,7 +2048,7 @@ impl Workbench {
     /// Shows the go-to-line picker, focused, for the active editor, in
     /// place of any other palette, or dismisses it if it shows. Nothing
     /// without an active editor.
-    fn toggle_go_to_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_go_to_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette == Some(Palette::GoToLine) {
             return self.dismiss_palette(window, cx);
         }
@@ -2156,7 +2154,7 @@ impl Workbench {
 
     /// Shows or hides every pane's toolbar, as `view.toggle_breadcrumbs`
     /// does.
-    fn toggle_breadcrumbs(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_breadcrumbs(&mut self, cx: &mut Context<Self>) {
         self.breadcrumbs = !self.breadcrumbs;
         self.layout_keys.breadcrumbs.set(self.breadcrumbs);
         self.layout_keys_changed(cx);
@@ -2493,17 +2491,6 @@ impl Workbench {
         }
         #[cfg(test)]
         self.commands_run.push(run.0.clone());
-        match picker::toggled(run, cx) {
-            Some(Toggle::QuickOpen) => return self.toggle_quick_open(window, cx),
-            Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
-            None => {}
-        }
-        if toast::dismisses_all(run, cx) {
-            return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
-        }
-        if config_problems::shows(run, cx) {
-            return self.show_config_problems(window, cx);
-        }
         if self.run_references_command(run, window, cx) {
             return;
         }
@@ -2512,9 +2499,6 @@ impl Workbench {
         }
         if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
             return self.reveal_active(cx);
-        }
-        if pane_toolbar::toggles(run, cx) {
-            return self.toggle_breadcrumbs(cx);
         }
         if let Some(op) = terminal_panel::op(run, cx) {
             return self.run_terminal_op(op, window, cx);

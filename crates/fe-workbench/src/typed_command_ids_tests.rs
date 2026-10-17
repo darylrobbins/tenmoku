@@ -64,6 +64,15 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     ("view.toggle_status_bar", "Toggle Status Bar", "workbench"),
+    ("quick_open.toggle", "Go to File", "workbench"),
+    ("go_to_line.toggle", "Go to Line/Column…", "workbench"),
+    ("toast.dismiss_all", "Dismiss Notifications", "workbench"),
+    (
+        "workbench.show_config_problems",
+        "Show Config Problems",
+        "workbench",
+    ),
+    ("view.toggle_breadcrumbs", "Toggle Breadcrumbs", "workbench"),
     ("language.select", "Change Language Mode…", "workbench"),
     ("nav.goto_definition", "Go to Definition", "workbench"),
     (

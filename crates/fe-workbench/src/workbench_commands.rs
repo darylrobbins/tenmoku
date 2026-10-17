@@ -217,6 +217,42 @@ impl Workbench {
         persist::save_status_bar(self.status_bar_visible(), cx.cx);
     }
 
+    /// Go to File
+    #[command(id = "quick_open.toggle")]
+    fn toggle_quick_open_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_quick_open(cx.window, cx.cx);
+    }
+
+    /// Go to Line/Column…
+    #[command(id = "go_to_line.toggle")]
+    fn toggle_go_to_line_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_go_to_line(cx.window, cx.cx);
+    }
+
+    /// Dismiss Notifications
+    #[command(id = "toast.dismiss_all")]
+    fn dismiss_notifications(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toasts
+            .update(cx.cx, |toasts, cx| toasts.dismiss_all(cx));
+    }
+
+    /// Show Config Problems
+    #[command(id = "workbench.show_config_problems")]
+    fn show_config_problems_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.show_config_problems(cx.window, cx.cx);
+    }
+
+    /// Toggle Breadcrumbs
+    #[command(id = "view.toggle_breadcrumbs")]
+    fn toggle_breadcrumbs_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_breadcrumbs(cx.cx);
+    }
+
     /// Change Language Mode…
     #[command(id = "language.select")]
     fn select_language_mode(&mut self, cx: &mut Cx<Self>) {

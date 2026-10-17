@@ -20,30 +20,20 @@
 //! The queue and its timers are [`ToastQueue`], which knows nothing of
 //! GPUI: it's told the time.
 //!
-//! The first workbench registers `toast.dismiss_all` and lists it in the
-//! palette ([`init`]). It has no key yet, and isn't in
-//! [`crate::command_catalog`], so a keymap can't bind it until it is.
+//! `toast.dismiss_all` is a typed command on the workbench.
 
 use std::{
     collections::VecDeque,
-    rc::Rc,
     time::{Duration, Instant},
 };
 
-use fe_command::{
-    Actor, CommandId, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
-    Source,
-};
-use fe_gpui::commands::RunCommand;
+use fe_command::{CommandId, Invocation, Source};
 use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, UiTheme};
 use gpui::{
     App, Context, Entity, HoverListenerMode, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
     Styled as _, Task, WeakEntity, Window, WindowId, div, px,
 };
-
-/// The command that dismisses every toast.
-pub(crate) const DISMISS_ALL: &str = "toast.dismiss_all";
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -305,62 +295,6 @@ fn layer_for(active: Option<WindowId>, cx: &mut App) -> Option<Entity<ToastLayer
 struct Layers(Vec<(WindowId, WeakEntity<ToastLayer>)>);
 
 impl gpui::Global for Layers {}
-
-/// The [`CommandTarget`] of [`DISMISS_ALL`]: whether it ran.
-pub(crate) struct ToastCommands;
-
-impl CommandTarget for ToastCommands {
-    type Tx = ();
-    type Target<'a> = bool;
-}
-
-struct Commands(Rc<Registry<ToastCommands>>);
-
-impl gpui::Global for Commands {}
-
-/// Registers [`DISMISS_ALL`] and lists it in the command palette, once.
-pub(crate) fn init(cx: &mut App) {
-    if cx.has_global::<Commands>() {
-        return;
-    }
-    let registry = registry();
-    kiln_shell::command_palette::add_commands(cx, registry.commands().cloned());
-    cx.set_global(Commands(Rc::new(registry)));
-}
-
-pub(crate) fn registry() -> Registry<ToastCommands> {
-    let mut registry = Registry::new();
-    registry
-        .register(
-            DISMISS_ALL,
-            "Dismiss Notifications",
-            |ran: &mut bool, _: &Actor| {
-                *ran = true;
-                Ok(Dispatched::new(Effect::Notify))
-            },
-        )
-        .expect("the toast command ID is valid")
-        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    registry
-}
-
-/// Whether `run` is [`DISMISS_ALL`], applying in its context.
-pub(crate) fn dismisses_all(run: &RunCommand, cx: &App) -> bool {
-    let Some(registry) = cx
-        .try_global::<Commands>()
-        .map(|commands| commands.0.clone())
-    else {
-        return false;
-    };
-    if registry.get(&run.0.command).is_none() {
-        return false;
-    }
-    let mut ran = false;
-    if let Err(error) = registry.dispatch(&mut ran, &run.0) {
-        log::warn!("{error}");
-    }
-    ran
-}
 
 /// A window's toasts, drawn as a column the workbench places at the
 /// bottom right, with the timer that dismisses them.

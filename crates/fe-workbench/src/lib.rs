@@ -94,7 +94,6 @@ pub fn init(cx: &mut App) {
     // `kiln::init` has run: the test apps never run it.
     module(cx);
     picker::init(cx);
-    config_problems::init(cx);
     dock::init(cx);
     lsp::init(cx);
     workbench::git_commands::init(cx);
@@ -109,7 +108,6 @@ pub fn init(cx: &mut App) {
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
     outline_panel::init(cx);
-    pane_toolbar::init(cx);
     project_panel::init(cx);
     references_panel::init(cx);
     status_bar::init(cx);
@@ -130,16 +128,13 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
 /// the editor's and the app's.
 fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     vec![
-        Box::new(picker::registry()),
         kiln_shell::picker::catalog(),
-        Box::new(config_problems::registry()),
         Box::new(dock::registry()),
         Box::new(find_bar::registry()),
         Box::new(workbench::git_commands::registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
         Box::new(outline_panel::registry()),
-        Box::new(pane_toolbar::registry()),
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
@@ -152,13 +147,10 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
 /// which lists each where its context holds; it lists the typed commands
 /// itself.
 fn command_list() -> Vec<CommandMeta> {
-    let mut list: Vec<CommandMeta> = picker::registry().commands().cloned().collect();
-    list.extend(config_problems::registry().commands().cloned());
-    list.extend(dock::registry().commands().cloned());
+    let mut list: Vec<CommandMeta> = dock::registry().commands().cloned().collect();
     list.extend(find_bar::registry().commands().cloned());
     list.extend(workbench::git_commands::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
-    list.extend(pane_toolbar::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());

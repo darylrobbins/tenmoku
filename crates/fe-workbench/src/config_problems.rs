@@ -15,16 +15,13 @@ use std::{
     fs::OpenOptions,
     io::{self, Read as _},
     path::Path,
-    rc::Rc,
 };
 
 use fe_buffer::Buffer;
 
-use fe_command::{
-    Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
-};
+use fe_command::Invocation;
 use fe_config::{Diagnostic, Severity};
-use fe_gpui::{EditorView, commands::RunCommand};
+use fe_gpui::EditorView;
 use fe_ui::UiTheme;
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, Focusable as _, IntoElement as _,
@@ -44,57 +41,6 @@ pub(crate) const SHOW: &str = "workbench.show_config_problems";
 
 /// The item's priority: on the left, after vim's mode and message.
 const PRIORITY: i32 = 50;
-
-/// The [`CommandTarget`] of [`SHOW`]: whether it ran.
-pub(crate) struct ConfigProblemsCommands;
-
-impl CommandTarget for ConfigProblemsCommands {
-    type Tx = ();
-    type Target<'a> = bool;
-}
-
-struct Commands(Rc<Registry<ConfigProblemsCommands>>);
-
-impl gpui::Global for Commands {}
-
-/// Registers [`SHOW`].
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<ConfigProblemsCommands> {
-    let mut registry = Registry::new();
-    registry
-        .register(
-            SHOW,
-            "Show Config Problems",
-            |shown: &mut bool, _: &Actor| {
-                *shown = true;
-                Ok(Dispatched::new(Effect::Notify))
-            },
-        )
-        .expect("the config problems command ID is valid")
-        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    registry
-}
-
-/// Whether `run` is [`SHOW`], applying in its context.
-pub(crate) fn shows(run: &RunCommand, cx: &App) -> bool {
-    let Some(registry) = cx
-        .try_global::<Commands>()
-        .map(|commands| commands.0.clone())
-    else {
-        return false;
-    };
-    if registry.get(&run.0.command).is_none() {
-        return false;
-    }
-    let mut shown = false;
-    if let Err(error) = registry.dispatch(&mut shown, &run.0) {
-        log::warn!("{error}");
-    }
-    shown
-}
 
 /// The status item for `count` problems: none for none.
 pub(crate) fn status_item(count: usize) -> Option<StatusItem> {
