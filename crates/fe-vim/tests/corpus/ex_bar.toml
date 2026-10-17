@@ -1,0 +1,184 @@
+# Ex `|` cases for fe-vim's oracle: several commands on one line, run in turn
+# as one undo step (so `u` after, which puts the cursor where nvim's does),
+# stopping at the first that fails, and where `|` isn't a separator: `\|` in
+# a pattern, `:s`'s pattern and replacement, a `"` comment, and the commands
+# that take the rest of the line (`:g`, `:normal`, `:w`). An error ends a
+# case: nvim flushes the keys after it.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in ex_bar.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "bar_two_substitutes_then_undo"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/ | s/c/C/<CR>u'
+
+[[case]]
+name = "bar_two_substitutes"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/ | s/c/C/<CR>'
+
+[[case]]
+name = "bar_without_blanks"
+buffer = "abc"
+cursor = [0, 1]
+keys = ':s/a/A/|s/c/C/<CR>'
+
+[[case]]
+name = "bar_redo"
+buffer = "abc"
+cursor = [0, 2]
+keys = ':s/a/A/ | s/c/C/<CR>u<C-r>'
+
+[[case]]
+name = "bar_error_stops_the_rest"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/ | s/z/Z/ | s/c/C/<CR>'
+
+[[case]]
+name = "bar_error_stops_then_undo"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/ | s/z/Z/ | s/c/C/<CR>u'
+
+[[case]]
+name = "bar_in_global_command"
+buffer = "a1/b/a2"
+cursor = [0, 0]
+keys = ':g/a/s/a/x/ | s/x/y/<CR>'
+
+[[case]]
+name = "bar_in_normal_keys"
+buffer = "a/b"
+cursor = [0, 0]
+keys = ':norm Ax | y<CR>'
+
+[[case]]
+name = "bar_escaped_in_pattern"
+buffer = "a|b"
+cursor = [0, 0]
+keys = ':s/a\|b/X/g<CR>'
+
+[[case]]
+name = "bar_in_replacement"
+buffer = "a b"
+cursor = [0, 0]
+keys = ':s/ /|/ | s/b/B/<CR>'
+
+[[case]]
+name = "bar_after_comment"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/ " | s/c/C/<CR>'
+
+[[case]]
+name = "bar_delete_then_yank"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':d | y<CR>p'
+
+[[case]]
+name = "bar_range_then_delete"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':2|d<CR>'
+
+[[case]]
+name = "bar_delete_then_yank_other_line"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':2d | 1y<CR>p'
+
+[[case]]
+name = "bar_after_host_command_unchanged"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':w | s/a/A/<CR>'
+
+[[case]]
+name = "bar_empty_first_command"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':|d<CR>'
+
+[[case]]
+name = "bar_trailing"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':d |<CR>'
+
+[[case]]
+name = "bar_doubled"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':y || d<CR>'
+
+[[case]]
+name = "bar_three_commands_then_undo"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ':d | d | d<CR>u'
+
+[[case]]
+name = "bar_move_then_join"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':m$ | j<CR>u'
+
+[[case]]
+name = "bar_search_range_then_substitute"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ':/c/ | s/c/C/<CR>'
+
+[[case]]
+name = "bar_substitute_after_blank_with_quote"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s /a/"/ | s/c/C/<CR>'
+
+[[case]]
+name = "bar_last_pattern_form"
+buffer = "abc"
+cursor = [0, 0]
+keys = '/a<CR>:s\/"| s/c/C/<CR>'
+
+[[case]]
+name = "bar_sort_pattern_holds_a_bar"
+buffer = "c|2\na|3\nb|1"
+cursor = [0, 0]
+keys = ':sort /|/ | 1d<CR>'
+
+[[case]]
+name = "bar_sort_then_delete"
+buffer = "b\na\nc"
+cursor = [0, 0]
+keys = ':sort | 1d<CR>u'
+
+[[case]]
+name = "bar_global_no_match_in_chain"
+buffer = "abc\naxc"
+cursor = [0, 0]
+keys = ':g/a/s/a/A/ | s/z/Z/ | s/A/Q/<CR>'
+
+[[case]]
+name = "bar_global_no_match_early"
+buffer = "abc\naxc"
+cursor = [0, 0]
+keys = ':g/a/s/z/Z/ | s/a/Q/<CR>'
+
+[[case]]
+name = "bar_browse_modifier"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':browse s/a/A/ | s/c/C/<CR>'
+
+[[case]]
+name = "bar_browse_normal"
+buffer = "a/b"
+cursor = [0, 0]
+keys = ':browse norm Ax | y<CR>'

@@ -17,6 +17,9 @@ use gpui::{
     VisualTestContext, point, px,
 };
 
+#[path = "read_only_bar_tests.rs"]
+mod read_only_bar_tests;
+
 use super::host::E21;
 use crate::{
     commands::{EditorViewEvent, HostBlock, HostBlockKind, RunCommand},

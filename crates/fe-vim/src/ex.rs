@@ -77,7 +77,7 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{
     KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, SearchOffset, Target,
-    VimKey, VimTarget, insert, marks,
+    VimKey, VimTarget, history, insert, marks,
     motion::{self, Cursor},
     operator,
     search::{self, Deadline, Pattern, PatternError},
@@ -419,6 +419,127 @@ impl Ex {
     }
 }
 
+impl Ex {
+    /// The commands `line` holds, cut where nvim cuts them (`:help :bar`):
+    /// at a `|` that isn't escaped (`\|` stays), but not in the argument of
+    /// a command that takes the rest of the line (`:g`, `:v`, `:normal`,
+    /// the host's and the capitalised ones), nor in `:s`'s pattern and
+    /// replacement, and not after a `"` comment, which runs to the end. A
+    /// line with no bar is its one command, as it was given.
+    pub fn commands(line: &str) -> Vec<&str> {
+        let mut pieces = Vec::new();
+        let mut rest = line;
+        while let Some(bar) = command_end(rest) {
+            pieces.push(rest[..bar].trim_end_matches([' ', '\t']));
+            rest = &rest[bar + 1..];
+        }
+        pieces.push(rest);
+        pieces
+    }
+}
+
+/// Where the first command of `piece` ends: the byte of the `|` that
+/// separates it from the next, if there is one.
+fn command_end(piece: &str) -> Option<usize> {
+    let (_, _, rest) = split(piece);
+    let start = piece.len() - rest.len();
+    let name_len = rest
+        .find(|ch: char| !ch.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_len);
+    let takes_the_rest = !name.is_empty()
+        && (host(name).is_some()
+            || name == "Replace"
+            || is_diff(name)
+            || global::kind(name).is_some()
+            || normal::is_normal(name)
+            || rest.starts_with(|ch: char| ch.is_ascii_uppercase()));
+    if takes_the_rest {
+        return None;
+    }
+    // A modifier: the command after it decides.
+    if name.len() >= 3 && "browse".starts_with(name) {
+        let command = after.trim_start_matches([' ', '\t']);
+        if command.len() == after.len() {
+            return None;
+        }
+        return command_end(command).map(|at| piece.len() - command.len() + at);
+    }
+    let substitute =
+        !is_substitute_with_flags(name) && !name.is_empty() && "substitute".starts_with(name);
+    let scan = match name {
+        _ if substitute => after_substitute_body(after),
+        _ if lines::is_sort(name) => after_sort_pattern(after),
+        _ => after,
+    };
+    let mut chars = scan.char_indices();
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '"' => return None,
+            '|' => return Some(piece.len() - scan.len() + at).filter(|&at| at >= start),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// What follows `:s`'s pattern and replacement in `after` (what follows its
+/// name), which are its own up to their delimiters, read as
+/// [`Substitute::parse`] reads them; `after` without its leading blanks if
+/// it has none (flags and a count for the last substitute).
+fn after_substitute_body(after: &str) -> &str {
+    let args = after.trim_start_matches([' ', '\t']);
+    let Some(delimiter) = args.chars().next() else {
+        return args;
+    };
+    let (delimiter, tail) = match delimiter {
+        '\\' => match args[1..].chars().next() {
+            Some(delimiter @ ('/' | '?' | '&')) => (delimiter, &args[2..]),
+            _ => return args,
+        },
+        _ if delimiter.is_ascii_alphanumeric() || matches!(delimiter, '"' | '|') => return args,
+        _ => {
+            let rest = &args[delimiter.len_utf8()..];
+            match search::split_search(rest, delimiter) {
+                (_, Some(tail)) => (delimiter, tail),
+                (_, None) => return "",
+            }
+        }
+    };
+    let mut chars = tail.char_indices();
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            _ if ch == delimiter => return &tail[at + ch.len_utf8()..],
+            _ => {}
+        }
+    }
+    ""
+}
+
+/// What follows `:sort`'s flags and pattern in `after`.
+fn after_sort_pattern(after: &str) -> &str {
+    let mut args = after;
+    loop {
+        let flags = args.trim_start_matches([' ', '\t', '!']);
+        match flags.chars().next() {
+            None | Some('"' | '|') => return flags,
+            Some(ch) if ch.is_ascii_alphabetic() => args = &flags[1..],
+            Some(delimiter) => {
+                match search::split_search(&flags[delimiter.len_utf8()..], delimiter).1 {
+                    Some(tail) => args = tail,
+                    None => return "",
+                }
+            }
+        }
+    }
+}
+
 /// A line's text from its range, the range, and the text from its command.
 fn split(line: &str) -> (&str, Vec<Address>, &str) {
     let line = line.trim_start_matches([':', ' ', '\t']);
@@ -531,7 +652,10 @@ fn command(
     }
     if "substitute".starts_with(name) {
         check(true)?;
-        return Ok(ExCommand::Substitute(Substitute::parse(after)?));
+        // A comment ends it, wherever its pattern and replacement end.
+        let tail = after_substitute_body(after);
+        let end = after.len() - tail.len() + tail.find('"').unwrap_or(tail.len());
+        return Ok(ExCommand::Substitute(Substitute::parse(&after[..end])?));
     }
     // After fe-vim's own capitalised commands, which would match above.
     if rest.starts_with(|ch: char| ch.is_ascii_uppercase()) {
@@ -971,9 +1095,78 @@ pub(crate) fn run(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Hand
     Ok(dispatched)
 }
 
-/// Runs `line`. As in nvim, its range is read (searching, and moving the
-/// cursor at a `;`) before its command is looked up.
+thread_local! {
+    /// How many `:g` are running: their commands' `:s` finding nothing
+    /// doesn't stop the commands after it.
+    static IN_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a `:g` running until dropped.
+struct InGlobal;
+
+impl InGlobal {
+    fn enter() -> Self {
+        IN_GLOBAL.set(IN_GLOBAL.get() + 1);
+        Self
+    }
+}
+
+impl Drop for InGlobal {
+    fn drop(&mut self) {
+        IN_GLOBAL.set(IN_GLOBAL.get() - 1);
+    }
+}
+
+/// Runs `line`: its commands in turn (`|` separates them), as one undo
+/// step, stopping at the first that fails, which leaves its error.
 fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Handled, ExError> {
+    let pieces = Ex::commands(line);
+    if let [piece] = pieces.as_slice() {
+        return execute_one(target, actor, piece);
+    }
+    let group = global::Group::begin(target, actor);
+    let mut outcome = Ok(());
+    for piece in pieces {
+        let before = history::pairs(target.model);
+        target.state.failed = false;
+        let ran = execute_one(target, actor, piece);
+        global::Group::note(target, before);
+        match ran {
+            Ok(Ok(_)) if !target.state.failed => {}
+            // A failed command leaves its message, and the rest don't run.
+            Ok(Ok(_)) => break,
+            Ok(Err(error)) => {
+                outcome = Err(error);
+                break;
+            }
+            // `:s` finding nothing isn't an error under `:g`, as in nvim.
+            Err(ExError::NotFound(_))
+                if IN_GLOBAL.get() > 0
+                    && matches!(
+                        Ex::parse(piece),
+                        Ok(Ex {
+                            command: ExCommand::Substitute(_),
+                            ..
+                        })
+                    ) => {}
+            Err(error) => {
+                target.state.fail(error.to_string());
+                break;
+            }
+        }
+    }
+    let transactions: Vec<TransactionId> = group.end(target).into_iter().collect();
+    if let Err(error) = outcome {
+        return Ok(Err(error));
+    }
+    Ok(Ok(
+        Dispatched::new(Effect::Changed).with_transactions(transactions)
+    ))
+}
+
+/// Runs `line`, one command. As in nvim, its range is read (searching, and moving the
+/// cursor at a `;`) before its command is looked up.
+fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Handled, ExError> {
     let (line, range, rest) = split(line);
     target.model.sync_display();
     let last = i64::from(target.model.text().row_count());
@@ -1105,6 +1298,7 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
                 Some(_) => counted_lines(target, lines, None, last)?,
                 None => (1, last),
             };
+            let _running = InGlobal::enter();
             return global::run(
                 target,
                 actor,

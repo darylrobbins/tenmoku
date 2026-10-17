@@ -247,10 +247,16 @@ fn yanks(args: &Value) -> bool {
     args.get("operator").and_then(Value::as_str) == Some("yank")
 }
 
-/// Whether the ex line `text` can edit, by its command. One that doesn't
+/// Whether the ex line `text` can edit: if any of the commands `|` separates
+/// does ([`command_edits`]).
+fn ex_edits(text: &str) -> bool {
+    Ex::commands(text).into_iter().any(command_edits)
+}
+
+/// Whether the ex command `text` can edit, by its command. One that doesn't
 /// parse can't: it fails with its own error. `:g` edits if the command it
 /// runs does, and `:normal` if its keys do ([`keys_edit`]).
-fn ex_edits(text: &str) -> bool {
+fn command_edits(text: &str) -> bool {
     let Ok(ex) = Ex::parse(text) else {
         return false;
     };

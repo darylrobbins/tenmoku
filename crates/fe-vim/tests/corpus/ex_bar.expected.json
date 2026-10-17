@@ -1,0 +1,708 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "bar_two_substitutes_then_undo",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/ | s/c/C/<CR>u",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_two_substitutes",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/ | s/c/C/<CR>",
+      "expect": {
+        "buffer": "AbC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_without_blanks",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": ":s/a/A/|s/c/C/<CR>",
+      "expect": {
+        "buffer": "AbC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_redo",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": ":s/a/A/ | s/c/C/<CR>u<C-r>",
+      "expect": {
+        "buffer": "AbC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_error_stops_the_rest",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/ | s/z/Z/ | s/c/C/<CR>",
+      "expect": {
+        "buffer": "Abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_error_stops_then_undo",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/ | s/z/Z/ | s/c/C/<CR>u",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_in_global_command",
+      "buffer": "a1/b/a2",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/a/s/a/x/ | s/x/y/<CR>",
+      "expect": {
+        "buffer": "y1/b/a2",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_in_normal_keys",
+      "buffer": "a/b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":norm Ax | y<CR>",
+      "expect": {
+        "buffer": "a/bx | y",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bar_escaped_in_pattern",
+      "buffer": "a|b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\|b/X/g<CR>",
+      "expect": {
+        "buffer": "X|X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\|b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_in_replacement",
+      "buffer": "a b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ /|/ | s/b/B/<CR>",
+      "expect": {
+        "buffer": "a|B",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_after_comment",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/ \" | s/c/C/<CR>",
+      "expect": {
+        "buffer": "Abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_delete_then_yank",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":d | y<CR>p",
+      "expect": {
+        "buffer": "b\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_range_then_delete",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2|d<CR>",
+      "expect": {
+        "buffer": "a\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_delete_then_yank_other_line",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2d | 1y<CR>p",
+      "expect": {
+        "buffer": "a\nc\na",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_after_host_command_unchanged",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":w | s/a/A/<CR>",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bar_empty_first_command",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":|d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_trailing",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":d |<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_doubled",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":y || d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_three_commands_then_undo",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":d | d | d<CR>u",
+      "expect": {
+        "buffer": "a\nb\nc\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_move_then_join",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":m$ | j<CR>u",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bar_search_range_then_substitute",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/c/ | s/c/C/<CR>",
+      "expect": {
+        "buffer": "a\nb\nC",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_substitute_after_blank_with_quote",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s /a/\"/ | s/c/C/<CR>",
+      "expect": {
+        "buffer": "\"bC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_last_pattern_form",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a<CR>:s\\/\"| s/c/C/<CR>",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_sort_pattern_holds_a_bar",
+      "buffer": "c|2\na|3\nb|1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort /|/ | 1d<CR>",
+      "expect": {
+        "buffer": "c|2\na|3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b|1\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b|1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_sort_then_delete",
+      "buffer": "b\na\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort | 1d<CR>u",
+      "expect": {
+        "buffer": "b\na\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_global_no_match_in_chain",
+      "buffer": "abc\naxc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/a/s/a/A/ | s/z/Z/ | s/A/Q/<CR>",
+      "expect": {
+        "buffer": "Qbc\nQxc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "A",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_global_no_match_early",
+      "buffer": "abc\naxc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/a/s/z/Z/ | s/a/Q/<CR>",
+      "expect": {
+        "buffer": "Qbc\nQxc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_browse_modifier",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":browse s/a/A/ | s/c/C/<CR>",
+      "expect": {
+        "buffer": "AbC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bar_browse_normal",
+      "buffer": "a/b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":browse norm Ax | y<CR>",
+      "expect": {
+        "buffer": "a/bx | y",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}
