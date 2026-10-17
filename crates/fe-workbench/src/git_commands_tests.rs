@@ -223,8 +223,10 @@ fn ex_routes(cx: &mut TestAppContext) {
             _ if op.command.feature() == Feature::Branch => "Not in a git repository".to_owned(),
             _ => format!("Not supported yet: {}", op.command.title()),
         };
+        // Line blame's toggle answers nothing.
+        let answer = (op.command != ToggleLineBlame).then_some(answer);
         assert_eq!(routed(&workbench, cx), [Routed::Op(op)], ":{line}");
-        assert_eq!(message(&editor, cx), Some(answer), ":{line}");
+        assert_eq!(message(&editor, cx), answer, ":{line}");
     }
 
     // A visual selection's range.

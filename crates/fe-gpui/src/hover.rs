@@ -18,11 +18,17 @@
 //!   found. One shown at the caret goes when the caret moves, and stays
 //!   while the pointer moves over nothing to show. An answer for a buffer
 //!   version the view has moved on from is dropped.
+//! - **The host's.** A host shows its own text at the caret
+//!   ([`EditorView::show_popover`]), as `editor.show_hover` shows the
+//!   provider's, or as the pointer rests on an after-line decoration's text
+//!   ([`EditorView::set_after_line_popover`]): line blame's commit, say.
+//!   Neither asks the provider; each hides as the provider's would, and the
+//!   pointer's once the pointer leaves the decoration.
 
-use std::{future::Future, ops::Range, pin::Pin, rc::Rc, time::Duration};
+use std::{future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
 use fe_buffer::{Bias, BufferId, Version};
-use fe_editor::diagnostics::DiagnosticEntry;
+use fe_editor::{decorations::DecorationKind, diagnostics::DiagnosticEntry};
 use gpui::{
     AnyElement, AvailableSpace, Context, IntoElement, ParentElement as _, Pixels, Point,
     SharedString, Styled as _, Subscription, Task, anchored, canvas, deferred, div, px,
@@ -64,6 +70,9 @@ pub trait HoverProvider {
 #[derive(Default)]
 pub(crate) struct HoverPopover {
     current: Option<Current>,
+    /// The host's text for the pointer resting on an after-line
+    /// decoration's label ([`EditorView::set_after_line_popover`]).
+    after_line: Option<(Arc<str>, HoverContent)>,
     /// Hides it on `escape` ([`hide_on_escape`]).
     _escape: Option<Subscription>,
 }
@@ -112,6 +121,9 @@ struct Hovered {
     scroll: Point<Pixels>,
     /// Shown at the caret, by `editor.show_hover`: where the caret was.
     caret: Option<usize>,
+    /// The host's text, not the provider's or the diagnostics': shown for
+    /// whatever diagnostics come and go.
+    host: bool,
 }
 
 /// Where the pointer is, in the text.
@@ -274,6 +286,7 @@ impl EditorView {
             version: self.model.snapshot().version(),
             scroll: self.scroll,
             caret,
+            host: false,
         }
     }
 
@@ -285,6 +298,9 @@ impl EditorView {
         position: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
+        if self.hover_after_line(position, cx) {
+            return;
+        }
         let under = position.and_then(|position| Some((self.under(position)?, position)));
         let raw = under.map(|(under, _)| {
             let word = match under {
@@ -329,7 +345,7 @@ impl EditorView {
                 .then_some(current.at)
         });
         if let Some(at) = keep {
-            self.wait_for_popover(hovered, at, Some(HOVER_DELAY), true, cx);
+            self.wait_for_popover(hovered, at, Some(HOVER_DELAY), true, None, cx);
             cx.notify();
             return;
         }
@@ -341,7 +357,99 @@ impl EditorView {
             .as_mut()
             .and_then(|layout| layout.caret_bounds(offset))
             .map_or(position, |caret| gpui::point(position.x, caret.bottom()));
-        self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, cx);
+        self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, None, cx);
+    }
+
+    /// The pointer moved to `position`, or off the text: over the label of
+    /// the host's after-line popover, waits out the delay to show it, or
+    /// keeps it shown; off it, hides it. Whether the pointer is over the
+    /// label.
+    fn hover_after_line(
+        &mut self,
+        position: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let shows_after_line = (self.popover.current.as_ref())
+            .is_some_and(|current| current.hovered.host && current.hovered.caret.is_none());
+        let Some((position, bottom, content)) = position.and_then(|position| {
+            let (label, content) = self.popover.after_line.as_ref()?;
+            let layout = self.layout.as_ref()?;
+            let placed = (layout.decorations.placed.iter()).find(|placed| {
+                matches!(&placed.kind, DecorationKind::AfterLine(shown) if shown == label)
+                    && placed.bounds.contains(&position)
+            })?;
+            Some((position, placed.bounds.bottom(), content.clone()))
+        }) else {
+            if shows_after_line {
+                self.hide_popover(cx);
+            }
+            return false;
+        };
+        if shows_after_line {
+            return true;
+        }
+        let text = self.model.text();
+        let Some(layout) = self.layout.as_mut() else {
+            return false;
+        };
+        let offset = layout.offset_at(text, position);
+        self.hide_popover(cx);
+        let hovered = Hovered {
+            under: Under::RowEnd(offset),
+            items: Vec::new(),
+            word: None,
+            version: self.model.snapshot().version(),
+            scroll: self.scroll,
+            caret: None,
+            host: true,
+        };
+        let at = gpui::point(position.x, bottom);
+        self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, Some(content), cx);
+        true
+    }
+
+    /// Has the pointer resting on an after-line decoration whose text is
+    /// `label` show `content`, as the provider's hover shows, or nothing
+    /// (`None`), hiding one shown.
+    pub fn set_after_line_popover(
+        &mut self,
+        popover: Option<(Arc<str>, HoverContent)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.popover.after_line == popover {
+            return;
+        }
+        self.popover.after_line = popover;
+        if (self.popover.current.as_ref())
+            .is_some_and(|current| current.hovered.host && current.hovered.caret.is_none())
+        {
+            self.hide_popover(cx);
+        }
+    }
+
+    /// Shows `content`, the host's, in the popover below the caret, at once,
+    /// in place of any shown: as `editor.show_hover` shows the provider's,
+    /// and hidden as that is. Nothing for a caret out of the frame.
+    pub fn show_popover(&mut self, content: HoverContent, cx: &mut Context<Self>) {
+        self.hide_popover(cx);
+        let caret = self.model.primary_selection().head();
+        let hovered = Hovered {
+            under: Under::Char(caret),
+            items: Vec::new(),
+            word: None,
+            version: self.model.snapshot().version(),
+            scroll: self.scroll,
+            caret: Some(caret),
+            host: true,
+        };
+        let Some(at) = (self.layout.as_mut())
+            .filter(|layout| layout.version == hovered.version)
+            .and_then(|layout| layout.caret_bounds(caret))
+            .map(|caret| gpui::point(caret.left(), caret.bottom()))
+        else {
+            return;
+        };
+        self.wait_for_popover(hovered, at, None, false, Some(content), cx);
     }
 
     /// `editor.show_hover`: the popover for what's at the caret, at once.
@@ -375,17 +483,19 @@ impl EditorView {
         else {
             return;
         };
-        self.wait_for_popover(hovered, at, None, false, cx);
+        self.wait_for_popover(hovered, at, None, false, None, cx);
     }
 
     /// Shows `hovered` at `at` once `delay` is up (or at once, if
-    /// `shown`), asking the provider about its word, if any.
+    /// `shown`), with the host's `content`, or else asking the provider
+    /// about its word, if any.
     fn wait_for_popover(
         &mut self,
         hovered: Hovered,
         at: Point<Pixels>,
         delay: Option<Duration>,
         shown: bool,
+        content: Option<HoverContent>,
         cx: &mut Context<Self>,
     ) {
         let buffer = self.model.buffer().id();
@@ -462,7 +572,7 @@ impl EditorView {
             hovered,
             at,
             shown: shown || delay.is_none(),
-            content: None,
+            content,
             requested: ask.unwrap_or(hovered_offset),
             _task: task,
         });
@@ -478,7 +588,7 @@ impl EditorView {
         shown.version == self.model.snapshot().version()
             && shown.scroll == self.scroll
             && (shown.caret).is_none_or(|caret| caret == self.model.primary_selection().head())
-            && shown.under.items(&self.model.diagnostics()) == shown.items
+            && (shown.host || shown.under.items(&self.model.diagnostics()) == shown.items)
     }
 
     /// What the popover says, if it's shown, still stands and has
@@ -654,4 +764,137 @@ pub(crate) fn popover_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
         },
     );
     deferred(layer.absolute())
+}
+
+#[cfg(test)]
+mod host_popover_tests {
+    //! The host's popovers: over an after-line decoration's text, and at
+    //! the caret.
+
+    use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+
+    use fe_buffer::{Buffer, BufferSnapshot, ResolvedSelection};
+    use fe_editor::{
+        EditorModel,
+        decorations::{Decoration, DecorationKind, DecorationProvider, Tint},
+    };
+    use gpui::{
+        Entity, Focusable as _, Modifiers, Pixels, Point, TestAppContext, VisualTestContext, point,
+        px,
+    };
+
+    use super::HOVER_DELAY;
+    use crate::{EditorTheme, EditorView, HoverContent, init};
+
+    const TEXT: &str = "one\ntwo\nthree\n";
+
+    /// `blame` after row 1.
+    struct Note;
+
+    impl DecorationProvider for Note {
+        fn decorations(
+            &self,
+            snapshot: &BufferSnapshot,
+            _: Range<usize>,
+            out: &mut Vec<Decoration>,
+        ) {
+            let start = snapshot.text().row_start(1);
+            let kind = DecorationKind::AfterLine("blame".into());
+            out.push(Decoration::new(start..start + 3, kind, Tint::Muted));
+        }
+    }
+
+    fn content(text: &str) -> HoverContent {
+        HoverContent {
+            text: text.into(),
+            range: None,
+        }
+    }
+
+    fn editor(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContext) {
+        cx.update(init);
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            let mut model = EditorModel::new(Buffer::new(TEXT), None);
+            model.set_selections(vec![ResolvedSelection {
+                range: 0..0,
+                reversed: false,
+            }]);
+            model.add_decoration_provider(Rc::new(RefCell::new(Note)));
+            EditorView::new(model, EditorTheme::default_dark(cx), cx)
+        });
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.focus(&view.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    /// The middle of the last frame's `blame` text.
+    fn over_note(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Point<Pixels> {
+        view.read_with(cx, |view, _| {
+            let layout = view.layout.as_ref().expect("drawn");
+            let placed = (layout.decorations.placed.iter())
+                .find(|placed| matches!(placed.kind, DecorationKind::AfterLine(_)))
+                .expect("the note is drawn");
+            placed.bounds.center()
+        })
+    }
+
+    fn rest(position: Point<Pixels>, cx: &mut VisualTestContext) {
+        cx.simulate_mouse_move(position, None, Modifiers::none());
+        cx.run_until_parked();
+        cx.executor().advance_clock(HOVER_DELAY);
+        cx.run_until_parked();
+    }
+
+    fn shown(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<String> {
+        view.read_with(cx, |view, _| view.popover_text())
+    }
+
+    #[gpui::test]
+    fn over_after_line_text(cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx);
+        let note = over_note(&view, cx);
+
+        // Nothing set for it: nothing.
+        rest(note, cx);
+        assert_eq!(shown(&view, cx), None);
+
+        // Set for another text: nothing.
+        let other = Some((Arc::from("other"), content("no")));
+        view.update(cx, |view, cx| view.set_after_line_popover(other, cx));
+        rest(note, cx);
+        assert_eq!(shown(&view, cx), None);
+
+        let blame = Some((Arc::from("blame"), content("**Ann** ann@example.com")));
+        view.update(cx, |view, cx| view.set_after_line_popover(blame, cx));
+        rest(note, cx);
+        assert_eq!(shown(&view, cx).as_deref(), Some("**Ann** ann@example.com"));
+
+        // Moving within it keeps it; off it, it goes.
+        rest(note + point(px(1.), px(0.)), cx);
+        assert_eq!(shown(&view, cx).as_deref(), Some("**Ann** ann@example.com"));
+        rest(note + point(px(0.), px(200.)), cx);
+        assert_eq!(shown(&view, cx), None);
+
+        // Unset while shown, it goes.
+        rest(note, cx);
+        assert!(shown(&view, cx).is_some());
+        view.update(cx, |view, cx| view.set_after_line_popover(None, cx));
+        assert_eq!(shown(&view, cx), None);
+    }
+
+    #[gpui::test]
+    fn at_the_caret(cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx);
+        view.update(cx, |view, cx| view.show_popover(content("Hi\n\nthere"), cx));
+        assert_eq!(shown(&view, cx).as_deref(), Some("Hi\n\nthere"));
+        cx.run_until_parked();
+        assert_eq!(shown(&view, cx).as_deref(), Some("Hi\n\nthere"));
+
+        // The caret moving hides it.
+        view.update(cx, |view, cx| view.select_and_reveal(4..4, cx));
+        assert_eq!(shown(&view, cx), None);
+    }
 }

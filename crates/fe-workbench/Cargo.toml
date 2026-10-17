@@ -16,6 +16,8 @@ fe-editor.workspace = true
 # Files too large to read open in a read-only view.
 fe-fileview.workspace = true
 fe-git.workspace = true
+# Matching a buffer's rows to HEAD's as fe-git's blame does.
+imara-diff.workspace = true
 fe-vim.workspace = true
 fe-gpui.workspace = true
 fe-keymap.workspace = true

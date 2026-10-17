@@ -2187,6 +2187,7 @@ dependencies = [
  "futures",
  "gpui-pre",
  "gpui-pre-platform",
+ "imara-diff",
  "kiln",
  "kiln-command",
  "kiln-platform",
