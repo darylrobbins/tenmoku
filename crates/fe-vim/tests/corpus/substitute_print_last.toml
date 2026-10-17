@@ -1,0 +1,163 @@
+# Substitute print-flag and last-pattern cases for fe-vim's oracle: `:s`'s
+# print flags (`p`, `#`, `l`: taken and ignored), and the forms `:s\/`,
+# `:s\?` and `:s\&` that substitute with the last search's or the last
+# substitute's pattern, then often `n`, `&&`, `:s` or `u` to see what became
+# the last search and the last substitute. An error ends a case: nvim
+# flushes the keys after it. Hand-written: name, buffer (rows joined with
+# \n, no trailing newline), cursor = [row, byte column] and keys in vim
+# notation. What nvim does with each is recorded in
+# substitute_print_last.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+#
+# nvim's last search and last substitute outlive a case (one session records
+# the whole file), so the cases where they are unset come first.
+
+[[case]]
+name = "last_substitute_unset_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s\&X&<CR>'
+
+[[case]]
+name = "last_search_unset_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s\/X/<CR>'
+
+[[case]]
+name = "print_flag_p"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/p<CR>'
+
+[[case]]
+name = "print_flag_hash"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/#<CR>'
+
+[[case]]
+name = "print_flag_l"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/l<CR>'
+
+[[case]]
+name = "print_flags_with_g_and_count"
+buffer = "a a\na a\na a\na a"
+cursor = [0, 0]
+keys = ':s/a/x/gp#l 2<CR>'
+
+[[case]]
+name = "print_flag_p_then_undo"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/p<CR>u'
+
+[[case]]
+name = "amp_amp_keeps_no_print_flag"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ':s/a/x/gp<CR>j:&&<CR>'
+
+[[case]]
+name = "amp_keep_then_print"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ':s/a/x/g<CR>j:s/a/y/&p<CR>'
+
+[[case]]
+name = "last_search_slash"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/<CR>'
+
+[[case]]
+name = "last_search_slash_flags"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/gp<CR>'
+
+[[case]]
+name = "last_search_question"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '?c<CR>:s\?X?<CR>'
+
+[[case]]
+name = "last_search_question_slash_in_string"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '?c<CR>:s\?a/b?<CR>'
+
+[[case]]
+name = "last_substitute_amp"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = ':s/a/1/<CR>/c<CR>:s\&2&<CR>'
+
+[[case]]
+name = "last_substitute_amp_g"
+buffer = "abc abc abc"
+cursor = [0, 0]
+keys = ':s/c/1/<CR>:s\&2&g<CR>'
+
+[[case]]
+name = "backslash_other_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s\xb\xB\x<CR>x'
+
+[[case]]
+name = "n_after_last_search_form"
+buffer = "abc abc\nabc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/<CR>jnx'
+
+[[case]]
+name = "n_after_last_substitute_form"
+buffer = "abc abc\nabc abc"
+cursor = [0, 0]
+keys = ':s/a/1/<CR>/c<CR>:s\&2&<CR>jnx'
+
+[[case]]
+name = "amp_form_then_repeat"
+buffer = "abc abc\nabc abc"
+cursor = [0, 0]
+keys = ':s/a/1/<CR>/c<CR>:s\&2&<CR>j:&&<CR>'
+
+[[case]]
+name = "slash_form_then_repeat"
+buffer = "abc abc\nabc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/<CR>j:s<CR>'
+
+[[case]]
+name = "slash_form_range_count"
+buffer = "c\nc\nc\nc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/ 3<CR>'
+
+[[case]]
+name = "slash_form_unterminated"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X<CR>'
+
+[[case]]
+name = "slash_form_empty_string"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\//<CR>'
+
+[[case]]
+name = "slash_form_trailing"
+buffer = "abc abc"
+cursor = [0, 0]
+keys = '/c<CR>:s\/X/z<CR>x'
+
+[[case]]
+name = "print_flag_after_trailing_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/pz<CR>x'

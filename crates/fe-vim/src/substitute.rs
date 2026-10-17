@@ -84,7 +84,10 @@ impl Substitute {
             if delimiter.is_ascii_alphabetic() && !FLAGS.contains(delimiter) {
                 return Err(ExError::LetterDelimiter);
             }
-            if matches!(delimiter, '\\' | '"' | '|') {
+            if delimiter == '\\' {
+                return Self::last_pattern(&args[1..]);
+            }
+            if matches!(delimiter, '"' | '|') {
                 return Err(ExError::Unsupported(format!(":s{delimiter}")));
             }
             return Self::repeat(args, false);
@@ -104,6 +107,27 @@ impl Substitute {
         })
     }
 
+    /// `:s\/{string}/`, `:s\?{string}?` and `:s\&{string}&` (`args` after
+    /// the backslash): `string` replaces the last search's pattern or, for
+    /// `&`, the last substitute's, which [`run`] looks up.
+    fn last_pattern(args: &str) -> Result<Self, ExError> {
+        let Some(delimiter @ ('/' | '?' | '&')) = args.chars().next() else {
+            return Err(ExError::BackslashDelimiter);
+        };
+        let (replacement, after) = split_replacement(&args[1..], delimiter);
+        Replacement::compile(&replacement)?;
+        let (flags, count) = flags_and_count(after, true)?;
+        let pattern = match delimiter {
+            '&' => LAST_SUBSTITUTE_PATTERN.to_string(),
+            _ => String::new(),
+        };
+        Ok(Self {
+            with: Some((pattern, replacement)),
+            flags,
+            count,
+        })
+    }
+
     /// `:&` (or `:s` with no pattern): `args` from its flags, after blanks
     /// (`&&`'s second `&` is `keep`, for `:&`).
     pub(crate) fn repeat(args: &str, keep_allowed: bool) -> Result<Self, ExError> {
@@ -116,6 +140,10 @@ impl Substitute {
         })
     }
 }
+
+/// Stands for the last substitute's pattern where a [`Substitute`]'s pattern
+/// is typed (`:s\&`): a NUL, which no typed pattern holds.
+const LAST_SUBSTITUTE_PATTERN: &str = "\0";
 
 /// The flag letters nvim knows: those fe-vim doesn't support are refused
 /// as trailing characters (`c`, which needs a prompt, with a message).
@@ -152,6 +180,9 @@ fn flags_and_count(args: &str, keep_allowed: bool) -> Result<(Flags, Option<u32>
             'n' => flags.count_only = true,
             'e' => flags.quiet = !flags.quiet,
             'r' => flags.search_pattern = true,
+            // Print flags: nvim prints the last line changed, which
+            // fastedit has nowhere to do.
+            'p' | '#' | 'l' => {}
             'c' => return Err(ExError::Unsupported("the c flag (confirm)".into())),
             _ => break,
         }
@@ -349,11 +380,17 @@ pub(crate) fn run(
     };
     let (pattern, raw) = match &sub.with {
         Some((pattern, raw)) => {
-            let pattern = match pattern.is_empty() {
-                true => target.registers.last_search().map(|(pattern, _)| pattern),
-                false => Some(pattern.as_str()),
+            let pattern = match pattern.as_str() {
+                LAST_SUBSTITUTE_PATTERN => {
+                    last.pattern.clone().ok_or(ExError::NoPreviousSubstitute)?
+                }
+                "" => target
+                    .registers
+                    .last_search()
+                    .map(|(pattern, _)| pattern.to_string())
+                    .ok_or(ExError::NoPreviousSearch)?,
+                typed => typed.to_string(),
             };
-            let pattern = pattern.ok_or(ExError::NoPreviousSearch)?.to_string();
             (pattern, raw.clone())
         }
         None if flags.search_pattern => (
@@ -385,7 +422,11 @@ pub(crate) fn run(
     };
     // The pattern becomes the last search, as a search's does: even if Vim
     // rejects it, but not one fe-vim can't search.
-    if sub.with.is_some()
+    // (`:s\&`'s isn't: it was the last substitute's, not the last search's.)
+    if sub
+        .with
+        .as_ref()
+        .is_some_and(|(typed, _)| typed != LAST_SUBSTITUTE_PATTERN)
         && !matches!(
             parsed,
             Err(PatternError::Unsupported(_) | PatternError::TooLarge(_))

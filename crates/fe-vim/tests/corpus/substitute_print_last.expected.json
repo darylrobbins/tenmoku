@@ -1,0 +1,602 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "last_substitute_unset_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s\\&X&<CR>",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "last_search_unset_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s\\/X/<CR>",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "print_flag_p",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/p<CR>",
+      "expect": {
+        "buffer": "aBc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "print_flag_hash",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/#<CR>",
+      "expect": {
+        "buffer": "aBc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "print_flag_l",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/l<CR>",
+      "expect": {
+        "buffer": "aBc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "print_flags_with_g_and_count",
+      "buffer": "a a\na a\na a\na a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/x/gp#l 2<CR>",
+      "expect": {
+        "buffer": "x x\nx x\na a\na a",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "print_flag_p_then_undo",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/p<CR>u",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "amp_amp_keeps_no_print_flag",
+      "buffer": "a a\na a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/x/gp<CR>j:&&<CR>",
+      "expect": {
+        "buffer": "x x\nx x",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "amp_keep_then_print",
+      "buffer": "a a\na a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/x/g<CR>j:s/a/y/&p<CR>",
+      "expect": {
+        "buffer": "x x\ny y",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_search_slash",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/<CR>",
+      "expect": {
+        "buffer": "abX abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_search_slash_flags",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/gp<CR>",
+      "expect": {
+        "buffer": "abX abX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_search_question",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?c<CR>:s\\?X?<CR>",
+      "expect": {
+        "buffer": "abX abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_search_question_slash_in_string",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?c<CR>:s\\?a/b?<CR>",
+      "expect": {
+        "buffer": "aba/b abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_substitute_amp",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/1/<CR>/c<CR>:s\\&2&<CR>",
+      "expect": {
+        "buffer": "1bc 2bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "last_substitute_amp_g",
+      "buffer": "abc abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/c/1/<CR>:s\\&2&g<CR>",
+      "expect": {
+        "buffer": "ab1 ab2 ab2",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backslash_other_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s\\xb\\xB\\x<CR>x",
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_after_last_search_form",
+      "buffer": "abc abc\nabc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/<CR>jnx",
+      "expect": {
+        "buffer": "abX abc\nab abc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_after_last_substitute_form",
+      "buffer": "abc abc\nabc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/1/<CR>/c<CR>:s\\&2&<CR>jnx",
+      "expect": {
+        "buffer": "1bc 2bc\nab abc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "amp_form_then_repeat",
+      "buffer": "abc abc\nabc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/1/<CR>/c<CR>:s\\&2&<CR>j:&&<CR>",
+      "expect": {
+        "buffer": "1bc 2bc\n2bc abc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_form_then_repeat",
+      "buffer": "abc abc\nabc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/<CR>j:s<CR>",
+      "expect": {
+        "buffer": "abX abc\nabX abc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_form_range_count",
+      "buffer": "c\nc\nc\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/ 3<CR>",
+      "expect": {
+        "buffer": "c\nX\nX\nX",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_form_unterminated",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X<CR>",
+      "expect": {
+        "buffer": "abX abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_form_empty_string",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\//<CR>",
+      "expect": {
+        "buffer": "ab abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_form_trailing",
+      "buffer": "abc abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c<CR>:s\\/X/z<CR>x",
+      "expect": {
+        "buffer": "ab abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "print_flag_after_trailing_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/pz<CR>x",
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}
