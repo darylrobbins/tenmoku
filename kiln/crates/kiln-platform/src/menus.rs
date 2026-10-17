@@ -13,7 +13,7 @@
 
 use gpui::{Action, App, Global, KeyBinding, Menu, MenuItem, SystemMenuType, Window};
 use kiln_command::ContextStack;
-use kiln_core::{CommandItem, ItemKind, MenuBar, OsAction, SystemMenu};
+use kiln_core::{CommandItem, ItemKind, Key, MenuBar, OsAction, SystemMenu};
 
 use crate::{commands, keys};
 
@@ -95,7 +95,17 @@ pub fn refresh(cx: &mut App) {
                         menu: menu.name.clone(),
                         item: command.id.clone(),
                     };
-                    if let Some(keys) = command.shortcut(&keymap) {
+                    // The newest single-keystroke key macOS can display; a
+                    // newer one it can't is skipped, not the whole shortcut.
+                    let candidates = kiln_core::shortcuts(
+                        &keymap,
+                        &command.command,
+                        &command.args,
+                        &command.shortcut_context,
+                    )
+                    .into_iter()
+                    .filter(|keys| matches!(keys.keystrokes(), [key] if key.key != Key::Click));
+                    for keys in candidates {
                         let keys = keys.to_string();
                         let keystroke = gpui::Keystroke::parse(&keys);
                         if keystroke.as_ref().is_ok_and(native_key_equivalent) {
@@ -109,6 +119,7 @@ pub fn refresh(cx: &mut App) {
                                 action.clone(),
                                 Some(KEY_CONTEXT),
                             ));
+                            break;
                         } else if keystroke.is_ok() {
                             log::debug!(
                                 "menu shortcut {keys} has no native key equivalent; not shown"
