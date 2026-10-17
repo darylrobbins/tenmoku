@@ -48,6 +48,11 @@ tempfile.workspace = true
 name = "keystroke"
 harness = false
 
+# Scrolling frame time on big files, headless (PERF.md, "Scrolling, headless").
+[[bench]]
+name = "scroll"
+harness = false
+
 # Hand-checking proposed changes: diff blocks, buttons, undo and commands.
 [[example]]
 name = "proposal_demo"

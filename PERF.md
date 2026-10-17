@@ -141,6 +141,40 @@ Highlighted rows are slow to shape. Highlighting 60 rows takes about 0.12 ms
 than the same file as plain text. The difference is shaping each row in many
 coloured runs instead of one.
 
+### Scrolling, headless (`cargo bench -p fe-gpui --bench scroll`)
+
+600 scroll-wheel frames a case through a focused `EditorView` in GPUI's
+headless test window with the real macOS text system and the headless Metal
+renderer, so it needs no screen. Smooth is 40 px a frame, jump about 1000 rows
+(21,000 px) and wraps to the top at the end. The frame runs from dispatching
+the event to the scene being committed with `render_to_image`; it leaves out
+vsync, the compositor and the GPU's own time, as the keystroke bench's numbers
+do. Budget: frame p99 at most 8.33 ms (120 fps).
+
+Apple M3 Max, bench at commit e0b94b24 plus the review fixes, 2026-10-17,
+release build. **Not a quiet machine:** the load average was 50-66 on 14 cores
+(other lanes' gates), so the p99 and max columns carry scheduler noise; p50
+barely moves between runs. Earlier runs the same day varied: frame p99 between
+2.5 and 140 ms for smooth, and 4 and 285 ms for the jump cases, with the
+quietest at 4-5 ms for `jump/1m-plain` and `jump/7mb-rust`. The table is one
+run, not the best.
+
+| Case | Frame p50 / p99 / max | Prepaint p50 / p99 / max | Paint p50 / p99 / max | Over 8.33 ms | p99 <= 8.33 ms |
+|---|---|---|---|---|---|
+| `smooth/1m-plain` | 0.62 / 2.9 / 6.5 ms | 0.26 / 1.2 / 2.7 ms | 0.20 / 0.55 / 2.4 ms | 0 of 600 | holds |
+| `jump/1m-plain` | 3.8 / 97.9 / 168 ms | 3.3 / 92.2 / 167 ms | 0.22 / 3.4 / 17.5 ms | 56 of 600 | misses |
+| `jump/7mb-rust` | 3.4 / 108 / 164 ms | 2.9 / 105 / 163 ms | 0.16 / 4.1 / 153 ms | 90 of 600 | misses |
+| `jump/1m-plain-wrapped` | 3.4 / 21.6 / 35.0 ms | 3.0 / 17.7 / 27.8 ms | 0.19 / 0.56 / 4.9 ms | 19 of 600 | misses |
+
+The three misses are in prepaint: its p99 is nearly the frame's, while paint
+p99 is a few ms at most and present (frame minus prepaint and paint, about
+0.2 ms at p50) never carries a tail. Jump prepaint's p50 alone is 2.9-3.3 ms,
+and the tail at this load is several times that, so the jump cases can't be
+confirmed at 120 fps from this run. Follow-ups: T974 re-runs the bench on a
+quiet machine to separate load from the code (T408's screen run is the other
+check), and T975 cuts jump-frame prepaint (shaping a thousand-row jump's new
+rows, in the plain, highlighted and wrapped cases).
+
 ### Memory (physical footprint)
 
 The 16 MB rows were measured at the old 16 MB global parse limit, and not
