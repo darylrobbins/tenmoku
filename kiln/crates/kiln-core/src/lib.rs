@@ -43,11 +43,13 @@ pub mod text_edit;
 pub mod theme;
 pub mod trust;
 pub mod watch;
+pub mod watch_tree;
 pub mod write;
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use extension::{
-    ApiVersion, AppKind, ExtensionApi, License, LicenseClass, Manifest, load_manifest,
+    ApiVersion, AppKind, ExtensionApi, ExtensionSet, License, LicenseClass, LicenseNotice,
+    Manifest, load_manifest,
 };
 pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
 pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
@@ -69,6 +71,7 @@ pub use serde;
 pub use settings::{ProjectFilter, SettingsEvent, SettingsOptions, SettingsStore, SettingsType};
 pub use text_edit::{Motion, Selection, TextEdit};
 pub use watch::ConfigWatcher;
+pub use watch_tree::TreeWatcher;
 pub use write::write_setting;
 
 #[cfg(test)]

@@ -9,4 +9,5 @@ mod theme;
 mod watch;
 mod watch_late;
 pub(crate) mod watch_reconcile;
+mod watch_tree;
 mod write;

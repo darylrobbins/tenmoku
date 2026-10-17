@@ -49,8 +49,9 @@ use std::{
 use gpui::{App, Global, SharedString, Task, WindowOptions};
 use kiln_command::{CommandId, Value};
 use kiln_core::{
-    CatalogError, CommandCatalog, Diagnostic, Keymap, KeymapLayer, KeymapStore, MenuBar, Os,
-    SettingsStore, SettingsType, load_keymap_layer, theme::ThemeFile,
+    ApiVersion, AppKind, CatalogError, CommandCatalog, Diagnostic, ExtensionSet, Keymap,
+    KeymapLayer, KeymapStore, LicenseNotice, MenuBar, Os, SettingsStore, SettingsType,
+    load_keymap_layer, theme::ThemeFile,
 };
 use kiln_platform::{
     Capabilities, WindowSpec, commands,
@@ -65,6 +66,7 @@ use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 use crate::{
     config::UserTheme,
     contributions::{self, Shipped},
+    extensions::{self, ExtensionSource},
     settings::{SettingsSection, section_store},
 };
 
@@ -153,6 +155,7 @@ pub struct Config {
     capabilities: Option<Capabilities>,
     /// Where the user's files are read from instead, each by its name.
     user_dir: Option<PathBuf>,
+    extensions: extensions::Setup,
 }
 
 impl Config {
@@ -185,6 +188,7 @@ impl Config {
             fail_fast: false,
             capabilities: None,
             user_dir: None,
+            extensions: extensions::Setup::default(),
         }
     }
 
@@ -346,6 +350,61 @@ impl Config {
             panic!("`{name}` is a theme key of kiln's own, not an app's table");
         }
         self.theme_extensions = names;
+        self
+    }
+
+    /// The user's extensions, a directory each under `dir` (the app's
+    /// [`kiln_core::AppPaths::extensions_dir`], in its state directory),
+    /// loaded by [`init`] in ID order and reloaded when anything under
+    /// `dir` changes: see [`crate::extensions`]. Their manifests must name
+    /// `app` in `[engine]` (the app's [`kiln_core::AppId::short`]) at an
+    /// API version `api_version` serves, and IDs may not start with the
+    /// namespace of a command registered by `init`. A manifest with errors
+    /// keeps its last good version, its errors in
+    /// [`kiln_platform::config::diagnostics`]; [`Config::fail_fast`]
+    /// never panics over them.
+    pub fn extensions(
+        mut self,
+        dir: impl Into<PathBuf>,
+        app: impl Into<String>,
+        api_version: ApiVersion,
+    ) -> Self {
+        self.extensions.dir = Some((dir.into(), app.into(), api_version));
+        self
+    }
+
+    /// A contribution kind of the app's own that extensions may have, such
+    /// as a language server: their `contributes.<name>` table is checked
+    /// against `schema` and kept as written in
+    /// [`kiln_core::Manifest::app`]. Each call adds one.
+    pub fn extension_kind(mut self, name: &'static str, schema: serde_json::Value) -> Self {
+        self.extensions.kinds.push(AppKind { name, schema });
+        self
+    }
+
+    /// Loads only extensions whose licence these SPDX IDs allow (the
+    /// user's `extensions.allowed_licenses`); unset, any licence loads.
+    pub fn allowed_extension_licenses(mut self, ids: Vec<String>) -> Self {
+        self.extensions.allowed_licenses = Some(ids);
+        self
+    }
+
+    /// Calls `f` with the extensions [`init`] loaded, once the service has
+    /// started, and again after each reload that changes them or their
+    /// diagnostics: to apply an app kind's tables, say. Each call adds
+    /// one, called in the order added.
+    pub fn on_extensions(mut self, f: impl FnMut(&ExtensionSet, &mut App) + 'static) -> Self {
+        self.extensions.on_extensions.push(Box::new(f));
+        self
+    }
+
+    /// Calls `f` with each licence notice: an extension the user
+    /// installed whose licence is copyleft or unknown, the first time it
+    /// loads at its version (see [`ExtensionSet::license_notices`]), to
+    /// show it, as a toast say. Its text is [`LicenseNotice::message`].
+    /// Each call adds one; without any, it's only logged.
+    pub fn on_license_notice(mut self, f: impl FnMut(&LicenseNotice, &mut App) + 'static) -> Self {
+        self.extensions.on_notice.push(Box::new(f));
         self
     }
 
@@ -514,9 +573,12 @@ impl Global for Watching {}
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
 /// 6. the user's settings, keymap and theme files, watched from now on
-///    ([`kiln_platform::config`]); a user theme applies at once.
+///    ([`kiln_platform::config`]); a user theme applies at once;
+/// 7. the user's extensions ([`Config::extensions`]), their directory
+///    watched from now on, and [`Config::on_extensions`] called with them
+///    once the service starts.
 ///
-/// Returns the keymap's, menus', settings' and theme's diagnostics, which
+/// Returns the keymap's, menus', settings', theme's and extensions' diagnostics, which
 /// it has also logged: errors and warnings at those levels. Those the
 /// user's files have later are logged as they change, and
 /// [`kiln_platform::config::diagnostics`] has them all.
@@ -599,12 +661,17 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
+    let setup = std::mem::take(&mut config.extensions);
+    if let Some(source) = ExtensionSource::load(setup, command_namespaces(cx)) {
+        diagnostics.extend(source.diagnostics());
+        service = service.source(source);
+    }
     let target = config.log_target.unwrap_or(DEFAULT_LOG_TARGET);
     log_diagnostics_as(target, &diagnostics);
     let shared_keymap = service.keymap_store().expect("the service has the keymap");
     let task = match config.batches.take() {
         Some(batches) => service.start_with(batches, cx),
-        None if service.paths().is_empty() => {
+        None if service.paths().is_empty() && service.trees().is_empty() => {
             // Nothing to watch: the service only applies what's loaded.
             let (_, closed) = batch_channel();
             service.start_with(closed, cx)
@@ -645,6 +712,22 @@ pub fn window_options(spec: &WindowSpec, cx: &App) -> WindowOptions {
         spec.app_id = cx.try_global::<AppInfo>().map(|info| info.id.clone());
     }
     kiln_platform::window_options(&spec, &Capabilities::of(cx), cx)
+}
+
+/// The namespace of every command registered so far, each once: the app
+/// registry's and the typed ones.
+fn command_namespaces(cx: &App) -> Vec<String> {
+    let app = commands::app_command_list(cx)
+        .into_iter()
+        .map(|meta| meta.id);
+    let typed = kiln_platform::command_actions::typed_commands(cx);
+    let mut namespaces: Vec<String> = app
+        .chain(typed.into_iter().map(|typed| typed.id))
+        .map(|id| id.namespace().to_owned())
+        .collect();
+    namespaces.sort();
+    namespaces.dedup();
+    namespaces
 }
 
 /// `path` in `dir` by its file name, if there's a `dir`.

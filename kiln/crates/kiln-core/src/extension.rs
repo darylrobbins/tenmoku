@@ -84,7 +84,7 @@ pub struct ExtensionApi {
 
 /// An extension's licence: its SPDX expression and what kind of licence it
 /// comes to.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct License {
     pub expr: String,
     pub class: LicenseClass,
@@ -623,6 +623,267 @@ impl ArraySpans {
     }
 }
 
+/// The extensions in one directory, a directory each, as last loaded:
+/// see [`ExtensionSet::discover`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionSet {
+    root: PathBuf,
+    api: ExtensionApi,
+    extensions: Vec<Manifest>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl ExtensionSet {
+    /// Loads every directory directly under `root` that has an
+    /// [`MANIFEST_FILE`], with [`load_manifest`], in ID order. A missing
+    /// `root` is no extensions and no diagnostics. Of two directories with
+    /// one ID, the first by directory name loads, and the other has an
+    /// error naming both.
+    pub fn discover(root: &Path, api: &ExtensionApi) -> ExtensionSet {
+        let mut set = ExtensionSet {
+            root: std::path::absolute(root).unwrap_or_else(|_| root.to_owned()),
+            api: api.clone(),
+            extensions: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        set.rescan();
+        set
+    }
+
+    /// Reads the directory again: an extension whose manifest now has
+    /// errors, or is missing or unreadable, keeps its last good version,
+    /// reporting them, and one whose directory is gone drops out. Returns whether anything changed, the
+    /// diagnostics included.
+    pub fn rescan(&mut self) -> bool {
+        let mut diagnostics = Vec::new();
+        let dirs = match extension_dirs(&self.root) {
+            Ok(mut dirs) => {
+                // A directory that held an extension keeps it until the
+                // directory is gone: a manifest removed or unreadable is
+                // an error, and its last good version stays.
+                for last in &self.extensions {
+                    if !dirs.contains(&last.dir) && still_a_dir(&last.dir) {
+                        dirs.push(last.dir.clone());
+                    }
+                }
+                dirs.sort();
+                dirs
+            }
+            Err(error) => {
+                // Unreadable for now: what was loaded stays.
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    file: self.root.clone(),
+                    key: None,
+                    line: 1,
+                    column: 1,
+                    message: format!("can't read the extensions directory: {error}"),
+                });
+                let changed = diagnostics != self.diagnostics;
+                self.diagnostics = diagnostics;
+                return changed;
+            }
+        };
+        let mut extensions: Vec<Manifest> = Vec::new();
+        for dir in dirs {
+            let (loaded, found) = load_manifest(&dir, &self.api);
+            let has_errors = found.iter().any(Diagnostic::is_error);
+            diagnostics.extend(found);
+            let manifest = match loaded {
+                Some(manifest) => manifest,
+                None if has_errors => {
+                    let last_good = self.extensions.iter().find(|last| last.dir == dir);
+                    let Some(last_good) = last_good else {
+                        continue;
+                    };
+                    last_good.clone()
+                }
+                None => continue,
+            };
+            if let Some(first) = extensions.iter().find(|first| first.id == manifest.id) {
+                let message = format!(
+                    "`{}` is also the ID of the extension in {}, which loads instead",
+                    manifest.id,
+                    first.dir.display()
+                );
+                let layer = load_layer(&dir.join(MANIFEST_FILE));
+                let path = owned(&["id"]);
+                diagnostics.push(layer.value_diagnostic(Severity::Error, &path, message));
+                continue;
+            }
+            extensions.push(manifest);
+        }
+        extensions.sort_by(|a, b| a.id.cmp(&b.id));
+        let changed = extensions != self.extensions || diagnostics != self.diagnostics;
+        self.extensions = extensions;
+        self.diagnostics = diagnostics;
+        changed
+    }
+
+    /// The directory the extensions are in, made absolute.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The extensions loaded, in ID order.
+    pub fn extensions(&self) -> &[Manifest] {
+        &self.extensions
+    }
+
+    /// Their manifests' problems, in directory order.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// A notice for each extension loaded whose licence is copyleft or
+    /// unknown that the user hasn't had at its version, recorded in
+    /// `<state_dir>/`[`ACKNOWLEDGED_FILE`] so it's given once: the app
+    /// ships none of these, so the user should know they installed one. A
+    /// permissive one has none. The file is read and written under a lock
+    /// on `<file>.lock`, so of two processes discovering the same
+    /// extension only one has its notice, and neither drops the other's
+    /// entries. Call it when the notices will reach the user; a failure
+    /// to record them is logged, and they're still returned.
+    pub fn license_notices(&self, state_dir: &Path) -> Vec<LicenseNotice> {
+        let path = state_dir.join(ACKNOWLEDGED_FILE);
+        let claimed = crate::trust::locked(&path, || {
+            let mut acknowledged = read_acknowledged(&path);
+            let notices: Vec<LicenseNotice> = self
+                .unpermissive()
+                .filter(|notice| acknowledged.insert(notice.key()))
+                .collect();
+            if !notices.is_empty() {
+                let entries: Value = acknowledged.into_iter().collect::<Vec<_>>().into();
+                let text = format!("{ACKNOWLEDGED_HEADER}acknowledged = {entries}\n");
+                if let Err(error) = crate::trust::write(&path, text.as_bytes()) {
+                    log::warn!("can't write {}: {error}", path.display());
+                }
+            }
+            notices
+        });
+        claimed.unwrap_or_else(|error| {
+            log::warn!("can't lock {}: {error}", path.display());
+            self.pending_license_notices(state_dir)
+        })
+    }
+
+    /// The notices [`ExtensionSet::license_notices`] would give, without
+    /// recording them: for when there's nowhere to show them yet.
+    pub fn pending_license_notices(&self, state_dir: &Path) -> Vec<LicenseNotice> {
+        let acknowledged = read_acknowledged(&state_dir.join(ACKNOWLEDGED_FILE));
+        self.unpermissive()
+            .filter(|notice| !acknowledged.contains(&notice.key()))
+            .collect()
+    }
+
+    /// A notice for each extension loaded whose licence isn't permissive.
+    fn unpermissive(&self) -> impl Iterator<Item = LicenseNotice> + '_ {
+        self.extensions
+            .iter()
+            .filter(|manifest| manifest.license.class != LicenseClass::Permissive)
+            .map(|manifest| LicenseNotice {
+                id: manifest.id.clone(),
+                name: manifest.name.clone(),
+                version: manifest.version,
+                license: manifest.license.clone(),
+            })
+    }
+}
+
+/// Whether `dir` may still be a directory: it is one, or what it is can't
+/// be read. Gone, or something else now, it isn't.
+fn still_a_dir(dir: &Path) -> bool {
+    match std::fs::metadata(dir) {
+        Ok(meta) => meta.is_dir(),
+        Err(error) => !matches!(
+            error.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+        ),
+    }
+}
+
+/// The directories directly under `root` with a manifest, or one that
+/// can't be read, by name; none if `root` is missing.
+fn extension_dirs(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let dir = entry?.path();
+        let manifest = dir.join(MANIFEST_FILE).symlink_metadata();
+        let has_manifest = match manifest {
+            Ok(_) => true,
+            Err(error) => error.kind() != io::ErrorKind::NotFound,
+        };
+        if dir.is_dir() && has_manifest {
+            dirs.push(dir);
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
+}
+
+/// The file in the state directory recording which extensions' licence
+/// notices the user has had ([`ExtensionSet::license_notices`]), each as
+/// `id@version`.
+pub const ACKNOWLEDGED_FILE: &str = "extensions-acknowledged.toml";
+
+const ACKNOWLEDGED_HEADER: &str = "\
+# The extensions you installed, as id@version, whose licence you've been
+# told of. Remove an entry to be told again.
+
+";
+
+/// The `id@version` entries in `path`; none if it's missing or unreadable.
+fn read_acknowledged(path: &Path) -> std::collections::BTreeSet<String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Default::default(),
+        Err(error) => {
+            log::warn!("can't read {}: {error}", path.display());
+            return Default::default();
+        }
+    };
+    let table: toml::Table = toml::from_str(&text).unwrap_or_default();
+    let entries = table.get("acknowledged").and_then(Value::as_array);
+    entries
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| Some(entry.as_str()?.to_owned()))
+        .collect()
+}
+
+/// That an extension the user installed isn't permissively licensed:
+/// [`ExtensionSet::license_notices`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LicenseNotice {
+    pub id: String,
+    pub name: String,
+    pub version: (u32, u32, u32),
+    pub license: License,
+}
+
+impl LicenseNotice {
+    /// What to tell the user, in the app named `app`: "Solarized
+    /// (acme.solarized) is licensed GPL-3.0-only. Notes doesn't ship it;
+    /// you installed it."
+    pub fn message(&self, app: &str) -> String {
+        format!(
+            "{} ({}) is licensed {}. {app} doesn't ship it; you installed it.",
+            self.name, self.id, self.license.expr
+        )
+    }
+
+    /// Its entry in [`ACKNOWLEDGED_FILE`]: `id@version`.
+    fn key(&self) -> String {
+        let (major, minor, patch) = self.version;
+        format!("{}@{major}.{minor}.{patch}", self.id)
+    }
+}
+
 /// A small SPDX licence expression parser, after the grammar in SPDX 2.3
 /// annex D. Expressions are short: their length and nesting are capped, and
 /// `AND` and `OR` chains are flat, so nothing recurses deeply.
@@ -751,7 +1012,16 @@ mod spdx {
                 ch if is_word_char(ch) => {
                     let len = rest.find(|ch| !is_word_char(ch)).unwrap_or(rest.len());
                     let plus = rest[len..].starts_with('+');
-                    (Token::Word(&rest[..len], plus), len + usize::from(plus))
+                    let end = len + usize::from(plus);
+                    // `GPL-2.0+OR MIT`: what follows is set apart from the
+                    // `+` as from an ID, by a space or a parenthesis.
+                    if plus && rest[end..].starts_with(|ch| is_word_char(ch) || ch == '+') {
+                        return Err(format!(
+                            "`{}` must be followed by a space, a parenthesis or the end",
+                            &rest[..end]
+                        ));
+                    }
+                    (Token::Word(&rest[..len], plus), end)
                 }
                 ch => return Err(format!("{ch:?} can't be in a licence expression")),
             };

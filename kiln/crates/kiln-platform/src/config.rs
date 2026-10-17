@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! The config service: watches an app's config files with one
-//! [`ConfigWatcher`] and applies each change on the main thread, so every
-//! window follows.
+//! [`ConfigWatcher`], and its directories, such as the extensions
+//! directory, with one [`TreeWatcher`], and applies each change on the main
+//! thread, so every window follows.
 //!
 //! ```ignore
 //! let settings = SettingsStore::<NotesSettings>::load(Some(user), project);
@@ -40,7 +41,9 @@ use std::{
 };
 
 use gpui::{App, Global, Task};
-use kiln_core::{ConfigWatcher, Diagnostic, KeymapEvent, KeymapStore, SettingsStore, SettingsType};
+use kiln_core::{
+    ConfigWatcher, Diagnostic, KeymapEvent, KeymapStore, SettingsStore, SettingsType, TreeWatcher,
+};
 
 /// The log target the service logs under unless the app names its own:
 /// `kiln_platform::config`.
@@ -67,6 +70,12 @@ use crate::keys;
 pub trait ConfigSource: 'static {
     /// The files it reads, all watched.
     fn paths(&self) -> Vec<PathBuf>;
+
+    /// Directories it reads, each watched recursively: a change anywhere
+    /// under one is a batch naming the directory itself.
+    fn trees(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 
     /// The user's own files among [`ConfigSource::paths`]: the service
     /// creates each one's directory if it's missing, before watching.
@@ -315,12 +324,26 @@ impl ConfigService {
         paths
     }
 
+    /// Every source's directories watched recursively
+    /// ([`ConfigSource::trees`]), each once, in order.
+    pub fn trees(&self) -> Vec<PathBuf> {
+        let mut trees: Vec<PathBuf> = Vec::new();
+        for tree in self.sources.iter().flat_map(|source| source.trees()) {
+            if !trees.contains(&tree) {
+                trees.push(tree);
+            }
+        }
+        trees
+    }
+
     /// Applies what each source loaded, then watches their files,
     /// reloading on the main thread for as long as the task runs: detach
     /// it, or hold it. Each user file's directory is created first if it's
     /// missing, as are those from [`ConfigService::create_dir`]. The
     /// watcher's first batch names every file, so a save made between
-    /// loading and watching applies too.
+    /// loading and watching applies too. The sources' directories
+    /// ([`ConfigSource::trees`]) are watched by a [`TreeWatcher`] into the
+    /// same batches, its first naming each that exists.
     ///
     /// If the files can't be watched, what was loaded still applies, and
     /// the error says why they won't reload.
@@ -328,14 +351,24 @@ impl ConfigService {
         self.create_dirs();
         let (sender, batches) = batch_channel();
         let paths = self.paths();
+        let trees = self.trees();
         self.install(cx);
+        let tree_watcher = if trees.is_empty() {
+            None
+        } else {
+            let sender = sender.clone();
+            let watcher = TreeWatcher::new(trees, move |batch| sender.send(batch));
+            Some(watcher.map_err(io::Error::other)?)
+        };
         let watcher =
             ConfigWatcher::new(paths, move |batch| sender.send(batch)).map_err(io::Error::other)?;
-        Ok(self.run(batches, Some(watcher), cx))
+        Ok(self.run(batches, Some(Watchers(watcher, tree_watcher)), cx))
     }
 
     /// [`ConfigService::start`] without a watcher: `batches` says which
-    /// files changed, as the watcher would. Directories are created as
+    /// files changed, as the watcher would, and names a source's
+    /// directory ([`ConfigSource::trees`]) for a change under it.
+    /// Directories are created as
     /// `start` creates them. For tests, and for an app with
     /// its own watcher.
     pub fn start_with(mut self, batches: Batches, cx: &mut App) -> Task<()> {
@@ -374,7 +407,7 @@ impl ConfigService {
         cx.set_global(ConfigDiagnostics(all.collect()));
     }
 
-    fn run(self, mut batches: Batches, watcher: Option<ConfigWatcher>, cx: &mut App) -> Task<()> {
+    fn run(self, mut batches: Batches, watcher: Option<Watchers>, cx: &mut App) -> Task<()> {
         let sources = Rc::new(RefCell::new(self.sources));
         cx.set_global(Running(sources.clone()));
         cx.spawn(async move |cx| {
@@ -386,6 +419,12 @@ impl ConfigService {
         })
     }
 }
+
+/// What [`ConfigService::start`] watches with, held by its task.
+struct Watchers(
+    #[allow(dead_code, reason = "held, not read")] ConfigWatcher,
+    #[allow(dead_code, reason = "held, not read")] Option<TreeWatcher>,
+);
 
 /// Hands `batch` to every source, logging diagnostics that changed, then
 /// publishing them all if they did.

@@ -556,6 +556,10 @@ fn extension_licence_handling() {
         "DocumentRef-a:MIT",
         "MIT:Apache-2.0",
         "MIT WITH LLVM-exception+",
+        "GPL-2.0+OR MIT",
+        "MIT+AND Apache-2.0",
+        "GPL-2.0+WITH Classpath-exception-2.0",
+        "GPL-2.0++",
     ] {
         assert!(License::parse(bad).is_err(), "{bad:?}");
         let manifest = licensed(bad);
@@ -581,6 +585,8 @@ fn extension_licence_handling() {
             LicenseClass::Copyleft,
         ),
         ("((MIT))", LicenseClass::Permissive),
+        ("(GPL-2.0+)AND(MIT)", LicenseClass::Copyleft),
+        ("GPL-2.0+ OR MIT", LicenseClass::Permissive),
     ] {
         assert_eq!(
             License::parse(good).map(|license| license.class),
@@ -607,6 +613,10 @@ fn extension_licence_handling() {
         (error.line, error.column),
         position(&manifest, "\"GPL-3.0-only\"")
     );
+
+    // Not read as `GPL-2.0+ OR MIT`, which MIT would allow.
+    let (_dir, loaded, _) = load_with(&licensed("GPL-2.0+OR MIT"), &only_mit);
+    assert!(loaded.is_none());
 
     let (_dir, loaded, diagnostics) = load_with(&licensed("Apache-2.0 OR MIT"), &only_mit);
     assert_eq!(diagnostics, []);

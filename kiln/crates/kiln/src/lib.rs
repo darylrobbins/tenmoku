@@ -11,6 +11,7 @@ mod config;
 mod contributions;
 mod cx;
 mod ext;
+pub mod extensions;
 mod item;
 pub mod model;
 mod settings;

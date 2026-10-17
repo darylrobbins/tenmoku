@@ -97,23 +97,11 @@ impl TrustStore {
     /// left as it is).
     pub fn update(path: impl Into<PathBuf>, apply: impl FnOnce(&mut Self)) -> io::Result<()> {
         let path = path.into();
-        let mut lock_name = path.file_name().unwrap_or_default().to_owned();
-        lock_name.push(".lock");
-        let lock_path = path.with_file_name(lock_name);
-        create_dir(lock_path.parent().unwrap_or(Path::new(".")))?;
-        let lock = private(
-            fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false),
-        )
-        .open(&lock_path)?;
-        lock.lock()?;
-        let mut store = Self::load(path);
-        apply(&mut store);
-        // The lock is released when `lock` drops, after the save.
-        store.save()
+        locked(&path, || {
+            let mut store = Self::load(path.clone());
+            apply(&mut store);
+            store.save()
+        })?
     }
 
     /// The trust of canonical folder `folder`: the decision of the nearest
@@ -214,6 +202,27 @@ fn parse(text: &str) -> Option<BTreeMap<PathBuf, bool>> {
             .collect(),
         Some(_) => None,
     }
+}
+
+/// Runs `f` holding an exclusive lock on `<path>.lock` (created, mode
+/// 0600, beside `path` and never removed), blocking while another, in this
+/// process or another, holds it. Errs if the lock can't be taken.
+pub(crate) fn locked<T>(path: &Path, f: impl FnOnce() -> T) -> io::Result<T> {
+    let mut lock_name = path.file_name().unwrap_or_default().to_owned();
+    lock_name.push(".lock");
+    let lock_path = path.with_file_name(lock_name);
+    create_dir(lock_path.parent().unwrap_or(Path::new(".")))?;
+    let lock = private(
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false),
+    )
+    .open(&lock_path)?;
+    lock.lock()?;
+    // The lock is released when `lock` drops, after `f`.
+    Ok(f())
 }
 
 /// Writes `contents` to `path` through a temporary file beside it, renamed
