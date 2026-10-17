@@ -128,13 +128,18 @@ fn a_stale_tree_is_parsed_within_the_time() {
     buffer.edit([(0..0, "mod m {\n")], Origin::User);
     syntax.edit(&buffer.snapshot());
     assert!(syntax.needs_parse());
-    let started = Instant::now();
-    let deadline = started + Duration::from_millis(2);
-    assert!(reparsed(&syntax, &buffer.snapshot(), deadline).is_none());
-    let bounded = started.elapsed();
-    let started = Instant::now();
-    syntax.parse_job().run();
-    let stale = started.elapsed();
+    // The fastest of interleaved runs, so a thread descheduled under load
+    // in one run doesn't decide it.
+    let (mut bounded, mut stale) = (Duration::MAX, Duration::MAX);
+    for _ in 0..5 {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(2);
+        assert!(reparsed(&syntax, &buffer.snapshot(), deadline).is_none());
+        bounded = bounded.min(started.elapsed());
+        let started = Instant::now();
+        syntax.parse_job().run();
+        stale = stale.min(started.elapsed());
+    }
     assert!(bounded * 2 < stale, "{bounded:?} bounded, {stale:?} stale");
 }
 
@@ -151,13 +156,18 @@ fn a_slow_seed_stops_at_the_deadline() {
     buffer.edit([(0..0, "\n")], Origin::User);
     assert!(!syntax.needs_parse());
 
-    let started = Instant::now();
-    let deadline = started + Duration::from_millis(2);
-    assert!(reparsed(&syntax, &buffer.snapshot(), deadline).is_none());
-    let bounded = started.elapsed();
-    let started = Instant::now();
-    syntax.parse_job().run();
-    let seed = started.elapsed();
+    // The fastest of interleaved runs, so a thread descheduled under load
+    // in one run doesn't decide it.
+    let (mut bounded, mut seed) = (Duration::MAX, Duration::MAX);
+    for _ in 0..5 {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(2);
+        assert!(reparsed(&syntax, &buffer.snapshot(), deadline).is_none());
+        bounded = bounded.min(started.elapsed());
+        let started = Instant::now();
+        syntax.parse_job().run();
+        seed = seed.min(started.elapsed());
+    }
     assert!(bounded * 2 < seed, "{bounded:?} bounded, {seed:?} seeding");
 }
 
