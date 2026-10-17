@@ -92,6 +92,34 @@ struct Snapshot {
 
 /// What a refresh's status run found: the repository the root is in, if
 /// any, with its statuses, their halves apart, and what was read.
+/// What the status bar's branch item marks, as VS Code's
+/// `Repository.headLabel` does: `*` for working-tree or untracked changes,
+/// `+` for staged ones, `!` while a path is unmerged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Marks {
+    pub working: bool,
+    pub staged: bool,
+    pub unmerged: bool,
+}
+
+impl Marks {
+    /// The marks for `statuses`. A conflicted path counts as unmerged only.
+    pub(crate) fn of(statuses: &[SplitStatus]) -> Self {
+        let mut marks = Self::default();
+        for status in statuses {
+            if status.staged == Some(ChangeKind::Conflicted)
+                || status.unstaged == Some(ChangeKind::Conflicted)
+            {
+                marks.unmerged = true;
+            } else {
+                marks.working |= status.unstaged.is_some();
+                marks.staged |= status.staged.is_some();
+            }
+        }
+        marks
+    }
+}
+
 type Statuses = Result<Option<(Arc<Found>, Vec<SplitStatus>, Snapshot)>, GitError>;
 
 /// An open editor's file, for a background run.
@@ -370,7 +398,7 @@ impl GitState {
         let (statuses, landed) = match statuses {
             Ok(Some((repo, statuses, snapshot))) => {
                 if let Some(head) = snapshot.branch.clone() {
-                    self.show_branch(Some((head, !snapshot.kinds.is_empty())), cx);
+                    self.show_branch(Some((head, Marks::of(&statuses))), cx);
                 }
                 let after = Arc::new(snapshot);
                 let before = self.snapshot.replace(after.clone());
@@ -422,8 +450,8 @@ impl GitState {
     }
 
     /// Has the workbench's status bar show `branch`, where HEAD points and
-    /// whether anything changed; none hides it.
-    fn show_branch(&self, branch: Option<(Head, bool)>, cx: &mut App) {
+    /// what changed; none hides it.
+    fn show_branch(&self, branch: Option<(Head, Marks)>, cx: &mut App) {
         if let Some(workbench) = self.workbench.upgrade() {
             workbench.update(cx, |workbench, cx| workbench.set_branch_item(branch, cx));
         }

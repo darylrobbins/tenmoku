@@ -796,3 +796,6 @@ fn remote_name_with_a_slash(cx: &mut TestAppContext) {
     );
     assert_eq!(upstream, "refs/remotes/team/origin/feat");
 }
+
+#[path = "git_branch_marks_tests.rs"]
+mod marks;

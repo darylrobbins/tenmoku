@@ -4,8 +4,9 @@
 //! branch item.
 //!
 //! - **Item.** On the bar's left, before the vim mode: the git-branch icon
-//!   and HEAD's branch, with `*` while anything changed (VS Code's), or its
-//!   short id when detached; none outside a repository. The git refresh
+//!   and HEAD's branch, or its short id when detached, then as VS Code's
+//!   does: `*` for working-tree or untracked changes, `+` for staged ones
+//!   and `!` while a path is unmerged, in that order; none outside a repository. The git refresh
 //!   ([`crate::git`]) sets it each time it reads the status. A click runs
 //!   `git.switch_branch`.
 //! - **Picker.** `git.switch_branch`, or `:Git switch` and `:Git checkout`
@@ -63,7 +64,10 @@ use super::{
     git_commands::{GitCommand, GitOp},
     toast::{self, Toast},
 };
-use crate::picker::{Picker, PickerDelegate};
+use crate::{
+    git::Marks,
+    picker::{Picker, PickerDelegate},
+};
 
 /// The status item's id.
 pub(crate) const ITEM: &str = "git.branch";
@@ -191,12 +195,12 @@ enum Outcome {
 }
 
 impl Workbench {
-    /// Shows `branch` on the status bar: where HEAD points, and whether
-    /// anything changed. None, outside a repository, hides the item.
-    pub(crate) fn set_branch_item(&mut self, branch: Option<(Head, bool)>, cx: &mut App) {
+    /// Shows `branch` on the status bar: where HEAD points, and what
+    /// changed ([`Marks`]). None, outside a repository, hides the item.
+    pub(crate) fn set_branch_item(&mut self, branch: Option<(Head, Marks)>, cx: &mut App) {
         let bar = self.status_bar.clone();
         bar.update(cx, |bar, cx| match branch {
-            Some((head, dirty)) => bar.set_item(status_item(&head, dirty), cx),
+            Some((head, marks)) => bar.set_item(status_item(&head, marks), cx),
             None => bar.remove_item(ITEM, cx),
         });
     }
@@ -488,12 +492,21 @@ impl Workbench {
     }
 }
 
-/// The status item for `head`, with `*` if anything changed.
-fn status_item(head: &Head, dirty: bool) -> StatusItem {
+/// The status item for `head`, with `*`, `+` and `!` as `marks` say.
+fn status_item(head: &Head, marks: Marks) -> StatusItem {
     let name = match head {
         Head::Branch(name) | Head::Unborn(name) | Head::Detached(name) => name,
     };
-    let text = format!("{name}{}", if dirty { "*" } else { "" });
+    let mut text = name.to_string();
+    for (set, mark) in [
+        (marks.working, '*'),
+        (marks.staged, '+'),
+        (marks.unmerged, '!'),
+    ] {
+        if set {
+            text.push(mark);
+        }
+    }
     let switch = fe_command::Invocation::of("git.switch_branch").expect("a valid command ID");
     StatusItem::new(ITEM, StatusSide::Left, PRIORITY, text)
         .icon(Icon::GitBranch)
