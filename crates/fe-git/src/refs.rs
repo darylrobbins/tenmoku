@@ -9,6 +9,20 @@ use gix::refs::Category;
 use crate::cli::{self, Access};
 use crate::{GitError, Repo};
 
+/// A commit message's subject as git's `%s` gives it: the first paragraph
+/// after any leading empty lines, each line's trailing whitespace dropped,
+/// joined by single spaces.
+pub(crate) fn subject(message: &[u8]) -> String {
+    let lines = message
+        .split(|&b| b == b'\n')
+        .map(|line| line.trim_end())
+        .skip_while(|line| line.is_empty())
+        .take_while(|line| !line.is_empty())
+        .map(|line| String::from_utf8_lossy(line).into_owned())
+        .collect::<Vec<_>>();
+    lines.join(" ")
+}
+
 /// Where HEAD points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Head {
@@ -46,7 +60,7 @@ pub struct Branch {
     pub upstream: Option<String>,
     /// The tip's committer time, seconds since the epoch.
     pub committed: i64,
-    /// The first line of the tip's message.
+    /// The tip's subject, as git's `%s` gives it.
     pub summary: String,
     /// Commits on a local branch that its upstream lacks, as of the last
     /// fetch. `None` for remote-tracking branches, branches without an
@@ -146,12 +160,7 @@ impl Repo {
                 continue;
             };
             let committed = commit.time().map_err(GitError::from_gix)?.seconds;
-            let summary = commit
-                .message_raw_sloppy()
-                .lines()
-                .next()
-                .map(|line| String::from_utf8_lossy(line).trim_end().to_owned())
-                .unwrap_or_default();
+            let summary = subject(commit.message_raw_sloppy());
             let upstream = if remote.is_none() {
                 repo.branch_remote_tracking_ref_name(
                     full_name.as_ref(),
