@@ -81,7 +81,12 @@ for _, case in ipairs(vim.json.decode(read(input))) do
     vim.fn.histdel(history)
   end
 
+  -- The load isn't a change: a file loads with no undo history, so `u` and
+  -- `:undo 0` stop at the buffer as it was loaded.
+  local undolevels = vim.bo.undolevels
+  vim.bo.undolevels = -1
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(case.buffer, "\n", { plain = true }))
+  vim.bo.undolevels = undolevels
   -- Closed folds (manual folds start closed); soft wrap is nvim's default
   -- 'wrap', at the 80 columns the window has.
   for _, fold in ipairs(case.folds or {}) do

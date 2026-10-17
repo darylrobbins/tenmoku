@@ -65,8 +65,10 @@ impl Entry {
 /// Every command in the table.
 #[path = "put.rs"]
 mod put;
+#[path = "undo.rs"]
+mod undo;
 
-pub(super) const COMMANDS: &[Entry] = &[put::COMMAND];
+pub(super) const COMMANDS: &[Entry] = &[put::COMMAND, undo::UNDO, undo::REDO];
 
 /// The entry `name` names.
 pub(super) fn find(name: &str) -> Option<&'static Entry> {

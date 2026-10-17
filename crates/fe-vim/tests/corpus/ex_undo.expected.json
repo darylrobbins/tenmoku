@@ -1,0 +1,883 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "undo_once",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xx:undo<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_abbreviated_u",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "x:u<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_abbreviated_un",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "xjx:un<CR>",
+      "expect": {
+        "buffer": "abc\ndf\nghi",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "h",
+            "linewise": false
+          },
+          "-": {
+            "text": "h",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_after_dd",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "dd:undo<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_after_insert",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ixy<Esc>:undo<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_twice",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxjx:undo<CR>:undo<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "g",
+            "linewise": false
+          },
+          "-": {
+            "text": "g",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_then_undo_key",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxjx:undo<CR>u",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "g",
+            "linewise": false
+          },
+          "-": {
+            "text": "g",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_after_undo",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:undo<CR>:redo<CR>",
+      "expect": {
+        "buffer": "bc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_abbreviated_red",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:undo<CR>:red<CR>",
+      "expect": {
+        "buffer": "bc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_after_undo_key",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxu:redo<CR>",
+      "expect": {
+        "buffer": "bc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_with_nothing_to_redo_fails",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:redo<CR>",
+      "expect": {
+        "buffer": "bc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_then_undo_key",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxu:redo<CR>u",
+      "expect": {
+        "buffer": "bc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_zero_undoes_all",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xx:undo 0<CR>",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_zero_many_changes",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "xkxkxjjdd:undo 0<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "gi\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "1": {
+            "text": "gi\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_zero_then_redo",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxjx:undo 0<CR>:redo<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "g",
+            "linewise": false
+          },
+          "-": {
+            "text": "g",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_zero_with_nothing_to_undo",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": ":undo 0<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_zero_range",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:0undo<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_with_nothing_to_undo_fails",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": ":undo<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_range_fails",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:2undo<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_number_fails",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:undo 2<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_bang_allowed",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:undo!<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_bang_fails",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:redo!<CR>",
+      "expect": {
+        "buffer": "bc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_range_fails",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxu:2redo<CR>",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_trailing_fails",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjx:undo x<CR>",
+      "expect": {
+        "buffer": "bc\nef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_trailing_fails",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xu:redo x<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_comment",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:undo \" why<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_undo",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:undo<CR>j.",
+      "expect": {
+        "buffer": "abc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_redo",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xu:redo<CR>j.",
+      "expect": {
+        "buffer": "bc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_from_global",
+      "buffer": "x1\nx2\nz\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/s/x/y/<CR>:undo<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nz\nx3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_from_global",
+      "buffer": "x1\nx2\nz\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/s/x/y/<CR>:undo<CR>:redo<CR>",
+      "expect": {
+        "buffer": "y1\ny2\nz\ny3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_after_put",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy:2pu<CR>:undo<CR>",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_after_indent_ex",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":2,3><CR>:undo<CR>",
+      "expect": {
+        "buffer": "a\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_count_key_after",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxjx:undo<CR>2u",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "g",
+            "linewise": false
+          },
+          "-": {
+            "text": "g",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_then_new_change_then_redo_fails",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xu:undo<CR>jx:redo<CR>",
+      "expect": {
+        "buffer": "abc\nef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}
