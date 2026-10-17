@@ -53,6 +53,7 @@ mod tree_style;
 mod vim_line;
 mod vim_recording;
 mod window_frame;
+mod workspace_focus_split;
 
 use std::{cell::Cell, path::Path, rc::Rc};
 
