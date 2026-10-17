@@ -162,6 +162,35 @@ impl Terminal {
         lock(&self.shell).view_moved(offset, &term);
     }
 
+    /// Scrolls the view by `pages` pages (negative back into history,
+    /// positive toward the bottom) of two rows less than its height, as
+    /// vim's ctrl-f and ctrl-b do, as far as it can, then puts the vi cursor,
+    /// keeping its column, on the view's top row after paging forward or its
+    /// bottom row after paging back. Where the view can't move at all, paging
+    /// forward puts the cursor on the bottom row and paging back leaves it.
+    /// Nothing outside vi mode.
+    pub fn vi_scroll_page(&self, pages: i32) {
+        let mut term = self.term.lock();
+        if !term.mode().contains(TermMode::VI) {
+            return;
+        }
+        let offset = term.grid().display_offset();
+        let point = term.vi_mode_cursor.point;
+        let page = (term.screen_lines() as i32 - 2).max(1);
+        term.scroll_display(Scroll::Delta(pages.saturating_mul(page).saturating_neg()));
+        let top = -(term.grid().display_offset() as i32);
+        let bottom = top + term.screen_lines() as i32 - 1;
+        let moved = term.grid().display_offset() != offset;
+        let line = match (pages > 0, moved) {
+            (true, true) => top,
+            (true, false) => bottom,
+            (false, true) => bottom,
+            (false, false) => point.line.0,
+        };
+        term.vi_goto_point(Point::new(Line(line), point.column));
+        lock(&self.shell).view_moved(offset, &term);
+    }
+
     /// Scrolls the view by `lines` (negative back into history) with the vi
     /// cursor staying on its line, as vim's ctrl-e and ctrl-y do; it moves
     /// only to the view's top or bottom row when its line would leave the

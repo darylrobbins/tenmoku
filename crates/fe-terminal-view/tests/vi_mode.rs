@@ -293,8 +293,11 @@ fn keys_move_the_vi_cursor(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("1 2 j");
     assert_eq!(on(&view, cx), here("out 1 12", 0));
 
-    // ctrl-d, ctrl-u, ctrl-f and ctrl-b move the cursor with the view on
-    // screen; ctrl-e and ctrl-y leave it on its line.
+    // ctrl-d and ctrl-u move the cursor with the view on screen; ctrl-f and
+    // ctrl-b page two rows less than the view and put it on the new top or
+    // bottom row; ctrl-e and ctrl-y leave it on its line.
+    let row = view.read_with(cx, |view, _| view.terminal().unwrap().snapshot().cursor.row);
+    let page = rows - 2;
     let (_, _, offset) = at(&view, cx);
     // The fixture's line `n` rows below `$ prompt 1`.
     let row_text = |n: usize| match n {
@@ -308,9 +311,9 @@ fn keys_move_the_vi_cursor(cx: &mut TestAppContext) {
         ("ctrl-y", 0, offset),
         ("ctrl-d", half, offset - half),
         ("ctrl-u", 0, offset),
-        ("ctrl-f", rows, offset - rows),
-        ("ctrl-b", 0, offset),
-        ("2 ctrl-e", 0, offset - 2),
+        ("ctrl-f", page - row, offset - page),
+        ("ctrl-b", rows - 1 - row, offset),
+        ("2 ctrl-e", rows - 1 - row, offset - 2),
     ];
     for (keys, down, want) in steps {
         cx.simulate_keystrokes(keys);

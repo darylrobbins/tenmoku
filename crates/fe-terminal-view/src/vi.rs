@@ -97,6 +97,8 @@ pub(crate) enum ViCommand {
     Move(ViMove, usize),
     /// [`fe_terminal::Terminal::vi_scroll`] by this many lines.
     Scroll(i32),
+    /// [`fe_terminal::Terminal::vi_scroll_page`] by this many pages.
+    Page(i32),
     /// [`fe_terminal::Terminal::vi_scroll_view`] by this many lines.
     ScrollView(i32),
     Select(SelectionKind),
@@ -182,7 +184,7 @@ impl ViKeys {
         let count = self.count.take();
         let times = count.unwrap_or(1);
         let lines = |n: usize| i32::try_from(n.saturating_mul(times)).unwrap_or(i32::MAX);
-        let (half, page) = ((rows / 2).max(1), rows.max(1));
+        let half = (rows / 2).max(1);
         let motion = |to: ViMove| Some(ViCommand::Move(to, times));
         match (pending, key) {
             (Some('g'), ViKey::Char('g')) => return Some(ViCommand::Move(ViMove::Top, 1)),
@@ -238,8 +240,8 @@ impl ViKeys {
             ViKey::Ctrl('y') => Some(ViCommand::ScrollView(-lines(1))),
             ViKey::Ctrl('d') => Some(ViCommand::Scroll(lines(half))),
             ViKey::Ctrl('u') => Some(ViCommand::Scroll(-lines(half))),
-            ViKey::Ctrl('f') | ViKey::PageDown => Some(ViCommand::Scroll(lines(page))),
-            ViKey::Ctrl('b') | ViKey::PageUp => Some(ViCommand::Scroll(-lines(page))),
+            ViKey::Ctrl('f') | ViKey::PageDown => Some(ViCommand::Page(lines(1))),
+            ViKey::Ctrl('b') | ViKey::PageUp => Some(ViCommand::Page(-lines(1))),
             ViKey::Char('v') => Some(ViCommand::Select(SelectionKind::Simple)),
             ViKey::Char('V') => Some(ViCommand::Select(SelectionKind::Line)),
             ViKey::Ctrl('v') => Some(ViCommand::Select(SelectionKind::Block)),
@@ -344,6 +346,7 @@ impl TerminalView {
                 }
             }
             ViCommand::Scroll(lines) => terminal.vi_scroll(lines),
+            ViCommand::Page(pages) => terminal.vi_scroll_page(pages),
             ViCommand::ScrollView(lines) => terminal.vi_scroll_view(lines),
             ViCommand::Select(kind) => terminal.vi_select(Some(kind)),
             ViCommand::Yank => {
@@ -493,8 +496,8 @@ mod tests {
                 Some(Scroll(5)),
                 None,
                 Some(Scroll(-10)),
-                Some(Scroll(10)),
-                Some(Scroll(-10)),
+                Some(Page(1)),
+                Some(Page(-1)),
                 Some(ScrollView(1)),
                 Some(ScrollView(-1)),
             ]
