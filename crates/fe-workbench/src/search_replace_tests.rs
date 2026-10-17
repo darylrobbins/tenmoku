@@ -1204,3 +1204,25 @@ fn a_project_beneath_a_folder_that_can_only_be_searched(cx: &mut TestAppContext)
     assert_eq!(a, "bar a\n");
     assert_eq!(b, "bar b\n");
 }
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn replacing_keeps_a_files_extended_attributes(cx: &mut TestAppContext) {
+    let dir = project(&[("a.rs", b"foo a\n")]);
+    let path = dir.path().join("a.rs");
+    let set = std::process::Command::new("/usr/bin/xattr")
+        .args(["-w", "com.example.fastedit-test", "kept"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(set.status.success());
+    let (_workbench, search, cx) = searching(cx, dir.path(), "foo");
+    replace_all(&search, "bar", cx);
+    assert_eq!(read(dir.path(), "a.rs"), "bar a\n");
+    let kept = std::process::Command::new("/usr/bin/xattr")
+        .args(["-p", "com.example.fastedit-test"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&kept.stdout).trim(), "kept");
+}

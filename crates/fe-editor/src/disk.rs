@@ -131,8 +131,9 @@ impl SaveJob {
     /// The new file gets a random name and is created exclusively, so it
     /// never follows a planted symlink. Over an existing file it is owner-only
     /// mid-save, so never readable by others, and the original's permissions
-    /// are then applied through the open handle; a file made where nothing was
-    /// gets 0666 less the umask. If the path is a symlink, the file it points
+    /// are then applied through the open handle, and on macOS its extended
+    /// attributes (Finder tags, quarantine) are copied too; a file made where
+    /// nothing was gets 0666 less the umask. If the path is a symlink, the file it points
     /// to is updated and the link is left in place. On a volume with no
     /// exclusive rename, a new file is instead created in place, still never
     /// replacing anything.
@@ -194,6 +195,7 @@ impl SaveJob {
         }
         let temp = builder.tempfile_in(dir)?;
         if let Some(permissions) = permissions {
+            copy_xattrs(&target, temp.as_file());
             temp.as_file().set_permissions(permissions)?;
         }
         let mut out = io::BufWriter::new(temp);
@@ -240,6 +242,50 @@ impl SaveJob {
         })
     }
 }
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn fcopyfile(
+        from: std::ffi::c_int,
+        to: std::ffi::c_int,
+        state: *mut std::ffi::c_void,
+        flags: u32,
+    ) -> std::ffi::c_int;
+}
+
+/// `COPYFILE_XATTR` of `copyfile.h`: extended attributes only.
+#[cfg(target_os = "macos")]
+const COPYFILE_XATTR: u32 = 1 << 2;
+
+/// Copies the extended attributes of the file at `original` onto `new` (macOS).
+/// A failure is logged and the save goes on.
+#[cfg(target_os = "macos")]
+fn copy_xattrs(original: &Path, new: &std::fs::File) {
+    use std::os::fd::AsRawFd;
+    let copied = std::fs::File::open(original).and_then(|from| {
+        // SAFETY: both descriptors are open for the call; no state is passed.
+        match unsafe {
+            fcopyfile(
+                from.as_raw_fd(),
+                new.as_raw_fd(),
+                std::ptr::null_mut(),
+                COPYFILE_XATTR,
+            )
+        } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    });
+    if let Err(error) = copied {
+        log::warn!(
+            "{}: its extended attributes weren't kept: {error}",
+            original.display()
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_xattrs(_: &Path, _: &std::fs::File) {}
 
 /// Whether `error` says the file system has no exclusive rename (exFAT, FAT
 /// and some network shares), so a new file can't be committed by one.

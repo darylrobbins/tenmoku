@@ -489,6 +489,31 @@ fn write_beneath(
         }
         why
     };
+    #[cfg(target_os = "macos")]
+    match open_in(&folder, name) {
+        Ok(original) => {
+            // SAFETY: both descriptors are open for the call; no state is passed.
+            let copied = unsafe {
+                libc::fcopyfile(
+                    original.as_raw_fd(),
+                    temp.as_raw_fd(),
+                    std::ptr::null_mut(),
+                    libc::COPYFILE_XATTR,
+                )
+            };
+            if copied != 0 {
+                log::warn!(
+                    "{}: its extended attributes weren't kept: {}",
+                    rel.display(),
+                    io::Error::last_os_error()
+                );
+            }
+        }
+        Err(error) => log::warn!(
+            "{}: its extended attributes weren't kept: {error}",
+            rel.display()
+        ),
+    }
     let written = (|| {
         let mut out = io::BufWriter::new(&temp);
         snapshot.write_to(&mut out)?;
