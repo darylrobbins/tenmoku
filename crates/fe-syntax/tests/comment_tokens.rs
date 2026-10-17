@@ -17,7 +17,10 @@ fn values() {
     let rust = get("rust");
     assert_eq!((rust.line, rust.block), (Some("//"), Some(("/*", "*/"))));
     let python = get("python");
-    assert_eq!((python.line, python.block), (Some("#"), None));
+    assert_eq!(
+        (python.line, python.block),
+        (Some("#"), Some(("\"\"\"", "\"\"\"")))
+    );
     let lua = get("lua");
     assert_eq!((lua.line, lua.block), (Some("--"), Some(("--[[", "]]"))));
     let sql = get("sql");
@@ -27,5 +30,5 @@ fn values() {
     let html = get("html");
     assert_eq!((html.line, html.block), (None, Some(("<!--", "-->"))));
     let json = get("json");
-    assert_eq!((json.line, json.block), (None, None));
+    assert_eq!((json.line, json.block), (Some("//"), Some(("/*", "*/"))));
 }

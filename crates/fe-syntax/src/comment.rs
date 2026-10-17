@@ -1,4 +1,6 @@
-//! Comment delimiters of each language in the table.
+//! Comment delimiters of each language in the table. They follow VS Code's
+//! language configurations, except Ruby's `=begin`/`=end` block, which must
+//! start a row and so is left out.
 
 /// A language's comment delimiters.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -24,14 +26,15 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
     let hash = tokens(Some("#"), None);
     let html = tokens(None, Some(("<!--", "-->")));
     Some(match language {
-        "rust" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java" | "php"
-        | "csharp" | "scala" | "swift" | "kotlin" => c_like,
-        "python" | "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" => hash,
+        "rust" | "json" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java"
+        | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
+        "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" => hash,
+        "python" => tokens(Some("#"), Some(("\"\"\"", "\"\"\""))),
         "lua" => tokens(Some("--"), Some(("--[[", "]]"))),
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
-        "json" | "markdown_inline" => tokens(None, None),
+        "markdown_inline" => tokens(None, None),
         _ => return None,
     })
 }
