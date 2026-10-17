@@ -93,7 +93,13 @@ impl Repo {
         }) {
             return Err(CommitError::EmptyMessage);
         }
-        if !amend && !self.has_staged()? {
+        // `git commit` concludes a merge whose resolution matches HEAD; it
+        // refuses an empty cherry-pick, revert or rebase step.
+        let merging = matches!(
+            self.repo.to_thread_local().state(),
+            Some(gix::state::InProgress::Merge)
+        );
+        if !amend && !merging && !self.has_staged()? {
             return Err(CommitError::NothingStaged);
         }
         let mut args: Vec<OsString> = ["commit", "-q", "--cleanup=strip"]
