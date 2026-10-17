@@ -1321,3 +1321,116 @@ fn operations_hold_renames_across_spellings_and_windows(cx: &mut TestAppContext)
     assert!(!real.join("a.txt").exists());
     assert_eq!(fs::read_to_string(real.join("x.txt")).unwrap(), "a\n");
 }
+
+/// A rename into a name a pending copy or Save As holds as its destination
+/// is refused until it's let go: the write would otherwise replace the file.
+#[gpui::test]
+fn rename_waits_for_a_held_destination(cx: &mut TestAppContext) {
+    let dir = project(&[("notes.txt", "hello\n"), ("todo.txt", "")]);
+    let root = dir.path();
+    std::fs::remove_file(root.join("todo.txt")).unwrap();
+    let (workbench, cx) = open_root(cx, root);
+    let held = root.join("todo.txt");
+    let buffer = fe_buffer::Buffer::new("");
+    let reservation =
+        crate::open::reserve(buffer.id(), held.clone(), crate::open::file_identity(&held));
+
+    let panel = focus_panel(&workbench, cx);
+    select(&panel, root, "notes.txt", cx);
+    run("project_panel.rename", cx);
+    cx.simulate_input("todo");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let error = field(&panel, cx).and_then(|(_, error)| error);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.contains("being saved")),
+        "{error:?}"
+    );
+    assert!(root.join("notes.txt").is_file());
+    assert!(!held.exists());
+
+    drop(reservation);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(held.is_file());
+    assert!(!root.join("notes.txt").exists());
+}
+
+/// A `:w copy.txt` waiting behind a running save holds its destination: a
+/// rename into it is refused meanwhile, and the destination is let go once
+/// the copy is written.
+#[gpui::test]
+fn rename_waits_for_a_pending_copy(cx: &mut TestAppContext) {
+    let dir = project(&[("a.txt", "one\n"), ("notes.txt", "hello\n")]);
+    let root = dir.path();
+    let mut app = cx.clone();
+    let (workbench, cx) = open_root(cx, root);
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    open_file(&workbench, &root.join("a.txt"), cx);
+    cx.simulate_keystrokes("x");
+    // The copy stops inside its background write until released.
+    let (release, gate) = futures::channel::oneshot::channel();
+    fe_gpui::pane_item::pause_next_copy(gate);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("w copy.txt");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!root.join("copy.txt").exists(), "paused before it writes");
+
+    let panel = focus_panel(&workbench, cx);
+    select(&panel, root, "notes.txt", cx);
+    run("project_panel.rename", cx);
+    cx.simulate_input("copy");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let error = field(&panel, cx).and_then(|(_, error)| error);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.contains("being saved")),
+        "{error:?}"
+    );
+    assert!(root.join("notes.txt").is_file());
+
+    // The tab and its window close (`:q!`); another window's panel is
+    // still refused, as the copy goes on holding its destination.
+    cx.simulate_keystrokes("escape");
+    let (other, other_cx) = open_root(&mut app, root);
+    open_file(&workbench, &root.join("a.txt"), cx);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("q!");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        crate::open::reserved_paths().contains(&root.join("copy.txt")),
+        "held after the window closed"
+    );
+    let other_panel = focus_panel(&other, other_cx);
+    select(&other_panel, root, "notes.txt", other_cx);
+    run("project_panel.rename", other_cx);
+    other_cx.simulate_input("copy");
+    other_cx.simulate_keystrokes("enter");
+    other_cx.run_until_parked();
+    let error = field(&other_panel, other_cx).and_then(|(_, error)| error);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.contains("being saved")),
+        "{error:?}"
+    );
+    other_cx.simulate_keystrokes("escape");
+
+    // Released: the copy is written and its destination let go.
+    release.send(()).unwrap();
+    other_cx.run_until_parked();
+    assert_eq!(fs::read_to_string(root.join("copy.txt")).unwrap(), "ne\n");
+    assert!(
+        crate::open::reserved_paths().is_empty(),
+        "let go once written"
+    );
+    let fresh = crate::open::reserve(fe_buffer::Buffer::new("").id(), root.join("copy.txt"), None);
+    assert_eq!(crate::open::reserved_paths(), [root.join("copy.txt")]);
+    drop(fresh);
+}

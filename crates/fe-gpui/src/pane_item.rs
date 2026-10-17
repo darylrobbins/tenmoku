@@ -257,6 +257,8 @@ impl Drop for SaveGuard {
 thread_local! {
     /// The reason of the save whose hook runs, per editor.
     static HOOK_REASONS: RefCell<HashMap<EntityId, SaveReason>> = RefCell::default();
+    /// What the next [`EditorView::write_copy`] waits for before it writes.
+    static COPY_GATE: RefCell<Option<oneshot::Receiver<()>>> = const { RefCell::new(None) };
 }
 
 /// Ends an editor's entry in [`HOOK_REASONS`] when its hook is over or the
@@ -285,6 +287,14 @@ impl EditorView {
         let reason = HOOK_REASONS.with_borrow(|reasons| reasons.get(&cx.entity_id()).copied());
         reason.is_none_or(|reason| self.edits_allowed(reason))
     }
+}
+
+/// For tests: the next copy ([`EditorView::write_copy`]) waits until `gate`
+/// is sent to or dropped before it writes, so a test can look at the world
+/// while one is under way.
+#[doc(hidden)]
+pub fn pause_next_copy(gate: oneshot::Receiver<()>) {
+    COPY_GATE.with_borrow_mut(|slot| *slot = Some(gate));
 }
 
 /// How long a save waits for its [`SaveHook`] before saving anyway.
@@ -334,11 +344,11 @@ impl EditorView {
 
     /// Applies the [`SaveFixes`] as one edit of the user, so one undo takes
     /// them back; none if the text needs nothing.
-    fn apply_save_fixes(&mut self, cx: &mut Context<Self>) {
+    fn apply_save_fixes(&mut self, fixes: SaveFixes, cx: &mut Context<Self>) {
         let SaveFixes {
             trim_trailing_whitespace: trim,
             insert_final_newline: newline,
-        } = self.save_fixes;
+        } = fixes;
         if !trim && !newline {
             return;
         }
@@ -425,7 +435,7 @@ impl EditorView {
         let hook = self.save_hook.clone().filter(|_| edits);
         let job = (previous.is_none() && hook.is_none()).then(|| {
             if edits {
-                self.apply_save_fixes(cx);
+                self.apply_save_fixes(self.save_fixes, cx);
             }
             self.model.prepare_save(false)
         });
@@ -456,7 +466,7 @@ impl EditorView {
             if job.is_none() {
                 this.update(cx, |view, cx| {
                     if view.edits_allowed(reason) {
-                        view.apply_save_fixes(cx);
+                        view.apply_save_fixes(view.save_fixes, cx);
                     }
                 })?;
             }
@@ -479,7 +489,8 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
-        self.save_as_with(path, None, |_| {}, window, cx)
+        let fixes = self.save_fixes;
+        self.save_as_with(path, None, fixes, true, |_| {}, window, cx)
     }
 
     /// [`EditorView::save_as`], written with `line_ending` if given (the
@@ -490,11 +501,16 @@ impl EditorView {
     /// keeps of the buffer under its old path, such as a language server's
     /// document, which would otherwise hear of the save. Saves of the buffer
     /// asked for earlier are over by then, so the path changes in the order
-    /// asked.
+    /// asked. `fixes` are the destination's: applied to the text before it is
+    /// written, as a save applies the file's own. Unless `overwrite`, a file at `path` is refused with an error
+    /// whose inner error downcasts to [`SaveError::ChangedOnDisk`].
+    #[allow(clippy::too_many_arguments)]
     pub fn save_as_with(
         &mut self,
         path: PathBuf,
         line_ending: Option<fe_buffer::LineEnding>,
+        fixes: SaveFixes,
+        overwrite: bool,
         before_commit: impl FnOnce(&mut App) + 'static,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -502,9 +518,11 @@ impl EditorView {
         let (previous, guard) = self.queue_save();
         // With none running, the text as it is now; typing from here on is
         // unsaved.
-        let job = previous
-            .is_none()
-            .then(|| self.model.prepare_save_as(path.clone(), line_ending));
+        let job = previous.is_none().then(|| {
+            self.apply_save_fixes(fixes, cx);
+            self.model
+                .prepare_save_as(path.clone(), line_ending, overwrite)
+        });
         Self::spawn_save(cx, async move |this, cx| {
             if let Some(previous) = previous {
                 previous.over.await.ok();
@@ -512,8 +530,10 @@ impl EditorView {
             let saved = async {
                 let job = match job {
                     Some(job) => job,
-                    None => this.update(cx, |view, _| {
-                        view.model.prepare_save_as(path.clone(), line_ending)
+                    None => this.update(cx, |view, cx| {
+                        view.apply_save_fixes(fixes, cx);
+                        view.model
+                            .prepare_save_as(path.clone(), line_ending, overwrite)
                     })?,
                 };
                 let saved = run(job, cx).await.map_err(io::Error::from)?;
@@ -539,6 +559,35 @@ impl EditorView {
             .await;
             drop(guard);
             saved
+        })
+    }
+
+    /// Writes the buffer as it is now to `path` off the UI thread, as a
+    /// copy: the buffer keeps its own path and its dirty state
+    /// ([`EditorModel::prepare_save_to`], never finished). Unless
+    /// `overwrite`, a file already there is refused with an error whose
+    /// inner error downcasts to [`SaveError::ChangedOnDisk`]. It waits its
+    /// turn in the buffer's queue of saves, so writes to one file land in
+    /// the order asked.
+    pub fn write_copy(
+        &mut self,
+        path: PathBuf,
+        overwrite: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<io::Result<()>> {
+        let (previous, guard) = self.queue_save();
+        let job = self.model.prepare_save_to(path, overwrite);
+        let gate = COPY_GATE.with_borrow_mut(Option::take);
+        cx.spawn(async move |_, cx| {
+            if let Some(previous) = previous {
+                previous.over.await.ok();
+            }
+            if let Some(gate) = gate {
+                gate.await.ok();
+            }
+            let written = run(job, cx).await.map(drop).map_err(io::Error::from);
+            drop(guard);
+            written
         })
     }
 

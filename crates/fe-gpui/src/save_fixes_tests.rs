@@ -138,3 +138,61 @@ fn apart_from_an_open_transaction(cx: &mut TestAppContext) {
         assert_eq!(view.model().text().to_string(), "a  ");
     });
 }
+
+struct Hold;
+
+impl crate::SaveHook for Hold {
+    fn before_save(&self, _: &Entity<EditorView>, cx: &mut gpui::App) -> gpui::Task<()> {
+        gpui::AppContext::background_spawn(cx, std::future::pending())
+    }
+}
+
+/// Save As writes what an ordinary save does: the destination's fixes are
+/// applied to the text, whether it starts at once or waits for a save.
+#[gpui::test]
+fn save_as_fixes_like_save(cx: &mut TestAppContext) {
+    let (dir, view, cx) = opened(cx, "x\n", SaveFixes::default());
+    let typed = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
+        view.update(cx, |view, _| {
+            view.model_mut().select_all();
+            view.model_mut().insert("a  \nb\t");
+        })
+    };
+    let save_as = |name: &str, view: &Entity<EditorView>, cx: &mut VisualTestContext| {
+        let path = dir.path().join(name);
+        let saved = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.save_as_with(path.clone(), None, BOTH, true, |_| {}, window, cx)
+            })
+        });
+        cx.run_until_parked();
+        drop(saved);
+        path
+    };
+
+    // At once.
+    typed(&view, cx);
+    let b = save_as("b.txt", &view, cx);
+    assert_eq!(fs::read_to_string(&b).unwrap(), "a\nb\n");
+    assert!(!view.update(cx, |view, _| view.model().is_dirty()));
+
+    // Queued behind a running save.
+    view.update(cx, |view, _| {
+        view.set_save_fixes(SaveFixes::default());
+        view.set_save_hook(Some(std::rc::Rc::new(Hold)));
+    });
+    typed(&view, cx);
+    let running = cx.update(|window, cx| view.update(cx, |view, cx| view.save(window, cx)));
+    cx.run_until_parked();
+    let path = dir.path().join("c.txt");
+    let queued = cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.save_as_with(path.clone(), None, BOTH, true, |_| {}, window, cx)
+        })
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    drop((running, queued));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\n");
+}

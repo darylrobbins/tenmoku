@@ -320,7 +320,10 @@ fn owned_editors(cx: &mut TestAppContext) {
         workbench.own_editor(&commit_box, Owner::CommitBox);
     });
 
-    let write = HostCommand::Write { force: false };
+    let write = HostCommand::Write {
+        force: false,
+        path: None,
+    };
     let get = HostCommand::DiffGet { rows: 1..2 };
     for command in [write.clone(), get.clone()] {
         host_command(&workbench, &left, command.clone(), cx);

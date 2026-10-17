@@ -625,3 +625,66 @@ fn editorconfig_follows(cx: &mut TestAppContext) {
     answer(Some(dir.path().join("new.rs")), cx);
     assert_eq!(tab_size(cx), 2);
 }
+
+struct HoldSave;
+
+impl fe_gpui::pane_item::SaveHook for HoldSave {
+    fn before_save(&self, _: &Entity<EditorView>, cx: &mut gpui::App) -> gpui::Task<()> {
+        gpui::AppContext::background_spawn(cx, std::future::pending())
+    }
+}
+
+/// The save panel's Save As writes the destination's `.editorconfig` fixes,
+/// not the source's (a.rs has none, b.md trims and ends with a newline), at
+/// once and queued behind a save that writes the text as typed.
+#[gpui::test]
+fn save_as_applies_the_destinations_editorconfig(cx: &mut TestAppContext) {
+    let dir = project();
+    fs::write(
+        dir.path().join(".editorconfig"),
+        "root = true\n[*.md]\ntrim_trailing_whitespace = true\ninsert_final_newline = true\n",
+    )
+    .unwrap();
+    let (workbench, cx) = setup(cx, dir.path(), true);
+    let a = active(&workbench, cx);
+    let type_dirty = |cx: &mut VisualTestContext| {
+        a.update(cx, |a, _| {
+            a.model_mut().select_all();
+            a.model_mut().insert("a  \nb\t");
+        });
+    };
+
+    // At once.
+    type_dirty(cx);
+    cx.simulate_keystrokes("cmd-shift-s");
+    answer(Some(dir.path().join("b.md")), cx);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("b.md")).unwrap(),
+        "a\nb\n"
+    );
+
+    // Queued: the save ahead of it is the buffer's own (b.md now, with the
+    // fixes), so go back to a source without any.
+    let c = dir.path().join("c.rs");
+    save_as(&workbench, &a, &c, cx);
+    cx.run_until_parked();
+    type_dirty(cx);
+    let saving = cx.update(|window, cx| {
+        a.update(cx, |a, cx| {
+            a.set_save_hook(Some(std::rc::Rc::new(HoldSave)));
+            a.save(window, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("cmd-shift-s");
+    answer(Some(dir.path().join("d.md")), cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    drop(saving);
+    assert_eq!(fs::read_to_string(&c).unwrap(), "a  \nb\t");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("d.md")).unwrap(),
+        "a\nb\n"
+    );
+}

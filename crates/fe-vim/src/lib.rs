@@ -342,11 +342,13 @@
 //!   `.,.+{count-1}`: `vim.repeat_substitute`, which `.` doesn't repeat
 //!   either.
 //! - File and window commands aren't run: `:w[rite][!]`, `:q[uit][!]`,
-//!   `:wq[!]`, `:x[it][!]`, `:exi[t][!]`, `:e[dit][!] [path]`, `:qa[ll][!]`
+//!   `:w[rite][!] [path]`, `:sav[eas][!] {path}`, `:wq[!]`, `:x[it][!]`,
+//!   `:exi[t][!]`, `:e[dit][!] [path]`, `:qa[ll][!]`
 //!   (`:quita[ll]`) and `:wa[ll]` leave a [`HostCommand`] for the host to
 //!   fetch once with [`VimState::take_host_command`] (and map to its own
 //!   commands), changing no text, cursor or register. They take no range,
-//!   and no argument but `:e`'s path; `:w {path}` isn't supported yet.
+//!   and no argument but `:e`'s, `:w`'s and `:sav`'s path (`:sav` needs one,
+//!   E471); `:wq {path}` and `:x {path}` aren't supported.
 //!
 //! What can't run changes nothing (but where a `;` moved the cursor) and
 //! leaves nvim's error in [`VimState::message`]: E492 for any other command

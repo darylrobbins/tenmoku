@@ -19,16 +19,18 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 
+use fe_editor::SaveError;
 use fe_gpui::EditorView;
 use fe_vim::HostCommand;
 use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use kiln_shell::{ItemHandle, PaneView as _};
 
-use super::Workbench;
 use super::git_commands::{self, GitCommand, GitOp};
+use super::{Workbench, open};
 use crate::Pane;
 
 const E32: &str = "E32: No file name";
+pub(crate) const E13: &str = "E13: File exists (add ! to override)";
 const E37: &str = "E37: No write since last change (add ! to override)";
 const E99: &str = "E99: Current buffer is not in diff mode";
 const RELOAD: &str = "Not supported yet: reloading a file from disk";
@@ -50,7 +52,14 @@ impl Workbench {
             return git_commands::owned_host_command(self, editor, command, window, cx);
         }
         match command {
-            HostCommand::Write { .. } => self.vim_write(editor, false, window, cx),
+            HostCommand::Write { path: None, .. } => self.vim_write(editor, false, window, cx),
+            HostCommand::Write {
+                force,
+                path: Some(path),
+            } => self.vim_write_to(editor, &path, force, true, window, cx),
+            HostCommand::SaveAs { force, path } => {
+                self.vim_write_to(editor, &path, force, false, window, cx)
+            }
             HostCommand::Quit { force } => self.vim_quit(&editor, force, window, cx),
             HostCommand::WriteQuit {
                 only_if_modified, ..
@@ -161,6 +170,76 @@ impl Workbench {
                 .ok();
         })
         .detach();
+    }
+
+    /// `:w {path}` (`copy`) and `:sav {path}`: an untitled buffer, or any
+    /// buffer for `:sav`, is saved as `path` and its tab takes the name; a
+    /// named one with `:w` is written there as a copy, keeping its own path
+    /// and dirty state. `path` as the buffer's own file is a plain `:w`.
+    /// An existing file is `E13` unless `force`.
+    fn vim_write_to(
+        &mut self,
+        editor: Entity<EditorView>,
+        path: &str,
+        force: bool,
+        copy: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folder = (self.root.clone()).or_else(|| editor.path(cx)?.parent().map(Path::to_owned));
+        let resolved = match resolve(path, folder.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(error) => return message(&editor, error, cx),
+        };
+        let own = editor.path(cx);
+        let is_own = own.as_deref().is_some_and(|own| {
+            own == resolved || identity(own).is_some() && identity(own) == identity(&resolved)
+        });
+        if is_own && copy {
+            return self.vim_write(editor, false, window, cx);
+        }
+        if !is_own && !force && std::fs::symlink_metadata(&resolved).is_ok() {
+            return message(&editor, E13, cx);
+        }
+        if copy && own.is_some() {
+            // Held like a Save As destination until written, so nothing
+            // is moved into it meanwhile.
+            let buffer = editor.read(cx).model().buffer().id();
+            let identity = open::file_identity(&resolved);
+            let held = open::reserved(&resolved, identity.as_deref())
+                .is_some_and(|(holder, _)| holder != buffer);
+            if held {
+                let name = resolved.file_name().unwrap_or_default().to_string_lossy();
+                let error = format!("“{name}” is being saved by another tab");
+                return message(&editor, error, cx);
+            }
+            let reservation = open::reserve(buffer, resolved.clone(), identity);
+            #[cfg(test)]
+            after_check(&resolved);
+            let written = editor.update(cx, |editor, cx| editor.write_copy(resolved, force, cx));
+            let editor = editor.downgrade();
+            cx.spawn(async move |_, cx| {
+                let written = written.await;
+                drop(reservation);
+                if let Err(error) = written {
+                    let exists = (error.get_ref())
+                        .is_some_and(|inner| inner.downcast_ref::<SaveError>().is_some());
+                    let error = if exists {
+                        E13.to_owned()
+                    } else {
+                        format!("{error:#}")
+                    };
+                    editor
+                        .update(cx, |editor, cx| editor.set_vim_message(error, cx))
+                        .ok();
+                }
+            })
+            .detach();
+        } else {
+            #[cfg(test)]
+            after_check(&resolved);
+            self.save_editor_as_with(&editor, resolved, force, window, cx);
+        }
     }
 
     /// `:q`: closes `editor`'s tab, unless it's dirty and no other tab
@@ -283,6 +362,30 @@ impl Workbench {
         pane.update(cx, |pane, cx| pane.open(resolved, window, cx));
     }
 }
+
+// What a test does between the check for an existing file and the write.
+#[cfg(test)]
+type Hook = Box<dyn FnOnce(&Path)>;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_CHECK: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn after_check(path: &Path) {
+    if let Some(hook) = AFTER_CHECK.with_borrow_mut(Option::take) {
+        hook(path);
+    }
+}
+
+#[cfg(test)]
+#[path = "vim_write_path_tests.rs"]
+mod write_path_tests;
+
+#[cfg(test)]
+#[path = "vim_write_no_clobber_tests.rs"]
+mod write_no_clobber_tests;
 
 /// Leaves `text` as `editor`'s vim message.
 fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {

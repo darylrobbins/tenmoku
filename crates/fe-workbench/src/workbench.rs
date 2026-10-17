@@ -1017,6 +1017,20 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.save_editor_as_with(editor, path, true, window, cx);
+    }
+
+    /// [`Workbench::save_editor_as`], refusing a file that exists unless
+    /// `overwrite` (a vim `:sav` without `!`): that is the vim message
+    /// `E13`, not a prompt.
+    pub(crate) fn save_editor_as_with(
+        &mut self,
+        editor: &Entity<EditorView>,
+        path: PathBuf,
+        overwrite: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = fe_gpui::pane_item::file_name(Some(&path));
         let identity = open::file_identity(&path);
         let same = |other: &Path| {
@@ -1050,12 +1064,16 @@ impl Workbench {
         // Read here, so Save As requests keep their order.
         let config = fe_config::editorconfig_for(&path);
         let line_ending = crate::pane::config_line_ending(&config);
+        let fixes = fe_gpui::SaveFixes {
+            trim_trailing_whitespace: config.trim_trailing_whitespace == Some(true),
+            insert_final_newline: config.insert_final_newline == Some(true),
+        };
         let workbench = cx.weak_entity();
         let release = move |cx: &mut App| {
             (workbench.update(cx, |w, cx| w.lsp_release(buffer, cx))).ok();
         };
         let saved = editor.update(cx, |editor, cx| {
-            editor.save_as_with(path, line_ending, release, window, cx)
+            editor.save_as_with(path, line_ending, fixes, overwrite, release, window, cx)
         });
         let editor = editor.clone();
         cx.spawn_in(window, async move |workbench, cx| {
@@ -1069,6 +1087,13 @@ impl Workbench {
                     let Err(error) = result else {
                         return;
                     };
+                    let exists = (error.downcast_ref::<std::io::Error>())
+                        .and_then(|error| error.get_ref())
+                        .is_some_and(|inner| inner.is::<fe_editor::SaveError>());
+                    if exists && !overwrite {
+                        editor.update(cx, |editor, cx| editor.set_vim_message(vim_host::E13, cx));
+                        return;
+                    }
                     let detail = format!("{error:#}");
                     drop(window.prompt(
                         PromptLevel::Critical,

@@ -19,7 +19,7 @@ const TEXT: &str = "one\n";
 const E37: &str = "E37: No write since last change (add ! to override)";
 
 /// Writes `files`, each holding [`TEXT`], in `dir`.
-fn write(dir: &Path, files: &[&str]) {
+pub(super) fn write(dir: &Path, files: &[&str]) {
     for file in files {
         std::fs::write(dir.join(file), TEXT).unwrap();
     }
@@ -27,7 +27,7 @@ fn write(dir: &Path, files: &[&str]) {
 
 /// A window of a workbench rooted at `root`, active, showing `files` from
 /// it opened in order, the last focused, with vim on.
-fn window(
+pub(super) fn window(
     cx: &mut TestAppContext,
     root: &Path,
     files: &[&str],
@@ -65,14 +65,14 @@ fn open(workbench: &Entity<Workbench>, path: PathBuf, cx: &mut VisualTestContext
     draw(cx);
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
 /// Types `:{line}` and Enter.
-fn ex(line: &str, cx: &mut VisualTestContext) {
+pub(super) fn ex(line: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(":");
     cx.simulate_input(line);
     cx.simulate_keystrokes("enter");
@@ -89,7 +89,10 @@ fn run(id: &str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
+pub(super) fn active(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<EditorView> {
     workbench
         .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
         .expect("a tab is shown")
@@ -99,7 +102,7 @@ fn focused(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| editor.focus_handle(cx).is_focused(window))
 }
 
-fn dirty(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
+pub(super) fn dirty(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
     editor.read_with(cx, |editor, _| editor.model().is_dirty())
 }
 
@@ -117,7 +120,10 @@ fn tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Vec<St
 }
 
 /// The vim message the status bar draws.
-fn message(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<SharedString> {
+pub(super) fn message(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Option<SharedString> {
     draw(cx);
     let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
     bar.read_with(cx, |bar, _| bar.drawn(StatusSide::Left))

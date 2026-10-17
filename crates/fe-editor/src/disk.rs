@@ -67,6 +67,10 @@ pub struct SaveJob {
     /// buffer doesn't know.
     expected: Option<Option<DiskStamp>>,
     overwrite: bool,
+    /// The destination isn't the buffer's own file, so nothing, not even
+    /// a symlink, may be there: unless `overwrite`, it's committed at the
+    /// path itself, with a rename that refuses anything found there.
+    new_entry: bool,
 }
 
 /// A save that's on disk, for [`EditorModel::finish_save`].
@@ -130,20 +134,34 @@ impl SaveJob {
     /// applied through the open handle. If the path is a symlink, the file it
     /// points to is updated and the link is left in place.
     pub fn run(self) -> Result<Saved, SaveError> {
-        self.run_with(|| {})
+        self.run_with(|| {}, || {})
     }
 
     /// [`SaveJob::run`], calling `before_commit` between writing the new
-    /// file and checking the target again.
-    fn run_with(self, before_commit: impl FnOnce()) -> Result<Saved, SaveError> {
+    /// file and checking the target again, and `before_persist` after the
+    /// last check, just before the rename.
+    fn run_with(
+        self,
+        before_commit: impl FnOnce(),
+        before_persist: impl FnOnce(),
+    ) -> Result<Saved, SaveError> {
         let SaveJob {
             path,
             snapshot,
             expected,
             overwrite,
+            new_entry,
         } = self;
         ensure_regular(&path)?;
         let found = DiskStamp::of(&path)?;
+        // Nothing, not even a symlink, was at `path`: a non-forced job
+        // commits at `path` itself, so whatever appears there is kept.
+        // A job for a destination that isn't the buffer's own file is
+        // the same, even if a symlink has since appeared.
+        let fresh = !overwrite
+            && (new_entry
+                || matches!(std::fs::symlink_metadata(&path),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound));
         if !overwrite
             && found.is_some()
             && let Some(expected) = expected
@@ -151,7 +169,7 @@ impl SaveJob {
         {
             return Err(SaveError::ChangedOnDisk);
         }
-        let target = resolve(&path)?;
+        let target = if fresh { path.clone() } else { resolve(&path)? };
         let permissions = match std::fs::metadata(&target) {
             Ok(metadata) => Some(metadata.permissions()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -180,11 +198,23 @@ impl SaveJob {
         ensure_regular(&path)?;
         let now = resolve(&path)?;
         ensure_regular(&now)?;
-        if !overwrite && (DiskStamp::of(&path)? != found || now != target) {
+        if !overwrite && (DiskStamp::of(&path)? != found || (!fresh && now != target)) {
             return Err(SaveError::ChangedOnDisk);
         }
-        // Dropping `temp` on any error above deletes it.
-        temp.persist(&target).map_err(|error| error.error)?;
+        // Dropping `temp` on any error above deletes it. A target that was
+        // missing is committed with a rename that refuses an existing one,
+        // so a file created since the check isn't replaced.
+        before_persist();
+        let no_clobber = !overwrite && found.is_none();
+        let persisted = if no_clobber {
+            temp.persist_noclobber(&target)
+        } else {
+            temp.persist(&target)
+        };
+        persisted.map_err(|error| match error.error.kind() {
+            io::ErrorKind::AlreadyExists if no_clobber => SaveError::ChangedOnDisk,
+            _ => SaveError::from(error.error),
+        })?;
         Ok(Saved {
             path,
             snapshot,
@@ -339,11 +369,13 @@ impl EditorModel {
         // Typing after this point is a step of its own, in any split.
         history.save_marks += 1;
         let buffer = self.buffer.borrow();
+        let mut new_entry = false;
         let expected = if history.stamped.as_ref() == Some(&path) {
             buffer.disk_stamp_known().then(|| buffer.disk_stamp())
         } else if self.path() == Some(path.as_path()) {
             None
         } else {
+            new_entry = true;
             Some(None)
         };
         SaveJob {
@@ -351,20 +383,27 @@ impl EditorModel {
             snapshot: buffer.save_snapshot(),
             expected,
             overwrite,
+            new_entry,
         }
     }
 
-    /// A save of the buffer as it is now to `path`, over any file there,
-    /// for a Save As: written with `line_ending` if given (the new file's
-    /// setting), the buffer's own left as it is. Once it's written,
-    /// [`EditorModel::finish_save_as`] records it.
-    pub fn prepare_save_as(&self, path: PathBuf, line_ending: Option<LineEnding>) -> SaveJob {
+    /// A save of the buffer as it is now to `path` for a Save As, over any
+    /// file there if `overwrite` (else a file there is refused, as
+    /// [`EditorModel::prepare_save_to`] does): written with `line_ending`
+    /// if given (the new file's setting), the buffer's own left as it is.
+    /// Once it's written, [`EditorModel::finish_save_as`] records it.
+    pub fn prepare_save_as(
+        &self,
+        path: PathBuf,
+        line_ending: Option<LineEnding>,
+        overwrite: bool,
+    ) -> SaveJob {
         let Some(ending) = line_ending else {
-            return self.prepare_save_to(path, true);
+            return self.prepare_save_to(path, overwrite);
         };
         let own = self.buffer.borrow().line_ending();
         self.buffer.borrow_mut().set_line_ending(ending);
-        let job = self.prepare_save_to(path, true);
+        let job = self.prepare_save_to(path, overwrite);
         self.buffer.borrow_mut().set_line_ending(own);
         job
     }
@@ -438,6 +477,10 @@ impl EditorModel {
 }
 
 #[cfg(test)]
+#[path = "no_clobber_tests.rs"]
+mod no_clobber_tests;
+
+#[cfg(test)]
 mod tests {
     use fe_buffer::Buffer;
 
@@ -458,7 +501,8 @@ mod tests {
         let path = dir.path().join("f.txt");
         std::fs::write(&path, "old").unwrap();
 
-        let result = job(&path, "mine").run_with(|| std::fs::write(&path, "theirs").unwrap());
+        let result =
+            job(&path, "mine").run_with(|| std::fs::write(&path, "theirs").unwrap(), || {});
         assert!(matches!(result, Err(SaveError::ChangedOnDisk)));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs");
         assert_eq!(
@@ -474,14 +518,14 @@ mod tests {
         let result = model
             .prepare_save(false)
             .unwrap()
-            .run_with(|| std::fs::write(&new, "theirs").unwrap());
+            .run_with(|| std::fs::write(&new, "theirs").unwrap(), || {});
         assert!(matches!(result, Err(SaveError::ChangedOnDisk)));
         assert_eq!(std::fs::read_to_string(&new).unwrap(), "theirs");
 
         // Overwriting doesn't check.
         let mut job = job(&path, "mine");
         job.overwrite = true;
-        job.run_with(|| std::fs::write(&path, "again").unwrap())
+        job.run_with(|| std::fs::write(&path, "again").unwrap(), || {})
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
     }
@@ -537,7 +581,7 @@ mod tests {
         std::fs::write(&a, "x\n").unwrap();
         let mut model = EditorModel::open(&a).unwrap();
         model.insert("new ");
-        let saved = (model.prepare_save_as(b.clone(), Some(LineEnding::CrLf)))
+        let saved = (model.prepare_save_as(b.clone(), Some(LineEnding::CrLf), true))
             .run()
             .unwrap();
         std::fs::write(&b, "theirs").unwrap();
@@ -559,7 +603,7 @@ mod tests {
         let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
         std::fs::write(&a, "x\ny\n").unwrap();
         let mut model = EditorModel::open(&a).unwrap();
-        let job = model.prepare_save_as(b.clone(), Some(LineEnding::CrLf));
+        let job = model.prepare_save_as(b.clone(), Some(LineEnding::CrLf), true);
         // Not until it's recorded.
         assert_eq!(model.buffer().line_ending(), LineEnding::Lf);
         assert!(!model.is_dirty());
@@ -584,10 +628,13 @@ mod tests {
         std::fs::write(&b, "b").unwrap();
         std::os::unix::fs::symlink(&a, &link).unwrap();
 
-        let result = job(&link, "mine").run_with(|| {
-            std::fs::remove_file(&link).unwrap();
-            std::os::unix::fs::symlink(&b, &link).unwrap();
-        });
+        let result = job(&link, "mine").run_with(
+            || {
+                std::fs::remove_file(&link).unwrap();
+                std::os::unix::fs::symlink(&b, &link).unwrap();
+            },
+            || {},
+        );
         assert!(matches!(result, Err(SaveError::ChangedOnDisk)));
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
@@ -609,11 +656,14 @@ mod tests {
         for overwrite in [false, true] {
             let mut job = job(&link, "mine");
             job.overwrite = overwrite;
-            let result = job.run_with(|| {
-                std::fs::remove_file(&a).unwrap();
-                let made = std::process::Command::new("mkfifo").arg(&a).status();
-                assert!(made.unwrap().success(), "mkfifo");
-            });
+            let result = job.run_with(
+                || {
+                    std::fs::remove_file(&a).unwrap();
+                    let made = std::process::Command::new("mkfifo").arg(&a).status();
+                    assert!(made.unwrap().success(), "mkfifo");
+                },
+                || {},
+            );
             let error = match result {
                 Err(SaveError::Io(error)) => error,
                 _ => panic!("expected an I/O error, overwrite={overwrite}"),

@@ -7,9 +7,27 @@ fn submit(vim: &mut HeadlessVim, line: &str) {
 #[test]
 fn host_commands_are_handed_over() {
     let cases = [
-        ("w", H::Write { force: false }),
-        ("write", H::Write { force: false }),
-        ("w!", H::Write { force: true }),
+        (
+            "w",
+            H::Write {
+                force: false,
+                path: None,
+            },
+        ),
+        (
+            "write",
+            H::Write {
+                force: false,
+                path: None,
+            },
+        ),
+        (
+            "w!",
+            H::Write {
+                force: true,
+                path: None,
+            },
+        ),
         ("q", H::Quit { force: false }),
         ("quit", H::Quit { force: false }),
         ("q!", H::Quit { force: true }),
@@ -64,7 +82,6 @@ fn what_a_host_command_doesnt_take_is_an_error() {
     for (line, message) in [
         ("5w", "E481: No range allowed"),
         ("q foo", "E488: Trailing characters: foo"),
-        ("w path", ":w path: not supported yet"),
         ("wq x", "E488: Trailing characters: x"),
     ] {
         let mut vim = HeadlessVim::new("one", (0, 0));
@@ -90,7 +107,7 @@ fn edit(path: Option<&str>, force: bool) -> H {
 
 #[test]
 fn a_failed_line_drops_an_untaken_command() {
-    for line in ["q foo", "5w", "w path", "frobnicate"] {
+    for line in ["q foo", "5w", "sav", "frobnicate"] {
         let mut vim = HeadlessVim::new("one", (0, 0));
         submit(&mut vim, "q!");
         submit(&mut vim, line);

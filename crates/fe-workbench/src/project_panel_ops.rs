@@ -343,7 +343,16 @@ impl ProjectPanel {
             .strip_prefix(&root)
             .ok()
             .and_then(|rel| Some(self.root.as_ref()?.join(rel)));
-        let busy = (shown.as_ref()).and_then(|shown| Workbench::busy_under(shown, window, cx));
+        // The new path counts too: a copy or Save As may be about to write
+        // there.
+        let destination = (shown.as_ref()).and_then(|shown| Some(shown.parent()?.join(name)));
+        let busy = (shown.as_ref())
+            .and_then(|shown| Workbench::busy_under(shown, window, cx))
+            .or_else(|| {
+                let destination = destination.as_ref()?;
+                crate::open::any_reserved().then_some(())?;
+                Workbench::busy_under(destination, window, cx)
+            });
         if let Some(busy) = busy {
             let old = target.file_name().unwrap_or_default().to_string_lossy();
             let error = match busy {

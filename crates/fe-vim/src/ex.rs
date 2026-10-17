@@ -236,8 +236,12 @@ pub enum ExCommand {
 /// over the last one submitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostCommand {
-    /// `:w[rite]`: save the buffer to its file; `force` is `!`.
-    Write { force: bool },
+    /// `:w[rite] [path]`: save the buffer to its file, or with a `path`
+    /// write a copy there; `force` is `!`.
+    Write { force: bool, path: Option<String> },
+    /// `:sav[eas] {path}`: save the buffer as `path`, which it takes for
+    /// its file.
+    SaveAs { force: bool, path: String },
     /// `:q[uit]`: close the window; `force` (`!`) discards changes.
     Quit { force: bool },
     /// `:wq` (`only_if_modified` false) and `:x[it]`, `:exi[t]` (true):
@@ -532,7 +536,14 @@ type Build = fn(bool, &str) -> HostCommand;
 fn host(name: &str) -> Option<Build> {
     let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
     Some(match name {
-        _ if is("write", 1) => |force, _| HostCommand::Write { force },
+        _ if is("write", 1) => |force, path| {
+            let path = (!path.is_empty()).then(|| path.to_string());
+            HostCommand::Write { force, path }
+        },
+        _ if is("saveas", 3) => |force, path| HostCommand::SaveAs {
+            force,
+            path: path.to_string(),
+        },
         _ if is("quit", 1) => |force, _| HostCommand::Quit { force },
         "wq" => |force, _| HostCommand::WriteQuit {
             force,
@@ -620,8 +631,8 @@ fn user_command(
     }))
 }
 
-/// A host command's line: no range, and an argument only `:e` takes
-/// (`:w {path}`, saving as, isn't supported yet).
+/// A host command's line: no range, and an argument only `:e`, `:w` and
+/// `:sav` take (`:sav` needs one).
 fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExCommand, ExError> {
     if !range.is_empty() {
         return Err(ExError::NoRange);
@@ -634,8 +645,11 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
     let args = trim_unescaped_end(args);
     let command = build(force, &unescape(args));
     match (&command, args.is_empty()) {
-        (_, true) | (HostCommand::Edit { .. }, _) => Ok(ExCommand::Host(command)),
-        (HostCommand::Write { .. }, false) => Err(ExError::Unsupported(format!(":w {args}"))),
+        (HostCommand::SaveAs { .. }, true) => Err(ExError::ArgumentRequired),
+        (_, true)
+        | (HostCommand::Edit { .. } | HostCommand::Write { .. } | HostCommand::SaveAs { .. }, _) => {
+            Ok(ExCommand::Host(command))
+        }
         (_, false) => Err(ExError::Trailing(args.to_string())),
     }
 }
