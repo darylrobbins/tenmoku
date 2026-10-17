@@ -257,6 +257,7 @@ pub(crate) fn put(
     let lines = |text: &str| text.strip_suffix('\n').unwrap_or(text).to_string();
     // The edits, where the put text starts and its last character (once
     // they're in), and whether the caret goes to the first non-blank.
+    let mut raw_marks = None;
     let (edits, start, end, first_non_blank) = match (value.block_width, ends.kind) {
         (Some(_), VisualKind::Line) => {
             let rows = lines(&(payload.clone() + "\n").repeat(count));
@@ -267,6 +268,10 @@ pub(crate) fn put(
             let column = column_of(&emptied, at, tab);
             let (edits, [_, last, len]) =
                 put_block(&emptied, (first, column), &rows, (width, count), tab);
+            // nvim's marks here are raw bytes: `'<` where the put starts and
+            // `'>` its last byte on the last row (that row's start if none).
+            let tail = (last + len).saturating_sub(1);
+            raw_marks = Some((at, tail, last));
             (edits, at, last + len, false)
         }
         (None, kind) if value.linewise => {
@@ -341,8 +346,15 @@ pub(crate) fn put(
     };
     operator::land(model, &snapshot, [land]);
     if let Some(marks) = state.last_visual.as_mut() {
-        marks.start = Pos::at(&snapshot, start);
-        marks.end = Pos::at(&snapshot, end);
+        let (raw_start, raw_end) = match raw_marks {
+            Some((first, tail, last)) => {
+                let row = after.offset_to_point(last).row;
+                (first, tail.max(after.row_start(row)))
+            }
+            None => (start, end),
+        };
+        marks.start = Pos::at(&snapshot, raw_start);
+        marks.end = Pos::at(&snapshot, raw_end);
     }
     // `p` leaves what it replaced in the registers, as a delete would; a
     // delete of nothing writes nothing.
