@@ -1052,6 +1052,73 @@ everything after `dispatch` was under 0.2 ms. After T20 (table above) its
 The numbers leave out OS event delivery, waiting for vsync, the compositor,
 scan-out and the GPU's own time, which need a real screen.
 
+### Diff base and 100 carets (T160)
+
+Two cases for per-keystroke costs the six above leave out. `type/diff-base`
+is the `type/10k-rust` corpus with a git base in which one body row of every
+10th function differs (167 changed rows), typing `x` at the same caret: each
+new version is row-diffed when the change bar paints (`row_changes`,
+imara-diff Histogram). `type/100-carets` is the same corpus with 100 carets
+in the body rows of 100 functions 16 apart, the first at the usual caret,
+typing `x` at every caret. The harness asserts non-empty `row_changes()` and
+100 selections respectively.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release build in a private `CARGO_TARGET_DIR`, one run of all 8
+  cases under `xvfb-run -a cargo bench -p fe-gpui --bench keystroke`.
+- **Commit:** `ac2d19e` (the cases, plus the bench's `editor` row).
+  **Date:** 2026-10-17.
+- **Load average** (`/proc/loadavg`, 1 minute): 34.97 at the start, 33.31 at
+  the end, from other lanes building: heavily loaded. A first run of the same
+  build at load 12 to 37 had `present` p99 of 11 to 32 ms in every case and
+  is not used; this is the second. In this run `type/10k-rust` has a `present`
+  p99 of 18.8 ms against a p50 of 1.2 ms, so p99s here are load-sensitive.
+- `editor` is total minus `present`, computed per sample and then
+  percentiled; it is not the difference of the two p99s.
+
+**`type/diff-base`**, 250 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.021 | 0.034 |
+| pre_layout | 0.983 | 1.206 |
+| prepaint | 2.818 | 3.640 |
+| paint | 0.118 | 0.157 |
+| draw_rest | 0.065 | 0.087 |
+| present | 0.144 | 0.200 |
+| **total** | **4.141** | **4.460** |
+| editor (total - present) | 4.000 | 4.334 |
+
+**`type/100-carets`**, 350 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.338 | 0.467 |
+| pre_layout | 0.107 | 0.209 |
+| prepaint | 0.532 | 0.657 |
+| paint | 0.119 | 0.156 |
+| draw_rest | 0.063 | 0.083 |
+| present | 0.134 | 0.193 |
+| **total** | **1.295** | **1.638** |
+| editor (total - present) | 1.162 | 1.461 |
+
+Against the budgets (total p99 under 8 ms; the editor's own stages, total
+minus `present`, at most 2 ms at p99):
+
+- **`type/100-carets` meets both**: total p99 1.638 ms, editor p99 1.461 ms.
+  100 carets cost `dispatch` (0.34 ms at p50, against 0.08 ms in
+  `type/10k-rust`) and `prepaint` is no larger than one caret's.
+- **`type/diff-base` meets the total** (4.460 ms) **and misses the editor's
+  2 ms**: editor p99 4.334 ms (4.0 ms at p50). It is `prepaint`, 2.818 ms at
+  p50 and 3.640 ms at p99 against 1.18 ms and 2.66 ms in `type/10k-rust` in
+  this run, plus `pre_layout`, 0.98 ms at p50 against 0.03 ms. The change bar's
+  `row_changes` diffs each new version synchronously. Follow-up: Mac T812 (the
+  row-diff Histogram-to-Myers bound), lent to argon. The editor is not changed
+  here.
+- The earlier run at load 12 to 37 gave `type/diff-base` an editor p99 of
+  13.9 ms and `type/100-carets` 6.4 ms, so the `100-carets` verdict is
+  sensitive to load; the budgets should be re-checked on a quiet host.
+
 ## Large-file view (`cargo run --release -p fe-fileview --example first_screen` and `--example line_index`)
 
 The target, from `docs/decisions/mmap-read-only.md`, is the first screen of

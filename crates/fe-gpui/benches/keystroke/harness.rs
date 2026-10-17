@@ -53,6 +53,12 @@ pub(crate) struct Case {
     /// still pending in the background: [`Harness::reset`] doesn't settle
     /// it, and [`Harness::keystroke`] asserts it's pending.
     pub(crate) during_parse: bool,
+    /// The git base the view diffs against, made from the corpus text; `None`
+    /// for no base.
+    pub(crate) diff_base: Option<fn(&str) -> String>,
+    /// How many carets the keystroke lands at: the corpus's caret and
+    /// [`spread_carets`] more.
+    pub(crate) carets: usize,
 }
 
 /// Samples between full settles of a [`Case::during_parse`] case, which
@@ -61,7 +67,7 @@ const SETTLE_EVERY: usize = 50;
 
 /// The cases the bench runs. Corpora are generated, so there are no fixture
 /// files.
-pub(crate) fn cases() -> [Case; 6] {
+pub(crate) fn cases() -> [Case; 8] {
     [
         Case {
             name: "type/small",
@@ -69,6 +75,8 @@ pub(crate) fn cases() -> [Case; 6] {
             language: Some("rust"),
             keys: "x",
             during_parse: false,
+            diff_base: None,
+            carets: 1,
         },
         Case {
             name: "type/10k-rust",
@@ -76,6 +84,8 @@ pub(crate) fn cases() -> [Case; 6] {
             language: Some("rust"),
             keys: "x",
             during_parse: false,
+            diff_base: None,
+            carets: 1,
         },
         Case {
             name: "type/1m-plain",
@@ -83,6 +93,8 @@ pub(crate) fn cases() -> [Case; 6] {
             language: None,
             keys: "x",
             during_parse: false,
+            diff_base: None,
+            carets: 1,
         },
         Case {
             name: "move/10k-rust",
@@ -90,6 +102,8 @@ pub(crate) fn cases() -> [Case; 6] {
             language: Some("rust"),
             keys: "right",
             during_parse: false,
+            diff_base: None,
+            carets: 1,
         },
         Case {
             name: "type/during-parse",
@@ -97,6 +111,8 @@ pub(crate) fn cases() -> [Case; 6] {
             language: Some("rust"),
             keys: "x",
             during_parse: true,
+            diff_base: None,
+            carets: 1,
         },
         Case {
             name: "move/long-row",
@@ -104,8 +120,66 @@ pub(crate) fn cases() -> [Case; 6] {
             language: None,
             keys: "right",
             during_parse: false,
+            diff_base: None,
+            carets: 1,
+        },
+        Case {
+            name: "type/diff-base",
+            corpus: || rust(1667, 833),
+            language: Some("rust"),
+            keys: "x",
+            during_parse: false,
+            diff_base: Some(changed_every_10th_function),
+            carets: 1,
+        },
+        Case {
+            name: "type/100-carets",
+            corpus: || rust(1667, 833),
+            language: Some("rust"),
+            keys: "x",
+            during_parse: false,
+            diff_base: None,
+            carets: 100,
         },
     ]
+}
+
+/// The body row [`rust`] writes before `{n}`, which [`changed_every_10th_function`]
+/// and [`spread_carets`] look for.
+const BODY_ROW: &str = "    let doubled = input.wrapping_mul(2) + ";
+
+/// `text` with the body row of every 10th function changed: 167 changed rows
+/// in the 10k-line corpus.
+fn changed_every_10th_function(text: &str) -> String {
+    let mut base = String::with_capacity(text.len() + 1024);
+    let mut body_rows = 0;
+    for row in text.split_inclusive('\n') {
+        if row.starts_with(BODY_ROW) {
+            if body_rows % 10 == 0 {
+                base += "    let doubled = input.wrapping_mul(3);\n";
+            } else {
+                base += row;
+            }
+            body_rows += 1;
+        } else {
+            base += row;
+        }
+    }
+    base
+}
+
+/// `count` carets at the column of `caret` in body rows 16 functions apart,
+/// wrapping around the file, the first at `caret`.
+fn spread_carets(text: &str, caret: usize, count: usize) -> Vec<usize> {
+    let rows: Vec<usize> = text
+        .match_indices(BODY_ROW)
+        .map(|(start, _)| start)
+        .collect();
+    let first = rows.partition_point(|&start| start <= caret) - 1;
+    let column = caret - rows[first];
+    (0..count)
+        .map(|n| rows[(first + 16 * n) % rows.len()] + column)
+        .collect()
 }
 
 /// `blocks` six-line Rust functions, with the caret inside a word of block
@@ -285,14 +359,21 @@ impl Harness {
         cx.update(fe_gpui::init);
         let (text, caret) = (case.corpus)();
         let language = case.language;
+        let base = case.diff_base.map(|make| Arc::<str>::from(make(&text)));
+        let carets = if case.carets > 1 {
+            spread_carets(&text, caret, case.carets)
+        } else {
+            vec![caret]
+        };
         let window = cx
             .open_window(size(px(WINDOW.0), px(WINDOW.1)), move |window, cx| {
                 let view = cx.new(|cx| {
                     let mut model = EditorModel::new(Buffer::new(&text), None);
-                    model.set_selections([ResolvedSelection {
+                    model.set_selections(carets.iter().map(|&caret| ResolvedSelection {
                         range: caret..caret,
                         reversed: false,
-                    }]);
+                    }));
+                    model.set_diff_base(base);
                     let mut view = EditorView::new(model, EditorTheme::default_dark(cx), cx);
                     view.set_language(language, cx);
                     view
@@ -325,6 +406,20 @@ impl Harness {
             cx,
         };
         harness.settle();
+        let (changed, selections) = harness.cx.read_entity(&harness.view, |view, _| {
+            (
+                view.model().row_changes().len(),
+                view.model().selections().len(),
+            )
+        });
+        if case.diff_base.is_some() {
+            assert!(
+                changed > 0,
+                "{}: the diff base has no changed rows",
+                case.name
+            );
+        }
+        assert_eq!(selections, case.carets, "{}: selections", case.name);
         if harness.during_parse {
             // Leaves a reparse pending for the first keystroke, as `reset`
             // does for the rest.

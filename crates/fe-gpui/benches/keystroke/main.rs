@@ -1,7 +1,10 @@
 //! Keystroke-to-frame latency, by stage: a synthesized keystroke goes through
 //! the real keymap and input handling into a focused `EditorView`, and is
 //! timed until the frame showing its effect has been drawn and presented.
-//! The cases and stages are in `harness.rs`.
+//! The cases and stages are in `harness.rs`: typing in small, 10k-line,
+//! 1M-line and parse-pending files, typing with a git diff base
+//! (`type/diff-base`) and with 100 carets (`type/100-carets`), and moving the
+//! caret.
 //!
 //! Everything runs headless: GPUI's test window with the real macOS text
 //! system and its headless Metal renderer. No window is opened on screen, so
@@ -90,6 +93,12 @@ fn print_percentiles(name: &str, samples: &[Sample]) {
     }
     let totals = samples.iter().map(Sample::total).collect();
     eprintln!("  {:<26}{}", "total", percentiles(totals));
+    // The editor's own stages: total minus `present`, per sample.
+    let editor = samples
+        .iter()
+        .map(|sample| sample.total() - sample.stages()[STAGES.len() - 1])
+        .collect();
+    eprintln!("  {:<26}{}", "editor (total-present)", percentiles(editor));
 }
 
 criterion_group!(keystroke, benches);
