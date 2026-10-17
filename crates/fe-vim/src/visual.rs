@@ -33,6 +33,7 @@ mod block;
 mod object;
 mod operate;
 mod put;
+mod quote;
 
 use block::{Block, at_column, column_of, operate_block, recased_text};
 pub(crate) use block::{insertion, spaced, width_from};

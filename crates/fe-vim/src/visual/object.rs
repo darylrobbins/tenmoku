@@ -107,6 +107,22 @@ pub(crate) fn select_object(
             Some(found) => found,
             None => return failed(state),
         }
+    } else if ends.kind == VisualKind::Char
+        && ends.anchor != ends.cursor
+        && matches!(
+            args.text_object,
+            InnerDoubleQuote | ADoubleQuote | InnerSingleQuote | ASingleQuote
+        )
+    {
+        let quote = match args.text_object {
+            InnerDoubleQuote | ADoubleQuote => b'"',
+            _ => b'\'',
+        };
+        let include = matches!(args.text_object, ADoubleQuote | ASingleQuote);
+        match quote::select(&text, &ends, quote, include, count) {
+            Some(found) => found,
+            None => return failed(state),
+        }
     } else if ends.anchor == ends.cursor && inner && after_blanks {
         let mut start = cursor_at(&text, ends.cursor);
         start.ix -= 1;
