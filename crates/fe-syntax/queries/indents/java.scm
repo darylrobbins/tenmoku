@@ -5,7 +5,7 @@
 ; Changes: `indent.rs` indents between brackets itself, from the opener's
 ; row, so `(`, `{` and `[` are no longer branches: that put one on a row of
 ; its own out of line. The loop, `do` and `if` patterns at the end, for
-; unbraced bodies and `else`, are ours.
+; unbraced bodies and `else`, and the case pattern, are ours.
 
 [
   (class_body)
@@ -35,6 +35,11 @@
   ")" @indent.end)
 
 "}" @indent.end
+
+; Ours: a case's statements are a level in from its label, and so is a new
+; row after the label.
+((switch_block_statement_group) @indent.begin
+  (#set! indent.immediate))
 
 (line_comment) @indent.ignore
 
