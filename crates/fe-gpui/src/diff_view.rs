@@ -23,6 +23,7 @@ use std::{
     cell::RefCell,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Range,
+    path::Path,
     rc::Rc,
     sync::Arc,
 };
@@ -221,6 +222,27 @@ impl DiffView {
             view(left.model, true, &tints[0]),
             view(right.model, right.read_only, &tints[1]),
         ];
+        // A git side has no path, and its text lands after the view opens, so
+        // `EditorView::new` found it no language; the file's name does.
+        let file_name = file_name.into();
+        let language = |view: &Entity<EditorView>, name: &Path, cx: &App| {
+            let model = view.read(cx).model();
+            let text = model.text();
+            let start = text.slice_to_string(
+                0..text.clip_offset(crate::view::DETECT_BYTES, fe_buffer::Bias::Left),
+            );
+            let path = model.path().map_or(name, |path| path);
+            fe_syntax::detect_language_name(Some(path), &start)
+        };
+        let named = Path::new(file_name.as_ref());
+        let right_language = language(&views[1], named, cx);
+        for view in &views {
+            if view.read(cx).model().path().is_some() {
+                continue;
+            }
+            let found = language(view, named, cx).or(right_language);
+            view.update(cx, |view, cx| view.set_language(found, cx));
+        }
         let mut subscriptions = Vec::new();
         for (from, to) in [(0, 1), (1, 0)] {
             // A side's edits, carets and scrolls may change the diff.
@@ -244,7 +266,7 @@ impl DiffView {
             }
         });
         let mut this = Self {
-            file_name: file_name.into(),
+            file_name,
             titles,
             views,
             tints,

@@ -725,3 +725,6 @@ fn a_save_elsewhere_redraws_the_tab(cx: &mut TestAppContext) {
     assert!(notified.get() > 0);
     assert!(!diff.read_with(cx, |diff, cx| diff.is_dirty(cx)));
 }
+
+#[path = "diff_view_language_tests.rs"]
+mod language_tests;
