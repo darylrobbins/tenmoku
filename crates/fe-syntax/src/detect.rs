@@ -51,12 +51,72 @@ pub fn language_name_for_shebang(first_line: &str) -> Option<&'static str> {
     language_names().find(|&compiled| compiled == language)
 }
 
-/// The language for a buffer: the path's if it names one, else the shebang on
-/// the first line of `text_start`. Pass the first few hundred bytes, not the
+/// The language VS Code's `firstLine` patterns pick for the first line of
+/// `first_line`, if it is compiled in: `<?xml`, `<svg` or `<!doctype svg`
+/// anywhere on the line is XML, `#cloud-config` at its start is YAML, and an
+/// Emacs `-*- mode: shell-script -*-` line is shell. All are case-sensitive.
+fn language_name_for_first_line(first_line: &str) -> Option<&'static str> {
+    let line = first_line.lines().next()?;
+    let language = if is_xml_line(line) {
+        "xml"
+    } else if line.starts_with("#cloud-config") {
+        "yaml"
+    } else if is_shell_mode_line(line) {
+        "bash"
+    } else {
+        return None;
+    };
+    language_names().find(|&compiled| compiled == language)
+}
+
+/// A character JavaScript's regex `\s` matches: Rust's whitespace, but with
+/// U+FEFF in and U+0085 out.
+fn is_js_space(c: char) -> bool {
+    c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}')
+}
+
+fn is_xml_line(line: &str) -> bool {
+    line.contains("<?xml") || line.contains("<svg") || has_doctype_svg(line)
+}
+
+/// `<!doctype`, whitespace, then `svg`.
+fn has_doctype_svg(line: &str) -> bool {
+    line.match_indices("<!doctype").any(|(at, doctype)| {
+        let rest = &line[at + doctype.len()..];
+        let svg = rest.trim_start_matches(is_js_space);
+        svg.len() < rest.len() && svg.starts_with("svg")
+    })
+}
+
+/// `^#\s*-\*-[^*]*mode:\s*shell-script[^*]*-\*-`.
+fn is_shell_mode_line(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('#') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start_matches(is_js_space).strip_prefix("-*-") else {
+        return false;
+    };
+    let Some((body, after)) = rest.split_once('*') else {
+        return false;
+    };
+    let Some(body) = body.strip_suffix('-') else {
+        return false;
+    };
+    after.starts_with('-')
+        && body.match_indices("mode:").any(|(at, mode)| {
+            body[at + mode.len()..]
+                .trim_start_matches(is_js_space)
+                .starts_with("shell-script")
+        })
+}
+
+/// The language for a buffer: the path's if it names one, else the shebang or
+/// other first-line marker in `text_start`. Pass the first few hundred bytes, not the
 /// whole buffer.
 pub fn detect_language_name(path: Option<&Path>, text_start: &str) -> Option<&'static str> {
     path.and_then(language_name_for_path)
         .or_else(|| language_name_for_shebang(text_start))
+        .or_else(|| language_name_for_first_line(text_start))
 }
 
 /// What an `env` option takes after it.
