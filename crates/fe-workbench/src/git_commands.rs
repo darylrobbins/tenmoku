@@ -3,8 +3,8 @@
 //! [`crate::KEY_CONTEXT`] and listed in the palette, and its ex forms in
 //! [`EX_FORMS`], typed on the vim line. Either way it becomes a [`GitOp`]
 //! that [`Workbench::run_git_op`] hands to its feature's module:
-//! `git_diff`, `git_stage`, `git_commit`, `git_blame`, `git_branch` or
-//! [`git_history`], each with a `run` that answers `Not supported yet:
+//! `git_diff`, `git_stage`, `git_commit`, `git_blame`, `git_branch`,
+//! [`git_history`] or [`git_log`], each with a `run` that answers `Not supported yet:
 //! <title>` until its card fills it in.
 //!
 //! The ex forms follow the plugins vim users know them from: fugitive's
@@ -37,8 +37,12 @@ use super::{
     toast::{self, Toast},
 };
 
+#[path = "commit_rows.rs"]
+mod commit_rows;
 #[path = "git_history.rs"]
 pub(crate) mod git_history;
+#[path = "git_log.rs"]
+pub(crate) mod git_log;
 
 /// A git or diff command: see [`COMMANDS`] for each one's id and title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,12 +67,14 @@ pub(crate) enum GitCommand {
     SwitchBranch,
     CreateBranch,
     FileHistory,
+    Log,
+    LogAll,
 }
 
 use GitCommand::*;
 
 /// Each command's id and palette title.
-pub(crate) const COMMANDS: [(GitCommand, &str, &str); 20] = [
+pub(crate) const COMMANDS: [(GitCommand, &str, &str); 22] = [
     (DiffIndex, "git.diff_index", "Git: Compare with Index"),
     (DiffHead, "git.diff_head", "Git: Compare with HEAD"),
     (
@@ -113,6 +119,8 @@ pub(crate) const COMMANDS: [(GitCommand, &str, &str); 20] = [
     (SwitchBranch, "git.switch_branch", "Git: Switch Branch…"),
     (CreateBranch, "git.create_branch", "Git: Create Branch…"),
     (FileHistory, "git.file_history", "Git: File History"),
+    (Log, "git.log", "Git: Log"),
+    (LogAll, "git.log_all", "Git: Log (All Branches)"),
 ];
 
 /// The module a command runs in.
@@ -124,6 +132,7 @@ pub(crate) enum Feature {
     Blame,
     Branch,
     History,
+    Log,
 }
 
 impl GitCommand {
@@ -144,6 +153,7 @@ impl GitCommand {
             ToggleLineBlame | BlameLine | OpenLineCommit => Feature::Blame,
             SwitchBranch | CreateBranch => Feature::Branch,
             FileHistory => Feature::History,
+            Log | LogAll => Feature::Log,
         }
     }
 }
@@ -377,6 +387,7 @@ impl Workbench {
             Feature::Blame => git_blame::run(self, op, window, cx),
             Feature::Branch => git_branch::run(self, op, window, cx),
             Feature::History => git_history::run(self, op, window, cx),
+            Feature::Log => git_log::run(self, op, window, cx),
         }
     }
 

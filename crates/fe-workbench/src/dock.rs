@@ -1,11 +1,12 @@
 //! The right dock: one panel at a time, the project tree, project search,
-//! the outline, the git changes, find references' results, the problems or
-//! a file's git history, under a title row naming it, and picked from the
-//! activity rail on the window's right edge, which stays when the dock
-//! hides. Switching keeps each panel's state. The References, Problems and
-//! History buttons join the rail once their panel has shown; the History
-//! panel is made the first time `git.file_history` runs
-//! ([`Dock::set_history`]).
+//! the outline, the git changes, find references' results, the problems, a
+//! file's git history or the repository's log, under a title row naming it,
+//! and picked from the activity rail on the window's right edge, which
+//! stays when the dock hides. Switching keeps each panel's state. The
+//! References, Problems, History and Git Log buttons join the rail once
+//! their panel has shown; the History panel is made the first time
+//! `git.file_history` runs ([`Dock::set_history`]), the Git Log panel the
+//! first time `git.log` or `git.log_all` does ([`Dock::set_git_log`]).
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
 //! the dock's in the workbench's [`crate::KEY_CONTEXT`] (with
@@ -25,7 +26,7 @@ use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, Shar
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
 use crate::{
-    GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
+    GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -45,11 +46,12 @@ pub enum DockPanel {
     References,
     Problems,
     History,
+    GitLog,
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References, Problems
-    /// and History follow once they have shown.
+    /// The panels the rail always has, in its order; References, Problems,
+    /// History and Git Log follow once they have shown.
     pub const ALL: [DockPanel; 4] = [
         DockPanel::Project,
         DockPanel::Search,
@@ -66,6 +68,7 @@ impl DockPanel {
             DockPanel::References => "References",
             DockPanel::Problems => "Problems",
             DockPanel::History => "History",
+            DockPanel::GitLog => "Git Log",
         }
     }
 
@@ -79,6 +82,7 @@ impl DockPanel {
             DockPanel::References => "references",
             DockPanel::Problems => "problems",
             DockPanel::History => "history",
+            DockPanel::GitLog => "git_log",
         })
     }
 
@@ -88,6 +92,7 @@ impl DockPanel {
             DockPanel::References,
             DockPanel::Problems,
             DockPanel::History,
+            DockPanel::GitLog,
         ]
         .into_iter()
         .chain(DockPanel::ALL)
@@ -104,6 +109,7 @@ impl DockPanel {
             DockPanel::References => "nav.find_references",
             DockPanel::Problems => problems_panel::SHOW,
             DockPanel::History => "git.file_history",
+            DockPanel::GitLog => "git.log",
         }
     }
 
@@ -117,6 +123,7 @@ impl DockPanel {
             DockPanel::References => DockOp::ShowReferences,
             DockPanel::Problems => DockOp::Problems(ProblemsOp::Show),
             DockPanel::History => DockOp::ShowHistory,
+            DockPanel::GitLog => DockOp::ShowGitLog,
         }
     }
 }
@@ -132,6 +139,7 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
         // The bundle has no warning sign: an error's cross.
         DockPanel::Problems => Icon::X,
         DockPanel::History => Icon::FileDiff,
+        DockPanel::GitLog => Icon::GitBranch,
     }
 }
 
@@ -191,6 +199,15 @@ dock_item!(
     true,
     HistoryPanel::title
 );
+// On the rail once it has shown; focused when shown, as its rows take keys;
+// titled with the branch it lists.
+dock_item!(
+    GitLogPanel,
+    DockPanel::GitLog,
+    false,
+    true,
+    GitLogPanel::title
+);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,9 +215,9 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
-/// whose rail clicks run the op the panel's key would; the History panel's
-/// shows the history last listed.
+/// The right dock: kiln-shell's [`DockState`] over fastedit's eight panels,
+/// whose rail clicks run the op the panel's key would; the History and Git
+/// Log panels' show the list last listed.
 pub struct Dock {
     state: DockState,
     project: Entity<ProjectPanel>,
@@ -211,6 +228,8 @@ pub struct Dock {
     problems: Entity<ProblemsPanel>,
     /// Made the first time it's asked for.
     history: Option<Entity<HistoryPanel>>,
+    /// Made the first time it's asked for.
+    git_log: Option<Entity<GitLogPanel>>,
     #[cfg(test)]
     ops: Vec<DockOp>,
 }
@@ -244,6 +263,7 @@ impl Dock {
             references,
             problems,
             history: None,
+            git_log: None,
             #[cfg(test)]
             ops: Vec::new(),
         }
@@ -301,6 +321,18 @@ impl Dock {
         cx.notify();
     }
 
+    pub(crate) fn git_log(&self) -> Option<&Entity<GitLogPanel>> {
+        self.git_log.as_ref()
+    }
+
+    /// Registers `git_log`, the Git Log panel made on first use, as
+    /// [`Dock::set_history`] does.
+    pub(crate) fn set_git_log(&mut self, git_log: Entity<GitLogPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(git_log.clone(), cx);
+        self.git_log = Some(git_log);
+        cx.notify();
+    }
+
     /// The dock's state, in kiln-shell.
     pub fn state(&self) -> &DockState {
         &self.state
@@ -351,6 +383,7 @@ impl Dock {
             DockOp::Problems(ProblemsOp::Show) => DockPanel::Problems,
             // Nothing until it has been made.
             DockOp::ShowHistory => DockPanel::History,
+            DockOp::ShowGitLog => DockPanel::GitLog,
             // The workbench's to do.
             DockOp::Problems(_) => return false,
             DockOp::RefreshChanges => {
@@ -505,6 +538,8 @@ pub(crate) enum DockOp {
     ShowChanges,
     /// The History button: shows the history last listed.
     ShowHistory,
+    /// The Git Log button: shows the log last listed.
+    ShowGitLog,
     /// `git.refresh`: reads the git status again, shown or not.
     RefreshChanges,
     Toggle,

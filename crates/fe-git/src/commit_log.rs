@@ -75,10 +75,70 @@ impl Repo {
         limit: usize,
     ) -> Result<Vec<LogCommit>, GitError> {
         let repo = self.repo.to_thread_local();
-        let unborn = repo.head().map_err(GitError::from_gix)?.is_unborn();
-        if limit == 0 || unborn {
+        if repo.head().map_err(GitError::from_gix)?.is_unborn() {
             return Ok(Vec::new());
         }
+        let revisions: &[&str] = match scope {
+            LogScope::Head => &["HEAD"],
+            LogScope::All => &["--branches", "--remotes", "--tags", "HEAD"],
+        };
+        self.log_of(revisions, skip, limit)
+    }
+
+    /// The ids `scope`'s log starts from, as they are now: HEAD's commit
+    /// and, for [`LogScope::All`], each branch's, remote-tracking branch's
+    /// and tag's (an annotated tag's own id). Empty for an unborn HEAD. Paging
+    /// with [`Repo::log_from`] from them walks one fixed history, whatever
+    /// the refs do meanwhile. Runs one `git rev-parse`; blocks until it exits.
+    pub fn log_tips(&self, scope: LogScope) -> Result<Vec<String>, GitError> {
+        let repo = self.repo.to_thread_local();
+        if repo.head().map_err(GitError::from_gix)?.is_unborn() {
+            return Ok(Vec::new());
+        }
+        let mut args: Vec<OsString> = vec!["rev-parse".into(), "HEAD".into()];
+        if scope == LogScope::All {
+            args.extend(["--branches", "--remotes", "--tags"].map(OsString::from));
+        }
+        let stdout = cli::run(&self.workdir, Access::Read, &args, None)?;
+        let stdout = String::from_utf8_lossy(&stdout);
+        let mut tips: Vec<String> = Vec::new();
+        for tip in stdout.split_whitespace() {
+            if !tips.iter().any(|seen| seen == tip) {
+                tips.push(tip.to_owned());
+            }
+        }
+        Ok(tips)
+    }
+
+    /// As [`Repo::log`], from `tips` ([`Repo::log_tips`]) rather than the
+    /// refs: `limit` commits after the first `skip` of the history they
+    /// reach, which stays the same however the refs move, HEAD becoming
+    /// unborn included. Empty for no tips or a `limit` of 0.
+    pub fn log_from(
+        &self,
+        tips: &[String],
+        skip: usize,
+        limit: usize,
+    ) -> Result<Vec<LogCommit>, GitError> {
+        if tips.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+        self.log_of(&tips, skip, limit)
+    }
+
+    /// `git log --topo-order` of `revisions`, as [`Repo::log`] reads it,
+    /// whatever HEAD is.
+    fn log_of(
+        &self,
+        revisions: &[&str],
+        skip: usize,
+        limit: usize,
+    ) -> Result<Vec<LogCommit>, GitError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let repo = self.repo.to_thread_local();
         // Explicit flags, so neither the user's nor the repo's config changes
         // the output. The decoration patterns override log.excludeDecoration.
         let mut args: Vec<OsString> = [
@@ -102,10 +162,8 @@ impl Repo {
         .into();
         args.push(format!("--skip={skip}").into());
         args.push(format!("--max-count={limit}").into());
-        if scope == LogScope::All {
-            args.extend(["--branches", "--remotes", "--tags"].map(OsString::from));
-        }
-        args.extend(["HEAD", "--"].map(OsString::from));
+        args.extend(revisions.iter().map(OsString::from));
+        args.push("--".into());
         let stdout = match cli::run(&self.workdir, Access::Read, &args, None) {
             Ok(stdout) => stdout,
             Err(GitError::Command { stderr, .. })

@@ -3,8 +3,9 @@
 //! or `:Gclog -- %`, shows the History panel on the right dock with the
 //! commits that changed the file, newest first, following renames
 //! ([`Repo::file_log`], at most [`LIMIT`]), read on the background
-//! executor. `:Gclog`'s other forms, a repository's log among them, answer
-//! `Not supported yet: :<line>`.
+//! executor. `:Gclog` with no range or argument, and `:Gclog --all`, are
+//! the repository's log ([`git_log`]); its other forms answer `Not supported
+//! yet: :<line>`.
 //!
 //! The list is a snapshot: running the command again reads it again, for
 //! the file active then. Each row has the commit's short id and summary,
@@ -22,10 +23,10 @@
 //! `git_diff`'s diffs are. The sides' host commands (`:q`) are the diff
 //! view's, as `git_diff` takes them.
 //!
-//! The panel takes its keys itself: up and down move the selection and
-//! Enter opens; with vim on (its key context then has the `vim` flag),
-//! `j` and `k` move, `g g` and `G` go to the first and last row, `o` opens
-//! and `q` hides the dock, focusing the active editor.
+//! The panel takes its keys itself, as [`commit_rows`] says: up and down
+//! move the selection and Enter opens; with vim on (its key context then
+//! has the `vim` flag), `j` and `k` move, `g g` and `G` go to the first and
+//! last row, `o` opens and `q` hides the dock, focusing the active editor.
 
 use std::{
     ops::Range,
@@ -40,14 +41,17 @@ use fe_gpui::{DiffSide, DiffView};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, ParentElement as _, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
-    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use kiln_shell::PaneView as _;
 
-use super::{GitCommand, GitOp, Owner};
+use super::{
+    GitCommand, GitOp, Owner,
+    commit_rows::{self, Key, ListKeys},
+    git_log,
+};
 use crate::{Pane, Workbench, dock::DockOp, git};
 
 /// The most commits listed.
@@ -55,9 +59,6 @@ pub(crate) const LIMIT: usize = 1000;
 
 /// The key context the panel's element sets.
 const KEY_CONTEXT: &str = "history_panel";
-
-/// The flag its key context has while vim is on.
-const VIM_FLAG: &str = "vim";
 
 /// What the panel and the command answer outside a repository.
 const NO_REPO: &str = "Not in a git repository";
@@ -76,6 +77,9 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     if op.typed && !is_file_form(&op) {
+        if let Some(command) = log_form(&op) {
+            return git_log::run(workbench, GitOp { command, ..op }, window, cx);
+        }
         let text = format!("Not supported yet: :{}", typed_line(&op));
         return workbench.answer_git_op(&op, text, cx);
     }
@@ -88,6 +92,17 @@ fn is_file_form(op: &GitOp) -> bool {
     match &op.range {
         Some(range) => *range == (0..0) && op.args.is_empty(),
         None => op.args == "%" || op.args == "-- %",
+    }
+}
+
+/// The log command `op`, typed as `:Gclog`, is a form of: `git.log` with no
+/// range or argument, `git.log_all` for `:Gclog --all`.
+fn log_form(op: &GitOp) -> Option<GitCommand> {
+    match op.args.as_str() {
+        _ if op.range.is_some() => None,
+        "" => Some(GitCommand::Log),
+        "--all" => Some(GitCommand::LogAll),
+        _ => None,
     }
 }
 
@@ -109,38 +124,6 @@ fn file_name(path: &Path) -> String {
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
-}
-
-/// Seconds since the epoch.
-fn now() -> i64 {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-    since.map_or(0, |since| since.as_secs() as i64)
-}
-
-/// How long ago `seconds` was: `just now`, `5 minutes ago`, `1 day ago`,
-/// as the branch picker says it.
-fn ago(seconds: i64) -> String {
-    const MINUTE: i64 = 60;
-    const HOUR: i64 = 60 * MINUTE;
-    const DAY: i64 = 24 * HOUR;
-    let seconds = seconds.max(0);
-    let (count, unit) = if seconds < MINUTE {
-        return "just now".to_owned();
-    } else if seconds < HOUR {
-        (seconds / MINUTE, "minute")
-    } else if seconds < DAY {
-        (seconds / HOUR, "hour")
-    } else if seconds < 14 * DAY {
-        (seconds / DAY, "day")
-    } else if seconds < 60 * DAY {
-        (seconds / (7 * DAY), "week")
-    } else if seconds < 365 * DAY {
-        (seconds / (30 * DAY), "month")
-    } else {
-        (seconds / (365 * DAY), "year")
-    };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
 }
 
 /// What reading a file's history found: its repository and the commits
@@ -227,15 +210,6 @@ impl Workbench {
         let root = self.root.clone();
         panel.update(cx, |panel, cx| panel.list(path, root, op, cx));
         self.run_dock_op(DockOp::ShowHistory, window, cx);
-    }
-
-    /// `q` in the History panel: hides the dock and focuses the active
-    /// editor.
-    fn leave_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dock.read(cx).is_visible() {
-            self.run_dock_op(DockOp::Toggle, window, cx);
-        }
-        window.focus(&self.focus_handle(cx), cx);
     }
 
     /// The pane and tab of this window's diff view of `commit`'s change to
@@ -412,8 +386,7 @@ pub(crate) struct HistoryPanel {
     /// When the list landed, for how long ago each commit was.
     now: i64,
     selected: Option<usize>,
-    /// Whether `g` was pressed, with vim on, waiting for a second.
-    pending_g: bool,
+    keys: ListKeys,
     /// The last read started's number: only it lands.
     read: u64,
     scroll: UniformListScrollHandle,
@@ -432,7 +405,7 @@ impl HistoryPanel {
             commits: Vec::new(),
             now: 0,
             selected: None,
-            pending_g: false,
+            keys: ListKeys::default(),
             read: 0,
             scroll: UniformListScrollHandle::new(),
             ui,
@@ -474,7 +447,7 @@ impl HistoryPanel {
         if read != self.read {
             return;
         }
-        self.now = now();
+        self.now = commit_rows::now();
         match found {
             Ok(Some((repo, commits))) => {
                 self.status = Status::Listed;
@@ -535,11 +508,7 @@ impl HistoryPanel {
             return (self.limited() && ix == self.commits.len())
                 .then(|| vec![format!("Showing the newest {LIMIT} commits")]);
         };
-        let commit = &entry.commit;
-        let mut texts = vec![
-            format!("{}  {}", commit.short, commit.summary),
-            format!("{}, {}", commit.author, ago(self.now - commit.time)),
-        ];
+        let mut texts = commit_rows::texts(&entry.commit, self.now).to_vec();
         if let Some(from) = entry.from.as_deref().filter(|from| *from != entry.path) {
             texts.push(format!("renamed from {}", self.display_path(from)));
         }
@@ -567,73 +536,22 @@ impl HistoryPanel {
 
     /// Its keys: see the module docs.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        // Anything but a second g drops the prefix.
-        let pending_g = std::mem::take(&mut self.pending_g);
-        let m = keystroke.modifiers;
-        if m.control || m.alt || m.platform || m.function {
+        let Some(key) = self.keys.key(event, cx) else {
             return;
-        }
-        let vim = fe_gpui::vim_enabled(cx);
-        let key = match (keystroke.key.as_str(), m.shift) {
-            ("up", false) => Key::Up,
-            ("down", false) => Key::Down,
-            ("enter", false) => Key::Open,
-            _ if !vim => return,
-            ("j", false) => Key::Down,
-            ("k", false) => Key::Up,
-            ("g", false) if pending_g => Key::First,
-            ("g", false) => {
-                self.pending_g = true;
-                return cx.stop_propagation();
-            }
-            ("g", true) => Key::Last,
-            ("o", false) => Key::Open,
-            ("q", false) => Key::Quit,
-            _ => return,
         };
-        cx.stop_propagation();
-        let last = self.commits.len().checked_sub(1);
-        match (key, last) {
-            // Once the panel's update is over: hiding the dock looks at
-            // which of its panels has focus.
-            (Key::Quit, _) => {
-                let workbench = self.workbench.clone();
-                window.defer(cx, move |window, cx| {
-                    let leave = |workbench: &mut Workbench, cx: &mut Context<Workbench>| {
-                        workbench.leave_history(window, cx)
-                    };
-                    workbench.update(cx, leave).ok();
-                });
-            }
-            (_, None) => {}
-            (Key::Up, Some(_)) => {
-                let ix = self.selected.map_or(0, |ix| ix.saturating_sub(1));
-                self.select(ix, cx);
-            }
-            (Key::Down, Some(last)) => {
-                let ix = self.selected.map_or(0, |ix| (ix + 1).min(last));
-                self.select(ix, cx);
-            }
-            (Key::First, Some(_)) => self.select(0, cx),
-            (Key::Last, Some(last)) => self.select(last, cx),
-            (Key::Open, Some(_)) => {
-                if let Some(ix) = self.selected {
+        match key {
+            Key::Quit => commit_rows::leave(self.workbench.clone(), window, cx),
+            Key::Open => {
+                if let Some(ix) = self.selected.filter(|ix| *ix < self.commits.len()) {
                     self.open(ix, window, cx);
                 }
             }
+            _ => {
+                if let Some(ix) = key.moved(self.selected, self.commits.len()) {
+                    self.select(ix, cx);
+                }
+            }
         }
-    }
-
-    /// Its element's key context: [`KEY_CONTEXT`], with the `vim` flag
-    /// while vim is on.
-    fn key_context(&self, cx: &App) -> KeyContext {
-        let mut context = KeyContext::default();
-        context.add(KEY_CONTEXT);
-        if fe_gpui::vim_enabled(cx) {
-            context.add(VIM_FLAG);
-        }
-        context
     }
 
     fn render_rows(
@@ -694,17 +612,6 @@ impl HistoryPanel {
     }
 }
 
-/// What a key in the panel does.
-#[derive(Clone, Copy)]
-enum Key {
-    Up,
-    Down,
-    First,
-    Last,
-    Open,
-    Quit,
-}
-
 impl Focusable for HistoryPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -725,7 +632,7 @@ impl Render for HistoryPanel {
         let error = matches!(self.status, Status::Failed(_));
         div()
             .track_focus(&self.focus)
-            .key_context(self.key_context(cx))
+            .key_context(commit_rows::key_context(KEY_CONTEXT, cx))
             .on_key_down(cx.listener(Self::on_key_down))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()

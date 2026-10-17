@@ -303,8 +303,13 @@ fn lists(cx: &mut TestAppContext) {
     }
 
     let editor_focus = cx.update(|_, cx| editor.focus_handle(cx));
+    // Bare, it's the repository's log.
+    focus_on(&editor_focus, cx);
+    ex("Gclog", cx);
+    assert_eq!(message(&editor, cx), None);
+    let log = (true, DockPanel::GitLog, "Git Log: main".to_owned());
+    assert_eq!(dock(&workbench, cx), log);
     for (line, answer) in [
-        ("Gclog", "Not supported yet: :Gclog"),
         ("3Gclog", "Not supported yet: :3Gclog"),
         ("Gclog main", "Not supported yet: :Gclog main"),
         ("0Gclog %", "Not supported yet: :0Gclog %"),
