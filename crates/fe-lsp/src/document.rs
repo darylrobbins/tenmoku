@@ -299,11 +299,14 @@ impl Opening {
 
 /// The LSP `languageId` for a buffer of fe-syntax's `language` (§3.2): a
 /// fixed table, with `.jsx` files told apart from plain JavaScript by
-/// their extension. Other languages pass their name through.
+/// their extension, and fe-syntax's `bash` and `make` named as the LSP
+/// specification names them. Other languages pass their name through.
 pub(crate) fn language_id(language: &str, path: &Path) -> String {
     match language {
         "javascript" if path.extension().is_some_and(|ext| ext == "jsx") => "javascriptreact",
         "tsx" => "typescriptreact",
+        "bash" => "shellscript",
+        "make" => "makefile",
         other => other,
     }
     .to_owned()

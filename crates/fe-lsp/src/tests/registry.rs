@@ -31,6 +31,7 @@ use crate::{
     ReadinessMode, ServerId, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
 };
 
+mod language_ids;
 mod routed_save;
 
 /// A manager on the fake, with a clock that never moves.

@@ -586,7 +586,8 @@ Reusing the name would invite one trait to grow both meanings.
   (the same `language` that `NavRequest` carries) and pick the first enabled
   server whose `languages` contains it. M4 has one server per language. The
   LSP `languageId` comes from a fixed table: `rust`, `python`, `javascript`,
-  `javascriptreact`, `typescript` and `typescriptreact` (fe-syntax's `tsx`).
+  `javascriptreact`, `typescript` and `typescriptreact` (fe-syntax's `tsx`), and `shellscript`
+  and `makefile` (fe-syntax's `bash` and `make`).
 
 ### 3.3 Configuration
 
