@@ -558,3 +558,6 @@ fn edges(cx: &mut TestAppContext) {
     assert_eq!(panel_message(&workbench, cx), None);
     assert_eq!(rows(&workbench, cx).len(), 4);
 }
+
+#[path = "diff_crumbs_tests.rs"]
+mod diff_crumbs_tests;

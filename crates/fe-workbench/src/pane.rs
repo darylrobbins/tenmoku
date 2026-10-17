@@ -20,7 +20,7 @@ use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
-    EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
+    DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
     commands::RunCommand,
 };
 use fe_ui::{
@@ -1514,13 +1514,39 @@ impl Pane {
     fn crumbs(&self, cx: &mut Context<Self>) -> Vec<Crumb> {
         let path = match (&self.opening, &self.error) {
             (Some(path), _) | (None, Some((path, _))) => Some(Some(path.clone())),
-            (None, None) => self.state.active_item().map(|item| item.path(cx)),
+            (None, None) => self.state.active_item().map(|item| {
+                let diff = item.downcast_ref::<DiffView>();
+                item.path(cx).or_else(|| {
+                    diff.and_then(|diff| {
+                        diff.read(cx)
+                            .right()
+                            .read(cx)
+                            .model()
+                            .path()
+                            .map(Path::to_owned)
+                    })
+                })
+            }),
         };
         let Some(path) = path else {
             return Vec::new();
         };
         let path = path.as_deref();
-        let path_crumbs = pane_toolbar::path_crumbs(path, self.toolbar.root.as_deref());
+        // A diff view with no working file on its right (HEAD against the
+        // index, a commit's change) is named by its tab's title.
+        let diff_title = (path.is_none() && self.opening.is_none() && self.error.is_none())
+            .then(|| self.state.active_item())
+            .flatten()
+            .filter(|item| item.downcast_ref::<DiffView>().is_some())
+            .map(|item| item.tab_title(cx));
+        let path_crumbs = match diff_title {
+            Some(title) => vec![kiln_shell::crumbs::PathCrumb {
+                label: title,
+                dir: None,
+                file: true,
+            }],
+            None => pane_toolbar::path_crumbs(path, self.toolbar.root.as_deref()),
+        };
         let mut crumbs: Vec<_> =
             path_crumbs
                 .into_iter()
