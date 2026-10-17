@@ -124,27 +124,33 @@ impl Config {
     }
 }
 
-/// Names the bundled bar's app menu, its first, for the app. Menus are
-/// known by their names, so a bundled menu the app shares its name with,
-/// as an app called `Window` does, is folded into the app menu after a
-/// separator rather than shown twice.
+/// Names the bundled bar's app menu, the one `menus.toml` calls `App`, for
+/// the app. Menus are known by their names, so a bundled menu the app shares
+/// its name with, as an app called `Window` does, is folded into the app
+/// menu after a separator rather than shown twice. A catalog that knows none
+/// of the app menu's commands drops it; the bar is then left as parsed, so
+/// no other menu is renamed or folded.
 pub(super) fn name_app_menu(bar: &mut MenuBar, app_name: &str) {
+    let Some(app_ix) = bar.menus.iter().position(|menu| menu.name == "App") else {
+        return;
+    };
     if let Some(ix) = bar
         .menus
         .iter()
-        .skip(1)
         .position(|menu| menu.name == app_name)
+        .filter(|&ix| ix != app_ix)
     {
-        let same = bar.menus.remove(ix + 1);
-        let app = &mut bar.menus[0];
+        let same = bar.menus.remove(ix);
+        let app_ix = if ix < app_ix { app_ix - 1 } else { app_ix };
+        let app = &mut bar.menus[app_ix];
         app.items.push(MenuItem {
             kind: ItemKind::Separator,
             place: None,
         });
         app.items.extend(same.items);
-    }
-    if let Some(app) = bar.menus.first_mut() {
         app_name.clone_into(&mut app.name);
+    } else {
+        app_name.clone_into(&mut bar.menus[app_ix].name);
     }
 }
 
