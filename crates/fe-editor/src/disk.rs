@@ -128,11 +128,14 @@ impl SaveJob {
     /// file is written and synced, it fails the same way, discarding it, if
     /// the file or the one a symlink points to changed meanwhile.
     ///
-    /// The new file gets a random name and is created exclusively with
-    /// owner-only permissions, so it never follows a planted symlink and is
-    /// never readable by others mid-save. The original's permissions are then
-    /// applied through the open handle. If the path is a symlink, the file it
-    /// points to is updated and the link is left in place.
+    /// The new file gets a random name and is created exclusively, so it
+    /// never follows a planted symlink. Over an existing file it is owner-only
+    /// mid-save, so never readable by others, and the original's permissions
+    /// are then applied through the open handle; a file made where nothing was
+    /// gets 0666 less the umask. If the path is a symlink, the file it points
+    /// to is updated and the link is left in place. On a volume with no
+    /// exclusive rename, a new file is instead created in place, still never
+    /// replacing anything.
     pub fn run(self) -> Result<Saved, SaveError> {
         self.run_with(|| {}, || {})
     }
@@ -180,10 +183,16 @@ impl SaveJob {
             _ => Path::new("."),
         };
         let file_name = target.file_name().unwrap_or_default().to_string_lossy();
-        let temp = tempfile::Builder::new()
-            .prefix(&format!(".{file_name}."))
-            .suffix(".fastedit-save")
-            .tempfile_in(dir)?;
+        let prefix = format!(".{file_name}.");
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(&prefix).suffix(".fastedit-save");
+        // Nothing at the target: `open(2)` applies the umask to 0666.
+        #[cfg(unix)]
+        if permissions.is_none() {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o666));
+        }
+        let temp = builder.tempfile_in(dir)?;
         if let Some(permissions) = permissions {
             temp.as_file().set_permissions(permissions)?;
         }
@@ -211,15 +220,97 @@ impl SaveJob {
         } else {
             temp.persist(&target)
         };
-        persisted.map_err(|error| match error.error.kind() {
-            io::ErrorKind::AlreadyExists if no_clobber => SaveError::ChangedOnDisk,
-            _ => SaveError::from(error.error),
-        })?;
+        let stamp = match persisted {
+            Ok(_) => stamp,
+            Err(error) if no_clobber && no_exclusive_rename(&error.error) => {
+                // The temp is deleted when `error` drops.
+                create_in_place(&target, &snapshot)?
+            }
+            Err(error) => {
+                return Err(match error.error.kind() {
+                    io::ErrorKind::AlreadyExists if no_clobber => SaveError::ChangedOnDisk,
+                    _ => SaveError::from(error.error),
+                });
+            }
+        };
         Ok(Saved {
             path,
             snapshot,
             stamp: Some(stamp),
         })
+    }
+}
+
+/// Whether `error` says the file system has no exclusive rename (exFAT, FAT
+/// and some network shares), so a new file can't be committed by one.
+fn no_exclusive_rename(error: &io::Error) -> bool {
+    let Some(code) = error.raw_os_error() else {
+        return false;
+    };
+    #[cfg(target_os = "macos")]
+    return matches!(
+        code,
+        45 // ENOTSUP
+        | 102 // EOPNOTSUPP
+        | 22 // EINVAL
+        | 78 // ENOSYS
+    );
+    #[cfg(target_os = "linux")]
+    return matches!(
+        code,
+        95 // EOPNOTSUPP
+        | 22 // EINVAL
+        | 38 // ENOSYS
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = code;
+        false
+    }
+}
+
+/// Writes `snapshot` to a file created at `target` that must not exist yet,
+/// for a volume with no exclusive rename. An existing file there, or a
+/// symlink, is never replaced: [`SaveError::ChangedOnDisk`]. A write that
+/// fails removes the file, unless something else has since taken its place.
+fn create_in_place(target: &Path, snapshot: &SaveSnapshot) -> Result<DiskStamp, SaveError> {
+    use std::io::Write;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::AlreadyExists => SaveError::ChangedOnDisk,
+            _ => SaveError::from(error),
+        })?;
+    let written = (|| -> Result<DiskStamp, SaveError> {
+        let mut out = io::BufWriter::new(&file);
+        snapshot.write_to(&mut out)?;
+        out.flush()?;
+        drop(out);
+        file.sync_all()?;
+        Ok(DiskStamp::from_metadata(&file.metadata()?)?)
+    })();
+    if written.is_err() && is_same_file(target, &file) {
+        let _ = std::fs::remove_file(target);
+    }
+    written
+}
+
+/// Whether `path` is still the file `file` has open.
+fn is_same_file(path: &Path, file: &std::fs::File) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::symlink_metadata(path), file.metadata()) {
+            (Ok(at), Ok(open)) => at.dev() == open.dev() && at.ino() == open.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, file);
+        false
     }
 }
 
