@@ -456,22 +456,6 @@ fn refuses_bad_edits() {
         "isn't open",
     );
 
-    // Creating or renaming a file.
-    assert_refused(
-        s.decode(json!({ "documentChanges": [
-            fine,
-            { "kind": "create", "uri": uri("new.rs") },
-        ]})),
-        "creates",
-    );
-    assert_refused(
-        s.decode(json!({ "documentChanges": [
-            { "kind": "rename", "oldUri": uri("open.rs"), "newUri": uri("moved.rs") },
-            fine,
-        ]})),
-        "renames",
-    );
-
     // Overlapping edits in one file, open or closed, in one edit or across
     // two for the file.
     for name in ["open.rs", "closed.rs"] {
@@ -875,3 +859,6 @@ fn apply_edit_reads_what_was_handed() {
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].identity, reopened.identity);
 }
+
+#[path = "workspace_edit_ops_tests.rs"]
+mod ops;

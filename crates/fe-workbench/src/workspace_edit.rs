@@ -197,6 +197,15 @@ impl Workbench {
                     model: Box::new(model),
                 })
             }
+            EditTarget::Create { .. } => Err(format!(
+                "fastedit can't create files from an edit yet ({display})"
+            )),
+            EditTarget::Rename { .. } => Err(format!(
+                "fastedit can't rename files from an edit yet ({display})"
+            )),
+            EditTarget::Delete { .. } => Err(format!(
+                "fastedit can't delete files from an edit yet ({display})"
+            )),
             _ => Err(format!("{display}: an edit fastedit doesn't know")),
         }
     }

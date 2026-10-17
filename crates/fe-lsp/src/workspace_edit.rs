@@ -12,9 +12,18 @@
 //! - **Refused.** The whole edit is refused if any part of it can't be
 //!   applied as the server meant: a `TextDocumentEdit` for a version the
 //!   server doesn't have (the buffer moved on, or the file isn't open),
-//!   even one with no edits in it, a resource operation (fe-lsp declares
-//!   none: create, rename or delete a file), overlapping edits in a file, a
-//!   range that ends before it starts, or a URI that isn't a `file:` path.
+//!   even one with no edits in it, a text edit to a file the edit deleted
+//!   or renamed away earlier, overlapping edits in a file, a range that
+//!   ends before it starts, or a URI that isn't a `file:` path (a resource
+//!   operation's too).
+//! - **Resource operations.** A `documentChanges` with a create, rename or
+//!   delete keeps its order: the output lists, in order, each run of text
+//!   edits (merged per file) and each operation ([`EditTarget::Create`],
+//!   [`Rename`](EditTarget::Rename), [`Delete`](EditTarget::Delete)), with
+//!   the operation's options. Text edits to a file created or renamed to
+//!   earlier are [`EditTarget::Closed`], against empty text for a created
+//!   one. fe-lsp decodes them but doesn't advertise them yet
+//!   (`resourceOperations` stays empty), and the workbench refuses them.
 //! - Both forms are read: `documentChanges` if the server sent it,
 //!   otherwise `changes`. Several `TextDocumentEdit`s for one file are
 //!   merged, all read against the same text, and each file's edits come
@@ -34,7 +43,7 @@
 //!   to it is dropped.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -85,6 +94,23 @@ pub enum EditTarget {
     Closed {
         edits: Vec<TextEdit>,
         encoding: PositionEncoding,
+    },
+    /// Create the file (an entry in the edit's order; text edits to it come
+    /// after, [`Closed`](Self::Closed), against empty text).
+    Create {
+        overwrite: bool,
+        ignore_if_exists: bool,
+    },
+    /// Rename the file to `to`; text edits after it name `to`, closed.
+    Rename {
+        to: PathBuf,
+        overwrite: bool,
+        ignore_if_exists: bool,
+    },
+    /// Delete the file or folder.
+    Delete {
+        recursive: bool,
+        ignore_if_not_exists: bool,
     },
 }
 
@@ -179,6 +205,120 @@ struct Sent {
     /// The versions the server named for it, if any.
     versions: Vec<i32>,
     edits: Vec<TextEdit>,
+    /// The edit created it, or renamed another file to it, earlier: it's
+    /// closed, whatever the server has open under the path.
+    fresh: bool,
+}
+
+/// A step of a workspace edit, in the order the server sent them.
+enum Step {
+    /// A run of text edits, merged per file.
+    Edits(Vec<Sent>),
+    Operation(FileEdits),
+}
+
+/// Reads an edit's parts in order, tracking which files its operations
+/// have made or removed.
+#[derive(Default)]
+struct Reader {
+    steps: Vec<Step>,
+    /// The current run of text edits.
+    files: Vec<Sent>,
+    /// Created, or renamed to, earlier in the edit.
+    fresh: HashSet<PathBuf>,
+    /// Deleted or renamed away earlier in the edit, and which.
+    gone: HashMap<PathBuf, &'static str>,
+}
+
+impl Reader {
+    fn add(&mut self, uri: Url, version: Option<i32>, edits: Vec<TextEdit>) -> Result<(), String> {
+        let path = file_path(&uri)?;
+        if let Some(how) = self.gone.get(&path) {
+            return Err(format!(
+                "it edits {}, which it {how} earlier",
+                path.display()
+            ));
+        }
+        let at = match self.files.iter().position(|file| file.path == path) {
+            Some(at) => at,
+            None => {
+                self.files.push(Sent {
+                    uri,
+                    fresh: self.fresh.contains(&path),
+                    path,
+                    versions: Vec::new(),
+                    edits: Vec::new(),
+                });
+                self.files.len() - 1
+            }
+        };
+        self.files[at].versions.extend(version);
+        self.files[at].edits.extend(edits);
+        Ok(())
+    }
+
+    fn operation(&mut self, op: ResourceOp) -> Result<(), String> {
+        if !self.files.is_empty() {
+            self.steps
+                .push(Step::Edits(std::mem::take(&mut self.files)));
+        }
+        let (path, target) = match op {
+            ResourceOp::Create(create) => {
+                let path = file_path(&create.uri)?;
+                let options = create.options;
+                self.gone.remove(&path);
+                self.fresh.insert(path.clone());
+                let target = EditTarget::Create {
+                    overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
+                    ignore_if_exists: options
+                        .as_ref()
+                        .and_then(|o| o.ignore_if_exists)
+                        .unwrap_or(false),
+                };
+                (path, target)
+            }
+            ResourceOp::Rename(rename) => {
+                let (from, to) = (file_path(&rename.old_uri)?, file_path(&rename.new_uri)?);
+                let options = rename.options;
+                self.fresh.remove(&from);
+                self.gone.insert(from.clone(), "renamed");
+                self.gone.remove(&to);
+                self.fresh.insert(to.clone());
+                let target = EditTarget::Rename {
+                    to,
+                    overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
+                    ignore_if_exists: options
+                        .as_ref()
+                        .and_then(|o| o.ignore_if_exists)
+                        .unwrap_or(false),
+                };
+                (from, target)
+            }
+            ResourceOp::Delete(delete) => {
+                let path = file_path(&delete.uri)?;
+                let options = delete.options;
+                self.fresh.remove(&path);
+                self.gone.insert(path.clone(), "deleted");
+                let target = EditTarget::Delete {
+                    recursive: options.as_ref().and_then(|o| o.recursive).unwrap_or(false),
+                    ignore_if_not_exists: options
+                        .as_ref()
+                        .and_then(|o| o.ignore_if_not_exists)
+                        .unwrap_or(false),
+                };
+                (path, target)
+            }
+        };
+        self.steps.push(Step::Operation(FileEdits { path, target }));
+        Ok(())
+    }
+
+    fn finish(mut self) -> Vec<Step> {
+        if !self.files.is_empty() {
+            self.steps.push(Step::Edits(self.files));
+        }
+        self.steps
+    }
 }
 
 /// `edit` decoded against `documents`, the documents the server has open,
@@ -188,30 +328,12 @@ pub(crate) fn decode(
     documents: &[SentDocument],
     encoding: PositionEncoding,
 ) -> Result<Vec<FileEdits>, String> {
-    let mut files: Vec<Sent> = Vec::new();
-    let mut add = |uri: Url, version: Option<i32>, edits: Vec<TextEdit>| {
-        let path = file_path(&uri)?;
-        let at = match files.iter().position(|file| file.path == path) {
-            Some(at) => at,
-            None => {
-                files.push(Sent {
-                    uri,
-                    path,
-                    versions: Vec::new(),
-                    edits: Vec::new(),
-                });
-                files.len() - 1
-            }
-        };
-        files[at].versions.extend(version);
-        files[at].edits.extend(edits);
-        Ok::<_, String>(())
-    };
+    let mut reader = Reader::default();
     match edit.document_changes {
         Some(DocumentChanges::Edits(edits)) => {
             for edit in edits {
                 let edits = edit.edits.into_iter().map(text_edit).collect();
-                add(edit.text_document.uri, edit.text_document.version, edits)?;
+                reader.add(edit.text_document.uri, edit.text_document.version, edits)?;
             }
         }
         Some(DocumentChanges::Operations(operations)) => {
@@ -219,9 +341,9 @@ pub(crate) fn decode(
                 match operation {
                     DocumentChangeOperation::Edit(edit) => {
                         let edits = edit.edits.into_iter().map(text_edit).collect();
-                        add(edit.text_document.uri, edit.text_document.version, edits)?;
+                        reader.add(edit.text_document.uri, edit.text_document.version, edits)?;
                     }
-                    DocumentChangeOperation::Op(op) => return Err(refused_operation(&op)),
+                    DocumentChangeOperation::Op(op) => reader.operation(op)?,
                 }
             }
         }
@@ -230,17 +352,26 @@ pub(crate) fn decode(
             let mut changes: Vec<_> = edit.changes.unwrap_or_default().into_iter().collect();
             changes.sort_by(|a, b| a.0.cmp(&b.0));
             for (uri, edits) in changes {
-                add(uri, None, edits)?;
+                reader.add(uri, None, edits)?;
             }
         }
     }
-    let mut decoded = (files.into_iter())
-        .map(|file| decode_file(file, documents, encoding))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut decoded = Vec::new();
+    for step in reader.finish() {
+        match step {
+            Step::Edits(files) => {
+                for file in files {
+                    decoded.push(decode_file(file, documents, encoding)?);
+                }
+            }
+            Step::Operation(operation) => decoded.push(operation),
+        }
+    }
     // Only once every file's version has been checked.
     decoded.retain(|file| match &file.target {
         EditTarget::Open { edits, .. } => !edits.is_empty(),
         EditTarget::Closed { edits, .. } => !edits.is_empty(),
+        _ => true,
     });
     Ok(decoded)
 }
@@ -253,9 +384,11 @@ fn decode_file(
     encoding: PositionEncoding,
 ) -> Result<FileEdits, String> {
     let display = file.path.display();
-    let mut open = (documents.iter()).filter(|document| {
-        document.uri == file.uri || file_path(&document.uri).is_ok_and(|path| path == file.path)
-    });
+    let mut open = (documents.iter())
+        .filter(|document| {
+            document.uri == file.uri || file_path(&document.uri).is_ok_and(|path| path == file.path)
+        })
+        .filter(|_| !file.fresh);
     let target = match (open.next(), open.next()) {
         (Some(_), Some(_)) => return Err(format!("{display} is open twice")),
         (Some(document), None) => {
@@ -277,7 +410,7 @@ fn decode_file(
             }
         }
         (None, _) => {
-            if let Some(version) = file.versions.first() {
+            if let Some(version) = file.versions.first().filter(|_| !file.fresh) {
                 return Err(format!("{display} isn't open at version {version}"));
             }
             let edits = sorted(file.edits).map_err(|why| format!("{display}: {why}"))?;
@@ -304,16 +437,6 @@ pub(crate) fn file_path(uri: &Url) -> Result<PathBuf, String> {
     }
     uri.to_file_path()
         .map_err(|()| format!("{uri} isn't a local file"))
-}
-
-fn refused_operation(op: &ResourceOp) -> String {
-    match op {
-        ResourceOp::Create(create) => format!("it creates {}", create.uri),
-        ResourceOp::Rename(rename) => {
-            format!("it renames {} to {}", rename.old_uri, rename.new_uri)
-        }
-        ResourceOp::Delete(delete) => format!("it deletes {}", delete.uri),
-    }
 }
 
 /// Where a `workspace/applyEdit`'s answer goes: taken by the first answer,
