@@ -42,6 +42,7 @@ fe-fileview = { path = "crates/fe-fileview" }
 fe-terminal = { path = "crates/fe-terminal" }
 fe-terminal-view = { path = "crates/fe-terminal-view" }
 fe-git = { path = "crates/fe-git" }
+fe-markdown = { path = "crates/fe-markdown" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -73,6 +74,14 @@ grep-regex = "0.1"
 grep-searcher = "0.1"
 # fe-vim's search patterns, translated to it (already in the lock through grep-regex).
 regex = "1"
+
+# Markdown for the preview (fe-markdown): pulldown-cmark (MIT), the fastest
+# parser we looked at, with byte ranges for each event (`into_offset_iter`),
+# which give blocks their source lines. Its only new dependency is unicase (MIT
+# OR Apache-2.0). Without default features it has no `getopts` or `html`.
+pulldown-cmark = { version = "0.13", default-features = false }
+# Percent-decoding link destinations (already in the lock).
+percent-encoding = "2"
 
 # The host's channel from the config watcher to the main thread (already in
 # the lock through gpui).

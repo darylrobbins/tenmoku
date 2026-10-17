@@ -1,0 +1,22 @@
+[package]
+name = "fe-markdown"
+description = "Markdown documents parsed for the preview, with source lines. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-buffer.workspace = true
+fe-syntax.workspace = true
+percent-encoding.workspace = true
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+# Highlights complete whatever the machine's load, as in fe-syntax's own tests.
+fe-syntax = { workspace = true, features = ["no-query-budget"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

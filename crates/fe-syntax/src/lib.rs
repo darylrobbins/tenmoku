@@ -15,6 +15,7 @@
 //! - [`outline`] lists a parsed file's symbols, nested, from our own
 //!   per-language outline queries; [`outline_job`] runs it on another thread.
 //!   [`symbols`] adds fields, enum variants and variables, for a tags index.
+//! - [`fence_language`] is the language a Markdown fence's info string names.
 //! - [`suggest_indent`] suggests a row's indentation and [`closer_outdents`]
 //!   the row a `}` lines up with, from per-language indent queries.
 //!
@@ -24,6 +25,7 @@ mod brackets;
 mod comment;
 mod detect;
 mod driver;
+mod fence;
 mod fold;
 mod highlight;
 mod imports;
@@ -39,6 +41,7 @@ pub use brackets::{BracketPair, bracket_pair};
 pub use comment::{CommentTokens, auto_pairs, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
+pub use fence::fence_language;
 pub use fold::{fold_range_at, fold_ranges};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};
