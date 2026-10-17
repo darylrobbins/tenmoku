@@ -21,22 +21,24 @@
 //! since and the working side has no unsaved changes, when a diff of the
 //! file as it is now replaces it.
 //!
-//! The Changes panel opens a row's file against HEAD, as VS Code's Source
-//! Control does (a deleted file against nothing, both sides read-only);
-//! so does a click on an editor's change bar, side by side, with the right
+//! The Changes panel opens a Changes row's file against the index (a
+//! deleted file against nothing, both sides read-only), and a Staged row's
+//! HEAD against the index, `a.rs (HEAD ↔ Index)`, both sides git's and
+//! read-only, as VS Code's Source Control does: the entry git tracks at
+//! that name, a symlink's being its target's path. A click on an editor's
+//! change bar opens its file against HEAD, side by side, with the right
 //! side's caret on the change's first row, centred. (VS Code peeks at the
 //! change inline instead.) `diff.compare_file` (`:diffsplit {file}`)
 //! compares a file the quick-open picker, titled "Compare with…", picks
 //! (or `:diffsplit` names, resolved as `:e` resolves it) on the read-only
 //! left with the active file on the right.
 //!
-//! Each git diff's left side is read again after a git refresh
-//! ([`Workbench::refresh_git_diffs`]): an `Index` side after every refresh,
-//! as staging changes no file's status; a `HEAD` side after one that
-//! changed its file's status or moved HEAD. Only a view's last read lands,
-//! and a diff opened while a refresh ran is read again. A refresh that finds
-//! the file deleted or restored rebuilds a clean diff, as asking again
-//! does.
+//! Each git diff's git sides are read again after a git refresh
+//! ([`Workbench::refresh_git_diffs`]), a staged diff's both. Only a view's
+//! last read lands, and a diff opened while a refresh ran is read again. A
+//! refresh that finds the file deleted or restored rebuilds a clean diff,
+//! as asking again does (a staged diff is never rebuilt: its sides are
+//! git's).
 //!
 //! In a tab, `git.next_change` remembers the change it went to, as the
 //! diff view's navigation does, so a deletion past the last row, whose
@@ -85,10 +87,10 @@ use crate::{Pane, Picker, QuickOpen, git, loader, quick_open::Pick};
 const NO_REPO: &str = "Not in a git repository";
 
 /// What a command for the active file answers when it has none.
-const NO_FILE: &str = "E32: No file name";
+pub(super) const NO_FILE: &str = "E32: No file name";
 
 /// What a read-only side answers to an edit.
-const E21: &str = "E21: Cannot make changes, 'modifiable' is off";
+pub(super) const E21: &str = "E21: Cannot make changes, 'modifiable' is off";
 
 /// What putting into a read-only side answers.
 const E793: &str = "E793: No other buffer in diff mode is modifiable";
@@ -110,13 +112,16 @@ const TOO_LARGE: &str = "Too large to compare";
 pub(crate) enum Base {
     Index,
     Head,
+    /// HEAD, against the index on the right: what's staged, both sides
+    /// git's and read-only.
+    Staged,
 }
 
 impl Base {
     fn title(self) -> &'static str {
         match self {
             Base::Index => "Index",
-            Base::Head => "HEAD",
+            Base::Head | Base::Staged => "HEAD",
         }
     }
 }
@@ -236,7 +241,7 @@ impl Request {
 }
 
 /// Whether `a` and `b` name the same file, through symlinks and `..`.
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(super) fn same_file(a: &Path, b: &Path) -> bool {
     a == b || git::resolve(a) == git::resolve(b)
 }
 
@@ -428,7 +433,7 @@ fn put(diff: &Entity<DiffView>, editor: &Entity<EditorView>, rows: Range<u32>, c
 
 /// The bytes of `old` that `new` changes, and what replaces them: all but
 /// the prefix and suffix the two share, cut at char boundaries.
-fn changed_span(old: &str, new: &str) -> (Range<usize>, String) {
+pub(super) fn changed_span(old: &str, new: &str) -> (Range<usize>, String) {
     let prefix = (old.char_indices().zip(new.chars()))
         .find(|((_, a), b)| a != b)
         .map_or(old.len().min(new.len()), |((at, _), _)| at);
@@ -448,29 +453,58 @@ fn changed_span(old: &str, new: &str) -> (Range<usize>, String) {
 /// exists, so a file whose folder was deleted has one. Runs on the
 /// background executor.
 fn git_text(base: Base, path: &Path) -> Result<String, String> {
-    let real = git::resolve(path);
-    let Some(folder) = real.ancestors().skip(1).find(|folder| folder.is_dir()) else {
-        return Err(NO_REPO.to_owned());
-    };
-    let repo = match Repo::discover(folder) {
-        Ok(Some(repo)) => repo,
-        Ok(None) => return Err(NO_REPO.to_owned()),
-        Err(error) => return Err(error.to_string()),
-    };
+    git_text_at(base, path, &git::resolve(path))
+}
+
+/// The text of `path` in `base` for a staged diff, whose sides are both
+/// git's: the entry git tracks at that name, a symlink's being its target's
+/// path, read as [`git_text`] reads. Runs on the background executor.
+fn staged_text(base: Base, path: &Path) -> Result<String, String> {
+    git_text_at(base, path, &link_path(path))
+}
+
+/// [`git_text`] of `path`, found in git at `real`.
+fn git_text_at(base: Base, path: &Path, real: &Path) -> Result<String, String> {
+    let repo = repo_of(real)?;
     let size = match base {
-        Base::Index => repo.index_blob_size(&real),
-        Base::Head => repo.head_blob_size(&real),
+        Base::Index => repo.index_blob_size(real),
+        Base::Head | Base::Staged => repo.head_blob_size(real),
     };
     let size = size.map_err(|error| error.to_string())?;
     if size.is_some_and(|size| size >= loader::large_bytes(path)) {
         return Err(too_large(path));
     }
     let text = match base {
-        Base::Index => repo.index_text(&real),
-        Base::Head => repo.head_text(&real),
+        Base::Index => repo.index_text(real),
+        Base::Head | Base::Staged => repo.head_text(real),
     };
     text.map(Option::unwrap_or_default)
         .map_err(|error| error.to_string())
+}
+
+/// `path` with its folder through symlinks and `..`, its own name kept: a
+/// symlink is the link git tracks, not what it points to.
+pub(super) fn link_path(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(folder), Some(name)) if !folder.as_os_str().is_empty() => {
+            git::resolve(folder).join(name)
+        }
+        _ => path.to_owned(),
+    }
+}
+
+/// The repository of the file at `real`, through symlinks, found from the
+/// nearest folder of it that exists, or the answer. Runs on the background
+/// executor.
+pub(super) fn repo_of(real: &Path) -> Result<Repo, String> {
+    let Some(folder) = real.ancestors().skip(1).find(|folder| folder.is_dir()) else {
+        return Err(NO_REPO.to_owned());
+    };
+    match Repo::discover(folder) {
+        Ok(Some(repo)) => Ok(repo),
+        Ok(None) => Err(NO_REPO.to_owned()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// A read-only side titled `title` over `text`, a file's contents, its
@@ -520,18 +554,21 @@ fn reveal(diff: &Entity<DiffView>, reveal: Reveal, cx: &mut App) {
     }
 }
 
-/// Replaces `diff`'s left text with `text`, if it differs.
-fn set_left_text(diff: &Entity<DiffView>, text: &str, cx: &mut App) {
-    let left = diff.read(cx).left().clone();
+/// Replaces `side`'s text, a diff's git side's, with `text`, if it
+/// differs. It's git's text, not an edit, so the side stays clean.
+fn set_side_text(side: &Entity<EditorView>, text: &str, cx: &mut App) {
     let text = Buffer::from_file_contents(text).text().to_string();
     let text = text.as_str();
-    left.update(cx, |view, cx| {
+    side.update(cx, |view, cx| {
         if view.model().text().to_string() == text {
             return;
         }
         let len = view.model().text().len();
         let edits = [(0..len, text)];
-        view.model_mut().buffer_mut().edit(edits, Origin::User);
+        let mut buffer = view.model_mut().buffer_mut();
+        buffer.edit(edits, Origin::User);
+        buffer.did_save();
+        drop(buffer);
         cx.notify();
     });
 }
@@ -552,13 +589,27 @@ fn is_last_read(view: &WeakEntity<DiffView>, read: u64, cx: &mut App) -> bool {
     compared(view, cx).is_some_and(|compared| compared.read == read)
 }
 
-/// Lands read `read` of `view`'s git side, `text`, unless a later read
+/// Lands read `read` of `view`'s git side, `text`, and of the index's
+/// text on the right of a [`Base::Staged`] diff, unless a later read
 /// started: whether it landed.
-fn land_read(view: &WeakEntity<DiffView>, read: u64, text: &str, cx: &mut App) -> bool {
+fn land_read(
+    view: &WeakEntity<DiffView>,
+    read: u64,
+    text: &str,
+    index: Option<&str>,
+    cx: &mut App,
+) -> bool {
     let Some(diff) = view.upgrade().filter(|_| is_last_read(view, read, cx)) else {
         return false;
     };
-    set_left_text(&diff, text, cx);
+    let (left, right) = {
+        let diff = diff.read(cx);
+        (diff.left().clone(), diff.right().clone())
+    };
+    set_side_text(&left, text, cx);
+    if let Some(index) = index {
+        set_side_text(&right, index, cx);
+    }
     true
 }
 
@@ -603,8 +654,9 @@ struct Landing {
 }
 
 /// What a git diff's sides were read from: the git text, whether the file
-/// is there, and the file from disk if no editor had it open.
-type GitRead = Result<(String, bool, Option<Option<Buffer>>), String>;
+/// is there, the file from disk if no editor had it open, and the index's
+/// text for a [`Base::Staged`] diff's right side.
+type GitRead = Result<(String, bool, Option<Option<Buffer>>, Option<String>), String>;
 
 impl Workbench {
     /// The open editors of files: the tabs', and each diff view's working
@@ -660,7 +712,7 @@ impl Workbench {
     }
 
     /// The diff view `editor` is a side of, if it's one.
-    fn diff_of(&self, editor: &Entity<EditorView>) -> Option<Entity<DiffView>> {
+    pub(super) fn diff_of(&self, editor: &Entity<EditorView>) -> Option<Entity<DiffView>> {
         let editor = editor.downgrade();
         (self.owned_editors.iter()).find_map(|(owned, owner)| match owner {
             Owner::DiffView(diff) if *owned == editor => diff.upgrade(),
@@ -670,11 +722,25 @@ impl Workbench {
 
     /// The editor of the file `editor` shows: itself, or a diff view's right
     /// side.
-    fn file_editor(&self, editor: &Entity<EditorView>, cx: &App) -> Entity<EditorView> {
+    pub(super) fn file_editor(&self, editor: &Entity<EditorView>, cx: &App) -> Entity<EditorView> {
         match self.diff_of(editor) {
             Some(diff) => diff.read(cx).right().clone(),
             None => editor.clone(),
         }
+    }
+
+    /// The file a command typed or run in `editor` is for: its own, a diff
+    /// view side's working file, or the file a staged diff, whose sides are
+    /// git's, compares.
+    pub(super) fn op_path(&self, editor: &Entity<EditorView>, cx: &App) -> Option<PathBuf> {
+        let file = self.file_editor(editor, cx);
+        if let Some(path) = file.read(cx).model().path() {
+            return Some(path.to_owned());
+        }
+        let diff = self.diff_of(editor)?.downgrade();
+        let state = cx.try_global::<DiffState>()?;
+        let compared = state.views.iter().find(|compared| compared.view == diff)?;
+        Some(compared.path.clone())
     }
 
     /// The pane showing `diff`, and its tab's index there.
@@ -688,9 +754,16 @@ impl Workbench {
 
     /// This window's diff view of `path` against `base`, if one is open, and
     /// whether it compares with the file deleted.
+    /// A staged diff is of the entry git tracks at the path, a symlink
+    /// itself, so it's found by the path with only its folder resolved;
+    /// another, of a working file, by the file's real path.
     fn open_diff(&self, path: &Path, base: Base, cx: &mut App) -> Option<(Entity<DiffView>, bool)> {
+        let same = |open: &Path| match base {
+            Base::Staged => open == path || link_path(open) == link_path(path),
+            _ => same_file(open, path),
+        };
         let views: Vec<(Entity<DiffView>, bool)> = (diff_views(cx).iter())
-            .filter(|compared| compared.base == Some(base) && same_file(&compared.path, path))
+            .filter(|compared| compared.base == Some(base) && same(&compared.path))
             .filter_map(|compared| Some((compared.view.upgrade()?, compared.deleted)))
             .collect();
         (views.into_iter()).find(|(view, _)| self.diff_tab(view, cx).is_some())
@@ -855,12 +928,13 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path = (op.editor.as_ref())
-            .map(|editor| self.file_editor(editor, cx))
-            .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
-        match path {
+        let editor = (op.editor.as_ref()).map(|editor| self.file_editor(editor, cx));
+        // An editor's buffer, else a staged diff's file.
+        let live = (editor.as_ref()).is_some_and(|editor| editor.read(cx).model().path().is_some());
+        match (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx)) {
             Some(path) => {
-                let request = Request::asked(path, base, None, op).live();
+                let request = Request::asked(path, base, None, op);
+                let request = if live { request.live() } else { request };
                 self.request_git_diff(request, window, cx)
             }
             None => self.answer_git_op(&op, NO_FILE.to_owned(), cx),
@@ -903,19 +977,31 @@ impl Workbench {
             .and_then(|old| self.diff_tab(&old, cx));
         let pane = replaced.map_or_else(|| self.active.clone(), |(pane, _)| pane);
         let landing = self.landing(&pane, request.asked, cx);
-        // The open buffer, else the file as it is on disk.
-        let model = self.file_model(&request.path, cx);
-        let read_disk = model.is_none();
+        let staged = request.base == Base::Staged;
+        // The open buffer, else the file as it is on disk; neither for the
+        // staged text, whose sides are both git's.
+        let model = (!staged)
+            .then(|| self.file_model(&request.path, cx))
+            .flatten();
+        let read_disk = model.is_none() && !staged;
         let (base, at, deleted) = (request.base, request.path.clone(), request.deleted);
         // An editor's buffer is there whether or not its file is.
         let live = request.live && model.is_some();
         let read = cx.background_spawn(async move {
-            let exists = live || deleted.map_or_else(|| at.exists(), |deleted| !deleted);
+            let exists = staged || live || deleted.map_or_else(|| at.exists(), |deleted| !deleted);
             let disk = match exists && read_disk {
                 true => Some(read_file(&at)?),
                 false => None,
             };
-            Ok((git_text(base, &at)?, exists, disk))
+            let index = match staged {
+                true => Some(staged_text(Base::Index, &at)?),
+                false => None,
+            };
+            let text = match staged {
+                true => staged_text(base, &at)?,
+                false => git_text(base, &at)?,
+            };
+            Ok((text, exists, disk, index))
         });
         cx.spawn_in(window, async move |workbench, cx| {
             let read = read.await;
@@ -941,7 +1027,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (text, exists, disk) = match read {
+        let (text, exists, disk, index) = match read {
             Ok(read) => read,
             Err(answer) if request.asked => return self.answer_git_op(&request.op, answer, cx),
             Err(_) => return,
@@ -959,7 +1045,7 @@ impl Workbench {
                     return;
                 }
                 if old.is_dirty(cx) {
-                    land_read(&old.downgrade(), *read, &text, cx);
+                    land_read(&old.downgrade(), *read, &text, index.as_deref(), cx);
                     return;
                 }
                 then = then.or_else(|| compared(&old.downgrade(), cx)?.reveal.take());
@@ -982,16 +1068,17 @@ impl Workbench {
                 opened => opened.map(|(diff, _)| diff),
             },
         };
-        let source = match exists {
+        let source = match exists && index.is_none() {
             true => (model.or_else(|| self.file_model(&request.path, cx))).or_else(|| {
                 let buffer = loader::buffer_or_new(disk.flatten());
                 Some(EditorModel::new(buffer, Some(request.path.clone())))
             }),
             false => None,
         };
-        let right = match source {
-            Some(source) => Ok((WORKING_TREE.into(), source)),
-            None => Err(fixed_side(WORKING_TREE, "")),
+        let right = match (index, source) {
+            (Some(index), _) => Err(fixed_side(Base::Index.title(), &index)),
+            (None, Some(source)) => Ok((WORKING_TREE.into(), source)),
+            (None, None) => Err(fixed_side(WORKING_TREE, "")),
         };
         let left = fixed_side(request.base.title(), &text);
         let compared = (request.path.clone(), Some(request.base), deleted);
@@ -1012,8 +1099,24 @@ impl Workbench {
         }
     }
 
-    /// Opens a Changes panel row's file against HEAD: see the module docs.
+    /// Opens a Changes panel row's diff: a staged file's HEAD against the
+    /// index, else the file against the index. See the module docs.
     pub(crate) fn open_change_diff(
+        &mut self,
+        path: PathBuf,
+        staged: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base = if staged { Base::Staged } else { Base::Index };
+        let request = Request::asked(path, base, None, clicked(GitCommand::DiffIndex));
+        self.request_git_diff(request, window, cx);
+    }
+
+    /// Opens `path`'s diff against HEAD as the Changes panel did before it
+    /// had groups, for the tests of the HEAD diff.
+    #[cfg(test)]
+    pub(crate) fn open_head_diff(
         &mut self,
         path: PathBuf,
         window: &mut Window,
@@ -1093,15 +1196,22 @@ impl Workbench {
         let files: Vec<(PathBuf, Base)> = (reads.iter())
             .map(|(_, _, path, base, _)| (path.clone(), *base))
             .collect();
+        // A staged diff's sides are both git's: its file's always there.
         let found = cx.background_spawn(async move {
             (files.iter())
-                .map(|(path, base)| (git_text(*base, path), path.exists()))
+                .map(|(path, base)| match base {
+                    Base::Staged => {
+                        let index = staged_text(Base::Index, path);
+                        (staged_text(*base, path), Some(index), true)
+                    }
+                    _ => (git_text(*base, path), None, path.exists()),
+                })
                 .collect::<Vec<_>>()
         });
         cx.spawn(async move |workbench, cx| {
             let found = found.await;
             cx.update(|cx| {
-                for ((view, read, path, base, deleted), (text, exists)) in
+                for ((view, read, path, base, deleted), (text, index, exists)) in
                     reads.into_iter().zip(found)
                 {
                     if !is_last_read(&view, read, cx) {
@@ -1127,8 +1237,13 @@ impl Workbench {
                         if let Some(compared) = compared(&view, cx) {
                             compared.reveal = None;
                         }
+                        let index = match index {
+                            Some(Ok(index)) => Some(index),
+                            Some(Err(_)) => continue,
+                            None => None,
+                        };
                         if let Ok(text) = text {
-                            land_read(&view, read, &text, cx);
+                            land_read(&view, read, &text, index.as_deref(), cx);
                         }
                     }
                 }
@@ -1140,24 +1255,21 @@ impl Workbench {
     /// `diff.compare_file`: the file `op` names, or else one picked, against
     /// the active file.
     fn compare_file(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
-        let source = (op.editor.as_ref()).map(|editor| self.file_editor(editor, cx));
-        let Some((source, path)) = source.and_then(|source| {
-            let path = source.read(cx).model().path()?.to_owned();
-            Some((source, path))
-        }) else {
+        let path = (op.editor.as_ref()).and_then(|editor| self.op_path(editor, cx));
+        let Some(path) = path else {
             return self.answer_git_op(&op, NO_FILE.to_owned(), cx);
         };
         if !op.args.is_empty() {
             let folder = (self.root.clone()).or_else(|| path.parent().map(Path::to_owned));
             return match vim_host::resolve(&op.args, folder.as_deref()) {
-                Ok(other) => self.compare_with(other, &source, op, window, cx),
+                Ok(other) => self.compare_with(other, path, op, window, cx),
                 Err(answer) => self.answer_git_op(&op, answer, cx),
             };
         }
         let workbench = cx.weak_entity();
         let pick: Pick = Box::new(move |other, window, cx| {
             (workbench.update(cx, |workbench, cx| {
-                workbench.compare_with(other, &source, op, window, cx)
+                workbench.compare_with(other, path, op, window, cx)
             }))
             .ok();
         });
@@ -1173,40 +1285,49 @@ impl Workbench {
         self.show_palette(Palette::QuickOpen, picker, window, cx);
     }
 
-    /// Opens `other`, read-only, against `source`'s file.
+    /// Opens `other`, read-only, against the file at `path`: its open
+    /// buffer as the read lands, else the file read from disk, which is
+    /// read whether or not a buffer's open as it's asked for, as that may
+    /// close or move to another file meanwhile.
     fn compare_with(
         &mut self,
         other: PathBuf,
-        source: &Entity<EditorView>,
+        path: PathBuf,
         op: GitOp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let landing = self.landing(&self.active.clone(), true, cx);
         let at = other.clone();
-        let read = cx.background_spawn(async move { read_file(&at) });
-        let source = source.downgrade();
+        let source = path.clone();
+        #[cfg(test)]
+        let gate = super::git_stage::test_gate(cx);
+        let read = cx.background_spawn(async move {
+            // The source's read matters only if no buffer's open as it lands.
+            let read = (read_file(&at)?, read_file(&source));
+            #[cfg(test)]
+            gate.await;
+            Ok(read)
+        });
         cx.spawn_in(window, async move |workbench, cx| {
-            let read = read.await;
+            let read: Result<_, String> = read.await;
             workbench
                 .update_in(cx, |workbench, window, cx| {
-                    let buffer = match read {
-                        Ok(Some(buffer)) => buffer,
-                        Ok(None) => {
-                            let missing = format!("Can't open {}: No such file", other.display());
-                            return workbench.answer_git_op(&op, missing, cx);
-                        }
+                    let missing =
+                        |path: &Path| format!("Can't open {}: No such file", path.display());
+                    let (buffer, disk) = match read {
+                        Ok((Some(buffer), disk)) => (buffer, disk),
+                        Ok((None, _)) => return workbench.answer_git_op(&op, missing(&other), cx),
                         Err(answer) => return workbench.answer_git_op(&op, answer, cx),
                     };
-                    let Some(source) = source.upgrade() else {
-                        return;
-                    };
-                    let Some(path) = source.read(cx).model().path().map(Path::to_owned) else {
-                        return;
-                    };
                     // Not a split of a diff's side, whose comparison it'd share.
-                    let Some(model) = workbench.file_model(&path, cx) else {
-                        return;
+                    let model = match (workbench.file_model(&path, cx), disk) {
+                        (Some(model), _) => model,
+                        (None, Ok(Some(disk))) => EditorModel::new(disk, Some(path.clone())),
+                        (None, Ok(None)) => {
+                            return workbench.answer_git_op(&op, missing(&path), cx);
+                        }
+                        (None, Err(answer)) => return workbench.answer_git_op(&op, answer, cx),
                     };
                     let right = Ok((workbench.relative(&path).into(), model));
                     let left = EditorModel::new(buffer, None);

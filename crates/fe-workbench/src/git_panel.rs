@@ -1,42 +1,61 @@
 //! The Changes panel on the right dock: the project's files that differ
-//! from git's HEAD, each with a one-letter status, its name and its
-//! directory, sorted by path. Clicking a row, or Enter on the selected one,
-//! opens the file's diff against HEAD in the active pane, as VS Code's
-//! Source Control does (`git_diff`); a deleted file's row is dimmed, and
-//! its diff compares HEAD's text with nothing. Alt-Enter, or the row's
-//! "Open File" button, opens the file itself, which a deleted one can't.
+//! from git's HEAD in VS Code's groups, "Staged Changes" (how the index
+//! differs from HEAD, shown only when there are any) and "Changes" (how the
+//! working tree differs from the index, untracked files too, as `U`), each
+//! header with its count. A file staged and changed again is in both. Each
+//! row has a one-letter status, its name and its directory, sorted by path
+//! within its group; a conflicted file is only in Changes.
+//!
+//! Clicking a row, or Enter on the selected one, opens its diff in the
+//! active pane (`git_diff`): a Staged row's HEAD ↔ Index, a Changes row's
+//! Index ↔ Working Tree. A deleted file's row is dimmed. Alt-Enter, or the
+//! row's "Open File" button, opens the file itself, which a deleted one
+//! can't.
+//!
+//! The selected row's buttons show, and any row's under the pointer, as VS
+//! Code's do: a Changes row's "Open File", "Discard Changes" and "Stage
+//! Changes", a Staged row's "Open File" and "Unstage Changes". The headers'
+//! are "Unstage All Changes" on Staged Changes, "Discard All Changes" and
+//! "Stage All Changes" on Changes. The workbench runs them (`git_stage`),
+//! asking before it discards.
+//!
+//! With vim on, the panel takes the keys of fugitive's `:Git` status
+//! window: `j` and `k` move, `s` stages the selected file, `u` unstages it,
+//! `-` stages a Changes row's or unstages a Staged row's, `X` discards it,
+//! and `o` opens its diff as Enter does. With vim off they do nothing.
 //!
 //! The workbench's [`GitState`] reads the status of the repository
-//! containing the project root, on the background executor, one run at a
-//! time: when the project tree opens, when the panel's first drawn unless a
-//! run has started, on `git.refresh`, and as files and `.git` change. Each
-//! run, and each list given by [`GitPanel::set_statuses`], has a sequence
-//! number from the panel, and a run's result shows only if nothing newer
-//! has. Only files under the
-//! project root are listed: the repository may be larger. Where the root is
-//! in the repository is found through symlinks and `..`, so a list given
-//! before that's known is kept and listed again once it is.
+//! containing the project root, its staged and unstaged halves apart, on
+//! the background executor, one run at a time: when the project tree opens,
+//! when the panel's first drawn unless a run has started, on `git.refresh`,
+//! after staging, and as files and `.git` change. Each run, and each list
+//! given by [`GitPanel::set_statuses`], has a sequence number from the
+//! panel, and a run's result shows only if nothing newer has. Only files
+//! under the project root are listed: the repository may be larger. Where
+//! the root is in the repository is found through symlinks and `..`, so a
+//! list given before that's known is kept and listed again once it is.
 //!
-//! The list is also the project tree's: whenever it changes the panel emits
-//! [`GitPanelEvent::Listed`], and the workbench hands
-//! [`GitPanel::statuses`] to the root's project panel.
+//! The list is also the project tree's, each file's halves combined into
+//! one status as [`fe_git::Repo::status`] combines them: whenever it
+//! changes the panel emits [`GitPanelEvent::Listed`], and the workbench
+//! hands [`GitPanel::statuses`] to the root's project panel.
 
 use std::{
     ops::Range,
     path::{Path, PathBuf},
 };
 
-use fe_git::{ChangeKind, FileStatus, GitError};
+use fe_git::{ChangeKind, FileStatus, GitError, SplitStatus};
 use fe_ui::{Icon, IconButton, ROW_HEIGHT, Tooltip, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable,
-    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Modifiers, ParentElement as _,
-    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
-    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Modifiers,
+    ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
+    Styled as _, UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
 
-use crate::git::GitState;
+use crate::{Workbench, git::GitState};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
@@ -54,6 +73,25 @@ pub enum GitPanelEvent {
     /// The files listed, or their statuses, changed: see
     /// [`GitPanel::statuses`].
     Listed,
+}
+
+/// A group of rows, as VS Code's Source Control groups them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Group {
+    /// How the index differs from HEAD.
+    Staged,
+    /// How the working tree differs from the index, untracked files too.
+    Changes,
+}
+
+impl Group {
+    /// Its header's title.
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Group::Staged => "Staged Changes",
+            Group::Changes => "Changes",
+        }
+    }
 }
 
 /// Where the project root is in its repository, once found.
@@ -77,19 +115,121 @@ enum Status {
     Listed,
 }
 
-/// One changed file under the root.
+/// One changed file under the root, in one group.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
     /// What a click opens: the root joined with `relative`.
     path: PathBuf,
-    /// From the root, which the list is sorted by.
+    /// From the root, which each group is sorted by.
     relative: PathBuf,
+    /// Its status in its group.
+    kind: ChangeKind,
+    group: Group,
+}
+
+/// One file as the project tree shows it: its path from the root and as
+/// opened, and its halves combined.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Changed {
+    relative: PathBuf,
+    path: PathBuf,
     kind: ChangeKind,
 }
 
+/// A row of the list: a group's header, or a file, by its index in
+/// `entries`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Row {
+    Header(Group),
+    File(usize),
+}
+
+/// What a row's or a header's button does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Action {
+    OpenFile,
+    Discard,
+    Stage,
+    Unstage,
+}
+
+impl Action {
+    /// Its tooltip on a row, and on a header.
+    fn tooltip(self, header: bool) -> &'static str {
+        match (self, header) {
+            (Action::OpenFile, _) => "Open File",
+            (Action::Discard, false) => "Discard Changes",
+            (Action::Discard, true) => "Discard All Changes",
+            (Action::Stage, false) => "Stage Changes",
+            (Action::Stage, true) => "Stage All Changes",
+            (Action::Unstage, false) => "Unstage Changes",
+            (Action::Unstage, true) => "Unstage All Changes",
+        }
+    }
+
+    /// Its icon: the set has no plus or undo arrow, so staging is a check
+    /// and discarding an arrow back.
+    fn icon(self) -> Icon {
+        match self {
+            Action::OpenFile => Icon::File,
+            Action::Discard => Icon::ArrowLeft,
+            Action::Stage => Icon::Check,
+            Action::Unstage => Icon::Minus,
+        }
+    }
+
+    /// Its name in its button's ID.
+    fn name(self) -> &'static str {
+        match self {
+            Action::OpenFile => "open",
+            Action::Discard => "discard",
+            Action::Stage => "stage",
+            Action::Unstage => "unstage",
+        }
+    }
+}
+
+/// The buttons a row of `group` has, in order: "Open File" only for a file
+/// that's there.
+fn row_actions(group: Group, deleted: bool) -> &'static [Action] {
+    match (group, deleted) {
+        (Group::Changes, false) => &[Action::OpenFile, Action::Discard, Action::Stage],
+        (Group::Changes, true) => &[Action::Discard, Action::Stage],
+        (Group::Staged, false) => &[Action::OpenFile, Action::Unstage],
+        (Group::Staged, true) => &[Action::Unstage],
+    }
+}
+
+/// The buttons a header of `group` has, in order.
+fn header_actions(group: Group) -> &'static [Action] {
+    match group {
+        Group::Changes => &[Action::Discard, Action::Stage],
+        Group::Staged => &[Action::Unstage],
+    }
+}
+
 /// What a run found: where the root is in its repository and the
-/// repository's status, or no repository.
-pub(crate) type Found = Result<Option<(Located, Vec<FileStatus>)>, GitError>;
+/// repository's status, its halves apart, or no repository.
+pub(crate) type Found = Result<Option<(Located, Vec<SplitStatus>)>, GitError>;
+
+/// `status`'s halves combined as [`fe_git::Repo::status`] combines them: a
+/// conflict, else an addition (none if the file's gone from disk again), a
+/// deletion, a modification, or an untracked file.
+pub(crate) fn combined(status: &SplitStatus) -> Option<ChangeKind> {
+    use ChangeKind::*;
+    let has = |kind| status.staged == Some(kind) || status.unstaged == Some(kind);
+    if has(Conflicted) {
+        Some(Conflicted)
+    } else if has(Added) {
+        (status.unstaged != Some(Deleted)).then_some(Added)
+    } else if has(Deleted) {
+        Some(Deleted)
+    } else if has(Modified) {
+        Some(Modified)
+    } else {
+        status.unstaged.filter(|kind| *kind == Untracked)
+    }
+}
 
 pub struct GitPanel {
     root: Option<PathBuf>,
@@ -100,8 +240,14 @@ pub struct GitPanel {
     status: Status,
     /// The statuses `entries` were listed from, to list again once the
     /// root is located.
-    listed: Vec<FileStatus>,
+    listed: Vec<SplitStatus>,
+    /// The Staged group's files, then the Changes group's.
     entries: Vec<Entry>,
+    /// How many of `entries` are staged.
+    staged: usize,
+    /// Each listed file as the project tree shows it, sorted by path.
+    files: Vec<Changed>,
+    /// The selected file's index in `entries`.
     selected: Option<usize>,
     /// Whether a run has started or been asked for: the first is when the
     /// project tree opens, or when the panel's first drawn if that's
@@ -136,6 +282,8 @@ impl GitPanel {
             status,
             listed: Vec::new(),
             entries: Vec::new(),
+            staged: 0,
+            files: Vec::new(),
             selected: None,
             read: false,
             started: 0,
@@ -217,17 +365,26 @@ impl GitPanel {
     fn clear(&mut self, cx: &mut Context<Self>) {
         self.listed.clear();
         self.selected = None;
+        self.staged = 0;
+        self.files.clear();
         if !self.entries.is_empty() {
             self.entries.clear();
             cx.emit(GitPanelEvent::Listed);
         }
     }
 
-    /// Replaces the list with `statuses`, the repository's, as of now: a
-    /// run in flight lands unshown, though the repository it finds is kept.
-    /// Before the root is located, those of `statuses` under it as spelled
-    /// are listed; the rest are once it is.
+    /// Replaces the list with `statuses`, the repository's, each a change
+    /// not staged, as of now: a run in flight lands unshown, though the
+    /// repository it finds is kept. Before the root is located, those of
+    /// `statuses` under it as spelled are listed; the rest are once it is.
     pub fn set_statuses(&mut self, statuses: Vec<FileStatus>, cx: &mut Context<Self>) {
+        let statuses = (statuses.into_iter())
+            .map(|status| SplitStatus {
+                path: status.path,
+                staged: None,
+                unstaged: Some(status.kind),
+            })
+            .collect();
         self.started += 1;
         self.show(self.started, statuses, cx);
         cx.notify();
@@ -236,48 +393,132 @@ impl GitPanel {
     /// Each listed file's path from the root, and its status, sorted by
     /// path.
     pub(crate) fn statuses(&self) -> impl Iterator<Item = (&Path, ChangeKind)> {
-        (self.entries.iter()).map(|entry| (entry.relative.as_path(), entry.kind))
+        (self.files.iter()).map(|file| (file.relative.as_path(), file.kind))
     }
 
     /// Each listed file's path as opened, and its status.
     pub(crate) fn changed_paths(&self) -> impl Iterator<Item = (&Path, ChangeKind)> {
-        (self.entries.iter()).map(|entry| (entry.path.as_path(), entry.kind))
+        (self.files.iter()).map(|file| (file.path.as_path(), file.kind))
     }
 
-    /// Lists those of `statuses` under the root, sorted by path from it,
-    /// keeping the selected file selected if it's still listed, and says
-    /// so if that changed what's listed.
-    fn show(&mut self, seq: u64, statuses: Vec<FileStatus>, cx: &mut Context<Self>) {
-        let selected = self.selected_entry().map(|entry| entry.path.clone());
+    /// Lists those of `statuses` under the root in their groups, each
+    /// sorted by path from it, and says so if that changed what's listed.
+    /// The selected file stays selected if it's still in its group; else
+    /// the row now where it was in its group is, as after staging it; else
+    /// the file in its other group.
+    fn show(&mut self, seq: u64, statuses: Vec<SplitStatus>, cx: &mut Context<Self>) {
+        let selected = (self.selected).and_then(|ix| {
+            let entry = self.entries.get(ix)?;
+            let start = self.group_range(entry.group).start;
+            Some((entry.path.clone(), entry.group, ix - start))
+        });
         self.shown = seq;
         let Some(root) = &self.root else {
             return;
         };
         self.status = Status::Listed;
         let located = self.located.as_ref();
-        let mut entries: Vec<Entry> = statuses
-            .iter()
-            .filter_map(|status| {
-                let relative = relative_to(root, located, &status.path)?;
-                Some(Entry {
-                    path: root.join(&relative),
+        let (mut staged, mut changes, mut files) = (Vec::new(), Vec::new(), Vec::new());
+        for status in &statuses {
+            let Some(relative) = relative_to(root, located, &status.path) else {
+                continue;
+            };
+            let path = root.join(&relative);
+            let entry = |kind, group| Entry {
+                path: path.clone(),
+                relative: relative.clone(),
+                kind,
+                group,
+            };
+            let combined = combined(status);
+            match combined {
+                Some(ChangeKind::Conflicted) => {
+                    changes.push(entry(ChangeKind::Conflicted, Group::Changes))
+                }
+                _ => {
+                    staged.extend(status.staged.map(|kind| entry(kind, Group::Staged)));
+                    changes.extend(status.unstaged.map(|kind| entry(kind, Group::Changes)));
+                }
+            }
+            if let Some(kind) = combined {
+                files.push(Changed {
                     relative,
-                    kind: status.kind,
-                })
-            })
-            .collect();
-        entries.sort_by(|a, b| a.relative.cmp(&b.relative));
-        self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
-        let changed = entries != self.entries;
-        self.entries = entries;
+                    path,
+                    kind,
+                });
+            }
+        }
+        staged.sort_by(|a, b| a.relative.cmp(&b.relative));
+        changes.sort_by(|a, b| a.relative.cmp(&b.relative));
+        files.sort_by(|a, b| a.relative.cmp(&b.relative));
+        let changed = staged.len() + changes.len() != self.entries.len()
+            || (staged.iter().chain(&changes)).ne(&self.entries)
+            || files != self.files;
+        self.staged = staged.len();
+        self.entries = staged.into_iter().chain(changes).collect();
+        self.selected = selected.and_then(|(path, group, at)| {
+            let range = self.group_range(group);
+            let same = |entry: &Entry| entry.path == path;
+            (self.entries[range.clone()].iter().position(same))
+                .map(|ix| range.start + ix)
+                .or_else(|| (!range.is_empty()).then(|| (range.start + at).min(range.end - 1)))
+                .or_else(|| self.entries.iter().position(same))
+        });
+        self.files = files;
         self.listed = statuses;
         if changed {
             cx.emit(GitPanelEvent::Listed);
         }
     }
 
+    /// The indices in `entries` of `group`'s files.
+    fn group_range(&self, group: Group) -> Range<usize> {
+        match group {
+            Group::Staged => 0..self.staged,
+            Group::Changes => self.staged..self.entries.len(),
+        }
+    }
+
+    /// How many rows the list has: each file's and each group's header,
+    /// Staged Changes only if it has any, none if nothing's listed.
+    fn row_count(&self) -> usize {
+        match self.entries.is_empty() {
+            true => 0,
+            false => self.entries.len() + 1 + usize::from(self.staged > 0),
+        }
+    }
+
+    /// The list's row `at`.
+    fn row(&self, at: usize) -> Option<Row> {
+        if at >= self.row_count() {
+            return None;
+        }
+        let staged = self.staged;
+        Some(match (staged > 0, at) {
+            (true, 0) => Row::Header(Group::Staged),
+            (true, at) if at <= staged => Row::File(at - 1),
+            (true, at) if at == staged + 1 => Row::Header(Group::Changes),
+            (true, at) => Row::File(at - 2),
+            (false, 0) => Row::Header(Group::Changes),
+            (false, at) => Row::File(at - 1),
+        })
+    }
+
+    /// The list's row of file `ix`.
+    fn row_of(&self, ix: usize) -> usize {
+        ix + 1 + usize::from(self.staged > 0 && ix >= self.staged)
+    }
+
     fn selected_entry(&self) -> Option<&Entry> {
         self.entries.get(self.selected?)
+    }
+
+    /// If the panel has focus, its selected file, if any: what
+    /// `git.stage_file`, `git.unstage_file` and `git.discard_file` act on
+    /// then. `None` if it hasn't focus.
+    pub(crate) fn focused_selection(&self, window: &Window, cx: &App) -> Option<Option<PathBuf>> {
+        let focused = self.focus.contains_focused(window, cx);
+        focused.then(|| self.selected_entry().map(|entry| entry.path.clone()))
     }
 
     /// What shows in place of the list, if anything.
@@ -293,29 +534,35 @@ impl GitPanel {
 
     fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = Some(ix);
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        self.scroll
+            .scroll_to_item(self.row_of(ix), ScrollStrategy::Nearest);
         cx.notify();
     }
 
-    /// Selects row `ix` and opens its file's diff against HEAD, through the
-    /// workbench the git state gives bases to.
+    /// The workbench the git state gives bases to, which runs what the
+    /// rows ask.
+    fn workbench(&self, cx: &App) -> Option<Entity<Workbench>> {
+        self.git.upgrade()?.read(cx).workbench().upgrade()
+    }
+
+    /// Selects file `ix` and opens its diff: a staged file's HEAD ↔ Index,
+    /// a changed one's Index ↔ Working Tree.
     fn open_diff(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get(ix) else {
             return;
         };
         // Whether it's on disk is looked at as it opens: a staged deletion
         // may have left it there.
-        let path = entry.path.clone();
+        let (path, staged) = (entry.path.clone(), entry.group == Group::Staged);
         self.select(ix, cx);
-        let workbench = (self.git.upgrade()).map(|git| git.read(cx).workbench());
-        if let Some(workbench) = workbench.and_then(|workbench| workbench.upgrade()) {
+        if let Some(workbench) = self.workbench(cx) {
             workbench.update(cx, |workbench, cx| {
-                workbench.open_change_diff(path, window, cx)
+                workbench.open_change_diff(path, staged, window, cx)
             });
         }
     }
 
-    /// Selects row `ix` and opens its file, unless it's deleted.
+    /// Selects file `ix` and opens it, unless it's deleted.
     fn open_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get(ix) else {
             return;
@@ -327,8 +574,66 @@ impl GitPanel {
         }
     }
 
+    /// Stages `paths`, or with `stage` false unstages them, through the
+    /// workbench.
+    fn stage(&mut self, paths: Vec<PathBuf>, stage: bool, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(workbench) = self.workbench(cx) {
+            workbench.update(cx, |workbench, cx| workbench.stage_files(paths, stage, cx));
+        }
+    }
+
+    /// Discards the changes to `paths`, through the workbench, which asks
+    /// first.
+    fn discard(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(workbench) = self.workbench(cx) {
+            workbench.update(cx, |workbench, cx| {
+                workbench.discard_files(paths, window, cx)
+            });
+        }
+    }
+
+    /// Runs `action` on file `ix`.
+    fn act(&mut self, ix: usize, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.entries.get(ix) else {
+            return;
+        };
+        let path = entry.path.clone();
+        match action {
+            Action::OpenFile => self.open_file(ix, cx),
+            Action::Discard => self.discard(vec![path], window, cx),
+            Action::Stage => self.stage(vec![path], true, cx),
+            Action::Unstage => self.stage(vec![path], false, cx),
+        }
+    }
+
+    /// Runs `action` on every file of `group`.
+    fn act_on_all(
+        &mut self,
+        group: Group,
+        action: Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths: Vec<PathBuf> = (self.entries[self.group_range(group)].iter())
+            .map(|entry| entry.path.clone())
+            .collect();
+        match action {
+            Action::OpenFile => {}
+            Action::Discard => self.discard(paths, window, cx),
+            Action::Stage => self.stage(paths, true, cx),
+            Action::Unstage => self.stage(paths, false, cx),
+        }
+    }
+
     /// Up and down move the selection, the first press selecting the first
     /// row; Enter opens the selected row's diff, and Alt-Enter its file.
+    /// With vim on, so do fugitive's keys: see the module docs.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.key == "enter" && keystroke.modifiers == Modifiers::alt() {
@@ -338,11 +643,17 @@ impl GitPanel {
             }
             return;
         }
-        if keystroke.modifiers.modified() || self.entries.is_empty() {
+        if self.entries.is_empty() {
             return;
         }
+        let vim = fe_gpui::vim_enabled(cx);
+        let key = match (keystroke.modifiers, keystroke.key.as_str()) {
+            (modifiers, key) if !modifiers.modified() => key,
+            (modifiers, "x") if vim && modifiers == Modifiers::shift() => "X",
+            _ => return,
+        };
         let last = self.entries.len() - 1;
-        match keystroke.key.as_str() {
+        match key {
             "up" => {
                 let ix = self.selected.map_or(0, |ix| ix.saturating_sub(1));
                 self.select(ix, cx);
@@ -355,9 +666,69 @@ impl GitPanel {
                 Some(ix) => self.open_diff(ix, window, cx),
                 None => return,
             },
+            "k" if vim => {
+                let ix = self.selected.map_or(0, |ix| ix.saturating_sub(1));
+                self.select(ix, cx);
+            }
+            "j" if vim => {
+                let ix = self.selected.map_or(0, |ix| (ix + 1).min(last));
+                self.select(ix, cx);
+            }
+            "o" | "s" | "u" | "-" | "X" if vim => {
+                let Some(ix) = self.selected else {
+                    return;
+                };
+                let staged = self.entries[ix].group == Group::Staged;
+                match key {
+                    "o" => self.open_diff(ix, window, cx),
+                    "s" => self.act(ix, Action::Stage, window, cx),
+                    "u" => self.act(ix, Action::Unstage, window, cx),
+                    "-" if staged => self.act(ix, Action::Unstage, window, cx),
+                    "-" => self.act(ix, Action::Stage, window, cx),
+                    _ => self.act(ix, Action::Discard, window, cx),
+                }
+            }
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// The ID of a button for `action` on row `at` of the list shown.
+    fn button_id(&self, at: usize, action: Action) -> String {
+        format!("change-{}-{}-{at}", self.shown, action.name())
+    }
+
+    /// `actions`' buttons on row `at`: on file `ix`'s, or on a header's.
+    fn buttons(
+        &self,
+        at: usize,
+        target: Row,
+        actions: &[Action],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let ui = self.ui;
+        let header = matches!(target, Row::Header(_));
+        let panel = cx.weak_entity();
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .children(actions.iter().map(|&action| {
+                let panel = panel.clone();
+                let tooltip = action.tooltip(header);
+                IconButton::new(self.button_id(at, action), action.icon(), &ui)
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
+                    })
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        (panel.update(cx, |panel, cx| match target {
+                            Row::File(ix) => panel.act(ix, action, window, cx),
+                            Row::Header(group) => panel.act_on_all(group, action, window, cx),
+                        }))
+                        .ok();
+                    })
+            }))
     }
 
     fn render_rows(
@@ -375,72 +746,95 @@ impl GitPanel {
         // Each list shown has its own IDs, so a row pressed before the list
         // changed isn't clicked as the row that replaced it.
         let name = SharedString::from(format!("change-{}", self.shown));
-        let panel = cx.weak_entity();
         range
-            .filter_map(|ix| {
-                let entry = self.entries.get(ix)?;
-                let name_text = entry
-                    .relative
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let directory = entry
-                    .relative
-                    .parent()
-                    .map(|dir| dir.display().to_string())
-                    .unwrap_or_default();
-                let deleted = entry.kind == ChangeKind::Deleted;
-                let panel = panel.clone();
-                let open_file = IconButton::new(format!("{name}-open-{ix}"), Icon::File, &ui)
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| Tooltip::new("Open File", None::<&str>, &ui))
-                            .into()
-                    })
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        (panel.update(cx, |panel, cx| panel.open_file(ix, cx))).ok();
-                    });
-                Some(
-                    div()
-                        .id(ElementId::NamedInteger(name.clone(), ix as u64))
-                        .h(ROW_HEIGHT)
-                        .w_full()
-                        .px_3()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .when(deleted, |row| row.opacity(0.5))
-                        .when(self.selected == Some(ix), |row| row.bg(selected_bg))
-                        .hover(move |row| row.bg(ui.row_hover))
-                        .on_click(
-                            cx.listener(move |panel, _, window, cx| {
+            .filter_map(|at| {
+                let row = self.row(at)?;
+                // Its buttons show under the pointer, and on the selected row.
+                let hover = SharedString::from(format!("{name}-row-{at}"));
+                let base = div()
+                    .id(ElementId::NamedInteger(name.clone(), at as u64))
+                    .group(hover.clone())
+                    .h(ROW_HEIGHT)
+                    .w_full()
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .overflow_hidden()
+                    .whitespace_nowrap();
+                let element = match row {
+                    Row::Header(group) => {
+                        let count = self.group_range(group).len();
+                        let buttons = self.buttons(at, row, header_actions(group), cx);
+                        base.font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(div().flex_1().min_w_0().child(group.title()))
+                            .child(
+                                div()
+                                    .invisible()
+                                    .group_hover(hover, |style| style.visible())
+                                    .child(buttons),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .px_1()
+                                    .rounded_md()
+                                    .bg(ui.row_hover)
+                                    .text_color(ui.muted_text)
+                                    .child(count.to_string()),
+                            )
+                    }
+                    Row::File(ix) => {
+                        let entry = self.entries.get(ix)?;
+                        let name_text = entry
+                            .relative
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let directory = entry
+                            .relative
+                            .parent()
+                            .map(|dir| dir.display().to_string())
+                            .unwrap_or_default();
+                        let deleted = entry.kind == ChangeKind::Deleted;
+                        let selected = self.selected == Some(ix);
+                        let (kind, group) = (entry.kind, entry.group);
+                        let buttons = self.buttons(at, row, row_actions(group, deleted), cx);
+                        base.when(deleted, |row| row.opacity(0.5))
+                            .when(selected, |row| row.bg(selected_bg))
+                            .hover(move |row| row.bg(ui.row_hover))
+                            .on_click(cx.listener(move |panel, _, window, cx| {
                                 panel.open_diff(ix, window, cx)
-                            }),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(10.))
-                                .text_color(letter_color(entry.kind, &ui))
-                                .child(letter(entry.kind)),
-                        )
-                        .child(div().flex_none().child(name_text))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .text_color(ui.muted_text)
-                                .child(directory),
-                        )
-                        .when(!deleted, |row| {
-                            row.child(div().flex_none().child(open_file))
-                        })
-                        .into_any_element(),
-                )
+                            }))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(10.))
+                                    .text_color(letter_color(kind, &ui))
+                                    .child(letter(kind)),
+                            )
+                            .child(div().flex_none().child(name_text))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .text_color(ui.muted_text)
+                                    .child(directory),
+                            )
+                            .child(
+                                div()
+                                    .when(!selected, |buttons| {
+                                        buttons
+                                            .invisible()
+                                            .group_hover(hover, |style| style.visible())
+                                    })
+                                    .child(buttons),
+                            )
+                    }
+                };
+                Some(element.into_any_element())
             })
             .collect()
     }
@@ -520,7 +914,7 @@ impl Render for GitPanel {
         let ui = self.ui;
         let list = uniform_list(
             "change-rows",
-            self.entries.len(),
+            self.row_count(),
             cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
         )
         .track_scroll(&self.scroll)
@@ -621,6 +1015,11 @@ impl TestHooks {
     }
 }
 
+/// A group as shown: its title, its count, and its rows' letters and paths
+/// from the root.
+#[cfg(test)]
+pub(crate) type ShownGroup = (&'static str, usize, Vec<(&'static str, String)>);
+
 /// A row as shown: its letter, name and directory, and whether it's dimmed.
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -683,6 +1082,40 @@ impl GitPanel {
             .collect()
     }
 
+    /// Each group shown, in order: its title, its count, and its rows'
+    /// letters and paths from the root.
+    pub(crate) fn groups(&self) -> Vec<ShownGroup> {
+        let shown = [Group::Staged, Group::Changes].into_iter().filter(|group| {
+            (0..self.row_count()).any(|at| self.row(at) == Some(Row::Header(*group)))
+        });
+        shown
+            .map(|group| {
+                let range = self.group_range(group);
+                let rows = (self.entries[range.clone()].iter())
+                    .map(|entry| (letter(entry.kind), entry.relative.display().to_string()))
+                    .collect();
+                (group.title(), range.len(), rows)
+            })
+            .collect()
+    }
+
+    /// The debug selector of the button for `action` on file `ix`'s row, or
+    /// with `ix` `None` on `group`'s header.
+    pub(crate) fn button_selector(
+        &self,
+        ix: Option<usize>,
+        group: Group,
+        action: Action,
+    ) -> String {
+        let at = match ix {
+            Some(ix) => self.row_of(ix),
+            None => (0..self.row_count())
+                .find(|at| self.row(*at) == Some(Row::Header(group)))
+                .unwrap_or(usize::MAX),
+        };
+        format!("icon-button:{}", self.button_id(at, action))
+    }
+
     /// The paths a row would open, in row order.
     pub(crate) fn paths(&self) -> Vec<PathBuf> {
         self.entries
@@ -700,14 +1133,25 @@ impl GitPanel {
         self.selected
     }
 
-    /// Where row `ix` was laid out in the last frame, from the list's bounds,
-    /// scroll offset and measured row height.
+    /// Where file `ix`'s row was laid out in the last frame, from the list's
+    /// bounds, scroll offset and measured row height.
     pub(crate) fn row_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
-        let count = self.entries.len();
+        self.list_row_bounds(self.row_of(ix))
+    }
+
+    /// Where the header of `group` was laid out in the last frame.
+    pub(crate) fn header_bounds(&self, group: Group) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let at = (0..self.row_count()).find(|at| self.row(*at) == Some(Row::Header(group)))?;
+        self.list_row_bounds(at)
+    }
+
+    /// Where row `at` of the list was laid out in the last frame.
+    fn list_row_bounds(&self, at: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let count = self.row_count();
         let state = self.scroll.0.borrow();
         let list = state.base_handle.bounds();
         let height = state.last_item_size?.contents.height / count as f32;
-        let top = list.origin.y + state.base_handle.offset().y + height * ix as f32;
+        let top = list.origin.y + state.base_handle.offset().y + height * at as f32;
         Some(gpui::Bounds::new(
             gpui::point(list.origin.x, top),
             gpui::size(list.size.width, height),
@@ -718,3 +1162,7 @@ impl GitPanel {
 #[cfg(test)]
 #[path = "git_panel_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "git_panel_groups_tests.rs"]
+mod git_panel_groups_tests;

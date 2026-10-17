@@ -13,7 +13,7 @@ use fe_gpui::{EditorSettings, EditorTheme, commands::RunCommand};
 use fe_ui::Icon;
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 
-use super::{GitPanel, ShownRow};
+use super::{Action, GitPanel, Group, ShownRow};
 use crate::{DockPanel, Launch, Workbench};
 
 /// Runs `git` in `dir`, with the developer's own config shut out.
@@ -153,11 +153,17 @@ fn titles(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Stri
     })
 }
 
-/// Clicks row `ix`'s "Open File" button, at the row's end.
+/// Clicks row `ix`'s "Open File" button, shown with the pointer over the
+/// row.
 fn click_open_file(panel: &Entity<GitPanel>, ix: usize, cx: &mut VisualTestContext) {
-    let bounds = panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"));
-    let at = gpui::point(bounds.right() - gpui::px(20.), bounds.center().y);
-    cx.simulate_click(at, Modifiers::none());
+    let row = panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"));
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(cx);
+    let selector = panel.read_with(cx, |panel, _| {
+        panel.button_selector(Some(ix), Group::Changes, Action::OpenFile)
+    });
+    let bounds = cx.debug_bounds(selector.leak()).expect("drawn");
+    cx.simulate_click(bounds.center(), Modifiers::none());
     draw(cx);
 }
 
@@ -245,12 +251,12 @@ fn clicking_a_row_opens_its_diff_and_its_button_its_file(cx: &mut TestAppContext
     assert!(tabs(&workbench, cx).is_empty());
 
     click(&panel, 0, cx);
-    assert_eq!(titles(&workbench, cx), ["a.rs (HEAD ↔ Working Tree)"]);
+    assert_eq!(titles(&workbench, cx), ["a.rs (Index ↔ Working Tree)"]);
 
-    // A deleted file's compares HEAD with nothing.
+    // A deleted file's compares the index with nothing.
     click(&panel, 1, cx);
     assert_eq!(panel.read_with(cx, |panel, _| panel.selected()), Some(1));
-    let both = ["a.rs (HEAD ↔ Working Tree)", "b.rs (HEAD ↔ Working Tree)"];
+    let both = ["a.rs (Index ↔ Working Tree)", "b.rs (Index ↔ Working Tree)"];
     assert_eq!(titles(&workbench, cx), both);
 
     click_open_file(&panel, 0, cx);
@@ -271,7 +277,7 @@ fn enter_opens_the_selected_rows_diff_and_alt_enter_its_file(cx: &mut TestAppCon
     assert_eq!(panel.read_with(cx, |panel, _| panel.selected()), Some(0));
     cx.simulate_keystrokes("enter");
     draw(cx);
-    assert_eq!(titles(&workbench, cx), ["a.rs (HEAD ↔ Working Tree)"]);
+    assert_eq!(titles(&workbench, cx), ["a.rs (Index ↔ Working Tree)"]);
 
     focus(&panel, cx);
     cx.simulate_keystrokes("alt-enter");
@@ -454,7 +460,7 @@ fn opening_another_folder_reads_its_repository(cx: &mut TestAppContext) {
     assert_eq!(rows(&new, cx), [("M", "x.rs".to_owned())]);
 
     click(&new, 0, cx);
-    assert_eq!(titles(&workbench, cx), ["x.rs (HEAD ↔ Working Tree)"]);
+    assert_eq!(titles(&workbench, cx), ["x.rs (Index ↔ Working Tree)"]);
     let diff = workbench.read_with(cx, |workbench, cx| {
         let pane = workbench.pane().read(cx);
         let diff = pane
@@ -467,6 +473,6 @@ fn opening_another_folder_reads_its_repository(cx: &mut TestAppContext) {
     assert_eq!(
         diff.as_deref(),
         Some("x.rs\n"),
-        "HEAD's text in the new repository"
+        "the index's text in the new repository"
     );
 }

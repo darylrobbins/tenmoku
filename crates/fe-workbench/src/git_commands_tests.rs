@@ -168,10 +168,8 @@ fn palette_lists(cx: &mut TestAppContext) {
         typed: false,
     };
     assert_eq!(routed(&workbench, cx), [Routed::Op(op)]);
-    assert_eq!(
-        toasts(&workbench, cx),
-        ["Not supported yet: Git: Stage File"]
-    );
+    // Saved, then staged where there's no repository.
+    assert_eq!(toasts(&workbench, cx), ["Not in a git repository"]);
     // Not on the vim line: the palette isn't vim's.
     assert_eq!(message(&editor, cx), None);
 }
@@ -213,10 +211,10 @@ fn ex_routes(cx: &mut TestAppContext) {
     ];
     for (line, op) in lines {
         ex(line, cx);
-        // The branch and diff commands are implemented; the root isn't a
-        // repository.
+        // The branch, diff and file staging commands are implemented; the
+        // root isn't a repository.
         let answer = match op.command {
-            DiffIndex | DiffHead => "Not in a git repository".to_owned(),
+            DiffIndex | DiffHead | StageFile | ResetBuffer => "Not in a git repository".to_owned(),
             NextChange => "No changes".to_owned(),
             CompareFile => {
                 let path = dir.path().join("b.txt");

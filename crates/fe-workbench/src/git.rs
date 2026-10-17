@@ -7,12 +7,13 @@
 //! (unless something read it already), as the tree shows the Changes
 //! panel's list too, so the status is read whether or not that panel's
 //! ever drawn; for the Changes panel when it's first drawn if nothing has
-//! run yet; on `git.refresh`; and as files change. Every batch from the
-//! project panel's watcher, `.git/` paths and rescans included, schedules a
-//! refresh [`DEBOUNCE`] after the last batch. A refresh reads the status
-//! and HEAD's id on the background executor, one run at a time: a refresh
-//! asked for meanwhile runs once more after it lands, or, if a batch's
-//! debounce is still running then, when that runs out. The Changes panel
+//! run yet; on `git.refresh`; once a file's staged, unstaged or discarded
+//! (`git_stage`); and as files change. Every batch from the project panel's
+//! watcher, `.git/` paths and rescans included, schedules a refresh
+//! [`DEBOUNCE`] after the last batch. A refresh reads the status, staged
+//! and unstaged apart, and HEAD's id on the background executor, one run at
+//! a time: a refresh asked for meanwhile runs once more after it lands, or,
+//! if a batch's debounce is still running then, when that runs out. The Changes panel
 //! numbers each run as it starts, so a run's result shows only if nothing
 //! newer has. The refresh then reloads, in the background, the diff base of
 //! each open editor whose file's status changed, or of every one if HEAD
@@ -51,7 +52,7 @@ use std::{
     time::Duration,
 };
 
-use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo};
+use fe_git::{ChangeKind, GitError, Head, Repo, SplitStatus};
 use fe_gpui::{EditorView, commands::EditorViewEvent};
 use fe_project::FsChange;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
@@ -80,7 +81,7 @@ struct Found {
 }
 
 /// What a refresh read: HEAD's id, where HEAD points, and the changed
-/// files' statuses, by path from the working tree.
+/// files' statuses, their halves combined, by path from the working tree.
 #[derive(Default)]
 struct Snapshot {
     head: Option<String>,
@@ -90,8 +91,8 @@ struct Snapshot {
 }
 
 /// What a refresh's status run found: the repository the root is in, if
-/// any, with its statuses and what was read.
-type Statuses = Result<Option<(Arc<Found>, Vec<FileStatus>, Snapshot)>, GitError>;
+/// any, with its statuses, their halves apart, and what was read.
+type Statuses = Result<Option<(Arc<Found>, Vec<SplitStatus>, Snapshot)>, GitError>;
 
 /// An open editor's file, for a background run.
 struct Wanted {
@@ -369,7 +370,7 @@ impl GitState {
         let (statuses, landed) = match statuses {
             Ok(Some((repo, statuses, snapshot))) => {
                 if let Some(head) = snapshot.branch.clone() {
-                    self.show_branch(Some((head, !statuses.is_empty())), cx);
+                    self.show_branch(Some((head, !snapshot.kinds.is_empty())), cx);
                 }
                 let after = Arc::new(snapshot);
                 let before = self.snapshot.replace(after.clone());
@@ -507,7 +508,8 @@ impl GitState {
 }
 
 /// Finds the repository containing `root` unless `repo` is it, and reads
-/// its status and HEAD's id. Runs on the background executor.
+/// its status, staged and unstaged apart, and HEAD's id. Runs on the
+/// background executor.
 fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
     let repo = match repo {
         Some(repo) => repo,
@@ -527,7 +529,7 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
             })
         }
     };
-    let statuses = repo.repo.status()?;
+    let statuses = repo.repo.status_split()?;
     let workdir = repo.repo.workdir();
     let snapshot = Snapshot {
         head: repo.repo.head_id(),
@@ -537,7 +539,7 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
         kinds: (statuses.iter())
             .filter_map(|status| {
                 let relative = status.path.strip_prefix(workdir).ok()?;
-                Some((relative.to_owned(), status.kind))
+                Some((relative.to_owned(), git_panel::combined(status)?))
             })
             .collect(),
     };

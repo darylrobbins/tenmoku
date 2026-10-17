@@ -377,20 +377,30 @@ fn panel_and_bar(cx: &mut TestAppContext) {
     ex("q", cx);
     assert!(active_diff(&workbench, cx).is_none());
 
-    // Enter on a Changes panel row.
+    // Enter on a Changes panel row: a staged file's HEAD against the
+    // index, neither side editable.
+    dispatch("git.show_changes", cx);
+    keys("down", cx);
+    keys("enter", cx);
+    let staged = diff(&workbench, cx);
+    assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Index)");
+    assert_eq!(texts(&staged, cx), [head(), index()]);
+    assert_eq!(read_only(&staged, cx), [true, true]);
+
+    // A changed file's: the index against the file.
     dispatch("git.show_changes", cx);
     keys("down", cx);
     keys("enter", cx);
     let by_panel = diff(&workbench, cx);
-    assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Working Tree)");
-    assert_eq!(texts(&by_panel, cx), [head(), working()]);
+    assert_eq!(title(&workbench, cx), "a.rs (Index ↔ Working Tree)");
+    assert_eq!(texts(&by_panel, cx), [index(), working()]);
 
-    // A deleted file's: HEAD against nothing, neither side editable.
+    // A deleted file's: the index against nothing, neither side editable.
     dispatch("git.show_changes", cx);
     keys("down", cx);
     keys("enter", cx);
     let deleted = diff(&workbench, cx);
-    assert_eq!(title(&workbench, cx), "d.rs (HEAD ↔ Working Tree)");
+    assert_eq!(title(&workbench, cx), "d.rs (Index ↔ Working Tree)");
     assert_eq!(texts(&deleted, cx), [D.to_owned(), String::new()]);
     assert_eq!(read_only(&deleted, cx), [true, true]);
 
@@ -408,11 +418,12 @@ fn panel_opens_a_file_no_tab_has(cx: &mut TestAppContext) {
     let dir = fixture();
     let (workbench, mut cx) = window(cx, dir.path(), None);
     let cx = &mut cx;
+    // The changed row, after the staged one.
     dispatch("git.show_changes", cx);
-    keys("down", cx);
+    keys("down down", cx);
     keys("enter", cx);
     let by_panel = diff(&workbench, cx);
-    assert_eq!(texts(&by_panel, cx), [head(), working()]);
+    assert_eq!(texts(&by_panel, cx), [index(), working()]);
     assert_eq!(tab_count(&workbench, cx), 1);
 
     // Its right side is the file, saved as it.
@@ -516,7 +527,7 @@ fn quit_refuses_a_dirty_diff_no_tab_shows(cx: &mut TestAppContext) {
     let cx = &mut cx;
     let other = tab_editor(&workbench, cx).unwrap();
     dispatch("git.show_changes", cx);
-    keys("down", cx);
+    keys("down down", cx);
     keys("enter", cx);
     let [_, right] = sides(&diff(&workbench, cx), cx);
     focus(&right, cx);
@@ -564,12 +575,21 @@ fn refresh_and_navigation(cx: &mut TestAppContext) {
     assert_eq!(caret_row(&tab, cx), 2);
 }
 
-/// Opens `a.rs`'s diff against HEAD from the Changes panel, no tab having
-/// the file open: its working side is the only editor of it.
+/// Opens the diff of `file`, under the root, against HEAD.
+fn open_head_diff(workbench: &Entity<Workbench>, file: &str, cx: &mut VisualTestContext) {
+    let path = workbench.read_with(cx, |workbench, _| workbench.root().unwrap().join(file));
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| {
+            workbench.open_head_diff(path, window, cx)
+        })
+    });
+    draw(cx);
+}
+
+/// Opens `a.rs`'s diff against HEAD as a Changes panel row did, no tab
+/// having the file open: its working side is the only editor of it.
 fn diff_only(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<DiffView> {
-    dispatch("git.show_changes", cx);
-    keys("down", cx);
-    keys("enter", cx);
+    open_head_diff(workbench, "a.rs", cx);
     let diff = diff(workbench, cx);
     assert_eq!(title(workbench, cx), "a.rs (HEAD ↔ Working Tree)");
     diff
@@ -649,7 +669,7 @@ fn a_file_whose_folder_was_deleted_compares_with_nothing(cx: &mut TestAppContext
     keys("down", cx);
     keys("enter", cx);
     let deleted = diff(&workbench, cx);
-    assert_eq!(title(&workbench, cx), "e.rs (HEAD ↔ Working Tree)");
+    assert_eq!(title(&workbench, cx), "e.rs (Index ↔ Working Tree)");
     assert_eq!(texts(&deleted, cx), ["e\n".to_owned(), String::new()]);
     assert_eq!(read_only(&deleted, cx), [true, true]);
 }
@@ -667,7 +687,7 @@ fn deleting_and_restoring_the_file_rebuilds_its_diff(cx: &mut TestAppContext) {
     fs::remove_file(&path).unwrap();
     cx.update(|window, cx| {
         workbench.update(cx, |workbench, cx| {
-            workbench.open_change_diff(path.clone(), window, cx)
+            workbench.open_head_diff(path.clone(), window, cx)
         })
     });
     draw(cx);
@@ -718,9 +738,9 @@ fn only_a_views_last_read_lands(cx: &mut TestAppContext) {
             super::start_read(&view, cx).unwrap(),
         )
     });
-    let landed = cx.update(|_, cx| super::land_read(&view, second, "second\n", cx));
+    let landed = cx.update(|_, cx| super::land_read(&view, second, "second\n", None, cx));
     assert!(landed);
-    let landed = cx.update(|_, cx| super::land_read(&view, first, "first\n", cx));
+    let landed = cx.update(|_, cx| super::land_read(&view, first, "first\n", None, cx));
     assert!(!landed, "an older read lands after a newer one");
     assert_eq!(text(&left, cx), "second\n");
 
@@ -1095,12 +1115,21 @@ fn a_staged_deletion_of_a_file_still_there_shows_it(cx: &mut TestAppContext) {
     git(dir.path(), &["rm", "-q", "-f", "--cached", "a.rs"]);
     let (workbench, mut cx) = window(cx, dir.path(), None);
     let cx = &mut cx;
+    // Staged, HEAD's text against none in the index.
+    dispatch("git.show_changes", cx);
+    keys("down", cx);
+    keys("enter", cx);
+    let staged = diff(&workbench, cx);
+    assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Index)");
+    assert_eq!(texts(&staged, cx), [head(), String::new()]);
+    assert_eq!(read_only(&staged, cx), [true, true]);
+    // And untracked, the file against none in the index.
     dispatch("git.show_changes", cx);
     keys("down", cx);
     keys("enter", cx);
     let shown = diff(&workbench, cx);
-    assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Working Tree)");
-    assert_eq!(texts(&shown, cx), [head(), working()]);
+    assert_eq!(title(&workbench, cx), "a.rs (Index ↔ Working Tree)");
+    assert_eq!(texts(&shown, cx), [String::new(), working()]);
     assert_eq!(read_only(&shown, cx), [true, false]);
 }
 
@@ -1240,9 +1269,7 @@ fn a_change_bar_click_reveals_in_the_diff_that_replaces_an_old_one(cx: &mut Test
     let cx = &mut cx;
     cx.simulate_resize(size(px(600.), px(600.)));
     draw(cx);
-    dispatch("git.show_changes", cx);
-    keys("down", cx);
-    keys("enter", cx);
+    open_head_diff(&workbench, "a.rs", cx);
     let deleted = diff(&workbench, cx);
     assert_eq!(texts(&deleted, cx), [head(), String::new()]);
 
