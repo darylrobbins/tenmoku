@@ -16,10 +16,10 @@ fn expected(name: &str) -> Vec<(char, char)> {
         "markdown_inline" => vec![],
         "rust" => with_quotes(&[dq]),
         "markdown" => with_quotes(&[dq, bt]),
-        "javascript" | "typescript" | "tsx" | "go" | "bash" => with_quotes(&[dq, sq, bt]),
-        "python" | "php" | "ruby" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml"
-        | "dockerfile" | "make" | "scala" | "kotlin" | "swift" | "csharp" | "java" | "c"
-        | "cpp" | "json" => with_quotes(&[dq, sq]),
+        "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
+        | "json" => with_quotes(&[dq, sq, bt]),
+        "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
+        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" => with_quotes(&[dq, sq]),
         other => panic!("no table entry for language {other}"),
     }
 }
@@ -57,7 +57,14 @@ fn values() {
     );
     assert_eq!(
         auto_pairs("json"),
-        [('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')]
+        [
+            ('(', ')'),
+            ('[', ']'),
+            ('{', '}'),
+            ('"', '"'),
+            ('\'', '\''),
+            ('`', '`')
+        ]
     );
     assert_eq!(
         auto_pairs("no such language"),

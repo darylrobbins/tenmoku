@@ -47,7 +47,8 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
     match language {
         "markdown_inline" => &[],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
-        "javascript" | "typescript" | "tsx" | "go" | "bash" => &[
+        "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
+        | "json" => &[
             ('(', ')'),
             ('[', ']'),
             ('{', '}'),
@@ -56,9 +57,10 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
             ('`', '`'),
         ],
         "markdown" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('`', '`')],
-        "python" | "php" | "ruby" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml"
-        | "dockerfile" | "make" | "scala" | "kotlin" | "swift" | "csharp" | "java" | "c"
-        | "cpp" | "json" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')],
+        "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
+        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" => {
+            &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')]
+        }
         _ => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
     }
 }
