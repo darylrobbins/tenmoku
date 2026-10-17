@@ -799,3 +799,6 @@ fn remote_name_with_a_slash(cx: &mut TestAppContext) {
 
 #[path = "git_branch_marks_tests.rs"]
 mod marks;
+
+#[path = "git_branch_merge_marks_tests.rs"]
+mod merge_marks;

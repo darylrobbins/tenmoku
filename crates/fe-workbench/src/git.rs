@@ -88,30 +88,34 @@ struct Snapshot {
     /// `None` if it couldn't be read.
     branch: Option<Head>,
     kinds: HashMap<PathBuf, ChangeKind>,
+    /// A merge or rebase is in progress.
+    merging: bool,
 }
 
 /// What a refresh's status run found: the repository the root is in, if
 /// any, with its statuses, their halves apart, and what was read.
 /// What the status bar's branch item marks, as VS Code's
 /// `Repository.headLabel` does: `*` for working-tree or untracked changes,
-/// `+` for staged ones, `!` while a path is unmerged.
+/// `+` for staged ones, `!` while a merge or rebase is in progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Marks {
     pub working: bool,
     pub staged: bool,
-    pub unmerged: bool,
+    pub merging: bool,
 }
 
 impl Marks {
-    /// The marks for `statuses`. A conflicted path counts as unmerged only.
-    pub(crate) fn of(statuses: &[SplitStatus]) -> Self {
-        let mut marks = Self::default();
+    /// The marks for `statuses`, with `merging` as a merge or rebase being
+    /// in progress. A conflicted path sets neither `working` nor `staged`.
+    pub(crate) fn of(statuses: &[SplitStatus], merging: bool) -> Self {
+        let mut marks = Self {
+            merging,
+            ..Self::default()
+        };
         for status in statuses {
-            if status.staged == Some(ChangeKind::Conflicted)
-                || status.unstaged == Some(ChangeKind::Conflicted)
+            if status.staged != Some(ChangeKind::Conflicted)
+                && status.unstaged != Some(ChangeKind::Conflicted)
             {
-                marks.unmerged = true;
-            } else {
                 marks.working |= status.unstaged.is_some();
                 marks.staged |= status.staged.is_some();
             }
@@ -398,7 +402,7 @@ impl GitState {
         let (statuses, landed) = match statuses {
             Ok(Some((repo, statuses, snapshot))) => {
                 if let Some(head) = snapshot.branch.clone() {
-                    self.show_branch(Some((head, Marks::of(&statuses))), cx);
+                    self.show_branch(Some((head, Marks::of(&statuses, snapshot.merging))), cx);
                 }
                 let after = Arc::new(snapshot);
                 let before = self.snapshot.replace(after.clone());
@@ -570,6 +574,7 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
                 Some((relative.to_owned(), git_panel::combined(status)?))
             })
             .collect(),
+        merging: repo.repo.merging(),
     };
     Ok(Some((repo, statuses, snapshot)))
 }

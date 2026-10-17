@@ -6,7 +6,8 @@
 //! - **Item.** On the bar's left, before the vim mode: the git-branch icon
 //!   and HEAD's branch, or its short id when detached, then as VS Code's
 //!   does: `*` for working-tree or untracked changes, `+` for staged ones
-//!   and `!` while a path is unmerged, in that order; none outside a repository. The git refresh
+//!   and `!` while a merge or rebase is in progress, in that order; none outside a
+//!   repository. The git refresh
 //!   ([`crate::git`]) sets it each time it reads the status. A click runs
 //!   `git.switch_branch`.
 //! - **Picker.** `git.switch_branch`, or `:Git switch` and `:Git checkout`
@@ -501,7 +502,7 @@ fn status_item(head: &Head, marks: Marks) -> StatusItem {
     for (set, mark) in [
         (marks.working, '*'),
         (marks.staged, '+'),
-        (marks.unmerged, '!'),
+        (marks.merging, '!'),
     ] {
         if set {
             text.push(mark);

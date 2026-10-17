@@ -262,6 +262,18 @@ impl Repo {
         }
     }
 
+    /// Whether a merge or rebase is in progress, as VS Code's `headLabel`
+    /// marks with `!`: the repository's own git dir (a linked worktree's,
+    /// not the shared one) holds `MERGE_HEAD`, or `REBASE_HEAD` and a
+    /// `rebase-merge` or `rebase-apply` directory. Runs no git process.
+    pub fn merging(&self) -> bool {
+        let repo = self.repo.to_thread_local();
+        let dir = repo.git_dir();
+        dir.join("MERGE_HEAD").exists()
+            || (dir.join("REBASE_HEAD").exists()
+                && (dir.join("rebase-merge").is_dir() || dir.join("rebase-apply").is_dir()))
+    }
+
     /// HEAD commit's full message, `None` when HEAD is unborn.
     pub fn head_message(&self) -> Result<Option<String>, GitError> {
         let repo = self.repo.to_thread_local();
