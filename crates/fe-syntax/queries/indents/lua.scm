@@ -2,7 +2,8 @@
 ; Adapted from nvim-treesitter, https://github.com/nvim-treesitter/nvim-treesitter
 ; commit 1a4f47b03dfe92d28de7d5654c67327ef008c9e6,
 ; path runtime/queries/lua/indents.scm, license Apache-2.0.
-; Changes: none.
+; Changes: the "do" and "repeat" tokens are ours, added to the first @indent.begin
+; list so an unclosed loop's next row is a level in, as an unclosed if's is.
 
 [
   (function_definition)
@@ -14,6 +15,8 @@
   (repeat_statement)
   (if_statement)
   "then"
+  "do"
+  "repeat"
   (for_statement)
   (return_statement)
   (table_constructor)
