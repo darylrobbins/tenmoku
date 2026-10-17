@@ -41,6 +41,7 @@ use crate::{
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
+    workbench::toast::{self, Toast},
 };
 
 /// A tab's ID, which stays with it as tabs open, close and move: its
@@ -712,6 +713,12 @@ impl Pane {
             }
             Err(error) => {
                 log::error!("cannot open {}: {error}", path.display());
+                let name = path.file_name().unwrap_or(path.as_os_str());
+                toast::show(
+                    cx,
+                    Toast::error(format!("Can't open {}", name.to_string_lossy()))
+                        .detail(error.to_string()),
+                );
                 if last {
                     let message = format!("Cannot open {}: {error}", path.display());
                     self.error = Some((path.clone(), message));

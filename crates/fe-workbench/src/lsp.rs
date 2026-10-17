@@ -125,6 +125,7 @@ use fe_lsp::{
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
 use crate::open::settings_path;
+use crate::workbench::toast::{self, Toast};
 use crate::{RootChanged, TrustChanged, Workbench};
 use kiln_shell::{Icon, StatusSide, StatusTone};
 
@@ -1497,6 +1498,16 @@ impl Workbench {
                 message,
             } => {
                 log::info!("{name} says ({typ:?}): {message}");
+                // fe-workbench has no lsp_types of its own; its Debug is the
+                // level's name.
+                let toast = match format!("{typ:?}").as_str() {
+                    "Error" => Some(Toast::error(name.clone())),
+                    "Warning" => Some(Toast::warning(name.clone())),
+                    _ => None,
+                };
+                if let Some(toast) = toast {
+                    toast::show(cx, toast.detail(message.clone()));
+                }
                 lsp.messages.insert(server, message);
             }
             LspEvent::Diagnostics {
@@ -1717,7 +1728,13 @@ impl Workbench {
                     }
                 }
                 Ok(None) => log::info!("{name} isn't restarted: it doesn't apply here now"),
-                Err(error) => log::error!("can't restart {name}: {error}"),
+                Err(error) => {
+                    log::error!("can't restart {name}: {error}");
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Can't restart {name}")).detail(error.to_string()),
+                    );
+                }
             },
             true => {
                 let log = Buffer::from_file_contents(&manager.log(&name, &root));

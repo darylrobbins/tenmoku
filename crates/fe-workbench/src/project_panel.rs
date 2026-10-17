@@ -36,6 +36,7 @@ use gpui::{
 };
 
 use crate::git_panel;
+use crate::workbench::toast::{self, Toast};
 use ops::EditKind;
 
 /// The key context the panel's element sets.
@@ -231,6 +232,11 @@ impl ProjectPanel {
             Err(error) => {
                 let root = self.root.as_deref().unwrap_or(Path::new(""));
                 log::error!("cannot open {}: {error}", root.display());
+                toast::show(
+                    cx,
+                    Toast::error(format!("Can't open folder {}", root.display()))
+                        .detail(error.to_string()),
+                );
                 State::Failed(format!("Cannot open {}: {error}", root.display()))
             }
         };

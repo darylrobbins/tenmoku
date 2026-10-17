@@ -24,6 +24,7 @@ use gpui::{
 };
 
 use self::recent_picker::{RecentOp, RecentPicker};
+use self::toast::Toast;
 use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
@@ -898,19 +899,23 @@ impl Workbench {
             workbench
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
-                    // Off macOS only, for now: there the panel is
-                    // xdg-desktop-portal's, which a minimal desktop may lack.
-                    // Whether macOS should show it too is still open.
-                    if let Some(error) = failed.filter(|_| !cfg!(target_os = "macos")) {
+                    // A prompt off macOS, where the panel is
+                    // xdg-desktop-portal's, which a minimal desktop may
+                    // lack; a toast on macOS.
+                    if let Some(error) = failed {
                         let (message, detail) = open_panel_failed(&error);
-                        // Answered by its one button; nothing waits on it.
-                        drop(window.prompt(
-                            PromptLevel::Critical,
-                            message,
-                            Some(&detail),
-                            &[PromptButton::ok("OK")],
-                            cx,
-                        ));
+                        if cfg!(target_os = "macos") {
+                            toast::show(cx, Toast::error(message).detail(detail));
+                        } else {
+                            // Answered by its one button; nothing waits on it.
+                            drop(window.prompt(
+                                PromptLevel::Critical,
+                                message,
+                                Some(&detail),
+                                &[PromptButton::ok("OK")],
+                                cx,
+                            ));
+                        }
                     }
                     match (op, path) {
                         (_, None)
@@ -1330,6 +1335,10 @@ impl Workbench {
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = open::settings_path(cx) else {
             log::error!("can't open settings: there's no config directory");
+            toast::show(
+                cx,
+                Toast::error("Can't open settings").detail("There's no config directory"),
+            );
             return;
         };
         let created = cx.background_spawn({
@@ -1339,6 +1348,14 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             if let Err(error) = created.await {
                 log::error!("can't create {}: {error}", path.display());
+                cx.update(|_, cx| {
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Can't create {}", path.display()))
+                            .detail(error.to_string()),
+                    )
+                })
+                .ok();
                 return;
             }
             workbench
@@ -2805,11 +2822,6 @@ mod recent_picker;
 #[path = "hot_exit.rs"]
 mod hot_exit;
 
-// Nothing shows a toast yet: the next card routes messages to it.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "no caller of toast::show until the next card")
-)]
 #[path = "toast.rs"]
 pub(crate) mod toast;
 

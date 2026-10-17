@@ -104,6 +104,7 @@ impl Toast {
         self
     }
 
+    #[cfg_attr(not(test), allow(dead_code, reason = "no caller outside tests yet"))]
     pub(crate) fn action(mut self, label: impl Into<String>, command: CommandId) -> Self {
         self.action = Some((label.into(), command));
         self
@@ -138,6 +139,7 @@ pub(crate) struct Entry {
 
 impl Entry {
     /// Whether it's paused under the pointer.
+    #[cfg(test)]
     pub(crate) fn hovered(&self) -> bool {
         matches!(self.timer, Timer::Paused(_))
     }
@@ -196,11 +198,13 @@ impl ToastQueue {
     }
 
     /// The toasts shown, oldest (top) first.
+    #[cfg(test)]
     pub(crate) fn shown(&self) -> &[Entry] {
         &self.shown
     }
 
     /// How many wait for room.
+    #[cfg(test)]
     pub(crate) fn waiting(&self) -> usize {
         self.waiting.len()
     }
@@ -384,6 +388,7 @@ impl ToastLayer {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn queue(&self) -> &ToastQueue {
         &self.queue
     }
@@ -571,3 +576,7 @@ impl Render for ToastLayer {
 #[cfg(test)]
 #[path = "toast_tests.rs"]
 mod toast_tests;
+
+#[cfg(test)]
+#[path = "toast_routing_tests.rs"]
+mod toast_routing_tests;
