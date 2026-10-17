@@ -8,7 +8,8 @@
 //! that starts with a zero keeps its width, and the caret ends on its last
 //! digit. Decimals saturate nowhere: they cross zero and wrap at 64 bits as
 //! nvim's do; hex and binary wrap. A row with no number changes nothing and
-//! leaves no undo step; `.` repeats it.
+//! leaves no undo step; `.` still repeats the command (with its count, from
+//! the new caret), and only normal mode fails, so a macro stops there.
 //!
 //! In a visual mode the same keys change the first number on each selected
 //! row (only inside the selection: a charwise one starts and ends mid-row,
@@ -440,14 +441,17 @@ pub(crate) fn increment(
     };
     if let Some(id) = transaction {
         target.state.carets.record(id, carets_before);
-        let replay = match (&area, ended) {
-            (Some(area), true) => Some(Extent::of(area.extent)),
-            _ => args.replay,
-        };
-        let args = IncrementArgs { replay, ..args };
-        target.state.set_last_change(Change::Increment(args).into());
         target.state.goals = None;
     }
+    // A change that found no number is still the change `.` repeats.
+    let replay = match (&area, ended) {
+        (Some(area), true) => Some(Extent::of(area.extent)),
+        _ => args.replay,
+    };
+    let repeat = IncrementArgs { replay, ..args };
+    target
+        .state
+        .set_last_change(Change::Increment(repeat).into());
     // A selection leaves the caret at its start; a number's last digit
     // otherwise.
     let carets: Vec<usize> = match &area {
@@ -461,8 +465,9 @@ pub(crate) fn increment(
             })
             .collect(),
     };
-    // nvim fails a change that finds no number.
-    target.state.failed |= transaction.is_none();
+    // nvim fails a normal-mode change that finds no number; over a
+    // selection it ends the mode and a macro goes on.
+    target.state.failed |= transaction.is_none() && area.is_none();
     operator::land(target.model, &snapshot, carets);
     let effect = match transaction.is_some() || ended {
         true => Effect::Changed,
