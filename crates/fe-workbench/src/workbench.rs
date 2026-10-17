@@ -28,6 +28,7 @@ use self::toast::Toast;
 use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
+    auto_save::AutoSave,
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
@@ -303,6 +304,8 @@ pub struct Workbench {
     hot_exit: hot_exit::HotExit,
     /// Keeps the open buffers in step with their files on disk.
     pub(crate) disk_sync: DiskSync,
+    /// Saves changed buffers as `editor.auto_save` says.
+    pub(crate) auto_save: AutoSave,
     /// An editor a problem opened in, left in vim's insert or replace mode,
     /// and the problem's start: see [`Workbench::land_problem`].
     pub(crate) problem_landing: Option<(WeakEntity<EditorView>, usize)>,
@@ -336,6 +339,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Self {
         let format_on_save = settings.format_on_save;
+        let auto_save = AutoSave::new(&settings, window, cx);
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
@@ -557,6 +561,7 @@ impl Workbench {
             _layout_hooks: Vec::new(),
             hot_exit: Default::default(),
             disk_sync: DiskSync::new(window, cx),
+            auto_save,
             problem_landing: None,
             owned_editors: Vec::new(),
             diff_left: None,
@@ -860,7 +865,7 @@ impl Workbench {
     /// Shows the open panel for `op`, then opens what's picked: a folder
     /// re-roots the workbench, and a file opens in the active pane as a
     /// tree click does, the root staying. Cancelling does nothing, and an
-    /// error from the panel is logged and, off macOS, shown in a prompt
+    /// error from the panel is logged and shown in an error toast
     /// ([`open_panel_failed`]). Asked again while the panel shows, it does
     /// nothing.
     fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
@@ -881,6 +886,15 @@ impl Workbench {
         }
         self.prompting = true;
         let answer = cx.prompt_for_paths(op.prompt());
+        #[cfg(test)]
+        let answer = match OPEN_PANEL_FAILS.take() {
+            Some(error) => {
+                let (failed, answer) = futures::channel::oneshot::channel();
+                failed.send(Err(std::io::Error::other(error).into())).ok();
+                answer
+            }
+            None => answer,
+        };
         cx.spawn_in(window, async move |workbench, cx| {
             let mut failed = None;
             let path = match answer.await {
@@ -899,23 +913,9 @@ impl Workbench {
             workbench
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
-                    // A prompt off macOS, where the panel is
-                    // xdg-desktop-portal's, which a minimal desktop may
-                    // lack; a toast on macOS.
                     if let Some(error) = failed {
                         let (message, detail) = open_panel_failed(&error);
-                        if cfg!(target_os = "macos") {
-                            toast::show(cx, Toast::error(message).detail(detail));
-                        } else {
-                            // Answered by its one button; nothing waits on it.
-                            drop(window.prompt(
-                                PromptLevel::Critical,
-                                message,
-                                Some(&detail),
-                                &[PromptButton::ok("OK")],
-                                cx,
-                            ));
-                        }
+                        toast::show(cx, Toast::error(message).detail(detail));
                     }
                     match (op, path) {
                         (_, None)
@@ -985,15 +985,9 @@ impl Workbench {
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
                     // As the open panel's (see `prompt_open`).
-                    if let Some(error) = failed.filter(|_| !cfg!(target_os = "macos")) {
+                    if let Some(error) = failed {
                         let (message, detail) = open_panel_failed(&error);
-                        drop(window.prompt(
-                            PromptLevel::Critical,
-                            message,
-                            Some(&detail),
-                            &[PromptButton::ok("OK")],
-                            cx,
-                        ));
+                        toast::show(cx, Toast::error(message).detail(detail));
                     }
                     if let Some(path) = path {
                         workbench.save_editor_as(&editor, path, window, cx);
@@ -1779,6 +1773,7 @@ impl Workbench {
         self.tint_tabs(cx);
         self.sync_problems(cx);
         self.sync_backups(cx);
+        self.sync_auto_save(cx);
     }
 
     /// Tints each open editor's tab title in its file's status colour from
@@ -1828,6 +1823,7 @@ impl Workbench {
         // A diagnostic arriving or clearing notifies, as an edit does.
         self.sync_problems(cx);
         self.sync_backups(cx);
+        self.sync_auto_save(cx);
         if self.echoes.remove(&editor.entity_id()) {
             return;
         }
@@ -2546,6 +2542,7 @@ impl Workbench {
             .set(event.settings.editor.format_on_save);
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
+        self.reload_auto_save(&event.settings.editor, cx);
     }
 
     /// Runs a `workbench.*` command on the active pane, a pane command, a
@@ -2790,6 +2787,14 @@ fn active_diff_view(pane: &Pane) -> Option<&Entity<DiffView>> {
 /// [`kiln_platform::dialogs::open_panel_failed`].
 pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
     kiln_platform::dialogs::open_panel_failed(error, kiln_platform::Os::current())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The open panel's next answer is this error, in tests: the test
+    /// platform's panel can't fail.
+    pub(crate) static OPEN_PANEL_FAILS: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
 }
 
 #[path = "vim_host.rs"]

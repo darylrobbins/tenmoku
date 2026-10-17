@@ -11,6 +11,7 @@
 //! [`fe_gpui::commands::RunCommand`] that the focused editor doesn't know
 //! and propagates.
 
+mod auto_save;
 mod config_problems;
 mod disk_sync;
 mod dock;
