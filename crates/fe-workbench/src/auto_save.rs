@@ -427,7 +427,12 @@ impl Workbench {
         seen.saving = true;
         #[cfg(test)]
         self.auto_save.saves.push(buffer);
-        let editor = shown[0].clone();
+        // Through a split that's inserting, if any: `save_with` then runs no
+        // hook or fixes, which would edit the shared buffer under the insert.
+        let editor = (shown.iter())
+            .find(|editor| insert_mode(editor.read(cx)) == Some(true))
+            .unwrap_or(&shown[0])
+            .clone();
         let reason = reason(mode);
         let window = self.auto_save.window;
         cx.spawn(async move |workbench, cx| {

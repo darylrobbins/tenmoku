@@ -724,3 +724,6 @@ fn turned_off_mid_save(cx: &mut TestAppContext) {
     wait(5000, cx);
     assert_eq!(saves(&workbench, cx), 1);
 }
+
+#[path = "auto_save_split_insert_tests.rs"]
+mod split_insert;
