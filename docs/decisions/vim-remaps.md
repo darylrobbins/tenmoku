@@ -1,6 +1,6 @@
 # Vim key-to-key remaps: where they are written, stored and run
 
-Status: **proposed, waiting on the user's answers** (see "Questions for the
+Status: **decided** by the user, 2026-10-17 (see "Questions for the
 user"). Source card T62 (Mac T425). Follows `vim-engine.md` §10, which left
 remaps "not designed yet". Clean room: fastedit's code and docs, and nvim's
 `:help map-overview`, `:help :noremap`, `:help mapleader`, `:help 'timeoutlen'`
@@ -22,20 +22,23 @@ mode can't be made to feel like the user's own. Today there are none:
   `vim.key` hands the chord's keys to vim. An unmatched key goes to vim while
   `vim.pending` is set or the mode is normal/visual. A failed chord re-delivers
   its swallowed keys, which is how `jk` in insert mode works today; the chord
-  timeout is `CHORD_TIMEOUT`.
+  timeout is `kiln_platform::keys::CHORD_TIMEOUT` (1 s, re-exported by
+  `fe-gpui/src/keymap.rs`).
 - Macros (`macros.rs`) record typed keys as register text; `@` queues them for
   the host to feed back through `feed` or `record_key`.
 - `:normal[!]` exists (`ex/normal.rs`): it feeds each key through
   `VimState::feed` and vim's registry on each line. Its parser reads `!` but
   today discards the distinction, since fe-vim has no mappings.
-- GPUI's macro runner (the host's replay of `@`) stops when a key enters
-  `cmdline` mode: the host's line takes the later keys, not `feed`.
+- GPUI's macro runner (the host's replay of `@`): `EditorView::replay_key`
+  (`fe-gpui/src/vim.rs`) types a replay's keys into a command line it doesn't
+  show, and drops the host command (`:w`) that such a line leaves, with "a
+  macro replay doesn't run …".
 
 ## Options
 
 ### 1. Where remaps are written
 
-**(a) A table in the keymap TOML.**
+**(a) A table in `settings.toml`'s `[vim]` table.**
 
 ```toml
 [[vim.remap]]
@@ -44,6 +47,11 @@ from = "H"
 to = "^"
 recursive = false
 ```
+
+The table is `[[vim.remap]]`, with `vim.leader`, read by fe-config's
+`VimSettings` (`crates/fe-config/src/settings.rs`). It is not in the keymap
+file: that file is kiln's (`kiln_core`'s loader, through
+`kiln::Config::keymap`), and vim's settings already live in `VimSettings`.
 
 Fits M5's config model: one file, hot reload, "invalid config keeps last
 good". Verbose for the common one-liner, and no way to paste an existing
@@ -98,7 +106,7 @@ longer map, and gives up after `'timeoutlen'` (1000 ms), then runs the shorter
 meaning. fastedit has two owners of a key sequence:
 
 - the **keymap chord engine**: first, in every mode (§10 step 1), with
-  `CHORD_TIMEOUT` and re-delivery on failure;
+  `kiln_platform::keys::CHORD_TIMEOUT` and re-delivery on failure;
 - **fe-vim's remap table**: only for keys the keymap didn't take.
 
 Rules, in order:
@@ -121,7 +129,7 @@ Rules, in order:
    the state is one of: no match (feed the keys as typed), incomplete prefix
    only (wait), exact match only (run it), or exact match that is also a
    prefix of a longer map (wait; this is the ambiguity). On timeout
-   (`CHORD_TIMEOUT` as `'timeoutlen'`; `vim.timeoutlen` can come later) or a
+   (`kiln_platform::keys::CHORD_TIMEOUT` as `'timeoutlen'`; `vim.timeoutlen` can come later) or a
    key that breaks the longer match, the **longest completed mapping runs**
    and the unconsumed suffix is processed again from the start, as new keys
    (so it may match another map, or go to `feed` as typed). With no
@@ -190,7 +198,8 @@ How (i) meets the rest of fe-vim:
   expansion: for each key, feed or route it by the current mode, **dispatch
   each resulting invocation before the next key**, then route the next key
   by the mode that left (the command line's input after `:`). This is the
-  GPUI macro runner extended past `cmdline` (today it stops there) and the
+  GPUI macro runner (`replay_key`, which today drops the host command a
+  replayed line leaves) extended to run it, and the
   `:normal` runner's per-mode routing, one runner rather than a third. It
   keeps typed-vs-expanded recording separate from which modes' left sides
   are remappable: a remap's keys are never recorded, whatever the mode.
@@ -259,11 +268,13 @@ modes first, `noremap` semantics only at first, run in fe-vim in front of
 `step`.**
 
 Reasons: the engine is the same either way and is the real work; the TOML
-table is the smallest surface that matches M5's config and diagnostics; the
+table (in `settings.toml`'s `[vim]` table, where fe-config's `VimSettings`
+already holds vim's settings; the keymap file is kiln's) is the smallest
+surface that matches M5's config and diagnostics; the
 vimrc parser then adds what nvim users actually want, pasting their lines,
 for the price of a small parser that emits the same records. `<leader>`
 defaults to `\` as in nvim, settable with `let mapleader` in (b) and
-`vim.leader` in TOML. Recursive `map` is accepted by the parser and supported
+`vim.leader` in `settings.toml`. Recursive `map` is accepted by the parser and supported
 by the engine (depth 100), since pasted vimrcs contain `nmap`; a stricter first
 cut isn't cheaper once the engine exists.
 
@@ -271,21 +282,29 @@ cut isn't cheaper once the engine exists.
 
 1. **(a) TOML table only, (b) vimrc subset only, or (c) both?** Recommended: (c),
    in that order.
+   Decided by the user, 2026-10-17: Both: the TOML table first, then the vimrc subset.
 2. **Recursive maps** (`nmap`, `map`): needed, or `noremap` family only and
    `nmap` is a diagnostic? Recommended: supported, depth limit 100.
+   Decided by the user, 2026-10-17: Recursive maps (`nmap`, `map`) are supported, depth limit 100.
 3. **`<leader>` default**: `\` (nvim) or `<Space>` (a common choice)?
    Recommended: `\`, so a pasted vimrc behaves.
+   Decided by the user, 2026-10-17: `<leader>` defaults to backslash `\`.
 4. **Modes in the first cut**: normal, visual and operator-pending only
    (recommended), or insert and cmdline too? `inoremap jk <Esc>` already works
    as a keymap chord today.
+   Decided by the user, 2026-10-17: The first cut covers normal, visual and operator-pending modes only. Insert and cmdline come later.
 5. **Fastedit command IDs on a right side** (`<Cmd>fe:workbench.save<CR>`):
    wanted, or ex lines only?
-6. **`'timeoutlen'`**: reuse `CHORD_TIMEOUT` (recommended), or a separate
+   Decided by the user, 2026-10-17: Yes: `<Cmd>fe:<command id><CR>` right sides run fastedit commands, in a card after the core engine.
+6. **`'timeoutlen'`**: reuse `kiln_platform::keys::CHORD_TIMEOUT` (recommended), or a separate
    `vim.timeoutlen` setting from the start?
+   Decided by the user, 2026-10-17: `kiln_platform::keys::CHORD_TIMEOUT` serves as 'timeoutlen'.
 
 ## Implementation cards (outline)
 
 All new code is in new files; the only edits to hub files are one-line hooks.
+The cards were filed on 2026-10-17 under the label `vim-remaps`; card 8 (insert
+and cmdline) waits, as the user scoped the first cut to n/x/o.
 
 1. **Remap engine** (`crates/fe-vim/src/remap.rs`, new; M). `Remap`,
    `RemapSet`, `RemapState` (prefix matching, timeout input, recursion limit,
@@ -295,7 +314,7 @@ All new code is in new files; the only edits to hub files are one-line hooks.
    `Operator` variant), `args.rs`, `reducer.rs` and `lib.rs` (beyond a
    `mod remap;`) are untouched. Unit tests for matching,
    ambiguity, timeout, depth.
-2. **Config table and reload** (`crates/fe-keymap` or the config crate's
+2. **Config table and reload** (`crates/fe-config`, beside `VimSettings`; the
    `vim.remap` loader, new file; S). Parses `[[vim.remap]]`, hands a
    `RemapSet` to fe-vim, diagnostics into T56's list, keeps last good. Host
    side: `fe-gpui/src/vim.rs` calls the timeout and feeds the produced keys
