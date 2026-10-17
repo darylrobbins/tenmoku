@@ -304,7 +304,8 @@
 //!   matches it, the last of them winning, and `\c` or `\C` in the
 //!   pattern beating both; `n` counts the matches, changing nothing; `e`
 //!   makes finding nothing quiet instead of E486 (each `e` toggles it, and
-//!   `&e` toggles the kept one). `c` (confirm) is refused
+//!   `&e` toggles the kept one); `r` (a repeat only) takes the last
+//!   search's pattern, not the last substitute's. `c` (confirm) is refused
 //!   with a message, as are the print flags, which nvim takes: fe-vim has
 //!   no prompt or output. The string's specials (`:help
 //!   sub-replace-special`, magic): `&` and `\0` are the whole match, `\1`
@@ -337,7 +338,9 @@
 //!   one; its pattern, not the last search's) on the
 //!   range, with the flags given: with `&&` (a second `&`) the last
 //!   substitute's own, which nvim keeps from every substitute run, repeats
-//!   included. Neither changes the last search. In normal mode `&` is
+//!   included. `:~[&][flags]` is `:&r`, and `:sg`, `:si`, `:sI`, `:sr` and
+//!   the other two-letter forms are `:s` with the rest as flags, by Vim's
+//!   rule (not `:sil`, `:sim`, `:sig`, `:scs`, `:scr`, `:sre`). Neither changes the last search. In normal mode `&` is
 //!   nvim's default mapping, `:&&`, and a count before it makes the range
 //!   `.,.+{count-1}`: `vim.repeat_substitute`, which `.` doesn't repeat
 //!   either.
@@ -364,8 +367,8 @@
 //! Not yet: the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
 //! `:normal`, `:m`, `:t`, `:co`, `:j`, `:y`, `:>`, `:<`, `:pu`, `:r`,
 //! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
-//! `:s`'s `c`, `r` and print flags, `\=` in its string, `:s\/`, `:s\?`
-//! and `:s\&`, the two-letter forms (`:sg`, `:si`, …), `g&`, `:~`,
+//! `:s`'s `c` and print flags, `\=` in its string, `:s\/`, `:s\?`
+//! and `:s\&`, `g&`,
 //! the line's completion, marks other than those above (`:'A`
 //! and `:'[` are E20 instead), `*` for `'<,'>`, and a count before
 //! `:` in a visual mode (nvim drops it too). These are E492, or, for a

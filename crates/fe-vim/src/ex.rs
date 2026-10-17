@@ -411,6 +411,24 @@ fn split(line: &str) -> (&str, Vec<Address>, &str) {
     (line, range, &line[parser.at..])
 }
 
+/// Whether `name` is `:s` with flags (`:sg`, `:sIe`), by Vim's rule in
+/// `find_ex_command`: its second letter is `g` or `I`, `c` (but not `scs`,
+/// `scr`, `sc?ip`), `i` (but not `sim`, `sil`, `sig`) or `r` (but not `sre`).
+fn is_substitute_with_flags(name: &str) -> bool {
+    let b = name.as_bytes();
+    let third = b.get(2).copied();
+    match b {
+        [b's', b'g' | b'I', ..] => true,
+        [b's', b'c', ..] => {
+            !matches!(third, Some(b's' | b'r'))
+                && !(b.get(3) == Some(&b'i') && b.get(4) == Some(&b'p'))
+        }
+        [b's', b'i', ..] => !matches!(third, Some(b'm' | b'l' | b'g')),
+        [b's', b'r', ..] => !name.starts_with("sre"),
+        _ => false,
+    }
+}
+
 /// The command `rest` names, after `range`, on `line`. `check` is called
 /// once the command is recognised, before its arguments are read, as nvim
 /// checks the range there: with whether both of the range's ends (not just
@@ -434,6 +452,17 @@ fn command(
         }
         check(true)?;
         return Ok(ExCommand::Substitute(Substitute::repeat(args, true)?));
+    }
+    if name.is_empty()
+        && let Some(args) = after.strip_prefix('~')
+    {
+        if args.starts_with('!') {
+            return Err(ExError::NoBang);
+        }
+        check(true)?;
+        let mut sub = Substitute::repeat(args, true)?;
+        sub.flags.search_pattern = true;
+        return Ok(ExCommand::Substitute(sub));
     }
     if name.is_empty() && after.starts_with(['>', '<']) {
         return lines::shift(after, check);
@@ -473,6 +502,11 @@ fn command(
     }
     if normal::is_normal(name) {
         return normal::parse(after, check);
+    }
+    if is_substitute_with_flags(name) {
+        check(true)?;
+        let flags = format!("{}{after}", &name[1..]);
+        return Ok(ExCommand::Substitute(Substitute::repeat(&flags, false)?));
     }
     if "substitute".starts_with(name) {
         check(true)?;

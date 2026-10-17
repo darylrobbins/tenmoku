@@ -32,6 +32,9 @@ pub struct Flags {
     pub count_only: bool,
     /// `e`: finding nothing isn't an error. Each `e` toggles it.
     pub quiet: bool,
+    /// `r`: a repeat takes the last search's pattern, not the last
+    /// substitute's. (`&` doesn't carry it over.)
+    pub search_pattern: bool,
 }
 
 /// What an `:s` line substitutes.
@@ -148,6 +151,7 @@ fn flags_and_count(args: &str, keep_allowed: bool) -> Result<(Flags, Option<u32>
             'I' => flags.ignore_case = Some(false),
             'n' => flags.count_only = true,
             'e' => flags.quiet = !flags.quiet,
+            'r' => flags.search_pattern = true,
             'c' => return Err(ExError::Unsupported("the c flag (confirm)".into())),
             _ => break,
         }
@@ -338,6 +342,7 @@ pub(crate) fn run(
             ignore_case: sub.flags.ignore_case.or(last.flags.ignore_case),
             count_only: last.flags.count_only || sub.flags.count_only,
             quiet: last.flags.quiet != sub.flags.quiet,
+            search_pattern: sub.flags.search_pattern,
             keep: false,
         },
         false => sub.flags,
@@ -351,6 +356,14 @@ pub(crate) fn run(
             let pattern = pattern.ok_or(ExError::NoPreviousSearch)?.to_string();
             (pattern, raw.clone())
         }
+        None if flags.search_pattern => (
+            target
+                .registers
+                .last_search()
+                .map(|(pattern, _)| pattern.to_string())
+                .ok_or(ExError::NoPreviousSearch)?,
+            last.replacement.clone(),
+        ),
         None => (
             last.pattern.clone().ok_or(ExError::NoPreviousSubstitute)?,
             last.replacement.clone(),
