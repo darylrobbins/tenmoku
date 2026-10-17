@@ -1,0 +1,296 @@
+# Substitute-with-confirm cases for fe-vim's oracle: `:s` with the `c` flag
+# (`:help :s_c`), answered with `y` (replace, ask about the next), `n` (skip),
+# `a` (this and every later match), `q` or `<Esc>` (stop), `l` (this one,
+# then stop), keys the prompt ignores, and the caret each answer leaves; one
+# `u` undoes every replacement. Every case answers until the asking ends:
+# nvim waits for more keys otherwise. An error ends a case: nvim flushes the
+# keys after it. Hand-written: name, buffer (rows joined with \n, no
+# trailing newline), cursor = [row, byte column] and keys in vim notation;
+# oracle_keys, if given, are what nvim is fed instead. What nvim does with
+# each is recorded in substitute_confirm.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "no_match_fails"
+buffer = "abc"
+cursor = [0, 1]
+keys = ":s/x/y/c<CR>"
+
+[[case]]
+name = "no_match_quiet"
+buffer = "abc"
+cursor = [0, 1]
+keys = ":s/x/y/ce<CR>"
+
+[[case]]
+name = "yes_no_yes"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>yny"
+
+[[case]]
+name = "all_after_no"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>na"
+
+[[case]]
+name = "all_goes_to_first_non_blank"
+buffer = "a a\n  a"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>na"
+
+[[case]]
+name = "all_at_once"
+buffer = "  a a\n  a"
+cursor = [0, 0]
+keys = ":%s/a/b/c<CR>a"
+
+[[case]]
+name = "quit_after_yes"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>yq"
+
+[[case]]
+name = "quit_first_stays_on_match"
+buffer = "x a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>q"
+
+[[case]]
+name = "last_after_no"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>nl"
+
+[[case]]
+name = "last_on_an_indented_row"
+buffer = "a a\n  a a"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>nnnl"
+
+[[case]]
+name = "esc_stays_on_match"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>yy<Esc>"
+
+[[case]]
+name = "esc_then_undo"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>yy<Esc>u"
+
+[[case]]
+name = "ctrl_c_quits"
+buffer = "a a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>y<C-c>"
+
+[[case]]
+name = "last_then_undo"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>ylu"
+
+[[case]]
+name = "all_then_undo"
+buffer = "a a\na"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>nau"
+
+[[case]]
+name = "all_no_changes_nothing"
+buffer = "a a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>nn"
+
+[[case]]
+name = "running_out_after_no"
+buffer = "a a\n  a a"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>yyyn"
+
+[[case]]
+name = "running_out_after_yes"
+buffer = "a a\n  a a"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>nnny"
+
+[[case]]
+name = "without_g_one_per_row"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":%s/a/b/c<CR>ny"
+
+[[case]]
+name = "without_g_yes_each_row"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":%s/a/b/c<CR>yy"
+
+[[case]]
+name = "without_g_last_ends"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":%s/a/b/c<CR>l"
+
+[[case]]
+name = "across_rows"
+buffer = "a a\n  a a"
+cursor = [0, 0]
+keys = ":%s/a/b/gc<CR>nnyq"
+
+[[case]]
+name = "with_a_count"
+buffer = "a\na\na"
+cursor = [0, 0]
+keys = ":s/a/b/c 2<CR>yy"
+
+[[case]]
+name = "over_a_visual_range"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = "Vj:s/a/b/gc<CR>nyyy"
+
+[[case]]
+name = "replacement_longer_than_match"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":s/a/xyz/gc<CR>yny"
+
+[[case]]
+name = "replacement_shorter_than_match"
+buffer = "abc abc abc"
+cursor = [0, 0]
+keys = ":s/abc/-/gc<CR>nyq"
+
+[[case]]
+name = "replacement_with_groups"
+buffer = "ab ab"
+cursor = [0, 0]
+keys = ':s/\(a\)\(b\)/\2\1/gc<CR>ny'
+
+[[case]]
+name = "replacement_with_line_break"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ':s/a/x\ry/gc<CR>yny'
+
+[[case]]
+name = "line_breaks_across_rows"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ':%s/a/x\ry/gc<CR>yyyy'
+
+[[case]]
+name = "line_break_then_quit"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ':%s/a/x\ry/gc<CR>yynq'
+
+[[case]]
+name = "line_break_last"
+buffer = "a a"
+cursor = [0, 0]
+keys = ':s/a/x\ry/gc<CR>nl'
+
+[[case]]
+name = "line_breaks_all"
+buffer = "a a\n a b"
+cursor = [0, 0]
+keys = ':%s/a/x\ry/gc<CR>a'
+
+[[case]]
+name = "line_breaks_match_the_row_as_read"
+buffer = "aXa"
+cursor = [0, 0]
+keys = ':s/^a\|X/\r/gc<CR>yy'
+
+[[case]]
+name = "empty_matches"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":s/x*/-/gc<CR>yyy"
+
+[[case]]
+name = "empty_matches_some_skipped"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":s/x*/-/gc<CR>nyn"
+
+[[case]]
+name = "at_row_ends"
+buffer = "ab\nab"
+cursor = [0, 0]
+keys = ":%s/b$/Z/gc<CR>yy"
+
+[[case]]
+name = "other_keys_ignored"
+buffer = "a a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>xjk<C-e><C-y>iy0y"
+
+[[case]]
+name = "count_flag_asks_nothing"
+buffer = "a a"
+cursor = [0, 2]
+keys = ":s/a/b/gnc<CR>"
+
+[[case]]
+name = "amp_amp_keeps_confirm"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>yqj&ny"
+
+[[case]]
+name = "colon_amp_drops_confirm"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":s/a/b/gc<CR>yqj:&g<CR>"
+
+[[case]]
+name = "jump_mark_set"
+buffer = "x\na a"
+cursor = [0, 0]
+keys = ":2s/a/b/gc<CR>yy''"
+
+[[case]]
+name = "jump_mark_set_replacing_nothing"
+buffer = "x\na a"
+cursor = [0, 0]
+keys = ":2s/a/b/gc<CR>q''"
+
+[[case]]
+name = "from_a_macro"
+buffer = "a a a\na a a"
+cursor = [0, 0]
+keys = "qa:s/a/b/gc<CR>nyqqj@a"
+
+[[case]]
+name = "from_normal"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":normal :s/a/b/gc<lt>CR>yny<CR>"
+oracle_keys = ':exe "normal :s/a/b/gc\ryny"<CR>'
+
+[[case]]
+name = "normal_running_out_ends_it"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":normal :s/a/b/gc<lt>CR>yn<CR>"
+oracle_keys = ':exe "normal :s/a/b/gc\ryn"<CR>'
+
+[[case]]
+name = "normal_running_out_then_undo"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":normal :s/a/b/gc<lt>CR>y<CR>u"
+oracle_keys = ':exe "normal :s/a/b/gc\ry"<CR>u'
+
+[[case]]
+name = "last_substitute_pattern_with_r"
+buffer = "abc abc\nabc"
+cursor = [0, 0]
+keys = ':s/a/1/<CR>/c<CR>:s\&X&r<CR>j:s<CR>'

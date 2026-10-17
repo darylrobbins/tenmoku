@@ -30,6 +30,7 @@ use crate::{
     marks::Place,
     operator,
     search::{self, Deadline, Pattern, PatternError},
+    substitute,
 };
 
 /// What a `:g` or `:normal` running on this thread shares with the commands
@@ -330,14 +331,18 @@ fn searched(target: &mut VimTarget<'_>, search: &LineSearch) -> Result<(String, 
     }
 }
 
-/// A `:g` running, for the commands it runs: another `:g` is E147, and
-/// what they do is noted ([`noted`]).
-struct Busy;
+/// A `:g` running, for the commands it runs: another `:g` is E147, a `:s`
+/// can't ask (`c`), and what they do is noted ([`noted`]).
+struct Busy {
+    _unasked: substitute::Unasked,
+}
 
 impl Busy {
     fn start() -> Self {
         RUNNING.with_borrow_mut(|running| running.notes = Some(Vec::new()));
-        Self
+        Self {
+            _unasked: substitute::Unasked::start(),
+        }
     }
 }
 

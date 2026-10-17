@@ -65,7 +65,8 @@ impl CommandTarget for VimCommands {
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 /// `vim.normal_mode`, `vim.replace_mode`, `vim.virtual_replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
-/// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, the
+/// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`,
+/// `vim.substitute_answer`, the
 /// macros' `vim.record`, `vim.record_stop` and `vim.play`, and for
 /// the visual modes
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
@@ -353,6 +354,23 @@ pub fn registry() -> Registry<VimCommands> {
         .expect("vim command IDs are valid and distinct")
         .description(
             "Repeats the last substitute with its flags on the cursor's line, or `count` lines from it (`&`, as nvim's `:&&`): one transaction, which `.` doesn't repeat.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.substitute_answer",
+            "Vim Substitute Answer",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: substitute::AnswerArgs| {
+                follow(target);
+                let answered = substitute::answer(target, actor, args);
+                marks::settle(target);
+                answered
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Answers the `:s` with the `c` flag asking about a match, as nvim's prompt takes `answer`: `y` replaces it and asks about the next, `n` skips it, `a` replaces it and every one after it, `l` replaces it and ends, `q` ends. Every replacement is one undo step; once it ends the message is nvim's report. Fails if no `:s` is asking.",
         )
         .context(normal.clone())
         .mutates_buffer(true);

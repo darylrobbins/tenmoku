@@ -185,16 +185,10 @@ fn flags_specials_and_bounds() {
         ("one\ntwo\nthree", (2, 0))
     );
 
-    // `\n` in the replacement and the `c` flag are errors that change
-    // nothing: not the text, the caret, the last search or the last
-    // substitute.
-    for (line, error) in [
-        ("s/z/x\\ny/", ExError::NulInReplacement),
-        (
-            "s/z/x/gc",
-            ExError::Unsupported("the c flag (confirm)".into()),
-        ),
-    ] {
+    // `\n` in the replacement is an error that changes nothing: not the
+    // text, the caret, the last search or the last substitute.
+    {
+        let (line, error) = ("s/z/x\\ny/", ExError::NulInReplacement);
         assert_eq!(Ex::parse(line), Err(error.clone()), "{line}");
         let mut vim = HeadlessVim::new("a b\na b", (0, 2));
         vim.feed(":s/b/B/<CR>/a<CR>").unwrap();
@@ -280,4 +274,67 @@ fn flags_specials_and_bounds() {
     crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
     assert!(elapsed < Duration::from_secs(10));
     assert_eq!(vim.text(), "A-".repeat(100_000));
+}
+
+#[test]
+fn confirm_edges() {
+    // `c` is a flag like any other.
+    let Ok(Ex {
+        command: ExCommand::Substitute(sub),
+        ..
+    }) = Ex::parse("s/a/b/gc")
+    else {
+        panic!("s/a/b/gc parses");
+    };
+    assert!(sub.flags.confirm && sub.flags.global);
+
+    // `:g` can't wait for answers: its `:s` with `c` is refused, changing
+    // nothing.
+    let mut vim = HeadlessVim::new("a a\na", (0, 0));
+    vim.feed(":g/a/s/a/b/c<CR>").unwrap();
+    assert_eq!(vim.text(), "a a\na");
+    assert_eq!(
+        vim.state().message(),
+        Some("the c flag (confirm) under :g: not supported yet")
+    );
+    assert!(vim.state().confirm.is_none());
+
+    // Something else editing the text between answers ends the asking as
+    // `q` does: the answer replaces nothing, and keys are read as usual.
+    let mut vim = HeadlessVim::new("a a a", (0, 0));
+    vim.feed(":s/a/b/gc<CR>y").unwrap();
+    vim.model_mut()
+        .buffer_mut()
+        .edit([(5..5, "!")], fe_buffer::Origin::User);
+    vim.feed("y").unwrap();
+    assert_eq!(vim.text(), "b a a!");
+    assert!(vim.state().confirm.is_none());
+    assert_eq!(vim.state().message(), None);
+    vim.feed("x").unwrap();
+    assert_eq!(vim.text(), "b  a!");
+
+    // Undo takes every replacement out, redo puts them back, the caret at
+    // the first changed line's start.
+    let mut vim = HeadlessVim::new("a a\n  a a", (1, 3));
+    vim.feed(":%s/a/b/gc<CR>nyny").unwrap();
+    assert_eq!(vim.text(), "a b\n  a b");
+    vim.feed("u").unwrap();
+    assert_eq!((vim.text().as_str(), vim.cursor()), ("a a\n  a a", (0, 0)));
+    vim.feed("<C-r>").unwrap();
+    assert_eq!((vim.text().as_str(), vim.cursor()), ("a b\n  a b", (0, 0)));
+
+    // A mode the host left normal mode for drops the asking.
+    let mut vim = HeadlessVim::new("a a", (0, 0));
+    vim.feed(":s/a/b/gc<CR>").unwrap();
+    vim.state_mut().mode = crate::Mode::Insert;
+    let step = vim.state_mut().feed(crate::VimKey::Char('y'));
+    assert!(vim.state().confirm.is_none());
+    assert!(!matches!(step, crate::Step::Commit(_)));
+
+    // With no `:s` asking, an answer fails.
+    let mut vim = HeadlessVim::new("a", (0, 0));
+    let answer =
+        invocation("vim.substitute_answer", json!({"answer": "y"})).context(context(vim.state()));
+    assert!(vim.dispatch(&answer).is_err());
+    assert_eq!(vim.text(), "a");
 }

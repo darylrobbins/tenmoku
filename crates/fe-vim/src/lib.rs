@@ -304,10 +304,24 @@
 //!   matches it, the last of them winning, and `\c` or `\C` in the
 //!   pattern beating both; `n` counts the matches, changing nothing; `e`
 //!   makes finding nothing quiet instead of E486 (each `e` toggles it, and
-//!   `&e` toggles the kept one); `r` (a repeat only) takes the last
-//!   search's pattern, not the last substitute's. `c` (confirm) is refused
-//!   with a message, as are the print flags, which nvim takes: fe-vim has
-//!   no prompt or output. The string's specials (`:help
+//!   `&e` toggles the kept one); `r` (a repeat or `:s\&` only) takes the
+//!   last search's pattern, not the last substitute's; `p`, `#` and `l`
+//!   are taken and ignored. `c` asks before each match, as
+//!   nvim's prompt does (`:help :s_c`): the caret goes to the match,
+//!   selecting it, and [`VimState::message`] is nvim's `replace with
+//!   {string}? (y)es/(n)o/(a)ll/(q)uit/(l)ast/scroll up(^E)/down(^Y)`, the
+//!   mode staying normal. While it asks, [`VimState::feed`] reads `y`
+//!   (replace it, then ask about the next), `n` (skip it), `a` (replace it
+//!   and every match after, asking no more), `l` (replace it and stop),
+//!   and `q`, `<Esc>` or `<C-c>` (stop) as `vim.substitute_answer`, and
+//!   does nothing with any other key; from a register or `:normal` too,
+//!   whose keys running out stop it. Rows are read as without `c`, before
+//!   any of their matches is replaced; a `g`-less `:s` asks about one match
+//!   per row. Its replacements are one undo step. Once it stops the
+//!   message is the report, and the caret stays at the match last asked
+//!   about, or at the start of the row a replacement ended on (after `a`,
+//!   the first non-blank of the last line changed). `n` beats `c`, `&&`
+//!   keeps it, and a `:g`'s `:s` refuses it. The string's specials (`:help
 //!   sub-replace-special`, magic): `&` and `\0` are the whole match, `\1`
 //!   to `\9` the groups `\(…\)` captured (empty if one took no part); `~`
 //!   is the last substitute's string as typed (a `~` in it already
@@ -777,7 +791,7 @@ pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
-pub use substitute::{Flags, Substitute};
+pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
 
 #[cfg(test)]
 mod tests;

@@ -127,6 +127,9 @@ pub struct VimState {
     /// or `<C-r>` returns it to a state a linewise delete emptied, which a
     /// version check can't see.
     pub(crate) emptied: Option<Version>,
+    /// Set while a `:s` with `c` waits for an answer: the keys
+    /// [`VimState::feed`] reads answer it.
+    pub(crate) confirm: Option<Box<crate::substitute::Confirm>>,
 }
 
 impl VimState {
@@ -320,6 +323,9 @@ impl VimState {
     /// on (as `/` is taken, with no prefix pending), and while labels wait
     /// every key goes to them first.
     pub fn feed(&mut self, key: VimKey) -> Step {
+        if let Some(step) = crate::substitute::confirm_key(self, key) {
+            return step;
+        }
         self.message = None;
         self.failed = false;
         let replayed = self.macros.count();

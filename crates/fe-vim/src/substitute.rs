@@ -3,18 +3,20 @@
 //! replacement, flags and count, and running it over an ex range in one
 //! transaction. The crate docs list the flags and specials.
 
-use std::ops::Range;
+use std::{cell::Cell, collections::VecDeque, ops::Range};
 
-use fe_buffer::TransactionId;
+use fe_buffer::{Anchor, ResolvedSelection, TransactionId, Version};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
-use fe_editor::commands::origin;
+use fe_editor::{EditorModel, commands::origin};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    VimTarget, edit,
+    Mode, Pending, Step, VimKey, VimState, VimTarget, edit,
     ex::ExError,
     insert, marks,
     motion::Cursor,
-    operator,
+    operator, reducer,
     search::{self, Deadline, Interrupted, Pattern, PatternError},
 };
 
@@ -32,9 +34,11 @@ pub struct Flags {
     pub count_only: bool,
     /// `e`: finding nothing isn't an error. Each `e` toggles it.
     pub quiet: bool,
-    /// `r`: a repeat takes the last search's pattern, not the last
-    /// substitute's. (`&` doesn't carry it over.)
+    /// `r`: a repeat or `:s\&` takes the last search's pattern, not the
+    /// last substitute's. (`&` doesn't carry it over.)
     pub search_pattern: bool,
+    /// `c`: ask before each match ([`Answer`]). `n` beats it.
+    pub confirm: bool,
 }
 
 /// What an `:s` line substitutes.
@@ -145,8 +149,7 @@ impl Substitute {
 /// is typed (`:s\&`): a NUL, which no typed pattern holds.
 const LAST_SUBSTITUTE_PATTERN: &str = "\0";
 
-/// The flag letters nvim knows: those fe-vim doesn't support are refused
-/// as trailing characters (`c`, which needs a prompt, with a message).
+/// The flag letters nvim knows.
 const FLAGS: &str = "&cegiInp#lr";
 
 /// The replacement, up to an unescaped `delimiter`, as typed, and what
@@ -183,7 +186,7 @@ fn flags_and_count(args: &str, keep_allowed: bool) -> Result<(Flags, Option<u32>
             // Print flags: nvim prints the last line changed, which
             // fastedit has nowhere to do.
             'p' | '#' | 'l' => {}
-            'c' => return Err(ExError::Unsupported("the c flag (confirm)".into())),
+            'c' => flags.confirm = true,
             _ => break,
         }
         rest = &rest[1..];
@@ -352,6 +355,8 @@ type Handled = Result<Dispatched<TransactionId>, CommandError>;
 /// which leaves the caret on the first non-blank of the last line changed
 /// (the last a line break made, after `\r`); with `n` nothing changes and
 /// the caret goes to its own line's first non-blank. `.` doesn't repeat it.
+/// With `c` (but not `n`), it asks before each match instead ([`ask`]),
+/// which a `:g` can't wait for: there it's refused, changing nothing.
 ///
 /// A command that passes [`search::time_limit`] before it has matched every
 /// row (an adversarial pattern on a long row) stops with
@@ -365,6 +370,9 @@ pub(crate) fn run(
     sub: &Substitute,
 ) -> Result<Handled, ExError> {
     insert::adopt_closing(target.state);
+    // One run while another asks (from a host's command) ends that one, as
+    // `q` would.
+    target.state.confirm = None;
     let last = target.registers.substitute.clone();
     // `&` starts from the last flags: `g` and `e` toggle theirs.
     let flags = match sub.flags.keep {
@@ -374,17 +382,24 @@ pub(crate) fn run(
             count_only: last.flags.count_only || sub.flags.count_only,
             quiet: last.flags.quiet != sub.flags.quiet,
             search_pattern: sub.flags.search_pattern,
+            confirm: last.flags.confirm || sub.flags.confirm,
             keep: false,
         },
         false => sub.flags,
     };
+    // `n` counts without asking, as in nvim.
+    let confirm = flags.confirm && !flags.count_only;
+    if confirm && UNASKED.get() {
+        return Err(ExError::Unsupported("the c flag (confirm) under :g".into()));
+    }
     let (pattern, raw) = match &sub.with {
         Some((pattern, raw)) => {
             let pattern = match pattern.as_str() {
-                LAST_SUBSTITUTE_PATTERN => {
+                // `r` makes it the last search's, as for a repeat.
+                LAST_SUBSTITUTE_PATTERN if !flags.search_pattern => {
                     last.pattern.clone().ok_or(ExError::NoPreviousSubstitute)?
                 }
-                "" => target
+                LAST_SUBSTITUTE_PATTERN | "" => target
                     .registers
                     .last_search()
                     .map(|(pattern, _)| pattern.to_string())
@@ -408,6 +423,8 @@ pub(crate) fn run(
     };
     let replacement = expand_tilde(&raw, &last.tilde);
     let compiled = Replacement::compile(&replacement)?;
+    // The prompt shows the replacement `~` expanded, as nvim's does.
+    let replacement_shown = replacement.clone();
     let parsed = Pattern::parse_with(&pattern, flags.ignore_case.unwrap_or(false));
     // As nvim's: the next `~` is this replacement only if the pattern is
     // valid, matching or not.
@@ -445,6 +462,15 @@ pub(crate) fn run(
         target.state.highlight = Pattern::parse(&pattern).ok();
     }
     let parsed = parsed.map_err(|error| ExError::Pattern(error.to_string()))?;
+    if confirm {
+        let asked = Asked {
+            pattern: parsed,
+            replacement: compiled,
+            shown: replacement_shown,
+            flags,
+        };
+        return ask(target, asked, rows, pattern);
+    }
     let Ok(found) = find(target, &parsed, &compiled, rows, flags) else {
         return Err(ExError::Pattern(Interrupted.to_string()));
     };
@@ -458,21 +484,9 @@ pub(crate) fn run(
     marks::jump_here(target);
     let starts = found.edits.iter().map(|(range, _)| range.start);
     target.state.marks.typing(target.model.snapshot(), starts);
-    let report = |n: usize, one: &str, many: &str| match n {
-        1 => format!("1 {one}"),
-        n => format!("{n} {many}"),
-    };
     let VimTarget { model, state, .. } = target;
-    // As nvim reports them: `n`'s count always, substitutions past two.
-    if flags.count_only || found.matches > 2 {
-        let what = match flags.count_only {
-            true => report(found.matches, "match", "matches"),
-            false => report(found.matches, "substitution", "substitutions"),
-        };
-        state.message = Some(format!(
-            "{what} on {}",
-            report(found.lines, "line", "lines")
-        ));
+    if let Some(report) = report(found.matches, found.lines, flags.count_only) {
+        state.message = Some(report);
     }
     state.goals = None;
     if flags.count_only {
@@ -492,6 +506,21 @@ pub(crate) fn run(
     Ok(Ok(
         Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect())
     ))
+}
+
+/// nvim's report of `matches` (with `n`, `count_only`) or substitutions on
+/// `lines` lines: `n`'s count always, substitutions past two.
+fn report(matches: usize, lines: usize, count_only: bool) -> Option<String> {
+    let counted = |n: usize, one: &str, many: &str| match n {
+        1 => format!("1 {one}"),
+        n => format!("{n} {many}"),
+    };
+    let what = match count_only {
+        true => counted(matches, "match", "matches"),
+        false if matches > 2 => counted(matches, "substitution", "substitutions"),
+        false => return None,
+    };
+    Some(format!("{what} on {}", counted(lines, "line", "lines")))
 }
 
 /// The first non-blank on `row`, as an offset.
@@ -584,4 +613,351 @@ pub(crate) fn repeat(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u3
         count => format!(".,.+{}&&", count - 1),
     };
     crate::ex::run(target, actor, &line)
+}
+
+thread_local! {
+    /// Set while a `:g` runs: a `:s` with `c` it runs is refused, since `:g`
+    /// can't wait for the answers.
+    static UNASKED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Refuses `:s`'s `c` until dropped, for a `:g` running.
+pub(crate) struct Unasked(bool);
+
+impl Unasked {
+    pub(crate) fn start() -> Self {
+        Self(UNASKED.replace(true))
+    }
+}
+
+impl Drop for Unasked {
+    fn drop(&mut self) {
+        UNASKED.set(self.0);
+    }
+}
+
+/// An answer to `:s`'s `c` prompt (`:help :s_c`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Answer {
+    /// `y`: replace this match and ask about the next.
+    #[serde(rename = "y")]
+    Yes,
+    /// `n`: skip this match.
+    #[serde(rename = "n")]
+    No,
+    /// `a`: replace this match and every one after it, without asking.
+    #[serde(rename = "a")]
+    All,
+    /// `q` (and `<Esc>` and `<C-c>`): replace no more.
+    #[serde(rename = "q")]
+    Quit,
+    /// `l`: replace this match and no more.
+    #[serde(rename = "l")]
+    Last,
+}
+
+/// `vim.substitute_answer`'s args: `{"answer": "y"}`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AnswerArgs {
+    pub answer: Answer,
+}
+
+/// A `:s` with `c` waiting for an answer about a match: what's left of it.
+/// Rows are read as for any `:s`, once each before any of their matches is
+/// replaced, so a replacement is never matched again.
+#[derive(Clone, Debug)]
+pub(crate) struct Confirm {
+    pattern: Pattern,
+    replacement: Replacement,
+    /// The prompt, which shows the replacement.
+    prompt: String,
+    global: bool,
+    /// The range's first row, before any is read.
+    first: u32,
+    /// The end of the last row read, which a replacement's line breaks
+    /// move down.
+    row_end: Option<Anchor>,
+    /// The start of the row after the range's last, `None` past the text.
+    end: Option<Anchor>,
+    /// The matches left on the last row read, the one asked about first:
+    /// where each starts, its length and its replacement.
+    waiting: VecDeque<(Anchor, usize, String)>,
+    /// The text's version once the last answer was taken: if it moved on,
+    /// something else edited the text, and the asking ends.
+    version: Version,
+    /// The undo step every replacement goes in.
+    transaction: Option<TransactionId>,
+    substitutions: usize,
+    /// The rows with a substitution, and whether the last row read has one.
+    lines: usize,
+    row_changed: bool,
+    /// The row the last replacement ended on.
+    last_row: u32,
+}
+
+/// What a `:s` with `c` asks about: its pattern, its replacement, as run
+/// and as the prompt shows it (`~` expanded), and its flags.
+struct Asked {
+    pattern: Pattern,
+    replacement: Replacement,
+    shown: String,
+    flags: Flags,
+}
+
+/// `:s` with `c` over `rows`, once the last search and the last substitute
+/// are set: the caret goes to the first match, selecting it, and
+/// [`VimState::message`](crate::VimState::message) asks about it as nvim's
+/// prompt does, until `vim.substitute_answer` ([`answer`]) ends it. Finding
+/// none is E486, or with `e` nothing, as without `c`.
+fn ask(
+    target: &mut VimTarget<'_>,
+    asked: Asked,
+    rows: Range<u32>,
+    typed: String,
+) -> Result<Handled, ExError> {
+    operator::sync(target.model);
+    let text = target.model.text();
+    let end = (rows.end < text.row_count()).then(|| {
+        target
+            .model
+            .snapshot()
+            .anchor_after(text.row_start(rows.end))
+    });
+    let mut confirm = Box::new(Confirm {
+        pattern: asked.pattern,
+        replacement: asked.replacement,
+        prompt: format!(
+            "replace with {}? (y)es/(n)o/(a)ll/(q)uit/(l)ast/scroll up(^E)/down(^Y)",
+            asked.shown
+        ),
+        global: asked.flags.global,
+        first: rows.start,
+        row_end: None,
+        end,
+        waiting: VecDeque::new(),
+        version: target.model.snapshot().version(),
+        transaction: None,
+        substitutions: 0,
+        lines: 0,
+        row_changed: false,
+        last_row: 0,
+    });
+    let Ok(found) = confirm.next(target.model, &Deadline::new()) else {
+        return Err(ExError::Pattern(Interrupted.to_string()));
+    };
+    if !found {
+        return match asked.flags.quiet {
+            true => Ok(Ok(Dispatched::new(Effect::Notify))),
+            false => Err(ExError::NotFound(typed)),
+        };
+    }
+    // Finding a match makes it a jump, as in nvim.
+    marks::jump_here(target);
+    confirm.show(target);
+    Ok(Ok(Dispatched::new(Effect::Changed)))
+}
+
+impl Confirm {
+    /// Reads rows until a match waits, if one is left in the range; `Err`
+    /// if the time limit ran out.
+    fn next(&mut self, model: &EditorModel, deadline: &Deadline) -> Result<bool, Interrupted> {
+        let snapshot = model.snapshot();
+        let text = snapshot.text();
+        let row_of = |anchor: &Anchor| text.offset_to_point(snapshot.resolve(anchor)).row;
+        let end = self.end.as_ref().map_or(text.row_count(), row_of);
+        let mut row = self
+            .row_end
+            .as_ref()
+            .map_or(self.first, |at| row_of(at) + 1);
+        let mut buf = String::new();
+        while self.waiting.is_empty() && row < end.min(text.row_count()) {
+            let (start, hay) = search::row_text(text, row, &mut buf);
+            let mut matches = self
+                .pattern
+                .substitutions(hay, self.replacement.groups, deadline);
+            while let Some(range) = matches.next() {
+                let group = |n: usize| match n {
+                    0 => &hay[range.clone()],
+                    n => matches.group(n).map_or("", |range| &hay[range]),
+                };
+                let mut new = String::new();
+                self.replacement.apply(group, &mut new);
+                let at = snapshot.anchor_after(start + range.start);
+                self.waiting.push_back((at, range.len(), new));
+                if !self.global {
+                    break;
+                }
+            }
+            deadline.check()?;
+            self.row_end = Some(snapshot.anchor_before(start + hay.len()));
+            self.row_changed = false;
+            row += 1;
+        }
+        Ok(!self.waiting.is_empty())
+    }
+
+    /// The match asked about, as a range in the text.
+    fn current(&self, model: &EditorModel) -> Option<Range<usize>> {
+        let (at, len, _) = self.waiting.front()?;
+        let start = model.snapshot().resolve(at);
+        Some(start..start + len)
+    }
+
+    /// Selects the match asked about, the caret on its start, and asks.
+    fn show(self: Box<Self>, target: &mut VimTarget<'_>) {
+        if let Some(range) = self.current(target.model) {
+            target.model.set_selections([ResolvedSelection {
+                range,
+                reversed: true,
+            }]);
+        }
+        target.state.goals = None;
+        target.state.message = Some(self.prompt.clone());
+        target.state.confirm = Some(self);
+    }
+
+    /// Replaces the match asked about, in the undo step, leaving the caret
+    /// at the start of the row its replacement ends on, as nvim does.
+    fn replace(&mut self, target: &mut VimTarget<'_>, actor: &Actor) {
+        let Some(range) = self.current(target.model) else {
+            return;
+        };
+        let (_, _, new) = self.waiting.pop_front().expect("a match waits");
+        let VimTarget { model, state, .. } = target;
+        let row = model.text().offset_to_point(range.start).row;
+        state.marks.typing(model.snapshot(), [range.start]);
+        let end = range.start + new.len();
+        let (transaction, snapshot) = {
+            let mut buffer = model.buffer_mut();
+            let edits = [(range, new)];
+            let transaction = match self.transaction {
+                // Undone or dropped from the history, it's a new one.
+                Some(id) => buffer
+                    .edit_in(id, edits.clone())
+                    .unwrap_or_else(|_| buffer.edit(edits, origin(actor))),
+                None => buffer.edit(edits, origin(actor)),
+            };
+            (transaction, buffer.snapshot())
+        };
+        operator::sync(model);
+        if let Some(id) = transaction {
+            // As nvim's undo and redo leave it: the first changed line's
+            // start.
+            state.carets.record(id, vec![(row, 0)]);
+            self.transaction = Some(id);
+        }
+        let text = snapshot.text();
+        let last_row = text.offset_to_point(end).row;
+        let row_end = text.row_start(last_row) + text.row_len(last_row) as usize;
+        self.row_end = Some(snapshot.anchor_before(row_end));
+        operator::land(model, &snapshot, [text.row_start(last_row)]);
+        self.last_row = model
+            .text()
+            .offset_to_point(model.primary_selection().head())
+            .row;
+        self.substitutions += 1;
+        self.lines += usize::from(!self.row_changed);
+        self.row_changed = true;
+    }
+
+    /// Ends the asking: one undo step holds every replacement, nvim's
+    /// report is the message, and the caret stays where the last answer
+    /// left it, or after `a` goes to the first non-blank of the last line
+    /// changed.
+    fn end(self, target: &mut VimTarget<'_>, all: bool) -> Dispatched<TransactionId> {
+        let VimTarget { model, state, .. } = target;
+        let head = match all {
+            true => first_non_blank(model.text(), self.last_row),
+            false => model.primary_selection().head(),
+        };
+        model.set_selections([operator::caret(head)]);
+        state.goals = None;
+        state.message = report(self.substitutions, self.lines, false);
+        Dispatched::new(Effect::Changed).with_transactions(self.transaction.into_iter().collect())
+    }
+}
+
+/// `vim.substitute_answer`: answers the `:s` asking ([`ask`]): `y`
+/// replaces the match and asks about the next, `n` skips it, `a` replaces
+/// it and every one after it, `l` replaces it and ends, and `q` ends. The
+/// asking ends too once no match is left, and as `q` does if anything else
+/// edited the text since the last answer. With no `:s` asking, it fails.
+pub(crate) fn answer(target: &mut VimTarget<'_>, actor: &Actor, args: AnswerArgs) -> Handled {
+    let Some(mut confirm) = target.state.confirm.take() else {
+        return Err(CommandError::new("no :s is asking"));
+    };
+    operator::sync(target.model);
+    if target.model.snapshot().version() != confirm.version {
+        return Ok(confirm.end(target, false));
+    }
+    let deadline = Deadline::new();
+    match args.answer {
+        Answer::Yes => confirm.replace(target, actor),
+        Answer::No => {
+            confirm.waiting.pop_front();
+        }
+        Answer::Last => {
+            confirm.replace(target, actor);
+            return Ok(confirm.end(target, false));
+        }
+        Answer::Quit => return Ok(confirm.end(target, false)),
+        Answer::All => loop {
+            confirm.replace(target, actor);
+            match confirm.next(target.model, &deadline) {
+                Ok(true) => {}
+                Ok(false) => return Ok(confirm.end(target, true)),
+                Err(Interrupted) => return Ok(interrupted(confirm.end(target, true), target)),
+            }
+        },
+    }
+    match confirm.next(target.model, &deadline) {
+        Ok(true) => {
+            confirm.version = target.model.snapshot().version();
+            let changed = confirm.transaction;
+            confirm.show(target);
+            Ok(Dispatched::new(Effect::Changed).with_transactions(changed.into_iter().collect()))
+        }
+        Ok(false) => Ok(confirm.end(target, false)),
+        Err(Interrupted) => Ok(interrupted(confirm.end(target, false), target)),
+    }
+}
+
+/// `ended`, with the time limit's message instead of the report.
+fn interrupted(
+    ended: Dispatched<TransactionId>,
+    target: &mut VimTarget<'_>,
+) -> Dispatched<TransactionId> {
+    target.state.message = Some(Interrupted.to_string());
+    target.state.failed = true;
+    ended
+}
+
+/// A key read while a `:s` asks ([`VimState::feed`](crate::VimState::feed)):
+/// `y n a q l` answer, `<Esc>` and `<C-c>` as `q`, committing
+/// `vim.substitute_answer`, and every other key does nothing, the prompt
+/// staying, as nvim waits for an answer (its `<C-e>` and `<C-y>` scroll:
+/// not here). `None` if nothing asks, or the mode isn't normal any more
+/// (the host left it): the asking is then dropped, as `q` would end it.
+pub(crate) fn confirm_key(state: &mut VimState, key: VimKey) -> Option<Step> {
+    state.confirm.as_ref()?;
+    if state.mode != Mode::Normal {
+        state.confirm = None;
+        return None;
+    }
+    state.failed = false;
+    state.macros.count();
+    state.macros.command_start();
+    state.macros.record(key);
+    let answer = match key {
+        VimKey::Char('y') => Answer::Yes,
+        VimKey::Char('n') => Answer::No,
+        VimKey::Char('a') => Answer::All,
+        VimKey::Char('q') | VimKey::Esc | VimKey::Ctrl('c') => Answer::Quit,
+        VimKey::Char('l') => Answer::Last,
+        _ => return Some(Step::Wait(Pending::new())),
+    };
+    Some(reducer::invocation(
+        "vim.substitute_answer",
+        AnswerArgs { answer },
+    ))
 }

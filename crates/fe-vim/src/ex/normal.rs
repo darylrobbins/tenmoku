@@ -8,8 +8,8 @@
 //! of its own in `cmdline` mode, as `HeadlessVim` feeds a key; a register a
 //! `@` plays goes in first. A key that fails drops the rest of that line's
 //! keys, and a command left unfinished ends as `<Esc>` would: an insert or
-//! replace session ends, a command line is dropped, an operator or count
-//! cancelled. A visual mode stays (over a range, its cursor goes to each
+//! replace session ends, a command line is dropped, a `:s` asking (`c`)
+//! ends replacing no more, an operator or count cancelled. A visual mode stays (over a range, its cursor goes to each
 //! line, and `<Esc>` ends it after the last), and on a command line
 //! `<Esc>` runs it, as in a register. Going to a line keeps the goal
 //! column, as nvim's curswant, unless a change on the line before left it
@@ -36,8 +36,8 @@ use super::{
     to_row_start,
 };
 use crate::{
-    Change, Mode, OperateArgs, Operator, Pending, Step, SubmitArgs, VimCommands, VimKey, VimState,
-    VimTarget, context, history, parse_keys, registry,
+    Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, Step, SubmitArgs,
+    VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
 };
 
 thread_local! {
@@ -134,6 +134,13 @@ impl Runner {
             Mode::Insert => self.dispatch(target, "vim.normal_mode", None),
             Mode::Replace => self.dispatch(target, "vim.replace_normal_mode", None),
             Mode::CmdLine(_) => self.dispatch(target, "vim.command_line_cancel", None),
+            _ if target.state.confirm.is_some() => {
+                let quit = AnswerArgs {
+                    answer: Answer::Quit,
+                };
+                let args = serde_json::to_value(quit).expect("vim args serialize");
+                self.dispatch(target, "vim.substitute_answer", Some(args))
+            }
             _ if *target.state.pending() != Pending::default() => {
                 target.state.feed(VimKey::Esc);
                 Ok(())
