@@ -137,7 +137,7 @@ pub(crate) fn motion(
     let (to, past_end) = match args.motion {
         Motion::ParagraphForward | Motion::ParagraphBackward => {
             let forward = args.motion == Motion::ParagraphForward;
-            let row = paragraph(text, cursor.row, count, forward).ok_or(goal)?;
+            let row = paragraph(text, cursor.row, count, forward).ok_or(None)?;
             let past_end = forward && row == text.row_count() - 1;
             (text.row_start(row), past_end)
         }

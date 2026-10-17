@@ -484,6 +484,7 @@ fn move_only(
     before: &[ResolvedSelection],
     spans: &[Span],
     kept: &[Option<usize>],
+    reset: bool,
 ) -> Dispatched<TransactionId> {
     let carets: Vec<ResolvedSelection> = before
         .iter()
@@ -497,8 +498,8 @@ fn move_only(
     model.set_selections(carets);
     let moved = model.selections() != before;
     // An operator over nothing still sets the goal column afresh; a failed
-    // one doesn't.
-    if moved || spans.iter().any(|span| moved_to(span).is_some()) {
+    // one doesn't, except a `{` or `}` that ran out (`reset`), as nvim's does.
+    if reset || moved || spans.iter().any(|span| moved_to(span).is_some()) {
         state.goals = None;
         keep_goals(model, state, &landed, kept);
     }
@@ -757,6 +758,10 @@ fn operate_unless_failing(
             _ => None,
         })
         .collect();
+    let reset = matches!(
+        measured,
+        Target::Motion(Motion::ParagraphForward | Motion::ParagraphBackward)
+    ) && spans.iter().any(|span| matches!(span, Span::Failed));
     let row = |text: &Text, offset: usize| text.offset_to_point(offset).row;
     // `.` repeats an operator whose target resolved, even over nothing (`x`
     // on an empty row); a failed one isn't a change. `c` is kept when its
@@ -799,7 +804,9 @@ fn operate_unless_failing(
             .iter()
             .all(|span| matches!(span, Span::Failed | Span::Move(_)))
         {
-            return Ok(move_only(model, state, &text, &before, &spans, &kept));
+            return Ok(move_only(
+                model, state, &text, &before, &spans, &kept, reset,
+            ));
         }
         for span in &spans {
             if let Span::Lines { rows, .. } = span {
@@ -851,7 +858,9 @@ fn operate_unless_failing(
             })
             .collect();
         if rows.iter().all(Option::is_none) {
-            return Ok(move_only(model, state, &text, &before, &spans, &kept));
+            return Ok(move_only(
+                model, state, &text, &before, &spans, &kept, reset,
+            ));
         }
         state.goals = None;
         let mut shifted: Vec<u32> = rows
@@ -939,7 +948,9 @@ fn operate_unless_failing(
         .map(|span| Op::new(&text, span, yank))
         .collect();
     if ops.iter().all(Option::is_none) {
-        return Ok(move_only(model, state, &text, &before, &spans, &kept));
+        return Ok(move_only(
+            model, state, &text, &before, &spans, &kept, reset,
+        ));
     }
     state.goals = None;
     // The registers take the primary (last) caret's text; if its target
