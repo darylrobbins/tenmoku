@@ -206,9 +206,12 @@ fn grow_and_shrink_size_the_focused_dock(cx: &mut TestAppContext) {
 #[test]
 fn grow_and_shrink_are_in_the_palette_with_no_default_key() {
     for id in ["dock.grow", "dock.shrink"] {
-        let listed = crate::command_list()
-            .iter()
-            .any(|command| command.id.as_str() == id);
+        let listed = crate::command_catalog()
+            .check(
+                &fe_command::CommandId::parse(id).unwrap(),
+                &fe_command::Value::Null,
+            )
+            .is_ok();
         assert!(listed, "{id}");
         for keymap in [DEFAULT_MACOS, DEFAULT_LINUX] {
             assert!(!keymap.contains(id), "{id}");

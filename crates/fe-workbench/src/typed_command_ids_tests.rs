@@ -32,6 +32,33 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("pane.equalize", "Equalize Panes", "workbench"),
     ("pane.focus_next", "Focus Next Pane", "workbench"),
     ("pane.focus_previous", "Focus Previous Pane", "workbench"),
+    ("dock.grow", "Grow Dock", "workbench"),
+    ("dock.shrink", "Shrink Dock", "workbench"),
+    (
+        "terminal.move_to_bottom",
+        "Move Terminal to Bottom",
+        "workbench",
+    ),
+    (
+        "terminal.move_to_left",
+        "Move Terminal to Left",
+        "workbench",
+    ),
+    (
+        "terminal.move_to_right",
+        "Move Terminal to Right",
+        "workbench",
+    ),
+    (
+        "dock.move_sidebar_left",
+        "Move Sidebar to Left",
+        "workbench",
+    ),
+    (
+        "dock.move_sidebar_right",
+        "Move Sidebar to Right",
+        "workbench",
+    ),
 ];
 
 #[gpui::test]

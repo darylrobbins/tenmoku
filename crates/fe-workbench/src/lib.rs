@@ -94,7 +94,6 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     config_problems::init(cx);
     dock::init(cx);
-    dock_layout::init(cx);
     lsp::init(cx);
     workbench::git_commands::init(cx);
     kiln_shell::menu_bar::register(cx);
@@ -135,7 +134,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
         kiln_shell::picker::catalog(),
         Box::new(config_problems::registry()),
         Box::new(dock::registry()),
-        Box::new(dock_layout::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
         Box::new(workbench::git_commands::registry()),
@@ -161,7 +159,6 @@ fn command_list() -> Vec<CommandMeta> {
     let mut list: Vec<CommandMeta> = picker::registry().commands().cloned().collect();
     list.extend(config_problems::registry().commands().cloned());
     list.extend(dock::registry().commands().cloned());
-    list.extend(dock_layout::registry().commands().cloned());
     list.extend(find_bar::registry().commands().cloned());
     list.extend(lsp::registry().commands().cloned());
     list.extend(workbench::git_commands::registry().commands().cloned());

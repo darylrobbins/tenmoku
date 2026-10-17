@@ -33,7 +33,7 @@ use crate::{
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
-    dock_layout::{self, DockLayoutOp},
+    dock_layout,
     find_bar::FindOp,
     git::GitState,
     git_panel,
@@ -1634,21 +1634,14 @@ impl Workbench {
         });
     }
 
-    /// `dock.grow` or `dock.shrink`: resizes the terminal's dock while the
-    /// terminal has focus, else the sidebar. The `*move*` commands move
-    /// the terminal's dock or the sidebar.
-    fn run_dock_layout_op(
+    /// `dock.grow` or `dock.shrink`: resizes the terminal's dock by `by`
+    /// while the terminal has focus, else the sidebar.
+    pub(crate) fn resize_focused_dock(
         &mut self,
-        op: DockLayoutOp,
+        by: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let by = match op {
-            DockLayoutOp::Grow => dock_layout::STEP,
-            DockLayoutOp::Shrink => -dock_layout::STEP,
-            DockLayoutOp::MoveTerminal(to) => return self.move_terminal(to, cx),
-            DockLayoutOp::MoveSidebar(to) => return self.move_sidebar(to, cx),
-        };
         if self.terminal.read(cx).is_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
                 dock_layout::resize(dock.dock_mut(), by, window, cx);
@@ -1671,7 +1664,7 @@ impl Workbench {
     /// Moves the terminal's dock to `to`, keeping its visibility, its
     /// sessions and focus, the sidebar giving way if there
     /// ([`dock_layout::displaced`]).
-    fn move_terminal(&mut self, to: DockPosition, cx: &mut Context<Self>) {
+    pub(crate) fn move_terminal(&mut self, to: DockPosition, cx: &mut Context<Self>) {
         let (sidebar, terminal) = self.dock_positions(cx);
         let sidebar = dock_layout::displaced(terminal, to, sidebar);
         self.place_docks(sidebar, to, cx);
@@ -1679,7 +1672,7 @@ impl Workbench {
 
     /// Moves the sidebar to the side `to`, the terminal's dock giving way
     /// if there ([`dock_layout::displaced`]).
-    fn move_sidebar(&mut self, to: DockPosition, cx: &mut Context<Self>) {
+    pub(crate) fn move_sidebar(&mut self, to: DockPosition, cx: &mut Context<Self>) {
         let (sidebar, terminal) = self.dock_positions(cx);
         let terminal = dock_layout::displaced(sidebar, to, terminal);
         self.place_docks(to, terminal, cx);
@@ -2543,9 +2536,6 @@ impl Workbench {
         }
         if let Some(command) = git_commands::op(run, cx) {
             return self.run_git_command(command, window, cx);
-        }
-        if let Some(op) = dock_layout::op(run, cx) {
-            return self.run_dock_layout_op(op, window, cx);
         }
         if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
             return self.reveal_active(cx);
