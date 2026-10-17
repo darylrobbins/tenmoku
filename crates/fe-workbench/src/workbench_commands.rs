@@ -9,7 +9,7 @@ use kiln::Cx;
 
 use kiln_shell::DockPosition;
 
-use crate::{Axis, Direction, Pane, Workbench, dock_layout};
+use crate::{Axis, Direction, Pane, Workbench, dock_layout, persist};
 
 #[kiln::command(context = "workbench")]
 impl Workbench {
@@ -204,6 +204,19 @@ impl Workbench {
     fn move_sidebar_right(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.move_sidebar(DockPosition::Right, cx.cx);
+    }
+
+    /// Toggle Status Bar
+    #[command(id = "view.toggle_status_bar")]
+    fn toggle_status_bar(&mut self, cx: &mut Cx<Self>) {
+        self.set_status_bar_visible(!self.status_bar_visible(), cx.cx);
+        persist::save_status_bar(self.status_bar_visible(), cx.cx);
+    }
+
+    /// Change Language Mode…
+    #[command(id = "language.select")]
+    fn select_language_mode(&mut self, cx: &mut Cx<Self>) {
+        self.select_language(cx.window, cx.cx);
     }
 }
 

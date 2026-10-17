@@ -260,78 +260,55 @@ impl StatusBar {
     }
 }
 
-/// What a status bar command asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StatusOp {
-    ToggleStatusBar,
-    SelectLanguage,
-    /// The line runs it: it applies only there.
-    CancelVimLine,
-}
-
-/// The [`CommandTarget`] of status bar commands: the op to do.
+/// The [`CommandTarget`] of the status bar's one registry command: whether
+/// the vim command line's cancel ran. The bar's other commands are typed
+/// methods of the workbench.
 pub(crate) struct StatusCommands;
 
 impl CommandTarget for StatusCommands {
     type Tx = ();
-    type Target<'a> = Option<StatusOp>;
+    type Target<'a> = bool;
 }
 
 struct Commands(Rc<Registry<StatusCommands>>);
 
 impl Global for Commands {}
 
-/// Registers the status bar commands.
+/// Registers the status bar's registry commands.
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(registry())));
 }
 
 pub(crate) fn registry() -> Registry<StatusCommands> {
-    use StatusOp::*;
-    let commands = [
-        (
-            "view.toggle_status_bar",
-            "Toggle Status Bar",
-            ToggleStatusBar,
-        ),
-        ("language.select", "Change Language Mode…", SelectLanguage),
-    ];
-    let commands = commands
-        .map(|(id, title, op)| (id, title, crate::KEY_CONTEXT, op))
-        .into_iter()
-        .chain([(
+    let mut registry = Registry::new();
+    registry
+        .register(
             vim_line::CANCEL,
             "Cancel Command Line",
-            vim_line::KEY_CONTEXT,
-            CancelVimLine,
-        )]);
-    let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
-        registry
-            .register(
-                id,
-                title,
-                move |target: &mut Option<StatusOp>, _: &Actor| {
-                    *target = Some(op);
-                    Ok(Dispatched::new(Effect::Notify))
-                },
-            )
-            .expect("status bar command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
+            |target: &mut bool, _: &Actor| {
+                *target = true;
+                Ok(Dispatched::new(Effect::Notify))
+            },
+        )
+        .expect("status bar command IDs are valid and distinct")
+        .context(ContextPredicate::identifier(vim_line::KEY_CONTEXT));
     registry
 }
 
-/// The op of `run`, if it's a status bar command that applies in its
-/// context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<StatusOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
+/// Whether `run` is the vim command line's cancel, in the line's context.
+pub(crate) fn is_cancel_line(run: &RunCommand, cx: &App) -> bool {
+    let Some(commands) = cx.try_global::<Commands>() else {
+        return false;
+    };
+    let registry = commands.0.clone();
+    if registry.get(&run.0.command).is_none() {
+        return false;
+    }
+    let mut cancel = false;
+    if let Err(error) = registry.dispatch(&mut cancel, &run.0) {
         log::warn!("{error}");
     }
-    op
+    cancel
 }
 
 #[path = "vim_line.rs"]

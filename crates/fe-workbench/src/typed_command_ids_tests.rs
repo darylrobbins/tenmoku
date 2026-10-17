@@ -59,6 +59,8 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Move Sidebar to Right",
         "workbench",
     ),
+    ("view.toggle_status_bar", "Toggle Status Bar", "workbench"),
+    ("language.select", "Change Language Mode…", "workbench"),
 ];
 
 #[gpui::test]

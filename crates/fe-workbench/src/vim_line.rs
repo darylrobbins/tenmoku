@@ -28,7 +28,7 @@ use gpui::{
     Subscription, WeakEntity, Window, div, px,
 };
 
-use super::{StatusBar, StatusOp};
+use super::StatusBar;
 use crate::{
     dock::{self, DockOp},
     picker::{self, PaletteOp},
@@ -279,7 +279,7 @@ impl StatusBar {
             let text = input.read(cx).text().to_owned();
             return self.end_line(Some(text), VimKey::Enter, window, cx);
         }
-        if super::op(run, cx) == Some(StatusOp::CancelVimLine) {
+        if super::is_cancel_line(run, cx) {
             return self.end_line(None, VimKey::Esc, window, cx);
         }
         let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {

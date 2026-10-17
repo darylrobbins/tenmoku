@@ -46,10 +46,8 @@ use crate::{
     outline_panel,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
-    persist,
     picker::{self, Toggle},
     project_panel::{self, PanelEvent, PanelOp},
-    status_bar::{self, StatusOp},
     terminal_panel::{self, TERMINAL, TerminalOp, TerminalPanel, TerminalPanelEvent},
     title_bar,
     toolbar_picker::ToolbarPicker,
@@ -2022,7 +2020,7 @@ impl Workbench {
     /// Shows the language picker, focused, for the active editor, in place
     /// of any other palette, or afresh if it shows. Nothing without an
     /// active editor.
-    fn select_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.active_editor(cx).cloned() else {
             return;
         };
@@ -2302,17 +2300,6 @@ impl Workbench {
             .update(cx, |shell, cx| shell.set_status_bar_visible(shown, cx));
     }
 
-    fn run_status_op(&mut self, op: StatusOp, window: &mut Window, cx: &mut Context<Self>) {
-        match op {
-            StatusOp::ToggleStatusBar => {
-                self.set_status_bar_visible(!self.status_bar_visible, cx);
-                persist::save_status_bar(self.status_bar_visible, cx);
-            }
-            StatusOp::SelectLanguage => self.select_language(window, cx),
-            StatusOp::CancelVimLine => {}
-        }
-    }
-
     /// The active tab's editor, unless a file being read or a read error
     /// shows in its place; for a [`DiffView`], the side focused last, so
     /// the vim line, the status bar and the editor commands follow it.
@@ -2527,9 +2514,6 @@ impl Workbench {
         }
         if self.run_references_command(run, window, cx) {
             return;
-        }
-        if let Some(op) = status_bar::op(run, cx) {
-            return self.run_status_op(op, window, cx);
         }
         if let Some(op) = lsp::op(run, cx) {
             return self.run_lsp_op(op, window, cx);
