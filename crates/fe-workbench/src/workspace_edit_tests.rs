@@ -10,10 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fe_command::{ContextFrame, ContextPredicate, ContextStack, Invocation};
+use fe_command::{CommandId, ContextPredicate};
 use fe_gpui::EditorView;
 use fe_lsp::{FileEdits, ServerId, fake::Script};
 use gpui::{Entity, Focusable as _, TestAppContext};
+use kiln::platform::command_actions::typed_command;
 use lsp_types::{
     ApplyWorkspaceEditParams, Position, Range, TextEdit, Url, WorkspaceEdit,
     request::ApplyWorkspaceEdit,
@@ -21,7 +22,6 @@ use lsp_types::{
 use serde_json::{Value, json};
 
 use super::AppliedEdits;
-use crate::lsp::{self, LspOp};
 use crate::tests::lsp::Lsp;
 
 /// `src/main.rs` as the tests open it.
@@ -645,38 +645,27 @@ fn a_file_that_doesnt_read_cleanly(cx: &mut TestAppContext) {
     assert_eq!(s.text(&main), MAIN);
 }
 
-#[test]
-fn stub_commands_in_the_editor_context() {
-    let registry = lsp::registry();
-    let in_editor = ContextStack::new()
-        .with(ContextFrame::new(crate::KEY_CONTEXT))
-        .with(ContextFrame::new(fe_editor::commands::CONTEXT));
-    for (id, title, op) in [
-        ("lsp.rename", "Rename Symbol…", LspOp::Rename),
-        ("lsp.code_actions", "Code Actions…", LspOp::CodeActions),
-        (
-            "lsp.format_document",
-            "Format Document",
-            LspOp::FormatDocument,
-        ),
-        (
-            "lsp.format_selection",
-            "Format Selection",
-            LspOp::FormatSelection,
-        ),
-    ] {
-        let meta = (registry.commands())
-            .find(|meta| meta.id.as_str() == id)
-            .unwrap_or_else(|| panic!("{id} is registered"));
-        assert_eq!(meta.title, title);
-        assert_eq!(
-            meta.context,
-            Some(ContextPredicate::identifier(fe_editor::commands::CONTEXT)),
-            "{id}"
-        );
-        let mut dispatched = None;
-        let invocation = Invocation::of(id).unwrap().context(in_editor.clone());
-        registry.dispatch(&mut dispatched, &invocation).unwrap();
-        assert_eq!(dispatched, Some(op), "{id}");
-    }
+#[gpui::test]
+fn stub_commands_in_the_editor_context(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    cx.read(|cx| {
+        for (id, title) in [
+            ("lsp.rename", "Rename Symbol…"),
+            ("lsp.code_actions", "Code Actions…"),
+            ("lsp.format_document", "Format Document"),
+            ("lsp.format_selection", "Format Selection"),
+        ] {
+            let command = typed_command(&CommandId::parse(id).unwrap(), cx)
+                .unwrap_or_else(|| panic!("{id} is registered"));
+            assert_eq!(command.title, title);
+            assert_eq!(
+                command.context,
+                Some(ContextPredicate::identifier(fe_editor::commands::CONTEXT)),
+                "{id}"
+            );
+        }
+    });
 }

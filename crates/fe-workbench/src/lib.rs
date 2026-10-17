@@ -108,7 +108,6 @@ pub fn init(cx: &mut App) {
     kiln_shell::layout::register_item::<fe_gpui::FileViewer>(cx);
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
-    open::init(cx);
     outline_panel::init(cx);
     pane_toolbar::init(cx);
     project_panel::init(cx);
@@ -136,18 +135,15 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
         Box::new(config_problems::registry()),
         Box::new(dock::registry()),
         Box::new(find_bar::registry()),
-        Box::new(lsp::registry()),
         Box::new(workbench::git_commands::registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
-        Box::new(open::registry()),
         Box::new(outline_panel::registry()),
         Box::new(pane_toolbar::registry()),
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
         Box::new(terminal_panel::registry()),
-        Box::new(trust::registry()),
         fe_gpui::commands::command_catalog(),
     ]
 }
@@ -160,16 +156,13 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(config_problems::registry().commands().cloned());
     list.extend(dock::registry().commands().cloned());
     list.extend(find_bar::registry().commands().cloned());
-    list.extend(lsp::registry().commands().cloned());
     list.extend(workbench::git_commands::registry().commands().cloned());
-    list.extend(open::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
     list.extend(pane_toolbar::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
     list.extend(terminal_panel::registry().commands().cloned());
-    list.extend(trust::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
     list
 }

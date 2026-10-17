@@ -4,13 +4,14 @@
 //! from the `fe-command` registry it moved from, so keymaps and menus still
 //! name it.
 
-use gpui::{App, Window};
+use fe_command::ContextPredicate;
+use gpui::{App, Context, Window};
 use kiln::Cx;
 
 use kiln_shell::DockPosition;
 
 use crate::{
-    Axis, Direction, Pane, Workbench, dock_layout, nav::NavOp, persist,
+    Axis, Direction, Pane, Workbench, dock_layout, nav::NavOp, open::OpenOp, persist,
     workbench::recent_picker::RecentOp,
 };
 
@@ -263,6 +264,98 @@ impl Workbench {
     fn open_recent_in_new_window(&mut self, cx: &mut Cx<Self>) {
         self.recent_command(RecentOp::OpenInNewWindow, cx);
     }
+
+    /// Restart Language Server
+    #[command(id = "lsp.restart")]
+    fn restart_language_server(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.run_server_op(false, cx.window, cx.cx);
+    }
+
+    /// Language Server Log
+    #[command(id = "lsp.show_log")]
+    fn show_language_server_log(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.run_server_op(true, cx.window, cx.cx);
+    }
+
+    /// Rename Symbol…
+    #[command(id = "lsp.rename", context = "editor")]
+    fn rename_symbol_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.rename_symbol(window, cx));
+    }
+
+    /// Code Actions…
+    #[command(id = "lsp.code_actions", context = "editor")]
+    fn code_actions(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.show_code_actions(window, cx));
+    }
+
+    /// Format Document
+    #[command(id = "lsp.format_document", context = "editor")]
+    fn format_document(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.format_active(false, window, cx));
+    }
+
+    /// Format Selection
+    #[command(id = "lsp.format_selection", context = "editor")]
+    fn format_selection(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.format_active(true, window, cx));
+    }
+
+    /// Open Folder…
+    #[command(id = "workbench.open_folder")]
+    fn open_folder(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::Folder, cx);
+    }
+
+    /// Open File…
+    #[command(id = "workbench.open_file")]
+    fn open_file(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::File, cx);
+    }
+
+    /// Settings…
+    #[command(id = "workbench.open_settings")]
+    fn open_settings_command(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::Settings, cx);
+    }
+
+    /// New Window
+    #[command(id = "window.new")]
+    fn new_window(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::NewWindow, cx);
+    }
+
+    /// Open Folder in New Window…
+    #[command(id = "workbench.open_folder_in_new_window")]
+    fn open_folder_in_new_window(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::FolderInNewWindow, cx);
+    }
+
+    /// New File
+    #[command(id = "workbench.new_file")]
+    fn new_file_command(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::NewFile, cx);
+    }
+
+    /// Save As…
+    #[command(id = "workbench.save_as")]
+    fn save_as(&mut self, cx: &mut Cx<Self>) {
+        self.open_command(OpenOp::SaveAs, cx);
+    }
+
+    /// Trust This Folder
+    #[command(id = "workbench.trust_folder")]
+    fn trust_folder(&mut self, cx: &mut Cx<Self>) {
+        self.trust_command(true, cx);
+    }
+
+    /// Untrust This Folder
+    #[command(id = "workbench.untrust_folder")]
+    fn untrust_folder(&mut self, cx: &mut Cx<Self>) {
+        self.trust_command(false, cx);
+    }
 }
 
 impl Workbench {
@@ -290,6 +383,40 @@ impl Workbench {
     fn recent_command(&mut self, op: RecentOp, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.run_recent_op(op, cx.window, cx.cx);
+    }
+
+    /// Runs `run`, an editor command's, if the command was invoked where
+    /// the editor's context holds, as its `fe-command` registry checked:
+    /// kiln runs a typed command's handler wherever it's dispatched, so a
+    /// menu pick or a `RunCommand` with the project panel or terminal
+    /// focused would act on the active editor. One run with no invocation,
+    /// as a raw action, whose key binding checked its context, runs.
+    fn in_editor(
+        &mut self,
+        cx: &mut Cx<Self>,
+        run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
+    ) {
+        self.ran(cx);
+        let editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
+        if let Some(invocation) = kiln::current_invocation(cx.cx)
+            && !editor.eval(&invocation.context)
+        {
+            log::warn!("{} doesn't apply here: not in {editor}", invocation.command);
+            return;
+        }
+        run(self, cx.window, cx.cx);
+    }
+
+    /// Runs the open command `op`.
+    fn open_command(&mut self, op: OpenOp, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.prompt_open(op, cx.window, cx.cx);
+    }
+
+    /// Trusts the root, if `trusted`, or untrusts it.
+    fn trust_command(&mut self, trusted: bool, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.set_root_trust(trusted, cx.cx);
     }
 
     /// Notes the command running in `commands_run`, for tests.

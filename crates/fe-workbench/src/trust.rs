@@ -8,14 +8,11 @@
 //! changes. The first time a folder is opened as one (a folder launch, or
 //! Open Folder…), the workbench asks whether to trust it, in fastedit's
 //! words ([`prompt`]). `workbench.trust_folder` and
-//! `workbench.untrust_folder` change the root's decision; their handlers
-//! only name it, and the workbench records it ([`Workbench::set_root_trust`]).
+//! `workbench.untrust_folder` change the root's decision: they're typed,
+//! `#[kiln::command]` methods of the workbench (`workbench_commands.rs`)
+//! that record it ([`Workbench::set_root_trust`]).
 
-use std::rc::Rc;
-
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::commands::RunCommand;
-use gpui::{App, Context, Global, Window};
+use gpui::{App, Context, Window};
 #[cfg(test)]
 pub(crate) use kiln_shell::trust::decide;
 use kiln_shell::trust::{RootTrust, TrustHost, TrustPrompt};
@@ -39,10 +36,9 @@ pub(crate) fn prompt() -> TrustPrompt {
     })
 }
 
-/// Registers the trust commands, and the session's decisions unless
-/// [`set_trust_file`] came first. Quitting waits for a write under way.
+/// Registers the session's decisions unless [`set_trust_file`] came
+/// first. Quitting waits for a write under way.
 pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
     kiln_shell::trust::init(cx);
 }
 
@@ -85,48 +81,6 @@ impl Workbench {
     pub fn set_root_trust(&mut self, trusted: bool, cx: &mut Context<Self>) {
         RootTrust::set_trusted(self, trusted, cx);
     }
-}
-
-/// The [`CommandTarget`] of the trust commands: whether to trust the root.
-pub(crate) struct TrustCommands;
-
-impl CommandTarget for TrustCommands {
-    type Tx = ();
-    type Target<'a> = Option<bool>;
-}
-
-struct Commands(Rc<Registry<TrustCommands>>);
-
-impl Global for Commands {}
-
-pub(crate) fn registry() -> Registry<TrustCommands> {
-    let commands = [
-        ("workbench.trust_folder", "Trust This Folder", true),
-        ("workbench.untrust_folder", "Untrust This Folder", false),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, trusted) in commands {
-        registry
-            .register(id, title, move |target: &mut Option<bool>, _: &Actor| {
-                *target = Some(trusted);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("trust command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    }
-    registry
-}
-
-/// Whether `run` trusts (`true`) or untrusts the root, if it's a trust
-/// command that applies in its context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<bool> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut trusted = None;
-    if let Err(error) = registry.dispatch(&mut trusted, &run.0) {
-        log::warn!("{error}");
-    }
-    trusted
 }
 
 #[cfg(test)]

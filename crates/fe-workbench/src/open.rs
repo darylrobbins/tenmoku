@@ -1,9 +1,9 @@
 //! Opening a folder or a file from the system's open panel, and a new
 //! untitled file, saved where the save panel says.
 //!
-//! Its commands are those of [`init`]'s registry, in the workbench's
-//! [`crate::KEY_CONTEXT`]. Their handlers only name an op: the workbench
-//! then shows the panel, and does what its answer asks with the window at
+//! Its commands are typed: `#[kiln::command]` methods of the workbench
+//! (`workbench_commands.rs`), in its [`crate::KEY_CONTEXT`], that each name
+//! an [`OpenOp`]. The workbench then shows the panel, and does what its answer asks with the window at
 //! hand: a folder re-roots the workbench in place
 //! ([`crate::Workbench::set_root`]), and a file opens in the active pane.
 //! New File opens an untitled tab in the active pane; Save As… asks where
@@ -25,11 +25,10 @@ use std::{
 };
 
 use fe_buffer::BufferId;
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::commands::RunCommand;
 use gpui::{App, Global, PathPromptOptions};
 
-/// What an open command asks for.
+/// What an open command asks for: its `#[kiln::command]` method runs it
+/// with `Workbench::prompt_open`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenOp {
     /// Pick a folder to re-root the workbench at.
@@ -69,18 +68,6 @@ impl OpenOp {
     }
 }
 
-/// The [`CommandTarget`] of open commands: the op to do.
-pub(crate) struct OpenCommands;
-
-impl CommandTarget for OpenCommands {
-    type Tx = ();
-    type Target<'a> = Option<OpenOp>;
-}
-
-struct Commands(Rc<Registry<OpenCommands>>);
-
-impl Global for Commands {}
-
 /// Opens a window on a folder, or with none: the host's.
 type Opener = Rc<dyn Fn(Option<PathBuf>, &mut App)>;
 
@@ -104,49 +91,6 @@ pub(crate) fn open_window(root: Option<PathBuf>, cx: &mut App) {
     };
     let open = open.clone();
     cx.defer(move |cx| open(root, cx));
-}
-
-/// Registers the open commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<OpenCommands> {
-    let commands = [
-        ("workbench.open_folder", "Open Folder…", OpenOp::Folder),
-        ("workbench.open_file", "Open File…", OpenOp::File),
-        ("workbench.open_settings", "Settings…", OpenOp::Settings),
-        ("window.new", "New Window", OpenOp::NewWindow),
-        (
-            "workbench.open_folder_in_new_window",
-            "Open Folder in New Window…",
-            OpenOp::FolderInNewWindow,
-        ),
-        ("workbench.new_file", "New File", OpenOp::NewFile),
-        (fe_gpui::pane_item::SAVE_AS, "Save As…", OpenOp::SaveAs),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, op) in commands {
-        registry
-            .register(id, title, move |target: &mut Option<OpenOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("open command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    }
-    registry
-}
-
-/// The op of `run`, if it's an open command that applies in its context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<OpenOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 #[cfg(test)]

@@ -60,8 +60,9 @@
 //!   context, act on the active editor's server. `lsp.rename`,
 //!   `lsp.code_actions`, `lsp.format_document` and `lsp.format_selection`,
 //!   in the editor's, are each done in a module of their own
-//!   (`lsp_rename`, `lsp_code_actions`, `lsp_format`). Their handlers only
-//!   name the op: the workbench does it.
+//!   (`lsp_rename`, `lsp_code_actions`, `lsp_format`). They're typed:
+//!   `#[kiln::command]` methods of the workbench (`workbench_commands.rs`);
+//!   the editor's run only where its context holds.
 //! - **Workspace edits.** A server's `workspace/applyEdit`
 //!   ([`LspEvent::ApplyEdit`]) is applied on the main thread, all or
 //!   nothing (`workspace_edit`), and answered applied, or failed with why.
@@ -108,16 +109,13 @@ use std::{
 };
 
 use fe_buffer::{Buffer, BufferEvent, BufferId, Version};
-use fe_command::{
-    Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
-};
+use fe_command::Invocation;
 use fe_config::settings::{LspLayer, LspSettings};
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
 use fe_editor::{
     EditorModel,
     diagnostics::{Diagnostic, DiagnosticTag, Severity},
 };
-use fe_gpui::commands::RunCommand;
 use fe_lsp::{
     KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
     ServerLauncher, ServerStatus,
@@ -1688,21 +1686,9 @@ impl Workbench {
         });
     }
 
-    /// Does `op`: each feature's in its own module.
-    pub(crate) fn run_lsp_op(&mut self, op: LspOp, window: &mut Window, cx: &mut Context<Self>) {
-        match op {
-            LspOp::Restart => self.run_server_op(false, window, cx),
-            LspOp::ShowLog => self.run_server_op(true, window, cx),
-            LspOp::Rename => self.rename_symbol(window, cx),
-            LspOp::CodeActions => self.show_code_actions(window, cx),
-            LspOp::FormatDocument => self.format_active(false, window, cx),
-            LspOp::FormatSelection => self.format_active(true, window, cx),
-        }
-    }
-
     /// Restarts the active editor's server, or opens its log in a tab if
     /// `log`.
-    fn run_server_op(&mut self, log: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_server_op(&mut self, log: bool, window: &mut Window, cx: &mut Context<Self>) {
         let buffer = self
             .active_editor(cx)
             .map(|editor| editor.read(cx).model().buffer().id());
@@ -2025,97 +2011,13 @@ pub(crate) fn resolve(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// What an LSP command asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LspOp {
-    Restart,
-    ShowLog,
-    Rename,
-    CodeActions,
-    FormatDocument,
-    FormatSelection,
-}
-
-/// The [`CommandTarget`] of the LSP commands: the op to do.
-pub(crate) struct LspCommands;
-
-impl CommandTarget for LspCommands {
-    type Tx = ();
-    type Target<'a> = Option<LspOp>;
-}
-
-struct Commands(Rc<Registry<LspCommands>>);
-
-impl Global for Commands {}
-
-/// Registers the LSP commands, and has quitting shut every server down
-/// first ([`shut_down_all`]).
+/// Has quitting shut every server down first ([`shut_down_all`]).
 pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
     cx.on_app_quit(|cx| {
         shut_down_all(cx);
         async {}
     })
     .detach();
-}
-
-pub(crate) fn registry() -> Registry<LspCommands> {
-    let (workbench, editor) = (crate::KEY_CONTEXT, fe_editor::commands::CONTEXT);
-    let commands = [
-        (
-            "lsp.restart",
-            "Restart Language Server",
-            LspOp::Restart,
-            workbench,
-        ),
-        (
-            "lsp.show_log",
-            "Language Server Log",
-            LspOp::ShowLog,
-            workbench,
-        ),
-        ("lsp.rename", "Rename Symbol…", LspOp::Rename, editor),
-        (
-            "lsp.code_actions",
-            "Code Actions…",
-            LspOp::CodeActions,
-            editor,
-        ),
-        (
-            "lsp.format_document",
-            "Format Document",
-            LspOp::FormatDocument,
-            editor,
-        ),
-        (
-            "lsp.format_selection",
-            "Format Selection",
-            LspOp::FormatSelection,
-            editor,
-        ),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, op, context) in commands {
-        registry
-            .register(id, title, move |target: &mut Option<LspOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("LSP command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
-    registry
-}
-
-/// The op of `run`, if it's an LSP command that applies in its context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<LspOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 #[cfg(test)]

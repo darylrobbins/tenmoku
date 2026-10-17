@@ -40,7 +40,7 @@ use crate::{
     go_to_line::GoToLine,
     language_picker::LanguagePicker,
     loader::{self, Opened},
-    lsp::{self, Lsp},
+    lsp::Lsp,
     nav::Nav,
     open::{self, OpenOp},
     outline_panel,
@@ -917,7 +917,7 @@ impl Workbench {
     /// error from the panel is logged and shown in an error toast
     /// ([`open_panel_failed`]). Asked again while the panel shows, it does
     /// nothing.
-    fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
         if op == OpenOp::Settings {
             return self.open_settings(window, cx);
         }
@@ -2493,12 +2493,6 @@ impl Workbench {
         }
         #[cfg(test)]
         self.commands_run.push(run.0.clone());
-        if let Some(op) = open::op(run, cx) {
-            return self.prompt_open(op, window, cx);
-        }
-        if let Some(trusted) = trust::op(run, cx) {
-            return self.set_root_trust(trusted, cx);
-        }
         match picker::toggled(run, cx) {
             Some(Toggle::QuickOpen) => return self.toggle_quick_open(window, cx),
             Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
@@ -2512,9 +2506,6 @@ impl Workbench {
         }
         if self.run_references_command(run, window, cx) {
             return;
-        }
-        if let Some(op) = lsp::op(run, cx) {
-            return self.run_lsp_op(op, window, cx);
         }
         if let Some(command) = git_commands::op(run, cx) {
             return self.run_git_command(command, window, cx);
