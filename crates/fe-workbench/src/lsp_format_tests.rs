@@ -47,7 +47,16 @@ fn edit(line: u32, from: u32, to: u32, text: &str) -> Value {
 /// The workbench with `src/main.rs` (as TABS) and `tool.py` open on
 /// servers, the first formatting, its editor focused.
 fn setup(cx: &mut TestAppContext, rust: Script) -> (Lsp, Entity<EditorView>) {
-    let mut s = Lsp::with_scripts(cx, rust, Script::default());
+    setup_on(cx, rust, Lsp::with_scripts)
+}
+
+/// [`setup`] with the workbench built by `make`.
+fn setup_on(
+    cx: &mut TestAppContext,
+    rust: Script,
+    make: fn(&mut TestAppContext, Script, Script) -> Lsp,
+) -> (Lsp, Entity<EditorView>) {
+    let mut s = make(cx, rust, Script::default());
     s.set_trust(true);
     fs::write(s.path("src/main.rs"), TABS).unwrap();
     s.open("src/main.rs");
@@ -156,22 +165,29 @@ fn document_and_selection(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn stale_missing_and_slow(cx: &mut TestAppContext) {
-    let (mut s, editor) = setup(cx, formatter());
+    let (mut s, editor) = setup_on(cx, formatter(), Lsp::with_fake_clock);
     // Typed before the reply: its edits are dropped, with nothing shown.
+    // The fake holds the reply on the test's clock: the test sees the
+    // request, types, then releases the reply and waits for the format to
+    // finish.
+    let delay = Duration::from_millis(300);
     s.fake.set_reply(
         FORMATTING,
         Scripted {
             reply: Reply::Result(json!([edit(1, 1, 2, "ff")])),
-            delay: Duration::from_millis(300),
+            delay,
         },
     );
-    run(&mut s, "lsp.format_document");
+    let task = (s.workbench).update(&mut s.cx, |w, cx| w.format_buffer(&editor, cx));
+    s.until("the request", |s| !requests(s, FORMATTING).is_empty());
+    s.clock.wait_for_sleep(delay);
     s.cx.simulate_input("x");
     s.draw();
     let typed = format!("x{TABS}");
     assert_eq!(text(&s, &editor), typed);
-    s.until("the reply", |s| !requests(s, FORMATTING).is_empty());
-    std::thread::sleep(Duration::from_millis(500));
+    s.clock.advance(delay);
+    // The format finishes, its edits dropped: nothing changed, nothing shown.
+    assert_eq!(block(&mut s, task), Ok(FormatOutcome::Unchanged));
     s.draw();
     assert_eq!(text(&s, &editor), typed);
     assert_eq!(toasts(&s), Vec::<String>::new());

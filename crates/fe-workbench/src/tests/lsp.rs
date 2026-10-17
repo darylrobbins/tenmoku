@@ -239,20 +239,35 @@ impl Lsp {
     /// `rust` and `python`, installed as the host's launcher, and the
     /// manual clock.
     pub(crate) fn with_scripts(cx: &mut TestAppContext, rust: Script, python: Script) -> Self {
-        Self::with_first_window(cx, rust, python, false)
+        Self::with_first_window(cx, rust, python, false, false)
     }
 
-    /// As [`Self::with_scripts`], the first window rootless if `rootless`.
+    /// As [`Self::with_scripts`], with the fakes' reply delays measured on
+    /// [`Self::clock`], so a test releases a delayed reply by advancing it.
+    pub(crate) fn with_fake_clock(cx: &mut TestAppContext, rust: Script, python: Script) -> Self {
+        Self::with_first_window(cx, rust, python, false, true)
+    }
+
+    /// As [`Self::with_scripts`], the first window rootless if `rootless`
+    /// and the fakes on the manager's clock if `fake_clock`.
     fn with_first_window(
         cx: &mut TestAppContext,
         rust: Script,
         python: Script,
         rootless: bool,
+        fake_clock: bool,
     ) -> Self {
         // Server threads wake the workbench's event loop.
         cx.executor().allow_parking();
-        let (fake, python) = (FakeServer::new(rust), FakeServer::new(python));
         let clock = Arc::new(ManualClock::new());
+        let (fake, python) = if fake_clock {
+            (
+                FakeServer::with_clock(rust, clock.clone()),
+                FakeServer::with_clock(python, clock.clone()),
+            )
+        } else {
+            (FakeServer::new(rust), FakeServer::new(python))
+        };
         let missing = Arc::new(AtomicBool::new(false));
         let hold = Arc::new(Hold::default());
         let gone = Arc::new(AtomicBool::new(false));
@@ -307,7 +322,7 @@ impl Lsp {
     /// A rootless workbench, the app's first and only window, with the
     /// project's folder and the fakes ready for `another_rooted`.
     pub(crate) fn rootless(cx: &mut TestAppContext) -> Self {
-        Self::with_first_window(cx, Script::default(), Script::default(), true)
+        Self::with_first_window(cx, Script::default(), Script::default(), true, false)
     }
 
     /// The workbench, its root trusted.
@@ -452,16 +467,18 @@ impl Lsp {
             .map(|(_, text)| text.to_string())
     }
 
-    /// Draws until the status item reads `text`. Panics after 10 s.
+    /// Draws until the status item reads `text`. Panics after 60 s.
     pub(crate) fn wait_item(&mut self, text: Option<&str>) {
         self.until(&format!("the item to read {text:?}"), |lsp| {
             lsp.item().as_deref() == text
         });
     }
 
-    /// Draws until `done` holds. Panics after 10 s, naming `what`.
+    /// Draws until `done` holds. Panics after 60 s, naming `what`: a fake
+    /// server round trip can outlast 10 s on a loaded machine, and a real
+    /// hang still fails within the bound.
     pub(crate) fn until(&mut self, what: &str, done: impl Fn(&mut Self) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             self.draw();
             if done(self) {
