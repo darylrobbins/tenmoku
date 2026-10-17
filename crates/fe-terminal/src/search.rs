@@ -45,18 +45,33 @@ impl TerminalQuery {
     }
 
     /// The pattern alacritty compiles: `text`, escaped unless it's a regex,
-    /// with a case flag when `case_sensitive` is set.
+    /// with an explicit case flag (smart case when `case_sensitive` is unset).
     fn pattern(&self) -> String {
         let text = if self.regex {
             self.text.clone()
         } else {
             escape(&self.text)
         };
-        match self.case_sensitive {
-            None => text,
-            Some(true) => format!("(?-i){text}"),
-            Some(false) => format!("(?i){text}"),
+        let case_sensitive = self.case_sensitive.unwrap_or_else(|| self.has_uppercase());
+        if case_sensitive {
+            format!("(?-i){text}")
+        } else {
+            format!("(?i){text}")
         }
+    }
+
+    /// Whether smart case sees an uppercase letter. In a regex the character
+    /// after a `\` (`\S`, `\W`) is skipped, as vim's 'smartcase' skips it.
+    fn has_uppercase(&self) -> bool {
+        let mut chars = self.text.chars();
+        while let Some(c) = chars.next() {
+            if self.regex && c == '\\' {
+                chars.next();
+            } else if c.is_uppercase() {
+                return true;
+            }
+        }
+        false
     }
 }
 
