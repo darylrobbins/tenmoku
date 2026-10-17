@@ -466,3 +466,12 @@ fn edits_made_while_measuring() {
         assert_eq!(run(text, keys, Some((1..7, ""))).0, "z", "{keys}");
     }
 }
+
+#[test]
+fn a_paragraph_motion_that_runs_out_resets_the_goal_column() {
+    // `gu3}` from the last row fails without moving, and the goal column
+    // 4 that `j` kept goes, as nvim's does.
+    let mut vim = HeadlessVim::new("abcdef\nxy", (0, 4));
+    vim.feed("jgu3}k").unwrap();
+    assert_eq!(vim.cursor(), (0, 1));
+}

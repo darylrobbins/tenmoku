@@ -329,6 +329,8 @@ pub(crate) fn motion(
         | Motion::SearchPrevious
         | Motion::SearchWordForward
         | Motion::SearchWordBackward
+        | Motion::SearchPartialWordForward
+        | Motion::SearchPartialWordBackward
         | Motion::Mark(_) => return Err(goal),
         // A mark's position is clamped as a caret is.
         Motion::MarkAt { offset, exact } => {

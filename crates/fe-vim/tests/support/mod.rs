@@ -303,6 +303,11 @@ fn names_clipboard(keys: &[VimKey]) -> bool {
     let mut lines = Vec::new();
     let mut keys_left = keys.iter();
     while let Some(key) = keys_left.next() {
+        // A `*` right after `g` is `g*`, or follows the register `g`: never
+        // the clipboard's name.
+        if *key == VimKey::Char('*') && outside.last() == Some(&VimKey::Char('g')) {
+            continue;
+        }
         if *key != VimKey::Char(':') {
             outside.push(*key);
             continue;

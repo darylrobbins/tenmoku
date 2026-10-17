@@ -572,6 +572,8 @@ pub(crate) fn operate(
                 | Motion::SearchPrevious
                 | Motion::SearchWordForward
                 | Motion::SearchWordBackward
+                | Motion::SearchPartialWordForward
+                | Motion::SearchPartialWordBackward
         )
     );
     let mut dispatched = operate_over(target, actor, args)?;

@@ -271,13 +271,21 @@ pub(crate) fn resolve(
             };
             return Ok((Motion::Search(search), true));
         }
-        Motion::SearchWordForward => true,
-        Motion::SearchWordBackward => false,
+        Motion::SearchWordForward | Motion::SearchPartialWordForward => true,
+        Motion::SearchWordBackward | Motion::SearchPartialWordBackward => false,
         _ => return Ok((motion, false)),
     };
     let at = caret(target);
     let Some((_, pattern)) = search::word_at(target.model.text(), at, forward) else {
         return Err("E348: No string under cursor".to_string());
+    };
+    let pattern = if matches!(
+        motion,
+        Motion::SearchPartialWordForward | Motion::SearchPartialWordBackward
+    ) {
+        crate::partial_word::unbounded(pattern)
+    } else {
+        pattern
     };
     let search = Search {
         pattern: SearchPattern::new(&pattern),

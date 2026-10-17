@@ -260,7 +260,14 @@ pub(crate) fn operate(
         let moved = model.selections() != before;
         // A text object that isn't there sets the goal column afresh too,
         // as in nvim.
-        if moved || matches!(measured, Target::TextObject(_)) {
+        // So does a paragraph motion that ran out without moving.
+        let ran_out = matches!(
+            measured,
+            Target::Motion(Motion::ParagraphForward | Motion::ParagraphBackward)
+        ) && covered
+            .iter()
+            .any(|covered| matches!(covered.span, Span::Failed));
+        if moved || ran_out || matches!(measured, Target::TextObject(_)) {
             state.goals = None;
         }
         operator::keep_goals(model, state, &landed, &kept);

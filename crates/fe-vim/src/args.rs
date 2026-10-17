@@ -110,6 +110,9 @@ pub enum Motion {
     SearchPrevious,
     SearchWordForward,
     SearchWordBackward,
+    /// `g*` and `g#` (`partial_word.rs`): `*` and `#` without word boundaries.
+    SearchPartialWordForward,
+    SearchPartialWordBackward,
     Mark(MarkMotion),
     Jump(JumpMotion),
     /// A `mark` once resolved: the mark's offset in the text it was
@@ -312,6 +315,8 @@ impl Motion {
             | Self::SearchPrevious
             | Self::SearchWordForward
             | Self::SearchWordBackward
+            | Self::SearchPartialWordForward
+            | Self::SearchPartialWordBackward
             | Self::Unmatched { .. } => RangeClass::Exclusive,
             Self::WordEnd
             | Self::BigWordEnd
@@ -368,6 +373,8 @@ impl Motion {
                 | Self::SearchPrevious
                 | Self::SearchWordForward
                 | Self::SearchWordBackward
+                | Self::SearchPartialWordForward
+                | Self::SearchPartialWordBackward
                 | Self::Mark(_)
                 | Self::MarkAt { .. }
                 | Self::Jump(_)
@@ -476,6 +483,8 @@ impl Target {
                     | Motion::SearchPrevious
                     | Motion::SearchWordForward
                     | Motion::SearchWordBackward
+                    | Motion::SearchPartialWordForward
+                    | Motion::SearchPartialWordBackward
                     | Motion::Mark(MarkMotion { exact: true, .. })
                     | Motion::MarkAt { exact: true, .. }
                     | Motion::Jump(_)

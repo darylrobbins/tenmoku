@@ -746,6 +746,7 @@ mod macros;
 mod marks;
 mod motion;
 mod operator;
+mod partial_word;
 mod prose;
 mod quit_keys;
 mod reducer;
