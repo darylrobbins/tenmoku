@@ -3,7 +3,7 @@
 use std::{fs, io::ErrorKind, path::PathBuf};
 
 use fe_buffer::{Backup, BackupId, BackupMeta, BackupStore, Buffer, DiskStamp, LineEnding, Origin};
-use fe_text::Encoding;
+use fe_text::{Encoding, Text};
 
 fn user(buffer: &mut Buffer, range: std::ops::Range<usize>, text: &str) {
     buffer.edit([(range, text)], Origin::User);
@@ -302,7 +302,7 @@ fn restoring_over_the_disk_file_is_one_undoable_edit() {
     assert_eq!(restored.text().to_string(), "one\nTWO\nthree\nfour\n");
     assert!(restored.is_dirty());
     restored
-        .undo(|origin| *origin == Origin::Host("backup".into()))
+        .undo(|origin| *origin == Origin::User)
         .unwrap()
         .unwrap();
     assert_eq!(restored.text().to_string(), "one\ntwo\nthree\n");
@@ -321,12 +321,12 @@ fn restoring_over_the_disk_file_is_one_undoable_edit() {
     assert!(!restored.is_dirty());
 
     // A backup that saves just what the file holds is still a restore:
-    // dirty, with one undo to the file.
+    // dirty, with one undo of the user's to the file.
     let same = back_up(&store, &restored, Some(path.clone()));
     let mut restored = Buffer::from_backup(Some(fs::File::open(&path).unwrap()), &same).unwrap();
     assert_eq!(restored.text().to_string(), "one\ntwo\nthree\nand more\n");
     assert!(restored.is_dirty());
-    let undone = restored.undo(|_| true).unwrap();
+    let undone = restored.undo(|origin| *origin == Origin::User).unwrap();
     assert!(undone.is_some());
     assert!(!restored.is_dirty());
     assert_eq!(restored.redo(|_| true).unwrap(), undone);
@@ -366,10 +366,8 @@ fn restoring_the_same_text_in_another_save_format_is_dirty() {
         let restored_bytes = write(&restored);
         assert_ne!(restored_bytes, original);
 
-        // One undo: the file's text and save format, clean.
-        let undone = restored
-            .undo(|origin| *origin == Origin::Host("backup".into()))
-            .unwrap();
+        // One undo of the user's: the file's text and save format, clean.
+        let undone = restored.undo(|origin| *origin == Origin::User).unwrap();
         assert!(undone.is_some(), "{meta:?}");
         assert!(!restored.is_dirty(), "{meta:?}");
         assert_eq!(restored.encoding(), buffer.encoding());
@@ -380,6 +378,41 @@ fn restoring_the_same_text_in_another_save_format_is_dirty() {
         assert!(restored.is_dirty(), "{meta:?}");
         assert_eq!(write(&restored), restored_bytes);
     }
+}
+
+/// A backup of text read with malformed bytes restores that flag, so a
+/// save still refuses to write U+FFFD back; the user's undo returns to the
+/// file's, and redo to the backup's.
+#[test]
+fn restoring_keeps_the_replaced_flag() {
+    let files = tempfile::tempdir().unwrap();
+    let store = BackupStore::new(files.path().join("backups"));
+    let path = files.path().join("f.txt");
+    fs::write(&path, "plain\n").unwrap();
+    let buffer = Buffer::from_file(fs::File::open(&path).unwrap()).unwrap();
+    let replaced = |buffer: &Buffer| BackupMeta::for_buffer(buffer, None, "f.txt").replaced;
+    assert!(!replaced(&buffer));
+    let mut meta = BackupMeta::for_buffer(&buffer, Some(path.clone()), "f.txt");
+    meta.replaced = true;
+    let id = BackupId::new();
+    store
+        .write(id, &meta, &Text::new("pla\u{fffd}n\n"))
+        .unwrap();
+    let backup = store.read(id).unwrap();
+
+    let mut restored = Buffer::from_backup(Some(fs::File::open(&path).unwrap()), &backup).unwrap();
+    assert!(replaced(&restored));
+    restored
+        .undo(|origin| *origin == Origin::User)
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.text().to_string(), "plain\n");
+    assert!(!replaced(&restored));
+    restored
+        .redo(|origin| *origin == Origin::User)
+        .unwrap()
+        .unwrap();
+    assert!(replaced(&restored));
 }
 
 #[test]

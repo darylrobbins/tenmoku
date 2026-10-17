@@ -6,24 +6,29 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     io,
     path::{Path, PathBuf},
     rc::Rc,
-    time::Duration,
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime},
 };
 
-use fe_buffer::{Bias, Buffer, BufferId};
+use fe_buffer::{Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, Version};
 use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved};
 
 use fe_command::{Invocation, Value};
+use fe_text::Text;
 use fe_vim::VimState;
 use futures::{FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, Global, Hsla,
-    PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window,
+    PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, WindowId,
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
@@ -652,8 +657,17 @@ impl PaneItem for EditorView {
     /// it, Cancel keeps it and is the default, with Return and Escape (see
     /// [`DISCARD_BUTTONS`]). A clean one closes. The shell doesn't ask while
     /// another editor shows its buffer.
+    ///
+    /// While the app quits ([`kiln_shell::layout::quitting`]), a dirty
+    /// editor whose buffer is backed up ([`back_up_to_close`]) closes
+    /// without asking: the next launch restores it. A host's quit can ask
+    /// that of its own close transaction alone, through
+    /// [`back_up_to_close`].
     fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> CloseAnswer {
         if !self.is_dirty(cx) {
+            return CloseAnswer::Close;
+        }
+        if kiln_shell::layout::quitting(cx) && back_up_to_close(self, cx) {
             return CloseAnswer::Close;
         }
         let question = format!(
@@ -709,49 +723,89 @@ impl PaneItem for EditorView {
         Some(cx.new(|cx| EditorView::new(model, theme, cx)))
     }
 
-    /// Its file's path and its caret, the primary selection's head. An
-    /// untitled buffer, or one at a path that isn't UTF-8, isn't saved.
-    fn serialize(&self, _: &App) -> Option<Value> {
-        let path = self.model.path()?.to_str()?;
-        let caret = self.model.primary_selection().head();
-        Some(Value::from_iter([
-            ("path", Value::from(path)),
-            ("caret", Value::from(caret)),
-        ]))
+    /// Its file's path, or for an untitled buffer its title, and its
+    /// caret, the primary selection's head; and with unsaved changes the id
+    /// of the buffer's backup ([`set_buffer_backup`]), as `backup`. An
+    /// untitled buffer without one, or a file at a path that isn't UTF-8,
+    /// isn't saved.
+    fn serialize(&self, cx: &App) -> Option<Value> {
+        let backup = (self.model.is_dirty())
+            .then(|| buffer_backup(self.model.buffer().id(), cx))
+            .flatten();
+        let mut state = Vec::new();
+        match self.model.path() {
+            Some(path) => state.push(("path", Value::from(path.to_str()?))),
+            None => {
+                backup.as_ref()?;
+                state.push(("title", Value::from(self.tab_title(cx).as_ref())));
+            }
+        }
+        state.push(("caret", Value::from(self.model.primary_selection().head())));
+        if let Some(backup) = backup {
+            state.push(("backup", Value::from(backup.id().to_string())));
+        }
+        Some(Value::from_iter(state))
     }
 
-    /// Reads `state`'s file off the main thread and opens it, in the
-    /// theme and settings of [`set_restore_style`], its caret placed,
-    /// clamped to the text. A file that's gone, or can't be read, isn't
+    /// Reads `state`'s backup, if it names one in the window's store
+    /// ([`set_window_backups`]) that no live editor owns and that reads,
+    /// restored over its file ([`restore_backup`]), else `state`'s file, off
+    /// the main thread, and opens it, in the theme and settings of
+    /// [`set_restore_style`], its caret placed, clamped to the text. A
+    /// restored backup stays the buffer's, owned ([`BufferBackup::claim`]).
+    /// A file that's gone, or can't be read, without a backup, isn't
     /// restored.
-    fn restore(state: Value, _: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
-        let Some(path) = state.get("path").and_then(Value::as_str).map(PathBuf::from) else {
+    fn restore(state: Value, window: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+        let path = state.get("path").and_then(Value::as_str).map(PathBuf::from);
+        let backup = (state.get("backup").and_then(Value::as_str))
+            .and_then(|id| id.parse::<BackupId>().ok());
+        if path.is_none() && backup.is_none() {
             return Task::ready(None);
-        };
-        let read = cx.background_spawn({
-            let path = path.clone();
-            async move {
-                let file = std::fs::File::open(&path)?;
-                // Stamped, so a save refuses a file changed since.
-                Buffer::from_file(file)
-            }
-        });
+        }
+        let window = window.window_handle().window_id();
         cx.spawn(async move |cx| {
-            let buffer = match read.await {
-                Ok(buffer) => buffer,
+            // Looked up once the window's host is built: it gives the
+            // window its store after restoring its layout.
+            let store = backup.and_then(|_| cx.update(|cx| window_backups(window, cx)));
+            let read = cx.background_spawn({
+                let path = path.clone();
+                async move {
+                    if let (Some(store), Some(id)) = (store, backup) {
+                        let read = BufferBackup::claim(store, id).and_then(|backup| {
+                            let backup = backup.ok_or_else(|| io::Error::other("it's in use"))?;
+                            let (buffer, path) = restore_backup(&backup.read()?)?;
+                            Ok((buffer, path, Some(backup)))
+                        });
+                        match read {
+                            Ok(read) => return Ok(read),
+                            Err(error) => log::info!("not restoring backup {id}: {error}"),
+                        }
+                    }
+                    let path = path.ok_or_else(|| io::Error::other("no file and no backup"))?;
+                    let file = std::fs::File::open(&path)?;
+                    // Stamped, so a save refuses a file changed since.
+                    Ok::<_, io::Error>((Buffer::from_file(file)?, Some(path), None))
+                }
+            });
+            let (buffer, path, backup) = match read.await {
+                Ok(read) => read,
                 Err(error) => {
-                    log::info!("not restoring {}: {error}", path.display());
+                    let name = path.as_deref().unwrap_or(Path::new("untitled"));
+                    log::info!("not restoring {}: {error}", name.display());
                     return None;
                 }
             };
             cx.update(|cx| {
                 let (theme, settings) = restore_style(cx);
-                let mut model = EditorModel::new(buffer, Some(path));
+                let mut model = EditorModel::new(buffer, path);
                 model.set_tab_size(settings.tab_size);
                 model.set_soft_wrap(settings.soft_wrap);
                 model.set_auto_close(settings.auto_close_pairs);
                 let view = cx.new(|cx| EditorView::new(model, theme, cx));
                 view.update(cx, |view, cx| place_caret(view, &state, cx));
+                if let Some(backup) = backup {
+                    adopt_backup(&view, backup, cx);
+                }
                 Some(view)
             })
         })
@@ -792,6 +846,439 @@ pub(crate) fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
         Some(RestoreStyle(theme, settings)) => (theme.clone(), settings.clone()),
         None => (EditorTheme::default_dark(cx), EditorSettings::default()),
     }
+}
+
+/// Hot exit's part in the editor: each window's backup store, which its
+/// restored editors read their backups from ([`set_window_backups`]), and
+/// each buffer's backup ([`set_buffer_backup`]), which a dirty editor's
+/// saved state names and which it writes to close as the app quits
+/// ([`back_up_to_close`]). When to write and remove backups is the host's.
+#[derive(Default)]
+struct Backups {
+    windows: HashMap<WindowId, BackupStore>,
+    buffers: HashMap<BufferId, BufferBackup>,
+}
+
+impl Global for Backups {}
+
+/// Has the editors restored in `window` read their backups from `store`,
+/// or from none.
+pub fn set_window_backups(window: WindowId, store: Option<BackupStore>, cx: &mut App) {
+    let windows = &mut cx.default_global::<Backups>().windows;
+    match store {
+        Some(store) => windows.insert(window, store),
+        None => windows.remove(&window),
+    };
+}
+
+/// Where `window`'s backups are kept, if it has a store.
+pub fn window_backups(window: WindowId, cx: &App) -> Option<BackupStore> {
+    cx.try_global::<Backups>()?.windows.get(&window).cloned()
+}
+
+/// Gives `buffer` its backup, or takes it away.
+pub fn set_buffer_backup(buffer: BufferId, backup: Option<BufferBackup>, cx: &mut App) {
+    let buffers = &mut cx.default_global::<Backups>().buffers;
+    match backup {
+        Some(backup) => buffers.insert(buffer, backup),
+        None => buffers.remove(&buffer),
+    };
+}
+
+/// `buffer`'s backup, if it has one.
+pub fn buffer_backup(buffer: BufferId, cx: &App) -> Option<BufferBackup> {
+    cx.try_global::<Backups>()?.buffers.get(&buffer).cloned()
+}
+
+/// Gives `editor`'s buffer `backup`, read into it just now
+/// ([`BufferBackup::read`]): it holds the buffer as it is.
+pub fn adopt_backup(editor: &Entity<EditorView>, backup: BufferBackup, cx: &mut App) {
+    let editor = editor.read(cx);
+    backup.landed().holds = Some(BackupRevision::of(editor));
+    let buffer = editor.model.buffer().id();
+    set_buffer_backup(buffer, Some(backup), cx);
+}
+
+/// Whether `editor`'s unsaved changes are in its buffer's backup, written
+/// now if it's behind them: so it may close, as the app quits, without
+/// asking. `false` without a backup, or if it can't be written.
+pub fn back_up_to_close(editor: &EditorView, cx: &App) -> bool {
+    let Some(backup) = buffer_backup(editor.model.buffer().id(), cx) else {
+        return false;
+    };
+    if backup.holds(&BackupRevision::of(editor)) {
+        return true;
+    }
+    match backup.write_job(editor).run() {
+        Ok(()) => true,
+        Err(error) => {
+            let name = file_name(editor.model.path());
+            log::error!("can't back up {name}, so asking: {error}");
+            false
+        }
+    }
+}
+
+/// What a backup of a buffer restores: its text's version, and what it
+/// saves as and where, and the file as the buffer last read or saved it. A
+/// backup behind any of it is written again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackupRevision {
+    version: Version,
+    path: Option<PathBuf>,
+    line_ending: fe_buffer::LineEnding,
+    encoding: fe_text::FileEncoding,
+    disk_stamp: Option<fe_buffer::DiskStamp>,
+}
+
+impl BackupRevision {
+    /// `editor`'s buffer's, as it is now.
+    pub fn of(editor: &EditorView) -> Self {
+        let buffer = editor.model.buffer();
+        Self {
+            version: buffer.version(),
+            path: editor.model.path().map(Path::to_owned),
+            line_ending: buffer.line_ending(),
+            encoding: buffer.encoding(),
+            disk_stamp: buffer.disk_stamp(),
+        }
+    }
+}
+
+/// The top bit of a backup id's process id, which no process id has: set,
+/// it names a buffer's second backup slot ([`twin`]).
+const TWIN_BIT: u32 = 1 << 31;
+
+/// The id of the second slot of the backup `id` (see [`BufferBackup`]):
+/// `id` with the top bit of its process id set.
+pub fn twin(id: BackupId) -> BackupId {
+    with_pid(id, |pid| pid | TWIN_BIT)
+}
+
+/// The backup a slot's id belongs to: the id itself, or the one it's the
+/// [`twin`] of.
+pub fn primary(id: BackupId) -> BackupId {
+    with_pid(id, |pid| pid & !TWIN_BIT)
+}
+
+/// `id` with its process id, the middle of its name, mapped by `map`.
+fn with_pid(id: BackupId, map: impl Fn(u32) -> u32) -> BackupId {
+    let name = id.to_string();
+    let mut parts = name.splitn(3, '-');
+    let (Some(millis), Some(pid), Some(counter)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return id;
+    };
+    let Ok(pid) = pid.parse::<u32>() else {
+        return id;
+    };
+    format!("{millis}-{}-{counter}", map(pid))
+        .parse()
+        .unwrap_or(id)
+}
+
+/// A buffer's backup: its store and id, and what was last written or
+/// removed of it. Writes and removals ([`BackupJob`]) each take a turn as
+/// they're made, and run under a lock, skipping any made before one that
+/// has run: so one runs at a time, and they land in the order they were
+/// made, whatever thread runs them.
+///
+/// It's kept in two slots, the id and its [`twin`], and each write goes to
+/// the slot that doesn't hold the newest backup: as a store's write first
+/// uncommits what it replaces, a crash part-way through one leaves the
+/// other, a write older. A read takes the newer of the two that read
+/// ([`read_newest`]).
+///
+/// While its backup is on disk, the editor that keeps it owns it: it holds
+/// an exclusive lock on `<id>.owner` beside it, which the OS drops if the
+/// process dies. A launch reopens only backups no one owns
+/// ([`BufferBackup::claim`]). Owner files are made, locked and removed only
+/// under the store's `owners.lock`, so one is never removed between being
+/// opened and locked, nor locked once removed.
+#[derive(Clone, Debug)]
+pub struct BufferBackup {
+    store: BackupStore,
+    id: BackupId,
+    /// Held while a job runs, with the owner lock, if taken.
+    running: Arc<Mutex<Option<std::fs::File>>>,
+    /// Held only to read or note what landed, so the main thread never
+    /// waits on a write.
+    landed: Arc<Mutex<Landed>>,
+}
+
+#[derive(Debug, Default)]
+struct Landed {
+    turn: u64,
+    /// What the backup holds; `None` while it's removed, or being written.
+    holds: Option<BackupRevision>,
+    /// The slot holding the newest backup, if either does, and when its
+    /// meta says it was written.
+    newest: Option<(BackupId, SystemTime)>,
+}
+
+static NEXT_TURN: AtomicU64 = AtomicU64::new(1);
+
+impl BufferBackup {
+    /// A backup `id` in `store`, not yet written, nor owned until it is.
+    pub fn new(store: BackupStore, id: BackupId) -> Self {
+        Self {
+            store,
+            id: primary(id),
+            running: Arc::default(),
+            landed: Arc::default(),
+        }
+    }
+
+    /// The backup `id` in `store`, owned: `None` if a live editor, in this
+    /// process or another, owns it.
+    pub fn claim(store: BackupStore, id: BackupId) -> io::Result<Option<Self>> {
+        let backup = Self::new(store, id);
+        let Some(owner) = backup.try_own()? else {
+            return Ok(None);
+        };
+        *backup.running() = Some(owner);
+        Ok(Some(backup))
+    }
+
+    /// The id it's named by; its slots are this and its [`twin`].
+    pub fn id(&self) -> BackupId {
+        self.id
+    }
+
+    pub fn store(&self) -> &BackupStore {
+        &self.store
+    }
+
+    /// Reads the newer of its slots that read ([`read_newest`]), noting
+    /// it as the newest.
+    pub fn read(&self) -> io::Result<Backup> {
+        let backup = read_newest(&self.store, self.id)?;
+        self.landed().newest = Some((backup.id, backup.meta.written));
+        Ok(backup)
+    }
+
+    /// Whether the backup holds `revision` of its buffer.
+    pub fn holds(&self, revision: &BackupRevision) -> bool {
+        self.landed().holds.as_ref() == Some(revision)
+    }
+
+    /// A write of `editor`'s buffer as it is now.
+    pub fn write_job(&self, editor: &EditorView) -> BackupJob {
+        let buffer = editor.model.buffer();
+        let path = editor.model.path().map(Path::to_owned);
+        let title = file_name(path.as_deref());
+        let meta = BackupMeta::for_buffer(&buffer, path, title);
+        let text = buffer.text().clone();
+        drop(buffer);
+        self.job(Some((meta, text, BackupRevision::of(editor))))
+    }
+
+    /// A removal of both slots, and of the owner lock.
+    pub fn remove_job(&self) -> BackupJob {
+        self.job(None)
+    }
+
+    fn job(&self, write: Option<(BackupMeta, Text, BackupRevision)>) -> BackupJob {
+        BackupJob {
+            backup: self.clone(),
+            turn: NEXT_TURN.fetch_add(1, Ordering::Relaxed),
+            write,
+        }
+    }
+
+    fn landed(&self) -> std::sync::MutexGuard<'_, Landed> {
+        self.landed.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn running(&self) -> std::sync::MutexGuard<'_, Option<std::fs::File>> {
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The owner lock, taken: `None` if someone holds it.
+    fn try_own(&self) -> io::Result<Option<std::fs::File>> {
+        let owner = owner_file(&self.store, self.id);
+        with_owners(&self.store, || try_lock(&owner))
+    }
+}
+
+/// The newer of the two slots of the backup `id` in `store` (see
+/// [`BufferBackup`]) that read: the later `written`, which each write keeps
+/// past the slot before it, whatever the clock says. If neither reads, the
+/// error is [`io::ErrorKind::InvalidData`] only if each slot is corrupt or
+/// missing, and not both missing: a slot that failed otherwise (it can't be
+/// opened, say) may yet read, so the backup isn't given up as corrupt.
+pub fn read_newest(store: &BackupStore, id: BackupId) -> io::Result<Backup> {
+    let mut newest: Option<Backup> = None;
+    let mut failed: Vec<io::Error> = Vec::new();
+    for slot in [primary(id), twin(id)] {
+        match store.read(slot) {
+            Ok(backup) => {
+                if (newest.as_ref()).is_none_or(|newest| backup.meta.written > newest.meta.written)
+                {
+                    newest = Some(backup);
+                }
+            }
+            Err(error) => failed.push(error),
+        }
+    }
+    if let Some(backup) = newest {
+        return Ok(backup);
+    }
+    let kind = |kind| move |error: &io::Error| error.kind() == kind;
+    let recoverable = failed.iter().position(|error| {
+        !kind(io::ErrorKind::InvalidData)(error) && !kind(io::ErrorKind::NotFound)(error)
+    });
+    let pick = recoverable
+        .or_else(|| failed.iter().position(kind(io::ErrorKind::InvalidData)))
+        .unwrap_or(0);
+    Err(failed.swap_remove(pick))
+}
+
+/// `<id>.owner` in `store`: see [`BufferBackup`].
+fn owner_file(store: &BackupStore, id: BackupId) -> PathBuf {
+    store.dir().join(format!("{id}.owner"))
+}
+
+/// Runs `f` holding `store`'s `owners.lock` exclusively, making the store's
+/// directory, owner-only, if need be.
+fn with_owners<T>(store: &BackupStore, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let mut dir = std::fs::DirBuilder::new();
+    dir.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut dir, 0o700);
+    dir.create(store.dir())?;
+    let lock = private_file(&store.dir().join("owners.lock"))?;
+    lock.lock()?;
+    f()
+}
+
+/// The file at `path`, opened to read and write, created owner-only if
+/// need be.
+fn private_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)
+}
+
+/// The file at `path` locked exclusively: `None` if someone holds the lock.
+fn try_lock(path: &Path) -> io::Result<Option<std::fs::File>> {
+    let file = private_file(path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error),
+    }
+}
+
+/// Removes `store`'s owner files whose backup isn't among `ids` (slots of
+/// either kind) and that no one holds.
+pub fn prune_owners(store: &BackupStore, ids: &[BackupId]) -> io::Result<()> {
+    let live: HashSet<BackupId> = ids.iter().copied().map(primary).collect();
+    with_owners(store, || {
+        for entry in std::fs::read_dir(store.dir())?.flatten() {
+            let name = entry.file_name();
+            let Some(id) = (name.to_str())
+                .and_then(|name| name.strip_suffix(".owner"))
+                .and_then(|id| id.parse::<BackupId>().ok())
+            else {
+                continue;
+            };
+            if !live.contains(&id)
+                && let Some(_held) = try_lock(&entry.path())?
+            {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// A write or removal of a [`BufferBackup`], made on the main thread, to
+/// run on any.
+pub struct BackupJob {
+    backup: BufferBackup,
+    turn: u64,
+    /// What to write, or `None` to remove the backup.
+    write: Option<(BackupMeta, Text, BackupRevision)>,
+}
+
+impl BackupJob {
+    /// Writes or removes the backup, unless a job made after this one has
+    /// run. A write owns the backup first, then writes the slot that
+    /// doesn't hold the newest; a removal removes both, then lets the
+    /// backup go.
+    pub fn run(self) -> io::Result<()> {
+        let backup = &self.backup;
+        let mut owner = backup.running();
+        let newest = {
+            let mut landed = backup.landed();
+            if landed.turn > self.turn {
+                return Ok(());
+            }
+            landed.turn = self.turn;
+            landed.holds = None;
+            landed.newest
+        };
+        match self.write {
+            Some((mut meta, text, revision)) => {
+                if owner.is_none() {
+                    *owner = backup.try_own()?;
+                }
+                if owner.is_none() {
+                    return Err(io::Error::other(format!(
+                        "backup {} is another editor's",
+                        backup.id
+                    )));
+                }
+                let slot = match newest {
+                    Some((newest, _)) if newest == backup.id => twin(backup.id),
+                    _ => backup.id,
+                };
+                // Past the newest slot's, so a read takes this one even if
+                // the clock has gone back.
+                if let Some((_, written)) = newest {
+                    meta.written = meta.written.max(written + Duration::from_nanos(1));
+                }
+                backup.store.write(slot, &meta, &text)?;
+                let mut landed = backup.landed();
+                landed.holds = Some(revision);
+                landed.newest = Some((slot, meta.written));
+            }
+            None => {
+                for slot in [backup.id, twin(backup.id)] {
+                    backup.store.remove(slot)?;
+                }
+                backup.landed().newest = None;
+                if owner.is_some() {
+                    let path = owner_file(&backup.store, backup.id);
+                    with_owners(&backup.store, || {
+                        let removed = std::fs::remove_file(&path);
+                        // Let go only once it's gone.
+                        drop(owner.take());
+                        removed
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Restores `backup` over its file as the file is now, or over nothing
+/// for an untitled buffer or a file that's gone ([`Buffer::from_backup`]):
+/// the buffer, dirty, one undo of the user's from the file's text and save
+/// format, and the backup's path.
+pub fn restore_backup(backup: &Backup) -> io::Result<(Buffer, Option<PathBuf>)> {
+    let path = backup.meta.path.clone();
+    let disk = match path.as_deref().map(std::fs::File::open) {
+        Some(Ok(file)) => Some(file),
+        Some(Err(error)) if error.kind() == io::ErrorKind::NotFound => None,
+        Some(Err(error)) => return Err(error),
+        None => None,
+    };
+    Ok((Buffer::from_backup(disk, backup)?, path))
 }
 
 /// `editor`'s items: see [`status`].

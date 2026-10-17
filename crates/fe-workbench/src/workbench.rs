@@ -298,6 +298,8 @@ pub struct Workbench {
     /// Saves the layout at quit, and keeps or deletes it as the window
     /// closes.
     _layout_hooks: Vec<Subscription>,
+    /// The open buffers' backups, once the window has a layout.
+    hot_exit: hot_exit::HotExit,
     /// Keeps the open buffers in step with their files on disk.
     pub(crate) disk_sync: DiskSync,
     /// An editor a problem opened in, left in vim's insert or replace mode,
@@ -552,6 +554,7 @@ impl Workbench {
             restoring: false,
             bounds: None,
             _layout_hooks: Vec::new(),
+            hot_exit: Default::default(),
             disk_sync: DiskSync::new(window, cx),
             problem_landing: None,
             owned_editors: Vec::new(),
@@ -1758,6 +1761,7 @@ impl Workbench {
         self.git.update(cx, |git, cx| git.track(&editors, cx));
         self.tint_tabs(cx);
         self.sync_problems(cx);
+        self.sync_backups(cx);
     }
 
     /// Tints each open editor's tab title in its file's status colour from
@@ -1806,6 +1810,7 @@ impl Workbench {
     fn editor_changed(&mut self, editor: Entity<EditorView>, cx: &mut Context<Self>) {
         // A diagnostic arriving or clearing notifies, as an edit does.
         self.sync_problems(cx);
+        self.sync_backups(cx);
         if self.echoes.remove(&editor.entity_id()) {
             return;
         }
@@ -1830,23 +1835,15 @@ impl Workbench {
 
     /// Saves the window's layout from now on, in `layout`, as it changes
     /// (a split, a close, a move, a dock toggle, a tab opening or
-    /// closing, a divider's drag), and in full as the app quits. As the
+    /// closing, a divider's drag, a buffer's backup written or removed),
+    /// and in full as the app quits, once its buffers are backed up. As the
     /// window closes, its entry is kept if it's the last window, else
-    /// deleted ([`kiln_shell::layout`]).
+    /// deleted ([`kiln_shell::layout`]). Its unsaved buffers are backed up
+    /// beside it from now on, for hot exit ([`hot_exit`]).
     pub fn set_layout(&mut self, layout: WindowLayout, window: &Window, cx: &mut Context<Self>) {
+        self.start_hot_exit(layout.store(), window, cx);
         self.layout = Some(layout);
-        let at_quit = cx.on_app_quit(|workbench, cx| {
-            let entry = workbench.layout_entry(cx);
-            let saved = workbench
-                .layout
-                .as_mut()
-                .map(|layout| layout.save_at_quit(entry, cx));
-            async move {
-                if let Some(saved) = saved {
-                    saved.await;
-                }
-            }
-        });
+        let at_quit = cx.on_app_quit(|workbench, cx| workbench.save_layout_at_quit(cx));
         // The window closes, or the workbench goes: whichever is first.
         let ours = window.window_handle().window_id();
         let workbench = cx.weak_entity();
@@ -1861,14 +1858,31 @@ impl Workbench {
         self._layout_hooks = vec![at_quit, closed, released];
     }
 
+    /// Saves the layout as the app quits, once every buffer's backup is
+    /// written, and resolves once it's written.
+    pub(crate) fn save_layout_at_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        self.flush_backups(cx);
+        let entry = self.layout_entry(cx);
+        let saved = (self.layout.as_mut()).map(|layout| layout.save_at_quit(entry, cx));
+        async move {
+            if let Some(saved) = saved {
+                saved.await;
+            }
+        }
+    }
+
     /// The window has closed: its entry is kept if no other window is open,
-    /// else deleted.
+    /// else deleted, and its backups go unless the app is quitting.
     fn close_layout(&mut self, cx: &mut App) {
         if let Some(layout) = self.layout.take() {
             let entry = self.layout_entry(cx);
             let others_open = !cx.windows().is_empty();
             layout.close(entry, others_open, cx);
         }
+        self.end_hot_exit(cx);
     }
 
     /// The window's layout id, once it has a layout.
@@ -1973,6 +1987,7 @@ impl Workbench {
                     };
                     workbench.activate(active, window, cx);
                     workbench.track_editors(cx);
+                    workbench.adopt_orphans(cx);
                 })
                 .ok();
         })
@@ -1985,12 +2000,22 @@ impl Workbench {
     /// restored.
     fn save_layout(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.bounds = Some(window.window_bounds());
+        self.write_layout(false, cx);
+    }
+
+    /// Saves the layout, with `full` or if the backups it names changed,
+    /// else if its shape changed, unless it's still being restored.
+    fn write_layout(&mut self, full: bool, cx: &mut Context<Self>) {
         if self.layout.is_none() || self.restoring {
             return;
         }
         let entry = self.layout_entry(cx);
+        let full = self.backups_changed(&entry) || full;
         if let Some(layout) = self.layout.as_mut() {
-            layout.save_if_changed(entry, cx);
+            match full {
+                true => layout.save(entry, cx),
+                false => layout.save_if_changed(entry, cx),
+            }
         }
     }
 
@@ -2776,6 +2801,9 @@ mod external_drop;
 
 #[path = "recent_picker.rs"]
 mod recent_picker;
+
+#[path = "hot_exit.rs"]
+mod hot_exit;
 
 // Nothing shows a toast yet: the next card routes messages to it.
 #[cfg_attr(

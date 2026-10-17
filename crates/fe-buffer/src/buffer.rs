@@ -368,12 +368,13 @@ impl Buffer {
     /// was untitled or the file is gone.
     ///
     /// The file's text, or no text, is the saved base, and the backup's
-    /// text is applied over it as one transaction of
-    /// `Origin::Host("backup")`, empty when the texts are equal. The buffer
-    /// saves in the backup's encoding, BOM and line ending, and is dirty
-    /// while the transaction is applied, until a save, even when the backup
-    /// saves just what the file holds. Undoing it returns to the file's text
-    /// and save format, clean; redoing it restores the backup's. A backup
+    /// text is applied over it as one transaction of [`Origin::User`], so
+    /// the user's first undo takes it back, empty when the texts are equal.
+    /// The buffer saves in the backup's encoding, BOM and line ending, and
+    /// is dirty while the transaction is applied, until a save, even when
+    /// the backup saves just what the file holds. Undoing it returns to the
+    /// file's text and save format, clean; redoing it restores the
+    /// backup's. A backup
     /// of a file keeps the [`DiskStamp`] the buffer had when it was taken,
     /// so if the file changed on disk since, a save is refused as any stale
     /// save is.
@@ -382,7 +383,7 @@ impl Buffer {
             Some(file) => Self::from_file(file)?,
             None => Self::new(""),
         };
-        let origin = Origin::Host("backup".into());
+        let origin = Origin::User;
         let (old, new) = differing_ranges(&buffer.snapshot.text, &backup.text);
         let transaction = if old.is_empty() && new.is_empty() {
             buffer.record_empty(origin)
