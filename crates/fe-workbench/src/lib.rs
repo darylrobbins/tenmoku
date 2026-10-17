@@ -110,7 +110,6 @@ pub fn init(cx: &mut App) {
     nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
-    pane_group::init(cx);
     pane_toolbar::init(cx);
     project_panel::init(cx);
     references_panel::init(cx);
@@ -145,7 +144,6 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
         Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),
-        Box::new(pane_group::registry()),
         Box::new(pane_toolbar::registry()),
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
@@ -170,7 +168,6 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(nav::registry().commands().cloned());
     list.extend(open::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());
-    list.extend(pane_group::registry().commands().cloned());
     list.extend(pane_toolbar::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());

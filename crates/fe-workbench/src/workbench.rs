@@ -44,7 +44,7 @@ use crate::{
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
-    pane_group::{self, Destination, Direction, PaneOp, RESIZE_STEP},
+    pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     persist,
     picker::{self, Toggle},
@@ -1591,38 +1591,47 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Does a pane command.
-    fn run_pane_op(&mut self, op: PaneOp, window: &mut Window, cx: &mut Context<Self>) {
-        match op {
-            PaneOp::Split(direction) => self.split(direction, window, cx),
-            PaneOp::Focus(direction) => {
-                if let Some(pane) = self.pane_group(cx).neighbour(&self.active, direction, cx) {
-                    self.activate(pane, window, cx);
-                }
-            }
-            PaneOp::MoveTab(direction) => self.move_tab(direction, window, cx),
-            PaneOp::Close => self.close_active_pane(window, cx),
-            PaneOp::Resize(axis, grow) => {
-                let delta = if grow { RESIZE_STEP } else { -RESIZE_STEP };
-                let active = self.active.clone();
-                self.workspace.update(cx, |workspace, cx| {
-                    if workspace.group_mut().resize(&active, axis, delta) {
-                        cx.notify();
-                    }
-                });
-            }
-            PaneOp::Equalize => {
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.group_mut().equalize();
-                    cx.notify();
-                });
-            }
-            PaneOp::FocusNext(forward) => {
-                if let Some(pane) = self.pane_group(cx).next(&self.active, forward) {
-                    self.activate(pane, window, cx);
-                }
-            }
+    /// Activates the pane in `direction` of the active one, if there's one.
+    pub(crate) fn focus_pane(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self.pane_group(cx).neighbour(&self.active, direction, cx) {
+            self.activate(pane, window, cx);
         }
+    }
+
+    /// Activates the next (or previous) pane, wrapping.
+    pub(crate) fn focus_next_pane(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self.pane_group(cx).next(&self.active, forward) {
+            self.activate(pane, window, cx);
+        }
+    }
+
+    /// Grows or shrinks the active pane by [`RESIZE_STEP`] along `axis`.
+    pub(crate) fn resize_active_pane(&mut self, axis: Axis, grow: bool, cx: &mut Context<Self>) {
+        let delta = if grow { RESIZE_STEP } else { -RESIZE_STEP };
+        let active = self.active.clone();
+        self.workspace.update(cx, |workspace, cx| {
+            if workspace.group_mut().resize(&active, axis, delta) {
+                cx.notify();
+            }
+        });
+    }
+
+    /// Evens out every axis's panes.
+    pub(crate) fn equalize_panes(&mut self, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.group_mut().equalize();
+            cx.notify();
+        });
     }
 
     /// `dock.grow` or `dock.shrink`: resizes the terminal's dock while the
@@ -1691,7 +1700,12 @@ impl Workbench {
     /// Opens a pane in `direction` of the active one and activates it. If
     /// the active pane shows a tab, the new pane gets one for the same file,
     /// sharing its buffer.
-    fn split(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn split(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let new =
             (self.workspace).update(cx, |workspace, cx| workspace.split(direction, window, cx));
         self.activate(new, window, cx);
@@ -1702,7 +1716,12 @@ impl Workbench {
     /// that way if there's none ([`Workspace::move_tab`]), then activates
     /// the pane it went to; the workspace closes the active pane if that
     /// emptied it.
-    fn move_tab(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn move_tab(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let source = self.active.clone();
         let pane = source.read(cx);
         let Some(ix) = pane.active() else {
@@ -1737,7 +1756,7 @@ impl Workbench {
     /// tabs agree ([`kiln_shell::close`]): each is asked unless another
     /// pane shows its file, and a dirty one asks whether to discard its
     /// changes.
-    fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pane_group(cx).panes().len() < 2 {
             return;
         }
@@ -2479,16 +2498,17 @@ impl Workbench {
         self.reload_auto_save(&event.settings.editor, cx);
     }
 
-    /// Runs a typed command (the `workbench.*` tab commands) as its action,
-    /// or a pane command, a palette toggle, a status bar command or a dock
+    /// Runs a typed command (the `workbench.*` tab commands and the
+    /// `pane.*` commands) as its action, or a palette toggle, a status bar command or a dock
     /// command; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(test)]
-        self.commands_run.push(run.0.clone());
-        // A typed command, as its action: the tab commands.
+        // A typed command, as its action, whose handler notes it ran: the
+        // tab and pane commands.
         if kiln::commands::dispatch_typed(run, window, cx) {
             return;
         }
+        #[cfg(test)]
+        self.commands_run.push(run.0.clone());
         if let Some(op) = open::op(run, cx) {
             return self.prompt_open(op, window, cx);
         }
@@ -2523,9 +2543,6 @@ impl Workbench {
         }
         if let Some(command) = git_commands::op(run, cx) {
             return self.run_git_command(command, window, cx);
-        }
-        if let Some(op) = pane_group::op(run, cx) {
-            return self.run_pane_op(op, window, cx);
         }
         if let Some(op) = dock_layout::op(run, cx) {
             return self.run_dock_layout_op(op, window, cx);
