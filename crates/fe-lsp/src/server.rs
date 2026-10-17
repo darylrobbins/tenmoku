@@ -337,6 +337,16 @@ pub(crate) fn latest(latest: &LatestStatus, server: ServerId, status: &ServerSta
     }
 }
 
+/// Whether `open` is `published`: the same URI, or both `file` URIs for the
+/// same decoded path (`published_path`, decoded once), so a server that
+/// escapes `[ ] ( )` still matches the URI fe-lsp built.
+fn same_file(open: &Url, published: &Url, published_path: &Option<PathBuf>) -> bool {
+    open == published
+        || (published_path.is_some()
+            && open.scheme() == "file"
+            && open.to_file_path().ok() == *published_path)
+}
+
 impl Server {
     pub(crate) fn spawn(self) -> io::Result<JoinHandle<()>> {
         thread::Builder::new()
@@ -1239,8 +1249,10 @@ impl Actor {
     /// Decodes a publication for the URI's current incarnation, or drops it
     /// (diagnostics.rs).
     fn published(&mut self, params: PublishDiagnosticsParams) {
-        let mut current = (self.documents.values_mut())
-            .filter(|document| document.is_synced() && *document.uri() == params.uri);
+        let path = params.uri.to_file_path().ok();
+        let mut current = (self.documents.values_mut()).filter(|document| {
+            document.is_synced() && same_file(document.uri(), &params.uri, &path)
+        });
         let (Some(document), None) = (current.next(), current.next()) else {
             log::debug!(
                 "{}: dropped diagnostics for {}, with no current incarnation or several",
