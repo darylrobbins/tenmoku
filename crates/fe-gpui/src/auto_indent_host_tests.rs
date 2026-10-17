@@ -160,3 +160,26 @@ fn a_slow_seed_stops_at_the_deadline() {
     let seed = started.elapsed();
     assert!(bounded * 2 < seed, "{bounded:?} bounded, {seed:?} seeding");
 }
+
+#[test]
+fn a_slow_seed_still_catches_up_by_a_long_deadline() {
+    // Malformed throughout, so seeding a copy takes far longer than the
+    // 20 ms an indent is given: a long deadline still gets the copy.
+    let item = "fn f(x: u32 -> u32 {\n    let y = x + ;\n    if y > 2 { y  else { x }\n}}\n";
+    let mut buffer = Buffer::new(&item.repeat(8000));
+    let rust = language_by_name("rust").expect("rust is built in");
+    let mut syntax = Syntax::new(rust, &buffer.snapshot());
+    syntax.finish(syntax.parse_job().run());
+    buffer.edit([(0..0, "\n")], Origin::User);
+
+    let started = Instant::now();
+    let caught_up = reparsed(
+        &syntax,
+        &buffer.snapshot(),
+        Instant::now() + Duration::from_secs(60),
+    );
+    let took = started.elapsed();
+    assert!(took > Duration::from_millis(20), "{took:?} is not slow");
+    assert!(caught_up.is_some(), "no copy after {took:?}");
+    assert!(!caught_up.is_some_and(|copy| copy.needs_parse()));
+}

@@ -385,8 +385,8 @@ const INDENT_PARSE_BUDGET: Duration = Duration::from_millis(20);
 /// well-formed code, though about a parse around errors, and it's edited
 /// forward to `snapshot`, to reparse only what changed. A tree waiting on
 /// a reparse could take as long as a parse to seed it, so then `snapshot`
-/// is parsed afresh. Every parse stops at `deadline`, so nothing runs on
-/// past it.
+/// is parsed afresh. Every parse stops at `deadline`, and only there, however long
+/// the seed took, so nothing runs on past it.
 fn reparsed(syntax: &Syntax, snapshot: &BufferSnapshot, deadline: Instant) -> Option<Syntax> {
     let out_of_time = || Instant::now() >= deadline;
     if syntax.failed() || out_of_time() {
@@ -396,8 +396,12 @@ fn reparsed(syntax: &Syntax, snapshot: &BufferSnapshot, deadline: Instant) -> Op
     if syntax.tree().is_some() && !syntax.needs_parse() {
         caught_up.finish(syntax.parse_job().parse(out_of_time)?);
     }
-    let parsed = caught_up.parse_until(INDENT_PARSE_BUDGET, out_of_time);
-    (parsed && caught_up.tree().is_some() && !caught_up.failed()).then_some(caught_up)
+    // Not `parse_until`: its budget on the last reparse's time would give up
+    // after a slow seed, whatever the deadline.
+    if caught_up.needs_parse() {
+        caught_up.finish(caught_up.parse_job().parse(out_of_time)?);
+    }
+    (caught_up.tree().is_some() && !caught_up.failed()).then_some(caught_up)
 }
 
 /// Whether a read-only view refuses `invocation`, one of the editor's: it
