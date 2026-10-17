@@ -26,7 +26,10 @@ pub struct FileCommit {
 impl Repo {
     /// The commits that changed `path` (absolute), newest first, following
     /// renames, at most `limit`. Empty for an untracked file, an unborn HEAD or
-    /// a `limit` of 0. Runs one `git log`; blocks until it exits.
+    /// a `limit` of 0. Like `git log -- <file>`, lists a merge that resolved
+    /// the file differently from every parent. A merge after a rename in one
+    /// parent is still left out: its combined diff is empty under `--follow`.
+    /// Runs one `git log`; blocks until it exits.
     pub fn file_log(&self, path: &Path, limit: usize) -> Result<Vec<FileCommit>, GitError> {
         let rela_path = self
             .rela_path(path)
@@ -44,6 +47,7 @@ impl Repo {
             "diff.renames=true",
             "log",
             "--follow",
+            "--cc",
             "--root",
             "-z",
             "--name-status",
@@ -103,9 +107,11 @@ struct Entry {
     from: Option<PathBuf>,
 }
 
-/// Parses `git log -z --name-status --format=%H`: per commit its id, then
+/// Parses `git log -z --cc --name-status --format=%H`: per commit its id, then
 /// `\n<status>`, then one path (two for a rename or copy: old, new), each
-/// NUL-terminated.
+/// NUL-terminated. A merge that changed the file has an empty token after its
+/// id, then one status letter per parent (`MM`) and one path; a merge that
+/// listed nothing has the empty token and the next id follows.
 fn parse(stdout: &[u8]) -> Vec<Entry> {
     let mut tokens = stdout.split(|&byte| byte == 0).peekable();
     let mut entries = Vec::new();
@@ -114,6 +120,21 @@ fn parse(stdout: &[u8]) -> Vec<Entry> {
             continue;
         }
         let id = String::from_utf8_lossy(id).trim().to_owned();
+        if tokens.next_if(|token| token.is_empty()).is_some() {
+            let combined = tokens.next_if(|token| {
+                !token.is_empty() && token.iter().all(|byte| byte.is_ascii_uppercase())
+            });
+            if combined.is_none() {
+                continue;
+            }
+            let Some(path) = tokens.next() else { break };
+            entries.push(Entry {
+                id,
+                path: path_of(path),
+                from: None,
+            });
+            continue;
+        }
         let Some(status) = tokens.next_if(|token| token.starts_with(b"\n")) else {
             continue;
         };
