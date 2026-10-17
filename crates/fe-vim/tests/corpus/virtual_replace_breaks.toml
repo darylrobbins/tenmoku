@@ -1,0 +1,195 @@
+# `<CR>` in gR's virtual replace mode: the rest of the row is replaced (deleted)
+# and replacing goes on at the next row, where its indentation replaces screen
+# columns; a row is added only past the last one (tabstop 4, 'expandtab',
+# 'autoindent'). Hand-written: name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. Recorded into
+# virtual_replace_breaks.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+[[case]]
+name = "rest_of_row"
+buffer = "abcdef\nghi"
+cursor = [0, 1]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "last_row_adds"
+buffer = "ab\ncd"
+cursor = [1, 1]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "last_row_adds_twice"
+buffer = "abc\ndef"
+cursor = [1, 1]
+keys = "gRx<CR><CR>y<Esc>"
+
+[[case]]
+name = "next_row_indent"
+buffer = "    abcdef\n  ghijkl"
+cursor = [0, 6]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "bs_over_break"
+buffer = "abcdef\nghi"
+cursor = [0, 1]
+keys = "gRx<CR>y<BS><BS><Esc>"
+
+[[case]]
+name = "count"
+buffer = "abcdef\nghi"
+cursor = [0, 1]
+keys = "2gRx<CR>y<Esc>"
+
+[[case]]
+name = "dot"
+buffer = "abcdef\nghi\njkl"
+cursor = [0, 1]
+keys = "gRx<CR>y<Esc>j0."
+
+[[case]]
+name = "break_then_bs_once"
+buffer = "abcdef\nghi"
+cursor = [0, 1]
+keys = "gRx<CR><BS><Esc>"
+
+[[case]]
+name = "break_at_row_end"
+buffer = "abc\ndef\nghi"
+cursor = [0, 3]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "break_over_tab_indent"
+buffer = "abcdef\n\tghijkl"
+cursor = [0, 1]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "last_row_rest_deleted"
+buffer = "abcdef"
+cursor = [0, 1]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "indent_unused_kept"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "gRx<CR><Esc>"
+
+[[case]]
+name = "indent_unused_on_added_row_goes"
+buffer = "    abcdef"
+cursor = [0, 6]
+keys = "gRx<CR><Esc>"
+
+[[case]]
+name = "bs_takes_indent_whole"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "gRx<CR><BS>y<Esc>"
+
+[[case]]
+name = "bs_over_indented_break"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "gRx<CR>y<BS><BS><Esc>"
+
+[[case]]
+name = "cr_twice_takes_unused_indent"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "gRx<CR><CR>y<Esc>"
+
+[[case]]
+name = "count_indent"
+buffer = "    abcdef\nghijkl\nmn"
+cursor = [0, 6]
+keys = "3gRx<CR>y<Esc>"
+
+[[case]]
+name = "count_ends_on_break"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "2gRx<CR><Esc>"
+
+[[case]]
+name = "count_past_last_row"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "4gRx<CR>y<Esc>"
+
+[[case]]
+name = "dot_indent"
+buffer = "    abcdef\nghijkl\nmnopqr\nstuv"
+cursor = [0, 6]
+keys = "gRx<CR>y<Esc>jj0."
+
+[[case]]
+name = "dot_with_count"
+buffer = "abcdef\nghi\njkl\nmno\npqr"
+cursor = [0, 1]
+keys = "gRx<CR>y<Esc>j02."
+
+[[case]]
+name = "undo"
+buffer = "    abcdef\nghijkl"
+cursor = [0, 6]
+keys = "gRx<CR>y<Esc>u"
+
+[[case]]
+name = "wide_under_indent"
+buffer = "  abcdef\n日本語"
+cursor = [0, 3]
+keys = "gRx<CR>y<Esc>"
+
+[[case]]
+name = "wide_under_indent_bs"
+buffer = "  abcdef\n日本語"
+cursor = [0, 3]
+keys = "gRx<CR><BS><Esc>"
+
+[[case]]
+name = "break_second_in_a_row_then_bs"
+buffer = "abcdef\nghi\njkl"
+cursor = [0, 1]
+keys = "gRx<CR>y<CR>z<BS><BS><BS><Esc>"
+
+[[case]]
+name = "wide_partly_covered_bs"
+buffer = " abcdef\n日本語"
+cursor = [0, 2]
+keys = "gRx<CR><BS><Esc>"
+
+[[case]]
+name = "wide_partly_covered"
+buffer = " abcdef\n日本語"
+cursor = [0, 2]
+keys = "gRx<CR>y<Esc>"
+
+# Carried from T156: a typed tab over wide characters, and decomposed
+# combining characters under a count.
+[[case]]
+name = "tab_bs_wide"
+buffer = "日本abcdef"
+cursor = [0, 0]
+keys = "gR<Tab><BS><Esc>"
+
+[[case]]
+name = "tab_bs_wide_then_type"
+buffer = "日本abcdef"
+cursor = [0, 0]
+keys = "gR<Tab><BS>xy<Esc>"
+
+[[case]]
+name = "count_combining_bs"
+buffer = "abcdefghijkl"
+cursor = [0, 0]
+keys = "2gRá<BS>日<Esc>"
+
+[[case]]
+name = "dot_count_combining_bs"
+buffer = "abcdefghijkl\nabcdefghijkl"
+cursor = [0, 0]
+keys = "gRá<BS>日<Esc>j02."

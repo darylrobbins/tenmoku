@@ -1,0 +1,563 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "rest_of_row",
+      "buffer": "abcdef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ax\nyhi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "last_row_adds",
+      "buffer": "ab\ncd",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ab\ncx\ny",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "last_row_adds_twice",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "gRx<CR><CR>y<Esc>",
+      "expect": {
+        "buffer": "abc\ndx\n\ny",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "next_row_indent",
+      "buffer": "    abcdef\n  ghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "    abx\n    yjkl",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_over_break",
+      "buffer": "abcdef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<BS><BS><Esc>",
+      "expect": {
+        "buffer": "axcdef\nghi",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count",
+      "buffer": "abcdef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "2gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ax\nyx\ny",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot",
+      "buffer": "abcdef\nghi\njkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>j0.",
+      "expect": {
+        "buffer": "ax\nyhi\nx\ny",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "break_then_bs_once",
+      "buffer": "abcdef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR><BS><Esc>",
+      "expect": {
+        "buffer": "axcdef\nghi",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "break_at_row_end",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "abx\nyef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "break_over_tab_indent",
+      "buffer": "abcdef\n\tghijkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ax\ny\tghijkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "last_row_rest_deleted",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ax\ny",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "indent_unused_kept",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR><Esc>",
+      "expect": {
+        "buffer": "    abx\n    kl",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "indent_unused_on_added_row_goes",
+      "buffer": "    abcdef",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR><Esc>",
+      "expect": {
+        "buffer": "    abx\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_takes_indent_whole",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR><BS>y<Esc>",
+      "expect": {
+        "buffer": "    abx\nyhijkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_over_indented_break",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR>y<BS><BS><Esc>",
+      "expect": {
+        "buffer": "    abx\nghijkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_twice_takes_unused_indent",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR><CR>y<Esc>",
+      "expect": {
+        "buffer": "    abx\n\n    y",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_indent",
+      "buffer": "    abcdef\nghijkl\nmn",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "3gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "    abx\n    yx\n    yx\n    y",
+        "cursor": [
+          3,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_ends_on_break",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2gRx<CR><Esc>",
+      "expect": {
+        "buffer": "    abx\n    x\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_past_last_row",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "4gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "ax\nyx\nyx\nyx\ny",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_indent",
+      "buffer": "    abcdef\nghijkl\nmnopqr\nstuv",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR>y<Esc>jj0.",
+      "expect": {
+        "buffer": "    abx\n    yl\nmnopqr\nx\ny",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_with_count",
+      "buffer": "abcdef\nghi\njkl\nmno\npqr",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<Esc>j02.",
+      "expect": {
+        "buffer": "ax\nyhi\nx\nyx\nyqr",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo",
+      "buffer": "    abcdef\nghijkl",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gRx<CR>y<Esc>u",
+      "expect": {
+        "buffer": "    abcdef\nghijkl",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_under_indent",
+      "buffer": "  abcdef\n日本語",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": "  ax\n  y 語",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_under_indent_bs",
+      "buffer": "  abcdef\n日本語",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gRx<CR><BS><Esc>",
+      "expect": {
+        "buffer": "  ax\n日本語",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "break_second_in_a_row_then_bs",
+      "buffer": "abcdef\nghi\njkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gRx<CR>y<CR>z<BS><BS><BS><Esc>",
+      "expect": {
+        "buffer": "ax\nghi\njkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_partly_covered_bs",
+      "buffer": " abcdef\n日本語",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "gRx<CR><BS><Esc>",
+      "expect": {
+        "buffer": " ax\n日本語",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "wide_partly_covered",
+      "buffer": " abcdef\n日本語",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "gRx<CR>y<Esc>",
+      "expect": {
+        "buffer": " ax\n y本語",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_bs_wide",
+      "buffer": "日本abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab><BS><Esc>",
+      "expect": {
+        "buffer": "日本abcdef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_bs_wide_then_type",
+      "buffer": "日本abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gR<Tab><BS>xy<Esc>",
+      "expect": {
+        "buffer": "xy本abcdef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_combining_bs",
+      "buffer": "abcdefghijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gRá<BS>日<Esc>",
+      "expect": {
+        "buffer": "日日ghijkl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count_combining_bs",
+      "buffer": "abcdefghijkl\nabcdefghijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gRá<BS>日<Esc>j02.",
+      "expect": {
+        "buffer": "日defghijkl\n日日ghijkl",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -34,7 +34,7 @@ use crate::{
     Change, CountArgs, InsertArgs, InsertAt, Mode, VimState, VimTarget,
     insert::{self, Session},
     motion::Line,
-    operator::{MAX_PUT, apply, caret, sync},
+    operator::{MAX_PUT, apply, caret, row_end, sync},
     visual::width_from,
 };
 
@@ -106,6 +106,9 @@ struct Entry {
     /// Spaces right after `made` that a virtual session's character left
     /// of a wide one it only partly covered, which `<BS>` takes out too.
     trail: usize,
+    /// What the indentation of a virtual session's line break replaced on
+    /// the next row, which `<BS>` puts back as it takes the indentation out.
+    indent_was: String,
     /// The first of this many entries a typed tab became in a virtual
     /// session (spaces), or one of the rest of them.
     tab: usize,
@@ -121,6 +124,7 @@ impl Entry {
             then: String::new(),
             touched: false,
             trail: 0,
+            indent_was: String::new(),
             tab: 0,
             tab_rest: false,
         }
@@ -542,10 +546,36 @@ pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
     let text = model.text().clone();
     let heads = sorted_heads(model);
     let records = replace.at_carets(&text, &heads);
+    let tab = model.tab_size().max(1);
+    // In a virtual session, the indentation the caret's last key (a line
+    // break) typed with nothing after it, which the next line break takes
+    // out again.
+    let unused: Vec<usize> = match replace.virtual_ {
+        true => {
+            let record = replace.record();
+            records
+                .iter()
+                .map(|&ix| {
+                    ix.and_then(|ix| record.typed[ix].last())
+                        .filter(|entry| entry.is_break())
+                        .map_or(0, |entry| entry.put.len() - 1)
+                })
+                .collect()
+        }
+        false => vec![0; heads.len()],
+    };
     let mut planned = Vec::with_capacity(heads.len());
+    let mut added = false;
     let acts = heads
         .iter()
-        .map(|&head| {
+        .zip(&unused)
+        .map(|(&head, &unused)| {
+            if replace.virtual_ {
+                let (act, entry, adds) = virtual_break(&text, head, unused, tab);
+                added |= adds;
+                planned.push(vec![entry]);
+                return act;
+            }
             let row = text.offset_to_point(head).row;
             let line = text.row_to_string(row);
             let column = head - text.row_start(row);
@@ -567,14 +597,62 @@ pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
         .collect();
     // The session takes the batch for a typed line break, whose white space
     // after the break is the new row's indentation (see `insert::Ledger`).
+    // A virtual one that goes on to the next row types no new indentation:
+    // it replaces the row's own, which `Esc` leaves.
     let from = model.buffer().version();
-    session.typed_line_break(from);
+    let adds = !replace.virtual_ || added;
+    if adds {
+        session.typed_line_break(from);
+    }
     let starts = act(model, session.origin.clone(), acts);
-    if model.buffer().version() == from {
+    if adds && model.buffer().version() == from {
         session.forget_line_break(from);
     }
     let typed = placed(starts, planned, records);
     replace.record().follow(Some(Pending { from, typed }));
+}
+
+/// A line break typed in a virtual session at `head`: the rest of its row
+/// is deleted (with the `unused` bytes of indentation just before the
+/// caret) and typing goes on at the start of the next row, where the
+/// indentation of the caret's row replaces as many screen columns as typed
+/// spaces would; past the last row a row is added instead, as `R`'s break
+/// does. Whether it adds a row is the third.
+fn virtual_break(text: &Text, head: usize, unused: usize, tab: usize) -> (Act, Entry, bool) {
+    let row = text.offset_to_point(head).row;
+    let line = Line::new(text, row);
+    let before = &line.text[..head - line.start];
+    let indent = &before[..before.len() - before.trim_start().len()];
+    let start = head - unused.min(before.len());
+    let end = line.start + line.text.len();
+    let rest = &text.slice_to_string(start..end);
+    let last = row + 1 >= text.row_count();
+    let next = match last {
+        true => Line::of(end, String::new()),
+        false => Line::new(text, row + 1),
+    };
+    let typed = virtual_over(&next, 0, 0, indent, 1, tab, true);
+    let put = format!("\n{}", &typed.text[..typed.land]);
+    let mut entry = Entry::new(0..put.len(), put, rest.clone());
+    let range = match last {
+        true => start..end,
+        false => {
+            entry.was.push('\n');
+            entry.indent_was = next.text[..past(&next, 0, typed.over) - next.start].to_string();
+            entry.trail = typed.text.len() - typed.land;
+            start..past(&next, 0, typed.over)
+        }
+    };
+    let text = match last {
+        true => entry.put.clone(),
+        false => format!("\n{}", typed.text),
+    };
+    let act = Act {
+        range,
+        land: entry.put.len(),
+        text,
+    };
+    (act, entry, last)
 }
 
 impl VimState {
@@ -761,7 +839,11 @@ impl VimState {
                                 keep: None,
                             },
                         ),
-                        (true, _) => (made.start + 1..made.end, String::new(), Undo::Trim),
+                        (true, _) => (
+                            made.start + 1..made.end,
+                            entry.indent_was.clone(),
+                            Undo::Trim,
+                        ),
                     };
                     // The spaces a wide grapheme left go with the character.
                     let range = match entry.trail {
@@ -810,6 +892,8 @@ impl Undo {
             Undo::Trim => {
                 if let Some(entry) = typed.last_mut() {
                     entry.put.truncate(1);
+                    entry.indent_was.clear();
+                    entry.trail = 0;
                     entry.then.push(BACKSPACE);
                 }
                 return;
@@ -844,6 +928,7 @@ impl Undo {
                 then: keys,
                 touched: false,
                 trail: 0,
+                indent_was: String::new(),
                 tab: 0,
                 tab_rest: false,
             }),
@@ -924,14 +1009,20 @@ fn virtual_over(
                     .grapheme_indices(true)
                     .next_back()
                     .map_or(0, |(at, _)| at);
+                // Only the grapheme's last character gives back what it took,
+                // as `<BS>` does; a typed tab's spaces all do.
+                let mut restore = true;
                 while let Some(step) = steps.pop() {
                     for _ in 0..step.trail {
                         rest.pop_front();
                     }
-                    over -= step.taken.iter().filter(|(_, own)| *own).count();
-                    for grapheme in step.taken.into_iter().rev() {
-                        rest.push_front(grapheme);
+                    if restore {
+                        over -= step.taken.iter().filter(|(_, own)| *own).count();
+                        for grapheme in step.taken.into_iter().rev() {
+                            rest.push_front(grapheme);
+                        }
                     }
+                    restore = step.tab_rest;
                     text.truncate(step.at);
                     if history {
                         entries.pop();
@@ -968,7 +1059,8 @@ fn virtual_over(
                 let Some(next) = rest.pop_front() else {
                     break;
                 };
-                if history {
+                // The spaces left of a wide grapheme aren't the row's.
+                if history && next.1 {
                     was.push_str(&next.0);
                 }
                 over += usize::from(next.1);
@@ -1058,10 +1150,18 @@ pub(crate) fn repeat_typed(
             if typed.is_empty() {
                 return Act::stay(head);
             }
+            if virtual_ && typed.contains('\n') && !typed.contains(BACKSPACE) {
+                return virtual_copies(&text, head, typed, more, tab, budget);
+            }
             let (line, ix) = rest_of_row(&text, head);
             if virtual_ && !typed.contains('\n') {
                 let column = width_from(&line.text[..head - line.start], 0, tab);
-                let copies = more.min(MAX_PUT / keys.len().max(1) / typed.len());
+                // Each tab is up to a tab stop's worth of spaces.
+                let size: usize = typed
+                    .chars()
+                    .map(|ch| if ch == '\t' { tab } else { ch.len_utf8() })
+                    .sum();
+                let copies = more.min(MAX_PUT / keys.len().max(1) / size.max(1));
                 let typed = virtual_over(&line, ix, column, typed, copies, tab, false);
                 return Act {
                     range: head..past(&line, ix, typed.over),
@@ -1083,6 +1183,100 @@ pub(crate) fn repeat_typed(
     COPIES_EDITED.set(acts.iter().filter(|act| !act.text.is_empty()).count());
     if let (_, Some(version)) = act_on(model, session.origin.clone(), acts) {
         session.ending(version);
+    }
+}
+
+/// `more` copies of `keys` (characters and line breaks) typed in a virtual
+/// session after the caret at `head`, as [`VimState::line_break`] and
+/// [`VimState::overwrite`] type them: each line break deletes the rest of its
+/// row and goes on to the next, whose own columns the indentation replaces,
+/// and adds a row past the last. One edit, from `head` to the end of the
+/// last row of the text they typed over, at most `budget` bytes of typing.
+/// Once a copy starts where the one before did, on a row it added, the rest
+/// type the same again at once.
+fn virtual_copies(
+    text: &Text,
+    head: usize,
+    keys: &str,
+    more: usize,
+    tab: usize,
+    budget: usize,
+) -> Act {
+    let first = text.offset_to_point(head).row;
+    let last = text.row_count().saturating_sub(1);
+    let mut cur = text.row_to_string(first);
+    let from = head - text.row_start(first);
+    let mut at = from;
+    let (mut row, mut end) = (first, row_end(text, first));
+    let mut out = String::new();
+    // The indentation a line break just typed, with nothing after it.
+    let mut unused = 0;
+    // Where the last copy started, to see the next starts there too.
+    let mut began: Option<((String, usize, usize), usize)> = None;
+    let mut done = 0;
+    while done < more && out.len() <= budget {
+        if row > last {
+            let state = (cur.clone(), at, unused);
+            if let Some((was, len)) = began.replace((state.clone(), out.len()))
+                && was == state
+            {
+                let piece = out[len..].to_string();
+                let room = budget.saturating_sub(out.len()) / piece.len().max(1);
+                out.push_str(&piece.repeat((more - done).min(room)));
+                break;
+            }
+        }
+        for (nth, piece) in keys.split('\n').enumerate() {
+            if nth > 0 {
+                let before = &cur[..at];
+                let indent = before[..before.len() - before.trim_start().len()].to_string();
+                cur.truncate(at - unused.min(at));
+                out.push_str(&cur);
+                out.push('\n');
+                row += 1;
+                cur = match row <= last {
+                    true => {
+                        end = row_end(text, row);
+                        text.row_to_string(row)
+                    }
+                    false => String::new(),
+                };
+                let line = Line::of(0, cur);
+                let typed = virtual_over(&line, 0, 0, &indent, 1, tab, false);
+                cur = typed.text + &line.text[past(&line, 0, typed.over)..];
+                at = typed.land;
+                unused = typed.land;
+            }
+            if piece.is_empty() {
+                continue;
+            }
+            let line = Line::of(0, std::mem::take(&mut cur));
+            let ix = line.starts.partition_point(|&start| start < at);
+            let column = width_from(&line.text[..at], 0, tab);
+            let typed = virtual_over(&line, ix, column, piece, 1, tab, false);
+            cur = format!(
+                "{}{}{}",
+                &line.text[..at],
+                typed.text,
+                &line.text[past(&line, ix, typed.over)..]
+            );
+            at += typed.land;
+            unused = 0;
+        }
+        done += 1;
+    }
+    // Indentation left on a row it added with nothing after it goes, as at
+    // `Esc`.
+    if row > last {
+        cur.truncate(at - unused.min(at));
+        at -= unused.min(at);
+    }
+    let land = out.len() + at - from;
+    out.push_str(&cur);
+    Act {
+        range: head..end,
+        text: out.split_off(from.min(out.len())),
+        land,
     }
 }
 
