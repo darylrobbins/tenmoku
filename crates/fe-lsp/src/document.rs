@@ -42,18 +42,19 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fe_buffer::{BufferEvent, BufferId, Edit, Subscription, Version};
-use fe_text::Text;
+use fe_text::{Bias, Text};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
 };
 use lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, Range, ServerCapabilities, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncSaveOptions, Url, VersionedTextDocumentIdentifier,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncSaveOptions, Url,
+    VersionedTextDocumentIdentifier,
 };
 
-use crate::encoding::{PositionEncoding, to_lsp};
+use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
 use crate::event::{BUFFER_CHANGED, LspError, LspEvent, NOT_OPEN, ServerId, TOO_LARGE};
 use crate::identity::{Generation, Identities, IncarnationId, Point, SessionId};
 use crate::pull::{Lists, Pulled, Puller, Source, full_items};
@@ -358,6 +359,27 @@ pub struct Admitted {
     pub document: SentDocument,
     /// Every other document the server has open, at its current version.
     pub others: Vec<SentDocument>,
+}
+
+impl Admitted {
+    /// The request's document and `offset`, as the server has them.
+    pub(crate) fn position(&self, offset: usize) -> TextDocumentPositionParams {
+        let text = &self.document.sent.text;
+        TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.document.uri.clone(),
+            },
+            position: to_lsp(text, text.clip_offset(offset, Bias::Left), self.encoding),
+        }
+    }
+
+    /// `range` in bytes of the text the server has, ordered.
+    pub(crate) fn offsets(&self, range: Range) -> std::ops::Range<usize> {
+        let text = &self.document.sent.text;
+        let start = from_lsp(text, range.start, self.encoding);
+        let end = from_lsp(text, range.end, self.encoding);
+        start.min(end)..end.max(start)
+    }
 }
 
 /// What a request on no document went out with (a workspace symbol

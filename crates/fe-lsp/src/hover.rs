@@ -17,16 +17,11 @@
 use std::ops::Range;
 
 use fe_buffer::{BufferId, Version};
-use fe_text::Bias;
 use futures::FutureExt;
 use lsp_types::request::HoverRequest;
-use lsp_types::{
-    HoverContents, HoverParams, LanguageString, MarkedString, MarkupContent,
-    TextDocumentIdentifier, TextDocumentPositionParams,
-};
+use lsp_types::{HoverContents, HoverParams, LanguageString, MarkedString, MarkupContent};
 
 use crate::document::Admitted;
-use crate::encoding::{from_lsp, to_lsp};
 use crate::event::LspError;
 use crate::manager::LspManager;
 
@@ -65,7 +60,7 @@ impl LspManager {
         offset: usize,
     ) -> impl Future<Output = Result<Option<Hover>, LspError>> + Send + 'static + use<> {
         let reply = self.document_request::<HoverRequest>(buffer, version, move |at| HoverParams {
-            text_document_position_params: position(at, offset),
+            text_document_position_params: at.position(offset),
             work_done_progress_params: Default::default(),
         });
         // Boxed, as its type names the manager's borrow.
@@ -74,17 +69,6 @@ impl LspManager {
             Err(LspError::Timeout) => Ok(None),
             Err(err) => Err(err),
         })
-    }
-}
-
-/// The request's document and offset, as the server has them.
-fn position(at: &Admitted, offset: usize) -> TextDocumentPositionParams {
-    let text = &at.document.sent.text;
-    TextDocumentPositionParams {
-        text_document: TextDocumentIdentifier {
-            uri: at.document.uri.clone(),
-        },
-        position: to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding),
     }
 }
 
@@ -102,12 +86,7 @@ fn convert(hover: lsp_types::Hover, at: &Admitted) -> Option<Hover> {
     if text.trim().is_empty() {
         return None;
     }
-    let range = hover.range.map(|range| {
-        let text = &at.document.sent.text;
-        let start = from_lsp(text, range.start, at.encoding);
-        let end = from_lsp(text, range.end, at.encoding);
-        start.min(end)..end.max(start)
-    });
+    let range = hover.range.map(|range| at.offsets(range));
     Some(Hover { text, range })
 }
 

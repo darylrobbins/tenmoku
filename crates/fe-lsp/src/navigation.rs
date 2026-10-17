@@ -43,12 +43,11 @@ use futures::future::{self, Either};
 use lsp_types::request::{GotoDefinition, References, WorkspaceSymbolRequest};
 use lsp_types::{
     GotoDefinitionParams, GotoDefinitionResponse, OneOf, ReferenceContext, ReferenceParams,
-    SymbolKind, TextDocumentIdentifier, TextDocumentPositionParams, Url, WorkspaceSymbolParams,
-    WorkspaceSymbolResponse,
+    SymbolKind, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 
 use crate::document::{Admitted, SentDocument};
-use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
+use crate::encoding::{PositionEncoding, from_lsp};
 use crate::event::{LspError, ServerStatus};
 use crate::manager::LspManager;
 use crate::workspace_edit::file_path;
@@ -138,7 +137,7 @@ impl NavigationProvider for LspNavigation {
         let sent = self.with_manager(|manager| {
             let reply = manager.document_request::<GotoDefinition>(buffer, version, move |at| {
                 GotoDefinitionParams {
-                    text_document_position_params: position(at, offset),
+                    text_document_position_params: at.position(offset),
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 }
@@ -198,7 +197,7 @@ impl NavigationProvider for LspNavigation {
                     buffer,
                     version,
                     move |at| ReferenceParams {
-                        text_document_position: position(at, offset),
+                        text_document_position: at.position(offset),
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                         context: ReferenceContext {
@@ -206,7 +205,7 @@ impl NavigationProvider for LspNavigation {
                         },
                     },
                     move |at| GotoDefinitionParams {
-                        text_document_position_params: position(at, offset),
+                        text_document_position_params: at.position(offset),
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     },
@@ -442,17 +441,6 @@ fn gone() -> NavError {
 
 fn unavailable(err: LspError) -> NavError {
     NavError::Unavailable(err.to_string())
-}
-
-/// The request's document and caret, as the server has them.
-fn position(at: &Admitted, offset: usize) -> TextDocumentPositionParams {
-    let text = &at.document.sent.text;
-    TextDocumentPositionParams {
-        text_document: TextDocumentIdentifier {
-            uri: at.document.uri.clone(),
-        },
-        position: to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding),
-    }
 }
 
 /// Blocks on `answer`, checking `cancel` every [`POLL`]. A cancel drops

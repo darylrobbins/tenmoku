@@ -2057,6 +2057,21 @@ fn client_capabilities() -> ClientCapabilities {
                 dynamic_registration: dynamic,
                 link_support: Some(true),
             }),
+            declaration: Some(GotoCapability {
+                dynamic_registration: dynamic,
+                link_support: Some(true),
+            }),
+            type_definition: Some(GotoCapability {
+                dynamic_registration: dynamic,
+                link_support: Some(true),
+            }),
+            implementation: Some(GotoCapability {
+                dynamic_registration: dynamic,
+                link_support: Some(true),
+            }),
+            document_highlight: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
             references: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
             }),

@@ -156,6 +156,58 @@ fn initialize_advertises_m4_capabilities() {
     );
 }
 
+#[test]
+fn initialize_advertises_navigation_and_highlight_capabilities() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let fake = FakeServer::new(Script::default());
+    let (mut manager, _events) = manager(fake.launcher(), None);
+    manager
+        .start(ServerSpec::new("init-utf8", "fake-server"), &root)
+        .unwrap();
+    fake.wait_initialized();
+
+    let records = fake.records();
+    let params = records
+        .iter()
+        .find_map(|record| match record {
+            Record::Request { method, params, .. } if method == "initialize" => Some(params),
+            _ => None,
+        })
+        .unwrap();
+    let text_document = &params["capabilities"]["textDocument"];
+    for goto in ["declaration", "typeDefinition", "implementation"] {
+        assert_eq!(
+            text_document[goto],
+            json!({ "dynamicRegistration": false, "linkSupport": true }),
+            "{goto}"
+        );
+    }
+    assert_eq!(
+        text_document["documentHighlight"],
+        json!({ "dynamicRegistration": false })
+    );
+}
+
+#[test]
+fn new_requests_time_out_as_their_neighbours() {
+    let timeouts = fe_config::settings::LspTimeouts::default();
+    let of = |method| crate::requests::timeout(method, &timeouts);
+    assert!(of("textDocument/definition").is_some());
+    for method in [
+        "textDocument/declaration",
+        "textDocument/typeDefinition",
+        "textDocument/implementation",
+    ] {
+        assert_eq!(of(method), of("textDocument/definition"), "{method}");
+    }
+    assert_eq!(
+        of("textDocument/documentHighlight"),
+        of("textDocument/hover")
+    );
+}
+
 fn shutdown_methods(fake: &FakeServer) -> Vec<String> {
     fake.records()
         .iter()

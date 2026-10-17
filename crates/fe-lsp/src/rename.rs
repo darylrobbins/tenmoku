@@ -25,13 +25,10 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::{FutureExt, future};
 use lsp_types::request::{PrepareRenameRequest, Rename};
-use lsp_types::{
-    OneOf, PrepareRenameResponse, RenameParams, ServerCapabilities, TextDocumentIdentifier,
-    TextDocumentPositionParams,
-};
+use lsp_types::{OneOf, PrepareRenameResponse, RenameParams, ServerCapabilities};
 
 use crate::document::Admitted;
-use crate::encoding::{from_lsp, to_lsp};
+use crate::encoding::from_lsp;
 use crate::event::LspError;
 use crate::manager::LspManager;
 use crate::requests::within;
@@ -77,7 +74,7 @@ impl LspManager {
         version: Version,
         offset: usize,
     ) -> impl Future<Output = Result<Option<RenameTarget>, LspError>> + Send + 'static + use<> {
-        let capabilities = match self.rename_capabilities(buffer) {
+        let capabilities = match self.provider_capabilities(buffer, "rename", renames) {
             Ok(capabilities) => capabilities,
             Err(err) => return future::ready(Err(err)).boxed(),
         };
@@ -95,7 +92,7 @@ impl LspManager {
                 .boxed();
         }
         let reply = self.document_request::<PrepareRenameRequest>(buffer, version, move |at| {
-            position(at, offset)
+            at.position(offset)
         });
         let reply = reply.map(move |answer| {
             let (reply, at) = answer?;
@@ -124,11 +121,11 @@ impl LspManager {
         offset: usize,
         new_name: String,
     ) -> impl Future<Output = Result<Vec<FileEdits>, LspError>> + Send + 'static + use<> {
-        if let Err(err) = self.rename_capabilities(buffer) {
+        if let Err(err) = self.provider_capabilities(buffer, "rename", renames) {
             return future::ready(Err(err)).boxed();
         }
         let reply = self.document_request::<Rename>(buffer, version, move |at| RenameParams {
-            text_document_position: position(at, offset),
+            text_document_position: at.position(offset),
             new_name,
             work_done_progress_params: Default::default(),
         });
@@ -149,24 +146,6 @@ impl LspManager {
         )
         .boxed()
     }
-
-    /// The capabilities of the server `buffer` is on if it can rename:
-    /// `Ok(None)` if they're not known yet, and
-    /// `Unavailable("rename")` if it can't.
-    fn rename_capabilities(
-        &self,
-        buffer: BufferId,
-    ) -> Result<Option<ServerCapabilities>, LspError> {
-        let capabilities = self
-            .server_of(buffer)
-            .and_then(|server| self.capabilities(server));
-        match capabilities {
-            Some(capabilities) if !renames(&capabilities) => {
-                Err(LspError::Unavailable("rename".into()))
-            }
-            capabilities => Ok(capabilities),
-        }
-    }
 }
 
 /// Whether the server renames at all.
@@ -183,17 +162,6 @@ fn prepares(capabilities: ServerCapabilities) -> bool {
         capabilities.rename_provider,
         Some(OneOf::Right(options)) if options.prepare_provider == Some(true)
     )
-}
-
-/// The request's document and offset, as the server has them.
-fn position(at: &Admitted, offset: usize) -> TextDocumentPositionParams {
-    let text = &at.document.sent.text;
-    TextDocumentPositionParams {
-        text_document: TextDocumentIdentifier {
-            uri: at.document.uri.clone(),
-        },
-        position: to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding),
-    }
 }
 
 /// A reply as a target, in bytes of the text the server had.

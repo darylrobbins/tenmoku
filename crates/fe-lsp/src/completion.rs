@@ -31,11 +31,10 @@ use lsp_types::request::{Completion, ResolveCompletionItem};
 use lsp_types::{
     CompletionContext, CompletionItemKind, CompletionParams, CompletionResponse,
     CompletionTextEdit, CompletionTriggerKind, Documentation, MarkupContent,
-    TextDocumentIdentifier, TextDocumentPositionParams,
 };
 
 use crate::document::Admitted;
-use crate::encoding::{PositionEncoding, from_lsp, to_lsp};
+use crate::encoding::{PositionEncoding, from_lsp};
 use crate::event::{LspError, ServerId};
 use crate::identity::{IncarnationId, SessionId};
 use crate::manager::LspManager;
@@ -163,7 +162,7 @@ impl LspManager {
         };
         let reply =
             self.document_request::<Completion>(buffer, version, move |at| CompletionParams {
-                text_document_position: position(at, offset),
+                text_document_position: at.position(offset),
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
                 context: Some(CompletionContext {
@@ -244,17 +243,6 @@ impl LspManager {
             .and_then(|server| self.capabilities(server)?.completion_provider)
             .and_then(|provider| provider.trigger_characters)
             .unwrap_or_default()
-    }
-}
-
-/// The request's document and offset, as the server has them.
-fn position(at: &Admitted, offset: usize) -> TextDocumentPositionParams {
-    let text = &at.document.sent.text;
-    TextDocumentPositionParams {
-        text_document: TextDocumentIdentifier {
-            uri: at.document.uri.clone(),
-        },
-        position: to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding),
     }
 }
 

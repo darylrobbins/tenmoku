@@ -1379,6 +1379,26 @@ impl LspManager {
         self.session(server, |session| session.encoding)
     }
 
+    /// The capabilities of the server `buffer` is on if `provides` says it
+    /// has `feature`: `Ok(None)` if they're not known yet, and
+    /// `Unavailable(feature)` if it hasn't.
+    pub(crate) fn provider_capabilities(
+        &self,
+        buffer: BufferId,
+        feature: &str,
+        provides: impl Fn(&ServerCapabilities) -> bool,
+    ) -> Result<Option<ServerCapabilities>, LspError> {
+        let capabilities = self
+            .server_of(buffer)
+            .and_then(|server| self.capabilities(server));
+        match capabilities {
+            Some(capabilities) if !provides(&capabilities) => {
+                Err(LspError::Unavailable(feature.into()))
+            }
+            capabilities => Ok(capabilities),
+        }
+    }
+
     /// What `server` said it can do, once it has initialized.
     pub fn capabilities(&self, server: ServerId) -> Option<ServerCapabilities> {
         self.session(server, |session| session.capabilities.clone())

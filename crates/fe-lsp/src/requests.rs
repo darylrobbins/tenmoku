@@ -62,12 +62,16 @@ const FORMAT_TIMEOUT_MS: u64 = 3000;
 pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> {
     let ms = match method {
         "textDocument/formatting" | "textDocument/rangeFormatting" => FORMAT_TIMEOUT_MS,
-        "textDocument/definition" => timeouts.definition,
+        "textDocument/definition"
+        | "textDocument/declaration"
+        | "textDocument/typeDefinition"
+        | "textDocument/implementation" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
         "textDocument/references" => timeouts.references,
-        "textDocument/hover" | "textDocument/codeAction" | "textDocument/signatureHelp" => {
-            timeouts.hover
-        }
+        "textDocument/hover"
+        | "textDocument/documentHighlight"
+        | "textDocument/codeAction"
+        | "textDocument/signatureHelp" => timeouts.hover,
         "textDocument/completion" => timeouts.completion,
         "completionItem/resolve" | "codeAction/resolve" => timeouts.resolve,
         _ => return None,
