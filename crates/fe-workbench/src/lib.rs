@@ -74,7 +74,7 @@ pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use terminal_panel::TerminalPanel;
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
 pub use trust::{TrustChanged, set_trust_file};
-pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
+pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch, window_layouts};
 
 /// The key context the workbench's root element sets.
 pub const KEY_CONTEXT: &str = "workbench";

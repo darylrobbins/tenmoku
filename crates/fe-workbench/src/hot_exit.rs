@@ -4,7 +4,9 @@
 //!
 //! A window with a saved layout ([`Workbench::set_layout`]) keeps its
 //! buffers' backups in its root's [`BackupStore`], `<state_dir>/backups/<key>`
-//! beside its layouts' `<state_dir>/layouts/<key>.json`, and gives fe-gpui
+//! beside its layouts' `<state_dir>/layouts/<key>.json`, or with no root
+//! (a launch with no argument), in the rootless windows' store, under a key
+//! of their own ([`crate::window_layouts`]); and it gives fe-gpui
 //! the store for the editors it restores
 //! ([`pane_item::set_window_backups`]). Each open buffer, once however many
 //! editors show it, has a backup ([`BufferBackup`]), which it owns while
@@ -30,9 +32,9 @@
 //! a window, asks as ever, even with a quit waiting behind it. The layout
 //! saved at quit is saved once every backup has been written.
 //!
-//! The first window on a root in the process opens as tabs, once its own
-//! layout is restored, the root's backups that no saved layout names and
-//! no live editor, in this process or another, owns. One that doesn't read
+//! The first window on a root, or with none, in the process opens as tabs,
+//! once its own layout is restored, the store's backups that no saved
+//! layout names and no live editor, in this process or another, owns. One that doesn't read
 //! (its file can't be opened, say) is left for the next launch. Then the
 //! store is pruned of half-written backups, of the corrupt slots (text and
 //! meta disagreeing) of backups neither of whose slots reads, and of owner

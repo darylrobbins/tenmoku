@@ -61,7 +61,7 @@ use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     ModalEvent, ModalId, ModalLayer, PaneView as _, Shell, Workspace, WorkspaceEvent,
     close::{self, Items, LiveItems},
-    layout::{self, WindowLayout},
+    layout::{self, LayoutStore, WindowLayout},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -108,6 +108,15 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
         root: path.parent().map(Path::to_owned),
         file: Some((path, None)),
     }
+}
+
+/// The saved layouts, in `dir` (`<state>/layouts`), of the windows on the
+/// canonical root folder `root`, or with no root, those of the windows a
+/// launch with no argument opens: theirs are kept under the key of the
+/// empty path, which no canonical root has, so their backups too are their
+/// own ([`hot_exit`]).
+pub fn window_layouts(dir: impl Into<PathBuf>, root: Option<&Path>) -> LayoutStore {
+    LayoutStore::new(dir, root.unwrap_or(Path::new("")))
 }
 
 /// The palette shown over the window, one at a time, in kiln-shell's
@@ -1529,7 +1538,8 @@ impl Workbench {
     /// or went, or another is active, by a click, a close or the workspace
     /// activating one itself. The workbench follows its active pane and its
     /// editors, and once a restored layout's files are in, takes up their
-    /// editors.
+    /// editors; a window with no root that's left with nothing open shows
+    /// the welcome text, as a launch with nothing to open does.
     fn follow_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if *self.workspace.read(cx).active_pane() != self.active {
             // The workspace made it active itself (a click on it, a close,
@@ -1544,6 +1554,11 @@ impl Workbench {
             let active = self.workspace.read(cx).active_pane().clone();
             self.activate(active, window, cx);
             self.adopt_orphans(cx);
+            let panes = self.pane_group(cx).panes();
+            if self.root.is_none() && panes.iter().all(|pane| pane.read(cx).tabs().is_empty()) {
+                let welcome = EditorModel::new(Buffer::new(WELCOME), None);
+                self.active.update(cx, |pane, cx| pane.add(welcome, cx));
+            }
         }
         self.track_editors(cx);
         cx.notify();

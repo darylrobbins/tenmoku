@@ -231,7 +231,7 @@ fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
     let settings = current_settings(cx);
     let theme = theme::editor_theme(&settings.editor, cx);
     let capabilities = Capabilities::current();
-    let (layout, entry) = match root.as_deref().and_then(layout_store) {
+    let (layout, entry) = match layout_store(root.as_deref()) {
         Some(store) => match kiln::shell::layout::new_window(&store) {
             Some((layout, entry)) => (Some(layout), entry),
             None => (None, None),
@@ -265,11 +265,12 @@ fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
 }
 
 /// The windows a launch on `root` opens, each with its layout (unless
-/// there's no root or no state directory) and the entry it restores, if
-/// any: see [`kiln::shell::layout::launch`]. A folder launch (`folder`)
-/// restores the root's saved windows; a file launch restores nothing.
+/// there's no state directory) and the entry it restores, if any: see
+/// [`kiln::shell::layout::launch`]. A folder launch (`folder`) restores the
+/// root's saved windows, and a launch with no argument (no root) those of
+/// the last such launch; a file launch restores nothing.
 fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<(Option<WindowLayout>, Option<Value>)> {
-    let windows: Vec<_> = (root.and_then(layout_store).iter())
+    let windows: Vec<_> = (layout_store(root).iter())
         .flat_map(|store| kiln::shell::layout::launch(store, folder))
         .map(|(layout, entry)| (Some(layout), entry))
         .collect();
@@ -279,10 +280,12 @@ fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<(Option<WindowLayout
     windows
 }
 
-/// The saved layouts of the folder `root`, if there's a state directory.
-fn layout_store(root: &Path) -> Option<LayoutStore> {
+/// The saved layouts of the windows on the folder `root`, or of those with
+/// no root, if there's a state directory.
+fn layout_store(root: Option<&Path>) -> Option<LayoutStore> {
     let dir = fe_config::paths::app_paths().layouts_dir()?;
-    Some(LayoutStore::new(dir, &kiln::core::trust::canonical(root)))
+    let root = root.map(kiln::core::trust::canonical);
+    Some(fe_workbench::window_layouts(dir, root.as_deref()))
 }
 
 /// Where a saved window was.
@@ -416,8 +419,9 @@ fn main() {
 
         let theme = theme::editor_theme(&settings.editor, cx);
         fe_gpui::set_restore_style(cx, theme.clone(), settings.editor.clone());
-        // A folder launch reopens its saved windows; a file launch opens
-        // the file, in a window that saves its layout from now on.
+        // A folder launch reopens its saved windows, and a launch with no
+        // argument the last such launch's; a file launch opens the file, in
+        // a window that saves its layout from now on.
         let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
         let (layout, entry) = windows.remove(0);
         let root = launch.root.clone();

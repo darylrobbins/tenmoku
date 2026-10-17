@@ -871,3 +871,22 @@ fn set_mode(path: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
+
+/// A folder launch leaves the rootless windows' backups to a launch with
+/// no argument: it neither opens nor prunes them.
+#[gpui::test]
+fn folder_leaves_rootless_backups(cx: &mut TestAppContext) {
+    let project = project();
+    let rootless = crate::window_layouts(project._dir.path().join("layouts"), None);
+    let rootless = BackupStore::new(backups_dir(&rootless).unwrap());
+    let orphan: BackupId = "1000-1-0".parse().unwrap();
+    let meta = BackupMeta::for_buffer(&Buffer::new(""), None, "untitled");
+    (rootless.write(orphan, &meta, &Text::new("rootless"))).unwrap();
+    std::fs::write(rootless.dir().join("1000-1-1.txt"), "half").unwrap();
+
+    init(false, cx);
+    let (workbench, mut cx) = launch(&project, cx);
+    assert!(editors(&workbench, &mut cx).is_empty());
+    assert_eq!(rootless.ids().unwrap(), [orphan]);
+    assert!(rootless.dir().join("1000-1-1.txt").exists(), "not pruned");
+}
