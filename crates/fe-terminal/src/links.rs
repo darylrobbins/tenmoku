@@ -1,7 +1,7 @@
 //! The link under a terminal cell, for the view to underline and open: an OSC 8
 //! hyperlink, a URL in the text, or a path to a file that exists, with an
 //! optional line and column (`src/main.rs:12:5`, `src/main.rs(12,5)`,
-//! `"src/main.py", line 12, column 5`).
+//! `"src/main.py", line 12, column 5`, `file:///src/main.rs:12:5`).
 //!
 //! Links don't continue across rows: one the terminal soft-wrapped is found
 //! only up to the row's edge, and a path cut there may not exist.
@@ -131,7 +131,7 @@ fn url_at(text: &RowText, at: usize) -> Option<(Range<usize>, LinkTarget)> {
             let end = url_end(chars, i, body);
             if end > body {
                 if (i..end).contains(&at) {
-                    return Some((i..end, uri_target(&text.text(i..end))));
+                    return Some((i..end, with_url_location(uri_target(&text.text(i..end)))));
                 }
                 i = end;
                 continue;
@@ -206,6 +206,30 @@ fn uri_target(uri: &str) -> LinkTarget {
             column: None,
         },
         None => LinkTarget::Url(uri.to_owned()),
+    }
+}
+
+/// A `file://` target whose path ends in `:line[:column]` (a Node.js ES module
+/// stack frame), with that suffix split off into `line` and `column`.
+fn with_url_location(target: LinkTarget) -> LinkTarget {
+    let LinkTarget::File { path, .. } = &target else {
+        return target;
+    };
+    let Some(text) = path.to_str() else {
+        return target;
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let split = (0..chars.len()).filter(|&i| chars[i] == ':').find_map(|i| {
+        let (line, column, end) = location(&chars, i, false);
+        (line.is_some() && end == chars.len()).then_some((i, line, column))
+    });
+    match split {
+        Some((i, line, column)) if i > 0 => LinkTarget::File {
+            path: PathBuf::from(chars[..i].iter().collect::<String>()),
+            line,
+            column,
+        },
+        _ => target,
     }
 }
 
