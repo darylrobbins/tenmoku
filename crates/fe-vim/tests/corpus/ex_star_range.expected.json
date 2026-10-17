@@ -1,0 +1,381 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "star_delete",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg:*d<CR>",
+      "expect": {
+        "buffer": "a\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\nc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_substitute",
+      "buffer": "x1\nx2\nx3\nx4",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jVj<Esc>gg:*s/x/y/<CR>",
+      "expect": {
+        "buffer": "x1\nx2\ny3\ny4",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_alone_goes_to_last",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg:*<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_with_offset",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg:*+1d<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_then_comma_is_not_a_command",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jVj<Esc>gg:*,$d<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_before_any_visual_fails",
+      "buffer": "a\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":*d<CR>",
+      "expect": {
+        "buffer": "a\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "star_shift",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg:*><CR>",
+      "expect": {
+        "buffer": "a\n    b\n    c\nd",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_yank_put",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jVj<Esc>gg:*y<CR>Gp",
+      "expect": {
+        "buffer": "a\nb\nc\nd\nc\nd",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\nd\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\nd\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_with_blank_before",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg: *d<CR>",
+      "expect": {
+        "buffer": "a\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\nc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_from_visual_colon",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj:*d<CR>",
+      "expect": {
+        "buffer": "a\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\nc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_then_search_is_not_a_command",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg:*/d/d<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_after_a_comma",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jVj<Esc>gg:1,*d<CR>",
+      "expect": {
+        "buffer": "a\nb\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\nd\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\nd\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    }
+  ]
+}

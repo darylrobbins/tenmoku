@@ -524,9 +524,11 @@ fn after_substitute_body(after: &str) -> &str {
 
 /// What follows `:sort`'s flags and pattern in `after`.
 fn after_sort_pattern(after: &str) -> &str {
-    let mut args = after;
+    // Only a `!` right after the name is a bang; later it may delimit the
+    // pattern.
+    let mut args = after.strip_prefix('!').unwrap_or(after);
     loop {
-        let flags = args.trim_start_matches([' ', '\t', '!']);
+        let flags = args.trim_start_matches([' ', '\t']);
         match flags.chars().next() {
             None | Some('"' | '|') => return flags,
             Some(ch) if ch.is_ascii_alphabetic() => args = &flags[1..],
@@ -975,6 +977,18 @@ impl<'a> Parser<'a> {
         loop {
             let address = self.address();
             self.skip_blanks();
+            // `*` is `'<,'>`, the last visual area, as with nvim's default
+            // 'cpoptions'. It is the whole range: what came before is
+            // dropped, and what follows is the command.
+            if self.peek() == Some('*') {
+                self.at += 1;
+                return ['<', '>']
+                    .map(|mark| Address {
+                        base: Base::Mark(mark),
+                        ..Address::default()
+                    })
+                    .to_vec();
+            }
             let semicolon = match self.peek() {
                 Some(',') => false,
                 Some(';') => true,
@@ -1170,7 +1184,12 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
     let (line, range, rest) = split(line);
     target.model.sync_display();
     let last = i64::from(target.model.text().row_count());
-    let lines = lines(target, &range)?;
+    // A search in the range that finds nothing fails the line even under
+    // `:g`, where `:s` finding nothing is not an error.
+    let lines = match lines(target, &range) {
+        Err(error @ ExError::NotFound(_)) => return Ok(Ok(target.state.fail(error.to_string()))),
+        lines => lines?,
+    };
     // As in nvim, a line before the first fails once the command is
     // recognised, before its arguments are read; and a command that goes to
     // the range's last line doesn't mind its first.

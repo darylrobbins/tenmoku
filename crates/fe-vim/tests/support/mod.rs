@@ -361,7 +361,7 @@ fn skip_range(line: &str) -> usize {
     let mut chars = line.char_indices().peekable();
     while let Some(&(at, ch)) = chars.peek() {
         match ch {
-            ' ' | '\t' | ':' | '.' | '$' | '%' | ',' | ';' | '+' | '-' | '0'..='9' => {
+            ' ' | '\t' | ':' | '.' | '$' | '%' | '*' | ',' | ';' | '+' | '-' | '0'..='9' => {
                 chars.next();
             }
             '\'' | '\\' => {

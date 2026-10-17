@@ -1,0 +1,82 @@
+# Ex `*` range cases for fe-vim's oracle: with nvim's default 'cpoptions'
+# `*` where a line specifier can start is `'<,'>`, the last visual area, so
+# `:*d`, `:*s/x/y/`, `:*` alone, `:*>` and `:*y` act on its lines, and are E20
+# before any visual area. It is the whole range (`:1,*d`, `:'<,'>*d`), and an
+# offset, comma or search after it is E492. An error ends a case: nvim
+# flushes the keys after it.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in ex_star_range.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "star_delete"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "Vj<Esc>gg:*d<CR>"
+
+[[case]]
+name = "star_substitute"
+buffer = "x1\nx2\nx3\nx4"
+cursor = [1, 0]
+keys = "jVj<Esc>gg:*s/x/y/<CR>"
+
+[[case]]
+name = "star_alone_goes_to_last"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "Vj<Esc>gg:*<CR>"
+
+[[case]]
+name = "star_with_offset"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "Vj<Esc>gg:*+1d<CR>"
+
+[[case]]
+name = "star_then_comma_is_not_a_command"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "jVj<Esc>gg:*,$d<CR>"
+
+[[case]]
+name = "star_before_any_visual_fails"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = ":*d<CR>"
+
+[[case]]
+name = "star_shift"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "Vj<Esc>gg:*><CR>"
+
+[[case]]
+name = "star_yank_put"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "jVj<Esc>gg:*y<CR>Gp"
+
+[[case]]
+name = "star_with_blank_before"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "Vj<Esc>gg: *d<CR>"
+
+[[case]]
+name = "star_from_visual_colon"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "Vj:*d<CR>"
+
+[[case]]
+name = "star_then_search_is_not_a_command"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "Vj<Esc>gg:*/d/d<CR>"
+
+[[case]]
+name = "star_after_a_comma"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "jVj<Esc>gg:1,*d<CR>"

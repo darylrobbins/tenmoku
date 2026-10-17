@@ -182,3 +182,21 @@ name = "bar_browse_normal"
 buffer = "a/b"
 cursor = [0, 0]
 keys = ':browse norm Ax | y<CR>'
+
+[[case]]
+name = "bar_sort_bang_delimited_pattern_then_command"
+buffer = "b\nc\na|\nd"
+cursor = [1, 0]
+keys = ":sort !|! | 1d<CR>"
+
+[[case]]
+name = "bar_sort_bang_delimited_pattern_with_quote_then_command"
+buffer = "b\nc\na\"|\nd"
+cursor = [1, 0]
+keys = ":sort !\"|! | 1d<CR>"
+
+[[case]]
+name = "bar_global_failing_range_search_stops_the_rest"
+buffer = "abc\naxc"
+cursor = [1, 0]
+keys = ":g/a/s/a/A/ | /z/s/A/Q/ | s/A/X/<CR>"
