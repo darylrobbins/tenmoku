@@ -299,7 +299,9 @@ fn viewer_and_editor_tabs_together(cx: &mut TestAppContext) {
     });
     assert_eq!(auto_close, [false, false]);
 
-    // Splitting the viewer opens another viewer of the file beside it.
+    // Splitting the viewer opens another viewer of the file beside it. Both
+    // share one index, so the original has to have read all of it first.
+    wait_for_index(&viewer, &big, cx);
     run("pane.split_right", cx);
     let panes = workbench.read_with(cx, |workbench, cx| {
         (workbench.pane_group(cx).panes().into_iter().cloned()).collect::<Vec<_>>()
@@ -423,6 +425,20 @@ fn launch_file_and_restore(cx: &mut TestAppContext) {
     assert_eq!(shown(&viewer, cx).1 + "\n", line(0));
     let editors = second.read_with(cx, |workbench, cx| workbench.open_editors(cx));
     assert!(editors.is_empty());
+}
+
+/// Waits for the index of `viewer`, which shows `path`, to finish building
+/// and for the viewer's poll to take all of its rows.
+fn wait_for_index(viewer: &Entity<FileViewer>, path: &Path, cx: &mut VisualTestContext) {
+    for _ in 0..500 {
+        if !viewer.read_with(cx, |viewer, _| viewer.is_polling()) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        cx.executor().advance_clock(Duration::from_millis(200));
+        draw(cx);
+    }
+    panic!("the index of {} never finished", path.display());
 }
 
 /// Waits for `viewer`'s index, building on a thread of its own, to find
