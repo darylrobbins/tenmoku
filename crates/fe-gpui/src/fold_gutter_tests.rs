@@ -143,3 +143,6 @@ fn clicking_keeps_the_selections_a_fold_doesnt_hide(cx: &mut TestAppContext) {
     cx.simulate_click(chevron, Modifiers::none());
     assert_eq!(selections(cx), folded);
 }
+
+#[path = "annotation_column_tests.rs"]
+mod annotation_column_tests;

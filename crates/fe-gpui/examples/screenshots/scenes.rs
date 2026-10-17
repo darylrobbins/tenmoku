@@ -1,10 +1,10 @@
 //! The scenes and their capture, with the Metal renderer: macOS only.
 
-use std::process::ExitCode;
+use std::{ops::Range, process::ExitCode, rc::Rc};
 
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
-use fe_gpui::{EditorTheme, EditorView};
+use fe_gpui::{EditorTheme, EditorView, GutterAnnotation, GutterAnnotations};
 use gpui::{AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
@@ -24,7 +24,11 @@ struct Scene {
     /// land from at least two rounds of background work: the language, then
     /// a parse too long for a frame or an injected language.
     cold: &'static [&'static str],
+    /// The gutter annotation column's entries: buffer rows, text and heat.
+    annotations: Annotations,
 }
+
+type Annotations = &'static [(Range<u32>, &'static str, Option<f32>)];
 
 fn scenes() -> Vec<Scene> {
     let scene = |name, path, text: &str| Scene {
@@ -32,6 +36,7 @@ fn scenes() -> Vec<Scene> {
         path,
         text: text.to_owned(),
         cold: &[],
+        annotations: &[],
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -72,18 +77,32 @@ fn scenes() -> Vec<Scene> {
             path: "scene.rs",
             text: numbered,
             cold: &[],
+            annotations: &[],
         },
         Scene {
             name: "markdown_fence",
             path: "scene.md",
             text: MARKDOWN.to_owned(),
             cold: &["markdown", "markdown_inline", "python"],
+            annotations: &[],
         },
         Scene {
             name: "large_c",
             path: "scene.c",
             text: large_c(),
             cold: &["c"],
+            annotations: &[],
+        },
+        Scene {
+            name: "annotated_gutter",
+            path: "scene.rs",
+            text: RUST.to_owned(),
+            cold: &[],
+            annotations: &[
+                (0..3, "2026-10-11 Ann Example", Some(1.0)),
+                (3..5, "2025-03-02 Bob Example", Some(0.0)),
+                (6..9, "2026-10-11 Ann Example", Some(1.0)),
+            ],
         },
     ]
 }
@@ -163,12 +182,33 @@ fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
     (text, selections)
 }
 
-/// Renders `model` in a focused editor, off screen, once the background work
+/// `entries` anchored in `model`'s buffer, with no popovers or clicks.
+fn gutter_annotations(model: &EditorModel, entries: Annotations) -> GutterAnnotations {
+    let snapshot = model.snapshot();
+    let text = snapshot.text();
+    GutterAnnotations {
+        version: snapshot.version(),
+        entries: (entries.iter())
+            .map(|(rows, label, heat)| GutterAnnotation {
+                rows: snapshot.anchor_before(text.row_start(rows.start))
+                    ..snapshot.anchor_before(text.row_start(rows.end)),
+                text: (*label).into(),
+                heat: *heat,
+            })
+            .collect(),
+        hover: Rc::new(|_, _| None),
+        on_click: Rc::new(|_, _, _, _| {}),
+    }
+}
+
+/// Renders `model` in a focused editor, off screen, with `annotations` in
+/// its gutter if there are any, once the background work
 /// its frames start (loading languages, parsing) has landed. Also returns
 /// how many times the view asked to be drawn again meanwhile.
 fn capture(
     cx: &mut VisualTestAppContext,
     model: EditorModel,
+    annotations: Annotations,
     size: Size<Pixels>,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
@@ -176,7 +216,12 @@ fn capture(
             font_family: FONT_FAMILY.into(),
             ..EditorTheme::default_dark(cx)
         };
-        cx.new(|cx| EditorView::new(model, theme, cx))
+        let shown = (!annotations.is_empty()).then(|| gutter_annotations(&model, annotations));
+        cx.new(|cx| {
+            let mut view = EditorView::new(model, theme, cx);
+            view.set_gutter_annotations(shown, cx);
+            view
+        })
     })?;
     let view = cx.update_window(window.into(), |view, window, cx| {
         let view = view.downcast::<EditorView>().expect("an editor");
@@ -206,7 +251,7 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
         let (text, selections) = parse(&scene.text);
         let mut model = EditorModel::new(Buffer::new(&text), Some(scene.path.into()));
         model.set_selections(selections);
-        let (image, notifications) = capture(cx, model, SCENE_SIZE)?;
+        let (image, notifications) = capture(cx, model, scene.annotations, SCENE_SIZE)?;
         if !scene.cold.is_empty() && notifications < 2 {
             return Err(format!(
                 "{}: no background work landed after the language loaded",
@@ -224,7 +269,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
     let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, size)?.0.save(out)?;
+    capture(cx, model, &[], size)?.0.save(out)?;
     println!("wrote {out}");
     Ok(())
 }

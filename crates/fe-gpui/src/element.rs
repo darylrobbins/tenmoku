@@ -33,6 +33,7 @@ use crate::{
     vim::{CaretShape, UNDERLINE_HEIGHT},
 };
 
+mod annotation_column;
 mod decorations;
 use decorations::{Decorations, Layer};
 mod ghost_text;
@@ -78,6 +79,10 @@ pub(crate) struct FrameLayout {
     clickable: Vec<Hitbox>,
     /// Over the text, right of the gutter, where a hover range is found.
     text: Hitbox,
+    /// The host's annotation column's rows ([`annotation_column`]).
+    annotation_column: annotation_column::Placed,
+    /// Over the column, if there is one, whose entries show popovers.
+    annotation_hitbox: Option<Hitbox>,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
     /// The pattern ([`fe_vim::search::Pattern::regex_str`]) and text version
@@ -572,11 +577,15 @@ impl Element for EditorElement {
 
         // Soft wrap fills the text area; catch the rows up with any edits.
         let width: f32 = bounds.size.width.into();
-        self.view.update(cx, |view, cx| {
+        let annotation_width = self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
+            let annotation_width =
+                view.annotation_width(&text_system, &font, font_id, font_size, em);
             // Less any room the view keeps for text after a line.
             let wrap = match view.gutter {
-                true => layout::wrap_width(width, rows, em),
+                true => {
+                    layout::wrap_width_with_annotation_column(width, rows, em, annotation_width)
+                }
                 false => layout::wrap_width_without_gutter(width, em),
             } - view.wrap_reserve * em;
             view.model.fit_wrap_width(wrap.max(em));
@@ -585,6 +594,8 @@ impl Element for EditorElement {
             // Caught up with edits made through another view of the buffer:
             // count them.
             view.sync_find(cx);
+            view.resolved_annotations();
+            annotation_width
         });
         let mut proposal_texts = self.view.update(cx, |view, _| {
             let layout = view.layout.as_mut();
@@ -681,8 +692,9 @@ impl Element for EditorElement {
         let blocks = block_map(view, &hunks, ghost.as_ref());
         let gutter = view.gutter;
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
-            true => layout::layout_frame_with_inlay(
+            true => layout::layout_frame_with_annotation_column(
                 input,
+                annotation_width,
                 &blocks,
                 inlay.as_ref(),
                 &mut shaper,
@@ -828,6 +840,7 @@ impl Element for EditorElement {
             &mut glyph_widths,
             host_x,
         );
+        let annotations = annotation_column::layout(&frame, view, &mut shaper, em);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -870,6 +883,8 @@ impl Element for EditorElement {
             fold_column,
             clickable,
             text,
+            annotation_column: annotations,
+            annotation_hitbox: None,
             matches: Vec::new(),
             highlight_ran_out: None,
             brackets: Vec::new(),
@@ -884,6 +899,10 @@ impl Element for EditorElement {
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
+        let (column, entries) =
+            annotation_column::insert_hitboxes(&layout.annotation_column, &layout, view, window);
+        layout.annotation_hitbox = column;
+        layout.clickable.extend(entries);
         layout.matches = match_rects(&mut layout, view);
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
@@ -1080,6 +1099,8 @@ impl Element for EditorElement {
         let mut painted_brackets = Vec::new();
         #[cfg(test)]
         let mut painted_blocks = Vec::new();
+        #[cfg(test)]
+        let mut painted_annotations = Vec::new();
         let mut proposal_buttons = Vec::new();
         #[cfg(test)]
         let mut painted_proposals = Vec::new();
@@ -1221,6 +1242,14 @@ impl Element for EditorElement {
                     }
                 },
             );
+            annotation_column::paint(
+                &layout.annotation_column,
+                &layout,
+                window,
+                cx,
+                #[cfg(test)]
+                &mut painted_annotations,
+            );
             for (origin, number) in &frame.line_numbers {
                 number.paint(layout.to_window(*origin), line_height, window, cx);
             }
@@ -1277,14 +1306,21 @@ impl Element for EditorElement {
         // them, and a click leaves them be.
         {
             let (view, text) = (view.clone(), layout.text.clone());
+            let column = layout.annotation_hitbox.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     let over = text
                         .is_hovered_at(event.position, window)
                         .then_some(event.position);
+                    let over_column = (column.as_ref())
+                        .filter(|column| column.is_hovered_at(event.position, window))
+                        .map(|_| event.position);
                     view.update(cx, |view, cx| {
                         view.hover_at(over, &event.modifiers, window, cx);
-                        view.hover_diagnostics(over, cx);
+                        // An annotation's popover, or else the text's.
+                        if !view.hover_annotation(over_column, cx) {
+                            view.hover_diagnostics(over, cx);
+                        }
                     })
                     .ok();
                 }
@@ -1329,6 +1365,7 @@ impl Element for EditorElement {
                 view.painted_chevrons = painted_chevrons;
                 view.painted_brackets = painted_brackets;
                 view.painted_blocks = painted_blocks;
+                view.painted_annotations = painted_annotations;
                 view.painted_proposals = painted_proposals;
                 view.painted_ghost = painted_ghost;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
@@ -1487,7 +1524,8 @@ type Mark = (u32, Bounds<Pixels>, Hsla);
 
 /// For `diagnostics`, in the frame's text: a wavy underline under each
 /// piece of each one on the frame's rows, in its severity's colour, the most
-/// severe last, so on top; and, at the gutter's left, a dot on the first
+/// severe last, so on top; and, at the gutter's left (right of any
+/// annotation column), a dot on the first
 /// display row of each buffer row one covers, in the colour of the most
 /// severe covering it. An empty range is underlined under the char after
 /// it, or a space's width at a row's end.
@@ -1566,7 +1604,7 @@ fn diagnostic_marks(
         .filter_map(|row| {
             let severity = rows.get(&row.buffer_row)?;
             let rect = Rect {
-                x: side / 2.,
+                x: frame.annotation_column.width + side / 2.,
                 y: frame.row_top(row.row) + (frame.line_height - side) / 2.,
                 width: side,
                 height: side,

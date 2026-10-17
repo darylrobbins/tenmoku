@@ -23,7 +23,10 @@
 //!   provider's, or as the pointer rests on an after-line decoration's text
 //!   ([`EditorView::set_after_line_popover`]): line blame's commit, say.
 //!   Neither asks the provider; each hides as the provider's would, and the
-//!   pointer's once the pointer leaves the decoration.
+//!   pointer's once the pointer leaves the decoration. Resting on a gutter
+//!   annotation shows the host's text for it the same way
+//!   ([`crate::GutterAnnotations::hover`]), until the pointer leaves the
+//!   entry.
 
 use std::{future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
@@ -124,6 +127,9 @@ struct Hovered {
     /// The host's text, not the provider's or the diagnostics': shown for
     /// whatever diagnostics come and go.
     host: bool,
+    /// The index of the gutter annotation the pointer rests on, whose
+    /// popover this is ([`EditorView::hover_annotation`]).
+    annotation: Option<usize>,
 }
 
 /// Where the pointer is, in the text.
@@ -287,6 +293,7 @@ impl EditorView {
             scroll: self.scroll,
             caret,
             host: false,
+            annotation: None,
         }
     }
 
@@ -369,8 +376,10 @@ impl EditorView {
         position: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let shows_after_line = (self.popover.current.as_ref())
-            .is_some_and(|current| current.hovered.host && current.hovered.caret.is_none());
+        let shows_after_line = (self.popover.current.as_ref()).is_some_and(|current| {
+            let hovered = &current.hovered;
+            hovered.host && hovered.caret.is_none() && hovered.annotation.is_none()
+        });
         let Some((position, bottom, content)) = position.and_then(|position| {
             let (label, content) = self.popover.after_line.as_ref()?;
             let layout = self.layout.as_ref()?;
@@ -402,6 +411,7 @@ impl EditorView {
             scroll: self.scroll,
             caret: None,
             host: true,
+            annotation: None,
         };
         let at = gpui::point(position.x, bottom);
         self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, Some(content), cx);
@@ -420,11 +430,70 @@ impl EditorView {
             return;
         }
         self.popover.after_line = popover;
-        if (self.popover.current.as_ref())
-            .is_some_and(|current| current.hovered.host && current.hovered.caret.is_none())
-        {
+        if (self.popover.current.as_ref()).is_some_and(|current| {
+            let hovered = &current.hovered;
+            hovered.host && hovered.caret.is_none() && hovered.annotation.is_none()
+        }) {
             self.hide_popover(cx);
         }
+    }
+
+    /// Whether the popover is a gutter annotation's, shown or waiting.
+    pub(crate) fn popover_shows_annotation(&self) -> bool {
+        (self.popover.current.as_ref()).is_some_and(|current| current.hovered.annotation.is_some())
+    }
+
+    /// The pointer moved to `position` over the annotation column, or off
+    /// it (`None`): over an entry's row, waits out the delay to show the
+    /// host's popover for it below the row, or keeps the one shown while
+    /// the pointer stays on that entry; elsewhere, hides one shown. Whether
+    /// the pointer is over an entry.
+    pub(crate) fn hover_annotation(
+        &mut self,
+        position: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let version = self.model.snapshot().version();
+        let found = position.and_then(|position| {
+            let layout = self
+                .layout
+                .as_ref()
+                .filter(|layout| layout.version == version)?;
+            let (row, slot) = layout.annotation_row_at(position)?;
+            let ix = self.resolved_annotations()?.entry_at(row)?;
+            Some((position, row, slot, ix))
+        });
+        let shows = (self.popover.current.as_ref()).and_then(|current| current.hovered.annotation);
+        let Some((position, row, slot, ix)) = found else {
+            if shows.is_some() {
+                self.hide_popover(cx);
+            }
+            return false;
+        };
+        if shows == Some(ix) {
+            return true;
+        }
+        self.hide_popover(cx);
+        let Some(hover) = (self.annotations.as_ref()).map(|shown| shown.annotations.hover.clone())
+        else {
+            return false;
+        };
+        // Asked once per entry rested on; with nothing to show, the
+        // popover waits unseen, so moves within the entry don't ask again.
+        let content = hover(ix, row);
+        let hovered = Hovered {
+            under: Under::RowEnd(self.model.text().row_start(row)),
+            items: Vec::new(),
+            word: None,
+            version,
+            scroll: self.scroll,
+            caret: None,
+            host: true,
+            annotation: Some(ix),
+        };
+        let at = gpui::point(position.x, slot.bottom());
+        self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, content, cx);
+        true
     }
 
     /// Shows `content`, the host's, in the popover below the caret, at once,
@@ -441,6 +510,7 @@ impl EditorView {
             scroll: self.scroll,
             caret: Some(caret),
             host: true,
+            annotation: None,
         };
         let Some(at) = (self.layout.as_mut())
             .filter(|layout| layout.version == hovered.version)
@@ -583,12 +653,14 @@ impl EditorView {
 
     /// Whether what the popover was found on still stands: no edit or
     /// scroll since, exactly the same diagnostics where the pointer last
-    /// was over them, and, at the caret, the caret where it was.
+    /// was over them, at the caret, the caret where it was, and on a gutter
+    /// annotation, the column still showing.
     fn popover_stands(&self, shown: &Hovered) -> bool {
         shown.version == self.model.snapshot().version()
             && shown.scroll == self.scroll
             && (shown.caret).is_none_or(|caret| caret == self.model.primary_selection().head())
             && (shown.host || shown.under.items(&self.model.diagnostics()) == shown.items)
+            && (shown.annotation).is_none_or(|_| self.gutter && self.annotations.is_some())
     }
 
     /// What the popover says, if it's shown, still stands and has

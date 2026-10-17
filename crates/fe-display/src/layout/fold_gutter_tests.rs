@@ -161,3 +161,6 @@ fn click_areas_are_clipped_to_what_shows() {
     // All of it is.
     assert_eq!(areas(60.), toggles);
 }
+
+#[path = "annotation_column_tests.rs"]
+mod annotation_column_tests;

@@ -51,6 +51,9 @@ pub struct EditorView {
     pub(crate) wrap_reserve: f32,
     /// Whether the gutter shows ([`EditorView::set_gutter`]).
     pub(crate) gutter: bool,
+    /// The host's column left of the line numbers
+    /// ([`EditorView::set_gutter_annotations`]).
+    pub(crate) annotations: Option<crate::gutter_annotations::Annotated>,
     /// How far the content is scrolled, in pixels (both ≥ 0).
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
@@ -193,6 +196,10 @@ pub struct EditorView {
     /// Its parts, and the font each was set in.
     #[cfg(test)]
     pub(crate) painted_popover_blocks: Vec<(crate::hover::Block, gpui::SharedString)>,
+    /// The annotation column's display rows the last frame painted: the
+    /// buffer row, its text and its tint.
+    #[cfg(test)]
+    pub(crate) painted_annotations: Vec<(u32, Option<gpui::SharedString>, Option<Hsla>)>,
     /// The completion menu, as the last frame showed it.
     #[cfg(test)]
     pub(crate) painted_completion: Option<crate::completion_menu::Painted>,
@@ -246,6 +253,7 @@ impl EditorView {
             tab_tint: None,
             wrap_reserve: 0.,
             gutter: true,
+            annotations: None,
             scroll: Point::default(),
             autoscroll: true,
             reveal_hunk: None,
@@ -311,6 +319,8 @@ impl EditorView {
             painted_popover: None,
             #[cfg(test)]
             painted_popover_blocks: Vec::new(),
+            #[cfg(test)]
+            painted_annotations: Vec::new(),
             #[cfg(test)]
             painted_completion: None,
             #[cfg(test)]
@@ -664,6 +674,12 @@ impl EditorView {
         self.composition = None;
         // A proposal's button leaves the carets where they are.
         if self.press_proposal_button(event.position, cx) {
+            self.drag = None;
+            return;
+        }
+        // The annotation column: a plain click on an entry is the host's;
+        // nothing else happens there.
+        if self.click_annotation(event, window, cx) {
             self.drag = None;
             return;
         }

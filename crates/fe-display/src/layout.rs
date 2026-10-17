@@ -190,6 +190,9 @@ pub struct Frame<L> {
     /// height, where chevrons go. Line numbers end [`LINE_NUMBER_GAP_EMS`]
     /// left of it.
     pub fold_column: Rect,
+    /// The column left of the gutter, the frame's height, where a host's
+    /// per-row annotations go; zero wide when there's none.
+    pub annotation_column: Rect,
     /// The side of a chevron's square box.
     pub fold_chevron: f32,
     /// Chevrons in the gutter of the rows that can fold or are folded.
@@ -406,7 +409,7 @@ impl<L: MeasuredLine> Frame<L> {
         Rect {
             x: self.text_left,
             y: 0.,
-            width: self.width - self.text_left,
+            width: (self.width - self.text_left).max(0.),
             height: self.height,
         }
     }
@@ -531,7 +534,19 @@ pub fn gutter_width(buffer_rows: u32, em: f32) -> f32 {
 /// gutter, less a margin, in whole ems. Re-wrapping a large file takes a
 /// while, so resizing only does it when another em fits.
 pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
-    let available = width - gutter_width(buffer_rows, em) - em * 2.;
+    wrap_width_with_annotation_column(width, buffer_rows, em, 0.)
+}
+
+/// [`wrap_width`] with an annotation column `annotation_width` wide left of
+/// the gutter ([`layout_frame_with_annotation_column`]): `annotation_width`
+/// less, still in whole ems.
+pub fn wrap_width_with_annotation_column(
+    width: f32,
+    buffer_rows: u32,
+    em: f32,
+    annotation_width: f32,
+) -> f32 {
+    let available = width - annotation_width - gutter_width(buffer_rows, em) - em * 2.;
     (available / em).floor().max(1.) * em
 }
 
@@ -612,9 +627,39 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
     fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
+    layout_frame_with_annotation_column(
+        input,
+        0.,
+        blocks,
+        inlay,
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_inlay`], with a column
+/// `annotation_width` wide (0 for none) at the left edge, before the
+/// gutter: the diagnostics' marks, line numbers, fold column, change lane and
+/// text all move right by `annotation_width`, and [`Frame::annotation_column`]
+/// covers it. Wrap it at [`wrap_width_with_annotation_column`].
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_with_annotation_column<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    annotation_width: f32,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
     lay_out_frame(
         input,
-        true,
+        Some(annotation_width),
         blocks,
         inlay,
         measure,
@@ -641,7 +686,7 @@ pub fn layout_frame_without_gutter<M: TextMeasure>(
 ) -> Frame<M::Line> {
     lay_out_frame(
         input,
-        false,
+        None,
         blocks,
         inlay,
         measure,
@@ -652,11 +697,12 @@ pub fn layout_frame_without_gutter<M: TextMeasure>(
     )
 }
 
-/// [`layout_frame_with_inlay`], with the gutter or without it.
+/// [`layout_frame_with_inlay`], with the gutter and an annotation column
+/// that wide before it, or with neither (`None`).
 #[allow(clippy::too_many_arguments)]
 fn lay_out_frame<M: TextMeasure>(
     input: &FrameInput<M::Style>,
-    gutter: bool,
+    annotation_width: Option<f32>,
     blocks: &BlockMap,
     inlay: Option<&Inlay<M::Style>>,
     measure: &mut M,
@@ -684,11 +730,14 @@ fn lay_out_frame<M: TextMeasure>(
 
     let row_count = display.row_count();
     let screen_rows = row_count + blocks.block_rows();
-    // Left to right: the fold column, the change lane and the text; without
-    // a gutter, the column and lane are empty, at the left edge.
+    // Left to right: the annotation column, the fold column, the change lane
+    // and the text; without a gutter, the columns and lane are empty, at the
+    // left edge.
+    let gutter = annotation_width.is_some();
+    let annotation_width = annotation_width.unwrap_or(0.);
     let (text_left, fold_column_width, change_lane_width) = match gutter {
         true => (
-            gutter_width(text.row_count(), em),
+            annotation_width + gutter_width(text.row_count(), em),
             em * FOLD_COLUMN_EMS,
             em * CHANGE_LANE_EMS,
         ),
@@ -706,7 +755,9 @@ fn lay_out_frame<M: TextMeasure>(
         width: change_lane_width,
         height,
     };
-    let text_width = width - text_left;
+    // A gutter, or an annotation column, wider than the editor leaves no
+    // text area, not a negative one.
+    let text_width = (width - text_left).max(0.);
 
     // Keep the primary cursor a few rows from the top and bottom edges.
     if autoscroll {
@@ -1163,7 +1214,8 @@ fn lay_out_frame<M: TextMeasure>(
             }
             // Far along a long row, a selection reaches far off screen,
             // further than an `f32` places its visible edge exactly.
-            let clamp = |x: f32| x.clamp(text_left - em, width + em);
+            // With no text area, both edges are at its left.
+            let clamp = |x: f32| x.clamp(text_left - em, (width + em).max(text_left - em));
             selection_rects.push(Rect::from_corners(
                 clamp(x_at(row, from)),
                 row_top(row.row),
@@ -1321,6 +1373,12 @@ fn lay_out_frame<M: TextMeasure>(
             x: fold_column_x,
             y: 0.,
             width: fold_column_width,
+            height,
+        },
+        annotation_column: Rect {
+            x: 0.,
+            y: 0.,
+            width: annotation_width,
             height,
         },
         fold_chevron: (em * FOLD_CHEVRON_EMS).min(line_height * FOLD_CHEVRON_LINE_FRACTION),

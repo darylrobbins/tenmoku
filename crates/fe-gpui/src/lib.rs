@@ -22,6 +22,7 @@ pub mod completion_menu;
 pub mod diff_view;
 mod element;
 mod file_viewer;
+mod gutter_annotations;
 mod hover;
 pub mod keymap;
 pub mod menu;
@@ -40,6 +41,7 @@ pub use fe_keymap;
 use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
+pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;
