@@ -260,6 +260,7 @@ fn ex_edits(text: &str) -> bool {
         }
         ExCommand::Global { command, .. } => ex_edits(&command),
         ExCommand::Normal { keys } => keys_edit(&keys),
+        ExCommand::Table(command) => command.edits(),
         ExCommand::Delete { .. }
         | ExCommand::Join { .. }
         | ExCommand::Move { .. }

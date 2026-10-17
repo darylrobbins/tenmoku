@@ -87,6 +87,7 @@ use crate::{
 mod global;
 mod lines;
 mod normal;
+mod table;
 
 /// A parsed ex line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,8 +228,24 @@ pub enum ExCommand {
     NoHighlight,
     /// `:s[ubstitute]`, `:&` and `:&&`: see [`Substitute`].
     Substitute(Substitute),
+    /// A command of the table (`ex/table.rs`).
+    Table(TableCommand),
     /// A file or window command, which the host runs.
     Host(HostCommand),
+}
+
+/// A command of the table, parsed: its entry's full name and arguments.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableCommand {
+    name: &'static str,
+    args: String,
+}
+
+impl TableCommand {
+    /// Whether the command can edit the buffer.
+    pub fn edits(&self) -> bool {
+        table::named(self.name).is_some_and(|entry| entry.edits)
+    }
 }
 
 /// A file or window command fe-vim parses but leaves to the host (it knows
@@ -488,6 +505,10 @@ fn command(
             false => Err(not_a_command()),
         };
     }
+    // Shared by the commands that take it, one of which (`lines`) may find
+    // the name isn't its own. Wrapped after `:browse`, which recurses.
+    let mut check = Some(check);
+    let mut check = |both| check.take().map_or(Ok(()), |check| check(both));
     if let Some(command) = host(name) {
         return host_command(command, range, after);
     }
@@ -519,7 +540,15 @@ fn command(
     let delete = DELETE.contains(&name);
     let nohlsearch = name.len() >= 3 && "nohlsearch".starts_with(name);
     if !delete && !nohlsearch {
-        return lines::command(name, after, check)?.ok_or_else(not_a_command);
+        if let Some(command) = lines::command(name, after, &mut check)? {
+            return Ok(command);
+        }
+        let entry = table::find(name).ok_or_else(not_a_command)?;
+        let args = (entry.parse)(after, &mut check)?;
+        return Ok(ExCommand::Table(TableCommand {
+            name: entry.name,
+            args,
+        }));
     }
     let after = uncommented(after);
     if after.starts_with('!') {
@@ -984,6 +1013,10 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
                 goto(target, line.clamp(1, last));
             }
             Ok(Dispatched::new(Effect::Changed))
+        }
+        ExCommand::Table(TableCommand { name, args }) => {
+            let entry = table::named(name).ok_or_else(|| ExError::NotACommand(line.to_string()))?;
+            return (entry.run)(target, actor, lines, &range, &args);
         }
         ExCommand::NoHighlight => {
             target.state.highlight = None;
