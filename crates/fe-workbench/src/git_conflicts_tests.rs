@@ -157,3 +157,6 @@ fn no_conflicts_says_so(cx: &mut TestAppContext) {
 
 #[path = "git_conflicts_accept_tests.rs"]
 mod accept;
+
+#[path = "git_conflicts_lens_tests.rs"]
+mod lenses;

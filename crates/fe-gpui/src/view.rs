@@ -592,6 +592,43 @@ impl EditorView {
         self.changed(cx);
     }
 
+    /// Edits the text as the user would, with a host's replacements: `plan`
+    /// gives them from the model once vim's insert or replace session has
+    /// ended (and so any autoindent it dropped), so offsets are never stale,
+    /// and the session resumes after them. Typing before and after them
+    /// undoes apart from them. They are one user transaction, and the caret
+    /// goes to the start of the first, scrolled into view as
+    /// [`EditorView::select_and_reveal`] does, with a fold hiding it opened.
+    /// `plan` gives replacements in order, not overlapping. Returns whether
+    /// it gave any.
+    pub fn edit_and_reveal(
+        &mut self,
+        plan: impl FnOnce(&EditorModel) -> Vec<(Range<usize>, String)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.cancel_vim(cx);
+        self.composition = None;
+        let edited = self.split_session(
+            fe_vim::Splits::Edits,
+            |model| {
+                let edits = plan(model);
+                let at = edits.first()?.0.start;
+                model.buffer_mut().edit(edits, fe_buffer::Origin::User);
+                let text = model.text();
+                let at = text.clip_offset(at, Bias::Left);
+                model.unfold_rows(text.offset_to_point(at).row..=text.offset_to_point(at).row);
+                model.set_selections([fe_buffer::ResolvedSelection {
+                    range: at..at,
+                    reversed: false,
+                }]);
+                Some(())
+            },
+            cx,
+        );
+        self.changed(cx);
+        edited.is_some()
+    }
+
     /// The buffer row first in view, and how many display rows the view
     /// shows: `None` before the first frame.
     pub fn viewport_rows(&self) -> Option<(u32, u32)> {

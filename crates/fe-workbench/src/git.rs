@@ -62,7 +62,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, 
 #[path = "git_conflicts.rs"]
 pub(crate) mod git_conflicts;
 
-use git_conflicts::ConflictBands;
+use git_conflicts::{ConflictBands, ConflictLenses};
 
 use crate::{
     GitPanel, Workbench,
@@ -328,8 +328,10 @@ impl GitState {
         for editor in editors {
             if self.banded.insert(editor.entity_id()) {
                 let bands = Rc::new(RefCell::new(ConflictBands::default()));
+                let lenses = Rc::new(RefCell::new(ConflictLenses::default()));
                 editor.update(cx, |editor, _| {
-                    editor.model_mut().add_decoration_provider(bands)
+                    editor.model_mut().add_decoration_provider(bands);
+                    editor.add_lens_provider(lenses);
                 });
             }
             if !self.bar_clicks.contains_key(&editor.entity_id()) {

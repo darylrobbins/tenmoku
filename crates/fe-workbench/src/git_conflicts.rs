@@ -5,10 +5,12 @@
 
 use std::{cell::RefCell, ops::Range};
 
-use fe_buffer::Origin;
 use fe_buffer::{BufferSnapshot, Version};
+use fe_command::{Invocation, Value};
+use fe_editor::EditorModel;
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps};
 use fe_git::conflict_markers;
+use fe_gpui::{Lens, LensItem, LensProvider};
 use gpui::{Context, Window};
 
 use crate::{
@@ -22,6 +24,16 @@ pub(crate) const MAX_SCAN_BYTES: usize = 8 << 20;
 /// Below diagnostics' decorations and the git change bar's, so they still
 /// show.
 const PRIORITY: i32 = -200;
+
+const CURRENT_LABEL: &str = "(Current Change)";
+const INCOMING_LABEL: &str = "(Incoming Change)";
+
+/// A lens's items, in VS Code's order: title and command.
+const ACTIONS: [(&str, &str); 3] = [
+    ("Accept Current Change", "git.accept_current"),
+    ("Accept Incoming Change", "git.accept_incoming"),
+    ("Accept Both Changes", "git.accept_both"),
+];
 
 const WRAPPED_TO_FIRST: &str = "Wrapped to the first conflict";
 const WRAPPED_TO_LAST: &str = "Wrapped to the last conflict";
@@ -66,7 +78,8 @@ fn scannable(snapshot: &BufferSnapshot) -> Option<String> {
 
 /// Bands each conflict in a snapshot's rows by side: the start marker and
 /// the current side added, a base muted, the incoming side and the end
-/// marker modified.
+/// marker modified. The start and end markers are labelled "(Current
+/// Change)" and "(Incoming Change)" after their text.
 #[derive(Default)]
 pub(crate) struct ConflictBands {
     cache: RefCell<Option<(Version, Vec<Decoration>)>>,
@@ -81,7 +94,15 @@ impl ConflictBands {
             Decoration::new(range, DecorationKind::RowBackground, tint).with_priority(PRIORITY)
         };
         let mut out = Vec::new();
+        // The label sits after the marker's text, its line break not included.
+        let label = |line: Range<usize>, label: &str| {
+            let end = line.start + text[line.clone()].trim_end_matches(['\r', '\n']).len();
+            let kind = DecorationKind::AfterLine(label.into());
+            Decoration::new(line.start..end, kind, Tint::Muted).with_priority(PRIORITY)
+        };
         for conflict in conflict_markers::parse(&text) {
+            out.push(label(conflict.start.line.clone(), CURRENT_LABEL));
+            out.push(label(conflict.end.line.clone(), INCOMING_LABEL));
             out.push(band(
                 conflict.start.line.start..conflict.current.end,
                 Tint::Added,
@@ -118,6 +139,84 @@ impl DecorationProvider for ConflictBands {
                 .cloned(),
         );
     }
+}
+
+/// One lens above each conflict's start marker row: Accept Current Change,
+/// Accept Incoming Change and Accept Both Changes, each taking the row.
+#[derive(Default)]
+pub(crate) struct ConflictLenses {
+    cache: Option<(Version, Vec<Lens>)>,
+}
+
+impl ConflictLenses {
+    fn lenses(snapshot: &BufferSnapshot) -> Vec<Lens> {
+        let Some(text) = scannable(snapshot) else {
+            return Vec::new();
+        };
+        let rows = snapshot.text();
+        (conflict_markers::parse(&text).iter())
+            .map(|conflict| {
+                let row = rows.offset_to_point(conflict.start.line.start).row;
+                let items = ACTIONS.iter().map(|&(title, command)| LensItem {
+                    title: title.into(),
+                    invocation: Invocation::of(command)
+                        .expect("the accept commands are registered")
+                        .args(Value::Object(
+                            [("row".to_owned(), row.into())].into_iter().collect(),
+                        )),
+                });
+                Lens {
+                    row,
+                    items: items.collect(),
+                }
+            })
+            .collect()
+    }
+}
+
+impl LensProvider for ConflictLenses {
+    fn lenses(&mut self, snapshot: &BufferSnapshot) -> Vec<Lens> {
+        let version = snapshot.version();
+        if (self.cache.as_ref()).is_none_or(|(cached, _)| *cached != version) {
+            self.cache = Some((version, Self::lenses(snapshot)));
+        }
+        self.cache
+            .as_ref()
+            .map_or_else(Vec::new, |(_, l)| l.clone())
+    }
+}
+
+/// The replacements an accept command makes in `model`: each chosen
+/// conflict's marker block for `side`'s lines (both: current, then
+/// incoming), the base dropped.
+fn plan_accept(model: &EditorModel, side: Side, which: Which) -> Vec<(Range<usize>, String)> {
+    let text = model.text();
+    let string = marked(model.snapshot()).unwrap_or_default();
+    let mut conflicts = conflict_markers::parse(&string);
+    if let Which::At(row) = which {
+        let row = row.unwrap_or_else(|| text.offset_to_point(model.primary_selection().head()).row);
+        conflicts.retain(|conflict| {
+            let range = conflict.range();
+            let (first, last) = (
+                text.offset_to_point(range.start).row,
+                text.offset_to_point(range.end.saturating_sub(1).max(range.start))
+                    .row,
+            );
+            (first..=last).contains(&row)
+        });
+    }
+    (conflicts.iter())
+        .map(|conflict| {
+            let current = &string[conflict.current.clone()];
+            let incoming = &string[conflict.incoming.clone()];
+            let kept = match side {
+                Side::Current => current.to_owned(),
+                Side::Incoming => incoming.to_owned(),
+                Side::Both => format!("{current}{incoming}"),
+            };
+            (conflict.range(), kept)
+        })
+        .collect()
 }
 
 impl Workbench {
@@ -170,8 +269,9 @@ impl Workbench {
 
     /// `git.accept_*`: replaces the chosen conflicts' marker blocks in the
     /// active editor with `side`'s lines (both: current, then incoming),
-    /// the base dropped, in one user transaction, and puts the caret at the
-    /// start of the first replacement.
+    /// the base dropped, in one user transaction apart from any Vim insert
+    /// typing around it, and puts the caret at the start of the first
+    /// replacement.
     pub(crate) fn accept(
         &mut self,
         side: Side,
@@ -185,53 +285,15 @@ impl Workbench {
         if editor.read(cx).is_read_only() {
             return toast::show(cx, Toast::info(READ_ONLY.to_owned()));
         }
-        let edits = {
-            let model = editor.read(cx).model();
-            let text = model.text();
-            let string = marked(model.snapshot()).unwrap_or_default();
-            let mut conflicts = conflict_markers::parse(&string);
-            match which {
-                Which::All => {}
-                Which::At(row) => {
-                    let row = row.unwrap_or_else(|| {
-                        text.offset_to_point(model.primary_selection().head()).row
-                    });
-                    conflicts.retain(|conflict| {
-                        let range = conflict.range();
-                        let (first, last) = (
-                            text.offset_to_point(range.start).row,
-                            text.offset_to_point(range.end.saturating_sub(1).max(range.start))
-                                .row,
-                        );
-                        (first..=last).contains(&row)
-                    });
-                }
-            }
-            let edits: Vec<(Range<usize>, String)> = (conflicts.iter())
-                .map(|conflict| {
-                    let current = &string[conflict.current.clone()];
-                    let incoming = &string[conflict.incoming.clone()];
-                    let kept = match side {
-                        Side::Current => current.to_owned(),
-                        Side::Incoming => incoming.to_owned(),
-                        Side::Both => format!("{current}{incoming}"),
-                    };
-                    (conflict.range(), kept)
-                })
-                .collect();
-            edits
-        };
-        let Some((first, _)) = edits.first() else {
+        if plan_accept(editor.read(cx).model(), side, which).is_empty() {
             let message = match which {
                 Which::All => NO_CONFLICTS,
                 Which::At(_) => NOT_IN_CONFLICT,
             };
             return toast::show(cx, Toast::info(message.to_owned()));
-        };
-        let at = first.start;
+        }
         editor.update(cx, |editor, cx| {
-            editor.model_mut().buffer_mut().edit(edits, Origin::User);
-            editor.select_and_reveal(at..at, cx);
+            editor.edit_and_reveal(|model| plan_accept(model, side, which), cx)
         });
     }
 }
