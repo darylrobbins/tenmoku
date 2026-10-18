@@ -56,3 +56,5 @@ fn the_visible_columns_run_from_the_scroll_to_the_text_edge() {
     assert_eq!(visible_columns(0., 3., 10.), Some(0..1));
     assert_eq!(visible_columns(0., 800., 0.), None);
 }
+#[path = "diagnostic_tags_tests.rs"]
+mod diagnostic_tags_tests;

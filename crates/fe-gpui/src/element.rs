@@ -15,7 +15,10 @@ use fe_display::{
         TextMeasure, Vec2,
     },
 };
-use fe_editor::decorations::DecorationKind;
+use fe_editor::{
+    decorations::DecorationKind,
+    diagnostics::{DiagnosticTag, Severity},
+};
 use fe_syntax::{Syntax, SyntaxDriver};
 use fe_vim::jump::JumpLabelState;
 use gpui::{
@@ -753,6 +756,7 @@ impl Element for EditorElement {
         let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
         let gutter = view.gutter;
         let hints = crate::inlay_hints::inlays(view);
+        let unnecessary = unnecessary_ranges(&model.diagnostics());
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
             // fe-display lays hints out only beside no annotation column.
             true if annotation_width > 0. => layout::layout_frame_with_annotation_column(
@@ -763,7 +767,7 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, range),
                 |rows| fold_headers(syntax, rows),
             ),
             true => layout::layout_frame_with_hints(
@@ -774,7 +778,7 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, range),
                 |rows| fold_headers(syntax, rows),
             ),
             false => layout::layout_frame_without_gutter_with_hints(
@@ -785,7 +789,7 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, range),
             ),
         };
         let mut frame = lay_out(&input);
@@ -1145,7 +1149,7 @@ impl Element for EditorElement {
         let selections = selection_rects(&mut layout, view);
         let matches = mem::take(&mut layout.matches);
         let brackets = mem::take(&mut layout.brackets);
-        let (squiggles, mut marks) = {
+        let (squiggles, mut marks, strikes) = {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
         };
@@ -1314,6 +1318,9 @@ impl Element for EditorElement {
                     for (squiggle, style) in &squiggles {
                         window.paint_underline(squiggle.origin, squiggle.size.width, style);
                     }
+                    for &(strike, color) in &strikes {
+                        window.paint_quad(fill(strike, color));
+                    }
                     layout.decorations.paint(Layer::Underlines, window, cx);
                     layout.decorations.paint(Layer::AfterLine, window, cx);
                     for &(underline, color) in &underlines {
@@ -1477,6 +1484,7 @@ impl Element for EditorElement {
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;
+                view.painted_strikes = strikes.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_composition = composition_underline;
                 view.painted_marks = marks.iter().map(|&(row, _, color)| (row, color)).collect();
             }
@@ -1697,7 +1705,7 @@ fn diagnostic_marks(
     text: &Text,
     diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
     theme: &EditorTheme,
-) -> (Vec<Squiggle>, Vec<Mark>) {
+) -> (Vec<Squiggle>, Vec<Mark>, Vec<Strike>) {
     let FrameLayout {
         frame,
         long_rows,
@@ -1705,10 +1713,11 @@ fn diagnostic_marks(
         ..
     } = layout;
     let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     };
     let shown = first.start..last.end;
     let mut pieces = Vec::new();
+    let mut strikes = Vec::new();
     let mut rows: HashMap<u32, fe_editor::diagnostics::Severity> = HashMap::new();
     for entry in diagnostics {
         let range = entry.range.clone();
@@ -1757,7 +1766,21 @@ fn diagnostic_marks(
                 width: right - left,
                 height: SQUIGGLE,
             };
-            pieces.push((entry.severity, rect));
+            // Faded instead, for a hint.
+            if !(entry.severity == Severity::Hint && is_unnecessary(entry)) {
+                pieces.push((entry.severity, rect));
+            }
+            if entry.tags.contains(&DiagnosticTag::Deprecated) && start < end {
+                let color = (row.line)
+                    .color_at(row.expanded.to_display(start - row.shown().start))
+                    .unwrap_or(theme.foreground);
+                let middle = Rect {
+                    y: baseline - ascent / 2.,
+                    height: 1.,
+                    ..rect
+                };
+                strikes.push((middle, color));
+            }
         }
     }
     pieces.sort_by_key(|(severity, _)| *severity);
@@ -1788,7 +1811,112 @@ fn diagnostic_marks(
     let marks = (marks.into_iter())
         .map(|(row, rect, color)| (row, layout.bounds(rect), color))
         .collect();
-    (squiggles, marks)
+    let strikes = (strikes.into_iter())
+        .map(|(rect, color)| (layout.bounds(rect), color))
+        .collect();
+    (squiggles, marks, strikes)
+}
+
+/// A strike through deprecated text: its box in window coordinates and the
+/// text's colour.
+type Strike = (Bounds<Pixels>, Hsla);
+
+/// How much of its alpha text covered by an Unnecessary diagnostic keeps,
+/// as in VS Code's `editorUnnecessaryCode.opacity`.
+const UNNECESSARY_OPACITY: f32 = 0.67;
+
+fn is_unnecessary(entry: &fe_editor::diagnostics::DiagnosticEntry<'_>) -> bool {
+    entry.tags.contains(&DiagnosticTag::Unnecessary)
+}
+
+/// The ranges Unnecessary diagnostics cover, sorted and merged so
+/// overlapping ones fade once.
+fn unnecessary_ranges(
+    diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
+) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = (diagnostics.iter())
+        .filter(|entry| is_unnecessary(entry) && !entry.range.is_empty())
+        .map(|entry| entry.range.clone())
+        .collect();
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+/// `spans` with the parts inside `fade` (sorted, merged) at
+/// [`UNNECESSARY_OPACITY`] of their alpha, and the parts of `fade` within
+/// `range` that they leave uncovered added in `text`, faded.
+fn fade_spans(
+    spans: Vec<StyledSpan<Hsla>>,
+    fade: &[Range<usize>],
+    range: &Range<usize>,
+    text: Hsla,
+) -> Vec<StyledSpan<Hsla>> {
+    let faded = |color: Hsla| Hsla {
+        a: color.a * UNNECESSARY_OPACITY,
+        ..color
+    };
+    let mut out = Vec::new();
+    let mut covered = Vec::new();
+    for span in spans {
+        let mut at = span.range.start;
+        for inside in fade {
+            let (start, end) = (inside.start.max(at), inside.end.min(span.range.end));
+            if start >= end {
+                continue;
+            }
+            if at < start {
+                out.push(StyledSpan {
+                    range: at..start,
+                    style: span.style,
+                });
+            }
+            out.push(StyledSpan {
+                range: start..end,
+                style: faded(span.style),
+            });
+            at = end;
+        }
+        if at < span.range.end {
+            out.push(StyledSpan {
+                range: at..span.range.end,
+                style: span.style,
+            });
+        }
+        covered.push(span.range);
+    }
+    // What of the faded ranges no span covers.
+    covered.sort_by_key(|range| range.start);
+    for inside in fade {
+        let mut at = inside.start.max(range.start);
+        let end = inside.end.min(range.end);
+        for span in &covered {
+            if span.end <= at || span.start >= end {
+                continue;
+            }
+            if at < span.start {
+                out.push(StyledSpan {
+                    range: at..span.start,
+                    style: faded(text),
+                });
+            }
+            at = at.max(span.end);
+        }
+        if at < end {
+            out.push(StyledSpan {
+                range: at..end,
+                style: faded(text),
+            });
+        }
+    }
+    out.sort_by_key(|span| span.range.start);
+    out
 }
 
 /// Sets whether the pointer is over `column` in the rendered frame. Unlike
@@ -2430,13 +2558,12 @@ fn fold_headers(syntax: Option<&Syntax>, rows: Range<u32>) -> Vec<u32> {
 fn styled_highlights(
     syntax: Option<&Syntax>,
     theme: &EditorTheme,
+    unnecessary: &[Range<usize>],
     range: Range<usize>,
 ) -> Vec<StyledSpan<Hsla>> {
-    let Some(syntax) = syntax else {
-        return Vec::new();
-    };
-    syntax
-        .highlights(range)
+    let spans: Vec<_> = syntax
+        .map(|syntax| syntax.highlights(range.clone()))
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|span| {
             Some(StyledSpan {
@@ -2444,7 +2571,11 @@ fn styled_highlights(
                 range: span.range,
             })
         })
-        .collect()
+        .collect();
+    if unnecessary.is_empty() {
+        return spans;
+    }
+    fade_spans(spans, unnecessary, &range, theme.foreground)
 }
 
 /// The columns, each `space` wide, of an unwrapped row that `text_width`

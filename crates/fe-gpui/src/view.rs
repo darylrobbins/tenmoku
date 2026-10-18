@@ -191,6 +191,10 @@ pub struct EditorView {
     /// coordinates, and their colours.
     #[cfg(test)]
     pub(crate) painted_squiggles: Vec<(Bounds<Pixels>, gpui::UnderlineStyle)>,
+    /// The strikes through deprecated text the last frame painted, in
+    /// window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_strikes: Vec<Bounds<Pixels>>,
     /// The underline under composed text the last frame painted, in window
     /// coordinates.
     #[cfg(test)]
@@ -325,6 +329,8 @@ impl EditorView {
             painted_hover: (Vec::new(), false),
             #[cfg(test)]
             painted_squiggles: Vec::new(),
+            #[cfg(test)]
+            painted_strikes: Vec::new(),
             #[cfg(test)]
             painted_composition: None,
             #[cfg(test)]
