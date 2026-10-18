@@ -351,12 +351,14 @@ fn visual_layer_of_the_default_keymap(_: &mut TestAppContext) {
     let bindings = store.keymap().bindings();
     let visual: Vec<usize> = (0..bindings.len())
         .filter(|&ix| {
-            bindings[ix]
-                .context
-                .as_ref()
-                .map(ToString::to_string)
-                .as_deref()
-                == Some("editor && vim.visual")
+            // `g r a` is fe-workbench's, with its own catalog.
+            bindings[ix].command.as_str() != "lsp.code_actions"
+                && bindings[ix]
+                    .context
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref()
+                    == Some("editor && vim.visual")
         })
         .collect();
     let layer: Vec<_> = visual

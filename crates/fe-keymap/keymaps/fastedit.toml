@@ -1618,3 +1618,61 @@ context = "editor && vim.mode == normal"
 keys = "ctrl-w ="
 command = "pane.equalize"
 context = "editor && vim.mode == normal"
+
+# Language-server commands on vim's `gd`, `gD`, `ctrl-]`, nvim 0.12's `gr`
+# keys, `gO` and `K`; `gr` then any other key still reaches vim.
+
+[[bindings]]
+keys = "g d"
+command = "nav.goto_definition"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "ctrl-]"
+command = "nav.goto_definition"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g shift-d"
+command = "nav.goto_declaration"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r r"
+command = "nav.find_references"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r n"
+command = "lsp.rename"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r a"
+command = "lsp.code_actions"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r i"
+command = "nav.goto_implementation"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r t"
+command = "nav.goto_type_definition"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g shift-o"
+command = "outline.show"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "shift-k"
+command = "editor.show_hover"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "g r a"
+command = "lsp.code_actions"
+context = "editor && vim.visual"

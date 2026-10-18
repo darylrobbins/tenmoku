@@ -438,5 +438,5 @@ fn the_default_keymap_binds_outline_show() {
     );
     assert_eq!(store.diagnostics(), []);
     let id = fe_command::CommandId::parse("outline.show").unwrap();
-    assert_eq!(store.keymap().bindings_for(&id).len(), 1);
+    assert_eq!(store.keymap().bindings_for(&id).len(), 2);
 }

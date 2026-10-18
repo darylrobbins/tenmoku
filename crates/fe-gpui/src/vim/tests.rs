@@ -448,6 +448,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "problems_panel && vim"
                             | "find_bar && replace_input && text_input"
                             | "editor && vim.mode == normal && !vim.pending"
+                            | "editor && vim.visual"
                             | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
                             | "vim_line"
                             | "vim_line && text_input"
@@ -500,7 +501,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
     // ctrl-shift-minus) and Toggle Terminal (ctrl-`), which vim doesn't
     // bind, and `ctrl-space`, which asks for completions only where text is
     // typed: in insert mode, and Show Changes (ctrl-shift-g), which the
-    // reducer reads as `<C-g>`, a key vim leaves unbound.
+    // reducer reads as `<C-g>`, a key vim leaves unbound, and `ctrl-]`, which
+    // goes to the definition as nvim's tag jump does.
     let stack = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(
@@ -533,7 +535,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
             "ctrl-`",
             "ctrl-space",
             "ctrl-g",
-            "ctrl-shift-g"
+            "ctrl-shift-g",
+            "ctrl-]"
         ]
     );
 }
