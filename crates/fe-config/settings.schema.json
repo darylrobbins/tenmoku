@@ -222,11 +222,13 @@
         "timeouts": {
           "$ref": "#/$defs/LspTimeouts",
           "default": {
+            "code_action": 10000,
             "completion": 3000,
             "definition": 5000,
             "hover": 3000,
             "references": 30000,
             "resolve": 2000,
+            "signature_help": 3000,
             "workspace_symbol": 5000
           },
           "description": "How long requests may take, in milliseconds, by method."
@@ -242,6 +244,13 @@
     "LspTimeouts": {
       "description": "Request timeouts, in milliseconds.",
       "properties": {
+        "code_action": {
+          "default": 10000,
+          "description": "Code actions (cmd-.), an explicit request: the picker says there are\nnone only once this has passed.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
         "completion": {
           "default": 3000,
           "format": "uint64",
@@ -271,6 +280,13 @@
         "resolve": {
           "default": 2000,
           "description": "Resolving a completion item.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "signature_help": {
+          "default": 3000,
+          "description": "Signature help, which pops up while typing.",
           "format": "uint64",
           "minimum": 1,
           "type": "integer"
@@ -480,11 +496,13 @@
         "max_file_bytes": 52428800,
         "servers": {},
         "timeouts": {
+          "code_action": 10000,
           "completion": 3000,
           "definition": 5000,
           "hover": 3000,
           "references": 30000,
           "resolve": 2000,
+          "signature_help": 3000,
           "workspace_symbol": 5000
         },
         "typescript_server": "typescript-go"

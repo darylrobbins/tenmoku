@@ -939,6 +939,8 @@ A restarted server is a new session:
 | `workspace/symbol` | 5 s | |
 | `references` | 30 s | streams nothing until the server replies; T112's panel shows "Finding references…" |
 | `hover` | 3 s | silently nothing |
+| `codeAction` | 10 s | picker says none only once it's past |
+| `signatureHelp` | 3 s | silently nothing |
 | `completion` | 3 s | menu closes |
 | `completionItem/resolve` | 2 s | |
 | `shutdown` | 2 s | |

@@ -309,8 +309,8 @@ fn timeout_is_empty() {
             _ => None,
         })
         .unwrap();
-    s.clock.wait_for_sleep(Duration::from_secs(3));
-    s.clock.advance(Duration::from_millis(2999));
+    s.clock.wait_for_sleep(Duration::from_secs(10));
+    s.clock.advance(Duration::from_millis(9999));
     std::thread::sleep(Duration::from_millis(50));
     assert!(late.as_mut().now_or_never().is_none());
     s.clock.advance(Duration::from_millis(1));

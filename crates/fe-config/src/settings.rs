@@ -322,6 +322,13 @@ pub struct LspTimeouts {
     pub references: u64,
     #[schemars(range(min = 1))]
     pub hover: u64,
+    /// Code actions (cmd-.), an explicit request: the picker says there are
+    /// none only once this has passed.
+    #[schemars(range(min = 1))]
+    pub code_action: u64,
+    /// Signature help, which pops up while typing.
+    #[schemars(range(min = 1))]
+    pub signature_help: u64,
     #[schemars(range(min = 1))]
     pub completion: u64,
     /// Resolving a completion item.
@@ -336,6 +343,8 @@ impl Default for LspTimeouts {
             workspace_symbol: 5000,
             references: 30000,
             hover: 3000,
+            code_action: 10000,
+            signature_help: 3000,
             completion: 3000,
             resolve: 2000,
         }

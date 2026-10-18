@@ -5,7 +5,7 @@
 //!
 //! - **Request.** The range and the diagnostics the host shows over it,
 //!   in the session's encoding, each with the `data` its server gave it.
-//!   Timeout 3 s (`lsp.timeouts.hover`'s): an empty list.
+//!   Timeout 10 s (`lsp.timeouts.code_action`): an empty list.
 //! - **Order.** Quick fixes first, preferred ones first, then as the
 //!   server sent them. A bare `Command` is an action with that title and
 //!   no kind. Disabled actions are kept, with their reason, and never run.
@@ -83,7 +83,7 @@ impl LspManager {
     /// `buffer`, with `diagnostics`: those the host shows overlapping it.
     ///
     /// Empty if the server offers none, or doesn't say within
-    /// `lsp.timeouts.hover` (which also cancels the request). Dropping the
+    /// `lsp.timeouts.code_action`, 10 s (which also cancels the request). Dropping the
     /// future cancels it too. It doesn't borrow the manager.
     pub fn code_actions(
         &self,

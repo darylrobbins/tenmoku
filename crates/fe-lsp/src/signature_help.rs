@@ -10,7 +10,7 @@
 //!   clamped to the last; a signature with no parameters has no active
 //!   parameter. A help's missing `activeParameter` is 0 (gopls leaves it
 //!   out for the first argument); a signature's own stays as given.
-//! - **Failures.** A timeout (`lsp.timeouts.hover`'s) is no help. Other
+//! - **Failures.** A timeout (`lsp.timeouts.signature_help`, 3 s) is no help. Other
 //!   failures are errors.
 
 use std::ops::Range;

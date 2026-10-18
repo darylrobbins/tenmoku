@@ -2,6 +2,8 @@
 //! records of the client's answers, and queued commands under steady
 //! drains.
 
+mod own_timeouts;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
