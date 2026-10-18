@@ -854,3 +854,6 @@ fn files_opened_while_status_runs_get_their_bases_from_a_fresh_one(cx: &mut Test
     assert_eq!(row_changes(&new, cx), [change(0..2, RowChangeKind::Added)]);
     assert_eq!(runs(&state, cx).0, 3, "a fresh status for them");
 }
+
+#[path = "git_conflicts_tests.rs"]
+mod conflicts;

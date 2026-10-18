@@ -149,6 +149,12 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("git.next_change", "Go to Next Change", "workbench"),
     ("git.previous_change", "Go to Previous Change", "workbench"),
+    ("git.next_conflict", "Git: Next Conflict", "workbench"),
+    (
+        "git.previous_conflict",
+        "Git: Previous Conflict",
+        "workbench",
+    ),
     ("git.stage_file", "Git: Stage File", "workbench"),
     ("git.unstage_file", "Git: Unstage File", "workbench"),
     ("git.discard_file", "Git: Discard File Changes", "workbench"),

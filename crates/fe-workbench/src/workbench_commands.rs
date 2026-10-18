@@ -136,6 +136,20 @@ impl Workbench {
         self.run_typed_git(GitCommand::NextChange, cx);
     }
 
+    /// Git: Next Conflict
+    #[command(id = "git.next_conflict")]
+    fn git_next_conflict(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.go_to_conflict(true, window, cx));
+    }
+
+    /// Git: Previous Conflict
+    #[command(id = "git.previous_conflict")]
+    fn git_previous_conflict(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.go_to_conflict(false, window, cx)
+        });
+    }
+
     /// Go to Previous Change
     #[command(id = "git.previous_change")]
     fn git_previous_change(&mut self, cx: &mut Cx<Self>) {

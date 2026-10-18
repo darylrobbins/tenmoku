@@ -45,9 +45,11 @@
 //! change under the root or a `git.refresh`.
 
 use std::{
-    collections::HashMap,
+    cell::RefCell,
+    collections::{HashMap, HashSet},
     ffi::OsString,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -56,6 +58,11 @@ use fe_git::{ChangeKind, GitError, Head, Repo, SplitStatus};
 use fe_gpui::{EditorView, commands::EditorViewEvent};
 use fe_project::FsChange;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity};
+
+#[path = "git_conflicts.rs"]
+pub(crate) mod git_conflicts;
+
+use git_conflicts::ConflictBands;
 
 use crate::{
     GitPanel, Workbench,
@@ -165,6 +172,8 @@ pub(crate) struct GitState {
     failed: HashMap<EntityId, PathBuf>,
     /// Hears each tracked editor's change bar clicked.
     bar_clicks: HashMap<EntityId, Subscription>,
+    /// The editors given their conflict bands.
+    banded: HashSet<EntityId>,
     /// The refresh due after the last watcher batch.
     debounce: Option<Task<()>>,
     /// Whether `debounce` is still to run out.
@@ -204,6 +213,7 @@ impl GitState {
             based: HashMap::new(),
             failed: HashMap::new(),
             bar_clicks: HashMap::new(),
+            banded: HashSet::new(),
             debounce: None,
             due: false,
             running: None,
@@ -314,7 +324,14 @@ impl GitState {
         self.based.retain(|editor, _| open.contains(editor));
         self.failed.retain(|editor, _| open.contains(editor));
         self.bar_clicks.retain(|editor, _| open.contains(editor));
+        self.banded.retain(|editor| open.contains(editor));
         for editor in editors {
+            if self.banded.insert(editor.entity_id()) {
+                let bands = Rc::new(RefCell::new(ConflictBands::default()));
+                editor.update(cx, |editor, _| {
+                    editor.model_mut().add_decoration_provider(bands)
+                });
+            }
             if !self.bar_clicks.contains_key(&editor.entity_id()) {
                 let clicks = self.hear_bar_clicks(editor, cx);
                 self.bar_clicks.insert(editor.entity_id(), clicks);
