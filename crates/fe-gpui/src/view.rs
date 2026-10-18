@@ -1084,7 +1084,8 @@ impl EditorView {
         let row = text.offset_to_point(offset).row;
         let expanded = self.model.expanded_row(row);
         let column = expanded.char_column(expanded.to_display(offset - text.row_start(row)));
-        let past = (self.layout.as_mut()).map_or(0, |layout| layout.columns_past_row_end(position));
+        let past =
+            (self.layout.as_mut()).map_or(0, |layout| layout.columns_past_row_end(text, position));
         (row, column + past)
     }
 

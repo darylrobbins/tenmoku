@@ -142,6 +142,8 @@ fn squiggles_gutter_and_hover(cx: &mut TestAppContext) {
     let blank = at(&view, word("let").start - 1, cx);
     cx.simulate_mouse_move(blank, None, Modifiers::none());
     cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
     assert_eq!(painted(&view, cx).2, None);
     let main = at(&view, word("main").start + 1, cx);
     cx.simulate_mouse_move(main, None, Modifiers::none());
@@ -205,6 +207,10 @@ fn rest(
     cx.simulate_mouse_move(position, None, Modifiers::none());
     cx.run_until_parked();
     cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    // Past the grace a popover the pointer left has to hide, and the
+    // delay from there.
+    cx.executor().advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     painted(view, cx).2
 }

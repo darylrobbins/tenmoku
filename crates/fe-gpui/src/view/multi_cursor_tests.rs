@@ -304,3 +304,28 @@ fn alt_click_and_box(cx: &mut TestAppContext) {
     assert_eq!(seen.len(), 1, "{seen:?}");
     assert_eq!(seen[0].command.as_str(), "test.jump");
 }
+
+#[gpui::test]
+fn a_box_keeps_its_column_below_the_last_row(cx: &mut TestAppContext) {
+    // The last row short, with no newline after it.
+    let text = "abcdefgh\nxy";
+    let (view, _, cx) = editor(text, None, cx);
+    let r = |start: usize, end: usize| selection(start..end);
+
+    // From row 0 column 1 to row 1 column 6, then straight down into the
+    // blank space below the text: the box stays six columns wide.
+    let (from, to) = (at(&view, 0, 1, cx), at(&view, 1, 6, cx));
+    let boxed = [r(1, 6), r(10, 11)];
+    cx.simulate_mouse_down(from, MouseButton::Left, alt_shift());
+    cx.simulate_mouse_move(to, MouseButton::Left, alt_shift());
+    cx.run_until_parked();
+    assert_eq!(selections(&view, cx), boxed);
+    let line = view.read_with(cx, |view, _| {
+        px(view.layout.as_ref().unwrap().frame.line_height)
+    });
+    let below = to + point(px(0.), line * 3.);
+    cx.simulate_mouse_move(below, MouseButton::Left, alt_shift());
+    cx.simulate_mouse_up(below, MouseButton::Left, alt_shift());
+    cx.run_until_parked();
+    assert_eq!(selections(&view, cx), boxed);
+}

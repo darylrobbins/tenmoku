@@ -12,12 +12,20 @@
 //!   blocks in the editor's font, the rest as written, in the UI font.
 //!   There's no markdown renderer.
 //! - **Hiding.** Moving off what it shows (the word asked about, or the
-//!   range the provider answered for), leaving the window, scrolling (the
-//!   wheel's, or the layout's to reveal the caret), an edit or `escape`
-//!   hides it, and so does any change to the diagnostics where it was
+//!   range the provider answered for) hides it [`HOVER_HIDE_DELAY`] later,
+//!   unless the pointer reaches the popover or comes back first: it stays
+//!   while the pointer is over it, and leaving it starts the same wait.
+//!   Once that's up, the still pointer is taken as a fresh move. Leaving
+//!   the window, scrolling the editor (the wheel's, or the layout's to
+//!   reveal the caret), an edit or `escape` hides it at once, wherever the
+//!   pointer is, and so does any change to the diagnostics where it was
 //!   found. One shown at the caret goes when the caret moves, and stays
-//!   while the pointer moves over nothing to show. An answer for a buffer
-//!   version the view has moved on from is dropped.
+//!   while the pointer moves over nothing to show. One only waiting out
+//!   the delay goes at once. An answer for a buffer version the view has
+//!   moved on from is dropped.
+//! - **Reaching it.** The popover takes the pointer: the text under it
+//!   sees no moves or clicks, and the wheel over it scrolls its content,
+//!   which is at most [`MAX_POPOVER_ROWS`] of the editor's lines tall.
 //! - **The host's.** A host shows its own text at the caret
 //!   ([`EditorView::show_popover`]), as `editor.show_hover` shows the
 //!   provider's, or as the pointer rests on an after-line decoration's text
@@ -28,19 +36,32 @@
 //!   ([`crate::GutterAnnotations::hover`]), until the pointer leaves the
 //!   entry.
 
-use std::{future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::Cell, future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
 use fe_buffer::{Bias, BufferId, Version};
 use fe_editor::{decorations::DecorationKind, diagnostics::DiagnosticEntry};
 use gpui::{
-    AnyElement, AvailableSpace, Context, IntoElement, ParentElement as _, Pixels, Point,
-    SharedString, Styled as _, Subscription, Task, anchored, canvas, deferred, div, px,
+    AnyElement, AvailableSpace, Bounds, Context, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Point, ScrollHandle, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Task, Window, anchored, canvas, deferred, div, px,
 };
 
 use crate::EditorView;
 
 /// How long the pointer rests on a range before its popover shows.
 pub(crate) const HOVER_DELAY: Duration = Duration::from_millis(300);
+
+/// How long a shown popover stays once the pointer has left both it and
+/// what it shows: time to travel to it across other text (VS Code's
+/// `editor.hover.hidingDelay`).
+pub(crate) const HOVER_HIDE_DELAY: Duration = Duration::from_millis(300);
+
+/// The most of the editor's lines the popover's content is tall; more
+/// scrolls.
+pub(crate) const MAX_POPOVER_ROWS: f32 = 16.;
+
+/// The least room the popover leaves above and below it in the window.
+const WINDOW_MARGIN: Pixels = px(8.);
 
 /// GPUI's name for the platform's UI font, which the popover's prose is
 /// set in.
@@ -76,6 +97,9 @@ pub(crate) struct HoverPopover {
     /// The host's text for the pointer resting on an after-line
     /// decoration's label ([`EditorView::set_after_line_popover`]).
     after_line: Option<(Arc<str>, HoverContent)>,
+    /// Where the last frame drew it, in window coordinates; `None` if it
+    /// didn't.
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Hides it on `escape` ([`hide_on_escape`]).
     _escape: Option<Subscription>,
 }
@@ -106,6 +130,11 @@ struct Current {
     /// The delay's timer, then the provider's request: dropped with the
     /// popover, which cancels them.
     _task: Task<()>,
+    /// Once the pointer has left it and what it shows: the timer that
+    /// hides it ([`HOVER_HIDE_DELAY`]).
+    hiding: Option<Task<()>>,
+    /// Its content's scroll, from the top.
+    scroll: ScrollHandle,
 }
 
 /// What the pointer, or the caret, rests on.
@@ -130,6 +159,14 @@ struct Hovered {
     /// The index of the gutter annotation the pointer rests on, whose
     /// popover this is ([`EditorView::hover_annotation`]).
     annotation: Option<usize>,
+}
+
+impl Hovered {
+    /// Whether it's the host's text the pointer found: an after-line
+    /// decoration's or a gutter annotation's.
+    fn found_by_pointer_for_host(&self) -> bool {
+        self.host && self.caret.is_none()
+    }
 }
 
 /// Where the pointer is, in the text.
@@ -299,13 +336,15 @@ impl EditorView {
 
     /// The pointer moved to `position` over the text, or off it (`None`):
     /// waits out the delay over a diagnostic or a word, or hides the
-    /// popover once the pointer has left what it shows.
+    /// popover once the pointer has left what it shows
+    /// ([`Self::leave_popover`]).
     pub(crate) fn hover_diagnostics(
         &mut self,
         position: Option<Point<Pixels>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.hover_after_line(position, cx) {
+        if self.hover_after_line(position, window, cx) {
             return;
         }
         let under = position.and_then(|position| Some((self.under(position)?, position)));
@@ -318,12 +357,15 @@ impl EditorView {
         });
         // Still on what the popover shows, or waits to (whitespace within
         // its range included, and a popover from the caret too): it goes
-        // on, from where the pointer is now.
+        // on, from where the pointer is now. Not the host's for an
+        // after-line decoration or an annotation, which the pointer is off.
         if let (Some(raw), Some(current)) = (&raw, self.popover.current.as_mut())
+            && !current.hovered.found_by_pointer_for_host()
             && current.covers(raw)
         {
             current.hovered.under = raw.under;
             current.requested = raw.under.offset();
+            current.hiding = None;
             return;
         }
         let found = under.zip(raw).and_then(|((_, position), raw)| {
@@ -334,7 +376,7 @@ impl EditorView {
         let Some((hovered, position)) = found else {
             // One shown at the caret stays while the pointer finds nothing.
             if !at_caret {
-                self.hide_popover(cx);
+                self.leave_popover(window, cx);
             }
             return;
         };
@@ -356,7 +398,11 @@ impl EditorView {
             cx.notify();
             return;
         }
-        self.hide_popover(cx);
+        // The one shown stays a while for the pointer to reach it: what's
+        // here waits its turn, as a fresh move once that's up.
+        if self.leave_popover(window, cx) {
+            return;
+        }
         // Below the pointer's row, from the pointer.
         let offset = hovered.under.offset();
         let at = self
@@ -374,11 +420,11 @@ impl EditorView {
     fn hover_after_line(
         &mut self,
         position: Option<Point<Pixels>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let shows_after_line = (self.popover.current.as_ref()).is_some_and(|current| {
-            let hovered = &current.hovered;
-            hovered.host && hovered.caret.is_none() && hovered.annotation.is_none()
+            current.hovered.found_by_pointer_for_host() && current.hovered.annotation.is_none()
         });
         let Some((position, bottom, content)) = position.and_then(|position| {
             let (label, content) = self.popover.after_line.as_ref()?;
@@ -390,11 +436,15 @@ impl EditorView {
             Some((position, placed.bounds.bottom(), content.clone()))
         }) else {
             if shows_after_line {
-                self.hide_popover(cx);
+                self.leave_popover(window, cx);
             }
             return false;
         };
         if shows_after_line {
+            self.keep_popover();
+            return true;
+        }
+        if self.leave_popover(window, cx) {
             return true;
         }
         let text = self.model.text();
@@ -402,7 +452,6 @@ impl EditorView {
             return false;
         };
         let offset = layout.offset_at(text, position);
-        self.hide_popover(cx);
         let hovered = Hovered {
             under: Under::RowEnd(offset),
             items: Vec::new(),
@@ -431,8 +480,7 @@ impl EditorView {
         }
         self.popover.after_line = popover;
         if (self.popover.current.as_ref()).is_some_and(|current| {
-            let hovered = &current.hovered;
-            hovered.host && hovered.caret.is_none() && hovered.annotation.is_none()
+            current.hovered.found_by_pointer_for_host() && current.hovered.annotation.is_none()
         }) {
             self.hide_popover(cx);
         }
@@ -451,6 +499,7 @@ impl EditorView {
     pub(crate) fn hover_annotation(
         &mut self,
         position: Option<Point<Pixels>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let version = self.model.snapshot().version();
@@ -466,14 +515,17 @@ impl EditorView {
         let shows = (self.popover.current.as_ref()).and_then(|current| current.hovered.annotation);
         let Some((position, row, slot, ix)) = found else {
             if shows.is_some() {
-                self.hide_popover(cx);
+                self.leave_popover(window, cx);
             }
             return false;
         };
         if shows == Some(ix) {
+            self.keep_popover();
             return true;
         }
-        self.hide_popover(cx);
+        if self.leave_popover(window, cx) {
+            return true;
+        }
         let Some(hover) = (self.annotations.as_ref()).map(|shown| shown.annotations.hover.clone())
         else {
             return false;
@@ -645,6 +697,8 @@ impl EditorView {
             content,
             requested: ask.unwrap_or(hovered_offset),
             _task: task,
+            hiding: None,
+            scroll: ScrollHandle::new(),
         });
         if delay.is_none() {
             cx.notify();
@@ -698,8 +752,50 @@ impl EditorView {
         }
     }
 
+    /// The pointer has left what the popover shows, for somewhere it
+    /// doesn't find it: one it found and shows hides [`HOVER_HIDE_DELAY`]
+    /// from the first such move, unless the pointer reaches it or comes
+    /// back first ([`Self::keep_popover`]); then the still pointer is taken
+    /// as a fresh move. One waiting, or shown at the caret, goes at once.
+    /// Whether one is still shown.
+    fn leave_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(current) = (self.popover.current.as_mut())
+            .filter(|current| current.shown && current.hovered.caret.is_none())
+        else {
+            self.hide_popover(cx);
+            return false;
+        };
+        if current.hiding.is_none() {
+            current.hiding = Some(cx.spawn_in(window, async move |view, cx| {
+                cx.background_executor().timer(HOVER_HIDE_DELAY).await;
+                view.update_in(cx, |view, window, cx| {
+                    view.hide_popover(cx);
+                    crate::element::pointer_still(view, window, cx);
+                })
+                .ok();
+            }));
+        }
+        true
+    }
+
+    /// The pointer is over the popover, or back on what it shows: it stays.
+    pub(crate) fn keep_popover(&mut self) {
+        if let Some(current) = &mut self.popover.current {
+            current.hiding = None;
+        }
+    }
+
+    /// Whether `position` is over the popover as the last frame drew it.
+    pub(crate) fn pointer_on_popover(&self, position: Point<Pixels>) -> bool {
+        (self.popover.current.as_ref()).is_some_and(|current| current.shown)
+            && (self.popover.bounds.get()).is_some_and(|bounds| bounds.contains(&position))
+    }
+
     /// The popover, if it's shown and still stands; a stale one is dropped.
-    pub(crate) fn render_popover(&mut self) -> Option<AnyElement> {
+    /// Its content scrolls past [`MAX_POPOVER_ROWS`] lines, or past what
+    /// fits in `window`.
+    pub(crate) fn render_popover(&mut self, window: &Window) -> Option<AnyElement> {
+        self.popover.bounds.set(None);
         #[cfg(test)]
         {
             self.painted_popover = None;
@@ -712,7 +808,14 @@ impl EditorView {
             self.popover.current = None;
         }
         let blocks = self.popover_blocks()?;
-        let at = self.popover.current.as_ref()?.at;
+        let current = self.popover.current.as_ref()?;
+        let (at, scroll) = (current.at, current.scroll.clone());
+        let line_height =
+            (self.layout.as_ref()).map_or(px(20.), |layout| px(layout.frame.line_height));
+        // Its padding and border, above and below.
+        let chrome = window.rem_size() * 0.25 * 2. + px(2.);
+        let room = window.viewport_size().height - WINDOW_MARGIN * 2. - chrome;
+        let max_height = (line_height * MAX_POPOVER_ROWS).min(room).max(px(0.));
         let theme = &self.theme;
         let font = |block: &Block| -> SharedString {
             match block {
@@ -734,25 +837,44 @@ impl EditorView {
                 .font_family(font(block))
                 .child(SharedString::from(block.text().to_owned()))
         });
-        let popover = div()
-            .max_w(px(560.))
-            .px_2()
-            .py_1()
+        let body = div()
+            .debug_selector(|| "hover-popover-body".into())
             .flex()
             .flex_col()
             .gap_1()
+            .children(children);
+        let content = div()
+            .id("hover-popover-content")
+            .debug_selector(|| "hover-popover-content".into())
+            .max_h(max_height)
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
+            .child(body);
+        // It takes the pointer: the text under it sees no moves, clicks or
+        // wheel.
+        let popover = div()
+            .id("hover-popover")
+            .debug_selector(|| "hover-popover".into())
+            .occlude()
+            .max_w(px(560.))
+            .px_2()
+            .py_1()
             .bg(theme.popover_background)
             .border_1()
             .border_color(theme.popover_border)
             .rounded_sm()
             .text_color(theme.foreground)
             .text_size(theme.font_size)
-            .children(children);
+            .child(content);
+        let bounds = self.popover.bounds.clone();
+        let drawn = div()
+            .on_children_prepainted(move |drawn, _, _| bounds.set(drawn.first().copied()))
+            .child(popover);
         Some(
             anchored()
                 .position(at)
                 .snap_to_window()
-                .child(popover)
+                .child(drawn)
                 .into_any_element(),
         )
     }
@@ -820,7 +942,9 @@ pub(crate) fn popover_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
     let view = cx.entity().downgrade();
     let layer = canvas(
         move |_, window, cx| {
-            let mut popover = view.update(cx, |view, _| view.render_popover()).ok()??;
+            let mut popover = view
+                .update(cx, |view, _| view.render_popover(window))
+                .ok()??;
             popover.prepaint_as_root(
                 Point::default(),
                 window.viewport_size().map(AvailableSpace::Definite),

@@ -161,6 +161,8 @@ fn popover_after_the_delay(cx: &mut TestAppContext) {
 
     // Off the word, onto a space: gone.
     move_to(at(&view, alpha.start - 1, cx), cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
     assert_eq!(painted(&view, cx), []);
 
     // Typing.
@@ -221,6 +223,8 @@ fn popover_after_the_delay(cx: &mut TestAppContext) {
     // An answer for a version the buffer has moved on from by the time
     // it comes isn't shown, though the pointer rests where it was asked.
     move_to(at(&view, alpha.start - 1, cx), cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
     *provider.delay.borrow_mut() = Duration::from_secs(1);
     let asked = calls(&provider).len();
     rest(at(&view, alpha.start, cx), cx);
@@ -346,6 +350,8 @@ fn ranges_nothing_to_say_and_vim(cx: &mut TestAppContext) {
     assert_eq!(painted(&view, cx), [docs("the sum")]);
     assert_eq!(calls(&provider), [alpha.start]);
     move_to(at(&view, word("total").start, cx), cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
     assert_eq!(painted(&view, cx), []);
 
     // Nothing to say: nothing shows, and moves within the word don't ask
@@ -432,6 +438,8 @@ fn pointer_moves_within_what_it_shows(cx: &mut TestAppContext) {
     }
     assert_eq!(calls(&provider), [alpha.start]);
     move_to(at(&view, word("total").start, cx), cx);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
     assert_eq!(painted(&view, cx), []);
 
     // An answer that comes after the pointer moved within the word, to
@@ -525,3 +533,6 @@ fn narrow_late_reply_keeps_the_diagnostics(cx: &mut TestAppContext) {
         [(Block::Text("unused".into()), SharedString::from(UI_FONT))]
     );
 }
+
+#[path = "hover_reach_tests.rs"]
+mod reach;

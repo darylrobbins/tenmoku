@@ -19,13 +19,13 @@ use fe_editor::decorations::DecorationKind;
 use fe_syntax::{Syntax, SyntaxDriver};
 use fe_vim::jump::JumpLabelState;
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element,
-    ElementId, ElementInputHandler, Entity, Font, FontId, FontWeight, Global, GlobalElementId,
-    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout,
-    ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style,
-    TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem,
-    fill, outline, point, px, relative, size,
+    App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DecorationRun, DispatchPhase,
+    Element, ElementId, ElementInputHandler, Entity, Font, FontId, FontWeight, Global,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
+    LineLayout, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent,
+    SharedString, Style, TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window,
+    WindowId, WindowTextSystem, fill, outline, point, px, relative, size,
 };
 
 use crate::{
@@ -179,9 +179,12 @@ impl FrameLayout {
     }
 
     /// How many columns, each a space wide, a window position is past the
-    /// end of a buffer row this frame shows, to the nearest; 0 short of the
-    /// end or off the frame's rows. A box selection's column goes that far.
-    pub(crate) fn columns_past_row_end(&mut self, position: Point<Pixels>) -> usize {
+    /// end of the buffer row [`Self::offset_at`] finds there, to the
+    /// nearest; 0 short of the end. Off the frame's rows, or below the last,
+    /// that's the row it clamps to, so a box selection's column goes as far
+    /// there as on the row.
+    pub(crate) fn columns_past_row_end(&mut self, text: &Text, position: Point<Pixels>) -> usize {
+        let offset = self.offset_at(text, position);
         let at = self.to_frame(position);
         let Self {
             frame,
@@ -189,7 +192,10 @@ impl FrameLayout {
             glyph_widths,
             ..
         } = self;
-        let Some(row) = host_blocks::row_at(frame, at.y).filter(|row| row.last) else {
+        let Some(row) = (host_blocks::row_at(frame, at.y))
+            .or_else(|| frame.row_containing(offset))
+            .filter(|row| row.last)
+        else {
             return 0;
         };
         let end = frame.view_x(row.x_for_offset(row.end, long_rows, glyph_widths));
@@ -1331,18 +1337,17 @@ impl Element for EditorElement {
             let column = layout.annotation_hitbox.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
-                    let over = text
-                        .is_hovered_at(event.position, window)
-                        .then_some(event.position);
-                    let over_column = (column.as_ref())
-                        .filter(|column| column.is_hovered_at(event.position, window))
-                        .map(|_| event.position);
                     view.update(cx, |view, cx| {
-                        view.hover_at(over, &event.modifiers, window, cx);
-                        // An annotation's popover, or else the text's.
-                        if !view.hover_annotation(over_column, cx) {
-                            view.hover_diagnostics(over, cx);
-                        }
+                        let (position, modifiers) = (event.position, &event.modifiers);
+                        pointer_moved(
+                            view,
+                            position,
+                            modifiers,
+                            &text,
+                            column.as_ref(),
+                            window,
+                            cx,
+                        );
                     })
                     .ok();
                 }
@@ -1482,6 +1487,63 @@ pub(crate) fn pointer_over_text(
         .is_some_and(|outside| outside.0.contains(&id));
     let position = window.mouse_position();
     (!outside && layout.text.is_hovered_at(position, window)).then_some(position)
+}
+
+/// The pointer moved to `position`, with `modifiers` held: finds the hover
+/// range and the popover for what's there, over `text` or the annotation
+/// `column`. Over the popover itself, there's no hover range, and the
+/// popover stays.
+fn pointer_moved(
+    view: &mut EditorView,
+    position: Point<Pixels>,
+    modifiers: &Modifiers,
+    text: &Hitbox,
+    column: Option<&Hitbox>,
+    window: &mut Window,
+    cx: &mut Context<EditorView>,
+) {
+    if view.pointer_on_popover(position) {
+        view.hover_at(None, modifiers, window, cx);
+        view.keep_popover();
+        return;
+    }
+    let over = text.is_hovered_at(position, window).then_some(position);
+    let over_column = column
+        .filter(|column| column.is_hovered_at(position, window))
+        .map(|_| position);
+    view.hover_at(over, modifiers, window, cx);
+    // An annotation's popover, or else the text's.
+    if !view.hover_annotation(over_column, window, cx) {
+        view.hover_diagnostics(over, window, cx);
+    }
+}
+
+/// [`pointer_moved`] for the still pointer, if it's in the window, over the
+/// last frame: once the popover it left has hidden, what's under it starts
+/// its own wait.
+pub(crate) fn pointer_still(
+    view: &mut EditorView,
+    window: &mut Window,
+    cx: &mut Context<EditorView>,
+) {
+    let id = window.window_handle().window_id();
+    let outside = cx
+        .try_global::<PointerOutside>()
+        .is_some_and(|outside| outside.0.contains(&id));
+    let Some(layout) = view.layout.as_ref().filter(|_| !outside) else {
+        return;
+    };
+    let (text, column) = (layout.text.clone(), layout.annotation_hitbox.clone());
+    let (position, modifiers) = (window.mouse_position(), window.modifiers());
+    pointer_moved(
+        view,
+        position,
+        &modifiers,
+        &text,
+        column.as_ref(),
+        window,
+        cx,
+    );
 }
 
 /// A 1 px underline under each piece of `range` on the frame's rows, just
