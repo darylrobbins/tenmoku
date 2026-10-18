@@ -84,6 +84,7 @@ use crate::{
     substitute::{self, Substitute},
 };
 
+mod complete;
 mod global;
 mod lines;
 mod normal;
