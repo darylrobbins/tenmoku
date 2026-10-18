@@ -97,8 +97,8 @@ fn pair(title: &str, description: Option<&str>) -> (String, Option<String>) {
 fn same_titled_tabs_show_their_shortest_distinguishing_folders(cx: &mut TestAppContext) {
     let (pane, cx) = pane_of(
         &[
-            Some("crates/fe-vim/src/ex.rs"),
-            Some("crates/fe-vim/src/tests/ex.rs"),
+            Some("crates/vim/src/ex.rs"),
+            Some("crates/vim/src/tests/ex.rs"),
             Some("a/src/y.rs"),
             Some("b/src/y.rs"),
             Some("z.rs"),
