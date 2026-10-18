@@ -574,9 +574,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         'Z' if pending.operator.is_none() && !pending.visual && feature::has_big_z() => {
             Prefix::BigZ
         }
-        '[' | ']' if pending.operator.is_none() && feature::has_bracket() => {
-            Prefix::Bracket { forward: ch == ']' }
-        }
+        '[' | ']' if feature::has_bracket() => Prefix::Bracket { forward: ch == ']' },
         'f' => Prefix::Find(Motion::FindForward(' ')),
         'F' => Prefix::Find(Motion::FindBackward(' ')),
         't' => Prefix::Find(Motion::TillForward(' ')),

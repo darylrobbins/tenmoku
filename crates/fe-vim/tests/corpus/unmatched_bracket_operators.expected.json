@@ -1,0 +1,437 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "d_back_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d[(",
+      "expect": {
+        "buffer": "a ( b c ) d ) e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( ",
+            "linewise": false
+          },
+          "-": {
+            "text": "( ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_forward_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d])",
+      "expect": {
+        "buffer": "a ( b ( ) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_forward_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "y])",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ",
+            "linewise": false
+          },
+          "0": {
+            "text": "c ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_back_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "y[(",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( ",
+            "linewise": false
+          },
+          "0": {
+            "text": "( ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c_forward_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "c])X<Esc>",
+      "expect": {
+        "buffer": "a ( b ( X) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c_back_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "c[(X<Esc>",
+      "expect": {
+        "buffer": "a ( b Xc ) d ) e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( ",
+            "linewise": false
+          },
+          "-": {
+            "text": "( ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2_back_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d2[(",
+      "expect": {
+        "buffer": "a c ) d ) e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "( b ( ",
+            "linewise": false
+          },
+          "-": {
+            "text": "( b ( ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2_forward_paren",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d2])",
+      "expect": {
+        "buffer": "a ( b ( ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ) d ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ) d ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_back_paren_none",
+      "buffer": "a b c",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "d[(",
+      "expect": {
+        "buffer": "a b c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_forward_paren_none",
+      "buffer": "a b c",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "d])",
+      "expect": {
+        "buffer": "a b c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_back_brace",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d[{",
+      "expect": {
+        "buffer": "a { b c } d } e",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{ ",
+            "linewise": false
+          },
+          "-": {
+            "text": "{ ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_forward_brace",
+      "buffer": "a { b { c } d } e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d]}",
+      "expect": {
+        "buffer": "a { b { } d } e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_forward_paren_across_rows",
+      "buffer": "f(a,\n  b,\n  c)",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "d])",
+      "expect": {
+        "buffer": "f(a,\n  )",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b,\n  c",
+            "linewise": false
+          },
+          "1": {
+            "text": "b,\n  c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_forward_paren_dot",
+      "buffer": "a ( b ( c ) d ) e ( f ) g",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d])j.u",
+      "expect": {
+        "buffer": "a ( b ( ) d ) e ( f ) g",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": ") d ",
+            "linewise": false
+          },
+          "-": {
+            "text": ") d ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_forward_paren_dot_repeat",
+      "buffer": "( a ( b ) c ( d ) e )",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d])w.",
+      "expect": {
+        "buffer": "( a ) )",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ( d ) e ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ( d ) e ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_bracket_c_cancels",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d[c",
+      "expect": {
+        "buffer": "a ( b ( c ) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_forward_bracket_c_cancels",
+      "buffer": "a ( b ( c ) d ) e",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d]cx",
+      "expect": {
+        "buffer": "a ( b (  ) d ) e",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 //! `[` and `]` take a key after them (a [`Prefix::Bracket`] in the
 //! reducer): this module answers `c`, and later `[`/`]` keys (`[(`, `]]`,
 //! `[m`) join its prefix. Any other key cancels. With an operator pending
-//! they aren't a prefix, so `d]c` cancels.
+//! `c` cancels too, so `d]c` does (diff mode's is out of scope).
 //!
 //! In normal and the visual modes `]c` and `[c` commit `vim.change`
 //! ([`ChangeArgs`]): the caret goes to the first row of the `count`th next
@@ -66,7 +66,8 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 /// `c` after `[` or `]`.
 fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<Step> {
     match key {
-        VimKey::Char('c') => Some(invocation(
+        // Diff mode's `d]c` is out of scope: an operator cancels.
+        VimKey::Char('c') if pending.operator().is_none() => Some(invocation(
             "vim.change",
             ChangeArgs {
                 forward,

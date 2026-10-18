@@ -1,0 +1,109 @@
+# Operators over the unmatched-bracket motions [( [{ ]) ]}: d y c over each,
+# with a count, with none unmatched, on braces, . after d]), and d[c
+# cancelling (diff-mode d]c is out of scope).
+# Hand-written: name, buffer, cursor = [row, byte column], keys in vim
+# notation. What nvim does with each is recorded in
+# unmatched_bracket_operators.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "d_back_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d[("
+
+[[case]]
+name = "d_forward_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d])"
+
+[[case]]
+name = "y_forward_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "y])"
+
+[[case]]
+name = "y_back_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "y[("
+
+[[case]]
+name = "c_forward_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "c])X<Esc>"
+
+[[case]]
+name = "c_back_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "c[(X<Esc>"
+
+[[case]]
+name = "d2_back_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d2[("
+
+[[case]]
+name = "d2_forward_paren"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d2])"
+
+[[case]]
+name = "d_back_paren_none"
+buffer = "a b c"
+cursor = [0, 2]
+keys = "d[("
+
+[[case]]
+name = "d_forward_paren_none"
+buffer = "a b c"
+cursor = [0, 2]
+keys = "d])"
+
+[[case]]
+name = "d_back_brace"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "d[{"
+
+[[case]]
+name = "d_forward_brace"
+buffer = "a { b { c } d } e"
+cursor = [0, 8]
+keys = "d]}"
+
+[[case]]
+name = "d_forward_paren_across_rows"
+buffer = "f(a,\n  b,\n  c)"
+cursor = [1, 2]
+keys = "d])"
+
+[[case]]
+name = "d_forward_paren_dot"
+buffer = "a ( b ( c ) d ) e ( f ) g"
+cursor = [0, 8]
+keys = "d])j.u"
+
+[[case]]
+name = "d_forward_paren_dot_repeat"
+buffer = "( a ( b ) c ( d ) e )"
+cursor = [0, 4]
+keys = "d])w."
+
+[[case]]
+name = "d_bracket_c_cancels"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d[c"
+
+[[case]]
+name = "d_forward_bracket_c_cancels"
+buffer = "a ( b ( c ) d ) e"
+cursor = [0, 8]
+keys = "d]cx"
