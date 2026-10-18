@@ -26,10 +26,11 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::task::{Context, Poll, Waker};
 
 use fe_text::Text;
-use lsp_types::{NumberOrString, PublishDiagnosticsParams};
+use lsp_types::{NumberOrString, PublishDiagnosticsParams, Url};
 
 use crate::encoding::{PositionEncoding, from_lsp};
 
@@ -49,6 +50,26 @@ pub struct Diagnostic {
     /// What the server attached, as received: it comes back with the
     /// diagnostic in a code action request.
     pub data: Option<serde_json::Value>,
+    /// Secondary locations (`relatedInformation`), as rustc's "first borrow
+    /// here".
+    pub related: Vec<Related>,
+    /// The `href` of `codeDescription`: a page describing the code.
+    pub code_description: Option<Url>,
+}
+
+/// A location a diagnostic points to besides its own range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Related {
+    pub uri: Url,
+    /// The file's path, for a `file` URI.
+    pub path: Option<PathBuf>,
+    /// The line the location starts on, which needs no encoding.
+    pub row: u32,
+    /// Its bytes in the buffer version the diagnostic came with, set only
+    /// when the location is in that document.
+    pub range: Option<Range<usize>>,
+    pub message: String,
 }
 
 impl Diagnostic {
@@ -63,6 +84,8 @@ impl Diagnostic {
             code: None,
             tags: Vec::new(),
             data: None,
+            related: Vec::new(),
+            code_description: None,
         }
     }
 }
@@ -114,11 +137,24 @@ impl Inbox {
 
 /// `diagnostics` with their positions decoded against `text`, the ring's
 /// text for the version they were published for.
+#[cfg(test)]
 pub(crate) fn decode(
     text: &Text,
     encoding: PositionEncoding,
     diagnostics: Vec<lsp_types::Diagnostic>,
 ) -> Vec<Diagnostic> {
+    decode_in(text, encoding, diagnostics, None)
+}
+
+/// [`decode`], also placing related locations in `document`, the URI the
+/// diagnostics were published for.
+pub(crate) fn decode_in(
+    text: &Text,
+    encoding: PositionEncoding,
+    diagnostics: Vec<lsp_types::Diagnostic>,
+    document: Option<&Url>,
+) -> Vec<Diagnostic> {
+    let document_path = document.and_then(file_path);
     diagnostics
         .into_iter()
         .map(|diagnostic| {
@@ -138,9 +174,40 @@ pub(crate) fn decode(
                     .filter_map(tag)
                     .collect(),
                 data: diagnostic.data,
+                related: (diagnostic.related_information.into_iter().flatten())
+                    .map(|info| {
+                        let location = info.location;
+                        let path = file_path(&location.uri);
+                        let here = document.is_some_and(|document| {
+                            *document == location.uri
+                                || (document_path.is_some() && document_path == path)
+                        });
+                        let range = here.then(|| {
+                            let start = from_lsp(text, location.range.start, encoding);
+                            let end = from_lsp(text, location.range.end, encoding).max(start);
+                            start..end
+                        });
+                        Related {
+                            row: location.range.start.line,
+                            uri: location.uri,
+                            path,
+                            range,
+                            message: info.message,
+                        }
+                    })
+                    .collect(),
+                code_description: diagnostic.code_description.map(|c| c.href),
             }
         })
         .collect()
+}
+
+fn file_path(uri: &Url) -> Option<PathBuf> {
+    if uri.scheme() == "file" {
+        uri.to_file_path().ok()
+    } else {
+        None
+    }
 }
 
 fn severity(severity: lsp_types::DiagnosticSeverity) -> Option<Severity> {

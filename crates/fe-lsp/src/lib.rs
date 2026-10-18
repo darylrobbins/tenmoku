@@ -102,7 +102,7 @@ pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
 pub use code_action::{CodeAction, Payload};
 pub use completion::{CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_name};
-pub use diagnostics::{Diagnostic, DiagnosticTag, Severity};
+pub use diagnostics::{Diagnostic, DiagnosticTag, Related, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use document_highlight::{DocumentHighlight, HighlightKind};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};

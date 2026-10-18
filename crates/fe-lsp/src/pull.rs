@@ -50,7 +50,7 @@ use lsp_types::{
 use serde_json::{Value, json};
 
 use crate::clock::Clock;
-use crate::diagnostics::{Diagnostic, decode};
+use crate::diagnostics::{Diagnostic, decode_in};
 use crate::document::SentVersion;
 use crate::encoding::PositionEncoding;
 use crate::event::LspError;
@@ -346,7 +346,7 @@ impl Lists {
             );
             return None;
         };
-        let items = decode(&sent.text, encoding, diagnostics);
+        let items = decode_in(&sent.text, encoding, diagnostics, Some(uri));
         *slot = Some(List {
             lsp_version: version,
             items,
@@ -400,8 +400,22 @@ fn map_forward(ring: &VecDeque<SentVersion>, list: &List, to: usize) -> Option<V
                     .fold(item.range.start, |at, batch| map(batch, at, Bias::Right));
                 let end =
                     (batches.iter()).fold(item.range.end, |at, batch| map(batch, at, Bias::Left));
+                let related = (item.related.iter())
+                    .map(|related| {
+                        let mut related = related.clone();
+                        related.range = related.range.map(|range| {
+                            let start = (batches.iter())
+                                .fold(range.start, |at, batch| map(batch, at, Bias::Right));
+                            let end = (batches.iter())
+                                .fold(range.end, |at, batch| map(batch, at, Bias::Left));
+                            start..end.max(start)
+                        });
+                        related
+                    })
+                    .collect();
                 Diagnostic {
                     range: start..end.max(start),
+                    related,
                     ..item.clone()
                 }
             })
