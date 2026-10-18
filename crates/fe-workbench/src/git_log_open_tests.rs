@@ -6,7 +6,11 @@ use std::{fs, path::Path, process::Command};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{DiffView, EditorSettings, EditorTheme, commands::RunCommand};
-use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use fe_ui::ROW_HEIGHT;
+use gpui::{
+    Entity, Focusable as _, Modifiers, MouseButton, Pixels, Point, TestAppContext,
+    VisualTestContext, point, px,
+};
 
 use super::GitLogPanel;
 use crate::{Launch, Workbench};
@@ -410,3 +414,70 @@ fn clicks_by_row(cx: &mut TestAppContext) {
     assert_eq!(under(&listed, rename), ["R a.rs → b.rs"]);
     assert_eq!(selected(&workbench, cx), Some(edit));
 }
+
+/// The middle of row `ix` of the panel's list, as last drawn, scrolled to
+/// the top.
+fn row_center(panel: &Entity<GitLogPanel>, ix: usize, cx: &mut VisualTestContext) -> Point<Pixels> {
+    let list = panel.read_with(cx, |panel, _| panel.scroll.0.borrow().base_handle.bounds());
+    point(
+        list.left() + px(40.),
+        list.top() + ROW_HEIGHT * (ix as f32 + 0.5),
+    )
+}
+
+// With real mouse events, through gpui's pressed-state tracking and the
+// rows' rendered IDs: a press on a row that the landing of an expansion
+// replaces before the release clicks neither row.
+#[gpui::test]
+fn a_release_over_a_row_that_replaced_the_pressed_one_clicks_nothing(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let (workbench, mut cx) = window(cx, dir.path());
+    let cx = &mut cx;
+    let all = lines(&workbench, cx);
+    let edit = row_of(&all, "edit");
+    let panel = panel(&workbench, cx);
+    let none = Modifiers::none();
+
+    // A click on a commit row expands it, and again collapses it.
+    let commit_row = row_center(&panel, edit, cx);
+    cx.simulate_click(commit_row, none);
+    draw(cx);
+    let listed = lines(&workbench, cx);
+    assert_eq!(under(&listed, edit), ["M a.rs", "D d.rs", "A n.rs"]);
+    assert_eq!(selected(&workbench, cx), Some(edit));
+    cx.simulate_click(commit_row, none);
+    draw(cx);
+    assert_eq!(lines(&workbench, cx), all);
+
+    // `edit` loading, drawn without its files landing: `init` is below
+    // the loading row.
+    panel.update(cx, |panel, cx| panel.toggle(edit, cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let loading = lines(&workbench, cx);
+    assert_eq!(under(&loading, edit), ["Loading…"]);
+    let pressed = edit + 2;
+    assert!(loading[pressed].ends_with("  init"), "{loading:?}");
+
+    // Pressed on `init`; the files land and are drawn, `d.rs`'s row where
+    // `init`'s was; released there.
+    let at = row_center(&panel, pressed, cx);
+    cx.simulate_mouse_down(at, MouseButton::Left, none);
+    draw(cx);
+    let listed = lines(&workbench, cx);
+    assert_eq!(listed[pressed], "D d.rs");
+    cx.simulate_mouse_up(at, MouseButton::Left, none);
+    draw(cx);
+    assert_eq!(lines(&workbench, cx), listed, "init isn't expanded");
+    assert_eq!(selected(&workbench, cx), Some(edit), "nor selected");
+    assert_eq!(tab_count(&workbench, cx), 0, "nor d.rs opened");
+
+    // An ordinary click on that file row opens it.
+    cx.simulate_click(at, none);
+    draw(cx);
+    assert_eq!(selected(&workbench, cx), Some(pressed));
+    assert_eq!(tab_count(&workbench, cx), 1);
+    assert!(title(&workbench, cx).starts_with("d.rs ("));
+}
+
+#[path = "git_log_tab_names_tests.rs"]
+mod tab_names;

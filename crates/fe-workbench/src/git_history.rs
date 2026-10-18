@@ -337,7 +337,8 @@ impl Workbench {
         let left = fixed_side(format!("{short}^"), &left);
         let right = fixed_side(short.clone(), &right);
         let name = file_name(&commit.path);
-        let diff = cx.new(|cx| DiffView::new(name, left, right, cx));
+        let compared = commit.path.clone();
+        let diff = cx.new(|cx| DiffView::new(name, left, right, cx).with_compared_path(compared));
         let sides = {
             let view = diff.read(cx);
             [view.left().clone(), view.right().clone()]

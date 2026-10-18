@@ -92,12 +92,13 @@ impl RenderOnce for TabBar {
     }
 }
 
-/// One tab: its label, then a dot if it has unsaved changes or else a
-/// close button.
+/// One tab: its label and, muted, its description, then a dot if it has
+/// unsaved changes or else a close button.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
     label: SharedString,
+    description: Option<SharedString>,
     label_color: Option<Hsla>,
     dirty: bool,
     active: bool,
@@ -113,6 +114,7 @@ impl Tab {
         Self {
             id: id.into(),
             label: label.into(),
+            description: None,
             label_color: None,
             dirty: false,
             active: false,
@@ -120,6 +122,19 @@ impl Tab {
             on_close: None,
             drag: Vec::new(),
         }
+    }
+
+    /// Drawn after the label, at its size in the theme's muted text colour:
+    /// what tells this tab apart from others with the same label, such as
+    /// its file's folder.
+    pub fn description(mut self, description: Option<SharedString>) -> Self {
+        self.description = description;
+        self
+    }
+
+    /// The description drawn after the label, if any.
+    pub fn description_text(&self) -> Option<&SharedString> {
+        self.description.as_ref()
     }
 
     /// Draws the title in `color`, active or not, in place of the theme's
@@ -257,9 +272,14 @@ impl RenderOnce for Tab {
             })
             .child(
                 div()
+                    .flex()
+                    .items_baseline()
+                    .gap_1p5()
                     .whitespace_nowrap()
-                    .text_color(title_color)
-                    .child(self.label),
+                    .child(div().text_color(title_color).child(self.label))
+                    .when_some(self.description, |label, description| {
+                        label.child(div().text_color(muted).child(description))
+                    }),
             )
             .child(close)
             .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))

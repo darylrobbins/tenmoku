@@ -19,6 +19,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    path::{Component, Path, PathBuf},
     rc::Rc,
 };
 
@@ -501,12 +502,18 @@ impl<V: PaneView> PaneState<V> {
 
     /// A tab per item as drawn, but for its click, close, drag and drop
     /// handlers: its title, title colour and dirty dot from the item, and
-    /// whether it is the active one.
+    /// whether it is the active one. Tabs that share a title are described
+    /// by their [`PaneItem::tab_path`](crate::PaneItem::tab_path)s'
+    /// folders ([`tab_descriptions`]).
     pub fn tabs(&self, cx: &App) -> Vec<kiln_ui::Tab> {
         let ui = ui_theme(cx);
-        (self.items.iter().enumerate())
-            .map(|(ix, item)| {
-                kiln_ui::Tab::new(("tab", ix), item.tab_title(cx), &ui)
+        let titles: Vec<_> = self.items.iter().map(|item| item.tab_title(cx)).collect();
+        let paths: Vec<_> = self.items.iter().map(|item| item.tab_path(cx)).collect();
+        let descriptions = tab_descriptions(&titles, &paths);
+        (self.items.iter().zip(titles).zip(descriptions).enumerate())
+            .map(|(ix, ((item, title), description))| {
+                kiln_ui::Tab::new(("tab", ix), title, &ui)
+                    .description(description)
                     .label_color(item.tab_title_color(cx))
                     .dirty(item.is_dirty(cx))
                     .active(ix == self.active)
@@ -897,4 +904,50 @@ impl Render for ItemPane {
             )
             .children(self.state.drop_hint(cx))
     }
+}
+
+/// What tells each tab apart from the others with its title, as VS Code
+/// does: the fewest trailing folders of its path's parent, joined with `/`,
+/// that no other path among them ends its folders with, comparing whole
+/// components (`src` and `tests` for `x/src/ex.rs` and `x/src/tests/ex.rs`).
+/// A path whose folders run out first is described by its whole parent.
+/// A tab with a title of its own, no path, or the only path among its
+/// title's (two views of one file, say) has none.
+fn tab_descriptions(
+    titles: &[SharedString],
+    paths: &[Option<PathBuf>],
+) -> Vec<Option<SharedString>> {
+    let folders = |path: &Path| -> Vec<String> {
+        let parent = path.parent().unwrap_or(Path::new(""));
+        (parent.components())
+            .filter_map(|part| match part {
+                Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    (titles.iter().zip(paths))
+        .map(|(title, path)| {
+            let path = path.as_deref()?;
+            let others: Vec<&Path> = (titles.iter().zip(paths))
+                .filter(|(other, _)| *other == title)
+                .filter_map(|(_, other)| other.as_deref())
+                .filter(|other| *other != path)
+                .collect();
+            if others.is_empty() {
+                return None;
+            }
+            let own = folders(path);
+            let others: Vec<_> = others.into_iter().map(folders).collect();
+            let unique = (1..=own.len()).find(|&n| {
+                let tail = &own[own.len() - n..];
+                !others.iter().any(|other| other.ends_with(tail))
+            });
+            let description = match unique {
+                Some(n) => own[own.len() - n..].join("/"),
+                None => path.parent()?.to_string_lossy().into_owned(),
+            };
+            (!description.is_empty()).then(|| description.into())
+        })
+        .collect()
 }

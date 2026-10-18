@@ -1223,7 +1223,8 @@ fn show_commit(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let diff = cx.new(|cx| DiffView::new(name, left, right, cx));
+    let diff =
+        cx.new(|cx| DiffView::new(name, left, right, cx).with_compared_path(path.to_owned()));
     let sides = {
         let view = diff.read(cx);
         [view.left().clone(), view.right().clone()]

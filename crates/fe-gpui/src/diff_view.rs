@@ -23,7 +23,7 @@ use std::{
     cell::RefCell,
     hash::{DefaultHasher, Hash as _, Hasher as _},
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
@@ -150,6 +150,9 @@ impl DiffSide {
 /// Two texts compared side by side: see the [module docs](self).
 pub struct DiffView {
     file_name: SharedString,
+    /// The file compared, which tells its tab from others with the same
+    /// title ([`DiffView::with_compared_path`]).
+    compared_path: Option<PathBuf>,
     titles: [SharedString; 2],
     views: [Entity<EditorView>; 2],
     /// Each side's tints, registered on its model.
@@ -267,6 +270,7 @@ impl DiffView {
         });
         let mut this = Self {
             file_name,
+            compared_path: None,
             titles,
             views,
             tints,
@@ -287,6 +291,15 @@ impl DiffView {
         };
         this.sync_buffers(cx);
         this
+    }
+
+    /// Names `path` as the file compared, for the tab's
+    /// [`PaneItem::tab_path`], when neither side's model has it: a commit's
+    /// diff, or `HEAD` against the index. It isn't the view's
+    /// [`PaneItem::path`], so finding a file's tab never finds this one.
+    pub fn with_compared_path(mut self, path: PathBuf) -> Self {
+        self.compared_path = Some(path);
+        self
     }
 
     pub fn left(&self) -> &Entity<EditorView> {
@@ -735,6 +748,12 @@ impl PaneItem for DiffView {
 
     fn window_title(&self, cx: &App) -> SharedString {
         format!("{} — fastedit", self.tab_title(cx)).into()
+    }
+
+    /// The compared path, else the right side's model's. The view keeps the
+    /// default `None` [`PaneItem::path`].
+    fn tab_path<'a>(&'a self, cx: &'a App) -> Option<&'a Path> {
+        (self.compared_path.as_deref()).or_else(|| self.right_model(cx).path())
     }
 
     /// Whether the right side's buffer has unsaved changes.

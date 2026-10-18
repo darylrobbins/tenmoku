@@ -136,6 +136,15 @@ pub trait PaneItem: Render + Focusable + Sized + 'static {
         None
     }
 
+    /// The file the tab is named for, used only to tell tabs with the same
+    /// title apart by their folders ([`crate::PaneState::tabs`]). An item
+    /// that compares a file, say, names it here without claiming it as its
+    /// [`PaneItem::path`]. It may borrow from `cx`, as from another
+    /// entity's state. Defaults to the path.
+    fn tab_path<'a>(&'a self, cx: &'a App) -> Option<&'a Path> {
+        self.path(cx)
+    }
+
     /// Crumbs after the path's, in the pane's toolbar.
     fn breadcrumbs(&self, _cx: &App) -> Vec<ItemCrumb> {
         Vec::new()
@@ -256,6 +265,11 @@ pub trait ItemHandle: 'static {
     fn close_revision(&self, cx: &App) -> u64;
     fn save(&self, window: &mut Window, cx: &mut App) -> Option<Task<gpui::Result<()>>>;
     fn path(&self, cx: &App) -> Option<PathBuf>;
+    /// [`PaneItem::tab_path`]. Defaults to [`ItemHandle::path`], for a
+    /// wrapper that forwards to another handle.
+    fn tab_path(&self, cx: &App) -> Option<PathBuf> {
+        self.path(cx)
+    }
     fn breadcrumbs(&self, cx: &App) -> Vec<ItemCrumb>;
     fn status_items(&self, cx: &App) -> Vec<StatusItem>;
     fn split(&self, window: &mut Window, cx: &mut App) -> Option<Box<dyn ItemHandle>>;
@@ -339,6 +353,10 @@ impl<T: PaneItem> ItemHandle for Entity<T> {
 
     fn path(&self, cx: &App) -> Option<PathBuf> {
         self.read(cx).path(cx).map(Path::to_owned)
+    }
+
+    fn tab_path(&self, cx: &App) -> Option<PathBuf> {
+        self.read(cx).tab_path(cx).map(Path::to_owned)
     }
 
     fn breadcrumbs(&self, cx: &App) -> Vec<ItemCrumb> {

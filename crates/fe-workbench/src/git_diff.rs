@@ -852,7 +852,8 @@ impl Workbench {
             Err(right) => (right, None),
         };
         let name = file_name(&path);
-        let diff = cx.new(|cx| DiffView::new(name, left, right, cx));
+        let compared = path.clone();
+        let diff = cx.new(|cx| DiffView::new(name, left, right, cx).with_compared_path(compared));
         let sides = {
             let view = diff.read(cx);
             [view.left().clone(), view.right().clone()]
