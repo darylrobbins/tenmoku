@@ -33,7 +33,9 @@ fn picked(vim: &mut HeadlessVim, line: &str) -> Pick {
 fn cells(pick: &Pick) -> Vec<Vec<&str>> {
     pick.rows
         .iter()
-        .map(|row| row.cells.iter().map(String::as_str).collect())
+        .map(|row| row.cells.iter().map(String::as_str).collect::<Vec<_>>())
+        // The `.` and `:` rows hold what the test typed, not nvim's setup.
+        .filter(|cells| !matches!(cells.get(1), Some(&"\"." | &"\":")))
         .collect()
 }
 

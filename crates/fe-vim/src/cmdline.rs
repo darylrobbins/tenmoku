@@ -113,6 +113,11 @@ pub(crate) fn submit(
             target.registers.enter_ex();
             let handled = ex::run(target, actor, &args.text);
             target.registers.leave_ex();
+            // Set once the line has run, as nvim does: `:registers` and
+            // `:put :` see the line before.
+            if let Some(line) = &target.state.macros.last_command_line {
+                target.registers.set_command_line(line);
+            }
             handled
         }
     }

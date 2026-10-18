@@ -63,7 +63,8 @@ pub struct RegisterError(pub char);
 /// `" 0 1-9 - a-z`, plus `_` (which discards) and `+ *` (one slot: the host's
 /// clipboard). `A-Z` append to `a-z`. The read-only `/` holds the last
 /// search pattern, which with its direction is the host's last search, as
-/// every editor shares it.
+/// every editor shares it; the read-only `.` holds the last inserted text
+/// and `:` the last command line run.
 ///
 /// It keeps the command-line histories too (`:help cmdline-history`), which
 /// are as global as the last search: one for search lines, which `/` and
@@ -78,6 +79,13 @@ pub struct Registers {
     unnamed: Option<char>,
     /// `/`: the last search pattern, as characters.
     search: Option<Register>,
+    /// `.`: the text the last insert or replace session typed, charwise.
+    inserted: Option<Register>,
+    /// The order of the session `inserted` came from, so a session closed
+    /// late (by a clone of an editor's state) can't replace a newer one.
+    inserted_order: u64,
+    /// `:`: the last command line run, charwise.
+    command_line: Option<Register>,
     /// Whether the last search went forward (`/`, not `?`).
     search_forward: bool,
     /// The last search's offset, which `n` and `N` keep.
@@ -122,8 +130,8 @@ impl Registers {
     }
 
     /// Whether `name` is a register a command may write: `" 0-9 - a-z A-Z _
-    /// + *`. Not `/`, which only [`Registers::read`] and
-    /// [`Registers::get`] reach.
+    /// + *`. Not the read-only `/ . :`, which only [`Registers::read`] and
+    /// [`Registers::get`] reach: a yank, delete or change naming one fails.
     pub fn check(name: char) -> Result<(), RegisterError> {
         match name {
             '"' | '-' | '_' | '+' | '*' => Ok(()),
@@ -133,12 +141,15 @@ impl Registers {
     }
 
     /// A register's content, `"` following the last write and `A-Z` reading
-    /// `a-z`, `/` the last search pattern. `None` if it's empty, or for `_ +
+    /// `a-z`, `/` the last search pattern, `.` the last inserted text and `:`
+    /// the last command line, the last two charwise. `None` if it's empty, or for `_ +
     /// *` (and `"` pointing at the clipboard), which only
     /// [`Registers::read`] reaches.
     pub fn get(&self, name: char) -> Option<&Register> {
         match name {
             '/' => self.search.as_ref(),
+            '.' => self.inserted.as_ref(),
+            ':' => self.command_line.as_ref(),
             '"' => self.get(self.unnamed.filter(|&name| name != CLIPBOARD)?),
             '-' => self.small.as_ref(),
             '0'..='9' => self.numbered[name as usize - '0' as usize].as_ref(),
@@ -154,7 +165,9 @@ impl Registers {
     /// holds lines when its text ends in a line break, and never a block; its
     /// `\r\n` and `\r` read as `\n`. A block written to it is its rows
     /// joined by `\n`. `/` is the last search pattern, an error until a
-    /// search sets it (nvim's E35).
+    /// search sets it (nvim's E35). `.` and `:` are the last inserted text
+    /// and command line, charwise, empty until there is one; they can be read
+    /// but not written ([`Registers::check`]).
     pub fn read(
         &self,
         name: Option<char>,
@@ -163,6 +176,9 @@ impl Registers {
         let name = name.unwrap_or(if self.clipboard_unnamed { '+' } else { '"' });
         if name == '/' {
             return self.search.clone().map(Some).ok_or(RegisterError(name));
+        }
+        if matches!(name, '.' | ':') {
+            return Ok(self.get(name).cloned());
         }
         Self::check(name)?;
         let clipboard = match name {
@@ -282,6 +298,26 @@ impl Registers {
             Some(old) => Register::new(old.text + &text, false),
             None => Register::new(text, false),
         });
+    }
+
+    /// Notes the text the last insert or replace session typed, for `.`.
+    pub(crate) fn set_inserted(&mut self, text: &str) {
+        self.inserted = Some(Register::new(text, false));
+    }
+
+    /// Notes the last command line run, for `:`.
+    pub(crate) fn set_command_line(&mut self, line: &str) {
+        self.command_line = Some(Register::new(line, false));
+    }
+
+    /// Takes the inserted text a session of `state` left, if any, for `.`.
+    pub(crate) fn adopt_inserted(&mut self, state: &mut crate::state::VimState) {
+        if let Some((order, text)) = state.pending_inserted.take()
+            && order > self.inserted_order
+        {
+            self.inserted_order = order;
+            self.set_inserted(&text);
+        }
     }
 
     /// Adds a line submitted on a command line of `kind` to its history,
@@ -515,4 +551,27 @@ fn append(old: Register, new: Register) -> Register {
         text
     };
     Register::new(line(old) + &line(new), true)
+}
+
+#[cfg(test)]
+mod inserted_order_tests {
+    use super::*;
+    use crate::state::VimState;
+
+    #[test]
+    fn a_session_closed_late_does_not_replace_a_newer_one() {
+        let mut registers = Registers::new();
+        let mut newer = VimState::new();
+        newer.offer_inserted(5, "y".into());
+        registers.adopt_inserted(&mut newer);
+        // A clone that ended its session before it closes it now.
+        let mut older = VimState::new();
+        older.offer_inserted(3, "x".into());
+        registers.adopt_inserted(&mut older);
+        assert_eq!(registers.get('.'), Some(&Register::new("y", false)));
+        // Nor does the same session published twice.
+        older.offer_inserted(5, "z".into());
+        registers.adopt_inserted(&mut older);
+        assert_eq!(registers.get('.'), Some(&Register::new("y", false)));
+    }
 }

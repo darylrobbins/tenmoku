@@ -1,0 +1,600 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "dot_unset_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\".p",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "colon_unset_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\":p",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_insert",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahello<Esc>\".p",
+      "expect": {
+        "buffer": "xhellohello",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_later_delete",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>0dd\".P",
+      "expect": {
+        "buffer": "hi",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xhi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "xhi\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_dot_repeat",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>ofoo<Esc>.\".p",
+      "expect": {
+        "buffer": "xhi\nfoo\nfoofoo",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_replace_mode",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Rxy<Esc>$\".p",
+      "expect": {
+        "buffer": "xycdefxy",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_with_count",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ahi<Esc>\".p",
+      "expect": {
+        "buffer": "xhihihihi",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_put_count",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>3\".p",
+      "expect": {
+        "buffer": "xhihihihi",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_put_P_count",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>2\".P",
+      "expect": {
+        "buffer": "xhhihii",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_cw",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cwbaz<Esc>$\".p",
+      "expect": {
+        "buffer": "baz barbaz",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_o",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ofoo<Esc>gg\".p",
+      "expect": {
+        "buffer": "xfoo\nfoo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_in_visual_put",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>0vl\".p",
+      "expect": {
+        "buffer": "hiibc def",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ah",
+            "linewise": false
+          },
+          "-": {
+            "text": "ah",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_in_linewise_visual_put",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>jVj\".p",
+      "expect": {
+        "buffer": "ahibc\nhi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "colon_after_substitute",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/b/B/<CR>\":p",
+      "expect": {
+        "buffer": "as/b/B/Bc",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "colon_after_failed_command",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":nosuchcmd<CR>\":p",
+      "expect": {
+        "buffer": "anosuchcmdbc",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "colon_not_set_by_cancelled_line",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/<CR>:foo<Esc>\":p",
+      "expect": {
+        "buffer": "As/a/A/bc",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "colon_not_set_by_search",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/<CR>/b<CR>\":p",
+      "expect": {
+        "buffer": "Abs/a/A/c",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "colon_after_at_colon",
+      "buffer": "aaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/b/<CR>@:\":p",
+      "expect": {
+        "buffer": "bs/a/b/ba",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "colon_put_P",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set tw=0<CR>\":P",
+      "expect": {
+        "buffer": "set tw=0abc",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "colon_in_visual_put",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/<CR>0vl\":p",
+      "expect": {
+        "buffer": "s/a/A/c def",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "Ab",
+            "linewise": false
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "yank_into_dot_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\".yy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delete_into_colon_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\":dd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_multiline_insert",
+      "buffer": "  abc\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<CR>x<Esc>G\".p",
+      "expect": {
+        "buffer": "  abc\n  x\nz\nx",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_typed_indent",
+      "buffer": "abc\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<CR>  x<Esc>G\".p",
+      "expect": {
+        "buffer": "abc\n  x\nz\n  x",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ex_put_dot",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ahi<Esc>:put .<CR>",
+      "expect": {
+        "buffer": "xhi\nhi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ex_put_colon",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/<CR>:put :<CR>",
+      "expect": {
+        "buffer": "Abc\ns/a/A/",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ex_put_colon_is_the_previous_line",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/A/<CR>:put :<CR>:put :<CR>",
+      "expect": {
+        "buffer": "Abc\ns/a/A/\nput :",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

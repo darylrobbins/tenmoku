@@ -600,9 +600,9 @@ fn operate_over(
             return cmdline::failed(target.state, message);
         }
     }
-    // `/` is read-only: an operator that writes a register into it does
-    // nothing (leaving a visual mode), as in nvim; the others ignore it.
-    if args.register == Some('/') {
+    // `/ . :` are read-only: an operator that writes a register into one
+    // does nothing (leaving a visual mode), as in nvim; the others ignore it.
+    if let Some(name @ ('/' | '.' | ':')) = args.register {
         if !matches!(
             args.operator,
             Operator::Delete | Operator::Yank | Operator::Change
@@ -613,7 +613,7 @@ fn operate_over(
                 true => visual::exit(target)?.effect,
                 false => Effect::Nothing,
             };
-            target.state.fail("register / is read-only");
+            target.state.fail(format!("register {name} is read-only"));
             return Ok(Dispatched::new(match exited {
                 Effect::Nothing => Effect::Notify,
                 exited => exited,
@@ -1279,6 +1279,7 @@ fn put_unless_failing(
     if args.register == Some('/') && registers.last_search().is_none() {
         return Ok(state.fail("E35: No previous regular expression"));
     }
+    registers.adopt_inserted(state);
     let value = registers
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;
@@ -1417,20 +1418,23 @@ fn put_unless_failing(
                 true => head,
                 false => head + grapheme_len(&text, head),
             };
-            // A multi-row text leaves the caret at its start; otherwise on
-            // its last grapheme.
+            // A multi-row text leaves the caret at its start, or, when it
+            // begins with a line break, on the first non-blank of the row
+            // after that; otherwise on its last grapheme.
+            let after_break = repeated.starts_with('\n');
             let land = match repeated.contains('\n') {
+                true if after_break => 1,
                 true => 0,
                 false => repeated
                     .grapheme_indices(true)
                     .next_back()
                     .map_or(0, |(ix, _)| ix),
             };
-            let land = match args.cursor_after {
-                true => repeated.len(),
-                false => land,
+            let (land, after_break) = match args.cursor_after {
+                true => (repeated.len(), false),
+                false => (land, after_break),
             };
-            puts.push((at, repeated, (land, false), 0));
+            puts.push((at, repeated, (land, after_break), 0));
         }
     }
     puts.sort_by_key(|(at, _, _, _)| *at);

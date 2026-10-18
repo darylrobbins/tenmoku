@@ -196,6 +196,7 @@ fn flags_specials_and_bounds() {
         let mut substitute = vim.registers().clone();
         // Only the ex history takes the line, as in nvim.
         substitute.add_history(CommandLineKind::Ex, line);
+        substitute.set_command_line(line);
         vim.feed(&format!(":{line}<CR>")).unwrap();
         assert_eq!(vim.state().message(), Some(error.to_string().as_str()));
         assert_eq!((vim.text(), vim.cursor()), (text, cursor), "{line}");

@@ -1,0 +1,174 @@
+# Read-only register cases for fe-vim's oracle: `.` (the last inserted text)
+# after an insert, a later delete, a `.` repeat, replace mode, a count and a
+# change; `:` (the last command line) after `:s`, a failed command, a
+# cancelled line, a search and `@:`; both put with a count and over a visual
+# selection; and a yank, delete or change naming one, which fails. The oracle
+# doesn't record the registers: the cases put them into the buffer. A key that
+# fails is a case's last key.
+# Hand-written (by a script): name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. What nvim
+# does with each is recorded in readonly_registers.expected.json by the
+# ignored `record_corpus_with_neovim` test; edit a case, then re-record. The two unset cases come first: nvim keeps
+# `.` and `:` from one case to the next, and they can't be cleared.
+
+[[case]]
+name = "dot_unset_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = '".p'
+
+[[case]]
+name = "colon_unset_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = '":p'
+
+[[case]]
+name = "dot_after_insert"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahello<Esc>".p'
+
+[[case]]
+name = "dot_after_later_delete"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahi<Esc>0dd".P'
+
+[[case]]
+name = "dot_after_dot_repeat"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahi<Esc>ofoo<Esc>.".p'
+
+[[case]]
+name = "dot_after_replace_mode"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = 'Rxy<Esc>$".p'
+
+[[case]]
+name = "dot_with_count"
+buffer = "x"
+cursor = [0, 0]
+keys = '3ahi<Esc>".p'
+
+[[case]]
+name = "dot_put_count"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahi<Esc>3".p'
+
+[[case]]
+name = "dot_put_P_count"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahi<Esc>2".P'
+
+[[case]]
+name = "dot_after_cw"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = 'cwbaz<Esc>$".p'
+
+[[case]]
+name = "dot_after_o"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ofoo<Esc>gg".p'
+
+[[case]]
+name = "dot_in_visual_put"
+buffer = "abc def"
+cursor = [0, 0]
+keys = 'ahi<Esc>0vl".p'
+
+[[case]]
+name = "dot_in_linewise_visual_put"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = 'ahi<Esc>jVj".p'
+
+[[case]]
+name = "colon_after_substitute"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/B/<CR>":p'
+
+[[case]]
+name = "colon_after_failed_command"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':nosuchcmd<CR>":p'
+
+[[case]]
+name = "colon_not_set_by_cancelled_line"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/<CR>:foo<Esc>":p'
+
+[[case]]
+name = "colon_not_set_by_search"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/<CR>/b<CR>":p'
+
+[[case]]
+name = "colon_after_at_colon"
+buffer = "aaa"
+cursor = [0, 0]
+keys = ':s/a/b/<CR>@:":p'
+
+[[case]]
+name = "colon_put_P"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':set tw=0<CR>":P'
+
+[[case]]
+name = "colon_in_visual_put"
+buffer = "abc def"
+cursor = [0, 0]
+keys = ':s/a/A/<CR>0vl":p'
+
+[[case]]
+name = "yank_into_dot_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = '".yy'
+
+[[case]]
+name = "delete_into_colon_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = '":dd'
+
+[[case]]
+name = "dot_after_multiline_insert"
+buffer = "  abc\nz"
+cursor = [0, 0]
+keys = 'A<CR>x<Esc>G".p'
+
+[[case]]
+name = "dot_after_typed_indent"
+buffer = "abc\nz"
+cursor = [0, 0]
+keys = 'A<CR>  x<Esc>G".p'
+
+[[case]]
+name = "ex_put_dot"
+buffer = "x"
+cursor = [0, 0]
+keys = 'ahi<Esc>:put .<CR>'
+
+[[case]]
+name = "ex_put_colon"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/<CR>:put :<CR>'
+
+[[case]]
+name = "ex_put_colon_is_the_previous_line"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/a/A/<CR>:put :<CR>:put :<CR>'

@@ -499,6 +499,9 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
     // A change made while it was closing is newer than it for `.`. The
     // marks it left go only where nothing set them since (see
     // `marks::adopt_insert`): a yank or `m[` sets some, but not `'.`.
+    if let Some((order, text)) = closed.inserted {
+        state.offer_inserted(order, text);
+    }
     if state.changes == changes {
         state.set_last_change(closed.last_change);
     }
@@ -517,6 +520,10 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
 #[derive(Clone, Debug)]
 struct Closed {
     last_change: LastChange,
+    /// What the `.` register takes, with its place in the order sessions
+    /// ended in ([`VimState::offer_inserted`]); `None` for a session that
+    /// left it alone.
+    inserted: Option<(u64, String)>,
     transaction: Option<TransactionId>,
     left: Option<Box<marks::Left>>,
 }
@@ -2004,9 +2011,13 @@ pub(crate) fn normal_mode(
     target: &mut VimTarget<'_>,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget {
-        model, state, host, ..
+        model,
+        state,
+        host,
+        registers,
     } = target;
     let ended = end(model, state, Ending::Esc, Some(&**host));
+    registers.adopt_inserted(state);
     Ok(Dispatched::new(Effect::Changed).with_transactions(ended.into_iter().collect()))
 }
 
@@ -2075,6 +2086,9 @@ fn end(
         Err(closed) => {
             match closed {
                 Some(closed) => {
+                    if let Some((order, text)) = closed.inserted {
+                        state.offer_inserted(order, text);
+                    }
                     state.set_last_change(closed.last_change);
                     if !replaying {
                         state.carets.close(closed.transaction);
@@ -2231,11 +2245,31 @@ fn end(
     let corner = corner.map(|(corner, _)| corner);
 
     let snapshot = model.snapshot();
+    // The `.` register holds what was typed, not the indentation the
+    // session made: the repeat's `typed` keeps it, the register's drops it.
+    let mut register = None;
+    let indents = session.ledger().indents.clone();
     let typed = match keys {
-        Some((_, typed)) => typed,
+        Some((_, typed)) => {
+            register = Some(typed.clone());
+            typed
+        }
         None => kept.map_or_else(String::new, |(start, end)| {
             let (start, end) = (snapshot.resolve(&start), snapshot.resolve(&end));
-            model.text().slice_to_string(start..end.max(start))
+            let end = end.max(start);
+            let text = model.text();
+            let mut typed = String::new();
+            let mut at = start;
+            for indent in &indents.0 {
+                let range = &indent.range;
+                if range.start >= at && range.end <= end && !range.is_empty() {
+                    typed.push_str(&text.slice_to_string(at..range.start));
+                    at = range.end;
+                }
+            }
+            typed.push_str(&text.slice_to_string(at..end));
+            register = Some(typed);
+            text.slice_to_string(start..end)
         }),
     };
     let ended = model.buffer_mut().end_transaction();
@@ -2261,21 +2295,37 @@ fn end(
     }
     // A session a split resumed that edited nothing leaves `.` the change
     // before the split, as nvim does, whatever `Esc` typed on a block.
+    let skipped = session.resumed && !edited;
+    let inserted = match register {
+        Some(text) if !skipped => Some((next_order(), text)),
+        _ => None,
+    };
     let last_change = match &state.last_change {
-        Some(last) if session.resumed && !edited => last.clone(),
+        Some(last) if skipped => last.clone(),
         _ => LastChange {
             change: session.change.clone(),
             inserted: Some(typed),
             typed_first,
         },
     };
+    if let Some((order, text)) = inserted.clone() {
+        state.offer_inserted(order, text);
+    }
     session.ledger().end = End::Ended(Closed {
         last_change: last_change.clone(),
+        inserted,
         transaction: ended,
         left,
     });
     state.set_last_change(last_change);
     ended
+}
+
+/// A number for a session that is ending, higher than any earlier one's, so
+/// the `.` register can tell a session a clone closes late from a newer one.
+fn next_order() -> u64 {
+    static ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    ORDER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Steps each caret back one grapheme, as `Esc` does, unless it's at its

@@ -746,9 +746,9 @@ pub(crate) fn invocation(command: &str, args: impl Serialize) -> Step {
     Step::Commit(Invocation::new(command).args(args).source(Source::Keyboard))
 }
 
-/// A register's name: `/` too, which a put reads and writes refuse.
+/// A register's name: `/ . :` too, which a put reads and writes refuse.
 fn is_register(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/')
+    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/' | '.' | ':')
 }
 
 fn operator(ch: char) -> Option<Operator> {

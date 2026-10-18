@@ -37,7 +37,8 @@ fn parse(after: &str, check: &mut Check<'_>) -> Result<String, ExError> {
     let rest = rest.trim_start_matches([' ', '\t']);
     let mut chars = rest.chars();
     let name = chars.next().filter(|ch| {
-        ch.is_ascii_alphanumeric() || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/' | '=')
+        ch.is_ascii_alphanumeric()
+            || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/' | '=' | '.' | ':')
     });
     let name = match name {
         Some('=') => return Err(ExError::Pattern("the = register: not supported".into())),
@@ -85,6 +86,7 @@ fn run(
     if name == Some('/') && target.registers.last_search().is_none() {
         return Err(ExError::NoPreviousSearch);
     }
+    target.registers.adopt_inserted(target.state);
     let value = target
         .registers
         .read(name, &mut *target.host)

@@ -142,6 +142,7 @@ pub(crate) fn put(
         state,
         registers,
     } = target;
+    registers.adopt_inserted(state);
     let value = registers
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;

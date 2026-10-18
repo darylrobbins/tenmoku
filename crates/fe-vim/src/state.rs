@@ -86,6 +86,9 @@ pub struct VimState {
     /// is adopted once it's published (see `insert::adopt_closing`).
     pub(crate) closing: Option<Closing>,
     pub(crate) last_change: Option<LastChange>,
+    /// The text the last insert session typed, until the registers take it
+    /// for `.` ([`Registers::adopt_inserted`]).
+    pub(crate) pending_inserted: Option<(u64, String)>,
     /// How many times `last_change` was set, to order it against a session
     /// a clone is still closing (see `insert::Closing`).
     pub(crate) changes: u64,
@@ -171,6 +174,18 @@ impl VimState {
     }
 
     /// Sets what `.` repeats.
+    /// Offers the text a session that ended in place `order` typed, for
+    /// the `.` register; an older offer than one held is dropped.
+    pub(crate) fn offer_inserted(&mut self, order: u64, text: String) {
+        if self
+            .pending_inserted
+            .as_ref()
+            .is_none_or(|(held, _)| order > *held)
+        {
+            self.pending_inserted = Some((order, text));
+        }
+    }
+
     pub(crate) fn set_last_change(&mut self, change: LastChange) {
         self.last_change = Some(change);
         self.changes += 1;

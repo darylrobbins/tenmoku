@@ -42,7 +42,7 @@ pub(crate) struct Macros {
     /// The last register recorded, lowercase, for `Q`.
     last_recorded: Option<char>,
     /// The last ex line submitted, for `@:`.
-    last_command_line: Option<String>,
+    pub(crate) last_command_line: Option<String>,
     /// Keys `@` asked for that the host hasn't taken yet, in order.
     queued: Vec<VimKey>,
     /// Keys the host took and hasn't fed back yet: the next that many are
