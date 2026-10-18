@@ -201,10 +201,14 @@ pub struct Frame<L> {
     pub fold_markers: Vec<FoldMarker<L>>,
     /// Where the inlay was laid out, if its row is in the frame.
     pub inlay: Option<Rect>,
+    /// Where each hint was laid out, by its index in the hints the frame was
+    /// laid out with, in the order of the rows and then within them.
+    pub hints: Vec<(usize, Rect)>,
 }
 
 /// Text drawn inside a row at a buffer offset, with the rest of the row and
-/// every position on it shifted past it.
+/// every position on it shifted past it: the inlay (an IME composition or
+/// ghost text), or an inlay hint.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inlay<S> {
     pub offset: usize,
@@ -258,10 +262,17 @@ pub struct RowLayout<L> {
     /// The shaped text, from [`RowLayout::shown`].
     pub expanded: ExpandedRow,
     pub line: L,
-    /// The width of the inlay drawn in `line`, which the row's index doesn't
-    /// know: text of a long row past the shaped slice sits that far right of
-    /// where the index puts it.
+    /// The width of the inlay and the hints drawn in `line`, which the row's
+    /// index doesn't know: text of a long row past the shaped slice sits that
+    /// far right of where the index puts it.
     pub inlay_width: f64,
+    /// The hints drawn in `line`, by their index in the hints the frame was
+    /// laid out with, in the order of [`ExpandedRow::hint_ranges`].
+    pub hints: Vec<usize>,
+    /// Of a long row, the hints in the row outside the shaped slice, by
+    /// buffer offset and measured alone, in order: the text after each sits
+    /// that much further right.
+    outside_hints: Vec<(usize, f64)>,
 }
 
 impl<L> RowLayout<L> {
@@ -277,9 +288,21 @@ impl<L> RowLayout<L> {
         }
     }
 
-    /// The x of `line`'s start, from column 0.
+    /// The x of `line`'s start, from column 0: of a long row, past the hints
+    /// before the slice.
     pub fn start_x(&self) -> f64 {
-        self.slice.as_ref().map_or(0., |slice| slice.start_x)
+        self.slice.as_ref().map_or(0., |slice| {
+            slice.start_x + self.hints_outside_before(slice.range.start)
+        })
+    }
+
+    /// The width of the hints outside the shaped slice that are before
+    /// `offset`.
+    fn hints_outside_before(&self, offset: usize) -> f64 {
+        (self.outside_hints.iter())
+            .take_while(|(at, _)| *at < offset)
+            .map(|(_, width)| width)
+            .sum()
     }
 
     /// Whether the caret at `offset` is on this row. A soft wrap point
@@ -315,6 +338,7 @@ impl<L: MeasuredLine> RowLayout<L> {
             } else {
                 0.
             };
+            let shift = shift + self.hints_outside_before(offset);
             return index.x_for_offset(offset, widths) + shift;
         }
         let display = self
@@ -334,9 +358,30 @@ impl<L: MeasuredLine> RowLayout<L> {
             || line_x > f64::from(self.line.width()) && shown.end < self.end)
             && let Some(index) = self.index(long_rows)
         {
-            // Right of the slice, the index's x is short of the drawn x by
-            // the inlay.
-            let x = if line_x > 0. { x - self.inlay_width } else { x };
+            // The index's x is short of the drawn x by the hints before it,
+            // and right of the slice by what's drawn in it too. An x on a
+            // hint gives its offset.
+            let right = line_x > 0.;
+            let (mut shift, hints) = match right {
+                true => (
+                    self.inlay_width + self.hints_outside_before(shown.start),
+                    &self.outside_hints[self
+                        .outside_hints
+                        .partition_point(|(at, _)| *at < shown.start)..],
+                ),
+                false => (0., &self.outside_hints[..]),
+            };
+            for &(at, width) in hints {
+                let left = index.x_for_offset(at, widths) + shift;
+                if x < left || !right && at >= shown.start {
+                    break;
+                }
+                if x < left + width {
+                    return at;
+                }
+                shift += width;
+            }
+            let x = x - shift;
             let before = index.offset_for_x(x, widths);
             let after = index.next_boundary(before, widths).min(self.end);
             let past = x - index.x_for_offset(before, widths);
@@ -627,11 +672,44 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
     fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
-    layout_frame_with_annotation_column(
+    layout_frame_with_hints(
         input,
-        0.,
         blocks,
         inlay,
+        &[],
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_inlay`], with each of `hints` drawn
+/// inside the display row that holds its offset, in its style, if the offset
+/// is in what's shaped of the row; [`Frame::hints`] says where. Hints at one
+/// offset go in the order given, and before the inlay there. The rest of the
+/// row, and every position on it, shifts past each, so a caret is never
+/// inside one. Like the inlay, hints don't wrap the row, which may run past
+/// the wrap width for them.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_with_hints<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    hints: &[Inlay<M::Style>],
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
+    lay_out_frame(
+        input,
+        Some(0.),
+        blocks,
+        inlay,
+        hints,
         measure,
         long_rows,
         widths,
@@ -662,6 +740,7 @@ pub fn layout_frame_with_annotation_column<M: TextMeasure>(
         Some(annotation_width),
         blocks,
         inlay,
+        &[],
         measure,
         long_rows,
         widths,
@@ -684,11 +763,37 @@ pub fn layout_frame_without_gutter<M: TextMeasure>(
     widths: &mut dyn CharWidth,
     highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
 ) -> Frame<M::Line> {
+    layout_frame_without_gutter_with_hints(
+        input,
+        blocks,
+        inlay,
+        &[],
+        measure,
+        long_rows,
+        widths,
+        highlights,
+    )
+}
+
+/// Lays out like [`layout_frame_without_gutter`], with `hints` drawn as
+/// [`layout_frame_with_hints`] draws them.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_without_gutter_with_hints<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    hints: &[Inlay<M::Style>],
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+) -> Frame<M::Line> {
     lay_out_frame(
         input,
         None,
         blocks,
         inlay,
+        hints,
         measure,
         long_rows,
         widths,
@@ -697,7 +802,7 @@ pub fn layout_frame_without_gutter<M: TextMeasure>(
     )
 }
 
-/// [`layout_frame_with_inlay`], with the gutter and an annotation column
+/// [`layout_frame_with_hints`], with the gutter and an annotation column
 /// that wide before it, or with neither (`None`).
 #[allow(clippy::too_many_arguments)]
 fn lay_out_frame<M: TextMeasure>(
@@ -705,6 +810,7 @@ fn lay_out_frame<M: TextMeasure>(
     annotation_width: Option<f32>,
     blocks: &BlockMap,
     inlay: Option<&Inlay<M::Style>>,
+    hints: &[Inlay<M::Style>],
     measure: &mut M,
     long_rows: &mut LongRows,
     widths: &mut dyn CharWidth,
@@ -801,6 +907,41 @@ fn lay_out_frame<M: TextMeasure>(
         .collect();
     let spans = visible_spans(text, &shown, &mut highlights);
 
+    // The hints by offset, ties in the order given.
+    let mut hint_order: Vec<usize> = (0..hints.len()).collect();
+    hint_order.sort_by_key(|&ix| hints[ix].offset);
+    // The hints in a display row, as a range of `hint_order`.
+    let hints_in = |row: &DisplayRow| {
+        let start = hint_order.partition_point(|&ix| hints[ix].offset < row.range.start);
+        let end = hint_order.partition_point(|&ix| match row.last {
+            true => hints[ix].offset <= row.range.end,
+            false => hints[ix].offset < row.range.end,
+        });
+        start..end.max(start)
+    };
+    // Each hint's width shaped alone, for where it isn't shaped in its row,
+    // measured once it's wanted.
+    let alone: std::cell::RefCell<Vec<Option<f64>>> =
+        std::cell::RefCell::new(vec![None; hints.len()]);
+    let hint_width = |measure: &mut M, ix: usize| {
+        if let Some(width) = alone.borrow()[ix] {
+            return width;
+        }
+        let hint = &hints[ix];
+        let width = match hint.text.is_empty() {
+            true => 0.,
+            false => {
+                let run = [StyleRun {
+                    len: hint.text.len(),
+                    style: hint.style.clone(),
+                }];
+                f64::from(measure.shape(&hint.text, &run).width())
+            }
+        };
+        alone.borrow_mut()[ix] = Some(width);
+        width
+    };
+
     let shape_row = |measure: &mut M,
                      row: u32,
                      display_row: DisplayRow,
@@ -818,19 +959,47 @@ fn lay_out_frame<M: TextMeasure>(
         let first_span = spans.partition_point(|span| span.range.end <= shown.start);
         let mut expanded = expanded;
         let mut runs = row_runs(&expanded, shown.start, &spans[first_span..], &styles.text);
+        // The hints in what's shaped go in it; of a long row, the others
+        // shift the text after them.
+        let (row_hints, outside): (Vec<usize>, Vec<usize>) = hint_order[hints_in(&display_row)]
+            .iter()
+            .partition(|&&ix| (shown.start..=shown.end).contains(&hints[ix].offset));
+        let inserted: Vec<_> = (row_hints.iter())
+            .map(|&ix| (hints[ix].offset - shown.start, hints[ix].text.as_str()))
+            .collect();
+        expanded.insert_hints(&inserted);
+        let mut inlay_style = None;
         if let Some(inlay) = inlay
             && contains(display_row.range.clone(), display_row.last, inlay.offset)
             && (shown.start..=shown.end).contains(&inlay.offset)
         {
             expanded.insert_inlay(inlay.offset - shown.start, &inlay.text);
-            if let Some(range) = expanded.inlay_range() {
-                insert_run(&mut runs, range.start, inlay.text.len(), &inlay.style);
+            inlay_style = Some(&inlay.style);
+        }
+        // In display order, so each run goes where the ones before it put it;
+        // the inlay goes after the hints at its offset.
+        let mut drawn: Vec<_> = (expanded.hint_ranges())
+            .zip(&row_hints)
+            .map(|(range, &ix)| (range, &hints[ix].style))
+            .chain(expanded.inlay_range().zip(inlay_style))
+            .collect();
+        drawn.sort_by_key(|(range, _)| range.start);
+        for (range, style) in drawn {
+            if !range.is_empty() {
+                insert_run(&mut runs, range.start, range.len(), style);
             }
         }
         let line = measure.shape(expanded.text(), &runs);
-        let inlay_width = expanded.inlay_range().map_or(0., |range| {
-            f64::from(line.x_for_index(range.end) - line.x_for_index(range.start))
-        });
+        let inlay_width = (expanded.inlay_range().into_iter())
+            .chain(expanded.hint_ranges())
+            .map(|range| f64::from(line.x_for_index(range.end) - line.x_for_index(range.start)))
+            .sum();
+        let outside_hints = match slice {
+            Some(_) => (outside.iter())
+                .map(|&ix| (hints[ix].offset, hint_width(measure, ix)))
+                .collect(),
+            None => Vec::new(),
+        };
         RowLayout {
             row,
             buffer_row: display_row.buffer_row,
@@ -841,6 +1010,8 @@ fn lay_out_frame<M: TextMeasure>(
             expanded,
             line,
             inlay_width,
+            hints: row_hints,
+            outside_hints,
         }
     };
     let laid_out: Vec<Pending<M::Line>> = (first_row..)
@@ -861,6 +1032,12 @@ fn lay_out_frame<M: TextMeasure>(
     // by the row as it's laid out.
     let view_width = f64::from(text_width);
     let margin = f64::from(em) * 4.;
+    // Whether a long row has text drawn in it that its index doesn't know,
+    // so its width as laid out depends on its slice.
+    let spans_in_long_rows = inlay.is_some()
+        || laid_out
+            .iter()
+            .any(|row| matches!(row, Err((_, row)) if !hints_in(row).is_empty()));
     let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
     // The inlay's width as shaped: known from a row that held it, else from
     // shaping it alone, which sees contextual forms the index can't.
@@ -871,8 +1048,30 @@ fn lay_out_frame<M: TextMeasure>(
                           row: u32,
                           display_row: &DisplayRow,
                           scroll_x: f64| {
-        let view = scroll_x..scroll_x + view_width;
+        let row_view = scroll_x..scroll_x + view_width;
         let index = long_rows.index(source, text, display_row.buffer_row, tab_size, widths);
+        // The view in the index's coordinates, where the text after each
+        // hint is that much further left; a view's edge on a hint is at it.
+        let placed: Vec<(f64, f64)> = (hint_order[hints_in(display_row)].iter())
+            .map(|&ix| {
+                let at = index.x_for_offset(hints[ix].offset, widths);
+                (at, hint_width(measure, ix))
+            })
+            .collect();
+        let unhint = |x: f64| {
+            let mut shift = 0.;
+            for &(at, width) in &placed {
+                if x <= at + shift {
+                    break;
+                }
+                if x < at + shift + width {
+                    return at;
+                }
+                shift += width;
+            }
+            x - shift
+        };
+        let view = unhint(row_view.start)..unhint(row_view.end);
         let mut slice = index.slice(view.clone(), slice_margin, widths);
         // An inlay in the row is shaped with the slice whenever it fits, so
         // that the slice's place in the row doesn't decide the row's width.
@@ -932,7 +1131,7 @@ fn lay_out_frame<M: TextMeasure>(
         // even that ends short of the view leaves the rest of the
         // view blank for the frame.
         let shaped = f64::from(layout.line.width());
-        let short = view.end + slice_margin - (slice.start_x + shaped);
+        let short = row_view.end + slice_margin - (layout.start_x() + shaped);
         let limit = if short > 0. {
             index.slice_limit(slice.range.start, widths)
         } else {
@@ -950,14 +1149,19 @@ fn lay_out_frame<M: TextMeasure>(
                 }
             };
             layout = shape_slice(measure, &slice);
-            if slice.start_x + f64::from(layout.line.width()) < view.end && slice.range.end < limit
+            if layout.start_x() + f64::from(layout.line.width()) < row_view.end
+                && slice.range.end < limit
             {
                 slice.range.end = limit;
                 layout = shape_slice(measure, &slice);
             }
         }
-        if layout.inlay_width > 0. {
-            inlay_shaped.set(Some(layout.inlay_width));
+        if let Some(range) = layout.expanded.inlay_range() {
+            let x = |index: usize| layout.line.x_for_index(index);
+            let width = f64::from(x(range.end) - x(range.start));
+            if width > 0. {
+                inlay_shaped.set(Some(width));
+            }
         }
         layout
     };
@@ -992,7 +1196,9 @@ fn lay_out_frame<M: TextMeasure>(
                     long_rows
                         .index(source, text, row.buffer_row, tab_size, widths)
                         .width(widths)
-                        + shaped.as_ref().map_or(0., |shaped| shaped.inlay_width)
+                        + shaped.as_ref().map_or(0., |shaped| {
+                            shaped.inlay_width + shaped.hints_outside_before(usize::MAX)
+                        })
                 }
             };
             widest = widest.max(width);
@@ -1005,7 +1211,7 @@ fn lay_out_frame<M: TextMeasure>(
                       long_rows: &mut LongRows,
                       widths: &mut dyn CharWidth,
                       mut scroll_x: f64| {
-        if inlay.is_none() {
+        if !spans_in_long_rows {
             // Widths don't depend on the slice: shape once, where it ends up.
             let unshaped: Vec<Option<RowLayout<M::Line>>> = laid_out.iter().map(|_| None).collect();
             let scroll_x = scroll_x.clamp(0., max_scroll(long_rows, widths, &unshaped));
@@ -1053,7 +1259,11 @@ fn lay_out_frame<M: TextMeasure>(
         // there, with its margin, or failing that at all.
         let plain_x = long_rows
             .index(source, text, display_row.buffer_row, tab_size, widths)
-            .x_for_offset(primary_head, widths);
+            .x_for_offset(primary_head, widths)
+            + (hint_order[hints_in(display_row)].iter())
+                .filter(|&&ix| hints[ix].offset < primary_head)
+                .map(|&ix| hint_width(measure, ix))
+                .sum::<f64>();
         let mut tried = Vec::new();
         let mut next = follow(plain_x, wanted);
         for attempt in 0..3 {
@@ -1065,7 +1275,7 @@ fn lay_out_frame<M: TextMeasure>(
             let visible = x >= scroll_x && x <= scroll_x + view_width;
             let miss = (scroll_x - x).max(x - scroll_x - view_width).max(0.);
             tried.push((scroll_x, long, margined, visible, miss));
-            if margined || inlay.is_none() {
+            if margined || !spans_in_long_rows {
                 break;
             }
             next = if attempt == 0 {
@@ -1294,6 +1504,21 @@ fn lay_out_frame<M: TextMeasure>(
         })
     });
 
+    let hint_rects = (rows.iter())
+        .flat_map(|row| {
+            let x = |index: usize| row.start_x() + f64::from(row.line.x_for_index(index));
+            (row.expanded.hint_ranges().zip(&row.hints)).map(move |(range, &ix)| {
+                let rect = Rect {
+                    x: text_left + (x(range.start) - scroll_x) as f32,
+                    y: row_top(row.row),
+                    width: (x(range.end) - x(range.start)) as f32,
+                    height: line_height,
+                };
+                (ix, rect)
+            })
+        })
+        .collect();
+
     let visible_buffer_rows = match (rows.first(), rows.last()) {
         (Some(first), Some(last)) => first.buffer_row..last.buffer_row + 1,
         _ => 0..0,
@@ -1385,6 +1610,7 @@ fn lay_out_frame<M: TextMeasure>(
         fold_toggles,
         fold_markers,
         inlay: inlay_rect,
+        hints: hint_rects,
     }
 }
 
@@ -1506,6 +1732,8 @@ mod cluster_row_tests;
 mod fold_column_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+mod inlay_hints_tests;
 #[cfg(test)]
 mod inlay_tests;
 #[cfg(test)]

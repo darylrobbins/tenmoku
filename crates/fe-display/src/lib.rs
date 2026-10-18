@@ -1,7 +1,8 @@
 //! Maps buffer text to what's displayed: tabs expand within a row, long rows
 //! soft wrap and folds hide rows ([`DisplayMap`]), and blocks of rows go
-//! between display rows ([`BlockMap`]); one inlay per frame goes inside a row
-//! ([`ExpandedRow::insert_inlay`]). [`layout`] lays
+//! between display rows ([`BlockMap`]); one inlay per frame, and any number
+//! of inlay hints, go inside a row ([`ExpandedRow::insert_inlay`],
+//! [`ExpandedRow::insert_hints`]). [`layout`] lays
 //! out a frame of an editor from that. Must never depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
@@ -49,16 +50,19 @@ impl CharWidth for Monospace {
 pub struct ExpandedRow {
     text: String,
     tabs: Vec<Tab>,
-    inlay: Option<InlaySpan>,
+    /// The inlay and the hints, in display order.
+    spans: Vec<InlaySpan>,
 }
 
-/// Where an inlay sits in an [`ExpandedRow`].
+/// Where an inlay or an inlay hint sits in an [`ExpandedRow`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct InlaySpan {
     buffer_col: usize,
-    /// The display column the inlay starts at, before it was inserted.
+    /// The display column the span starts at.
     display_col: usize,
     len: usize,
+    /// An inlay hint, rather than the inlay.
+    hint: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -84,7 +88,7 @@ impl ExpandedRow {
             return Self {
                 text: row.to_string(),
                 tabs: Vec::new(),
-                inlay: None,
+                spans: Vec::new(),
             };
         }
         let mut text = String::with_capacity(row.len() + 16);
@@ -108,7 +112,7 @@ impl ExpandedRow {
         Self {
             text,
             tabs,
-            inlay: None,
+            spans: Vec::new(),
         }
     }
 
@@ -116,48 +120,97 @@ impl ExpandedRow {
         &self.text
     }
 
-    /// Inserts `text`, one line, at the display column of `buffer_col`. The
-    /// row's later columns shift right by its length; `to_display` of
-    /// `buffer_col` stays before it.
+    /// Inserts `text`, one line, at the display column of `buffer_col`,
+    /// after any hint there. The row's later columns shift right by its
+    /// length; `to_display` of `buffer_col` stays before it.
     pub fn insert_inlay(&mut self, buffer_col: usize, text: &str) {
-        debug_assert!(self.inlay.is_none(), "a row takes one inlay");
+        debug_assert!(self.inlay_range().is_none(), "a row takes one inlay");
         debug_assert!(!text.contains('\n'), "an inlay is one line");
-        let display_col = self.to_display(buffer_col);
-        self.text.insert_str(display_col, text);
-        self.inlay = Some(InlaySpan {
-            buffer_col,
-            display_col,
-            len: text.len(),
+        self.insert_span(buffer_col, text, false);
+    }
+
+    /// Inserts each hint's text, one line, at the display column of its
+    /// buffer column, in column order (ties in the order given), before any
+    /// inlay at the same column. Like the inlay, a hint shifts the row's
+    /// later columns right by its length, and `to_display` of its column
+    /// stays before it.
+    pub fn insert_hints(&mut self, hints: &[(usize, &str)]) {
+        let mut sorted: Vec<_> = hints.iter().collect();
+        sorted.sort_by_key(|(buffer_col, _)| *buffer_col);
+        for (buffer_col, text) in sorted {
+            debug_assert!(!text.contains('\n'), "a hint is one line");
+            self.insert_span(*buffer_col, text, true);
+        }
+    }
+
+    /// Inserts a span after the hints at `buffer_col`, and after the inlay
+    /// there too unless it's a hint.
+    fn insert_span(&mut self, buffer_col: usize, text: &str, hint: bool) {
+        let ix = self.spans.partition_point(|span| {
+            span.buffer_col < buffer_col || span.buffer_col == buffer_col && (span.hint || !hint)
         });
+        let before: usize = self.spans[..ix].iter().map(|span| span.len).sum();
+        let display_col = self.expand(buffer_col) + before;
+        self.text.insert_str(display_col, text);
+        for span in &mut self.spans[ix..] {
+            span.display_col += text.len();
+        }
+        self.spans.insert(
+            ix,
+            InlaySpan {
+                buffer_col,
+                display_col,
+                len: text.len(),
+                hint,
+            },
+        );
     }
 
     /// The display columns the inlay covers, if the row has one.
     pub fn inlay_range(&self) -> Option<std::ops::Range<usize>> {
-        let inlay = self.inlay?;
+        let inlay = self.spans.iter().find(|span| !span.hint)?;
         Some(inlay.display_col..inlay.display_col + inlay.len)
     }
 
-    pub fn to_display(&self, buffer_col: usize) -> usize {
+    /// The display columns each hint covers, in display order.
+    pub fn hint_ranges(&self) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+        (self.spans.iter())
+            .filter(|span| span.hint)
+            .map(|span| span.display_col..span.display_col + span.len)
+    }
+
+    /// The display column of `buffer_col` with tabs expanded, before any
+    /// span is counted.
+    fn expand(&self, buffer_col: usize) -> usize {
         let before = self.tabs.partition_point(|tab| tab.buffer_col < buffer_col);
         let extra: usize = self.tabs[..before].iter().map(|tab| tab.width - 1).sum();
-        let inlay = self
-            .inlay
-            .filter(|inlay| buffer_col > inlay.buffer_col)
-            .map_or(0, |inlay| inlay.len);
-        buffer_col + extra + inlay
+        buffer_col + extra
+    }
+
+    pub fn to_display(&self, buffer_col: usize) -> usize {
+        let spans: usize = (self.spans.iter())
+            .take_while(|span| span.buffer_col < buffer_col)
+            .map(|span| span.len)
+            .sum();
+        self.expand(buffer_col) + spans
     }
 
     /// The buffer column for a display column. Columns inside an expanded tab
-    /// snap to before (`Left`) or after (`Right`) it.
-    pub fn to_buffer(&self, mut display_col: usize, bias: Bias) -> usize {
-        if let Some(inlay) = self.inlay {
-            if display_col <= inlay.display_col + inlay.len && display_col >= inlay.display_col {
-                return inlay.buffer_col;
+    /// snap to before (`Left`) or after (`Right`) it. Columns inside an inlay
+    /// or a hint, or at either edge of it, give the buffer column it was
+    /// inserted at.
+    pub fn to_buffer(&self, display_col: usize, bias: Bias) -> usize {
+        let mut spans = 0;
+        for span in &self.spans {
+            if display_col < span.display_col {
+                break;
             }
-            if display_col > inlay.display_col {
-                display_col -= inlay.len;
+            if display_col <= span.display_col + span.len {
+                return span.buffer_col;
             }
+            spans += span.len;
         }
+        let display_col = display_col - spans;
         let mut extra = 0;
         for tab in &self.tabs {
             if display_col <= tab.display_col {
@@ -219,7 +272,54 @@ mod tests {
         assert_eq!(row.display_col_for_char_column(99), 6);
     }
 
+    #[test]
+    fn hints_go_before_the_inlay_at_their_column() {
+        let mut row = ExpandedRow::new("a\tb", 4);
+        row.insert_inlay(1, "XY");
+        row.insert_hints(&[(2, "c"), (1, "h"), (1, "i")]);
+        assert_eq!(row.text(), "ahiXY   cb");
+        assert_eq!(row.inlay_range(), Some(3..5));
+        assert_eq!(row.hint_ranges().collect::<Vec<_>>(), [1..2, 2..3, 8..9]);
+        assert_eq!(row.to_display(1), 1);
+        assert_eq!(row.to_display(2), 8);
+        for display in 1..=5 {
+            assert_eq!(row.to_buffer(display, Bias::Left), 1);
+        }
+        assert_eq!(row.to_buffer(6, Bias::Left), 1);
+        assert_eq!(row.to_buffer(6, Bias::Right), 2);
+        assert_eq!(row.to_buffer(8, Bias::Left), 2);
+        assert_eq!(row.to_buffer(10, Bias::Left), 3);
+    }
+
     proptest! {
+        #[test]
+        fn round_trips_past_hints(
+            row in "[a\t é]{0,40}",
+            tab_size in 1usize..9,
+            hints in proptest::collection::vec((0usize..41, "[hé]{0,3}"), 0..6),
+        ) {
+            let mut expanded = ExpandedRow::new(&row, tab_size);
+            let boundaries: Vec<_> = row.char_indices().map(|(ix, _)| ix).chain([row.len()]).collect();
+            let hints: Vec<_> = (hints.iter())
+                .map(|(col, text)| (boundaries[col % boundaries.len()], text.as_str()))
+                .collect();
+            expanded.insert_hints(&hints);
+            let ranges: Vec<_> = expanded.hint_ranges().collect();
+            for &buffer_col in &boundaries {
+                let display = expanded.to_display(buffer_col);
+                prop_assert!(expanded.text().is_char_boundary(display));
+                prop_assert_eq!(expanded.to_buffer(display, Bias::Left), buffer_col);
+                prop_assert!(!ranges.iter().any(|range| range.start < display && display < range.end));
+            }
+            let mut sorted = hints.clone();
+            sorted.sort_by_key(|(col, _)| *col);
+            for (range, (col, _)) in ranges.iter().zip(&sorted) {
+                for display in range.clone() {
+                    prop_assert_eq!(expanded.to_buffer(display, Bias::Right), *col);
+                }
+            }
+        }
+
         #[test]
         fn round_trips(row in "[a\t é]{0,40}", tab_size in 1usize..9) {
             let expanded = ExpandedRow::new(&row, tab_size);
