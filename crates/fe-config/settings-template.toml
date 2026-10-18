@@ -24,6 +24,23 @@
 # doesn't answer within a second is skipped and the file saves unformatted.
 # format_on_save = false
 
+# Show language servers' inlay hints (type and parameter names) inside the text.
+# inlay_hints = true
+
+# Colour code with language servers' semantic tokens over the syntax colours.
+# semantic_highlighting = true
+
+# Show a lightbulb by the caret's row when a language server has quick fixes or
+# refactorings there.
+# lightbulb = true
+
+# Show language servers' code lenses ("3 references", "Run") above rows.
+# code_lens = true
+
+# Code action kinds to run, in order, when you save a file, before
+# format_on_save, such as ["source.organizeImports", "source.fixAll"].
+# code_actions_on_save = []
+
 # Type the closing bracket or quote when typing an opening one, type over it,
 # and delete both with backspace.
 # auto_close_pairs = true

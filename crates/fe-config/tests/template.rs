@@ -23,12 +23,17 @@ fn template_is_all_defaults() {
             "auto_close_pairs",
             "auto_save",
             "auto_save_delay",
+            "code_actions_on_save",
+            "code_lens",
             "font_family",
             "font_size",
             "format_on_save",
             "indent_guides",
+            "inlay_hints",
             "inline_blame",
+            "lightbulb",
             "line_height",
+            "semantic_highlighting",
             "soft_wrap",
             "tab_size"
         ]

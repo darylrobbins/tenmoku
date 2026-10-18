@@ -305,6 +305,20 @@ pub struct EditorSettings {
     /// Format a file with its language server before saving it. A server that
     /// doesn't answer within a second is skipped and the file saves unformatted.
     pub format_on_save: bool,
+    /// Show language servers' inlay hints (type and parameter names) inside
+    /// the text.
+    pub inlay_hints: bool,
+    /// Colour code with language servers' semantic tokens over the syntax
+    /// colours.
+    pub semantic_highlighting: bool,
+    /// Show a lightbulb by the caret's row when a language server has quick
+    /// fixes or refactorings there.
+    pub lightbulb: bool,
+    /// Show language servers' code lenses ("3 references", "Run") above rows.
+    pub code_lens: bool,
+    /// Code action kinds to run, in order, when you save a file, before
+    /// `format_on_save`, such as `["source.organizeImports", "source.fixAll"]`.
+    pub code_actions_on_save: Vec<String>,
     /// Type the closing bracket or quote when typing an opening one, type over
     /// it, and delete both with backspace. Off, typing inserts only what's
     /// typed.
@@ -350,6 +364,11 @@ impl Default for EditorSettings {
             tab_size: 4,
             soft_wrap: false,
             format_on_save: false,
+            inlay_hints: true,
+            semantic_highlighting: true,
+            lightbulb: true,
+            code_lens: true,
+            code_actions_on_save: Vec::new(),
             auto_close_pairs: true,
             auto_save: AutoSave::default(),
             auto_save_delay: 1000,

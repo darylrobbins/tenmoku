@@ -51,6 +51,19 @@
           "minimum": 100,
           "type": "integer"
         },
+        "code_actions_on_save": {
+          "default": [],
+          "description": "Code action kinds to run, in order, when you save a file, before\n`format_on_save`, such as `[\"source.organizeImports\", \"source.fixAll\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "code_lens": {
+          "default": true,
+          "description": "Show language servers' code lenses (\"3 references\", \"Run\") above rows.",
+          "type": "boolean"
+        },
         "font_family": {
           "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
@@ -77,9 +90,19 @@
           "description": "Draw a thin vertical line at each indent level.",
           "type": "boolean"
         },
+        "inlay_hints": {
+          "default": true,
+          "description": "Show language servers' inlay hints (type and parameter names) inside\nthe text.",
+          "type": "boolean"
+        },
         "inline_blame": {
           "default": false,
           "description": "Show the caret row's git blame after the line in every new window; Git:\nToggle Line Blame turns it on or off for one window.",
+          "type": "boolean"
+        },
+        "lightbulb": {
+          "default": true,
+          "description": "Show a lightbulb by the caret's row when a language server has quick\nfixes or refactorings there.",
           "type": "boolean"
         },
         "line_height": {
@@ -89,6 +112,11 @@
           "maximum": 3.0,
           "minimum": 1.0,
           "type": "number"
+        },
+        "semantic_highlighting": {
+          "default": true,
+          "description": "Colour code with language servers' semantic tokens over the syntax\ncolours.",
+          "type": "boolean"
         },
         "soft_wrap": {
           "default": false,
@@ -587,11 +615,16 @@
         "auto_close_pairs": true,
         "auto_save": "off",
         "auto_save_delay": 1000,
+        "code_actions_on_save": [],
+        "code_lens": true,
         "font_size": 13.0,
         "format_on_save": false,
         "indent_guides": true,
+        "inlay_hints": true,
         "inline_blame": false,
+        "lightbulb": true,
         "line_height": 1.6,
+        "semantic_highlighting": true,
         "soft_wrap": false,
         "tab_size": 4
       },
