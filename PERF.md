@@ -858,73 +858,77 @@ of each case, each built into a private `CARGO_TARGET_DIR`:
 - **Mac** (baseline): an M3 Max MacBook Pro (36 GB, macOS 27.0), 2026-10-05
   at `9c08650`, before the keymap engine. Other lanes were building: the
   load average was 21 to 27.
+- **Mac, 2026-10-17** (current): the same M3 Max, a release run of every
+  case at `6193bea3`, load average 8.2 before and 7.6 after (waited for under
+  10, no other lane building). Its columns are "Mac 10-17".
 - **helium** (Linux, 24 cores, headless GPUI test window): 2026-10-11 at
   `7570bb2` (current main plus the two new cases), load average 13 to 15
   from other lanes. Not comparable with the Mac rows stage by stage: it is a
   different machine, text system and renderer, and `present` in particular
   is the Linux headless renderer's, not Metal's.
 
-**`type/small`**, 5,100 samples on the Mac, 600 on helium:
+**`type/small`**, 5,100 samples on the Mac (10-05 and 10-17), 600 on helium:
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
-|---|---|---|---|---|
-| dispatch | 0.004 | 0.010 | 0.019 | 0.038 |
-| pre_layout | 0.010 | 0.017 | 0.038 | 0.058 |
-| prepaint | 0.161 | 0.204 | 0.310 | 0.538 |
-| paint | 0.079 | 0.097 | 0.092 | 0.110 |
-| draw_rest | 0.036 | 0.049 | 0.022 | 0.050 |
-| present | 0.022 | 0.058 | 4.159 | 5.193 |
-| **total** | **0.315** | **0.419** | **4.655** | **5.603** |
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 | Mac 10-05 p50 | Mac 10-05 p99 | helium p50 | helium p99 |
+|---|---|---|---|---|---|---|
+| dispatch | 0.006 | 0.014 | 0.004 | 0.010 | 0.019 | 0.038 |
+| pre_layout | 0.011 | 0.018 | 0.010 | 0.017 | 0.038 | 0.058 |
+| prepaint | 0.176 | 0.222 | 0.161 | 0.204 | 0.310 | 0.538 |
+| paint | 0.076 | 0.092 | 0.079 | 0.097 | 0.092 | 0.110 |
+| draw_rest | 0.040 | 0.051 | 0.036 | 0.049 | 0.022 | 0.050 |
+| present | 0.024 | 0.065 | 0.022 | 0.058 | 4.159 | 5.193 |
+| **total** | **0.336** | **0.463** | **0.315** | **0.419** | **4.655** | **5.603** |
 
-**`type/10k-rust`**, 2,550 samples on the Mac, 550 on helium:
+**`type/10k-rust`**, 2,550 samples on the Mac 10-05, 1,275 on 10-17, 550 on helium:
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
-|---|---|---|---|---|
-| dispatch | 0.004 | 0.018 | 0.021 | 0.030 |
-| pre_layout | 0.584 | 0.939 | 0.016 | 1.092 |
-| prepaint | 0.171 | 0.255 | 0.343 | 0.386 |
-| paint | 0.084 | 0.106 | 0.100 | 0.113 |
-| draw_rest | 0.041 | 0.066 | 0.020 | 0.029 |
-| present | 0.028 | 0.103 | 0.292 | 2.590 |
-| **total** | **0.915** | **1.413** | **0.814** | **4.044** |
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 | Mac 10-05 p50 | Mac 10-05 p99 | helium p50 | helium p99 |
+|---|---|---|---|---|---|---|
+| dispatch | 0.007 | 0.016 | 0.004 | 0.018 | 0.021 | 0.030 |
+| pre_layout | 0.581 | 0.667 | 0.584 | 0.939 | 0.016 | 1.092 |
+| prepaint | 0.482 | 0.600 | 0.171 | 0.255 | 0.343 | 0.386 |
+| paint | 0.083 | 0.100 | 0.084 | 0.106 | 0.100 | 0.113 |
+| draw_rest | 0.044 | 0.055 | 0.041 | 0.066 | 0.020 | 0.029 |
+| present | 0.033 | 0.081 | 0.028 | 0.103 | 0.292 | 2.590 |
+| **total** | **1.235** | **1.466** | **0.915** | **1.413** | **0.814** | **4.044** |
 
-**`type/1m-plain`**, 7,650 samples on the Mac, 600 on helium:
+**`type/1m-plain`**, 7,650 samples on the Mac (both), 600 on helium:
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
-|---|---|---|---|---|
-| dispatch | 0.004 | 0.009 | 0.020 | 0.051 |
-| pre_layout | 0.002 | 0.003 | 0.013 | 0.025 |
-| prepaint | 0.048 | 0.062 | 0.066 | 0.104 |
-| paint | 0.087 | 0.104 | 0.111 | 0.130 |
-| draw_rest | 0.043 | 0.054 | 0.019 | 0.047 |
-| present | 0.021 | 0.048 | 4.602 | 5.298 |
-| **total** | **0.209** | **0.272** | **4.835** | **5.526** |
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 | Mac 10-05 p50 | Mac 10-05 p99 | helium p50 | helium p99 |
+|---|---|---|---|---|---|---|
+| dispatch | 0.008 | 0.032 | 0.004 | 0.009 | 0.020 | 0.051 |
+| pre_layout | 0.004 | 0.013 | 0.002 | 0.003 | 0.013 | 0.025 |
+| prepaint | 0.067 | 0.130 | 0.048 | 0.062 | 0.066 | 0.104 |
+| paint | 0.098 | 0.123 | 0.087 | 0.104 | 0.111 | 0.130 |
+| draw_rest | 0.047 | 0.078 | 0.043 | 0.054 | 0.019 | 0.047 |
+| present | 0.029 | 0.146 | 0.021 | 0.048 | 4.602 | 5.298 |
+| **total** | **0.256** | **0.503** | **0.209** | **0.272** | **4.835** | **5.526** |
 
-**`move/10k-rust`**, 7,650 samples on the Mac, 600 on helium:
+**`move/10k-rust`**, 7,650 samples on the Mac 10-05, 3,825 on 10-17, 600 on helium:
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
-|---|---|---|---|---|
-| dispatch | 0.003 | 0.006 | 0.013 | 0.024 |
-| pre_layout | 0.002 | 0.005 | 0.013 | 0.026 |
-| prepaint | 0.048 | 0.068 | 0.119 | 0.170 |
-| paint | 0.084 | 0.105 | 0.097 | 0.122 |
-| draw_rest | 0.039 | 0.054 | 0.019 | 0.047 |
-| present | 0.022 | 0.051 | 4.552 | 5.261 |
-| **total** | **0.201** | **0.266** | **4.815** | **5.527** |
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 | Mac 10-05 p50 | Mac 10-05 p99 | helium p50 | helium p99 |
+|---|---|---|---|---|---|---|
+| dispatch | 0.006 | 0.036 | 0.003 | 0.006 | 0.013 | 0.024 |
+| pre_layout | 0.006 | 0.030 | 0.002 | 0.005 | 0.013 | 0.026 |
+| prepaint | 0.531 | 2.774 | 0.048 | 0.068 | 0.119 | 0.170 |
+| paint | 0.122 | 0.531 | 0.084 | 0.105 | 0.097 | 0.122 |
+| draw_rest | 0.066 | 0.261 | 0.039 | 0.054 | 0.019 | 0.047 |
+| present | 0.042 | 0.378 | 0.022 | 0.051 | 4.552 | 5.261 |
+| **total** | **0.780** | **4.358** | **0.201** | **0.266** | **4.815** | **5.527** |
 
-**`type/during-parse`**, 400 samples on helium (new case, no Mac run yet):
+**`type/during-parse`**, 1,275 samples on the Mac 10-17, 400 on helium (new case since 10-05, so no Mac 10-05 numbers):
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
-|---|---|---|---|---|
-| dispatch | — | — | 0.026 | 0.043 |
-| pre_layout | — | — | 0.017 | 0.033 |
-| prepaint | — | — | 0.347 | 0.497 |
-| paint | — | — | 0.101 | 0.123 |
-| draw_rest | — | — | 0.032 | 0.066 |
-| present | — | — | 3.998 | 5.106 |
-| **total** | **—** | **—** | **4.529** | **5.481** |
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 | Mac 10-05 p50 | Mac 10-05 p99 | helium p50 | helium p99 |
+|---|---|---|---|---|---|---|
+| dispatch | 0.007 | 0.017 | — | — | 0.026 | 0.043 |
+| pre_layout | 0.005 | 0.010 | — | — | 0.017 | 0.033 |
+| prepaint | 0.513 | 0.640 | — | — | 0.347 | 0.497 |
+| paint | 0.087 | 0.103 | — | — | 0.101 | 0.123 |
+| draw_rest | 0.046 | 0.059 | — | — | 0.032 | 0.066 |
+| present | 0.023 | 0.081 | — | — | 3.998 | 5.106 |
+| **total** | **0.682** | **0.891** | **—** | **—** | **4.529** | **5.481** |
 
-**`move/long-row`**, helium only (new case, no Mac run yet). The row copy
+**`move/long-row`**: the Mac 10-17 run (30,600 samples, after T20) is in the
+table below the helium before/after one. The helium before/after: the row copy
 (`EditorModel::row_at`) was removed in T20 (Mac T407): grapheme moves read a
 1 KiB window either side of the caret, word moves scan chunks outwards, and
 `LineStart` reads only the leading whitespace. "Before" is `4d37cc6` (50
@@ -939,18 +943,43 @@ numbers are helium (Linux), 2026-10-12, other lanes building.
 | dispatch | 72.331 | 73.889 | 0.011 | 0.032 |
 | **total** | **72.541** | **74.115** | **5.083** | **6.073** |
 
-The after `total` is dominated by `present` (not tabulated per stage here),
+**`move/long-row`, Mac 2026-10-17** (after T20, 30,600 samples):
+
+| Stage | Mac 10-17 p50 | Mac 10-17 p99 |
+|---|---|---|
+| dispatch | 0.009 | 0.010 |
+| pre_layout | 0.003 | 0.005 |
+| prepaint | 0.007 | 0.009 |
+| paint | 0.009 | 0.014 |
+| draw_rest | 0.007 | 0.014 |
+| present | 0.017 | 0.038 |
+| **total** | **0.053** | **0.077** |
+
+The helium after `total` is dominated by `present` (not tabulated per stage here),
 the Linux headless renderer's 4 to 5 ms as in the other caret-move cases, not
 the editor; the before runs' `present` was 0.18 ms in the earlier 50-sample
 run, so `total` is not comparable stage by stage, only `dispatch` is. The run before T20 recorded `dispatch` 72.464 / 74.917 ms and
 `total` 72.684 / 75.144 ms (p50 / p99).
 
-On the Mac, every case fits the budget, with a p50 between 5% and 23% of 4 ms and a p99
-between 3% and 18% of 8 ms, so no stage is over. The largest stage is
-`pre_layout` in `type/10k-rust`: the reparse of the edited Rust file, inside
-its 1 ms in-frame reparse budget. An edit to highlighted text also costs about
-0.12 ms more `prepaint` than a caret move in the same file or an edit to
-plain text, from highlighting the visible rows again. The first keystroke after the
+On the Mac (10-17), every case fits the budget: the p50 totals are 0.05 to
+1.24 ms (1% to 31% of 4 ms) and the p99 totals 0.08 to 4.36 ms (1% to 54% of
+8 ms), so no case is over. The 10-05 numbers fit too (p50 5% to 23%, p99 3% to
+18%). Two cases are slower than on 10-05, both in `prepaint`: `type/10k-rust`
+(0.48 ms against 0.17 ms at p50, total 1.24 ms against 0.92 ms) and
+`move/10k-rust` (0.53 ms against 0.05 ms, total 0.78 ms against 0.20 ms).
+Both are highlighted Rust, and a lot landed after 10-05 (the keymap engine,
+vim, diagnostics, find highlights); which change it is was not bisected. The
+4.36 ms p99 of `move/10k-rust` is `prepaint` (2.8 ms), `paint`, `present` and
+`draw_rest` all rising together at the tail; it is one run at a load of 7.6 to
+8.2 and was not re-run, so it may be a tail event rather than a stage. It is
+the largest Mac p99 recorded here. `type/during-parse` (0.68 ms p50, 0.89 ms
+p99) costs what `type/small` does plus the `prepaint` of its larger file, as
+on helium. `type/1m-plain` and `type/small` are unchanged from 10-05 within
+0.13 ms. The largest stage other than `prepaint` is `pre_layout` in
+`type/10k-rust`: the reparse of the edited Rust file, inside its 1 ms in-frame
+reparse budget (0.58 ms at p50, as on 10-05). On 10-05 an edit to highlighted
+text cost about 0.12 ms more `prepaint` than a caret move in the same file or
+an edit to plain text, from highlighting the visible rows again. The first keystroke after the
 editor opens is slower (2.1 ms for `type/small` in a `--test` run, mostly
 `dispatch` and `present`); criterion's warm-up keeps it out of the numbers.
 
@@ -978,7 +1007,7 @@ budget) and `present`.
 8 ms, and `dispatch` was 72 ms at p50, 18 times the 4 ms target, from
 `EditorModel::row_at` copying the whole 10 MB row on every arrow key;
 everything after `dispatch` was under 0.2 ms. After T20 (table above) its
-`dispatch` is 0.011 ms at p50. A Mac run of the two new cases is still to do.
+`dispatch` is 0.011 ms at p50 on helium and 0.009 ms on the Mac (2026-10-17).
 The numbers leave out OS event delivery, waiting for vsync, the compositor,
 scan-out and the GPU's own time, which need a real screen.
 
@@ -1029,13 +1058,21 @@ apart between saves.
 - **Commit:** `b5014fc` plus the keymap-report callback. **Date:** 2026-10-12.
 - **Load average** (`/proc/loadavg`, 1 minute): 13.18 before the first run,
   10.00 after the last. Three runs, all within the ranges below.
-- **No Mac numbers were taken.** The Mac path is FSEvents and is still to run.
+- **Mac:** the M3 Max, release build, the FSEvents path, 2026-10-17 at
+  `6193bea3`, three runs; load average (1 minute) 7.9 before the first run,
+  7.9 after the last. Per-run p50 and max are over the 20 saves of each run.
 
-| File | helium p50 | helium max | Target |
-|---|---|---|---|
-| `settings.toml` | 1.1 ms | 1.2 ms | 200 ms |
-| `keymap.toml` | 2.5 ms | 2.6 to 3.1 ms | 200 ms |
-| user theme | 1.1 ms | 1.2 ms | 200 ms |
+| File | Mac p50 (3 runs) | Mac max (3 runs) | helium p50 | helium max | Target |
+|---|---|---|---|---|---|
+| `settings.toml` | 13.4, 15.9, 14.9 ms | 24.4, 19.1, 18.4 ms | 1.1 ms | 1.2 ms | 200 ms |
+| `keymap.toml` | 17.7, 21.6, 15.3 ms | 28.4, 27.6, 20.2 ms | 2.5 ms | 2.6 to 3.1 ms | 200 ms |
+| user theme | 14.7, 9.3, 12.9 ms | 19.4, 20.0, 18.0 ms | 1.1 ms | 1.2 ms | 200 ms |
+
+- **The 200 ms target holds on FSEvents too**: the slowest of the 60 Mac
+  saves was 28.4 ms (keymap), 14% of the target. FSEvents is 10 to 20 times
+  slower than inotify (p50 9 to 22 ms against 1 to 3 ms), from its
+  coalescing latency, but no file approaches 200 ms and no follow-up is filed.
+  The shortest saves (1.4 ms) are the test's polling floor.
 
 - **The 200 ms target holds on helium's inotify path**, by two orders of
   magnitude. The keymap is slower because it rebuilds and checks the keymap
@@ -1044,7 +1081,7 @@ apart between saves.
   `RECONCILE` (3 s, `kiln/crates/kiln-core/src/watch.rs`) to recover saves the
   platform watcher silently drops (FSEvents on the Mac). A save whose event is
   lost applies up to 3 s late, well over 200 ms. That applies on both
-  platforms; these runs lost no events, so they don't exercise it.
+  platforms; these runs (helium and Mac) lost no events, so they don't exercise it.
 
 ### Tree memory by language (`cargo bench -p fe-syntax --bench tree_ratio`)
 
@@ -1065,39 +1102,44 @@ growth in malloc'd bytes across one parse, median of three, each in a fresh
 - **Commit:** `f940dbb`. **Date:** 2026-10-12.
 - **Load average** (1 minute): 28.38 at the start of the run, 25.27 at the
   end. Memory doesn't depend on load; an earlier run gave the same numbers.
-- **No macOS numbers were taken.** The bench measures there too, with
-  `malloc_zone_statistics`; the Mac run is still to do.
+- **macOS:** the M3 Max, release build, 2026-10-17 at `6193bea3`, with
+  `malloc_zone_statistics` (bytes in use) for the tree's memory. Load average
+  (1 minute) 7.95 at the start; it rose to 30 by the end, from other lanes
+  starting builds. Memory doesn't depend on load.
+- **No language's macOS ratio is above its `RATIOS` entry**, so no follow-up
+  is filed. macOS is 1 to 8% below the helium ratio in every language
+  (PHP 42.6× against 43.1×, the smallest gap; Python 40.5× against 43.1×).
 
 The parse limit is `floor(300 MiB / ratio)`, with the ratio the measured one
 rounded up, and never below 20 (HTML measured 18.5×), so that no limit passes
 15 MiB. These are `RATIOS` in `crates/fe-syntax/src/parse_limit.rs`.
 
-| Language | Source | Tree | Tree / source | Ratio used | Parse limit |
-|---|---|---|---|---|---|
-| Python | 4.0 MB | 173 MB | 43.1× | 44× | 7,149,381 B (~6.8 MiB) |
-| JavaScript | 4.0 MB | 141 MB | 35.2× | 36× | 8,738,133 B (~8.3 MiB) |
-| TypeScript | 4.0 MB | 156 MB | 39.1× | 40× | 7,864,320 B (7.5 MiB) |
-| TSX | 4.0 MB | 137 MB | 34.3× | 35× | 8,987,794 B (~8.6 MiB) |
-| TOML | 4.0 MB | 141 MB | 35.3× | 36× | 8,738,133 B (~8.3 MiB) |
-| Go | 4.0 MB | 154 MB | 38.5× | 39× | 8,065,969 B (~7.7 MiB) |
-| C | 4.0 MB | 112 MB | 28.1× | 29× | 10,847,337 B (~10.3 MiB) |
-| C++ | 4.0 MB | 130 MB | 32.6× | 33× | 9,532,509 B (~9.1 MiB) |
-| Bash | 4.0 MB | 180 MB | 44.9× | 45× | 6,990,506 B (~6.7 MiB) |
-| HTML | 4.0 MB | 74 MB | 18.5× | 20× (floor) | 15,728,640 B (15 MiB) |
-| CSS | 4.0 MB | 101 MB | 25.1× | 26× | 12,098,953 B (~11.5 MiB) |
-| YAML | 4.0 MB | 215 MB | 53.7× | 54× | 5,825,422 B (~5.6 MiB) |
-| Java | 4.0 MB | 106 MB | 26.6× | 27× | 11,650,844 B (~11.1 MiB) |
-| Ruby | 4.0 MB | 272 MB | 68.1× | 69× | 4,559,026 B (~4.3 MiB) |
-| Lua | 4.0 MB | 161 MB | 40.3× | 41× | 7,672,507 B (~7.3 MiB) |
-| PHP | 0.1 MB | 4 MB | 43.1× | 44× | 7,149,381 B (~6.8 MiB) |
-| C# | 4.0 MB | 177 MB | 44.3× | 45× | 6,990,506 B (~6.7 MiB) |
-| Scala | 4.0 MB | 215 MB | 53.8× | 54× | 5,825,422 B (~5.6 MiB) |
-| XML | 4.0 MB | 184 MB | 45.9× | 46× | 6,838,539 B (~6.5 MiB) |
-| Swift | 4.0 MB | 192 MB | 48.1× | 49× | 6,419,853 B (~6.1 MiB) |
-| Kotlin | 4.0 MB | 218 MB | 54.5× | 55× | 5,719,505 B (~5.5 MiB) |
-| SQL | 4.0 MB | 168 MB | 42.0× | 42× | 7,489,828 B (~7.1 MiB) |
-| Dockerfile | 4.0 MB | 94 MB | 23.5× | 24× | 13,107,200 B (12.5 MiB) |
-| Make | 4.0 MB | 129 MB | 32.3× | 33× | 9,532,509 B (~9.1 MiB) |
+| Language | Source | Tree | Tree / source (helium) | Tree / source (macOS) | Ratio used | Parse limit |
+|---|---|---|---|---|---|---|
+| Python | 4.0 MB | 173 MB | 43.1× | 40.5× | 44× | 7,149,381 B (~6.8 MiB) |
+| JavaScript | 4.0 MB | 141 MB | 35.2× | 33.8× | 36× | 8,738,133 B (~8.3 MiB) |
+| TypeScript | 4.0 MB | 156 MB | 39.1× | 37.3× | 40× | 7,864,320 B (7.5 MiB) |
+| TSX | 4.0 MB | 137 MB | 34.3× | 33.0× | 35× | 8,987,794 B (~8.6 MiB) |
+| TOML | 4.0 MB | 141 MB | 35.3× | 31.8× | 36× | 8,738,133 B (~8.3 MiB) |
+| Go | 4.0 MB | 154 MB | 38.5× | 36.1× | 39× | 8,065,969 B (~7.7 MiB) |
+| C | 4.0 MB | 112 MB | 28.1× | 26.9× | 29× | 10,847,337 B (~10.3 MiB) |
+| C++ | 4.0 MB | 130 MB | 32.6× | 30.9× | 33× | 9,532,509 B (~9.1 MiB) |
+| Bash | 4.0 MB | 180 MB | 44.9× | 40.4× | 45× | 6,990,506 B (~6.7 MiB) |
+| HTML | 4.0 MB | 74 MB | 18.5× | 17.1× | 20× (floor) | 15,728,640 B (15 MiB) |
+| CSS | 4.0 MB | 101 MB | 25.1× | 23.3× | 26× | 12,098,953 B (~11.5 MiB) |
+| YAML | 4.0 MB | 215 MB | 53.7× | 48.5× | 54× | 5,825,422 B (~5.6 MiB) |
+| Java | 4.0 MB | 106 MB | 26.6× | 25.6× | 27× | 11,650,844 B (~11.1 MiB) |
+| Ruby | 4.0 MB | 272 MB | 68.1× | 65.3× | 69× | 4,559,026 B (~4.3 MiB) |
+| Lua | 4.0 MB | 161 MB | 40.3× | 39.1× | 41× | 7,672,507 B (~7.3 MiB) |
+| PHP | 0.1 MB | 4 MB | 43.1× | 42.6× | 44× | 7,149,381 B (~6.8 MiB) |
+| C# | 4.0 MB | 177 MB | 44.3× | 43.2× | 45× | 6,990,506 B (~6.7 MiB) |
+| Scala | 4.0 MB | 215 MB | 53.8× | 51.4× | 54× | 5,825,422 B (~5.6 MiB) |
+| XML | 4.0 MB | 184 MB | 45.9× | 40.8× | 46× | 6,838,539 B (~6.5 MiB) |
+| Swift | 4.0 MB | 192 MB | 48.1× | 45.7× | 49× | 6,419,853 B (~6.1 MiB) |
+| Kotlin | 4.0 MB | 218 MB | 54.5× | 52.3× | 55× | 5,719,505 B (~5.5 MiB) |
+| SQL | 4.0 MB | 168 MB | 42.0× | 39.0× | 42× | 7,489,828 B (~7.1 MiB) |
+| Dockerfile | 4.0 MB | 94 MB | 23.5× | 20.8× | 24× | 13,107,200 B (12.5 MiB) |
+| Make | 4.0 MB | 129 MB | 32.3× | 29.3× | 33× | 9,532,509 B (~9.1 MiB) |
 
 - **Twelve languages now have a lower limit than the old 40× default**
   (Python, Bash, YAML, Ruby, Lua, PHP, C#, Scala, XML, Swift, Kotlin, SQL:
