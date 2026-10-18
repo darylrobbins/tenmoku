@@ -1522,6 +1522,38 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 Token::Open { capture: false }
             }
+            '%' if matches!(self.peek(), Some('d' | 'o' | 'x' | 'u' | 'U')) => {
+                let code = self.bump().unwrap_or_default();
+                let (radix, most) = match code {
+                    'd' => (10, usize::MAX),
+                    'o' => (8, 3),
+                    'x' => (16, 2),
+                    'u' => (16, 4),
+                    _ => (16, 8),
+                };
+                let mut value: u64 = 0;
+                let mut taken = 0;
+                while taken < most && !(code == 'o' && value >= 0o40) {
+                    let Some(digit) = self.peek().and_then(|ch| ch.to_digit(radix)) else {
+                        break;
+                    };
+                    self.bump();
+                    value = value * u64::from(radix) + u64::from(digit);
+                    taken += 1;
+                    if value > i32::MAX as u64 {
+                        return Err(PatternError::Invalid(CODE_ATOM_INVALID));
+                    }
+                }
+                if taken == 0 {
+                    return Err(PatternError::Invalid(CODE_ATOM_INVALID));
+                }
+                // nvim matches a NUL for 0 and 10, an artefact of its line
+                // storage; rows here have no newline. A non-`char` matches nothing.
+                match char::from_u32(value as u32) {
+                    Some(ch) if value != 0 && value != 10 => Token::Char(ch),
+                    _ => return Err(self.unsupported(start)),
+                }
+            }
             '%' => {
                 self.skip_while(12, |ch| ch.is_ascii_digit() || "<>.'".contains(ch));
                 self.bump();
@@ -1990,6 +2022,9 @@ fn folds() -> &'static Folds {
         folds
     })
 }
+
+/// The error for a `\%d`, `\%o`, `\%x`, `\%u` or `\%U` with no digit or too big a value.
+const CODE_ATOM_INVALID: &str = "invalid character after \\%[dxouU]";
 
 /// One character of a collection, taking it off `rest`: itself, or a
 /// backslash code (`\e \t \r \b`, `\d123 \o40 \x20 € \U1234abcd`,
