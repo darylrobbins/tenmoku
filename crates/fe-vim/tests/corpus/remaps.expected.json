@@ -1,0 +1,1183 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "remap_Y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Yp",
+      "mapping": [
+        "nnoremap Y y$"
+      ],
+      "expect": {
+        "buffer": "abc ddefef",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_Y_yy",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Yp",
+      "mapping": [
+        "nnoremap Y yy"
+      ],
+      "expect": {
+        "buffer": "abc def\nabc def",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc def\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc def\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_H",
+      "buffer": "x\n  one two",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "H",
+      "mapping": [
+        "nnoremap H ^"
+      ],
+      "expect": {
+        "buffer": "x\n  one two",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_H_restored",
+      "buffer": "x\n  one two",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "H",
+      "expect": {
+        "buffer": "x\n  one two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_count_H",
+      "buffer": "a b c d e f",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3H",
+      "mapping": [
+        "nnoremap H w"
+      ],
+      "expect": {
+        "buffer": "a b c d e f",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_count_then_zero",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "3H",
+      "mapping": [
+        "nnoremap H 0x"
+      ],
+      "expect": {
+        "buffer": "abcde",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fgh",
+            "linewise": false
+          },
+          "-": {
+            "text": "fgh",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_count_before_count",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "3X",
+      "mapping": [
+        "nnoremap X 2x"
+      ],
+      "expect": {
+        "buffer": "abcde",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fgh",
+            "linewise": false
+          },
+          "-": {
+            "text": "fgh",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_count_expansion_two_commands",
+      "buffer": "a b c d e f",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2X",
+      "mapping": [
+        "nnoremap X dwdw"
+      ],
+      "expect": {
+        "buffer": "d e f",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c ",
+            "linewise": false
+          },
+          "-": {
+            "text": "c ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_dH_onoremap",
+      "buffer": "x\n  one two\ny",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "dH",
+      "mapping": [
+        "onoremap H ^"
+      ],
+      "expect": {
+        "buffer": "x\n  two\ny",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_dH_nnoremap_only",
+      "buffer": "x\n  one two\ny",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "dH",
+      "mapping": [
+        "nnoremap H ^"
+      ],
+      "expect": {
+        "buffer": "y",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x\n  one two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "x\n  one two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_d_count_omap",
+      "buffer": "a b c d e f",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2H",
+      "mapping": [
+        "onoremap H w"
+      ],
+      "expect": {
+        "buffer": "c d e f",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_omap_text_object",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "die",
+      "mapping": [
+        "onoremap ie iw"
+      ],
+      "expect": {
+        "buffer": "one  three",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_visual_x",
+      "buffer": "one two",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vexP",
+      "mapping": [
+        "xnoremap x y"
+      ],
+      "expect": {
+        "buffer": "oneone two",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one",
+            "linewise": false
+          },
+          "0": {
+            "text": "one",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "remap_visual_text_object",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "vie",
+      "mapping": [
+        "xnoremap ie iw"
+      ],
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "name": "remap_noremap_all_modes",
+      "buffer": "  one two",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vHd",
+      "mapping": [
+        "noremap H ^"
+      ],
+      "expect": {
+        "buffer": "  wo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one t",
+            "linewise": false
+          },
+          "-": {
+            "text": "one t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "remap_register",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"aX",
+      "mapping": [
+        "nnoremap X dw"
+      ],
+      "expect": {
+        "buffer": "two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one ",
+            "linewise": false
+          },
+          "a": {
+            "text": "one ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_dot",
+      "buffer": "one two three four",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "X.",
+      "mapping": [
+        "nnoremap X dw"
+      ],
+      "expect": {
+        "buffer": "three four",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_dot_count",
+      "buffer": "a b c d e f",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "X3.",
+      "mapping": [
+        "nnoremap X dw"
+      ],
+      "expect": {
+        "buffer": "e f",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b c d ",
+            "linewise": false
+          },
+          "-": {
+            "text": "b c d ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_dot_two_commands",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "X.",
+      "mapping": [
+        "nnoremap X xx"
+      ],
+      "expect": {
+        "buffer": "defgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_insert_in_to_dot",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "X.",
+      "mapping": [
+        "nnoremap X ihi<Esc>"
+      ],
+      "expect": {
+        "buffer": "ahhiibc",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_macro_record_play",
+      "buffer": "one two\none two\none two",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaXjq@a",
+      "mapping": [
+        "nnoremap X dw"
+      ],
+      "expect": {
+        "buffer": "two\ntwo\none two",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one ",
+            "linewise": false
+          },
+          "a": {
+            "text": "Xj",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_recursive",
+      "buffer": "one two\nthree\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "H",
+      "mapping": [
+        "nmap H L",
+        "nnoremap L w"
+      ],
+      "expect": {
+        "buffer": "one two\nthree\nfour",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_noremap",
+      "buffer": "one two\nthree\n  four",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "H",
+      "mapping": [
+        "nnoremap H L",
+        "nnoremap L w"
+      ],
+      "expect": {
+        "buffer": "one two\nthree\n  four",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_recursive_into_builtin",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "X",
+      "mapping": [
+        "nmap X dH",
+        "onoremap H w"
+      ],
+      "expect": {
+        "buffer": "two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_self_prefix",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "lx",
+      "mapping": [
+        "nmap l ll"
+      ],
+      "expect": {
+        "buffer": "abcdefg",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "h",
+            "linewise": false
+          },
+          "-": {
+            "text": "h",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_self_prefix_more",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ab<Esc>",
+      "mapping": [
+        "nmap ab abx"
+      ],
+      "expect": {
+        "buffer": "abxbc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_failed_prefix_suffix_mapped",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "jh",
+      "mapping": [
+        "nnoremap jk dd",
+        "nnoremap h x"
+      ],
+      "expect": {
+        "buffer": "abc\ndf",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_prefix_longest",
+      "buffer": "one two",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ",w",
+      "mapping": [
+        "nnoremap , x",
+        "nnoremap ,w dw"
+      ],
+      "expect": {
+        "buffer": "two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_prefix_exact_on_mismatch",
+      "buffer": "one two",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ",ll",
+      "mapping": [
+        "nnoremap , x",
+        "nnoremap ,w dw"
+      ],
+      "expect": {
+        "buffer": "ne two",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_cycle_e223",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xa",
+      "mapping": [
+        "nmap a b",
+        "nmap b a"
+      ],
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_leader",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\\d",
+      "mapping": [
+        "nnoremap <leader>d dd"
+      ],
+      "expect": {
+        "buffer": "two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_leader_let",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ",d",
+      "mapping": [
+        "let mapleader = \",\"",
+        "nnoremap <leader>d dd"
+      ],
+      "expect": {
+        "buffer": "two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_leader_restored",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\\x",
+      "mapping": [
+        "nnoremap <leader>x x"
+      ],
+      "expect": {
+        "buffer": "ne\ntwo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_space",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<Space><Space>",
+      "mapping": [
+        "nnoremap <Space> x"
+      ],
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_silent",
+      "buffer": "  one two",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "H",
+      "mapping": [
+        "nnoremap <silent> H ^"
+      ],
+      "expect": {
+        "buffer": "  one two",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_bar_two_maps",
+      "buffer": "  one two",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "L",
+      "mapping": [
+        "nnoremap H ^ | nnoremap L $"
+      ],
+      "expect": {
+        "buffer": "  one two",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_normal",
+      "buffer": "x\ny\n  one two",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": ":normal H<CR>",
+      "mapping": [
+        "nnoremap H ^"
+      ],
+      "expect": {
+        "buffer": "x\ny\n  one two",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_normal_bang",
+      "buffer": "x\ny\n  one two",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": ":normal! H<CR>",
+      "mapping": [
+        "nnoremap H ^"
+      ],
+      "expect": {
+        "buffer": "x\ny\n  one two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_unmap",
+      "buffer": "x\ny\n  one two",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": "H",
+      "mapping": [
+        "nnoremap H ^",
+        "nunmap H"
+      ],
+      "expect": {
+        "buffer": "x\ny\n  one two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_unmap_one_mode",
+      "buffer": "x\n  one two\ny",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "dH",
+      "mapping": [
+        "noremap H ^",
+        "ounmap H"
+      ],
+      "expect": {
+        "buffer": "y",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x\n  one two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "x\n  one two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_ex_line_in_to",
+      "buffer": "abca\naaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Hj",
+      "mapping": [
+        "nnoremap H :s/a/b/g<CR>"
+      ],
+      "expect": {
+        "buffer": "bbcb\naaa",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_ex_line_dot",
+      "buffer": "aaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Hx.",
+      "mapping": [
+        "nnoremap H :s/a/b/<CR>"
+      ],
+      "expect": {
+        "buffer": "a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

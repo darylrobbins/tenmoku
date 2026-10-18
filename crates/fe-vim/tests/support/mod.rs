@@ -10,9 +10,10 @@
 use std::{
     collections::{BTreeMap, HashSet},
     path::PathBuf,
+    sync::Arc,
 };
 
-use fe_vim::{HeadlessVim, VimKey, parse_keys};
+use fe_vim::{HeadlessVim, RemapSet, VimKey, parse_keys, parse_vimrc};
 use serde::{Deserialize, Serialize};
 
 /// The nvim the expectations were recorded with.
@@ -43,6 +44,10 @@ pub(crate) struct Case {
     /// Soft wrap on, at nvim's 80 columns.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) soft_wrap: bool,
+    /// Map commands (vimrc lines) run before the keys: in nvim with
+    /// `vim.cmd`, here read by [`parse_vimrc`] into a [`RemapSet`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) mapping: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +83,8 @@ pub(crate) struct Recorded {
     /// Soft wrap on, at nvim's 80 columns.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) soft_wrap: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) mapping: Vec<String>,
     pub(crate) expect: Expect,
 }
 
@@ -92,6 +99,7 @@ impl Recorded {
             oracle_keys,
             folds,
             soft_wrap,
+            mapping,
         } = case;
         Self {
             name,
@@ -102,6 +110,7 @@ impl Recorded {
             oracle_keys,
             folds,
             soft_wrap,
+            mapping,
             expect: expect.into(),
         }
     }
@@ -116,6 +125,7 @@ impl Recorded {
             oracle_keys: self.oracle_keys.clone(),
             folds: self.folds.clone(),
             soft_wrap: self.soft_wrap,
+            mapping: self.mapping.clone(),
         }
     }
 }
@@ -484,7 +494,8 @@ fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
 /// the cursor, the mode, the registers, the visual anchor and the marks
 /// ([`MARKS`]) with nvim's, and with `window_rows` (the view that many rows
-/// high) the view's top row.
+/// high) the view's top row. A case's `mapping` is read by [`parse_vimrc`]
+/// first, and any issue fails the case.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
@@ -499,6 +510,17 @@ pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     }
     if let Some(rows) = case.window_rows {
         vim.set_window_rows(rows);
+    }
+    if !case.mapping.is_empty() {
+        let vimrc = parse_vimrc(&case.mapping.join("\n"));
+        if !vimrc.issues.is_empty() {
+            return Err(format!("{}: mapping: {:?}", case.name, vimrc.issues));
+        }
+        let (set, issues) = RemapSet::new(&vimrc.remaps, "\\");
+        if !issues.is_empty() {
+            return Err(format!("{}: mapping: {issues:?}", case.name));
+        }
+        vim.state_mut().set_remaps(Arc::new(set));
     }
     vim.feed(&case.keys)
         .map_err(|error| format!("{}: {error}", case.name))?;

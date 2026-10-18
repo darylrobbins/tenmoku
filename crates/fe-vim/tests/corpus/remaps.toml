@@ -1,0 +1,325 @@
+# Remap cases for fe-vim's oracle (docs/decisions/vim-remaps.md §8): each
+# case's `mapping` lines run in nvim before the keys, and fe-vim reads the
+# same lines with its vimrc parser into a RemapSet, so the parser is under
+# test on both sides. Maps in normal, visual and operator-pending modes;
+# counts, registers, `.`, macros, `:normal` and `:normal!` through them;
+# recursive and `noremap` maps; prefixes resolved by a mismatch; a cycle;
+# `<leader>`; `unmap`. The recorder puts every map back after a case.
+# Hand-written: name, mapping, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. What nvim
+# does with each is recorded in remaps.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+#
+# nvim facts (0.12.4), as recorded:
+# - Self-prefix (`nmap l ll`): an expansion that starts with its own left
+#   side runs that first key as the builtin, and the rest is mapped again,
+#   so `l` moves right until it fails at the end of the line; the failure
+#   drops what is left of the expansion, not the typed `x` after it
+#   (remap_self_prefix). With `nmap ab abx`, the expansion's `a` is the
+#   builtin append and `bx` goes in as text (remap_self_prefix_more).
+# - A cycle (`nmap a b`, `nmap b a`) stops at E223 with nothing changed by
+#   it; the keys typed before it stand (remap_cycle_e223).
+# - A typed count and digits at the start of an expansion make one count:
+#   `3H` with `H` → `0x` is `30x` (remap_count_then_zero).
+# - Keys that end on a prefix that could still grow are resolved as a
+#   timeout would be, which fe-vim leaves to its host: no case ends there.
+# Not recorded: `nunmap Y` would leave nvim's builtin `Y` (`yy`), and
+# fe-vim has no `Y` but a map's, so no case types `Y` without one.
+
+[[case]]
+name = "remap_Y"
+mapping = ["nnoremap Y y$"]
+buffer = "abc def"
+cursor = [0, 4]
+keys = "Yp"
+
+[[case]]
+name = "remap_Y_yy"
+mapping = ["nnoremap Y yy"]
+buffer = "abc def"
+cursor = [0, 4]
+keys = "Yp"
+
+[[case]]
+name = "remap_H"
+mapping = ["nnoremap H ^"]
+buffer = "x\n  one two"
+cursor = [1, 6]
+keys = "H"
+
+# No mapping: the case before's `H` was taken back, so `H` is the
+# window's top row again.
+[[case]]
+name = "remap_H_restored"
+buffer = "x\n  one two"
+cursor = [1, 6]
+keys = "H"
+
+[[case]]
+name = "remap_count_H"
+mapping = ["nnoremap H w"]
+buffer = "a b c d e f"
+cursor = [0, 0]
+keys = "3H"
+
+# The count's digits and the expansion's `0` make one count, 30.
+[[case]]
+name = "remap_count_then_zero"
+mapping = ["nnoremap H 0x"]
+buffer = "abcdefgh"
+cursor = [0, 5]
+keys = "3H"
+
+# The same with a count in the expansion: 3 and 2x make 32x.
+[[case]]
+name = "remap_count_before_count"
+mapping = ["nnoremap X 2x"]
+buffer = "abcdefgh"
+cursor = [0, 5]
+keys = "3X"
+
+[[case]]
+name = "remap_count_expansion_two_commands"
+mapping = ["nnoremap X dwdw"]
+buffer = "a b c d e f"
+cursor = [0, 0]
+keys = "2X"
+
+[[case]]
+name = "remap_dH_onoremap"
+mapping = ["onoremap H ^"]
+buffer = "x\n  one two\ny"
+cursor = [1, 6]
+keys = "dH"
+
+[[case]]
+name = "remap_dH_nnoremap_only"
+mapping = ["nnoremap H ^"]
+buffer = "x\n  one two\ny"
+cursor = [1, 6]
+keys = "dH"
+
+[[case]]
+name = "remap_d_count_omap"
+mapping = ["onoremap H w"]
+buffer = "a b c d e f"
+cursor = [0, 0]
+keys = "d2H"
+
+[[case]]
+name = "remap_omap_text_object"
+mapping = ["onoremap ie iw"]
+buffer = "one two three"
+cursor = [0, 5]
+keys = "die"
+
+[[case]]
+name = "remap_visual_x"
+mapping = ["xnoremap x y"]
+buffer = "one two"
+cursor = [0, 0]
+keys = "vexP"
+
+[[case]]
+name = "remap_visual_text_object"
+mapping = ["xnoremap ie iw"]
+buffer = "one two three"
+cursor = [0, 5]
+keys = "vie"
+
+[[case]]
+name = "remap_noremap_all_modes"
+mapping = ["noremap H ^"]
+buffer = "  one two"
+cursor = [0, 6]
+keys = "vHd"
+
+[[case]]
+name = "remap_register"
+mapping = ["nnoremap X dw"]
+buffer = "one two three"
+cursor = [0, 0]
+keys = '"aX'
+
+[[case]]
+name = "remap_dot"
+mapping = ["nnoremap X dw"]
+buffer = "one two three four"
+cursor = [0, 0]
+keys = "X."
+
+[[case]]
+name = "remap_dot_count"
+mapping = ["nnoremap X dw"]
+buffer = "a b c d e f"
+cursor = [0, 0]
+keys = "X3."
+
+[[case]]
+name = "remap_dot_two_commands"
+mapping = ["nnoremap X xx"]
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "X."
+
+[[case]]
+name = "remap_insert_in_to_dot"
+mapping = ["nnoremap X ihi<Esc>"]
+buffer = "abc"
+cursor = [0, 1]
+keys = "X."
+
+[[case]]
+name = "remap_macro_record_play"
+mapping = ["nnoremap X dw"]
+buffer = "one two\none two\none two"
+cursor = [0, 0]
+keys = "qaXjq@a"
+
+[[case]]
+name = "remap_recursive"
+mapping = ["nmap H L", "nnoremap L w"]
+buffer = "one two\nthree\nfour"
+cursor = [0, 0]
+keys = "H"
+
+[[case]]
+name = "remap_noremap"
+mapping = ["nnoremap H L", "nnoremap L w"]
+buffer = "one two\nthree\n  four"
+cursor = [0, 0]
+keys = "H"
+
+[[case]]
+name = "remap_recursive_into_builtin"
+mapping = ["nmap X dH", "onoremap H w"]
+buffer = "one two three"
+cursor = [0, 0]
+keys = "X"
+
+[[case]]
+name = "remap_self_prefix"
+mapping = ["nmap l ll"]
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "lx"
+
+[[case]]
+name = "remap_self_prefix_more"
+mapping = ["nmap ab abx"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ab<Esc>"
+
+[[case]]
+name = "remap_failed_prefix_suffix_mapped"
+mapping = ["nnoremap jk dd", "nnoremap h x"]
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "jh"
+
+[[case]]
+name = "remap_prefix_longest"
+mapping = ["nnoremap , x", "nnoremap ,w dw"]
+buffer = "one two"
+cursor = [0, 0]
+keys = ",w"
+
+[[case]]
+name = "remap_prefix_exact_on_mismatch"
+mapping = ["nnoremap , x", "nnoremap ,w dw"]
+buffer = "one two"
+cursor = [0, 0]
+keys = ",ll"
+
+[[case]]
+name = "remap_cycle_e223"
+mapping = ["nmap a b", "nmap b a"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "xa"
+
+[[case]]
+name = "remap_leader"
+mapping = ['nnoremap <leader>d dd']
+buffer = "one\ntwo"
+cursor = [0, 0]
+keys = '\d'
+
+[[case]]
+name = "remap_leader_let"
+mapping = ['let mapleader = ","', "nnoremap <leader>d dd"]
+buffer = "one\ntwo"
+cursor = [0, 0]
+keys = ",d"
+
+# The case before's mapleader was put back: `<leader>` is `\` again.
+[[case]]
+name = "remap_leader_restored"
+mapping = ['nnoremap <leader>x x']
+buffer = "one\ntwo"
+cursor = [0, 0]
+keys = '\x'
+
+[[case]]
+name = "remap_space"
+mapping = ["nnoremap <Space> x"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "<Space><Space>"
+
+[[case]]
+name = "remap_silent"
+mapping = ["nnoremap <silent> H ^"]
+buffer = "  one two"
+cursor = [0, 6]
+keys = "H"
+
+[[case]]
+name = "remap_bar_two_maps"
+mapping = ["nnoremap H ^ | nnoremap L $"]
+buffer = "  one two"
+cursor = [0, 3]
+keys = "L"
+
+[[case]]
+name = "remap_normal"
+mapping = ["nnoremap H ^"]
+buffer = "x\ny\n  one two"
+cursor = [2, 6]
+keys = ":normal H<CR>"
+
+[[case]]
+name = "remap_normal_bang"
+mapping = ["nnoremap H ^"]
+buffer = "x\ny\n  one two"
+cursor = [2, 6]
+keys = ":normal! H<CR>"
+
+[[case]]
+name = "remap_unmap"
+mapping = ["nnoremap H ^", "nunmap H"]
+buffer = "x\ny\n  one two"
+cursor = [2, 6]
+keys = "H"
+
+[[case]]
+name = "remap_unmap_one_mode"
+mapping = ["noremap H ^", "ounmap H"]
+buffer = "x\n  one two\ny"
+cursor = [1, 6]
+keys = "dH"
+
+[[case]]
+name = "remap_ex_line_in_to"
+mapping = ["nnoremap H :s/a/b/g<CR>"]
+buffer = "abca\naaa"
+cursor = [0, 0]
+keys = "Hj"
+
+[[case]]
+name = "remap_ex_line_dot"
+mapping = ["nnoremap H :s/a/b/<CR>"]
+buffer = "aaa"
+cursor = [0, 0]
+keys = "Hx."

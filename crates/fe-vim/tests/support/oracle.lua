@@ -14,6 +14,16 @@
 -- (getpos('v')), only when the case ends in a visual mode (blockwise too), and
 -- `marks = {"<": {row, byte_col}, ">": ..., "a": ...}` for the marks among
 -- `<`, `>` and `a` to `z` that are set.
+-- A case may hold `mapping`, lines run with vim.cmd just before the keys
+-- (`nnoremap Y y$`, `let mapleader = ","`, `nunmap Y`), which fe-vim reads
+-- with its vimrc parser. Maps aren't reset with the buffer, so after each
+-- case every global map it added, changed or removed is put back as it was
+-- (maplist() saved before, then nvim_del_keymap and mapset), nvim's
+-- defaults (`Y` → `y$`) included, and so is g:mapleader. A cycle's E223
+-- flushes the keys after it as any error does, so it must be the case's
+-- last key. Keys are fed with no delay, so a prefix with more keys after
+-- it never times out, and a case must not end on a prefix that could
+-- still grow.
 
 local input, output = arg[1], arg[2]
 
@@ -63,6 +73,45 @@ local function set_rows(rows)
   vim.wo.scroll = math.max(math.floor(rows / 2), 1)
 end
 
+-- The global maps, as maplist() has them, by their modes and keys.
+local function global_maps()
+  local maps = {}
+  for _, map in ipairs(vim.fn.maplist()) do
+    if map.buffer == 0 then
+      maps[map.mode_bits .. " " .. map.lhsraw] = map
+    end
+  end
+  return maps
+end
+
+local function holds(maps, map)
+  return vim.deep_equal(maps[map.mode_bits .. " " .. map.lhsraw], map)
+end
+
+-- maplist()'s mode_bits, each a mode nvim_del_keymap takes.
+local mode_bits = { n = 1, x = 2, o = 4, c = 8, i = 16, l = 32, s = 64, t = 128 }
+
+-- Puts the global maps back to `saved`: each map that isn't one of them
+-- is deleted, in each of its modes, then each one missing is set again.
+local function restore_maps(saved)
+  for _, map in pairs(global_maps()) do
+    if not holds(saved, map) then
+      for mode, mask in pairs(mode_bits) do
+        if bit.band(map.mode_bits, mask) ~= 0 then
+          pcall(vim.api.nvim_del_keymap, mode, map.lhs)
+        end
+      end
+    end
+  end
+  local now = global_maps()
+  for _, map in pairs(saved) do
+    if not holds(now, map) then
+      vim.fn.mapset(map)
+    end
+  end
+  assert(vim.deep_equal(global_maps(), saved), "the maps are put back")
+end
+
 local results = {}
 for _, case in ipairs(vim.json.decode(read(input))) do
   -- A case's `:set` ends with it.
@@ -110,6 +159,10 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   vim.api.nvim_win_set_cursor(0, { case.cursor[1] + 1, case.cursor[2] })
   -- do_lt: `<lt>` is `<`, as fe-vim's parse_keys reads it.
   local keys = vim.api.nvim_replace_termcodes(case.oracle_keys or case.keys, true, true, true)
+  local saved_maps, saved_leader = global_maps(), vim.g.mapleader
+  for _, line in ipairs(case.mapping or {}) do
+    vim.cmd(line)
+  end
   vim.api.nvim_feedkeys(keys, "xt", false)
 
   local cursor = vim.api.nvim_win_get_cursor(0)
@@ -150,6 +203,8 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   if case.window_rows then
     top = vim.fn.line("w0") - 1
   end
+  restore_maps(saved_maps)
+  vim.g.mapleader = saved_leader
   table.insert(results, {
     name = case.name,
     buffer = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"),
