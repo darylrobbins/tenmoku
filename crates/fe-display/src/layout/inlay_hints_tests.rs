@@ -384,3 +384,6 @@ fn hints_lay_out_without_a_gutter_too() {
     );
     assert_eq!(frame.cursors, [rect(left + 18. * CELL, 0., 2., LINE)]);
 }
+
+#[path = "long_row_hint_inlay_tests.rs"]
+mod long_row_hint_inlay_tests;

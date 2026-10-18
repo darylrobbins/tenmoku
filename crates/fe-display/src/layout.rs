@@ -1050,17 +1050,40 @@ fn lay_out_frame<M: TextMeasure>(
                           scroll_x: f64| {
         let row_view = scroll_x..scroll_x + view_width;
         let index = long_rows.index(source, text, display_row.buffer_row, tab_size, widths);
-        // The view in the index's coordinates, where the text after each
-        // hint is that much further left; a view's edge on a hint is at it.
-        let placed: Vec<(f64, f64)> = (hint_order[hints_in(display_row)].iter())
+        // Each text drawn in the row that its index doesn't know, in display
+        // order: the hints, then the inlay after any at its offset, as
+        // `ExpandedRow` orders them. `(offset, x in the index, width)`.
+        let spans_here: Vec<(usize, f64, f64)> = (hint_order[hints_in(display_row)].iter())
             .map(|&ix| {
-                let at = index.x_for_offset(hints[ix].offset, widths);
-                (at, hint_width(measure, ix))
+                let offset = hints[ix].offset;
+                (
+                    offset,
+                    index.x_for_offset(offset, widths),
+                    hint_width(measure, ix),
+                )
             })
             .collect();
-        let unhint = |x: f64| {
+        let inlay_here = inlay
+            .filter(|inlay| contains(display_row.range.clone(), display_row.last, inlay.offset));
+        let inlay_span = inlay_here.map(|inlay| {
+            // Known from a row that held it, else from shaping it alone,
+            // which sees contextual forms the index can't.
+            let by = inlay_shaped.get().unwrap_or_else(|| {
+                let run = [StyleRun {
+                    len: inlay.text.len(),
+                    style: inlay.style.clone(),
+                }];
+                let by = f64::from(measure.shape(&inlay.text, &run).width());
+                inlay_shaped.set(Some(by));
+                by
+            });
+            (inlay.offset, index.x_for_offset(inlay.offset, widths), by)
+        });
+        // The view in the index's coordinates, where the text after each
+        // span is that much further left; a view's edge in a span is at it.
+        let unspan = |spans: &[(usize, f64, f64)], x: f64| {
             let mut shift = 0.;
-            for &(at, width) in &placed {
+            for &(_, at, width) in spans {
                 if x <= at + shift {
                     break;
                 }
@@ -1071,37 +1094,57 @@ fn lay_out_frame<M: TextMeasure>(
             }
             x - shift
         };
-        let view = unhint(row_view.start)..unhint(row_view.end);
-        let mut slice = index.slice(view.clone(), slice_margin, widths);
+        // Whether the row as laid out from `slice` covers the view: its
+        // text and every span shaped with it start at or before the view
+        // and end at or after it, or at the row's end.
+        let covers = |index: &mut RowIndex,
+                      slice: &RowSlice,
+                      with_inlay: bool,
+                      widths: &mut dyn CharWidth| {
+            let range = &slice.range;
+            let before = |spans: &[(usize, f64, f64)]| {
+                (spans.iter())
+                    .filter(|(offset, ..)| *offset < range.start)
+                    .map(|(.., width)| width)
+                    .sum::<f64>()
+            };
+            let inside = |spans: &[(usize, f64, f64)]| {
+                (spans.iter())
+                    .filter(|(offset, ..)| range.contains(offset) || *offset == range.end)
+                    .map(|(.., width)| width)
+                    .sum::<f64>()
+            };
+            let inlay_in = inlay_span.filter(|(offset, ..)| {
+                with_inlay && (range.contains(offset) || *offset == range.end)
+            });
+            let start = slice.start_x + before(&spans_here);
+            let end = index.x_for_offset(range.end, widths)
+                + before(&spans_here)
+                + inside(&spans_here)
+                + inlay_in.map_or(0., |(.., width)| width);
+            start <= row_view.start && (end >= row_view.end || range.end >= display_row.range.end)
+        };
         // An inlay in the row is shaped with the slice whenever it fits, so
         // that the slice's place in the row doesn't decide the row's width.
-        if let Some(inlay) = inlay
-            && contains(display_row.range.clone(), display_row.last, inlay.offset)
-        {
-            slice = index.extend_to(&slice, inlay.offset, widths);
-            if !slice.range.contains(&inlay.offset) && slice.range.end != inlay.offset {
-                // The view is in the row's coordinates, which the inlay
-                // displaces the text after it in; look for the slice in the
-                // index's, where a view past the inlay is further left. If
-                // that takes the inlay in, it's the slice that fills the view.
-                let at = index.x_for_offset(inlay.offset, widths);
-                let by = inlay_shaped.get().unwrap_or_else(|| {
-                    let run = [StyleRun {
-                        len: inlay.text.len(),
-                        style: inlay.style.clone(),
-                    }];
-                    let by = f64::from(measure.shape(&inlay.text, &run).width());
-                    inlay_shaped.set(Some(by));
-                    by
-                });
-                let unshift = |x: f64| {
-                    if x <= at { x } else { (x - by).max(at) }
-                };
-                let shifted =
-                    index.slice(unshift(view.start)..unshift(view.end), slice_margin, widths);
-                let shifted = index.extend_to(&shifted, inlay.offset, widths);
-                if shifted.range.contains(&inlay.offset) || shifted.range.end == inlay.offset {
-                    slice = shifted;
+        // The view is looked for first as if the inlay weren't drawn, then
+        // mapped through it as well; if the inlay fits in neither slice, it
+        // isn't drawn, and the slice is the one without its width.
+        let fits = |slice: &RowSlice, offset: usize| {
+            slice.range.contains(&offset) || slice.range.end == offset
+        };
+        let view = unspan(&spans_here, row_view.start)..unspan(&spans_here, row_view.end);
+        let mut slice = index.slice(view, slice_margin, widths);
+        if let Some((offset, at, by)) = inlay_span {
+            slice = index.extend_to(&slice, offset, widths);
+            if !(fits(&slice, offset) && covers(index, &slice, true, widths)) {
+                let split = spans_here.partition_point(|(hint, ..)| *hint <= offset);
+                let mut with = spans_here.clone();
+                with.insert(split, (offset, at, by));
+                let view = unspan(&with, row_view.start)..unspan(&with, row_view.end);
+                let with = index.slice(view, slice_margin, widths);
+                let with = index.extend_to(&with, offset, widths);
+                if fits(&with, offset) && covers(index, &with, true, widths) {
+                    slice = with;
                 }
             }
         }
