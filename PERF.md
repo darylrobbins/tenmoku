@@ -533,6 +533,52 @@ the wrap tree. `fold`, `unfold` and the rest still rebuild.
   the tree compact under edits is a separate card. Details in
   `docs/decisions/fgw53sd0zv-fold-rows-across-edits.md`.
 
+### Wrap tree kept compact under edits (T192)
+
+Every splice used to slice the wrap tree and append the rest. That left new
+nodes in whatever heap holes recent splices had freed, so after 100k
+keystrokes nearly every leaf sat away from its neighbours. A rebuild's walk
+(`fold`, `unfold` and the rest) then took 5x as long. A typed char that
+keeps its row's wrap count now rewrites the row's wrap points in place and
+leaves the tree as it was. Other splices are followed by a re-pack of
+the next 384 items every 8 such splices. The bench's two new `fold/` cases
+each wrap their own map, one fresh and one after 100k typed keystrokes.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release builds in private `CARGO_TARGET_DIR`s.
+- **Commit:** base `25c7711` with the new bench file over its sources;
+  candidate `0d3845f`. **Date:** 2026-10-18, 00:39–00:46 UTC.
+- **Load average** (`/proc/loadavg`, 1 minute): 9.26 at the start, 12.13
+  at the end (9.09–18.65 between runs), from other lanes.
+- Alternately for 3 rounds, base first, `--warm-up-time 1
+  --measurement-time 3`, `'fold/'` then `'sync/'`; "fastest" over all 3
+  rounds, "median" the lowest of the 3 criterion medians.
+
+| Case | Base median | Base fastest | Candidate median | Candidate fastest | Budget | Verdict |
+|---|---|---|---|---|---|---|
+| `fold/one more fold among 200k, wrapped` | 4.16 ms | 4.03 ms | 5.01 ms | 4.06 ms | not over 10% slower than base | meets |
+| `fold/one more fold among 200k, wrapped, fresh tree` | 3.94 ms | 3.92 ms | 5.10 ms | 3.94 ms | not over 10% slower than base | meets |
+| `fold/one more fold among 200k, wrapped, after 100k keystrokes` | 21.7 ms | 21.0 ms | 4.05 ms | 3.92 ms | at most 1.5x the fresh tree in every round | meets (0.80–1.01x; base 5.0–5.7x) |
+| `sync/keystroke, 1M lines unwrapped` | 4.1 µs | 3.7 µs | 3.9 µs | 3.5 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines wrapped` | 17.3 µs | 15.2 µs | 6.5 µs | 6.4 µs | not over 10% slower than base | meets (2.4x faster) |
+| `sync/keystroke, 1M lines unwrapped, 10k folds` | 16.3 µs | 14.9 µs | 15.0 µs | 14.6 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines wrapped, 10k folds` | 30.1 µs | 26.9 µs | 17.5 µs | 17.2 µs | not over 10% slower than base | meets |
+| `sync/keystroke, 1M lines wrapped, 200k folds` | 239 µs | 233 µs | 229 µs | 226 µs | not over 10% slower than base | meets |
+| slowest `map.sync` of the 100k typed keystrokes, over 6 runs | — | 4.05 ms | — | 1.06 ms | at most 4 ms | meets |
+
+Per round, the after-100k case over the fresh tree: base 5.03, 5.47, 5.72;
+candidate 1.01, 0.80, 0.99.
+
+- Leaves in the wrapped 1M-line tree, typing `x` (fresh, after 5k, after
+  100k): base 83,334 / 87,634 / 117,014. Candidate 83,334 throughout, its
+  leaves still in order in memory. Base's are out of order at 19.7k leaves
+  after 5k and at 115.7k after 100k.
+- Typing Enter, which moves items, still scatters the tree. The windows
+  hold it at 101k leaves after 100k Enters, against 129k without them, but
+  they can't put leaves back in order: the allocator places them.
+- Details, with the measurement test, in
+  `docs/decisions/k2m135revm-wrap-tree-compact.md`.
+
 ## Syntax (`cargo bench -p fe-syntax`)
 
 Corpora are generated: Rust items, pretty-printed JSON objects, and Markdown

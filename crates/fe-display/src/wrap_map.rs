@@ -20,7 +20,11 @@
 //! row becomes pending and keeps showing its previous wrap until
 //! [`WrapMap::wrap_pending`] gets to it.
 
-use std::{borrow::Cow, ops::Range};
+use std::{
+    borrow::Cow,
+    ops::Range,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use fe_text::TextSource;
 use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SumTree};
@@ -32,9 +36,65 @@ use crate::CharWidth;
 enum LineItem {
     /// One buffer row: byte offsets within it where continuation rows
     /// start, ascending.
-    Wrapped(Box<[u32]>),
+    Wrapped(Breaks),
     /// This many buffer rows (at least one), none of them wrapped.
     Unwrapped(u32),
+}
+
+/// A wrapped row's wrap points. They're atomic so that an edit which keeps
+/// the row's number of wrap points can rewrite them in the tree, through a
+/// shared reference: replacing the item would slice the tree and allocate
+/// new nodes along its path, which scatters the tree in memory (see
+/// [`WrapMap::splice`]). Only `WrapMap`, through `&mut self`, writes them,
+/// and no other tree shares `lines`' nodes by then.
+#[derive(Debug, Default)]
+struct Breaks(Box<[AtomicU32]>);
+
+impl Breaks {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn get(&self, ix: usize) -> Option<usize> {
+        Some(self.0.get(ix)?.load(Ordering::Relaxed) as usize)
+    }
+
+    /// How many wrap points are at or before `column`.
+    fn count_through(&self, column: usize) -> usize {
+        self.0
+            .partition_point(|at| at.load(Ordering::Relaxed) as usize <= column)
+    }
+
+    /// Takes `other`'s wrap points, of which there are as many.
+    fn copy_from(&self, other: &Self) {
+        debug_assert_eq!(self.len(), other.len());
+        for (at, new) in self.0.iter().zip(&other.0) {
+            at.store(new.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+    }
+}
+
+impl Clone for Breaks {
+    fn clone(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|at| AtomicU32::new(at.load(Ordering::Relaxed)))
+                .collect(),
+        )
+    }
+}
+
+impl PartialEq for Breaks {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && (0..self.len()).all(|ix| self.get(ix) == other.get(ix))
+    }
+}
+
+impl From<Vec<AtomicU32>> for Breaks {
+    fn from(breaks: Vec<AtomicU32>) -> Self {
+        Self(breaks.into_boxed_slice())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -140,6 +200,7 @@ pub(crate) struct WrapMap {
     lines: SumTree<LineItem>,
     pending: Pending,
     ascii: AsciiWidths,
+    compactor: Compactor,
 }
 
 impl WrapMap {
@@ -151,6 +212,7 @@ impl WrapMap {
             lines: SumTree::new(()),
             pending: Pending::default(),
             ascii: AsciiWidths::default(),
+            compactor: Compactor::default(),
         }
     }
 
@@ -224,12 +286,19 @@ impl WrapMap {
         let mut wrap_new_rows = 0;
         let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
         let mut rows = RowReader::new(text, start as u32..(start + new_rows) as u32);
-        let new_lines = (0..new_rows).map(|_| {
-            let line = wrapper.wrap_next(&mut rows).0;
-            wrap_new_rows += line.summary(()).wrap_rows;
-            line
-        });
-        replace_rows(&mut self.lines, start..start + old_rows, new_lines);
+        let new_lines: Vec<_> = (0..new_rows)
+            .map(|_| {
+                let line = wrapper.wrap_next(&mut rows).0;
+                wrap_new_rows += line.summary(()).wrap_rows;
+                line
+            })
+            .collect();
+        // Typing within a row usually keeps its number of wrap rows, and
+        // then its item is rewritten where it is, leaving the tree as it was.
+        if old_rows != new_rows || !rewrite_rows(&self.lines, start, &new_lines) {
+            replace_rows(&mut self.lines, start..start + old_rows, new_lines);
+            self.compactor.after_splice(&mut self.lines);
+        }
         self.pending
             .splice(start as u32, old_rows as u32, new_rows as u32);
         debug_assert_eq!(self.lines.summary().buffer_rows, self.line_count);
@@ -356,9 +425,7 @@ impl WrapMap {
         cursor.seek(&BufferRows(buffer_row), Bias::Right);
         let (start, first) = (cursor.start().0.0, cursor.start().1.0);
         match cursor.item() {
-            Some(LineItem::Wrapped(breaks)) => {
-                first + breaks.partition_point(|&at| at as usize <= column)
-            }
+            Some(LineItem::Wrapped(breaks)) => first + breaks.count_through(column),
             Some(LineItem::Unwrapped(_)) => first + buffer_row - start,
             None => first,
         }
@@ -367,20 +434,21 @@ impl WrapMap {
     /// Where wrap row `row` (clamped to the last) is.
     pub(crate) fn segment(&self, text: &dyn TextSource, row: usize) -> WrapSegment {
         let row = row.min(self.row_count().saturating_sub(1));
+        let none = Breaks::default();
         let (buffer_row, breaks, index) = if self.width.is_none() {
-            (row, &[][..], 0)
+            (row, &none, 0)
         } else {
             let mut cursor = self.lines.cursor::<Dimensions<WrapRows, BufferRows>>(());
             cursor.seek(&WrapRows(row), Bias::Right);
             let (first, start) = (cursor.start().0.0, cursor.start().1.0);
             match cursor.item().expect("row is in range") {
-                LineItem::Wrapped(breaks) => (start, &breaks[..], row - first),
-                LineItem::Unwrapped(_) => (start + row - first, &[][..], 0),
+                LineItem::Wrapped(breaks) => (start, breaks, row - first),
+                LineItem::Unwrapped(_) => (start + row - first, &none, 0),
             }
         };
         let len = text.row_len(buffer_row as u32) as usize;
-        let start = index.checked_sub(1).map_or(0, |ix| breaks[ix] as usize);
-        let end = breaks.get(index).map_or(len, |&at| at as usize);
+        let start = index.checked_sub(1).map_or(0, |ix| breaks.get(ix).unwrap());
+        let end = breaks.get(index).unwrap_or(len);
         WrapSegment {
             buffer_row: buffer_row as u32,
             index,
@@ -402,6 +470,24 @@ fn unwrapped(rows: usize) -> SumTree<LineItem> {
         lines.push(LineItem::Unwrapped(rows as u32), ());
     }
     lines
+}
+
+/// Rewrites buffer rows `start..start + new.len()` of `lines` as `new`
+/// where they are, if each keeps its number of wrap rows. Returns whether
+/// it could; if not, it may have rewritten some of the rows.
+fn rewrite_rows(lines: &SumTree<LineItem>, start: usize, new: &[LineItem]) -> bool {
+    let mut cursor = lines.cursor::<BufferRows>(());
+    for (row, new) in (start..).zip(new) {
+        cursor.seek_forward(&BufferRows(row), Bias::Right);
+        match (cursor.item(), new) {
+            (Some(LineItem::Wrapped(old)), LineItem::Wrapped(new)) if old.len() == new.len() => {
+                old.copy_from(new);
+            }
+            (Some(LineItem::Unwrapped(_)), LineItem::Wrapped(new)) if new.len() == 0 => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Replaces buffer rows `old` of `lines` with `new`, splitting the unwrapped
@@ -427,6 +513,85 @@ fn replace_rows(
     result.append(cursor.suffix(), ());
     drop(cursor);
     *lines = result;
+}
+
+/// Re-packs `lines` into full leaves a window at a time, rotating through
+/// it, after splices that changed its items.
+///
+/// Such a splice slices the tree at the edit and appends the rest, which
+/// leaves part-full leaves at the seams (`sum_tree` merges only those under
+/// half full) and more internal nodes. A window is the next
+/// [`Compactor::window`] items, collected and pushed back as full leaves;
+/// one runs every [`Compactor::every`] such splices, so no keystroke pays
+/// for more than one window, however large the tree.
+#[derive(Debug)]
+struct Compactor {
+    /// Splices per window.
+    every: u32,
+    /// Items per window; 0 compacts nothing.
+    window: usize,
+    /// Splices since the last window.
+    splices: u32,
+    /// The buffer row the next window starts at (or the item holding it).
+    next: usize,
+    /// Windows run, and those that reached the end, for the tests.
+    #[cfg(test)]
+    runs: usize,
+    #[cfg(test)]
+    sweeps: usize,
+}
+
+impl Default for Compactor {
+    fn default() -> Self {
+        Self {
+            every: 8,
+            window: 384,
+            splices: 0,
+            next: 0,
+            #[cfg(test)]
+            runs: 0,
+            #[cfg(test)]
+            sweeps: 0,
+        }
+    }
+}
+
+impl Compactor {
+    fn after_splice(&mut self, lines: &mut SumTree<LineItem>) {
+        self.splices += 1;
+        if self.window == 0 || self.splices < self.every {
+            return;
+        }
+        self.splices = 0;
+        #[cfg(test)]
+        {
+            self.runs += 1;
+        }
+        let mut cursor = lines.cursor::<BufferRows>(());
+        let mut result = cursor.slice(&BufferRows(self.next), Bias::Right);
+        let mut items = Vec::with_capacity(self.window);
+        while items.len() < self.window
+            && let Some(item) = cursor.item()
+        {
+            items.push(item.clone());
+            cursor.next();
+        }
+        result.extend(items, ());
+        // Edits may have moved rows, but each window starts where the last
+        // ended, and one that reaches the end starts the next sweep.
+        self.next = if cursor.item().is_some() {
+            cursor.start().0
+        } else {
+            #[cfg(test)]
+            {
+                self.sweeps += 1;
+            }
+            0
+        };
+        result.append(cursor.suffix(), ());
+        drop(cursor);
+        *lines = result;
+    }
 }
 
 /// Buffer rows still to wrap at the current width: sorted, disjoint and
@@ -537,7 +702,7 @@ impl<'a> Wrapper<'a> {
         let mut line = std::mem::take(&mut self.line);
         let len = rows.read(&mut line);
         let item = if len <= self.ascii.fits && line.bytes().all(|b| b.is_ascii() && b != b'\t') {
-            LineItem::Wrapped(Box::default())
+            LineItem::Wrapped(Breaks::default())
         } else {
             let (ascii, widths) = (self.ascii, &mut *self.widths);
             LineItem::Wrapped(break_points(
@@ -659,7 +824,7 @@ impl Measure for Cached<'_> {
 /// between grapheme clusters, never beside a no-break space, and each keeps
 /// at least one cluster. Whitespace may hang past the edge. Tab stops count
 /// from the start of each row, as the rows are laid out.
-fn break_points(line: &str, width: f32, tab_size: usize, measure: &mut impl Measure) -> Box<[u32]> {
+fn break_points(line: &str, width: f32, tab_size: usize, measure: &mut impl Measure) -> Breaks {
     let space = measure.char_width(' ');
     let mut breaks = Vec::new();
     let mut row_start = 0;
@@ -689,7 +854,7 @@ fn break_points(line: &str, width: f32, tab_size: usize, measure: &mut impl Meas
             };
             if ix > 0 && !is_space && x + cluster_width > width {
                 row_start += word_start.unwrap_or(ix);
-                breaks.push(row_start as u32);
+                breaks.push(AtomicU32::new(row_start as u32));
                 continue 'rows;
             }
             x += cluster_width;
@@ -700,6 +865,9 @@ fn break_points(line: &str, width: f32, tab_size: usize, measure: &mut impl Meas
     }
     breaks.into()
 }
+
+#[cfg(test)]
+mod compact_tests;
 
 #[cfg(test)]
 mod tests {
