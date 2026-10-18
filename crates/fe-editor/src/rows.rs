@@ -7,7 +7,10 @@
 //! block. Each command makes its edits as one transaction and keeps the
 //! selections on the same text.
 
-use std::ops::{Range, RangeInclusive};
+use std::{
+    ops::{Range, RangeInclusive},
+    rc::Rc,
+};
 
 use fe_buffer::{Bias, ResolvedSelection, SelectionSet, Text};
 use fe_command::{Effect, Registry};
@@ -24,7 +27,12 @@ type Command = (&'static str, &'static str, fn(&mut EditorModel));
 pub(crate) fn register(registry: &mut Registry<Editor>) {
     let commands: [Command; 6] = [
         ("indent", "Indent", EditorModel::indent_rows),
-        ("outdent", "Outdent", EditorModel::outdent_rows),
+        // In a snippet, outdent (shift-tab) goes to its previous stop.
+        ("outdent", "Outdent", |model| {
+            if !model.prev_snippet_stop() {
+                model.outdent_rows();
+            }
+        }),
         ("move_rows_up", "Move Rows Up", |model| {
             model.move_rows(true)
         }),
@@ -360,8 +368,10 @@ impl EditorModel {
         }
         // Anchored before catching up, whose measuring may edit the buffer
         // through another model.
+        let (edits, selections) = self.mirror_snippet_edits(edits, selections);
         let (selections, version) = {
-            let mut buffer = self.buffer.borrow_mut();
+            let shared = Rc::clone(&self.buffer);
+            let mut buffer = shared.borrow_mut();
             let Some(id) = buffer.edit(edits, self.origin.clone()) else {
                 return;
             };
@@ -369,10 +379,9 @@ impl EditorModel {
                 transactions.push(id);
             }
             let snapshot = buffer.snapshot();
-            (
-                SelectionSet::from_resolved(&snapshot, selections),
-                snapshot.version(),
-            )
+            let selections = SelectionSet::from_resolved(&snapshot, selections);
+            self.sync_snippet_mirrors(&mut buffer, Some(id));
+            (selections, snapshot.version())
         };
         self.sync_display();
         self.goals.clear();

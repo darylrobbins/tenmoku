@@ -16,13 +16,19 @@
 //!   since the request, which the item's edit replaces, go in the same
 //!   transaction, so one undo restores the text from before the accept,
 //!   and the caret where it was. Inside a transaction already open, as
-//!   vim's insert session holds, it joins that one, as typing does.
+//!   vim's insert session holds, it joins that one, as typing does. An
+//!   item whose edit is a [`Snippet`] goes in as
+//!   [`EditorModel::insert_snippet`] puts one in, in that same
+//!   transaction, starting its session.
 
 use std::{any::Any, fmt, ops::Range, rc::Rc};
 
 use fe_buffer::{Bias, BufferSnapshot, EditError, Origin, Text, TransactionId, Version};
 
-use crate::{CaretAt, CaretPick, CharClass, EditorModel, caret};
+use crate::{
+    CaretAt, CaretPick, CharClass, EditorModel, caret,
+    snippet::{Expansion, Snippet, row_indent},
+};
 
 /// Why completions are asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +60,9 @@ pub struct CompletionItem {
     pub edit: (Range<usize>, String),
     /// What else it does elsewhere, such as adding an import.
     pub additional_edits: Vec<(Range<usize>, String)>,
+    /// Whether `edit`'s text is a [`Snippet`], with tabstops and
+    /// placeholders, rather than plain text.
+    pub snippet: bool,
     /// The source's own, to resolve the item with.
     pub data: Option<Rc<dyn Any>>,
 }
@@ -66,6 +75,7 @@ impl fmt::Debug for CompletionItem {
             .field("detail", &self.detail)
             .field("edit", &self.edit)
             .field("additional_edits", &self.additional_edits)
+            .field("snippet", &self.snippet)
             .finish_non_exhaustive()
     }
 }
@@ -313,7 +323,23 @@ impl CompletionSession {
         };
         let caret_was = model.primary_selection().head();
         let (base, version) = (&self.base, self.version());
-        let (range, text) = (clip(base.text(), item.edit.0.clone()), item.edit.1.clone());
+        let range = clip(base.text(), item.edit.0.clone());
+        let snippet = item.snippet.then(|| Snippet::parse(&item.edit.1));
+        let unit = model.indent_unit();
+        // Borrowed apart from the model, so mirrors of a snippet stop the
+        // edit lands in can be filled in its transaction.
+        let shared = Rc::clone(&model.buffer);
+        let mut buffer = shared.borrow_mut();
+        let current = buffer.snapshot();
+        // Indented as the row the edit starts on is now.
+        let expansion = snippet.map(|snippet| {
+            let start = current.map_offset(range.start, Bias::Right, version);
+            Expansion::new(&snippet, &row_indent(current.text(), start), &unit)
+        });
+        let text = expansion.as_ref().map_or_else(
+            || item.edit.1.clone(),
+            |expansion| expansion.text().to_owned(),
+        );
         // The additional edits first, so one at the main edit's start goes
         // before it, in the source's order.
         let mut edits: Vec<_> = (item.additional_edits.iter())
@@ -329,8 +355,6 @@ impl CompletionSession {
             checks[main] = range.start..self.offset;
             checks.push(self.offset..range.end);
         }
-        let mut buffer = model.buffer_mut();
-        let current = buffer.snapshot();
         let conflict = (checks.into_iter().enumerate())
             .find(|(_, range)| !unchanged(base, &current, range.clone()));
         if let Some((index, _)) = conflict {
@@ -352,6 +376,9 @@ impl CompletionSession {
         };
         let end = after.anchor_after(end);
         let applied = buffer.edit_from(base, edits, Origin::User);
+        if expansion.is_none() {
+            model.sync_snippet_mirrors(&mut buffer, None);
+        }
         let id = buffer.end_transaction();
         // Checked above; a failure now would be a bug.
         debug_assert!(applied.is_ok(), "{applied:?}");
@@ -385,13 +412,30 @@ impl CompletionSession {
             }),
         };
         drop(buffer);
+        model.sync_display();
         if let Some(id) = id {
             model.pick_caret(id, CaretPick { undo, redo });
             if let Some(transactions) = &mut model.transactions {
                 transactions.push(id);
             }
         }
-        model.set_selections([caret(caret_at)]);
+        match expansion {
+            // The snippet's text went in as it was given, as it's always
+            // checked to have.
+            Some(expansion)
+                if caret_at
+                    .checked_sub(expansion.text().len())
+                    .is_some_and(|start| {
+                        current.text().range_eq(start..caret_at, expansion.text())
+                    }) =>
+            {
+                let start = caret_at - expansion.text().len();
+                model.set_selections(expansion.first_selections(start));
+                model.start_snippet(&current, start, expansion);
+            }
+            Some(_) => model.set_selections([caret(caret_at)]),
+            None => model.set_selections([caret(caret_at)]),
+        }
         Ok(id)
     }
 }

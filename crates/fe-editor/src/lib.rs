@@ -39,6 +39,7 @@ pub mod row_changes;
 mod rows;
 pub mod scripted_ai;
 mod smart_select;
+pub mod snippet;
 pub mod text_diff;
 mod typing;
 mod viewer;
@@ -161,6 +162,8 @@ pub struct EditorModel {
     auto_closed: Vec<pairs::AutoClosed>,
     /// What shrinking selection steps back through (see [`smart_select`]).
     expand_history: Option<smart_select::ExpandHistory>,
+    /// The snippet whose tabstops tab and shift-tab walk (see [`snippet`]).
+    snippet: Option<snippet::SnippetSession>,
 }
 
 impl EditorModel {
@@ -202,6 +205,7 @@ impl EditorModel {
             auto_close: true,
             auto_closed: Vec::new(),
             expand_history: None,
+            snippet: None,
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -259,6 +263,7 @@ impl EditorModel {
             auto_close: self.auto_close,
             auto_closed: Vec::new(),
             expand_history: None,
+            snippet: None,
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
@@ -375,6 +380,7 @@ impl EditorModel {
         self.events.drain();
         self.poll_typing();
         self.forget_auto_closed();
+        self.follow_snippet();
         // Lets go of the paths a split set since.
         self.path = Rc::clone(self.path.latest());
     }
@@ -795,6 +801,7 @@ impl EditorModel {
         self.goals.clear();
         self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
         self.forget_auto_closed();
+        self.follow_snippet();
     }
 
     /// Places a single caret.
@@ -1394,6 +1401,7 @@ impl EditorModel {
             self.goals.clear();
             self.selections = carets;
             self.forget_auto_closed();
+            self.follow_snippet();
         }
     }
 
@@ -1438,6 +1446,7 @@ impl EditorModel {
         selections: Vec<ResolvedSelection>,
         typed: Option<Typed>,
     ) -> BufferSnapshot {
+        let (edits, selections) = self.mirror_snippet_edits(edits, selections);
         self.apply_through(selections, |model, buffer| {
             model.edit_typed(buffer, edits, typed)
         })
@@ -1467,12 +1476,15 @@ impl EditorModel {
             let snapshot = buffer.snapshot();
             let selections = SelectionSet::from_resolved(&snapshot, selections);
             self.typing_left(&selections);
+            // After the snapshot callers' offsets are in.
+            self.sync_snippet_mirrors(&mut buffer, id);
             (selections, snapshot, id)
         };
         self.sync_display();
         self.goals.clear();
         self.selections = selections;
         self.forget_auto_closed();
+        self.follow_snippet();
         (snapshot, id)
     }
 }

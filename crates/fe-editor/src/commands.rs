@@ -426,7 +426,10 @@ pub fn registry() -> Registry<Editor> {
         },
     );
     add(&mut registry, "tab", "Insert Tab", true, |model, _| {
-        model.tab();
+        // In a snippet, tab goes to its next stop.
+        if !model.next_snippet_stop() {
+            model.tab();
+        }
         Ok(Effect::Changed)
     });
     add(&mut registry, "fold", "Fold", false, |model, host| {
@@ -568,11 +571,18 @@ pub(crate) fn add(
     mutates_buffer: bool,
     run: impl Fn(&mut EditorModel, &mut dyn EditorHost) -> Run + 'static,
 ) {
+    // Escape leaves a snippet, as it does in VS Code.
+    let leaves_snippet = name == "single_selection";
     registry
         .register(
             &format!("editor.{name}"),
             title,
-            move |target: &mut EditorTarget<'_>, actor: &Actor| run_as(target, actor, &run),
+            move |target: &mut EditorTarget<'_>, actor: &Actor| {
+                if leaves_snippet {
+                    target.model.end_snippet();
+                }
+                run_as(target, actor, &run)
+            },
         )
         .expect("editor command IDs are valid and distinct")
         .context(ContextPredicate::identifier(CONTEXT))
