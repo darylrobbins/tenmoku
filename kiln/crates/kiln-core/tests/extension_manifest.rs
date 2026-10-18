@@ -216,9 +216,11 @@ fn manifest_errors_name_their_key_and_position() {
     );
     assert!(error.message.contains("outside"), "{error}");
 
+    // A file not there yet is its reader's to report: the rest loads.
     let manifest = with("\"menus.toml\"", "\"missing.toml\"");
-    let error = assert_refused(&manifest, "contributes.menus", Some("\"missing.toml\""));
-    assert!(error.message.contains("doesn't exist"), "{error}");
+    let (dir, loaded, diagnostics) = load(&manifest);
+    assert_eq!(diagnostics, []);
+    assert_eq!(loaded.unwrap().menus, [dir.path().join("missing.toml")]);
 
     // A missing directory before `..` is missing, as the OS resolves it.
     if cfg!(unix) {
@@ -293,6 +295,17 @@ fn a_symlink_out_of_the_directory_is_refused() {
         (error.line, error.column),
         position(&manifest, "\"away/../menus.toml\"")
     );
+
+    // So is a missing file through a link out.
+    let manifest = VALID.replacen("\"menus.toml\"", "\"away/missing.toml\"", 1);
+    fs::write(dir.path().join(MANIFEST_FILE), &manifest).unwrap();
+    let (loaded, diagnostics) = load_manifest(dir.path(), &api());
+    assert!(loaded.is_none());
+    let error = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.key.as_deref() == Some("contributes.menus"))
+        .unwrap();
+    assert!(error.message.contains("outside"), "{error}");
 }
 
 #[test]

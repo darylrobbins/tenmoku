@@ -133,7 +133,8 @@ pub struct Manifest {
     pub license: License,
     /// The extension API version it needs.
     pub engine: ApiVersion,
-    /// Contributed files, each under `dir`.
+    /// Contributed files, each under `dir`. One may be missing, for its
+    /// reader to report.
     pub themes: Vec<PathBuf>,
     pub keymaps: Vec<PathBuf>,
     pub menus: Vec<PathBuf>,
@@ -523,6 +524,11 @@ fn parse_numbers<const N: usize>(text: &str) -> Option<[u32; N]> {
 /// and a file there, symlinks followed, still inside `dir`. The path is
 /// `dir` joined with where the entry leads, symlinks and `..` resolved,
 /// so it names the file that was checked.
+///
+/// A file that isn't there yet, written without `..`, under a directory
+/// that is inside `dir`, is `dir` joined with the entry: its reader
+/// reports it missing, and the extension's other files load. A reader
+/// checks it's still inside `dir` when it's read.
 fn contributed_file(
     dir: &Path,
     canonical_dir: Option<&Path>,
@@ -551,7 +557,7 @@ fn contributed_file(
     let canonical = match dir.join(relative).canonicalize() {
         Ok(canonical) => canonical,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(format!("{entry:?} doesn't exist"));
+            return missing_file(dir, canonical_dir, relative, entry);
         }
         Err(error) => return Err(format!("{entry:?} can't be read: {error}")),
     };
@@ -565,6 +571,42 @@ fn contributed_file(
         return Err(format!("{entry:?} isn't a file"));
     }
     Ok(dir.join(inside))
+}
+
+/// The path a missing `entry` would have under `dir`: see
+/// [`contributed_file`].
+fn missing_file(
+    dir: &Path,
+    canonical_dir: Option<&Path>,
+    relative: &Path,
+    entry: &str,
+) -> Result<PathBuf, String> {
+    let plain = relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+    if !plain {
+        return Err(format!("{entry:?} doesn't exist"));
+    }
+    let path: PathBuf = dir.join(relative.components().collect::<PathBuf>());
+    let mut ancestor = path.parent();
+    while let Some(dir) = ancestor {
+        match dir.canonicalize() {
+            Ok(canonical) => {
+                if canonical_dir.is_some_and(|root| canonical.starts_with(root)) {
+                    return Ok(path);
+                }
+                return Err(format!(
+                    "{entry:?} leads to {}, outside the extension's directory",
+                    canonical
+                        .join(path.strip_prefix(dir).unwrap_or(&path))
+                        .display()
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => ancestor = dir.parent(),
+            Err(error) => return Err(format!("{entry:?} can't be read: {error}")),
+        }
+    }
+    Err(format!("{entry:?} doesn't exist"))
 }
 
 /// Where each entry of the `contributes` file arrays is in the source,

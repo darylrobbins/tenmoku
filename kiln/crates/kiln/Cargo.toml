@@ -22,6 +22,8 @@ kiln-platform.workspace = true
 kiln-shell.workspace = true
 kiln-ui.workspace = true
 log.workspace = true
+# Where an extension's menu item is in its file, for a warning.
+toml.workspace = true
 # `#[kiln::settings]`'s schema, re-exported as kiln::schemars.
 schemars.workspace = true
 serde.workspace = true

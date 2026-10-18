@@ -270,3 +270,82 @@ fn a_missing_or_mismatched_selection_falls_back(cx: &mut TestAppContext) {
         )]
     );
 }
+
+/// The themes' IDs listed now.
+fn listed(cx: &mut TestAppContext) -> Vec<String> {
+    cx.update(|cx| themes(cx).into_iter().map(|theme| theme.id).collect())
+}
+
+#[gpui::test]
+fn a_missing_theme_leaves_its_sibling_loaded(cx: &mut TestAppContext) {
+    let state = tempfile::tempdir().unwrap();
+    let extensions = state.path().join("extensions");
+    let themes_dir = extensions.join("solarized/themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(extensions.join("solarized").join(MANIFEST_FILE), MANIFEST).unwrap();
+    fs::write(themes_dir.join("solarized-dark.toml"), DARK).unwrap();
+    let (sender, batches) = batch_channel();
+    let config = Config::new("com.example.Notes", "Notes")
+        .fail_fast(true)
+        .extensions(&extensions, "notes", ApiVersion { major: 1, minor: 0 })
+        .watch_with(batches);
+    let diagnostics = cx.update(|cx| kiln::init(cx, config));
+    cx.run_until_parked();
+    let light = themes_dir.join("solarized-light.toml");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].file, light);
+    assert!(diagnostics[0].is_error());
+    assert_eq!(listed(cx), ["acme.solarized/solarized-dark"]);
+
+    fs::write(&light, LIGHT).unwrap();
+    sender.send(vec![extensions.clone()]);
+    cx.run_until_parked();
+    assert_eq!(
+        listed(cx),
+        [
+            "acme.solarized/solarized-dark",
+            "acme.solarized/solarized-light"
+        ]
+    );
+    cx.update(|cx| assert_eq!(config::diagnostics(cx), []));
+
+    // Gone again, it drops out alone.
+    fs::remove_file(&light).unwrap();
+    sender.send(vec![extensions.clone()]);
+    cx.run_until_parked();
+    assert_eq!(listed(cx), ["acme.solarized/solarized-dark"]);
+}
+
+/// A theme file replaced by a link out of the extension's directory isn't
+/// read: the manifest's last good version stays, and so does the theme's.
+#[cfg(unix)]
+#[gpui::test]
+fn a_theme_leading_outside_is_not_read(cx: &mut TestAppContext) {
+    let state = tempfile::tempdir().unwrap();
+    let setup = setup(state.path(), cx);
+    cx.update(|cx| select_themes(cx, Some("acme.solarized/solarized-dark"), None));
+    let outside = state.path().join("outside.toml");
+    fs::write(&outside, DARK.replace("#002b36", "#ff00ff")).unwrap();
+    let file = setup
+        .extensions
+        .join("solarized/themes/solarized-dark.toml");
+    fs::remove_file(&file).unwrap();
+    std::os::unix::fs::symlink(&outside, &file).unwrap();
+    setup.sender.send(vec![setup.extensions.clone()]);
+    cx.run_until_parked();
+    let (dark, _) = cx.update(|cx| pair(cx));
+    assert_eq!(color(&dark.tokens, "surface.background"), "#002b36");
+    assert_eq!(listed(cx).len(), 2);
+    let errors: Vec<String> = cx.update(|cx| {
+        config::diagnostics(cx)
+            .iter()
+            .filter(|diagnostic| diagnostic.file == file)
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect()
+    });
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("outside acme.solarized's directory"),
+        "{errors:?}"
+    );
+}

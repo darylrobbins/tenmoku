@@ -78,7 +78,7 @@ use kiln_shell::{
 use kiln_ui::Icon;
 
 use crate::{
-    Cx, SettingsSection,
+    Cx, SettingsSection, extensions,
     setup::{Catalogs, Config, toml_escape},
     tables::{KeyBinding, KeyTable, MenuTable, TableItem},
 };
@@ -1336,15 +1336,20 @@ pub(crate) fn register_early(cx: &mut App) {
 }
 
 /// The keymap layers and menus the app ships, its contributions with
-/// them, and their diagnostics.
+/// them, and their diagnostics; then the extensions' layers laid over
+/// them, whose diagnostics are kept apart.
 pub(crate) struct Shipped {
     pub layers: Vec<KeymapLayer>,
     pub keymap_diagnostics: Vec<Diagnostic>,
     pub menu_bar: MenuBar,
     pub menu_diagnostics: Vec<Diagnostic>,
+    /// The extensions' keymap and menu files' problems: theirs, not the
+    /// app's, so [`Config::fail_fast`] leaves them be.
+    pub extension_diagnostics: Vec<Diagnostic>,
 }
 
 impl Shipped {
+    /// The diagnostics of what the app ships, not the extensions'.
     pub(crate) fn diagnostics(&self) -> Vec<Diagnostic> {
         [self.keymap_diagnostics.as_slice(), &self.menu_diagnostics].concat()
     }
@@ -1359,7 +1364,8 @@ pub(crate) fn shipped_catalog(config: &Config, cx: &App) -> Rc<dyn CommandCatalo
 }
 
 /// What `config` ships on `os`, with what's contributed, checked against
-/// `catalog`.
+/// `catalog`, then the extensions' keymap and menu layers over it
+/// ([`crate::extensions`]).
 pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx: &App) -> Shipped {
     let commands = Contributions::commands(cx);
     let this = cx.try_global::<Contributions>();
@@ -1374,9 +1380,11 @@ pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx:
             .collect(),
     };
     let (contributed, mut keymap_diagnostics) = keymap_layer(&bindings, os, catalog);
-    let (layers, found) = config.own_keymap(os, Some(catalog), Some(contributed));
+    let (mut layers, found) = config.own_keymap(os, Some(catalog), Some(contributed));
     keymap_diagnostics.extend(found);
-    let (menu_bar, menu_diagnostics) = match this.and_then(|this| this.menu_table.as_ref()) {
+    let (extension_layers, mut extension_diagnostics) = extensions::keymap_layers(cx, os, catalog);
+    layers.extend(extension_layers);
+    let (mut menu_bar, menu_diagnostics) = match this.and_then(|this| this.menu_table.as_ref()) {
         Some(table) => table_menu_bar(table, catalog, &config.menu_shortcut_context, cx),
         None => {
             let (mut menu_bar, mut menu_diagnostics) = config.menu_bar_for(os, Some(catalog));
@@ -1390,11 +1398,19 @@ pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx:
             (menu_bar, menu_diagnostics)
         }
     };
+    extension_diagnostics.extend(extensions::extend_menus(
+        cx,
+        &mut menu_bar,
+        os,
+        catalog,
+        &config.menu_shortcut_context,
+    ));
     Shipped {
         layers,
         keymap_diagnostics,
         menu_bar,
         menu_diagnostics,
+        extension_diagnostics,
     }
 }
 
@@ -1494,8 +1510,21 @@ fn on_workspace(
     });
 }
 
+/// Resolves the keymap and menus again once the current update is over,
+/// as the extensions' keymap or menu files changed: once [`start`] has
+/// them resolve, as `init` resolves them itself until then.
+pub(crate) fn resolve_again(cx: &mut App) {
+    if cx
+        .try_global::<Contributions>()
+        .is_some_and(|this| this.resolver.is_some())
+    {
+        schedule(cx);
+    }
+}
+
 /// Resolves the keymap and menus again, with every command registered and
-/// contributed now, and installs them.
+/// contributed now, and the extensions' files as last read, and installs
+/// them.
 fn resolve(cx: &mut App) {
     let this = cx.global_mut::<Contributions>();
     this.scheduled = false;
@@ -1510,7 +1539,9 @@ fn resolve(cx: &mut App) {
         keymap_diagnostics,
         menu_bar,
         menu_diagnostics,
+        extension_diagnostics,
     } = shipped;
+    extensions::set_laid(cx, extension_diagnostics, true);
     resolver.keymap.update(cx, |store| {
         store.set_defaults(layers, keymap_diagnostics, Some(Box::new(catalog)))
     });

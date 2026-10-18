@@ -569,8 +569,10 @@ impl Global for Watching {}
 ///    the contributed commands' keys and items, parsed for this platform
 ///    and checked against every command registered so far ([`catalog`]:
 ///    the shell's picker commands too), and the app's own catalogs
-///    ([`Config::catalog`]), then installed; from here on, each command
-///    contributed resolves them again;
+///    ([`Config::catalog`]), then the user's extensions' keymap and menu
+///    layers over them ([`crate::extensions`]), then installed; from here
+///    on, each command contributed, and each change to the extensions'
+///    files, resolves them again;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
@@ -591,7 +593,7 @@ impl Global for Watching {}
 /// With [`Config::fail_fast`] on, if the keymap or menus the app ships
 /// have any diagnostic, such as two contributed commands with the same
 /// default keys in the same context; and when a command contributed later
-/// brings one.
+/// brings one. Never for an extension's.
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     if let Some(capabilities) = config.capabilities {
         capabilities.install(cx);
@@ -612,17 +614,31 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         name: config.app_name.clone(),
     });
 
+    // Discovered first, so their keymap and menu files are laid in.
+    let layers = Layers::get(cx);
+    let setup = std::mem::take(&mut config.extensions);
+    let namespaces = command_namespaces(cx);
+    let extension_source = ExtensionSource::load(
+        setup,
+        namespaces,
+        config.theme_extensions,
+        layers.clone(),
+        extensions::Files::get(cx),
+    );
+
     let os = Capabilities::of(cx).os;
     let catalog = contributions::shipped_catalog(&config, cx);
     let shipped = contributions::shipped(&config, os, &*catalog, cx);
     config.check_fail_fast(&shipped.diagnostics());
     let Shipped {
-        layers,
+        layers: keymap_layers,
         keymap_diagnostics,
         menu_bar,
         menu_diagnostics,
+        extension_diagnostics,
     } = shipped;
-    let keymap = config.keymap_store(layers, keymap_diagnostics, catalog);
+    extensions::set_laid(cx, extension_diagnostics, false);
+    let keymap = config.keymap_store(keymap_layers, keymap_diagnostics, catalog);
     let mut diagnostics = keymap.diagnostics().to_vec();
     keys::init(cx, keymap.keymap().clone());
     diagnostics.extend(menu_diagnostics.iter().cloned());
@@ -659,17 +675,12 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         (service, found) = (section.add)(service, settings_file.clone(), &names);
         diagnostics.extend(found);
     }
-    let layers = Layers::get(cx);
     if let Some(path) = config.user_theme.take() {
         let theme = UserTheme::load(path, config.theme_extensions, layers.clone());
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
-    let setup = std::mem::take(&mut config.extensions);
-    let namespaces = command_namespaces(cx);
-    if let Some(source) =
-        ExtensionSource::load(setup, namespaces, config.theme_extensions, layers.clone())
-    {
+    if let Some(source) = extension_source {
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }
