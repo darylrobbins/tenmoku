@@ -1,7 +1,8 @@
 //! M1 performance budgets (release, Apple Silicon):
 //! - a 100 MB / 1M-line file loads well inside the 500 ms "interactive" budget;
 //! - a keystroke edit in that file is far below a frame (8 ms p99 end to end);
-//! - snapshots are O(1); anchor resolution scales with edits since the anchor.
+//! - snapshots are O(1); anchor resolution scales with edits since the anchor
+//!   (benched through 10, 100 and 1,000 edits; at most 12x per 10x edits).
 //!
 //! Run with `cargo bench -p fe-buffer`.
 
@@ -120,28 +121,34 @@ fn benches(c: &mut Criterion) {
         )
     });
 
-    // 10k anchors (e.g. diagnostics) resolved after 100 keystrokes.
-    let mut buffer = Buffer::new(&source);
-    let snapshot = buffer.snapshot();
-    let anchors: Vec<_> = (0..10_000)
-        .map(|_| snapshot.anchor_after(random_boundary(&mut rng, snapshot.text())))
-        .collect();
-    for _ in 0..100 {
-        let offset = random_boundary(&mut rng, buffer.text());
-        buffer.edit([(offset..offset, "x")], Origin::User);
+    // 10k anchors (e.g. diagnostics) resolved after 10, 100 and 1,000 keystrokes.
+    for edits in [10, 100, 1_000] {
+        let mut buffer = Buffer::new(&source);
+        let snapshot = buffer.snapshot();
+        let anchors: Vec<_> = (0..10_000)
+            .map(|_| snapshot.anchor_after(random_boundary(&mut rng, snapshot.text())))
+            .collect();
+        for _ in 0..edits {
+            let offset = random_boundary(&mut rng, buffer.text());
+            buffer.edit([(offset..offset, "x")], Origin::User);
+        }
+        let current = buffer.snapshot();
+        c.bench_function(
+            &format!("anchors/resolve 10k through {edits} edits, one by one"),
+            |b| {
+                b.iter(|| {
+                    anchors
+                        .iter()
+                        .map(|anchor| current.resolve(anchor))
+                        .sum::<usize>()
+                })
+            },
+        );
+        c.bench_function(
+            &format!("anchors/resolve 10k through {edits} edits, batched"),
+            |b| b.iter(|| current.resolve_many(&anchors)),
+        );
     }
-    let current = buffer.snapshot();
-    c.bench_function("anchors/resolve 10k through 100 edits, one by one", |b| {
-        b.iter(|| {
-            anchors
-                .iter()
-                .map(|anchor| current.resolve(anchor))
-                .sum::<usize>()
-        })
-    });
-    c.bench_function("anchors/resolve 10k through 100 edits, batched", |b| {
-        b.iter(|| current.resolve_many(&anchors))
-    });
 
     // Undo of a keystroke deep in history, with later edits elsewhere.
     c.bench_function("undo/keystroke after 100 later edits", |b| {

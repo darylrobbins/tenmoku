@@ -411,18 +411,40 @@ count is not the same for every case: the two buffer load cases set
 | `snapshot/clone` | 13.8 ns | 13.5 ns | O(1) | meets: 14 ns, and the case has no size input to scale |
 | `convert/offset to LSP point in 100MB` | 699 ns | 528 ns | none stated | n/a |
 | `convert/LSP point to offset in 100MB` | 1.60 µs | 1.24 µs | none stated | n/a |
+| `anchors/resolve 10k through 10 edits, one by one` | not taken | 1.25 ms (T147 run, below) | scales with edits since the anchor | see below |
+| `anchors/resolve 10k through 10 edits, batched` | not taken | 0.391 ms (T147 run, below) | scales with edits since the anchor | see below |
 | `anchors/resolve 10k through 100 edits, one by one` | 14.3 ms | 9.89 ms | scales with edits since the anchor | see below |
 | `anchors/resolve 10k through 100 edits, batched` | 1.51 ms | 1.42 ms | scales with edits since the anchor | see below |
+| `anchors/resolve 10k through 1000 edits, one by one` | not taken | 105.8 ms (T147 run, below) | scales with edits since the anchor | 13.5x the 100-edit case: over 12x |
+| `anchors/resolve 10k through 1000 edits, batched` | not taken | 15.1 ms (T147 run, below) | scales with edits since the anchor | 9.1x the 100-edit case: meets |
 | `undo/keystroke after 100 later edits` | 16.0 µs | 12.6 µs | far below 8 ms | meets (0.2%) |
 
-- **Nothing misses its budget**, so no follow-up is filed. The 8 ms budget is
+- **One budget is missed** (anchors one by one, 1000/100 edits, below); the rest meet theirs. The 8 ms budget is
   p99 end to end; these are the buffer's share only, in medians, and the
   rest of the keystroke path is in the Typing latency section below.
 - **Anchors:** 10k anchors through 100 edits cost about 1.4 µs each one by
-  one and 0.15 µs each batched, 9 to 10 times cheaper. The bench uses a
-  single edit count, so it shows the cost is small but not that it scales
-  with the edits since the anchor; that needs a second edit count, which
-  isn't filed.
+  one and 0.15 µs each batched, 9 to 10 times cheaper. T147 added the 10- and
+  1,000-edit cases (same 10k anchors made before the first edit, random
+  single-letter edits) to test "scales with the edits since the anchor" as a
+  budget: each 10x in edits costs at most 12x (linear with 20% slack). Fastest
+  sample of 3 rounds (`cargo bench -p fe-buffer --bench buffer -- anchors/`,
+  helium, same release build and private `CARGO_TARGET_DIR`, commit `8600df15`,
+  2026-10-18, load average 25.12 at the start and 29.55 at the end, from other
+  lanes building):
+
+  | Case | 10 edits | 100 edits | 1,000 edits | 100/10 | 1000/100 | At most 12x? |
+  |---|---|---|---|---|---|---|
+  | one by one | 1.25 ms | 7.85 ms | 105.8 ms | 6.3x | 13.5x | 100/10 yes; **1000/100 no, 1.5x over the 12x line** |
+  | batched | 0.391 ms | 1.66 ms | 15.1 ms | 4.2x | 9.1x | yes, both |
+
+  The 100-edit fastest values differ from the 2026-10-12 row above because
+  that run was at a different load and commit. The claim holds for batched
+  resolution. One by one it holds from 10 to 100 edits but not from 100 to
+  1,000 (13.5x), which is superlinear by a modest margin, and the
+  1,000-edit medians were noisy (178 to 273 ms across rounds). Follow-up
+  filed in `docs/decisions/711v0bra3g-anchor-resolve-scaling.md`: re-measure on a
+  quiet machine and, if it holds, find where `Snapshot::resolve` loses
+  linearity; fe-buffer is not changed here.
 - **CRLF load** is four times the LF load. It is inside the budget, and the
   budget for it is the same 500 ms, but on a loaded or slower machine it is
   the case to watch.
@@ -450,7 +472,7 @@ Apple Silicon and the helium numbers are compared with them as stated.
 | `sync/keystroke, 1M lines unwrapped` | 3.73 µs | 3.47 µs | far inside 8 ms | meets (0.05%) |
 | `sync/keystroke, 1M lines wrapped` | 13.4 µs | 12.8 µs | far inside 8 ms | meets (0.2%) |
 
-- **Nothing misses its budget**, so no follow-up is filed.
+- **One budget is missed** (anchors one by one, 1000/100 edits, below); the rest meet theirs.
 - `one slice` is slower than `set width + one slice` in the median, and its
   fastest sample (553 µs) is half its median, so it is noisy under this
   load. Both are far inside a frame.
