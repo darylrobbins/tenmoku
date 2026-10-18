@@ -417,6 +417,17 @@
       },
       "type": "object"
     },
+    "TreeSettings": {
+      "description": "Settings for the project tree.",
+      "properties": {
+        "show_ignored": {
+          "default": true,
+          "description": "List entries that `.gitignore` and `.ignore` files match (`target`,\n`.idea`), greyed. Off hides them. `.git` is never listed. Applies to\ntrees opened after it changes.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "TypescriptServer": {
       "description": "The built-in server for TypeScript and JavaScript.",
       "oneOf": [
@@ -618,6 +629,13 @@
         "mode": "dark"
       },
       "description": "The colour theme."
+    },
+    "tree": {
+      "$ref": "#/$defs/TreeSettings",
+      "default": {
+        "show_ignored": true
+      },
+      "description": "The project tree."
     },
     "vim": {
       "$ref": "#/$defs/VimSettings",

@@ -385,7 +385,8 @@ impl Workbench {
             dock
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
-        let panel = cx.new(|cx| ProjectPanel::new(launch.root, ui, cx));
+        let panel =
+            cx.new(|cx| ProjectPanel::new(launch.root, ui, project_panel::show_ignored(cx), cx));
         let problems = cx.weak_entity();
         let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, ui, cx));
         let pane = cx.new(|cx| {
@@ -883,7 +884,8 @@ impl Workbench {
         let changes_focused =
             (self.dock.read(cx).changes().focus_handle(cx)).contains_focused(window, cx);
         let ui = self.ui;
-        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, cx));
+        let show_ignored = self.panel.read(cx).lists_ignored();
+        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, show_ignored, cx));
         let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), ui, cx));
         let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
         // The next session starts in the new root; one running stays.
@@ -2494,6 +2496,10 @@ impl Workbench {
         }
         if event.settings.terminal != event.previous.terminal {
             self.set_terminal_settings(&event.settings.terminal, cx);
+        }
+        if event.settings.tree != event.previous.tree {
+            let show_ignored = event.settings.tree.show_ignored;
+            (self.panel).update(cx, |panel, cx| panel.set_show_ignored(show_ignored, cx));
         }
         for pane in self.panes(cx) {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));

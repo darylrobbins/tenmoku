@@ -110,6 +110,9 @@ pub struct ProjectPanel {
     /// Moves on with each successful listing (it may have made others
     /// reachable or owed), watcher batch and directory click.
     epoch: u64,
+    /// Moves on when the tree is opened again, so a listing that started
+    /// on the old one is dropped when it lands.
+    generation: u64,
     selected: Option<NodeId>,
     /// Where the selected row was last seen, checked before searching the
     /// rows for it.
@@ -146,6 +149,8 @@ pub struct ProjectPanel {
     /// Each row the last frame built, by name, and the status it drew.
     #[cfg(test)]
     drawn_status: Vec<(String, DrawnStatus)>,
+    /// Whether the tree lists ignored entries.
+    show_ignored: bool,
     _watch: Option<Task<()>>,
 }
 
@@ -155,9 +160,55 @@ impl ProjectPanel {
     /// A panel for `root`, or saying no folder is open. The root is opened,
     /// listed and watched in the background; nothing touches the file system
     /// on this thread.
-    pub fn new(root: Option<PathBuf>, theme: UiTheme, cx: &mut Context<Self>) -> Self {
-        let options = tree_options();
-        let watch = root.clone().map(|root| {
+    pub fn new(
+        root: Option<PathBuf>,
+        theme: UiTheme,
+        show_ignored: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut panel = Self {
+            state: if root.is_some() {
+                State::Opening
+            } else {
+                State::NoFolder
+            },
+            root,
+            expanded: HashSet::new(),
+            expanding: HashSet::new(),
+            listing: HashMap::new(),
+            failed: HashMap::new(),
+            epoch: 0,
+            generation: 0,
+            selected: None,
+            selected_hint: 0,
+            reveal: None,
+            revealing: None,
+            focus: cx.focus_handle(),
+            scroll: UniformListScrollHandle::new(),
+            theme,
+            git_files: HashMap::new(),
+            git_dirs: HashMap::new(),
+            edit: None,
+            edits: 0,
+            field_hint: Cell::new(0),
+            #[cfg(test)]
+            built: Vec::new(),
+            #[cfg(test)]
+            drawn_selected: None,
+            #[cfg(test)]
+            drawn_status: Vec::new(),
+            show_ignored,
+            _watch: None,
+        };
+        panel.start(show_ignored, cx);
+        panel
+    }
+
+    /// Opens, lists and watches the root in the background, listing ignored
+    /// entries too if `show_ignored`; the tree it replaces, if any, goes.
+    fn start(&mut self, show_ignored: bool, cx: &mut Context<Self>) {
+        let options = TreeOptions { show_ignored };
+        let watch = self.root.clone().map(|root| {
             let (sender, batches) = async_channel::unbounded::<Vec<FsChange>>();
             let opened = cx.background_spawn(async move {
                 // Watching first, so changes made while the root lists still
@@ -194,38 +245,38 @@ impl ProjectPanel {
                 }
             })
         });
-        Self {
-            state: if root.is_some() {
-                State::Opening
-            } else {
-                State::NoFolder
-            },
-            root,
-            expanded: HashSet::new(),
-            expanding: HashSet::new(),
-            listing: HashMap::new(),
-            failed: HashMap::new(),
-            epoch: 0,
-            selected: None,
-            selected_hint: 0,
-            reveal: None,
-            revealing: None,
-            focus: cx.focus_handle(),
-            scroll: UniformListScrollHandle::new(),
-            theme,
-            git_files: HashMap::new(),
-            git_dirs: HashMap::new(),
-            edit: None,
-            edits: 0,
-            field_hint: Cell::new(0),
-            #[cfg(test)]
-            built: Vec::new(),
-            #[cfg(test)]
-            drawn_selected: None,
-            #[cfg(test)]
-            drawn_status: Vec::new(),
-            _watch: watch,
+        self.state = if self.root.is_some() {
+            State::Opening
+        } else {
+            State::NoFolder
+        };
+        self._watch = watch;
+    }
+
+    /// Whether the tree lists ignored entries.
+    pub(crate) fn lists_ignored(&self) -> bool {
+        self.show_ignored
+    }
+
+    /// Lists ignored entries too, or stops, by opening the tree again.
+    pub(crate) fn set_show_ignored(&mut self, show_ignored: bool, cx: &mut Context<Self>) {
+        if self.show_ignored == show_ignored {
+            return;
         }
+        self.show_ignored = show_ignored;
+        // The new tree numbers its nodes afresh, so what the old ids named
+        // goes; a pending reveal is by path and carries over.
+        self.generation += 1;
+        self.expanded.clear();
+        self.expanding.clear();
+        self.listing.clear();
+        self.failed.clear();
+        self.selected = None;
+        self.selected_hint = 0;
+        self.revealing = None;
+        self.edit = None;
+        self.start(show_ignored, cx);
+        cx.notify();
     }
 
     pub fn tree(&self) -> Option<&FileTree> {
@@ -608,10 +659,15 @@ impl ProjectPanel {
             }
             self.listing.insert(dir, self.epoch);
             let listed = cx.background_spawn(async move { listing.run() });
+            let generation = self.generation;
             cx.spawn(async move |this, cx| {
                 let listed = listed.await;
-                this.update(cx, |panel, cx| panel.listed(dir, listed, cx))
-                    .ok();
+                this.update(cx, |panel, cx| {
+                    if panel.generation == generation {
+                        panel.listed(dir, listed, cx);
+                    }
+                })
+                .ok();
             })
             .detach();
         }
@@ -855,14 +911,16 @@ impl Focusable for ProjectPanel {
     }
 }
 
-/// What the tree lists: ignored entries only if a test asks.
-fn tree_options() -> TreeOptions {
+/// Whether new trees list ignored entries: unless `tree.show_ignored` is
+/// off in the app's settings. Tests with no settings global list them only
+/// if they ask.
+pub(crate) fn show_ignored(cx: &App) -> bool {
+    let settings = cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>();
     #[cfg(test)]
-    return TreeOptions {
-        show_ignored: tests::SHOW_IGNORED.get(),
-    };
+    let default = tests::SHOW_IGNORED.get();
     #[cfg(not(test))]
-    TreeOptions::default()
+    let default = true;
+    settings.map_or(default, |global| global.settings().tree.show_ignored)
 }
 
 /// Which status a folder holding several shows: the highest.
@@ -1085,3 +1143,7 @@ mod hover_tests;
 #[cfg(test)]
 #[path = "project_panel_git_status_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "project_ignored_tests.rs"]
+mod ignored_tests;

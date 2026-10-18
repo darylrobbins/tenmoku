@@ -44,6 +44,25 @@ pub struct Settings {
     /// The terminal panel.
     #[serde(default)]
     pub terminal: TerminalSettings,
+    /// The project tree.
+    #[serde(default)]
+    pub tree: TreeSettings,
+}
+
+/// Settings for the project tree.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TreeSettings {
+    /// List entries that `.gitignore` and `.ignore` files match (`target`,
+    /// `.idea`), greyed. Off hides them. `.git` is never listed. Applies to
+    /// trees opened after it changes.
+    pub show_ignored: bool,
+}
+
+impl Default for TreeSettings {
+    fn default() -> Self {
+        Self { show_ignored: true }
+    }
 }
 
 /// Settings for the terminal panel. A project file may set all but the
