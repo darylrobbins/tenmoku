@@ -68,8 +68,9 @@ pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
 pub use workspace::{Workspace, WorkspaceEvent};
 
-// For status items, to crates that use kiln-shell without kiln-ui.
-pub use kiln_ui::{Icon, StatusFill, StatusTone};
+// For status items and tab icons, to crates that use kiln-shell without
+// kiln-ui.
+pub use kiln_ui::{Icon, StatusFill, StatusTone, file_icon};
 
 /// Sets up what the shell draws for the platform: where it has no native
 /// alerts, `window.prompt` shows kiln-ui's in-window prompt, themed and

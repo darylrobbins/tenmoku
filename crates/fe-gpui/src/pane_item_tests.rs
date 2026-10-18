@@ -39,7 +39,7 @@ fn titles_and_dirty_state(cx: &mut TestAppContext) {
         assert_eq!(item.window_title(cx), "main.rs — fastedit");
         assert!(!item.is_dirty(cx));
         assert_eq!(item.path(cx), Some(path.clone()));
-        assert_eq!(item.tab_icon(cx), None, "the tab draws none");
+        assert_eq!(item.tab_icon(cx), Some(kiln_shell::Icon::FileCode));
     });
 
     view.update(cx, |view, cx| {
@@ -73,6 +73,7 @@ fn an_untitled_buffer(cx: &mut TestAppContext) {
     let item: Box<dyn ItemHandle> = Box::new(view);
     cx.update(|_, cx| {
         assert_eq!(item.tab_title(cx), "untitled");
+        assert_eq!(item.tab_icon(cx), Some(kiln_shell::Icon::File));
         assert_eq!(item.path(cx), None);
         assert_eq!(item.serialize(cx), None, "left out of a saved layout");
     });

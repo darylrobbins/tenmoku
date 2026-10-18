@@ -30,7 +30,7 @@ use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global,
     Hsla, PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, WindowId,
 };
-use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
+use kiln_shell::{CloseAnswer, Icon, PaneItem, StatusItem, StatusSide, file_icon};
 
 use crate::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunCommand};
 
@@ -745,6 +745,12 @@ impl PaneItem for EditorView {
 
     fn tab_title(&self, _: &App) -> SharedString {
         file_name(self.model.path()).into()
+    }
+
+    /// Its file's icon in the project tree; an untitled buffer's is a
+    /// plain file's.
+    fn tab_icon(&self, cx: &App) -> Option<Icon> {
+        Some(file_icon(&self.tab_title(cx)))
     }
 
     fn tab_title_color(&self, _: &App) -> Option<Hsla> {

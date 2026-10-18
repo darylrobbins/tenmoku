@@ -4,10 +4,10 @@ use gpui::{
     App, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
 
@@ -92,11 +92,14 @@ impl RenderOnce for TabBar {
     }
 }
 
-/// One tab: its label and, muted, its description, then a dot if it has
-/// unsaved changes or else a close button.
+/// One tab: its icon, its label and, muted, its description, then a dot
+/// if it has unsaved changes or else a close button. An inactive tab's
+/// close button shows only while the pointer is over the tab, as VS Code's
+/// does; its dirty dot always shows.
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
+    icon: Option<Icon>,
     label: SharedString,
     description: Option<SharedString>,
     label_color: Option<Hsla>,
@@ -113,6 +116,7 @@ impl Tab {
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
+            icon: None,
             label: label.into(),
             description: None,
             label_color: None,
@@ -122,6 +126,18 @@ impl Tab {
             on_close: None,
             drag: Vec::new(),
         }
+    }
+
+    /// Drawn before the label, in the theme's file icon colour: a file
+    /// tab's file-type icon, say.
+    pub fn icon(mut self, icon: Option<Icon>) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    /// The icon drawn before the label, if any.
+    pub fn icon_kind(&self) -> Option<Icon> {
+        self.icon
     }
 
     /// Drawn after the label, at its size in the theme's muted text colour:
@@ -225,11 +241,17 @@ fn tab_label_color(active: bool, tint: Option<Hsla>, cx: &App) -> Hsla {
     })
 }
 
+/// The group an inactive tab's close button shows on hovering.
+const TAB_GROUP: &str = "kiln-tab";
+
 impl RenderOnce for Tab {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let title_color = self.title_color(cx);
         let colors = &cx.theme().colors;
         let (hover, muted) = (colors.list.row_hover, colors.text.muted);
+        let label = self.label.clone();
+        // Hidden, it keeps its place, so the tab doesn't change width.
+        let hidden_at_rest = !self.active && !self.dirty;
         let close = div()
             .id("close")
             .size(px(14.))
@@ -239,11 +261,26 @@ impl RenderOnce for Tab {
             .justify_center()
             .rounded_sm()
             .hover(move |style| style.bg(hover))
+            .when(hidden_at_rest, |close| {
+                close
+                    .invisible()
+                    .group_hover(TAB_GROUP, |style| style.visible())
+            })
             .map(|close| {
                 if self.dirty {
-                    close.child(div().size(px(6.)).rounded_full().bg(colors.state.dirty))
+                    close.child(
+                        div()
+                            .size(px(6.))
+                            .rounded_full()
+                            .bg(colors.state.dirty)
+                            .debug_selector(|| format!("tab-dirty:{label}")),
+                    )
                 } else {
-                    close.text_color(muted).child("×")
+                    close.text_color(muted).child(
+                        div()
+                            .child("×")
+                            .debug_selector(|| format!("tab-close:{label}")),
+                    )
                 }
             })
             .when_some(self.on_close, |close, on_close| {
@@ -254,6 +291,7 @@ impl RenderOnce for Tab {
             });
         div()
             .id(self.id)
+            .group(TAB_GROUP)
             .flex()
             .flex_none()
             .h_full()
@@ -269,6 +307,16 @@ impl RenderOnce for Tab {
                 } else {
                     tab.bg(colors.tab.inactive)
                 }
+            })
+            .when_some(self.icon, |tab, icon| {
+                tab.child(
+                    svg()
+                        .path(icon.path())
+                        .size(px(14.))
+                        .flex_none()
+                        .text_color(colors.list.icon)
+                        .debug_selector(|| format!("tab-icon:{}:{}", self.label, icon.name())),
+                )
             })
             .child(
                 div()

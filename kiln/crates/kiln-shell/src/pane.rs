@@ -501,8 +501,9 @@ impl<V: PaneView> PaneState<V> {
     }
 
     /// A tab per item as drawn, but for its click, close, drag and drop
-    /// handlers: its title, title colour and dirty dot from the item, and
-    /// whether it is the active one. Tabs that share a title are described
+    /// handlers: its icon, title, title colour and dirty dot from the item,
+    /// and whether it is the active one, which shows its close button while
+    /// the others show theirs only on hovering. Tabs that share a title are described
     /// by their [`PaneItem::tab_path`](crate::PaneItem::tab_path)s'
     /// folders ([`tab_descriptions`]).
     pub fn tabs(&self, cx: &App) -> Vec<kiln_ui::Tab> {
@@ -513,6 +514,7 @@ impl<V: PaneView> PaneState<V> {
         (self.items.iter().zip(titles).zip(descriptions).enumerate())
             .map(|(ix, ((item, title), description))| {
                 kiln_ui::Tab::new(("tab", ix), title, &ui)
+                    .icon(item.tab_icon(cx))
                     .description(description)
                     .label_color(item.tab_title_color(cx))
                     .dirty(item.is_dirty(cx))
@@ -911,8 +913,8 @@ impl Render for ItemPane {
 /// that no other path among them ends its folders with, comparing whole
 /// components (`src` and `tests` for `x/src/ex.rs` and `x/src/tests/ex.rs`).
 /// A path whose folders run out first is described by its whole parent.
-/// A tab with a title of its own, no path, or the only path among its
-/// title's (two views of one file, say) has none.
+/// A tab with a title of its own, no path, or a path another tab with its
+/// title shares (two views of one file, say) has none.
 fn tab_descriptions(
     titles: &[SharedString],
     paths: &[Option<PathBuf>],
@@ -926,15 +928,14 @@ fn tab_descriptions(
             })
             .collect()
     };
-    (titles.iter().zip(paths))
-        .map(|(title, path)| {
+    (titles.iter().zip(paths).enumerate())
+        .map(|(ix, (title, path))| {
             let path = path.as_deref()?;
-            let others: Vec<&Path> = (titles.iter().zip(paths))
-                .filter(|(other, _)| *other == title)
-                .filter_map(|(_, other)| other.as_deref())
-                .filter(|other| *other != path)
+            let others: Vec<&Path> = (titles.iter().zip(paths).enumerate())
+                .filter(|&(other_ix, (other, _))| other_ix != ix && other == title)
+                .filter_map(|(_, (_, other))| other.as_deref())
                 .collect();
-            if others.is_empty() {
+            if others.is_empty() || others.contains(&path) {
                 return None;
             }
             let own = folders(path);
@@ -950,4 +951,39 @@ fn tab_descriptions(
             (!description.is_empty()).then(|| description.into())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use gpui::SharedString;
+
+    use super::tab_descriptions;
+
+    /// Each path's file name as its title, and the descriptions for them.
+    fn described(paths: &[&str]) -> Vec<Option<String>> {
+        let paths: Vec<_> = paths.iter().map(|path| Some(PathBuf::from(path))).collect();
+        let titles: Vec<SharedString> = (paths.iter().flatten())
+            .map(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+                    .into()
+            })
+            .collect();
+        (tab_descriptions(&titles, &paths).into_iter())
+            .map(|description| description.map(String::from))
+            .collect()
+    }
+
+    #[test]
+    fn two_views_of_a_file_beside_a_namesake() {
+        assert_eq!(
+            described(&["a/src/y.rs", "a/src/y.rs", "b/src/y.rs"]),
+            [None, None, Some("b/src".into())],
+            "the twins share a path, so none tells them apart"
+        );
+    }
 }
