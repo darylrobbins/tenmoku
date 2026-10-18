@@ -1,7 +1,6 @@
 # AI chat: a built-in Claude chat panel, its crates, provider, HTTP client, key storage, context, caching and privacy
 
-Status: **proposed.** The user signs it off before any ai-chat build card
-(T962-T973) is readied. Researched 2026-10-18 against fastedit `79955bef`.
+Status: **accepted**, signed off by the user 2026-10-18. Researched 2026-10-18 against fastedit `79955bef`.
 Source card T961.
 
 This record sets policy: what leaves the machine, where code and chats are
@@ -36,8 +35,8 @@ decisions changed. What moved:
   Markdown replies (card 9) wait for them, and the claim that the preview
   "blocks remote images" can't be checked here.
 - T839's plugin decision is at the base:
-  `docs/decisions/vmtnmkay62-extensions-and-plugins.md`, itself still
-  **proposed**. § 9 and § 7 are reconciled with it (capability strings,
+  `docs/decisions/vmtnmkay62-extensions-and-plugins.md`, itself not yet
+  signed off. § 9 and § 7 are reconciled with it (capability strings,
   `net:<host>` enforcement, per-plugin secrets, `Actor::Host`); the code has no
   `Grants`, `Capability` or capability string yet, so `kiln-command`'s
   `capability.rs` is new.
@@ -49,8 +48,8 @@ decisions changed. What moved:
   runtime); the draft's "tokio isn't in our normal graph" is true of the graph
   today on macOS, not after hyper. Reqwest's rejection stands on the runtime.
 - `Actor::Ai` holds `String`s and `Origin::Ai` holds `Arc<str>`s.
-- The keychain service `dev.fastedit.fastedit.chat` builds on the app id that
-  exists: `crates/fe-config/src/paths.rs:18` (`app_id()`) returns
+- The keychain service builds on the app id that exists:
+  `crates/fe-config/src/paths.rs:18` (`app_id()`) returns
   `AppId::new("dev.fastedit.fastedit", "fastedit", "fastedit")`. An earlier
   draft of this record said no app id was defined; that was wrong.
 
@@ -275,10 +274,11 @@ shows `webpki-root-certs` in none of the macOS, Linux or Windows targets'
 normal graphs: the verifier's manifest depends on it only for `wasm32`
 (and as a dev-dependency), and cargo deny walks every target, so it isn't
 linked into any build we ship. It is still in the graph
-`cargo deny` checks, so adding the dependency as is would fail CI. **That is
-not decided here; it's open question 1.** No `CDLA-Permissive-2.0` allowance
-is added by this record. The rejected `webpki-roots` is the same licence, which
-is why it was rejected; the same ruling covers both.
+`cargo deny` checks, so adding the dependency as is would fail CI. **Decided
+(Decisions, 1):** `deny.toml` gets an `exceptions` entry for
+`webpki-root-certs` only (`CDLA-Permissive-2.0`), made by card 4; the global
+allow list and `[graph]` are unchanged. The rejected `webpki-roots` is the same
+licence, which is why it was rejected; the exception does not cover it.
 
 With those declarations the scratch run's macOS tree contained ring and no
 aws-lc-rs, and no C build step in the
@@ -296,10 +296,10 @@ one native step, and is the same as any rustls+ring use). Proxies
   feature, which builds libdbus, AFL/GPL), and `MemoryStore` for tests. It's
   kiln's because T839's decision 5 needs per-plugin host-held secrets too. Each store is
   a target-gated dependency.
-- The chat's key: service `dev.fastedit.fastedit.chat`, account
-  `anthropic-api-key` (the app id of `crates/fe-config/src/paths.rs:18` plus
-  `.chat`: the chat's own namespace, as a plugin's secrets would be, keyed by
-  its id as T839 decision 5 has it). Resolution: `ANTHROPIC_API_KEY`
+- The chat's key: service `dev.fastedit.fastedit` (the app id of
+  `crates/fe-config/src/paths.rs:18`), account `chat.anthropic`. Each key has
+  its own account name; extension secrets share the service with their own
+  accounts (T839 decision 5). Resolution: `ANTHROPIC_API_KEY`
   from the environment if set (development; the panel says the key comes from
   the environment), else the keychain. Never in settings, logs or chat files;
   an `ApiKey` type whose `Debug` is redacted. Commands set and clear it (§ 16, card 11).
@@ -358,7 +358,7 @@ recorded and replayable.
   - **Environment.** T839 gives plugins no app environment. The chat reads
     `ANTHROPIC_API_KEY` (§ 7) as a first-party exception, for development only.
   v1 has no `buffer.write`: an edit is a proposal the user accepts. T839 is
-  still proposed, so the strings may change with its sign-off; the grants card
+  not yet signed off, so the strings may change with its sign-off; the grants card
   follows it.
 
 ## 10. Privacy
@@ -373,7 +373,7 @@ recorded and replayable.
   are kept (§ 11); dismissed once, remembered in the state dir.
 - **Untrusted folders**: only what the user explicitly attaches is sent (files
   and selections added by hand); nothing is attached automatically (open
-  editors, diagnostics). Trust is the workbench's existing folder trust
+  editors, diagnostics). Chats there are memory-only (§ 11). Trust is the workbench's existing folder trust
   (`crates/fe-workbench/src/trust.rs`).
 - @file refuses, and its picker leaves out, the built-in deny list (`.git/`,
   `.env*`, `*.pem`, `*.key`, `id_*`, credentials files and the like), anything
@@ -389,6 +389,11 @@ panel reopens the last chat of the folder and lists earlier ones, newest
 first, titled by their first user line. Kept until the user deletes them, one
 chat or all of a folder's (`chat.delete`). A file that doesn't parse is
 skipped with a warning, never deleted.
+
+**Untrusted folders: memory-only.** A chat in a folder the user marked
+untrusted is never written to disk and is gone when the window closes. The
+History list there shows only that window's in-memory chats, and lists nothing
+from disk. Trusted folders keep chats on disk as above.
 
 ## 12. Settings
 
@@ -454,17 +459,20 @@ UI tests use GPUI's test platform; the reply rendering has macOS screenshot gold
 In order (each depends on this record):
 
 1. fe-chat: conversation, provider trait, request assembly, scripted provider.
-2. kiln: capability grants and the keychain secret store.
+2. kiln: capability grants and the keychain secret store (follows this record
+   and T839's strings as written; does not wait for T839's sign-off).
 3. fe-chat-anthropic: SSE parser, wire format, provider with retries, fixtures.
-4. fe-net: the HTTPS client, its allowlist, and the provider's transport.
+4. fe-net: the HTTPS client, its allowlist, and the provider's transport; adds
+   the `deny.toml` exception for `webpki-root-certs` (Decisions, 1).
 5. `[chat]` settings.
 6. fe-chat-view: the chat view with plain-text replies.
 7. The workbench's chat panel, wired to the provider, settings and key.
 8. Context gathering and its budget.
-9. Markdown replies (after T846 and T847, which are not at the base), with goldens.
+9. Markdown replies, with goldens. Depends on T846 and T847 (not at the base);
+   held until both land.
 10. Code blocks applied as proposals.
 11. Commands, keys and menus, and the key prompt.
-12. Chats kept per folder.
+12. Chats kept per folder (memory-only in untrusted folders).
 
 ## 17. Out of scope (v1)
 
@@ -491,36 +499,29 @@ beyond the context meter.
    files and the like) **plus a `chat.exclude` glob setting** (user and workspace).
 7. **Prompt cache TTL: 5 minutes** (the default).
 
-## Open questions for the user
+## Decisions (user sign-off, 2026-10-18)
 
-Sign this record off, or say what to change, before any build card (T962-T973)
-is readied.
+The user answered the six questions the record ended with, which signs it off.
 
-1. **A licence `deny.toml` lacks: `CDLA-Permissive-2.0`.**
-   `rustls-platform-verifier` 0.6.2 depends on `webpki-root-certs` 1.0.9,
-   which has that licence, and `cargo deny check licenses` fails on it. It is
-   not linked into macOS, Linux or Windows builds. Options: (a) allow
-   `CDLA-Permissive-2.0` for that one crate with an `exceptions` entry, as
-   `dwrote` has for MPL-2.0; (b) limit `deny.toml`'s `[graph]` to the targets
-   we ship (macOS, Linux, Windows), which drops the wasm32-only dependency
-   but changes what every other check covers (not run; it would need its own
-   `cargo deny` pass); (c) drop the platform verifier for a different
-   certificate source. Nothing is chosen. Card 4 can't land until this is answered.
-2. **T839 isn't signed off.** § 9 follows its capability strings, its `net:`
-   enforcement and its secrets rule, and departs from it in four marked places
-   (`Actor::Ai` rather than `Actor::Host`, no redirects, the first-open notice
-   as the combination warning, the environment-key exception). Is that
-   reconciliation right, and should the grants card (card 2) wait for T839's
-   sign-off or follow it as written?
-3. **The keychain service** is `dev.fastedit.fastedit.chat`, from the existing
-   app id. It can't change later without losing stored keys; is the `.chat`
-   suffix what you want, or should the key live under the bare app id?
-4. **Markdown replies depend on T846 and T847.** They aren't at the base. OK to
-   ship cards 6-8 with plain-text replies and hold card 9 for them?
-5. **Server-side fallback sends a declined request to another model.** Decided
-   on by default (answer 4 above); confirm the first-open notice's wording is
-   enough disclosure, since this is what leaves the machine beyond what the
-   user chose.
-6. **Chat files hold code in plain text** under the state dir (0600). Decided
-   as kept until deleted; is that acceptable for folders the user marks
-   untrusted, or should those chats be kept in memory only?
+1. **Licence.** `deny.toml` gets an `exceptions` entry for `webpki-root-certs`
+   only (`{ allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" }`,
+   with a comment that `rustls-platform-verifier` pulls it in for wasm32 only
+   and it is not linked into any build we ship), as `dwrote` has for MPL-2.0.
+   `CDLA-Permissive-2.0` is not added to the global allow list, and `[graph]`
+   is unchanged. The HTTP client card (card 4) makes the edit.
+2. **T839 reconciliation.** Accepted: § 9 stands with its four marked
+   departures from T839; the grants card (card 2) follows this record as
+   written and does not wait for T839's sign-off.
+3. **Keychain.** The service is the bare app id, `dev.fastedit.fastedit`; each
+   key has its own account name, the chat's being `chat.anthropic`. This is the
+   general secret store's convention (T963), so extension secrets share the
+   service with their own accounts.
+4. **Markdown.** Cards 6-8 (view, panel, context) ship with plain-text
+   replies; card 9 (Markdown rendering) depends on T846 and T847 and is held
+   until both land.
+5. **Server-side fallback** is on by default; the first-open notice (§ 10) is
+   enough disclosure.
+6. **Untrusted folders.** Chats in a folder the user marked untrusted are
+   memory-only: never written to disk, gone when the window closes (and not
+   listed from disk). Trusted folders keep chats on disk (files 0600,
+   directories 0700) until deleted.
