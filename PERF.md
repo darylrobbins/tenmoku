@@ -83,7 +83,7 @@ which is enough for these targets.
 | Memory ≤ 1.5× file size (the text only), plus a syntax tree of ≤ 300 MB | Text: a 100 MB file costs 1.46–1.47×, 33 MB 1.45–1.48×, over an empty editor at file shown (footprint and resident). The read peaks no higher. Tree: each language's parse limit is set so its typical tree stays under 300 MB (see [tree memory](#tree-memory)). Measured before the limits, at the old 16 MB limit: a highlighted 16 MB Rust file cost 630 MB more than the same file unhighlighted (~39×) | ✅ text; tree capped per language, not re-measured |
 | Scrolling holds 120 fps | Smooth scrolling: 120 fps on every file, 0–1 missed vsyncs in 600 frames. Jump scrolling: 119–120 fps, but a highlighted 16 MB file spends 6.5 ms p50 in prepaint and misses 14 vsyncs | ✅, little headroom when highlighted |
 | Idle CPU near zero | 0.8–0.95% of a core, no frames painted | ✅ |
-| UI never blocks on a parse | A frame tries at most 1 ms of reparse, then moves it to a background thread | ✅ by design; see reparse below |
+| UI never blocks on a parse | A frame tries at most 1 ms of reparse, then moves it to a background thread | Per-frame driver time at 120 Hz while a parse really runs: ✅ 20 MiB, ❌ 7 MiB (max 394 ms to 1.25 s in the frame a parse lands); see [typing during a background parse](#typing-during-a-background-parse-cargo-bench--p-fe-syntax---bench-driver) | ⚠️ |
 
 Every 1M-line file tried is over every language's parse limit (a global
 16 MB when measured), so the 1M-line runs are unhighlighted. The largest
@@ -624,6 +624,51 @@ file), so it isn't our wrapper. Above roughly 0.5 MB of Rust, a reparse never
 fits the view's 1 ms synchronous budget: each keystroke spends that 1 ms and
 then reparses in the background, and colours lag the text by the reparse
 time.
+
+### Typing during a background parse (`cargo bench -p fe-syntax --bench driver`)
+
+The UI thread's `SyntaxDriver` time per frame while a parse really runs on
+another thread, which the keystroke bench's `type/during-parse` can't show
+(see [Typing latency](#typing-latency-cargo-bench--p-fe-gpui---bench-keystroke)).
+The main thread plays the UI thread at 120 Hz for 600 frames (8.33 ms each,
+about 5 s) per case. Each frame types one letter inside a random word, then
+times `sync` (1 ms budget, as the view's `SYNC_PARSE_BUDGET`), `finish` for a
+`Parsed` waiting on the channel, and `sync` again if one landed. Parse jobs run
+on a `std::thread`. `rust/7 MiB` is generated Rust just under the 7.5 MiB parse
+limit, so every reparse goes to the background; `rust/20 MiB` is over it, so
+windows are parsed around a viewport that moves 60 rows every 10 frames;
+`rust/10k lines` is the in-frame control.
+
+| Case | Frames | Parse running at frame start | Parses landed | Ticks skipped | p50 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| rust/10k lines | 600 | 474 | 56 | 139 | 0.015 ms | 48.403 ms | 123.552 ms |
+| rust/7 MiB | 600 | 592 | 3 | 121 | 0.015 ms | 0.031 ms | **395.145 ms** |
+| rust/20 MiB | 600 | **33** | 566 | 0 | 0.624 ms | 1.314 ms | 2.424 ms |
+
+"Running at frame start" counts a worker thread still inside `ParseJob::run`
+when the frame begins, before it types; a result waiting on the channel does
+not count. A frame that overruns skips the ticks it missed (the "ticks
+skipped" column) instead of replaying them, so the 600 frames are real frames.
+
+Intel Xeon E-2386G (12 threads), Linux, release build, base commit c2fdf38a
+plus the new bench, 2026-10-18. The machine was busy: load average 50 on 12
+threads. Other runs of the same bench moved p99 and max (20 MiB: p99 1.2–3.6
+ms, max 3.3–7.9 ms; the 7 MiB max 394 ms to 1.25 s), so read the table to its
+order of magnitude.
+
+**Budgets: p99 <= 2 ms and max <= 8 ms, with a parse in flight in half the
+frames.** The running condition (at least half the frames) holds for `rust/7 MiB`: 592 of 600. `rust/20 MiB` has no minimum: it measures the windowed path, where a parse rarely overlaps a frame start (a window is 32 KiB and parses in about 1 ms; 33 of 600 frames here), so its budget results say little about concurrency.
+`rust/20 MiB` is within both budgets, with little concurrency behind it. `rust/7 MiB` meets p99 (0.017 ms: only the landing frame is slow) and
+**misses max by over 100 times**. The frame a whole-file parse lands spends all of
+its time in `finish`, in `Syntax::finish`: `tree.edit` of the landed tree
+forward over the keystrokes typed meanwhile takes about 400 ms or more (the first edit
+of a fresh tree), and then replacing `self.tree` drops the old 7 MiB tree for
+150–215 ms. `sync` is 10–20 µs in those frames. The 10k-line control shows the
+same shape at a smaller size: `finish` is 14–28 ms per landed parse (more under load), nearly all
+`tree.edit`, which is why its p99 is tens of ms; those frames are not budgeted
+(the parse of a small file is meant to fit in the frame) but the file is no
+larger than a common source file. Decision and follow-up:
+[docs/decisions/finish-landed-tree.md](docs/decisions/finish-landed-tree.md).
 
 ## Flat files (`cargo bench -p fe-syntax --bench flat`)
 

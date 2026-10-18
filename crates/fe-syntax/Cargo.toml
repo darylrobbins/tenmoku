@@ -120,5 +120,9 @@ harness = false
 name = "tree_ratio"
 harness = false
 
+[[bench]]
+name = "driver"
+harness = false
+
 [lints]
 workspace = true
