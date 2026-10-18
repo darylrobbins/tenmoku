@@ -8,7 +8,10 @@
 //!   the request's version. An item with neither inserts its `insertText`,
 //!   or else its `label`, over the word before the offset (letters, digits
 //!   and `_`), as the protocol leaves to the client. Snippets aren't
-//!   advertised (`snippetSupport: false`), so text is inserted as it is.
+//!   advertised (`snippetSupport: false`), but a server may send them anyway:
+//!   an item whose `insertTextFormat` is a snippet is inserted as its plain
+//!   text, without tabstops, until snippet support lands. Other text is
+//!   inserted as it is.
 //! - **Resolve.** Only `documentation`, `detail` and `additionalTextEdits`
 //!   are resolved (`resolveSupport`), only from a server with a
 //!   `resolveProvider`, and only by the session that gave the item, while
@@ -30,7 +33,7 @@ use futures::FutureExt;
 use lsp_types::request::{Completion, ResolveCompletionItem};
 use lsp_types::{
     CompletionContext, CompletionItemKind, CompletionParams, CompletionResponse,
-    CompletionTextEdit, CompletionTriggerKind, Documentation, MarkupContent,
+    CompletionTextEdit, CompletionTriggerKind, Documentation, InsertTextFormat, MarkupContent,
 };
 
 use crate::document::Admitted;
@@ -268,18 +271,26 @@ fn convert(
     let range = |range: lsp_types::Range| decoded.range(range);
     let items = (items.into_iter())
         .map(|item| {
+            let snippet = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
+            let plain = |source: &str| {
+                if snippet {
+                    plain_snippet(source)
+                } else {
+                    source.to_string()
+                }
+            };
             let edit = match &item.text_edit {
                 Some(CompletionTextEdit::Edit(edit)) => CompletionEdit {
                     range: range(edit.range),
-                    text: edit.new_text.clone(),
+                    text: plain(&edit.new_text),
                 },
                 Some(CompletionTextEdit::InsertAndReplace(edit)) => CompletionEdit {
                     range: range(edit.insert),
-                    text: edit.new_text.clone(),
+                    text: plain(&edit.new_text),
                 },
                 None => CompletionEdit {
                     range: word.clone(),
-                    text: (item.insert_text.clone()).unwrap_or_else(|| item.label.clone()),
+                    text: plain(item.insert_text.as_deref().unwrap_or(&item.label)),
                 },
             };
             let additional_edits =
@@ -306,6 +317,149 @@ fn convert(
     Completions {
         items,
         is_incomplete,
+    }
+}
+
+/// The text a snippet expands to, without tabstops, by the LSP snippet
+/// grammar: tabstops and variables vanish, placeholders and variable
+/// defaults give their text, a choice its first option, and `\$`, `\}`
+/// and `\\` their second character. Malformed syntax stays as written.
+///
+/// Stopgap: T857 replaces it, handing the source to fe-editor's snippet
+/// engine instead once `snippetSupport` is on.
+fn plain_snippet(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::new();
+    expand_snippet(&chars, &mut 0, 0, &mut out);
+    out
+}
+
+/// How deep placeholders may nest before the rest stays literal, so a
+/// server can't overflow the stack.
+const MAX_SNIPPET_DEPTH: usize = 32;
+
+/// Expands `s` from `*at` into `out`, up to the end or, when `depth` is
+/// above 0, the `}` that closes a placeholder (consumed, and true). False
+/// if nested and unclosed, or malformed: the rest from the failing `$` is
+/// then kept literally.
+fn expand_snippet(s: &[char], at: &mut usize, depth: usize, out: &mut String) -> bool {
+    let nested = depth > 0;
+    while let Some(&c) = s.get(*at) {
+        match c {
+            '\\' => match s.get(*at + 1) {
+                Some(&next @ ('$' | '}' | '\\')) => {
+                    out.push(next);
+                    *at += 2;
+                }
+                _ => {
+                    out.push('\\');
+                    *at += 1;
+                }
+            },
+            '}' if nested => {
+                *at += 1;
+                return true;
+            }
+            '$' => {
+                let mut expanded = String::new();
+                let mut next = *at;
+                if expand_dollar(s, &mut next, depth, &mut expanded) {
+                    out.push_str(&expanded);
+                    *at = next;
+                } else {
+                    out.extend(&s[*at..]);
+                    *at = s.len();
+                    return false;
+                }
+            }
+            c => {
+                out.push(c);
+                *at += 1;
+            }
+        }
+    }
+    !nested
+}
+
+/// Expands the tabstop, placeholder, choice or variable at `s[*at]`
+/// (a `$`). False if malformed.
+fn expand_dollar(s: &[char], at: &mut usize, depth: usize, out: &mut String) -> bool {
+    if depth >= MAX_SNIPPET_DEPTH {
+        return false;
+    }
+    let digits = |at: &mut usize| {
+        let start = *at;
+        while s.get(*at).is_some_and(char::is_ascii_digit) {
+            *at += 1;
+        }
+        *at > start
+    };
+    let name = |at: &mut usize| {
+        let start = *at;
+        if !s
+            .get(*at)
+            .is_some_and(|c| c.is_ascii_alphabetic() || *c == '_')
+        {
+            return false;
+        }
+        while s
+            .get(*at)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+        {
+            *at += 1;
+        }
+        *at > start
+    };
+    *at += 1;
+    if s.get(*at) != Some(&'{') {
+        return digits(at) || name(at);
+    }
+    *at += 1;
+    let is_tabstop = digits(at);
+    if !is_tabstop && !name(at) {
+        return false;
+    }
+    match s.get(*at) {
+        Some('}') => {
+            *at += 1;
+            true
+        }
+        Some(':') => {
+            *at += 1;
+            expand_snippet(s, at, depth + 1, out)
+        }
+        Some('|') if is_tabstop => {
+            *at += 1;
+            let mut first = String::new();
+            let mut in_first = true;
+            while let Some(&c) = s.get(*at) {
+                match c {
+                    '\\' if matches!(s.get(*at + 1), Some('\\' | ',' | '|')) => {
+                        if in_first {
+                            first.push(s[*at + 1]);
+                        }
+                        *at += 2;
+                    }
+                    '|' if s.get(*at + 1) == Some(&'}') => {
+                        *at += 2;
+                        out.push_str(&first);
+                        return true;
+                    }
+                    ',' => {
+                        in_first = false;
+                        *at += 1;
+                    }
+                    c => {
+                        if in_first {
+                            first.push(c);
+                        }
+                        *at += 1;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 

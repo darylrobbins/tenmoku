@@ -4,6 +4,7 @@
 //! 2 s timeouts.
 
 mod resolve_edits;
+mod snippet_guard;
 
 use std::collections::HashMap;
 use std::path::Path;
