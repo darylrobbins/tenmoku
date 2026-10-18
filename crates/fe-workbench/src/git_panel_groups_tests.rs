@@ -1274,3 +1274,7 @@ fn staged_links_to_one_file_each_have_their_own_diff(cx: &mut TestAppContext) {
 #[cfg(test)]
 #[path = "git_panel_merge_tests.rs"]
 mod merge;
+
+#[cfg(test)]
+#[path = "git_panel_merge_queue_tests.rs"]
+mod merge_queue;

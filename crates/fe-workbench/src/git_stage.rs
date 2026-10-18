@@ -94,7 +94,10 @@ use super::{
     toast::{self, Toast},
     vim_host,
 };
-use crate::git::{self, GitState};
+use crate::{
+    git::{self, GitState},
+    loader,
+};
 
 /// What deleting an untracked file adds to its question.
 const IRREVERSIBLE: &str = "This is IRREVERSIBLE! This file will be FOREVER LOST if you proceed.";
@@ -145,6 +148,40 @@ type Save = Box<dyn FnOnce(&mut App) -> Task<Option<String>>>;
 /// What a save answers, before the file's name, if its editor moved to
 /// another buffer or file before its turn came.
 const MOVED: &str = "Not saved or staged: the editor no longer edits ";
+
+/// An open editor of a file being staged, with the buffer and path it
+/// edited when checked: the save checks they're still its own.
+#[derive(Clone)]
+struct Pinned {
+    editor: Entity<EditorView>,
+    buffer: BufferId,
+    path: Option<PathBuf>,
+}
+
+/// Whether the file at `path` holds conflict markers, read as the editor
+/// reads it, in its own encoding; a file that can't be read is an answer
+/// naming it. A missing file holds none.
+fn has_markers(path: &Path) -> Result<bool, String> {
+    let read = loader::read(path.to_owned())
+        .map_err(|error| format!("Not staged: can't read {}: {error}", file_name(path)))?;
+    Ok(read.is_some_and(|buffer| {
+        !fe_git::conflict_markers::parse(&buffer.text().to_string()).is_empty()
+    }))
+}
+
+/// The files of `paths`, each through its folder's links, that hold
+/// conflict markers but aren't among `asked`; an unreadable file is an
+/// error, which the staging after it reports.
+fn unconfirmed(paths: &[PathBuf], asked: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let asked: Vec<PathBuf> = asked.iter().map(|path| git_diff::link_path(path)).collect();
+    let mut found = Vec::new();
+    for path in paths {
+        if !asked.contains(&git_diff::link_path(path)) && has_markers(path)? {
+            found.push(path.clone());
+        }
+    }
+    Ok(found)
+}
 
 /// What a save answers if its window closed before its turn came.
 const WINDOW_CLOSED: &str = "Not saved: the window closed";
@@ -351,7 +388,7 @@ impl Workbench {
             return;
         }
         let open = self.file_editors(cx);
-        let mut editors: Vec<Entity<EditorView>> = Vec::new();
+        let mut editors: Vec<Pinned> = Vec::new();
         let texts: Vec<Option<String>> = (paths.iter())
             .map(|path| {
                 let editor = open.iter().find(|editor| {
@@ -359,7 +396,12 @@ impl Workbench {
                     (view.model().path()).is_some_and(|file| git_diff::same_file(file, path))
                 });
                 if let Some(editor) = editor {
-                    editors.push(editor.clone());
+                    let model = editor.read(cx).model();
+                    editors.push(Pinned {
+                        editor: editor.clone(),
+                        buffer: model.buffer().id(),
+                        path: model.path().map(Path::to_owned),
+                    });
                 }
                 editor.map(|editor| editor.read(cx).model().buffer().text().to_string())
             })
@@ -367,22 +409,24 @@ impl Workbench {
         let read = cx.background_spawn(async move {
             let mut unresolved = Vec::new();
             for (path, text) in paths.iter().zip(texts) {
-                let text = match text {
-                    Some(text) => text,
-                    None => String::from_utf8_lossy(&std::fs::read(path).unwrap_or_default())
-                        .into_owned(),
+                let marked = match text {
+                    Some(text) => !fe_git::conflict_markers::parse(&text).is_empty(),
+                    None => has_markers(path)?,
                 };
-                if !fe_git::conflict_markers::parse(&text).is_empty() {
+                if marked {
                     unresolved.push(path.clone());
                 }
             }
-            (paths, unresolved)
+            Ok((paths, unresolved))
         });
         cx.spawn_in(window, async move |workbench, cx| {
-            let (paths, unresolved) = read.await;
+            let read: Result<_, String> = read.await;
             workbench
-                .update_in(cx, |workbench, window, cx| {
-                    workbench.confirm_stage_merge(paths, unresolved, editors, window, cx)
+                .update_in(cx, |workbench, window, cx| match read {
+                    Ok((paths, unresolved)) => {
+                        workbench.confirm_stage_merge(paths, unresolved, editors, window, cx)
+                    }
+                    Err(error) => toast::show(cx, Toast::warning(error)),
                 })
                 .ok();
         })
@@ -398,35 +442,68 @@ impl Workbench {
         &mut self,
         paths: Vec<PathBuf>,
         unresolved: Vec<PathBuf>,
-        editors: Vec<Entity<EditorView>>,
+        editors: Vec<Pinned>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let handle = window.window_handle();
-        let save = move || -> Option<Save> {
-            if editors.is_empty() {
-                return None;
-            }
+        let this = cx.weak_entity();
+        let again = paths.clone();
+        let save = move |confirmed: Vec<PathBuf>| -> Option<Save> {
             Some(Box::new(move |cx: &mut App| {
+                // Each editor must still edit the buffer and file checked,
+                // as its turn comes; if any moved, nothing is saved.
+                for pinned in &editors {
+                    let model = pinned.editor.read(cx).model();
+                    if model.buffer().id() != pinned.buffer
+                        || model.path() != pinned.path.as_deref()
+                    {
+                        let name = pinned.path.as_deref().map(file_name).unwrap_or_default();
+                        return Task::ready(Some(format!("{MOVED}{name}")));
+                    }
+                }
                 let saves: Vec<Task<Option<String>>> = (editors.iter())
-                    .map(|editor| {
+                    .map(|Pinned { editor, .. }| {
                         let saved = cx.update_window(handle, |_, window, cx| {
                             vim_host::save(editor, NO_FILE.to_owned(), window, cx)
                         });
                         saved.unwrap_or_else(|_| Task::ready(Some(WINDOW_CLOSED.to_owned())))
                     })
                     .collect();
-                cx.spawn(async move |_| {
+                let pinned = editors.clone();
+                cx.spawn(async move |cx| {
                     let mut failed = None;
                     for save in saves {
                         failed = failed.or(save.await);
                     }
-                    failed
+                    if failed.is_some() {
+                        return failed;
+                    }
+                    // Markers back since the question was asked: ask again
+                    // about them, and stage nothing now.
+                    let (paths, asked) = (again, confirmed);
+                    let found = cx
+                        .background_spawn({
+                            let (paths, asked) = (paths.clone(), asked.clone());
+                            async move { unconfirmed(&paths, &asked) }
+                        })
+                        .await;
+                    let Ok(found) = found else { return None };
+                    let name = file_name(found.first()?);
+                    let unresolved = [asked, found].concat();
+                    cx.update_window(handle, |_, window, cx| {
+                        (this.update(cx, |workbench, cx| {
+                            workbench.confirm_stage_merge(paths, unresolved, pinned, window, cx)
+                        }))
+                        .ok();
+                    })
+                    .ok();
+                    Some(format!("{name} now has merge conflicts; not staged"))
                 })
             }))
         };
         let question = match unresolved.as_slice() {
-            [] => return self.stage_checked(paths, Vec::new(), save(), cx),
+            [] => return self.stage_checked(paths, Vec::new(), save(Vec::new()), cx),
             [path] => format!(
                 "Are you sure you want to stage {} with merge conflicts?",
                 file_name(path)
@@ -447,7 +524,7 @@ impl Workbench {
             }
             workbench
                 .update(cx, |workbench, cx| {
-                    workbench.stage_checked(paths, unresolved, save(), cx)
+                    workbench.stage_checked(paths, unresolved.clone(), save(unresolved), cx)
                 })
                 .ok();
         })
@@ -474,8 +551,7 @@ impl Workbench {
                 if confirmed.contains(path) {
                     continue;
                 }
-                let text = std::fs::read(path).unwrap_or_default();
-                if !fe_git::conflict_markers::parse(&String::from_utf8_lossy(&text)).is_empty() {
+                if has_markers(path).map_err(Failed::Answer)? {
                     return Err(Failed::Answer(format!(
                         "{} now has merge conflicts; not staged",
                         file_name(path)
