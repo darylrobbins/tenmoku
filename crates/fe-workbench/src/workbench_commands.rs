@@ -5,6 +5,7 @@
 //! name it.
 
 use fe_command::ContextPredicate;
+use fe_nav::Related;
 use gpui::{App, Context, Window};
 use kiln::Cx;
 
@@ -591,6 +592,24 @@ impl Workbench {
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {
         self.nav_command(NavOp::GotoDefinition, cx);
+    }
+
+    /// Go to Declaration
+    #[command(id = "nav.goto_declaration")]
+    fn go_to_declaration(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::Related(Related::Declaration), cx);
+    }
+
+    /// Go to Type Definition
+    #[command(id = "nav.goto_type_definition")]
+    fn go_to_type_definition(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::Related(Related::TypeDefinition), cx);
+    }
+
+    /// Go to Implementations
+    #[command(id = "nav.goto_implementation")]
+    fn go_to_implementation(&mut self, cx: &mut Cx<Self>) {
+        self.nav_command(NavOp::Related(Related::Implementation), cx);
     }
 
     /// Go to Symbol in Workspace…

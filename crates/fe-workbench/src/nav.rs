@@ -36,7 +36,7 @@ use async_channel::{Receiver, Sender};
 use fe_buffer::Bias;
 use fe_nav::{
     Answer, BuildOptions, Definitions, Location, MAX_BATCH_FILES, NavError, NavRequest, Navigation,
-    Precision, SearchNavigation, SymbolIndex,
+    Precision, Related, SearchNavigation, SymbolIndex,
 };
 use fe_project::FsChange;
 use fe_ui::UiTheme;
@@ -651,7 +651,8 @@ impl Workbench {
 
     pub(crate) fn run_nav_op(&mut self, op: NavOp, window: &mut Window, cx: &mut Context<Self>) {
         match op {
-            NavOp::GotoDefinition => self.goto_definition(window, cx),
+            NavOp::GotoDefinition => self.goto_definition(None, window, cx),
+            NavOp::Related(kind) => self.goto_definition(Some(kind), window, cx),
             NavOp::WorkspaceSymbols => self.toggle_symbols(window, cx),
             NavOp::Back | NavOp::Forward => {
                 // A go-to-definition still running would jump from elsewhere.
@@ -675,7 +676,14 @@ impl Workbench {
         }
     }
 
-    fn goto_definition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Go to definition, or to the declaration, type definition or
+    /// implementations `related` names.
+    fn goto_definition(
+        &mut self,
+        related: Option<Related>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.nav_state.root.is_none() {
             return self.show_definitions(Vec::new(), "No folder open".into(), window, cx);
         }
@@ -687,13 +695,19 @@ impl Workbench {
         let from = self.caret_place(cx);
         self.run_nav(
             |nav| &mut nav.goto,
-            move |navigation, cancel| navigation.definitions(&request, cancel),
+            move |navigation, cancel| {
+                let answer = match related {
+                    Some(kind) => navigation.related(kind, &request, cancel),
+                    None => navigation.definitions(&request, cancel),
+                };
+                (request.word(), answer)
+            },
             window,
             cx,
-            move |workbench, answer, window, cx| {
+            move |workbench, (word, answer), window, cx| {
                 // Another tab shows now: the answer is for one left.
                 if workbench.active_editor(cx).map(Entity::entity_id) == editor {
-                    workbench.definitions_landed(from, answer, window, cx);
+                    workbench.definitions_landed(from, related, word, answer, window, cx);
                 }
             },
         );
@@ -704,15 +718,32 @@ impl Workbench {
     fn definitions_landed(
         &mut self,
         from: Option<Place>,
+        related: Option<Related>,
+        word: Option<String>,
         answer: Result<Answer<Definitions>, NavError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (noun, verb) = match related {
+            None => ("definition", "definition"),
+            Some(Related::Declaration) => ("declaration", "declaration"),
+            Some(Related::TypeDefinition) => ("type definition", "type definition"),
+            Some(Related::Implementation) => ("implementation", "implementations"),
+        };
         let answer = match answer {
             Ok(answer) => answer,
             Err(NavError::Cancelled) => return,
+            // No provider has the answer: for the kinds search can't give,
+            // that is, none found.
+            Err(NavError::Unsupported) if related.is_some() => {
+                let status = match word {
+                    Some(word) => format!("No {noun} found for `{word}`"),
+                    None => "No symbol at the caret".to_owned(),
+                };
+                return self.show_definitions(Vec::new(), status, window, cx);
+            }
             Err(error) => {
-                let status = format!("Go to definition failed: {error}");
+                let status = format!("Go to {verb} failed: {error}");
                 return self.show_definitions(Vec::new(), status, window, cx);
             }
         };
@@ -730,12 +761,10 @@ impl Workbench {
         let status = match (word, items.len()) {
             (None, _) => format!("No symbol at the caret{by}"),
             (Some(word), 0) if partial => {
-                format!(
-                    "No definition found for `{word}` yet: the project is still being indexed{by}"
-                )
+                format!("No {noun} found for `{word}` yet: the project is still being indexed{by}")
             }
-            (Some(word), 0) => format!("No definition found for `{word}`{by}"),
-            (Some(word), count) => format!("{count} definitions of `{word}`{by}"),
+            (Some(word), 0) => format!("No {noun} found for `{word}`{by}"),
+            (Some(word), count) => format!("{count} {noun}s of `{word}`{by}"),
         };
         self.show_definitions(items, status, window, cx);
     }
@@ -784,6 +813,7 @@ impl Workbench {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NavOp {
     GotoDefinition,
+    Related(Related),
     WorkspaceSymbols,
     Back,
     Forward,

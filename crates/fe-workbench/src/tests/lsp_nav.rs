@@ -6,9 +6,12 @@ use std::{fs, ops::Range, path::PathBuf};
 
 use fe_buffer::Origin;
 use fe_gpui::EditorView;
-use fe_lsp::fake::{Record, Reply, Scripted};
+use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
 use gpui::{Entity, Focusable as _};
-use lsp_types::{LSPAny, LSPObject, Url, notification::Notification};
+use lsp_types::{
+    ImplementationProviderCapability, LSPAny, LSPObject, PositionEncodingKind,
+    TypeDefinitionProviderCapability, Url, notification::Notification,
+};
 
 use super::lsp::Lsp;
 use crate::{StatusSide, nav::SOURCE_ITEM};
@@ -250,4 +253,127 @@ fn a_jump_goes_to_the_buffer_the_server_named(cx: &mut gpui::TestAppContext) {
         at(s) == (alias.clone(), name.clone())
     });
     assert_eq!(tabs(&mut s), before, "no second buffer for the file");
+}
+
+#[gpui::test]
+fn goto_type_definition_and_implementation_jump_to_the_servers_answer(
+    cx: &mut gpui::TestAppContext,
+) {
+    let mut result = initialize_result(Some(PositionEncodingKind::UTF8));
+    result.capabilities.type_definition_provider =
+        Some(TypeDefinitionProviderCapability::Simple(true));
+    result.capabilities.implementation_provider =
+        Some(ImplementationProviderCapability::Simple(true));
+    let rust = Script {
+        initialize: InitializeReply::Result(Box::new(result)),
+        ..Script::default()
+    };
+    let mut s = Lsp::with_scripts(cx, rust, Script::default());
+    s.set_trust(true);
+    fs::write(s.path("src/main.rs"), MAIN).unwrap();
+    s.open("src/main.rs");
+    let (uri, path) = (s.uri("src/main.rs"), s.path("src/main.rs"));
+    s.fake.wait_for_document(&uri, "didOpen", |r| r.is_some());
+    let mut status = LSPObject::new();
+    status.insert("health".into(), "ok".into());
+    status.insert("quiescent".into(), true.into());
+    s.fake
+        .notify::<ServerStatusNotification>(LSPAny::Object(status));
+    s.wait_item(None);
+
+    // One answer: a jump, to `main`.
+    s.fake.set_reply(
+        "textDocument/typeDefinition",
+        Scripted::now(Reply::Result(LSPAny::Array(vec![location(&uri, 2, 3..7)]))),
+    );
+    caret_on_call(&mut s);
+    s.workbench.update_in(&mut s.cx, |w, window, cx| {
+        w.run_nav_op(
+            crate::nav::NavOp::Related(fe_nav::Related::TypeDefinition),
+            window,
+            cx,
+        )
+    });
+    let main = bytes_of(MAIN, "main");
+    s.until("the type definition's jump", |s| {
+        at(s) == (path.clone(), main.clone())
+    });
+    assert_eq!(asked(&s, "textDocument/typeDefinition"), 1);
+
+    // Two: listed.
+    s.fake.set_reply(
+        "textDocument/implementation",
+        Scripted::now(Reply::Result(LSPAny::Array(vec![
+            location(&uri, 0, 3..9),
+            location(&uri, 2, 3..7),
+        ]))),
+    );
+    caret_on_call(&mut s);
+    s.workbench.update_in(&mut s.cx, |w, window, cx| {
+        w.run_nav_op(
+            crate::nav::NavOp::Related(fe_nav::Related::Implementation),
+            window,
+            cx,
+        )
+    });
+    s.until("both implementations", |s| {
+        s.workbench.read_with(&s.cx, |w, cx| {
+            w.nav_state.definitions.read(cx).delegate.items().len() == 2
+        })
+    });
+    assert_eq!(asked(&s, "textDocument/implementation"), 1);
+    // Both items, by file and range.
+    let items = s.workbench.read_with(&s.cx, |w, cx| {
+        let picker = w.nav_state.definitions.read(cx);
+        (picker.delegate.items().iter())
+            .map(|item| (item.location.rel.clone(), item.location.range.clone()))
+            .collect::<Vec<_>>()
+    });
+    let rel = PathBuf::from("src/main.rs");
+    assert_eq!(
+        items,
+        [
+            (rel.clone(), bytes_of(MAIN, "helper")),
+            (rel, bytes_of(MAIN, "main")),
+        ]
+    );
+
+    // Each request named the file and the caret.
+    let column = "    helper();".find("lper").unwrap();
+    for method in ["textDocument/typeDefinition", "textDocument/implementation"] {
+        let params = (s.fake.records().into_iter())
+            .find_map(|record| match record {
+                Record::Request {
+                    method: m, params, ..
+                } if m == method => Some(params),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(params["textDocument"]["uri"], uri.as_str(), "{method}");
+        assert_eq!(params["position"]["line"], 3, "{method}");
+        assert_eq!(params["position"]["character"], column, "{method}");
+    }
+}
+
+#[gpui::test]
+fn goto_declaration_without_a_server_says_none_found(cx: &mut gpui::TestAppContext) {
+    let mut s = Lsp::untrusted(cx);
+    fs::write(s.path("src/main.rs"), MAIN).unwrap();
+    s.open("src/main.rs");
+    caret_on_call(&mut s);
+    let before = tabs(&mut s);
+    s.workbench.update_in(&mut s.cx, |w, window, cx| {
+        w.run_nav_op(
+            crate::nav::NavOp::Related(fe_nav::Related::Declaration),
+            window,
+            cx,
+        )
+    });
+    s.until("the status", |s| {
+        s.workbench.read_with(&s.cx, |w, cx| {
+            w.nav_state.definitions.read(cx).delegate.status_text()
+                == "No declaration found for `helper`"
+        })
+    });
+    assert_eq!(tabs(&mut s), before);
 }

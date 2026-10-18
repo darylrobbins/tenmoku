@@ -490,6 +490,11 @@ command = "nav.goto_definition"
 context = "workbench && !terminal"
 
 [[bindings]]
+keys = { macos = "cmd-f12", default = "ctrl-f12" }
+command = "nav.goto_implementation"
+context = "workbench && !terminal"
+
+[[bindings]]
 keys = "secondary-t"
 command = "nav.workspace_symbols"
 context = "workbench"

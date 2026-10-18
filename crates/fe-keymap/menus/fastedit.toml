@@ -375,6 +375,18 @@ title = "Go to Definition"
 command = "nav.goto_definition"
 
 [[menus.items]]
+title = "Go to Declaration"
+command = "nav.goto_declaration"
+
+[[menus.items]]
+title = "Go to Type Definition"
+command = "nav.goto_type_definition"
+
+[[menus.items]]
+title = "Go to Implementations"
+command = "nav.goto_implementation"
+
+[[menus.items]]
 title = "Find All References"
 command = "nav.find_references"
 
