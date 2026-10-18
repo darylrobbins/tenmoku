@@ -59,7 +59,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // 75 for the editor and the app, 98 for fe-workbench (32 of them vim's
     // `<C-w>` keys), 24 for vim, 5 for the completion menu, 2 for the ghost
     // text.
-    assert_eq!(bindings.len(), 219);
+    assert_eq!(bindings.len(), 221);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);

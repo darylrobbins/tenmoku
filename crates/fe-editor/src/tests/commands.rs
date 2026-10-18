@@ -115,6 +115,10 @@ fn every_editor_command_is_registered() {
     ];
     expected.extend(rows.map(|name| format!("editor.{name}")));
     expected.push("editor.toggle_comment".to_string());
+    expected.extend([
+        "editor.expand_selection".to_string(),
+        "editor.shrink_selection".to_string(),
+    ]);
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",

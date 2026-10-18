@@ -50,6 +50,12 @@ pub trait EditorHost {
     fn comment_tokens(&self) -> Option<CommentTokens> {
         None
     }
+    /// The next larger syntax node around `range`, as
+    /// `fe_syntax::larger_syntax_node` finds it; `None` (the default) if
+    /// there is none or syntax isn't known.
+    fn larger_syntax_node(&self, _range: Range<usize>) -> Option<Range<usize>> {
+        None
+    }
     /// The (opener, closer) pairs typing an opener closes in the buffer's
     /// language; none (the default) if it isn't known.
     fn auto_pairs(&self) -> &[(char, char)] {
@@ -543,6 +549,7 @@ pub fn registry() -> Registry<Editor> {
     crate::multi_cursor::register(&mut registry);
     crate::rows::register(&mut registry);
     crate::comment::register(&mut registry);
+    crate::smart_select::register(&mut registry);
     registry
 }
 

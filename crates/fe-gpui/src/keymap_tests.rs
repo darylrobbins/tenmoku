@@ -132,6 +132,16 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("tab", "editor.tab", Some("editor")),
     ("cmd-alt-[", "editor.fold", Some("editor")),
     ("cmd-alt-]", "editor.unfold", Some("editor")),
+    (
+        "ctrl-shift-cmd-right",
+        "editor.expand_selection",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "ctrl-shift-cmd-left",
+        "editor.shrink_selection",
+        Some("editor && !vim.enabled"),
+    ),
     ("cmd-k cmd-0", "editor.fold_all", Some("editor")),
     ("cmd-k cmd-j", "editor.unfold_all", Some("editor")),
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
@@ -237,7 +247,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 219);
+    assert_eq!(bindings.len(), 221);
     assert_eq!(bindings.iter().filter(|b| is_window_key(b)).count(), 32);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");

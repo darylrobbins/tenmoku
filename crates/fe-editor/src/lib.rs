@@ -38,6 +38,7 @@ mod row_change_decorations;
 pub mod row_changes;
 mod rows;
 pub mod scripted_ai;
+mod smart_select;
 pub mod text_diff;
 mod typing;
 mod viewer;
@@ -158,6 +159,8 @@ pub struct EditorModel {
     /// The pairs typing inserted whose closers typing may still move over,
     /// by closer (see [`EditorModel::forget_auto_closed`]).
     auto_closed: Vec<pairs::AutoClosed>,
+    /// What shrinking selection steps back through (see [`smart_select`]).
+    expand_history: Option<smart_select::ExpandHistory>,
 }
 
 impl EditorModel {
@@ -198,6 +201,7 @@ impl EditorModel {
             clock: Rc::new(Instant::now),
             auto_close: true,
             auto_closed: Vec::new(),
+            expand_history: None,
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -254,6 +258,7 @@ impl EditorModel {
             clock: Rc::clone(&self.clock),
             auto_close: self.auto_close,
             auto_closed: Vec::new(),
+            expand_history: None,
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();

@@ -320,6 +320,10 @@ impl EditorHost for ViewHost<'_> {
             .unwrap_or_default()
     }
 
+    fn larger_syntax_node(&self, range: Range<usize>) -> Option<Range<usize>> {
+        fe_syntax::larger_syntax_node(self.syntax?, range)
+    }
+
     fn comment_tokens(&self) -> Option<CommentTokens> {
         let tokens = fe_syntax::comment_tokens(self.language.as_ref()?.name)?;
         Some(CommentTokens {

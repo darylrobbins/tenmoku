@@ -297,6 +297,16 @@ command = "editor.unfold"
 context = "editor"
 
 [[bindings]]
+keys = { macos = "ctrl-shift-cmd-right", default = "shift-alt-right" }
+command = "editor.expand_selection"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = { macos = "ctrl-shift-cmd-left", default = "shift-alt-left" }
+command = "editor.shrink_selection"
+context = "editor && !vim.enabled"
+
+[[bindings]]
 keys = "secondary-k secondary-0"
 command = "editor.fold_all"
 context = "editor"

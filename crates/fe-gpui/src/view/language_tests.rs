@@ -119,3 +119,6 @@ fn hosts_read_the_parsed_tree(cx: &mut TestAppContext) {
         assert_eq!(kinds, ["struct_item", "function_item"]);
     });
 }
+
+#[path = "expand_selection_tests.rs"]
+mod expand_selection;

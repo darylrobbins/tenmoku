@@ -237,6 +237,8 @@ fn refuses_edits() {
         "editor.select_all_occurrences",
         "editor.split_selection_into_lines",
         "editor.single_selection",
+        "editor.expand_selection",
+        "editor.shrink_selection",
         "editor.nonexistent",
         "find.next",
     ];
