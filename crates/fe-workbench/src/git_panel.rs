@@ -4,24 +4,28 @@
 //! working tree differs from the index, untracked files too, as `U`), each
 //! header with its count. A file staged and changed again is in both. Each
 //! row has a one-letter status, its name and its directory, sorted by path
-//! within its group; a conflicted file is only in Changes.
+//! within its group. A conflicted file is only in "Merge Changes", above
+//! both and shown only when it has rows, still lettered `C`.
 //!
 //! Clicking a row, or Enter on the selected one, opens its diff in the
 //! active pane (`git_diff`): a Staged row's HEAD ↔ Index, a Changes row's
-//! Index ↔ Working Tree. A deleted file's row is dimmed. Alt-Enter, or the
+//! Index ↔ Working Tree; a Merge row opens the file itself, whose editor
+//! has the conflicts' bands and actions. A deleted file's row is dimmed. Alt-Enter, or the
 //! row's "Open File" button, opens the file itself, which a deleted one
 //! can't.
 //!
 //! The selected row's buttons show, and any row's under the pointer, as VS
 //! Code's do: a Changes row's "Open File", "Discard Changes" and "Stage
-//! Changes", a Staged row's "Open File" and "Unstage Changes". The headers'
-//! are "Unstage All Changes" on Staged Changes, "Discard All Changes" and
-//! "Stage All Changes" on Changes. The workbench runs them (`git_stage`),
+//! Changes", a Staged row's "Open File" and "Unstage Changes", a Merge row's
+//! "Open File" and "Stage Changes" (no discard). The headers' are "Stage All
+//! Merge Changes" on Merge Changes, "Unstage All Changes" on Staged
+//! Changes, "Discard All Changes" and "Stage All Changes" on Changes. The workbench runs them (`git_stage`),
 //! asking before it discards.
 //!
 //! With vim on, the panel takes the keys of fugitive's `:Git` status
 //! window: `j` and `k` move, `s` stages the selected file, `u` unstages it,
-//! `-` stages a Changes row's or unstages a Staged row's, `X` discards it,
+//! `-` stages a Changes or Merge row or unstages a Staged row, `X` discards
+//! it (not a Merge row; `u` does nothing on one either),
 //! and `o` opens its diff as Enter does. With vim off they do nothing.
 //!
 //! The workbench's [`GitState`] reads the status of the repository
@@ -161,8 +165,10 @@ pub enum GitPanelEvent {
 }
 
 /// A group of rows, as VS Code's Source Control groups them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Group {
+    /// Conflicted files, until they're staged.
+    Merge,
     /// How the index differs from HEAD.
     Staged,
     /// How the working tree differs from the index, untracked files too.
@@ -173,6 +179,7 @@ impl Group {
     /// Its header's title.
     pub(crate) fn title(self) -> &'static str {
         match self {
+            Group::Merge => "Merge Changes",
             Group::Staged => "Staged Changes",
             Group::Changes => "Changes",
         }
@@ -278,6 +285,8 @@ impl Action {
 /// that's there.
 fn row_actions(group: Group, deleted: bool) -> &'static [Action] {
     match (group, deleted) {
+        (Group::Merge, false) => &[Action::OpenFile, Action::Stage],
+        (Group::Merge, true) => &[Action::Stage],
         (Group::Changes, false) => &[Action::OpenFile, Action::Discard, Action::Stage],
         (Group::Changes, true) => &[Action::Discard, Action::Stage],
         (Group::Staged, false) => &[Action::OpenFile, Action::Unstage],
@@ -288,6 +297,7 @@ fn row_actions(group: Group, deleted: bool) -> &'static [Action] {
 /// The buttons a header of `group` has, in order.
 fn header_actions(group: Group) -> &'static [Action] {
     match group {
+        Group::Merge => &[Action::Stage],
         Group::Changes => &[Action::Discard, Action::Stage],
         Group::Staged => &[Action::Unstage],
     }
@@ -456,8 +466,11 @@ pub struct GitPanel {
     /// The statuses `entries` were listed from, to list again once the
     /// root is located.
     listed: Vec<SplitStatus>,
-    /// The Staged group's files, then the Changes group's.
+    /// The Merge group's files, then the Staged group's, then the Changes
+    /// group's.
     entries: Vec<Entry>,
+    /// How many of `entries` are conflicted.
+    merge: usize,
     /// How many of `entries` are staged.
     staged: usize,
     /// Each listed file as the project tree shows it, sorted by path.
@@ -507,6 +520,7 @@ impl GitPanel {
             status,
             listed: Vec::new(),
             entries: Vec::new(),
+            merge: 0,
             staged: 0,
             files: Vec::new(),
             selected: None,
@@ -596,6 +610,7 @@ impl GitPanel {
     fn clear(&mut self, cx: &mut Context<Self>) {
         self.listed.clear();
         self.selected = None;
+        self.merge = 0;
         self.staged = 0;
         self.files.clear();
         if !self.entries.is_empty() {
@@ -649,7 +664,8 @@ impl GitPanel {
         };
         self.status = Status::Listed;
         let located = self.located.as_ref();
-        let (mut staged, mut changes, mut files) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut merge, mut staged, mut changes, mut files) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for status in &statuses {
             let Some(relative) = relative_to(root, located, &status.path) else {
                 continue;
@@ -664,7 +680,7 @@ impl GitPanel {
             let combined = combined(status);
             match combined {
                 Some(ChangeKind::Conflicted) => {
-                    changes.push(entry(ChangeKind::Conflicted, Group::Changes))
+                    merge.push(entry(ChangeKind::Conflicted, Group::Merge))
                 }
                 _ => {
                     staged.extend(status.staged.map(|kind| entry(kind, Group::Staged)));
@@ -679,14 +695,16 @@ impl GitPanel {
                 });
             }
         }
+        merge.sort_by(|a, b| a.relative.cmp(&b.relative));
         staged.sort_by(|a, b| a.relative.cmp(&b.relative));
         changes.sort_by(|a, b| a.relative.cmp(&b.relative));
         files.sort_by(|a, b| a.relative.cmp(&b.relative));
-        let changed = staged.len() + changes.len() != self.entries.len()
-            || (staged.iter().chain(&changes)).ne(&self.entries)
+        let changed = merge.len() + staged.len() + changes.len() != self.entries.len()
+            || (merge.iter().chain(&staged).chain(&changes)).ne(&self.entries)
             || files != self.files;
+        self.merge = merge.len();
         self.staged = staged.len();
-        self.entries = staged.into_iter().chain(changes).collect();
+        self.entries = (merge.into_iter().chain(staged).chain(changes)).collect();
         self.selected = selected.and_then(|(path, group, at)| {
             let range = self.group_range(group);
             let same = |entry: &Entry| entry.path == path;
@@ -705,9 +723,24 @@ impl GitPanel {
     /// The indices in `entries` of `group`'s files.
     fn group_range(&self, group: Group) -> Range<usize> {
         match group {
-            Group::Staged => 0..self.staged,
-            Group::Changes => self.staged..self.entries.len(),
+            Group::Merge => 0..self.merge,
+            Group::Staged => self.merge..self.merge + self.staged,
+            Group::Changes => self.merge + self.staged..self.entries.len(),
         }
+    }
+
+    /// The groups with a header, in order: Changes whenever anything is
+    /// listed, the others only with rows.
+    fn headed(&self) -> impl Iterator<Item = Group> + use<> {
+        let (merge, staged) = (self.merge > 0, self.staged > 0);
+        let any = !self.entries.is_empty();
+        [
+            (Group::Merge, merge),
+            (Group::Staged, staged),
+            (Group::Changes, any),
+        ]
+        .into_iter()
+        .filter_map(|(group, shown)| shown.then_some(group))
     }
 
     /// How many rows the list has: each file's and each group's header,
@@ -715,7 +748,7 @@ impl GitPanel {
     fn row_count(&self) -> usize {
         match self.entries.is_empty() {
             true => 0,
-            false => self.entries.len() + 1 + usize::from(self.staged > 0),
+            false => self.entries.len() + self.headed().count(),
         }
     }
 
@@ -724,20 +757,24 @@ impl GitPanel {
         if at >= self.row_count() {
             return None;
         }
-        let staged = self.staged;
-        Some(match (staged > 0, at) {
-            (true, 0) => Row::Header(Group::Staged),
-            (true, at) if at <= staged => Row::File(at - 1),
-            (true, at) if at == staged + 1 => Row::Header(Group::Changes),
-            (true, at) => Row::File(at - 2),
-            (false, 0) => Row::Header(Group::Changes),
-            (false, at) => Row::File(at - 1),
-        })
+        let mut at = at;
+        for group in self.headed() {
+            if at == 0 {
+                return Some(Row::Header(group));
+            }
+            let range = self.group_range(group);
+            if at <= range.len() {
+                return Some(Row::File(range.start + at - 1));
+            }
+            at -= range.len() + 1;
+        }
+        None
     }
 
     /// The list's row of file `ix`.
     fn row_of(&self, ix: usize) -> usize {
-        ix + 1 + usize::from(self.staged > 0 && ix >= self.staged)
+        let group = (self.entries.get(ix)).map_or(Group::Changes, |entry| entry.group);
+        ix + self.headed().take_while(|g| *g <= group).count()
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -794,6 +831,9 @@ impl GitPanel {
         // Whether it's on disk is looked at as it opens: a staged deletion
         // may have left it there.
         let (path, staged) = (entry.path.clone(), entry.group == Group::Staged);
+        if entry.group == Group::Merge {
+            return self.open_file(ix, cx);
+        }
         self.select(ix, cx);
         if let Some(workbench) = self.workbench(cx) {
             workbench.update(cx, |workbench, cx| {
@@ -825,6 +865,19 @@ impl GitPanel {
         }
     }
 
+    /// Stages the conflicted `paths`, through the workbench, which asks
+    /// first about those still holding conflict markers.
+    fn stage_merge(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(workbench) = self.workbench(cx) {
+            workbench.update(cx, |workbench, cx| {
+                workbench.stage_merge_files(paths, window, cx)
+            });
+        }
+    }
+
     /// Discards the changes to `paths`, through the workbench, which asks
     /// first.
     fn discard(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
@@ -844,9 +897,13 @@ impl GitPanel {
             return;
         };
         let path = entry.path.clone();
+        let merge = entry.group == Group::Merge;
         match action {
             Action::OpenFile => self.open_file(ix, cx),
+            Action::Discard if merge => {}
+            Action::Unstage if merge => {}
             Action::Discard => self.discard(vec![path], window, cx),
+            Action::Stage if merge => self.stage_merge(vec![path], window, cx),
             Action::Stage => self.stage(vec![path], true, cx),
             Action::Unstage => self.stage(vec![path], false, cx),
         }
@@ -865,7 +922,9 @@ impl GitPanel {
             .collect();
         match action {
             Action::OpenFile => {}
+            Action::Discard | Action::Unstage if group == Group::Merge => {}
             Action::Discard => self.discard(paths, window, cx),
+            Action::Stage if group == Group::Merge => self.stage_merge(paths, window, cx),
             Action::Stage => self.stage(paths, true, cx),
             Action::Unstage => self.stage(paths, false, cx),
         }
@@ -972,7 +1031,10 @@ impl GitPanel {
             .items_center()
             .children(actions.iter().map(|&action| {
                 let panel = panel.clone();
-                let tooltip = action.tooltip(header);
+                let tooltip = match (target, action) {
+                    (Row::Header(Group::Merge), Action::Stage) => "Stage All Merge Changes",
+                    _ => action.tooltip(header),
+                };
                 IconButton::new(self.button_id(at, action), action.icon(), &ui)
                     .tooltip(move |_, cx| {
                         cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
@@ -2033,10 +2095,7 @@ impl GitPanel {
     /// Each group shown, in order: its title, its count, and its rows'
     /// letters and paths from the root.
     pub(crate) fn groups(&self) -> Vec<ShownGroup> {
-        let shown = [Group::Staged, Group::Changes].into_iter().filter(|group| {
-            (0..self.row_count()).any(|at| self.row(at) == Some(Row::Header(*group)))
-        });
-        shown
+        self.headed()
             .map(|group| {
                 let range = self.group_range(group);
                 let rows = (self.entries[range.clone()].iter())

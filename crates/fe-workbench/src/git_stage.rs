@@ -337,6 +337,155 @@ impl Workbench {
         self.stage(paths, stage, None, None, cx);
     }
 
+    /// Stages the conflicted `paths`, for the Changes panel's Merge Changes
+    /// rows: each file's text is the open buffer's, else the file's on
+    /// disk, and those that still hold conflict markers are asked about
+    /// once, in VS Code's words; the rest are staged without asking.
+    pub(crate) fn stage_merge_files(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        let open = self.file_editors(cx);
+        let mut editors: Vec<Entity<EditorView>> = Vec::new();
+        let texts: Vec<Option<String>> = (paths.iter())
+            .map(|path| {
+                let editor = open.iter().find(|editor| {
+                    let view = editor.read(cx);
+                    (view.model().path()).is_some_and(|file| git_diff::same_file(file, path))
+                });
+                if let Some(editor) = editor {
+                    editors.push(editor.clone());
+                }
+                editor.map(|editor| editor.read(cx).model().buffer().text().to_string())
+            })
+            .collect();
+        let read = cx.background_spawn(async move {
+            let mut unresolved = Vec::new();
+            for (path, text) in paths.iter().zip(texts) {
+                let text = match text {
+                    Some(text) => text,
+                    None => String::from_utf8_lossy(&std::fs::read(path).unwrap_or_default())
+                        .into_owned(),
+                };
+                if !fe_git::conflict_markers::parse(&text).is_empty() {
+                    unresolved.push(path.clone());
+                }
+            }
+            (paths, unresolved)
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            let (paths, unresolved) = read.await;
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.confirm_stage_merge(paths, unresolved, editors, window, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Asks whether to stage `unresolved`, the files of `paths` that still
+    /// have conflict markers, and stages `paths` if so; with none, stages
+    /// them without asking. The open `editors` of the files are saved first,
+    /// so the text staged is the text checked; a save that fails stages
+    /// nothing.
+    fn confirm_stage_merge(
+        &mut self,
+        paths: Vec<PathBuf>,
+        unresolved: Vec<PathBuf>,
+        editors: Vec<Entity<EditorView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let handle = window.window_handle();
+        let save = move || -> Option<Save> {
+            if editors.is_empty() {
+                return None;
+            }
+            Some(Box::new(move |cx: &mut App| {
+                let saves: Vec<Task<Option<String>>> = (editors.iter())
+                    .map(|editor| {
+                        let saved = cx.update_window(handle, |_, window, cx| {
+                            vim_host::save(editor, NO_FILE.to_owned(), window, cx)
+                        });
+                        saved.unwrap_or_else(|_| Task::ready(Some(WINDOW_CLOSED.to_owned())))
+                    })
+                    .collect();
+                cx.spawn(async move |_| {
+                    let mut failed = None;
+                    for save in saves {
+                        failed = failed.or(save.await);
+                    }
+                    failed
+                })
+            }))
+        };
+        let question = match unresolved.as_slice() {
+            [] => return self.stage_checked(paths, Vec::new(), save(), cx),
+            [path] => format!(
+                "Are you sure you want to stage {} with merge conflicts?",
+                file_name(path)
+            ),
+            files => format!(
+                "Are you sure you want to stage {} files with merge conflicts?",
+                files.len()
+            ),
+        };
+        let buttons = [
+            PromptButton::Ok(SharedString::new_static("Stage")),
+            PromptButton::Cancel(SharedString::new_static("Cancel")),
+        ];
+        let answer = window.prompt(PromptLevel::Warning, &question, None, &buttons, cx);
+        cx.spawn(async move |workbench, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            workbench
+                .update(cx, |workbench, cx| {
+                    workbench.stage_checked(paths, unresolved, save(), cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Stages `paths` once `save` has written the open editors, but only
+    /// if no file of them but `confirmed` holds conflict markers by then:
+    /// the text the save wrote, not the text that was asked about, is what
+    /// `git add` stages, and the buffer may have changed in between.
+    fn stage_checked(
+        &mut self,
+        paths: Vec<PathBuf>,
+        confirmed: Vec<PathBuf>,
+        save: Option<Save>,
+        cx: &mut Context<Self>,
+    ) {
+        let confirmed: Vec<PathBuf> = confirmed
+            .iter()
+            .map(|path| git_diff::link_path(path))
+            .collect();
+        self.run_git(paths, None, save, cx, move |repo, paths| {
+            for path in paths {
+                if confirmed.contains(path) {
+                    continue;
+                }
+                let text = std::fs::read(path).unwrap_or_default();
+                if !fe_git::conflict_markers::parse(&String::from_utf8_lossy(&text)).is_empty() {
+                    return Err(Failed::Answer(format!(
+                        "{} now has merge conflicts; not staged",
+                        file_name(path)
+                    )));
+                }
+            }
+            repo.stage(paths).map_err(git_failed)
+        });
+    }
+
     /// Asks whether to discard the changes to `paths`, and does if so, for
     /// the Changes panel: see the module docs.
     pub(crate) fn discard_files(

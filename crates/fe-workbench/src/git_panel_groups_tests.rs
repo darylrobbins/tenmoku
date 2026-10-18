@@ -1270,3 +1270,7 @@ fn staged_links_to_one_file_each_have_their_own_diff(cx: &mut TestAppContext) {
     let tabs = workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tabs().len());
     assert_eq!(tabs, 3);
 }
+
+#[cfg(test)]
+#[path = "git_panel_merge_tests.rs"]
+mod merge;
