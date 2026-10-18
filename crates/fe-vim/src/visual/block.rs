@@ -261,7 +261,7 @@ fn shift_block(
     row: u32,
     (left, by): (usize, usize),
     indent: bool,
-    tab: usize,
+    (tab, tabs): (usize, bool),
 ) -> Option<(Range<usize>, String)> {
     let line = Line::new(text, row);
     let width = |ix: usize, column: usize| line.width(ix, column, tab);
@@ -293,7 +293,7 @@ fn shift_block(
         while from > 0 && blank(from - 1) {
             from -= 1;
         }
-        let spaces = " ".repeat(end - columns[from] + by);
+        let spaces = blank_fill(columns[from], end - columns[from] + by, tab, tabs);
         return Some((byte(from)..byte(blanks), spaces));
     }
     let to = end - end.saturating_sub(left.max(columns[ix])).min(by);
@@ -302,13 +302,23 @@ fn shift_block(
         at += width(kept, at);
         kept += 1;
     }
-    let before = match kept == ix && at < left && blanks > ix {
-        true => left - std::mem::replace(&mut at, left),
-        false => 0,
-    };
-    let range = byte(kept)..byte(blanks);
-    let spaces = " ".repeat(before + to - at);
+    let (first, range) = (at, byte(kept)..byte(blanks));
+    let spaces = blank_fill(first, to - first, tab, tabs);
     (!range.is_empty() || !spaces.is_empty()).then_some((range, spaces))
+}
+
+/// `len` columns of blanks from `column`: spaces, or with `tabs` a tab for
+/// each tab stop they reach and spaces for the rest.
+fn blank_fill(column: usize, len: usize, tab: usize, tabs: bool) -> String {
+    if !tabs {
+        return " ".repeat(len);
+    }
+    let (mut fill, mut at, end) = (String::new(), column, column + len);
+    while at + (tab - at % tab) <= end {
+        fill.push('\t');
+        at += tab - at % tab;
+    }
+    fill + &" ".repeat(end - at)
 }
 
 /// `vim.operate` over a block, but for `S`, `R` and `J`, which take its rows
@@ -430,10 +440,11 @@ pub(super) fn operate_block(
                 .collect()
         }
         Operator::Indent | Operator::Outdent => {
-            let by = tab.saturating_mul(args.count.unwrap_or(1).max(1) as usize);
+            let (unit, tabs) = operator::shift_unit(model);
+            let by = unit.saturating_mul(args.count.unwrap_or(1).max(1) as usize);
             let indent = args.operator == Operator::Indent;
             (block.first..=block.last)
-                .filter_map(|row| shift_block(&text, row, (block.left, by), indent, tab))
+                .filter_map(|row| shift_block(&text, row, (block.left, by), indent, (tab, tabs)))
                 .collect()
         }
         Operator::Change | Operator::Insert | Operator::Append => {

@@ -1,0 +1,172 @@
+# Ex `:set` cases for fe-vim's oracle: each a `:set` and then an edit it
+# changes (`>>`, `:>` and a block `>`, under shiftwidth, tabstop and expandtab,
+# starting from the oracle's ts=4 sw=4 et). `:set ts=0` and the other
+# malformed forms fail, and what an earlier argument set stays set. An
+# error ends a case: nvim flushes the keys after it, so the ones after it
+# here are flushed too.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in ex_set.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "shift_after_sw2"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=2<CR>>>"
+
+[[case]]
+name = "shift_after_shiftwidth_long"
+buffer = "abc\ndef"
+cursor = [1, 0]
+keys = ":set shiftwidth=3<CR>>>j>>"
+
+[[case]]
+name = "shift_after_sw_colon"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw:6<CR>>>"
+
+[[case]]
+name = "shift_after_noet_ts4_sw4"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet<CR>>>"
+
+[[case]]
+name = "shift_after_noet_twice"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noexpandtab<CR>>>>>"
+
+[[case]]
+name = "shift_after_noet_sw0"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet sw=0<CR>>>"
+
+[[case]]
+name = "shift_after_ts8_noet"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=8 sw=8 noet<CR>>>"
+
+[[case]]
+name = "shift_after_ts2_sw0"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=2 sw=0<CR>>>"
+
+[[case]]
+name = "shift_after_inv_et"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set invet<CR>>>"
+
+[[case]]
+name = "shift_after_et_toggle_back"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet<CR>:set et<CR>>>"
+
+[[case]]
+name = "shift_after_several_options"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=1 ts=2 et nowrap<CR>>>"
+
+[[case]]
+name = "shift_after_failed_ts_zero"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=2 ts=0<CR>>>"
+
+[[case]]
+name = "ts_zero_fails"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=0<CR>>>"
+
+[[case]]
+name = "ts_not_a_number_fails"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=x<CR>>>"
+
+[[case]]
+name = "sw_negative_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":set sw=-1<CR>>>"
+
+[[case]]
+name = "unknown_option_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":set foo<CR>>>"
+
+[[case]]
+name = "bool_with_value_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":set et=1<CR>>>"
+
+[[case]]
+name = "earlier_options_stay_set"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":set sw=2 foo<CR>>>"
+
+[[case]]
+name = "query_changes_nothing"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":set sw?<CR>>>"
+
+[[case]]
+name = "clipboard_empty_then_yank"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set cb=<CR>yyjp"
+
+[[case]]
+name = "shift_sw0_follows_later_ts"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0 ts=8<CR>>>"
+
+[[case]]
+name = "shift_sw_stays_through_ts"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=3 ts=8<CR>>>"
+
+[[case]]
+name = "block_shift_after_noet"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet<CR><C-v>j>"
+
+[[case]]
+name = "block_shift_after_sw2"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=2<CR><C-v>j>"
+
+[[case]]
+name = "ex_shift_after_noet"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet<CR>:>><CR>"
+
+[[case]]
+name = "insert_then_shift_after_sw2"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "ix<Esc>:set sw=2<CR>>>"
+
+[[case]]
+name = "shift_after_noet_then_et_sw4"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set noet<CR>:set et sw=4<CR>>>"

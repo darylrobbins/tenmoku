@@ -551,10 +551,11 @@ pub(super) fn shift_rows(
     let text = target.model.text().clone();
     let tab = target.model.tab_size().max(1);
     let goal = goal(target);
-    let by = tab.saturating_mul(times as usize);
+    let (unit, tabs) = operator::shift_unit(target.model);
+    let by = unit.saturating_mul(times as usize);
     let edits: Vec<_> = rows
         .clone()
-        .filter_map(|row| shifted(&text, row, left, tab, by))
+        .filter_map(|row| shifted(&text, row, left, (tab, tabs), by))
         .collect();
     let changed: Vec<u32> = edits
         .iter()
@@ -576,14 +577,15 @@ pub(super) fn shift_rows(
     Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
 }
 
-/// `row`'s leading blanks rewritten as spaces, `by` columns less wide
+/// `row`'s leading blanks rewritten as spaces (or tabs and spaces if
+/// `tabs`), `by` columns less wide
 /// (`left`) or wider; `None` for an empty row, or one whose indent wouldn't
 /// change.
 fn shifted(
     text: &Text,
     row: u32,
     left: bool,
-    tab: usize,
+    (tab, tabs): (usize, bool),
     by: usize,
 ) -> Option<(Range<usize>, String)> {
     let line = text.row_to_string(row);
@@ -595,10 +597,14 @@ fn shifted(
         b'\t' => column + tab - column % tab,
         _ => column + 1,
     });
-    let spaces = " ".repeat(match left {
-        true => width.saturating_sub(by),
-        false => width.saturating_add(by),
-    });
+    let spaces = operator::indent_fill(
+        match left {
+            true => width.saturating_sub(by),
+            false => width.saturating_add(by),
+        },
+        tab,
+        tabs,
+    );
     let start = text.row_start(row);
     (spaces != line[..blanks]).then(|| (start..start + blanks, spaces))
 }

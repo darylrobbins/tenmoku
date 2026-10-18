@@ -116,6 +116,11 @@ impl Registers {
         self.clipboard_unnamed = on;
     }
 
+    /// Whether `clipboard=unnamedplus` is on ([`Registers::set_clipboard_unnamed`]).
+    pub fn clipboard_unnamed(&self) -> bool {
+        self.clipboard_unnamed
+    }
+
     /// Whether `name` is a register a command may write: `" 0-9 - a-z A-Z _
     /// + *`. Not `/`, which only [`Registers::read`] and
     /// [`Registers::get`] reach.

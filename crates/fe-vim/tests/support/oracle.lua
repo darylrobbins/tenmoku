@@ -65,6 +65,12 @@ end
 
 local results = {}
 for _, case in ipairs(vim.json.decode(read(input))) do
+  -- A case's `:set` ends with it.
+  vim.o.tabstop = 4
+  vim.o.shiftwidth = 4
+  vim.o.expandtab = true
+  vim.o.clipboard = ""
+  vim.o.wrap = true
   -- A fresh buffer, no registers and no last character search.
   local old = vim.api.nvim_get_current_buf()
   vim.cmd("enew!")

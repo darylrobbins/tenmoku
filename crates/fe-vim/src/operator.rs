@@ -13,7 +13,7 @@ use std::{
 
 use fe_buffer::{Anchor, BufferSnapshot, Origin, ResolvedSelection, TransactionId};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
-use fe_editor::{EditorModel, commands::origin};
+use fe_editor::{EditorModel, IndentStyle, commands::origin};
 use fe_text::{Bias, Text};
 
 use crate::{
@@ -904,13 +904,14 @@ fn operate_unless_failing(
         shifted.sort_unstable();
         shifted.dedup();
         let indent = args.operator == Operator::Indent;
+        let (unit, tabs) = shift_unit(model);
         let times = match selected {
             Some(_) => args.count.unwrap_or(1).max(1) as usize,
             None => 1,
         };
         let edits: Vec<(Range<usize>, String)> = shifted
             .into_iter()
-            .filter_map(|row| shift(&text, row, indent, tab, tab.saturating_mul(times)))
+            .filter_map(|row| shift(&text, row, indent, (tab, tabs), unit.saturating_mul(times)))
             .collect();
         let (transaction, snapshot) = apply(model, edits, origin(actor));
         if let Some(id) = transaction {
@@ -1155,14 +1156,36 @@ fn operate_unless_failing(
     }
 }
 
-/// `>>` or `<<` on `row`: its leading blanks rewritten as spaces, `by`
-/// columns (a 'shiftwidth', the tab size, per shift) more or less wide.
-/// Empty rows are left alone, as are rows whose indent wouldn't change.
+/// The editor's 'shiftwidth' and whether it indents with tabs
+/// ('noexpandtab'): the width of one indent unit, the tab size when the
+/// editor has no style.
+pub(crate) fn shift_unit(model: &EditorModel) -> (usize, bool) {
+    let tab = model.tab_size().max(1);
+    match model.indent_style() {
+        Some(IndentStyle::Spaces(width)) => (usize::from(width).max(1), false),
+        Some(IndentStyle::Tabs) => (tab, true),
+        None => (tab, false),
+    }
+}
+
+/// A `width` columns wide indent: spaces, or tabs and then the spaces left
+/// over with `tabs`.
+pub(crate) fn indent_fill(width: usize, tab: usize, tabs: bool) -> String {
+    match tabs {
+        true => "\t".repeat(width / tab) + &" ".repeat(width % tab),
+        false => " ".repeat(width),
+    }
+}
+
+/// `>>` or `<<` on `row`: its leading blanks rewritten as spaces (or tabs
+/// and spaces if `tabs`), `by` columns (a 'shiftwidth' per shift) more or
+/// less wide. Empty rows are left alone, as are rows whose indent wouldn't
+/// change.
 fn shift(
     text: &Text,
     row: u32,
     indent: bool,
-    tab: usize,
+    (tab, tabs): (usize, bool),
     by: usize,
 ) -> Option<(Range<usize>, String)> {
     let line = text.row_to_string(row);
@@ -1181,7 +1204,7 @@ fn shift(
         true => width.saturating_add(by),
         false => width.saturating_sub(by),
     };
-    let spaces = " ".repeat(width);
+    let spaces = indent_fill(width, tab, tabs);
     let start = text.row_start(row);
     (spaces != line[..blanks]).then(|| (start..start + blanks, spaces))
 }
