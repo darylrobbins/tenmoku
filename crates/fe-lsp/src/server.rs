@@ -1,9 +1,13 @@
 //! One thread per server, named `fe-lsp <name>`, running
-//! `async_io::block_on(join3(main_loop, actor, stderr))`: §2.2's
-//! `join(main_loop, actor)`, plus a drain for the server's stderr.
+//! `async_io::block_on(join4(main_loop, actor, stderr, pump))`: §2.2's
+//! `join(main_loop, actor)`, plus a drain for the server's stderr and a
+//! pump that reads its stdout whatever the main loop is doing.
 //!
 //! - The **main loop** is async-lsp's `MainLoop` over the launcher's byte
-//!   streams, answering the server through [`client_router`].
+//!   streams, answering the server through [`client_router`]. It reads the
+//!   server's output from a [`Backlog`], which the **pump** fills: while
+//!   the loop waits for a write, it reads nothing, and a server that stops
+//!   reading until its output drains would never take that write.
 //! - The **actor** owns the session: it starts and stops the server
 //!   (§3.4) and issues every request. async-lsp numbers requests from 0 in
 //!   the order they reach its loop and never says which number it gave, so
@@ -555,8 +559,14 @@ impl Server {
         let (loop_ended, loop_done) = oneshot::channel();
         let (session_over, over) = oneshot::channel::<()>();
         let over = over.shared();
+        // The server's output is read whatever the loop is doing (see
+        // [`Backlog`]), against the same budget as the loop's reads and
+        // writes.
+        let budget = IoBudget::default();
+        let (drained, overflowed, pump) = Backlog::split(output, BACKLOG_MAX, budget.clone());
         let main_loop = {
             let over = over.clone();
+            let budget = budget.clone();
             async move {
                 // async-lsp's loop has no budget of its own: with the
                 // server's output always ready, or a long queue to send,
@@ -564,11 +574,15 @@ impl Server {
                 // queue, starving the actor and its deadlines. Its reads
                 // and writes share an `IoBudget`, refilled each time the
                 // loop is polled.
-                let budget = IoBudget::default();
-                let run = main_loop.run_buffered(budget.meter(output), budget.meter(input));
+                let run = main_loop.run_buffered(budget.meter(drained), budget.meter(input));
                 pin_mut!(run);
+                // An overflowing backlog ends the loop here, not only through
+                // its reader: a loop waiting for a write reads nothing.
                 let run = futures::future::poll_fn(|cx| {
                     budget.refill();
+                    if let Poll::Ready(err) = overflowed.poll(cx) {
+                        return Poll::Ready(Err(async_lsp::Error::Io(err)));
+                    }
                     run.as_mut().poll(cx)
                 })
                 .fuse();
@@ -631,10 +645,12 @@ impl Server {
             shown: ServerStatus::Starting,
             carry,
         };
-        let (_, ended, ()) = async_io::block_on(futures::future::join3(
+        // The pump goes last, so the loop has the budget first each poll.
+        let (_, ended, (), ()) = async_io::block_on(futures::future::join4(
             main_loop,
             actor.run(&mut process, loop_done, session_over),
             stderr,
+            pump,
         ));
         (ended, process)
     }
@@ -1948,6 +1964,188 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for Metered<W> {
     }
 }
 
+/// The most server output a [`Backlog`] holds for the main loop before
+/// the session ends with an error.
+pub(crate) const BACKLOG_MAX: usize = 64 << 20;
+
+/// The most the pump reads at once.
+const PUMP_CHUNK: usize = 64 << 10;
+
+/// The server's output, read by the pump as it comes and held until
+/// async-lsp's main loop reads it.
+///
+/// The loop reads nothing while it waits for a write to finish (its
+/// `feed`, in async-lsp 0.2.4's `MainLoop::run`). A server that, like
+/// rust-analyzer's `lsp-server`, reads its input only while its output
+/// isn't blocked would then never take that write: each would wait for the
+/// other. The pump, a task of its own beside the loop, keeps reading.
+///
+/// The end of the output, or an error reading it, reaches the loop after
+/// the bytes before it, as it would have read them. The pump's reads spend
+/// the loop's [`IoBudget`], as the loop's own reads and writes do.
+///
+/// **Bound.** Once more than `max` bytes ([`BACKLOG_MAX`] in a session)
+/// wait for the loop, the pump stops reading, and the loop's reader yields
+/// an error ("server output backlog over 64 MiB") after those bytes. The
+/// loop may be waiting for a write, reading nothing, so [`Overflowed`]
+/// tells the session's wrapper of the loop too, which ends the loop with
+/// that error at once. The session then ends as on any transport error (a
+/// crash, the server killed and restarted, as a broken pipe would be),
+/// rather than holding a server's output without limit.
+#[derive(Default)]
+struct Backlog {
+    bytes: RefCell<VecDeque<u8>>,
+    /// How the output ended, once it has: handed to the loop's reader
+    /// after the bytes.
+    end: RefCell<Option<io::Result<()>>>,
+    /// Set once the pump has stopped reading, for good.
+    stopped: Cell<bool>,
+    /// Set once the loop's reader has yielded `end`.
+    ended: Cell<bool>,
+    /// The bound, once the pump has gone past it.
+    overflowed: Cell<Option<usize>>,
+    /// Set when the loop's reader is dropped: the pump then stops.
+    closed: Cell<bool>,
+    reader: RefCell<Option<Waker>>,
+    pump: RefCell<Option<Waker>>,
+    watcher: RefCell<Option<Waker>>,
+}
+
+impl Backlog {
+    /// The loop's reader of `output`, what says the backlog overflowed,
+    /// and the pump that fills it, holding at most `max` bytes unread.
+    fn split<R: AsyncRead + Unpin>(
+        output: R,
+        max: usize,
+        budget: IoBudget,
+    ) -> (Drained, Overflowed, impl Future<Output = ()>) {
+        let backlog = Rc::new(Self::default());
+        let pump = {
+            let backlog = backlog.clone();
+            let mut output = budget.meter(output);
+            let mut chunk = vec![0; PUMP_CHUNK];
+            futures::future::poll_fn(move |cx| backlog.pump(cx, &mut output, &mut chunk, max))
+        };
+        (Drained(backlog.clone()), Overflowed(backlog), pump)
+    }
+
+    /// Reads `output` until it's pending or has ended.
+    fn pump(
+        &self,
+        cx: &mut Context<'_>,
+        mut output: impl AsyncRead + Unpin,
+        chunk: &mut [u8],
+        max: usize,
+    ) -> Poll<()> {
+        loop {
+            if self.closed.get() || self.stopped.get() {
+                return Poll::Ready(());
+            }
+            let held = self.bytes.borrow().len();
+            if held > max {
+                self.overflowed.set(Some(max));
+                if let Some(waker) = self.watcher.borrow_mut().take() {
+                    waker.wake();
+                }
+                self.finish(Err(overflow(max)));
+                return Poll::Ready(());
+            }
+            // No further past `max` than a byte.
+            let room = chunk.len().min(max + 1 - held);
+            match Pin::new(&mut output).poll_read(cx, &mut chunk[..room]) {
+                Poll::Pending => {
+                    *self.pump.borrow_mut() = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+                Poll::Ready(Ok(0)) => self.finish(Ok(())),
+                Poll::Ready(Ok(n)) => {
+                    self.bytes.borrow_mut().extend(&chunk[..n]);
+                    self.wake_reader();
+                }
+                Poll::Ready(Err(err)) => self.finish(Err(err)),
+            }
+        }
+    }
+
+    fn finish(&self, end: io::Result<()>) {
+        self.stopped.set(true);
+        *self.end.borrow_mut() = Some(end);
+        self.wake_reader();
+    }
+
+    fn wake_reader(&self) {
+        if let Some(waker) = self.reader.borrow_mut().take() {
+            waker.wake();
+        }
+    }
+}
+
+/// The error a [`Backlog`] past `max` ends the loop with.
+fn overflow(max: usize) -> io::Error {
+    let over = if max >= 1 << 20 {
+        format!("{} MiB", max >> 20)
+    } else {
+        format!("{max} bytes")
+    };
+    io::Error::other(format!("server output backlog over {over}"))
+}
+
+/// Says when a [`Backlog`] has gone past its bound, whether or not the
+/// main loop is reading.
+struct Overflowed(Rc<Backlog>);
+
+impl Overflowed {
+    fn poll(&self, cx: &Context<'_>) -> Poll<io::Error> {
+        match self.0.overflowed.get() {
+            Some(max) => Poll::Ready(overflow(max)),
+            None => {
+                *self.0.watcher.borrow_mut() = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+}
+
+/// The main loop's reader of a [`Backlog`]: what the pump has read, then
+/// how the output ended, then nothing.
+struct Drained(Rc<Backlog>);
+
+impl AsyncRead for Drained {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let backlog = &*self.0;
+        let mut bytes = backlog.bytes.borrow_mut();
+        if !bytes.is_empty() {
+            return Poll::Ready(io::Read::read(&mut *bytes, buf));
+        }
+        if backlog.ended.get() {
+            return Poll::Ready(Ok(0));
+        }
+        match backlog.end.borrow_mut().take() {
+            Some(end) => {
+                backlog.ended.set(true);
+                Poll::Ready(end.map(|()| 0))
+            }
+            None => {
+                *backlog.reader.borrow_mut() = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+}
+
+impl Drop for Drained {
+    fn drop(&mut self) {
+        self.0.closed.set(true);
+        if let Some(waker) = self.0.pump.borrow_mut().take() {
+            waker.wake();
+        }
+    }
+}
+
 fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, String> {
     let uri = Url::from_file_path(root)
         .map_err(|()| format!("{} isn't an absolute path", root.display()))?;
@@ -2150,5 +2348,143 @@ fn client_capabilities() -> ClientCapabilities {
             ..Default::default()
         }),
         experimental: Some(serde_json::json!({ "serverStatusNotification": true })),
+    }
+}
+
+#[cfg(test)]
+mod pump_tests {
+    use super::*;
+
+    /// Serves `bytes`, then `end`, counting what it has served.
+    struct Source {
+        bytes: Vec<u8>,
+        at: Rc<Cell<usize>>,
+        end: Option<io::Error>,
+    }
+
+    impl AsyncRead for Source {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            let at = self.at.get();
+            if at == self.bytes.len() {
+                return Poll::Ready(self.end.take().map_or(Ok(0), Err));
+            }
+            let n = buf.len().min(self.bytes.len() - at);
+            buf[..n].copy_from_slice(&self.bytes[at..at + n]);
+            self.at.set(at + n);
+            Poll::Ready(Ok(n))
+        }
+    }
+
+    fn source(len: usize, end: Option<io::Error>) -> (Source, Rc<Cell<usize>>, Vec<u8>) {
+        let bytes: Vec<u8> = (0..len).map(|n| (n % 251) as u8).collect();
+        let at = Rc::new(Cell::new(0));
+        let source = Source {
+            bytes: bytes.clone(),
+            at: at.clone(),
+            end,
+        };
+        (source, at, bytes)
+    }
+
+    fn cx() -> Context<'static> {
+        Context::from_waker(futures::task::noop_waker_ref())
+    }
+
+    /// Runs the pump with a fresh budget until it stops.
+    fn pump_out(pump: impl Future<Output = ()>, budget: &IoBudget) {
+        pin_mut!(pump);
+        for _ in 0..100 {
+            budget.refill();
+            if pump.as_mut().poll(&mut cx()).is_ready() {
+                return;
+            }
+        }
+        panic!("the pump didn't stop");
+    }
+
+    /// What `drained` yields, 300 bytes at a time, until it's pending, has
+    /// ended or has failed, and how it ended (`None` when pending).
+    fn read(drained: &mut Drained) -> (Vec<u8>, Option<io::Result<()>>) {
+        let mut got = Vec::new();
+        let mut buf = [0; 300];
+        loop {
+            match Pin::new(&mut *drained).poll_read(&mut cx(), &mut buf) {
+                Poll::Ready(Ok(0)) => return (got, Some(Ok(()))),
+                Poll::Ready(Ok(n)) => got.extend_from_slice(&buf[..n]),
+                Poll::Ready(Err(err)) => return (got, Some(Err(err))),
+                Poll::Pending => return (got, None),
+            }
+        }
+    }
+
+    #[test]
+    fn the_output_backlog_bound_is_an_error() {
+        let (source, at, bytes) = source(4096, None);
+        let budget = IoBudget::default();
+        let (mut drained, overflowed, pump) = Backlog::split(source, 1024, budget.clone());
+        assert!(overflowed.poll(&cx()).is_pending());
+        // The reader isn't polled: the pump stops a byte past the bound.
+        pump_out(pump, &budget);
+        assert_eq!(at.get(), 1025);
+        let Poll::Ready(err) = overflowed.poll(&cx()) else {
+            panic!("no overflow");
+        };
+        assert_eq!(err.to_string(), "server output backlog over 1024 bytes");
+        let (got, end) = read(&mut drained);
+        assert_eq!(got, bytes[..1025]);
+        let err = end.unwrap().unwrap_err();
+        assert_eq!(err.to_string(), "server output backlog over 1024 bytes");
+        // Then nothing.
+        let (got, end) = read(&mut drained);
+        assert!(got.is_empty());
+        assert!(end.unwrap().is_ok());
+        assert_eq!(at.get(), 1025);
+        assert_eq!(BACKLOG_MAX, 64 << 20);
+    }
+
+    #[test]
+    fn the_end_of_the_output_and_its_errors_follow_its_bytes() {
+        for fails in [false, true] {
+            let end = fails.then(|| io::Error::from(io::ErrorKind::ConnectionReset));
+            let (source, at, bytes) = source(3000, end);
+            let budget = IoBudget::default();
+            let (mut drained, overflowed, pump) =
+                Backlog::split(source, BACKLOG_MAX, budget.clone());
+            pump_out(pump, &budget);
+            assert_eq!(at.get(), 3000);
+            assert!(overflowed.poll(&cx()).is_pending());
+            let (got, end) = read(&mut drained);
+            assert_eq!(got, bytes);
+            match end.unwrap() {
+                Ok(()) => assert!(!fails),
+                Err(err) => {
+                    assert!(fails);
+                    assert_eq!(err.kind(), io::ErrorKind::ConnectionReset);
+                }
+            }
+            assert!(read(&mut drained).0.is_empty());
+        }
+    }
+
+    #[test]
+    fn the_reader_waits_for_the_pump_and_the_pump_spends_the_budget() {
+        let (source, at, _) = source(2 * STEPS_PER_YIELD as usize * PUMP_CHUNK, None);
+        let budget = IoBudget::default();
+        let (mut drained, _, pump) = Backlog::split(source, BACKLOG_MAX, budget.clone());
+        // Nothing pumped yet.
+        assert!(read(&mut drained).1.is_none());
+        pin_mut!(pump);
+        budget.refill();
+        assert!(pump.as_mut().poll(&mut cx()).is_pending());
+        assert_eq!(at.get(), STEPS_PER_YIELD as usize * PUMP_CHUNK);
+        assert_eq!(read(&mut drained).0.len(), at.get());
+        // Dropping the reader stops the pump.
+        drop(drained);
+        budget.refill();
+        assert!(pump.as_mut().poll(&mut cx()).is_ready());
     }
 }

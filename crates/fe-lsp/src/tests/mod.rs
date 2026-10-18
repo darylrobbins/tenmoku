@@ -22,6 +22,7 @@ mod registry;
 mod restart;
 mod router;
 mod status;
+mod stdout_stall;
 mod sync;
 mod teardown_clears;
 mod tsserver_diagnostics;
