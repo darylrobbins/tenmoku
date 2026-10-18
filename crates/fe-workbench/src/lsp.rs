@@ -473,6 +473,8 @@ pub(crate) struct Lsp {
     /// Every editor's hover and completion provider, following the
     /// manager.
     hover: Rc<LspHover>,
+    /// Every editor's caret highlights.
+    highlights: highlights::Highlights,
     /// Every editor's save hook, and whether `editor.format_on_save` is on
     /// (set from the settings each reload).
     pub(crate) format_on_save: Rc<std::cell::Cell<bool>>,
@@ -627,6 +629,7 @@ impl Lsp {
             resolved: HashMap::new(),
             resolved_from: HashMap::new(),
             hover: Rc::default(),
+            highlights: Default::default(),
             format_on_save: Rc::default(),
             save_hook: None,
             resolving: HashSet::new(),
@@ -1114,6 +1117,7 @@ impl Workbench {
     pub(crate) fn sync_lsp(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         self.sync_save_hooks(cx);
+        self.sync_highlights(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
         let signature_help: Rc<dyn fe_gpui::SignatureHelpProvider> = self.lsp.hover.clone();
@@ -2129,6 +2133,9 @@ pub(crate) struct TestClock(pub(crate) Arc<dyn fe_lsp::Clock>);
 
 #[cfg(test)]
 impl Global for TestClock {}
+
+#[path = "lsp_highlights.rs"]
+mod highlights;
 
 #[cfg(test)]
 #[path = "lsp_trust_tests.rs"]

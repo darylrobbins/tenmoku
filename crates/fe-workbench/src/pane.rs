@@ -555,6 +555,9 @@ impl Pane {
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
             }
+            // Activating the active tab says nothing: an open that landed
+            // on it, such as one waiting behind a Save As, is told still.
+            cx.notify();
             return;
         }
         if let Some(model) = self.peer_model(&path, cx) {

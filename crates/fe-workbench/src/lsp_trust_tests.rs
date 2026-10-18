@@ -42,3 +42,6 @@ fn servers_start_only_in_a_trusted_root(cx: &mut TestAppContext) {
     assert_eq!(s.active_server(), Some(None));
     assert_eq!(s.fake.launches(), 1);
 }
+
+#[path = "lsp_highlights_tests.rs"]
+mod caret_highlights;
