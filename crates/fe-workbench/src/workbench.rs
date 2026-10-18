@@ -32,7 +32,7 @@ use crate::{
     auto_save::AutoSave,
     config_problems::ConfigProblemsPicker,
     disk_sync::DiskSync,
-    dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
+    dock::{DockEvent, DockOp, ProblemsPanel},
     dock_layout,
     find_bar::FindOp,
     git::GitState,
@@ -43,10 +43,9 @@ use crate::{
     lsp::Lsp,
     nav::Nav,
     open::{self, OpenOp},
-    outline_panel,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
-    project_panel::{self, PanelEvent, PanelOp},
+    project_panel::{self, PanelEvent},
     terminal_panel::{TERMINAL, TerminalPanel, TerminalPanelEvent},
     title_bar,
     toolbar_picker::ToolbarPicker,
@@ -2382,7 +2381,7 @@ impl Workbench {
     /// Has the project panel select the active editor's file, if it has
     /// one, expanding the directories above it; else drops a reveal still
     /// pending for another tab. Focus stays where it is.
-    fn reveal_active(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn reveal_active(&mut self, cx: &mut Context<Self>) {
         let path = self
             .active_editor(cx)
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
@@ -2403,15 +2402,13 @@ impl Workbench {
     /// Does a dock op, for a key or a rail click, with the active editor as
     /// the fallback focus: showing the project panel focuses it, showing
     /// search focuses its input, and showing the outline leaves focus where
-    /// it is unless on a hidden panel. False if the op is the search
-    /// panel's to do.
-    fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let done = self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
+    /// it is unless on a hidden panel.
+    pub(crate) fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
         if op == DockOp::ShowProject {
             window.focus(&self.panel.focus_handle(cx), cx);
         }
         self.leave_hidden_panel(window, cx);
-        done
     }
 
     /// The launch file the host is reading, until it lands: it opens in a
@@ -2487,8 +2484,8 @@ impl Workbench {
         self.reload_auto_save(&event.settings.editor, cx);
     }
 
-    /// Runs a typed command (the `workbench.*` tab commands and the
-    /// `pane.*` commands) as its action, or a palette toggle, a status bar command or a dock
+    /// Runs a typed command (the `workbench.*` tab commands, the `pane.*`
+    /// commands, the dock's and the panels') as its action, or a git
     /// command; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         // A typed command, as its action, whose handler notes it ran: the
@@ -2498,28 +2495,7 @@ impl Workbench {
         }
         #[cfg(test)]
         self.commands_run.push(run.0.clone());
-        if self.run_references_command(run, window, cx) {
-            return;
-        }
-        if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
-            return self.reveal_active(cx);
-        }
-        let op = if outline_panel::shows(run, cx) {
-            Some(DockOp::ShowOutline)
-        } else {
-            dock::op(run, cx)
-        };
-        // `problems.show` is the dock's; the other problems commands
-        // the workbench's.
-        if let Some(DockOp::Problems(op)) = op
-            && op != ProblemsOp::Show
-        {
-            return self.run_problems_op(op, window, cx);
-        }
-        let done = op.is_some_and(|op| self.run_dock_op(op, window, cx));
-        if !done {
-            cx.propagate();
-        }
+        cx.propagate();
     }
 }
 

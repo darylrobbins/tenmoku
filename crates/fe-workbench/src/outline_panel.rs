@@ -17,16 +17,15 @@
 //! is still of its language: one set to another language and back meanwhile
 //! keeps the outline shown.
 
-use std::{ops::Range, rc::Rc};
+use std::ops::Range;
 
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::{EditorView, commands::RunCommand};
+use fe_gpui::EditorView;
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, Syntax};
 use fe_ui::{TreeRow, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    Task, UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AppContext as _, Context, Entity, EntityId, Focusable as _, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, Styled as _, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
     uniform_list,
 };
 
@@ -372,55 +371,6 @@ impl Render for OutlinePanel {
     }
 }
 
-/// The [`CommandTarget`] of the outline's command: whether it ran.
-pub(crate) struct OutlineCommands;
-
-impl CommandTarget for OutlineCommands {
-    type Tx = ();
-    type Target<'a> = bool;
-}
-
-struct Commands(Rc<Registry<OutlineCommands>>);
-
-impl Global for Commands {}
-
-/// Registers `outline.show`.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<OutlineCommands> {
-    let mut registry = Registry::new();
-    registry
-        .register(
-            "outline.show",
-            "Show Outline",
-            |shown: &mut bool, _: &Actor| {
-                *shown = true;
-                Ok(Dispatched::new(Effect::Notify))
-            },
-        )
-        .expect("the outline command ID is valid")
-        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
-    registry
-}
-
-/// Whether `run` is `outline.show`, in a context where it applies.
-pub(crate) fn shows(run: &RunCommand, cx: &App) -> bool {
-    let Some(commands) = cx.try_global::<Commands>() else {
-        return false;
-    };
-    let registry = commands.0.clone();
-    if registry.get(&run.0.command).is_none() {
-        return false;
-    }
-    let mut shown = false;
-    if let Err(error) = registry.dispatch(&mut shown, &run.0) {
-        log::warn!("{error}");
-    }
-    shown
-}
-
 /// What the tests count.
 #[cfg(test)]
 #[derive(Default)]
@@ -442,7 +392,7 @@ impl TestCounters {
     /// The job also awaits the returned gate before it runs.
     fn started(
         &mut self,
-        cx: &App,
+        cx: &gpui::App,
     ) -> (
         impl FnOnce() + Send + 'static,
         impl Future<Output = ()> + Send + 'static,

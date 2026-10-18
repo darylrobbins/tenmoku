@@ -30,8 +30,8 @@ use gpui::{
 
 use super::StatusBar;
 use crate::{
-    dock::{self, DockOp},
     picker::{self, PaletteOp},
+    search_panel::{self, SearchOp},
 };
 
 /// The key context the line's element sets.
@@ -275,7 +275,7 @@ impl StatusBar {
         let Some(input) = self.line.input.clone() else {
             return cx.propagate();
         };
-        if dock::op(run, cx) == Some(DockOp::Submit) {
+        if search_panel::op(run, cx) == Some(SearchOp::Submit) {
             let text = input.read(cx).text().to_owned();
             return self.end_line(Some(text), VimKey::Enter, window, cx);
         }

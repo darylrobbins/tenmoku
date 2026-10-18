@@ -648,7 +648,7 @@ impl ProjectPanel {
             return self.run_in_field(run, window, cx);
         }
         let op = op(run, cx);
-        if op.is_some_and(|op| op != PanelOp::RevealActive) {
+        if op.is_some() {
             // The user moved on.
             self.cancel_reveal();
         }
@@ -667,7 +667,7 @@ impl ProjectPanel {
             Some(PanelOp::Duplicate) => self.duplicate_selected(window, cx),
             Some(PanelOp::CopyPath) => self.copy_path(false, cx),
             Some(PanelOp::CopyRelativePath) => self.copy_path(true, cx),
-            Some(PanelOp::RevealActive) | None => cx.propagate(),
+            None => cx.propagate(),
         }
     }
 
@@ -893,8 +893,6 @@ pub(crate) enum PanelOp {
     Duplicate,
     CopyPath,
     CopyRelativePath,
-    /// Done by the workbench, which knows the active file.
-    RevealActive,
 }
 
 /// The [`CommandTarget`] of panel commands: the op to do.
@@ -984,12 +982,6 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             KEY_CONTEXT,
             CopyRelativePath,
         ),
-        (
-            "project_panel.reveal_active",
-            "Reveal Active File in Project",
-            crate::KEY_CONTEXT,
-            RevealActive,
-        ),
     ];
     let mut registry = Registry::new();
     for (id, title, context, op) in commands {
@@ -1001,6 +993,16 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             .expect("project panel command IDs are valid and distinct")
             .context(ContextPredicate::identifier(context));
     }
+    // The workbench's typed command, which knows the active file: listed
+    // still, it names no op, so the panel passes it on.
+    registry
+        .register(
+            "project_panel.reveal_active",
+            "Reveal Active File in Project",
+            |_: &mut Option<PanelOp>, _: &Actor| Ok(Dispatched::new(Effect::Notify)),
+        )
+        .expect("project panel command IDs are valid and distinct")
+        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
     registry
 }
 

@@ -11,11 +11,13 @@ use kiln::Cx;
 use kiln_shell::DockPosition;
 
 use crate::{
-    Axis, Direction, Pane, Workbench, dock_layout,
+    Axis, Direction, Pane, ReferencesPanel, Workbench,
+    dock::{DockOp, ProblemsOp, problems_panel},
+    dock_layout,
     git::git_conflicts::{Side, Which},
     nav::NavOp,
     open::OpenOp,
-    persist,
+    persist, references_panel,
     workbench::git_commands::GitCommand,
     workbench::recent_picker::RecentOp,
 };
@@ -412,6 +414,130 @@ impl Workbench {
         self.move_sidebar(DockPosition::Right, cx.cx);
     }
 
+    /// Show Project
+    #[command(id = "dock.show_project")]
+    fn show_project(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowProject, cx);
+    }
+
+    /// Toggle Dock
+    #[command(id = "dock.toggle")]
+    fn toggle_dock(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::Toggle, cx);
+    }
+
+    /// Find in Files
+    #[command(id = "search.show")]
+    fn find_in_files(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowSearch, cx);
+    }
+
+    /// Replace in Files…
+    ///
+    /// The search panel does it itself while focused.
+    #[command(id = "search.show_replace")]
+    pub(crate) fn replace_in_files(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowReplace, cx);
+    }
+
+    /// Replace All in Files
+    ///
+    /// The search panel does it itself while focused.
+    #[command(id = "search.replace_all")]
+    pub(crate) fn replace_all_in_files(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ReplaceAll, cx);
+    }
+
+    /// Show Changes
+    #[command(id = "git.show_changes")]
+    fn show_changes(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowChanges, cx);
+    }
+
+    /// Refresh Changes
+    #[command(id = "git.refresh")]
+    fn refresh_changes(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::RefreshChanges, cx);
+    }
+
+    /// Show Outline
+    #[command(id = "outline.show")]
+    fn show_outline(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::ShowOutline, cx);
+    }
+
+    /// Reveal Active File in Project
+    #[command(id = "project_panel.reveal_active")]
+    fn reveal_active_file(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::KEY_CONTEXT, cx, |this, _, cx| this.reveal_active(cx));
+    }
+
+    /// Find All References
+    #[command(id = "nav.find_references")]
+    fn find_all_references(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::KEY_CONTEXT, cx, Self::find_references);
+    }
+
+    /// Select Previous Reference
+    ///
+    /// The References panel does it itself while focused.
+    #[command(id = "references_panel.select_prev", context = "ReferencesPanel")]
+    pub(crate) fn select_previous_reference(&mut self, cx: &mut Cx<Self>) {
+        self.references_command(cx, |panel, _, cx| panel.move_selection(-1, cx));
+    }
+
+    /// Select Next Reference
+    ///
+    /// The References panel does it itself while focused.
+    #[command(id = "references_panel.select_next", context = "ReferencesPanel")]
+    pub(crate) fn select_next_reference(&mut self, cx: &mut Cx<Self>) {
+        self.references_command(cx, |panel, _, cx| panel.move_selection(1, cx));
+    }
+
+    /// Open Reference
+    ///
+    /// The References panel does it itself while focused.
+    #[command(id = "references_panel.open", context = "ReferencesPanel")]
+    pub(crate) fn open_reference(&mut self, cx: &mut Cx<Self>) {
+        self.references_command(cx, ReferencesPanel::open_selected);
+    }
+
+    /// Show Problems
+    #[command(id = "problems.show")]
+    fn show_problems(&mut self, cx: &mut Cx<Self>) {
+        self.dock_command(DockOp::Problems(ProblemsOp::Show), cx);
+    }
+
+    /// Select Next Problem
+    #[command(id = "problems.select_next", context = "problems_panel")]
+    fn select_next_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::SelectNext, cx);
+    }
+
+    /// Select Previous Problem
+    #[command(id = "problems.select_previous", context = "problems_panel")]
+    fn select_previous_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::SelectPrevious, cx);
+    }
+
+    /// Open Problem
+    #[command(id = "problems.open", context = "problems_panel")]
+    fn open_problem_command(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::Open, cx);
+    }
+
+    /// Go to Next Problem
+    #[command(id = "diagnostics.next")]
+    fn go_to_next_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::Next, cx);
+    }
+
+    /// Go to Previous Problem
+    #[command(id = "diagnostics.previous")]
+    fn go_to_previous_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::Previous, cx);
+    }
+
     /// Toggle Status Bar
     #[command(id = "view.toggle_status_bar")]
     fn toggle_status_bar(&mut self, cx: &mut Cx<Self>) {
@@ -677,6 +803,41 @@ impl Workbench {
         });
     }
 
+    /// Does the dock op `op`, as a rail click does.
+    fn dock_command(&mut self, op: DockOp, cx: &mut Cx<Self>) {
+        self.in_context(crate::KEY_CONTEXT, cx, |this, window, cx| {
+            this.run_dock_op(op, window, cx)
+        });
+    }
+
+    /// Runs `run` on the References panel, a panel command's, if the
+    /// command was invoked where the panel's context holds: see
+    /// [`Workbench::in_context`].
+    fn references_command(
+        &mut self,
+        cx: &mut Cx<Self>,
+        run: impl FnOnce(&mut ReferencesPanel, &mut Window, &mut Context<ReferencesPanel>) + 'static,
+    ) {
+        self.in_context(references_panel::KEY_CONTEXT, cx, |this, window, cx| {
+            this.on_references_panel(run, window, cx)
+        });
+    }
+
+    /// Does the problems op `op`, if the command was invoked where its
+    /// context holds: the panel's for selecting and opening, the
+    /// workbench's for going to a diagnostic. See [`Workbench::in_context`].
+    fn problems_command(&mut self, op: ProblemsOp, cx: &mut Cx<Self>) {
+        let context = match op {
+            ProblemsOp::SelectNext | ProblemsOp::SelectPrevious | ProblemsOp::Open => {
+                problems_panel::KEY_CONTEXT
+            }
+            ProblemsOp::Show | ProblemsOp::Next | ProblemsOp::Previous => crate::KEY_CONTEXT,
+        };
+        self.in_context(context, cx, |this, window, cx| {
+            this.run_problems_op(op, window, cx)
+        });
+    }
+
     /// Runs the nav command `op`.
     fn nav_command(&mut self, op: NavOp, cx: &mut Cx<Self>) {
         self.ran(cx);
@@ -699,13 +860,8 @@ impl Workbench {
         self.in_context(fe_editor::commands::CONTEXT, cx, run);
     }
 
-    /// Runs `run`, the command's of a narrower context than the
-    /// workbench's, if the command was invoked where `context` holds, as
-    /// its `fe-command` registry checked: kiln runs a typed command's
-    /// handler wherever it's dispatched, so a menu pick or a `RunCommand`
-    /// with the project panel focused would act on the active editor or
-    /// terminal. One run with no invocation, as a raw action, whose key
-    /// binding checked its context, runs.
+    /// Runs `run`, a command's in `context`, if the command was invoked
+    /// where `context` holds: see [`invoked_in`].
     fn in_context(
         &mut self,
         context: &str,
@@ -713,17 +869,9 @@ impl Workbench {
         run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) {
         self.ran(cx);
-        let context = ContextPredicate::identifier(context);
-        if let Some(invocation) = kiln::current_invocation(cx.cx)
-            && !context.eval(&invocation.context)
-        {
-            log::warn!(
-                "{} doesn't apply here: not in {context}",
-                invocation.command
-            );
-            return;
+        if invoked_in(context, cx.cx) {
+            run(self, cx.window, cx.cx);
         }
-        run(self, cx.window, cx.cx);
     }
 
     /// Runs the open command `op`.
@@ -759,4 +907,25 @@ fn invocation_row(cx: &Cx<Workbench>) -> Option<u32> {
     let invocation = kiln::current_invocation(cx.cx)?;
     let row = invocation.args.get("row")?.as_u64()?;
     u32::try_from(row).ok()
+}
+
+/// Whether the typed command running was invoked where `context` holds, as
+/// its `fe-command` registry checked, warning if not: kiln runs a typed
+/// command's handler wherever it's dispatched, so a menu pick or a
+/// `RunCommand` with the project panel or terminal focused would act on the
+/// active editor, or on a panel. A run with no invocation, as a raw action,
+/// whose key binding checked its context, applies. For the workbench's
+/// handlers and a panel's of the commands it does itself.
+pub(crate) fn invoked_in(context: &str, cx: &App) -> bool {
+    let context = ContextPredicate::identifier(context);
+    match kiln::current_invocation(cx) {
+        Some(invocation) if !context.eval(&invocation.context) => {
+            log::warn!(
+                "{} doesn't apply here: not in {context}",
+                invocation.command
+            );
+            false
+        }
+        _ => true,
+    }
 }

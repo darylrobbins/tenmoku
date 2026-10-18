@@ -8,21 +8,14 @@
 //! `git.file_history` runs ([`Dock::set_history`]), the Git Log panel the
 //! first time `git.log` or `git.log_all` does ([`Dock::set_git_log`]).
 //!
-//! Its commands, and the search panel's, are those of [`init`]'s registry:
-//! the dock's in the workbench's [`crate::KEY_CONTEXT`] (with
-//! `search.show_replace` and `search.replace_all`), the search options' and
-//! the replace toggle's in the search panel's [`search_panel::KEY_CONTEXT`],
-//! the results list's in [`search_panel::RESULTS_KEY_CONTEXT`],
-//! `text_input.submit` in its input's, and the problems commands
-//! ([`problems_panel::commands`]). Their handlers only name an op: the
-//! workbench, or the search panel, then does it with the window at hand.
+//! Its commands (`dock.show_project`, `dock.toggle`, the panels' show
+//! commands, `search.show_replace`, `search.replace_all` and `git.refresh`)
+//! are the workbench's typed commands (`workbench_commands.rs`), which do a
+//! [`DockOp`], as a rail click does; the search panel's own are in its
+//! registry ([`search_panel::registry`]).
 
-use std::rc::Rc;
-
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, TextInput};
-use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, SharedString, Window};
+use fe_ui::Icon;
+use gpui::{App, Context, Entity, EventEmitter, IntoElement, Render, SharedString, Window};
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
 use crate::{
@@ -376,9 +369,7 @@ impl Dock {
     }
 
     /// Does a dock op, for a key or a rail click: showing search focuses its
-    /// input. Search options and submits, which the search panel does when
-    /// focused, go on. Focus on a panel the op hides stays: the workbench
-    /// moves it.
+    /// input. Focus on a panel the op hides stays: the workbench moves it.
     pub(crate) fn run(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
         #[cfg(test)]
         self.ops.push(op);
@@ -411,7 +402,7 @@ impl Dock {
                     .update(cx, |search, cx| search.confirm_replace_all(window, cx));
                 true
             }
-            // The search panel's, and the panels' show ops, done above.
+            // The panels' show ops, done above.
             _ => false,
         }
     }
@@ -523,12 +514,12 @@ impl Render for Dock {
 #[path = "sidebar_panels_tests.rs"]
 mod sidebar_panels_tests;
 
-/// What a dock or search command asks for.
+/// What a dock command, or a rail click, asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DockOp {
     ShowSearch,
     ShowProject,
-    /// `outline.show`, which the outline panel's registry has.
+    /// `outline.show`.
     ShowOutline,
     /// The References button: shows the last results, finding none.
     ShowReferences,
@@ -541,138 +532,11 @@ pub(crate) enum DockOp {
     /// `git.refresh`: reads the git status again, shown or not.
     RefreshChanges,
     Toggle,
-    ToggleRegex,
-    ToggleCase,
-    ToggleWholeWord,
-    /// Enter in the search panel's input: [`TextInput::submit`].
-    Submit,
     /// `search.show_replace`: shows search with its replace field, focused.
     ShowReplace,
     /// `search.replace_all`: asks, then replaces in the results' files.
     ReplaceAll,
-    ToggleReplace,
-    FocusResults,
-    SelectNext,
-    SelectPrevious,
-    OpenSelected,
     /// A problems command: `problems.show` is the dock's to do, the others
     /// the workbench's.
     Problems(ProblemsOp),
-}
-
-/// The [`CommandTarget`] of dock commands: the op to do.
-pub(crate) struct DockCommands;
-
-impl CommandTarget for DockCommands {
-    type Tx = ();
-    type Target<'a> = Option<DockOp>;
-}
-
-struct Commands(Rc<Registry<DockCommands>>);
-
-impl Global for Commands {}
-
-/// Registers the dock and search commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<DockCommands> {
-    use DockOp::*;
-    let workbench = crate::KEY_CONTEXT;
-    let search = search_panel::KEY_CONTEXT;
-    let results = search_panel::RESULTS_KEY_CONTEXT;
-    let commands = [
-        ("search.show", "Find in Files", workbench, ShowSearch),
-        ("dock.show_project", "Show Project", workbench, ShowProject),
-        ("dock.toggle", "Toggle Dock", workbench, Toggle),
-        ("git.show_changes", "Show Changes", workbench, ShowChanges),
-        ("git.refresh", "Refresh Changes", workbench, RefreshChanges),
-        (
-            "search.show_replace",
-            "Replace in Files…",
-            workbench,
-            ShowReplace,
-        ),
-        (
-            "search.replace_all",
-            "Replace All in Files",
-            workbench,
-            ReplaceAll,
-        ),
-        ("search.toggle_regex", "Toggle Regex", search, ToggleRegex),
-        (
-            "search.toggle_case",
-            "Toggle Match Case",
-            search,
-            ToggleCase,
-        ),
-        (
-            "search.toggle_whole_word",
-            "Toggle Whole Word",
-            search,
-            ToggleWholeWord,
-        ),
-        (
-            "search.toggle_replace",
-            "Toggle Replace",
-            search,
-            ToggleReplace,
-        ),
-        (
-            "search.focus_results",
-            "Focus Search Results",
-            search,
-            FocusResults,
-        ),
-        (
-            "search.select_next",
-            "Select Next Result",
-            results,
-            SelectNext,
-        ),
-        (
-            "search.select_previous",
-            "Select Previous Result",
-            results,
-            SelectPrevious,
-        ),
-        (
-            "search.open_selected",
-            "Open Selected Result",
-            results,
-            OpenSelected,
-        ),
-        (
-            "text_input.submit",
-            "Submit",
-            TextInput::KEY_CONTEXT,
-            Submit,
-        ),
-    ];
-    let problems = (problems_panel::commands().into_iter())
-        .map(|(id, title, context, op)| (id, title, context, Problems(op)));
-    let mut registry = Registry::new();
-    for (id, title, context, op) in commands.into_iter().chain(problems) {
-        registry
-            .register(id, title, move |target: &mut Option<DockOp>, _: &Actor| {
-                *target = Some(op);
-                Ok(Dispatched::new(Effect::Notify))
-            })
-            .expect("dock command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
-    registry
-}
-
-/// The op of `run`, if it's a dock or search command that applies in its
-/// context.
-pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<DockOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }

@@ -97,7 +97,7 @@ pub fn init(cx: &mut App) {
     // `kiln::init` has run: the test apps never run it.
     module(cx);
     picker::init(cx);
-    dock::init(cx);
+    search_panel::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
@@ -109,9 +109,7 @@ pub fn init(cx: &mut App) {
     kiln_shell::layout::register_item::<fe_gpui::FileViewer>(cx);
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
-    outline_panel::init(cx);
     project_panel::init(cx);
-    references_panel::init(cx);
     status_bar::init(cx);
     trust::init(cx);
 }
@@ -130,13 +128,11 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
 fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     vec![
         kiln_shell::picker::catalog(),
-        Box::new(dock::registry()),
+        Box::new(search_panel::registry()),
         Box::new(commit_box_registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
-        Box::new(outline_panel::registry()),
         Box::new(project_panel::registry()),
-        Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
         fe_gpui::commands::command_catalog(),
     ]
@@ -146,11 +142,9 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
 /// which lists each where its context holds; it lists the typed commands
 /// itself.
 fn command_list() -> Vec<CommandMeta> {
-    let mut list: Vec<CommandMeta> = dock::registry().commands().cloned().collect();
+    let mut list: Vec<CommandMeta> = search_panel::registry().commands().cloned().collect();
     list.extend(commit_box_registry().commands().cloned());
-    list.extend(outline_panel::registry().commands().cloned());
     list.extend(project_panel::registry().commands().cloned());
-    list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
     list

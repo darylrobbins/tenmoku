@@ -20,7 +20,6 @@ mod landing;
 use std::{
     ops::Range,
     path::PathBuf,
-    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,20 +28,21 @@ use std::{
 
 use async_channel::Receiver;
 use fe_buffer::{Bias, Text};
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
-use fe_gpui::commands::RunCommand;
 use fe_nav::{
     Answer, FileReferences, NavError, NavRequest, Navigation, Reference, ReferencesSummary,
 };
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, FocusHandle, Focusable, Global,
+    AnyElement, App, AppContext as _, Context, ElementId, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle, WeakEntity,
     Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{DockPanel, Workbench};
+use crate::{
+    DockPanel, Workbench,
+    workbench_commands::{OpenReference, SelectNextReference, SelectPreviousReference, invoked_in},
+};
 
 /// Find references' results in the sidebar: on the rail once it has shown.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
@@ -292,7 +292,7 @@ impl ReferencesPanel {
 
     /// Moves the selection `delta` references on, clamped to the first and
     /// last, skipping file headers, and scrolls it into view.
-    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub(crate) fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let Some(selected) = self.selected else {
             return;
         };
@@ -345,17 +345,10 @@ impl ReferencesPanel {
         }
     }
 
-    /// Runs a panel command; others go on to the workbench.
-    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
-        match op(run, cx) {
-            Some(ReferencesOp::SelectPrev) => self.move_selection(-1, cx),
-            Some(ReferencesOp::SelectNext) => self.move_selection(1, cx),
-            Some(ReferencesOp::Open) => {
-                if let Some(ix) = self.selected {
-                    self.open(self.generation, ix, window, cx);
-                }
-            }
-            Some(ReferencesOp::Find) | None => cx.propagate(),
+    /// Opens the selected reference, if any.
+    pub(crate) fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.selected {
+            self.open(self.generation, ix, window, cx);
         }
     }
 
@@ -518,7 +511,23 @@ impl Render for ReferencesPanel {
         div()
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
-            .on_action(cx.listener(Self::on_run_command))
+            // Its commands, the workbench's typed commands, which the panel
+            // does itself while focused, where their context holds.
+            .on_action(cx.listener(|panel, _: &SelectPreviousReference, _, cx| {
+                if invoked_in(KEY_CONTEXT, cx) {
+                    panel.move_selection(-1, cx)
+                }
+            }))
+            .on_action(cx.listener(|panel, _: &SelectNextReference, _, cx| {
+                if invoked_in(KEY_CONTEXT, cx) {
+                    panel.move_selection(1, cx)
+                }
+            }))
+            .on_action(cx.listener(|panel, _: &OpenReference, window, cx| {
+                if invoked_in(KEY_CONTEXT, cx) {
+                    panel.open_selected(window, cx)
+                }
+            }))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -552,7 +561,7 @@ impl Workbench {
     /// `nav.find_references`: shows the dock with References, focused, and
     /// finds the uses of the word at the active editor's caret there, in
     /// place of the last results.
-    fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A go-to-definition still running would take focus from the panel.
         self.nav_state.goto.next();
         let dock = self.dock().clone();
@@ -576,97 +585,19 @@ impl Workbench {
         });
     }
 
-    /// Runs `nav.find_references`, if `run` is it. Whether it was.
-    pub(crate) fn run_references_command(
+    /// Runs `run` on the References panel, once the workbench's update is
+    /// over: opening a reference updates the workbench.
+    pub(crate) fn on_references_panel(
         &mut self,
-        run: &RunCommand,
+        run: impl FnOnce(&mut ReferencesPanel, &mut Window, &mut Context<ReferencesPanel>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        let find = op(run, cx) == Some(ReferencesOp::Find);
-        if find {
-            self.find_references(window, cx);
-        }
-        find
+    ) {
+        let panel = self.dock().read(cx).references().clone();
+        window.defer(cx, move |window, cx| {
+            panel.update(cx, |panel, cx| run(panel, window, cx))
+        });
     }
-}
-
-/// What a references command asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReferencesOp {
-    Find,
-    SelectPrev,
-    SelectNext,
-    Open,
-}
-
-/// The [`CommandTarget`] of references commands: the op to do.
-pub(crate) struct ReferencesCommands;
-
-impl CommandTarget for ReferencesCommands {
-    type Tx = ();
-    type Target<'a> = Option<ReferencesOp>;
-}
-
-struct Commands(Rc<Registry<ReferencesCommands>>);
-
-impl Global for Commands {}
-
-/// Registers `nav.find_references` and the panel's commands.
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Commands(Rc::new(registry())));
-}
-
-pub(crate) fn registry() -> Registry<ReferencesCommands> {
-    use ReferencesOp::*;
-    let commands = [
-        (
-            "nav.find_references",
-            "Find All References",
-            crate::KEY_CONTEXT,
-            Find,
-        ),
-        (
-            "references_panel.select_prev",
-            "Select Previous Reference",
-            KEY_CONTEXT,
-            SelectPrev,
-        ),
-        (
-            "references_panel.select_next",
-            "Select Next Reference",
-            KEY_CONTEXT,
-            SelectNext,
-        ),
-        ("references_panel.open", "Open Reference", KEY_CONTEXT, Open),
-    ];
-    let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
-        registry
-            .register(
-                id,
-                title,
-                move |target: &mut Option<ReferencesOp>, _: &Actor| {
-                    *target = Some(op);
-                    Ok(Dispatched::new(Effect::Notify))
-                },
-            )
-            .expect("references command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(context));
-    }
-    registry
-}
-
-/// The op of `run`, if it's a references command that applies in its
-/// context.
-fn op(run: &RunCommand, cx: &App) -> Option<ReferencesOp> {
-    let registry = cx.try_global::<Commands>()?.0.clone();
-    registry.get(&run.0.command)?;
-    let mut op = None;
-    if let Err(error) = registry.dispatch(&mut op, &run.0) {
-        log::warn!("{error}");
-    }
-    op
 }
 
 /// What the tests hold and count.

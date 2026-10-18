@@ -63,6 +63,44 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Move Sidebar to Right",
         "workbench",
     ),
+    ("dock.show_project", "Show Project", "workbench"),
+    ("dock.toggle", "Toggle Dock", "workbench"),
+    ("search.show", "Find in Files", "workbench"),
+    ("search.show_replace", "Replace in Files…", "workbench"),
+    ("search.replace_all", "Replace All in Files", "workbench"),
+    ("git.show_changes", "Show Changes", "workbench"),
+    ("git.refresh", "Refresh Changes", "workbench"),
+    ("outline.show", "Show Outline", "workbench"),
+    ("nav.find_references", "Find All References", "workbench"),
+    (
+        "references_panel.select_prev",
+        "Select Previous Reference",
+        "ReferencesPanel",
+    ),
+    (
+        "references_panel.select_next",
+        "Select Next Reference",
+        "ReferencesPanel",
+    ),
+    ("references_panel.open", "Open Reference", "ReferencesPanel"),
+    ("problems.show", "Show Problems", "workbench"),
+    (
+        "problems.select_next",
+        "Select Next Problem",
+        "problems_panel",
+    ),
+    (
+        "problems.select_previous",
+        "Select Previous Problem",
+        "problems_panel",
+    ),
+    ("problems.open", "Open Problem", "problems_panel"),
+    ("diagnostics.next", "Go to Next Problem", "workbench"),
+    (
+        "diagnostics.previous",
+        "Go to Previous Problem",
+        "workbench",
+    ),
     ("view.toggle_status_bar", "Toggle Status Bar", "workbench"),
     ("quick_open.toggle", "Go to File", "workbench"),
     ("go_to_line.toggle", "Go to Line/Column…", "workbench"),
@@ -229,6 +267,26 @@ fn moved_commands_keep_their_ids_titles_and_contexts(cx: &mut TestAppContext) {
                 "{id}"
             );
         }
+    });
+}
+
+/// `project_panel.reveal_active` is a typed command with its title and
+/// context too, which the project panel's registry still lists, naming no
+/// op, and the panel passes on.
+#[gpui::test]
+fn reveal_active_is_a_typed_command(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    cx.read(|cx| {
+        let id = CommandId::parse("project_panel.reveal_active").unwrap();
+        let command = typed_command(&id, cx).expect("a typed command");
+        assert_eq!(command.title, "Reveal Active File in Project");
+        assert_eq!(
+            command.context,
+            Some(ContextPredicate::identifier("workbench"))
+        );
     });
 }
 
@@ -429,4 +487,126 @@ fn terminal_commands_run_only_in_the_terminals_context(cx: &mut TestAppContext) 
     }
     run("terminal.vi_mode", &["workbench", "terminal"], cx);
     assert!(shown(cx), "terminal.vi_mode in the terminal");
+}
+
+/// Dispatches `id` as a `RunCommand` from the focused element, invoked in
+/// `frames`' context, and lets it land.
+fn run_in(id: &str, frames: &[&'static str], cx: &mut VisualTestContext) {
+    let stack = (frames.iter()).fold(ContextStack::new(), |stack, frame| {
+        stack.with(ContextFrame::new(*frame))
+    });
+    let run = RunCommand(Invocation::of(id).unwrap().context(stack));
+    cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+/// A workbench rooted at a project of `a.rs`, showing it, focused, its
+/// caret in the first `helper`.
+fn helper_project(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    gpui::Entity<Workbench>,
+    &mut VisualTestContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let text = "fn helper() {}\n\nfn main() {\n    helper();\n    helper();\n}\n";
+    std::fs::write(root.join("a.rs"), text).unwrap();
+    let (workbench, cx) = crate::tests::open_root(cx, &root);
+    cx.update(|window, cx| {
+        let pane = workbench.read(cx).pane().clone();
+        pane.update(cx, |pane, cx| pane.open(root.join("a.rs"), window, cx));
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    let editor = workbench
+        .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
+        .expect("a.rs is shown");
+    editor.update(cx, |editor, cx| editor.select_and_reveal(4..4, cx));
+    cx.run_until_parked();
+    (dir, workbench, cx)
+}
+
+/// The workbench's moved commands in its context, the dock's, run only
+/// where it holds, as their registry's dispatch checked.
+#[gpui::test]
+fn the_dock_commands_run_only_in_the_workbenchs_context(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = helper_project(cx);
+    let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
+    let visible = |cx: &mut VisualTestContext| dock.read_with(cx, |dock, _| dock.is_visible());
+    let shown = visible(cx);
+    run_in("dock.toggle", &[fe_editor::commands::CONTEXT], cx);
+    assert_eq!(visible(cx), shown, "not in the workbench's context");
+    run_in(
+        "dock.toggle",
+        &["workbench", fe_editor::commands::CONTEXT],
+        cx,
+    );
+    assert_eq!(visible(cx), !shown);
+}
+
+/// The replace commands the search panel does itself while focused run
+/// only where the workbench's context holds, as the dock's registry
+/// checked.
+#[gpui::test]
+fn the_search_panels_replace_commands_check_their_context(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = helper_project(cx);
+    run_in("search.show", &["workbench"], cx);
+    let search = workbench.read_with(cx, |workbench, cx| {
+        workbench.dock().read(cx).search().clone()
+    });
+    let replace_focused = |cx: &mut VisualTestContext| {
+        let replace = search.read_with(cx, |search, _| search.replace_input().clone());
+        cx.update(|window, cx| replace.focus_handle(cx).is_focused(window))
+    };
+    assert!(!replace_focused(cx));
+    let panel = ["search_panel", fe_ui::TextInput::KEY_CONTEXT];
+    run_in("search.show_replace", &panel, cx);
+    assert!(!replace_focused(cx), "not in the workbench's context");
+    run_in(
+        "search.show_replace",
+        &["workbench", panel[0], panel[1]],
+        cx,
+    );
+    assert!(replace_focused(cx));
+}
+
+/// The References panel's commands run only where its context holds,
+/// whether the panel, focused, does them or the workbench does.
+#[gpui::test]
+fn the_references_commands_run_only_in_the_panels_context(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = helper_project(cx);
+    let editor = ["workbench", fe_editor::commands::CONTEXT];
+    run_in("nav.find_references", &editor[1..], cx);
+    let panel = workbench.read_with(cx, |workbench, cx| {
+        workbench.dock().read(cx).references().clone()
+    });
+    let selected = |cx: &mut VisualTestContext| panel.read_with(cx, |panel, _| panel.selected());
+    assert_eq!(selected(cx), None, "not in the workbench's context");
+    run_in("nav.find_references", &editor, cx);
+    let first = selected(cx);
+    assert!(first.is_some(), "the references are listed");
+
+    // The panel, focused, does them.
+    cx.update(|window, cx| window.focus(&panel.focus_handle(cx), cx));
+    run_in("references_panel.select_next", &["workbench"], cx);
+    assert_eq!(selected(cx), first, "not in the panel's context");
+    let in_panel = ["workbench", "ReferencesPanel"];
+    run_in("references_panel.select_next", &in_panel, cx);
+    let second = selected(cx);
+    assert!(second > first, "{second:?}");
+    run_in("references_panel.select_prev", &["workbench"], cx);
+    assert_eq!(selected(cx), second);
+    run_in("references_panel.select_prev", &in_panel, cx);
+    assert_eq!(selected(cx), first);
+
+    // The workbench does them for an invocation in the panel's context
+    // from elsewhere, and nothing for one that isn't.
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    run_in("references_panel.select_next", &editor, cx);
+    assert_eq!(selected(cx), first, "not in the panel's context");
+    run_in("references_panel.select_next", &in_panel, cx);
+    assert_eq!(selected(cx), second);
 }

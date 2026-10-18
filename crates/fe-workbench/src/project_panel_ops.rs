@@ -221,7 +221,6 @@ impl ProjectPanel {
         }
         let action: Box<dyn gpui::Action> = match op(run, cx) {
             Some(PanelOp::Open) => return self.commit_edit(window, cx),
-            Some(PanelOp::RevealActive) => return cx.propagate(),
             Some(PanelOp::CollapseOrParent) => Box::new(text_field::Left),
             Some(PanelOp::ExpandOrFirstChild) => Box::new(text_field::Right),
             Some(_) => return,

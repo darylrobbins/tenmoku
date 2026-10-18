@@ -25,10 +25,10 @@
 //! A known limit: fe-lsp delivers diagnostics per open document, so a file
 //! that isn't open isn't listed, whatever a server knows of it.
 //!
-//! The commands are in the dock's registry ([`crate::dock`]), as
-//! [`ProblemsOp`]s: `problems.show`, `diagnostics.next` and
-//! `diagnostics.previous` in the workbench's context, the others in the
-//! panel's [`KEY_CONTEXT`].
+//! The commands are the workbench's typed commands
+//! (`workbench_commands.rs`), which do a [`ProblemsOp`]: `problems.show`,
+//! `diagnostics.next` and `diagnostics.previous` in the workbench's
+//! context, the others in the panel's [`KEY_CONTEXT`].
 
 use std::{
     collections::HashSet,
@@ -96,36 +96,6 @@ pub(crate) enum ProblemsOp {
     Next,
     /// `diagnostics.previous`, on the active editor.
     Previous,
-}
-
-/// The problems commands, for the dock's registry: id, title, context and
-/// op.
-pub(crate) fn commands() -> [(&'static str, &'static str, &'static str, ProblemsOp); 6] {
-    use ProblemsOp::*;
-    let workbench = crate::KEY_CONTEXT;
-    [
-        (SHOW, "Show Problems", workbench, Show),
-        (
-            "problems.select_next",
-            "Select Next Problem",
-            KEY_CONTEXT,
-            SelectNext,
-        ),
-        (
-            "problems.select_previous",
-            "Select Previous Problem",
-            KEY_CONTEXT,
-            SelectPrevious,
-        ),
-        ("problems.open", "Open Problem", KEY_CONTEXT, Open),
-        ("diagnostics.next", "Go to Next Problem", workbench, Next),
-        (
-            "diagnostics.previous",
-            "Go to Previous Problem",
-            workbench,
-            Previous,
-        ),
-    ]
 }
 
 /// A row: a file's, or one of its problems.

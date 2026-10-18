@@ -35,6 +35,7 @@ use std::{
     ops::Range,
     os::unix::fs::FileExt as _,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -42,6 +43,7 @@ use std::{
 };
 
 use fe_buffer::FileEncoding;
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
 use fe_project::{
     FileMatches, LineMatch, PathFilter, Replacer, SearchError, SearchOptions, SearchQuery,
@@ -49,18 +51,18 @@ use fe_project::{
 };
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use gpui::{
-    AnyElement, AppContext as _, Context, ElementId, Entity, FocusHandle, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, PromptButton, PromptLevel, Render, ScrollHandle,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
-    uniform_list,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, PromptButton,
+    PromptLevel, Render, ScrollHandle, ScrollStrategy, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
 use crate::{
     Pane,
-    dock::{self, DockOp},
     pane::Reveal,
     picker::{self, PaletteOp},
+    workbench_commands::{ReplaceAllInFiles, ReplaceInFiles, invoked_in},
 };
 use search_replace::{Boundary, Target, count};
 
@@ -466,29 +468,27 @@ impl SearchPanel {
     /// Runs a search option, a replace or results command, Enter or an
     /// input edit; others go on to the workbench.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
-        let option = match dock::op(run, cx) {
-            Some(DockOp::ToggleRegex) => Some(SearchOption::Regex),
-            Some(DockOp::ToggleCase) => Some(SearchOption::MatchCase),
-            Some(DockOp::ToggleWholeWord) => Some(SearchOption::WholeWord),
-            Some(DockOp::Submit) => {
+        let option = match op(run, cx) {
+            Some(SearchOp::ToggleRegex) => Some(SearchOption::Regex),
+            Some(SearchOp::ToggleCase) => Some(SearchOption::MatchCase),
+            Some(SearchOp::ToggleWholeWord) => Some(SearchOption::WholeWord),
+            Some(SearchOp::Submit) => {
                 return self
                     .focused_input(window, cx)
                     .clone()
                     .update(cx, TextInput::submit);
             }
-            Some(DockOp::ShowReplace) => return self.show_replace(false, window, cx),
-            Some(DockOp::ToggleReplace) => return self.toggle_replace(window, cx),
-            Some(DockOp::ReplaceAll) => return self.confirm_replace_all(window, cx),
-            Some(DockOp::FocusResults) => return self.focus_results(window, cx),
-            Some(DockOp::SelectNext) => return self.select_next(true, cx),
-            Some(DockOp::SelectPrevious) => return self.select_next(false, cx),
-            Some(DockOp::OpenSelected) => {
+            Some(SearchOp::ToggleReplace) => return self.toggle_replace(window, cx),
+            Some(SearchOp::FocusResults) => return self.focus_results(window, cx),
+            Some(SearchOp::SelectNext) => return self.select_next(true, cx),
+            Some(SearchOp::SelectPrevious) => return self.select_next(false, cx),
+            Some(SearchOp::OpenSelected) => {
                 if let Some(ix) = self.selected {
                     self.open(self.layout, ix, window, cx);
                 }
                 return;
             }
-            _ => None,
+            None => None,
         };
         if let Some(option) = option {
             return self.toggle(option, cx);
@@ -1359,6 +1359,19 @@ impl Render for SearchPanel {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_run_command))
+            // The workbench's replace commands, which the panel does itself
+            // while focused, where the workbench's context holds: showing
+            // replace seeds nothing from the editor.
+            .on_action(cx.listener(|panel, _: &ReplaceInFiles, window, cx| {
+                if invoked_in(crate::KEY_CONTEXT, cx) {
+                    panel.show_replace(false, window, cx)
+                }
+            }))
+            .on_action(cx.listener(|panel, _: &ReplaceAllInFiles, window, cx| {
+                if invoked_in(crate::KEY_CONTEXT, cx) {
+                    panel.confirm_replace_all(window, cx)
+                }
+            }))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -1416,6 +1429,122 @@ impl Render for SearchPanel {
             })
             .child(results)
     }
+}
+
+/// What a search panel command asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchOp {
+    ToggleRegex,
+    ToggleCase,
+    ToggleWholeWord,
+    /// Enter in the search panel's input: [`TextInput::submit`].
+    Submit,
+    ToggleReplace,
+    FocusResults,
+    SelectNext,
+    SelectPrevious,
+    OpenSelected,
+}
+
+/// The [`CommandTarget`] of search panel commands: the op to do.
+pub(crate) struct SearchCommands;
+
+impl CommandTarget for SearchCommands {
+    type Tx = ();
+    type Target<'a> = Option<SearchOp>;
+}
+
+struct Commands(Rc<Registry<SearchCommands>>);
+
+impl Global for Commands {}
+
+/// Registers the search panel's commands.
+pub(crate) fn init(cx: &mut App) {
+    cx.set_global(Commands(Rc::new(registry())));
+}
+
+pub(crate) fn registry() -> Registry<SearchCommands> {
+    use SearchOp::*;
+    let search = KEY_CONTEXT;
+    let results = RESULTS_KEY_CONTEXT;
+    let commands = [
+        ("search.toggle_regex", "Toggle Regex", search, ToggleRegex),
+        (
+            "search.toggle_case",
+            "Toggle Match Case",
+            search,
+            ToggleCase,
+        ),
+        (
+            "search.toggle_whole_word",
+            "Toggle Whole Word",
+            search,
+            ToggleWholeWord,
+        ),
+        (
+            "search.toggle_replace",
+            "Toggle Replace",
+            search,
+            ToggleReplace,
+        ),
+        (
+            "search.focus_results",
+            "Focus Search Results",
+            search,
+            FocusResults,
+        ),
+        (
+            "search.select_next",
+            "Select Next Result",
+            results,
+            SelectNext,
+        ),
+        (
+            "search.select_previous",
+            "Select Previous Result",
+            results,
+            SelectPrevious,
+        ),
+        (
+            "search.open_selected",
+            "Open Selected Result",
+            results,
+            OpenSelected,
+        ),
+        (
+            "text_input.submit",
+            "Submit",
+            TextInput::KEY_CONTEXT,
+            Submit,
+        ),
+    ];
+    let mut registry = Registry::new();
+    for (id, title, context, op) in commands {
+        registry
+            .register(
+                id,
+                title,
+                move |target: &mut Option<SearchOp>, _: &Actor| {
+                    *target = Some(op);
+                    Ok(Dispatched::new(Effect::Notify))
+                },
+            )
+            .expect("search command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(context));
+    }
+    registry
+}
+
+/// The op of `run`, if it's a search panel command that applies in its
+/// context.
+pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<SearchOp> {
+    let registry = cx.try_global::<Commands>()?.0.clone();
+    registry.get(&run.0.command)?;
+    let mut op = None;
+    if let Err(error) = registry.dispatch(&mut op, &run.0) {
+        log::warn!("{error}");
+    }
+    op
 }
 
 #[cfg(test)]
