@@ -764,6 +764,7 @@ mod motion;
 mod operator;
 mod partial_word;
 mod prose;
+mod put_keys;
 mod quit_keys;
 mod reducer;
 mod register;

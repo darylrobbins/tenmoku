@@ -213,6 +213,7 @@ fn search_effects() {
     assert_eq!(vim.mode(), "normal");
     let put = crate::PutArgs {
         before: false,
+        cursor_after: false,
         count: None,
         register: Some('/'),
     };

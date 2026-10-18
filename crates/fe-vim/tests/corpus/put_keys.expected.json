@@ -1,0 +1,769 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "y_to_line_end",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Yp",
+      "expect": {
+        "buffer": "abc ddefef\nxyz",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_with_count",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2Yp",
+      "expect": {
+        "buffer": "abc ddef\nxyzef\nxyz",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\nxyz",
+            "linewise": false
+          },
+          "0": {
+            "text": "def\nxyz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_into_register",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "\"aYj\"ap",
+      "expect": {
+        "buffer": "abc def\nxyzdef",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "a": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_in_visual_is_linewise",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjYp",
+      "expect": {
+        "buffer": "abc\nabc\ndef\ndef\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\ndef\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\ndef\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "y_cursor_stays",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Y",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_at_line_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "Yp",
+      "expect": {
+        "buffer": "abc deff",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "0": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_linewise",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yygp",
+      "expect": {
+        "buffer": "a\na\nb\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_linewise_count",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy3gp",
+      "expect": {
+        "buffer": "a\na\na\na\nb",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_linewise_at_buffer_end",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "yygp",
+      "expect": {
+        "buffer": "a\nb\nc\nc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_charwise",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwgp",
+      "expect": {
+        "buffer": "aabcbc def",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_charwise_count",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiw2gp",
+      "expect": {
+        "buffer": "aabcabcbc def",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_charwise_at_line_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "yhgp",
+      "expect": {
+        "buffer": "abc deef",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "0": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_multirow_charwise",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjy$gp",
+      "expect": {
+        "buffer": "abcbc\nde\ndef",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nde",
+            "linewise": false
+          },
+          "0": {
+            "text": "bc\nde",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "gP_linewise",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yygP",
+      "expect": {
+        "buffer": "a\nb\nb\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gP_charwise",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "yiwgP",
+      "expect": {
+        "buffer": "abc defdef",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_block",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jly$gp",
+      "expect": {
+        "buffer": "abcab\ndefde\nghi",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "gP_block",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jly$gP",
+      "expect": {
+        "buffer": "ababc\ndedef\nghi",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "gp_register",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayiwwgp\"agp",
+      "expect": {
+        "buffer": "abc dabceabcf",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "a": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_then_dot",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yygp.",
+      "expect": {
+        "buffer": "a\na\nb\na\nc",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_linewise_then_p",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yygpp",
+      "expect": {
+        "buffer": "a\na\nb\na\nc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_marks_start",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy2gp`[iX<Esc>",
+      "expect": {
+        "buffer": "a\nXa\na\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_marks_end",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy2gp`]iY<Esc>",
+      "expect": {
+        "buffer": "a\na\nYa\nb\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_marks_at_buffer_end_start",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "yygp`[iX<Esc>",
+      "expect": {
+        "buffer": "a\nb\nc\nXc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_marks_at_buffer_end_end",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "yygp`]iY<Esc>",
+      "expect": {
+        "buffer": "a\nb\nc\nYc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gP_marks_start",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy2gP`[iX<Esc>",
+      "expect": {
+        "buffer": "a\nXb\nb\nb\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gP_marks_end",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yy2gP`]iY<Esc>",
+      "expect": {
+        "buffer": "a\nb\nYb\nb\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "gp_empty_register_fails",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"zgp",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -26,7 +26,8 @@ use fe_command::Registry;
 
 use crate::{
     Pending, Step, TextObject, VimCommands, VimKey, changes, delimiters, folds, g_operators,
-    increment, jump, jumplist, line_motions, partial_word, prose, quit_keys, scroll, unmatched,
+    increment, jump, jumplist, line_motions, partial_word, prose, put_keys, quit_keys, scroll,
+    unmatched,
 };
 
 /// A feature's answer to the key after `[` or `]` (`true`).
@@ -66,7 +67,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 13] = [
+pub(crate) const FEATURES: [&Feature; 14] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -80,6 +81,7 @@ pub(crate) const FEATURES: [&Feature; 13] = [
     &changes::FEATURE,
     &unmatched::FEATURE,
     &partial_word::FEATURE,
+    &put_keys::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

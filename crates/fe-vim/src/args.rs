@@ -565,6 +565,9 @@ pub struct OperateArgs {
 pub struct PutArgs {
     #[serde(default)]
     pub before: bool,
+    /// `gp` and `gP`: the caret ends just after the text put.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cursor_after: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

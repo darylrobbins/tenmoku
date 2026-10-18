@@ -191,6 +191,7 @@ fn counts_are_bounded() {
             "vim.put",
             PutArgs {
                 before: false,
+                cursor_after: false,
                 count: Some(count),
                 register: None,
             },

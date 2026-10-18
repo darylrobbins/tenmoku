@@ -1,0 +1,168 @@
+# Put-key cases for fe-vim's oracle: Y (y$ with counts and registers, and
+# linewise in visual mode), and gp and gP (put with the caret left after the
+# text) linewise, charwise, blockwise, with counts, at the buffer's end, in a
+# register, and repeated by `.`; gp from an empty register fails and is the
+# last case. Hand-written; what nvim does is recorded in put_keys.expected.json
+# by the ignored `record_corpus_with_neovim` test.
+
+[[case]]
+name = "y_to_line_end"
+buffer = "abc def\nxyz"
+cursor = [0, 4]
+keys = 'Yp'
+
+[[case]]
+name = "y_with_count"
+buffer = "abc def\nxyz"
+cursor = [0, 4]
+keys = '2Yp'
+
+[[case]]
+name = "y_into_register"
+buffer = "abc def\nxyz"
+cursor = [0, 4]
+keys = '"aYj"ap'
+
+[[case]]
+name = "y_in_visual_is_linewise"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = 'vjYp'
+
+[[case]]
+name = "y_cursor_stays"
+buffer = "abc def"
+cursor = [0, 4]
+keys = 'Y'
+
+[[case]]
+name = "y_at_line_end"
+buffer = "abc def"
+cursor = [0, 6]
+keys = 'Yp'
+
+[[case]]
+name = "gp_linewise"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = 'yygp'
+
+[[case]]
+name = "gp_linewise_count"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = 'yy3gp'
+
+[[case]]
+name = "gp_linewise_at_buffer_end"
+buffer = "a\nb\nc"
+cursor = [2, 0]
+keys = 'yygp'
+
+[[case]]
+name = "gp_charwise"
+buffer = "abc def"
+cursor = [0, 0]
+keys = 'yiwgp'
+
+[[case]]
+name = "gp_charwise_count"
+buffer = "abc def"
+cursor = [0, 0]
+keys = 'yiw2gp'
+
+[[case]]
+name = "gp_charwise_at_line_end"
+buffer = "abc def"
+cursor = [0, 6]
+keys = 'yhgp'
+
+[[case]]
+name = "gp_multirow_charwise"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = 'vjy$gp'
+
+[[case]]
+name = "gP_linewise"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = 'yygP'
+
+[[case]]
+name = "gP_charwise"
+buffer = "abc def"
+cursor = [0, 4]
+keys = 'yiwgP'
+
+[[case]]
+name = "gp_block"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = '<C-v>jly$gp'
+
+[[case]]
+name = "gP_block"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = '<C-v>jly$gP'
+
+[[case]]
+name = "gp_register"
+buffer = "abc def"
+cursor = [0, 0]
+keys = '"ayiwwgp"agp'
+
+[[case]]
+name = "gp_then_dot"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = 'yygp.'
+
+[[case]]
+name = "gp_linewise_then_p"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = 'yygpp'
+
+[[case]]
+name = "gp_marks_start"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = 'yy2gp`[iX<Esc>'
+
+[[case]]
+name = "gp_marks_end"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = 'yy2gp`]iY<Esc>'
+
+[[case]]
+name = "gp_marks_at_buffer_end_start"
+buffer = "a\nb\nc"
+cursor = [2, 0]
+keys = 'yygp`[iX<Esc>'
+
+[[case]]
+name = "gp_marks_at_buffer_end_end"
+buffer = "a\nb\nc"
+cursor = [2, 0]
+keys = 'yygp`]iY<Esc>'
+
+[[case]]
+name = "gP_marks_start"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = 'yy2gP`[iX<Esc>'
+
+[[case]]
+name = "gP_marks_end"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = 'yy2gP`]iY<Esc>'
+
+[[case]]
+name = "gp_empty_register_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = '"zgp'

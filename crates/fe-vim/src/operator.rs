@@ -1283,13 +1283,22 @@ fn put_unless_failing(
             )));
         }
         let rows: Vec<&str> = payload.split('\n').collect();
-        let (edits, [start, ..]) =
+        let (edits, starts) =
             visual::put_block(&text, (head.row, column), &rows, (width, count), tab);
+        let start = starts[0];
         let (transaction, snapshot) = apply(model, edits, origin(actor));
         if let Some(id) = transaction {
             state.carets.record(id, carets_before);
         }
-        land(model, &snapshot, [start]);
+        let end = starts[1] + starts[2];
+        land(
+            model,
+            &snapshot,
+            [match args.cursor_after {
+                true => Cursor::at(snapshot.text(), end).offset(),
+                false => start,
+            }],
+        );
         state.goals = None;
         return Ok(
             Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect())
@@ -1299,7 +1308,7 @@ fn put_unless_failing(
     // Each caret's insertion point, text, and where its caret goes: an
     // offset into the inserted text, or (`true`) the first non-blank of the
     // row starting there.
-    let mut puts: Vec<(usize, String, (usize, bool))> = Vec::with_capacity(before.len());
+    let mut puts: Vec<(usize, String, (usize, bool), usize)> = Vec::with_capacity(before.len());
     for selection in &before {
         let head = Cursor::at(&text, selection.head()).offset();
         let repeated = payload.repeat(count);
@@ -1324,7 +1333,19 @@ fn put_unless_failing(
                     1,
                 ),
             };
-            puts.push((at, inserted, (first, true)));
+            let place = match args.cursor_after {
+                // The row after the last put, or at the buffer's end the
+                // last row put.
+                true => (
+                    match (args.before, row + 1 < text.row_count()) {
+                        (false, false) => inserted.rfind('\n').map_or(0, |ix| ix + 1),
+                        _ => inserted.len(),
+                    },
+                    false,
+                ),
+                false => (first, true),
+            };
+            puts.push((at, inserted, place, first));
         } else {
             let at = match args.before {
                 true => head,
@@ -1339,21 +1360,25 @@ fn put_unless_failing(
                     .next_back()
                     .map_or(0, |(ix, _)| ix),
             };
-            puts.push((at, repeated, (land, false)));
+            let land = match args.cursor_after {
+                true => repeated.len(),
+                false => land,
+            };
+            puts.push((at, repeated, (land, false), 0));
         }
     }
-    puts.sort_by_key(|(at, _, _)| *at);
-    puts.dedup_by_key(|(at, _, _)| *at);
+    puts.sort_by_key(|(at, _, _, _)| *at);
+    puts.dedup_by_key(|(at, _, _, _)| *at);
     let (transaction, snapshot) = apply(
         model,
         puts.iter()
-            .map(|(at, inserted, _)| (*at..*at, inserted.as_str())),
+            .map(|(at, inserted, _, _)| (*at..*at, inserted.as_str())),
         origin(actor),
     );
     if let Some(id) = transaction {
         state.carets.record(id, carets_before);
         // The rows the first put in, for `'[` and `']`.
-        if let (true, Some((at, _, (first, _)))) = (value.linewise, puts.first()) {
+        if let (true, Some((at, _, _, first))) = (value.linewise, puts.first()) {
             let row = row(*at) + *first as u32;
             let rows = (payload.matches('\n').count() * count) as u32;
             let rows = (row, row + rows.max(1) - 1);
@@ -1366,7 +1391,7 @@ fn put_unless_failing(
     let mut shift = 0;
     let carets: Vec<usize> = puts
         .iter()
-        .map(|(at, inserted, (land, first_non_blank))| {
+        .map(|(at, inserted, (land, first_non_blank), _)| {
             let start = at + shift;
             shift += inserted.len();
             let land = start + land;
