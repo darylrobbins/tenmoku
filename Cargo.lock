@@ -1908,6 +1908,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-markdown-view"
+version = "0.1.0"
+dependencies = [
+ "fe-gpui",
+ "fe-markdown",
+ "fe-syntax",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "image",
+ "kiln-platform",
+ "kiln-ui",
+ "tempfile",
+ "usvg",
+]
+
+[[package]]
 name = "fe-nav"
 version = "0.1.0"
 dependencies = [

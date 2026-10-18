@@ -43,6 +43,7 @@ fe-terminal = { path = "crates/fe-terminal" }
 fe-terminal-view = { path = "crates/fe-terminal-view" }
 fe-git = { path = "crates/fe-git" }
 fe-markdown = { path = "crates/fe-markdown" }
+fe-markdown-view = { path = "crates/fe-markdown-view" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -106,6 +107,10 @@ chardetng = "0.1"
 
 # PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Checking a local SVG's linked files before GPUI draws it (fe-markdown-view),
+# read with the XML parser GPUI's SVG parser reads it with (already in the
+# lock through gpui).
+usvg = { version = "0.46", default-features = false }
 libc = "0.2"
 log = "0.4"
 # EditorConfig lookup and glob matching (Apache-2.0, no dependencies).

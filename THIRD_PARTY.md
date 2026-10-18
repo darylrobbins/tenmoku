@@ -13,6 +13,8 @@ repository. Change both files together.
 | `crates/fe-display/src/fold_map.rs` | gpui-kit `…/display_map/fold_map.rs`, `folding.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-editor/src/diagnostics.rs` | gpui-kit `crates/base/src/input/editor/diagnostics.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+| `crates/fe-markdown-view/src/blocks.rs` | gpui-kit `crates/base/src/text/utils.rs` (`list_item_prefix`, `ordered_list_ordinal`), `node.rs` (`CHECK_SVG_LIGHT`, `CHECK_SVG_DARK`) | `2154ba84afd2e771f117fd17e55c060dd5e03fd4` | Apache-2.0 |
+| `crates/fe-markdown-view/src/table.rs` | gpui-kit `crates/base/src/text/node.rs` (`render_table`, `render_table_rows`) | `2154ba84afd2e771f117fd17e55c060dd5e03fd4` | Apache-2.0 |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 | `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
 | `crates/fe-syntax/src/indent.rs` | nvim-treesitter `lua/nvim-treesitter/indent.lua` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |

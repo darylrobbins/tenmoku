@@ -1,0 +1,31 @@
+[package]
+name = "fe-markdown-view"
+description = "The GPUI view of an `fe-markdown` document: blocks, inlines, highlighted code, tables, task lists and images, in the editor's theme."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-gpui.workspace = true
+fe-markdown.workspace = true
+fe-syntax.workspace = true
+gpui.workspace = true
+# Telling a raster image from an SVG by its bytes, as GPUI does.
+image.workspace = true
+kiln-ui.workspace = true
+usvg.workspace = true
+
+[dev-dependencies]
+# Fences are highlighted whatever the machine's load, as in fe-syntax's own tests.
+fe-syntax = { workspace = true, features = ["no-query-budget"] }
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+# The screenshots example renders with the real Metal platform.
+gpui_platform = { workspace = true, features = ["test-support"] }
+# The screenshots example's harness: settling, comparison and goldens.
+kiln-platform = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
