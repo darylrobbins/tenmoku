@@ -15,7 +15,9 @@
 //! ([`crumbs`]) and the status bar's items ([`StatusItems::items_for`]).
 //! Beside the panes, a [`Dock`] shows one of its registered panels
 //! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
-//! shows one modal view, such as a [`Picker`] ([`modal`]).
+//! shows one modal view, such as a [`Picker`] ([`modal`]). A panel can
+//! stack several views under collapsible headers in a [`ViewStack`]
+//! ([`view_stack`]).
 //!
 //! [`Shell`] is a window's shell around the host's centre view: the chrome,
 //! the docks, the status bar and the modal layer, under the app's root key
@@ -46,6 +48,7 @@ mod shell;
 pub mod status;
 mod title_bar;
 pub mod trust;
+pub mod view_stack;
 pub mod window_frame;
 pub mod workspace;
 
@@ -66,6 +69,7 @@ pub use root::Root;
 pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
+pub use view_stack::{StackedView, ViewId, ViewStack};
 pub use workspace::{Workspace, WorkspaceEvent};
 
 // For status items and tab icons, to crates that use kiln-shell without
