@@ -256,14 +256,7 @@ fn headless_line_starts_empty() {
 fn counted_search_is_bounded() {
     // The bound is on rows searched, not time: a loaded machine mustn't
     // trip the default limit and turn a match into `None`.
-    struct Restore;
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
-        }
-    }
-    crate::search::set_time_limit(std::time::Duration::from_secs(600));
-    let _restore = Restore;
+    let _raised = super::raised_time_limit();
     let row = "x ".repeat(20_000);
     let text = fe_text::Text::new(&format!("{row}\nx\n{row}"));
     let pattern = Pattern::parse("x").unwrap();

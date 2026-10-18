@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use fe_command::Effect;
 use serde_json::json;
 
-use super::{invocation, registers};
+use super::{invocation, raised_time_limit, registers};
 use crate::{
     CommandLineKind, Ex, ExCommand, ExError, Flags, HeadlessVim, Substitute, context,
     search::ROWS_SEARCHED,
@@ -247,10 +247,10 @@ fn flags_specials_and_bounds() {
     let submit = invocation("vim.command_line_submit", json!({"text": "%s/x/y/"}))
         .context(context(vim.state()));
     // Two hundred thousand rows in a debug build can pass the default limit.
-    crate::search::set_time_limit(Duration::from_secs(600));
+    let raised = raised_time_limit();
     ROWS_SEARCHED.set(0);
     let dispatched = vim.dispatch(&submit).unwrap();
-    crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
+    drop(raised);
     assert_eq!(ROWS_SEARCHED.get(), rows);
     assert_eq!(dispatched.effect, Effect::Changed);
     assert_eq!(dispatched.transactions.len(), 1);
@@ -268,11 +268,11 @@ fn flags_specials_and_bounds() {
     let row = "ab".repeat(100_000);
     let mut vim = HeadlessVim::new(&row, (0, 0));
     // A hundred thousand matches under load can pass the default limit.
-    crate::search::set_time_limit(Duration::from_secs(600));
+    let raised = raised_time_limit();
     let started = Instant::now();
     vim.feed(":s/\\(a\\)b/\\u\\1-/g<CR>").unwrap();
     let elapsed = started.elapsed();
-    crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
+    drop(raised);
     assert!(elapsed < Duration::from_secs(10));
     assert_eq!(vim.text(), "A-".repeat(100_000));
 }

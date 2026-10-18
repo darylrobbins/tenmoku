@@ -45,6 +45,26 @@ mod visual;
 mod visual_block;
 mod visual_put_unset;
 
+/// Holds the process-wide search time limit raised, and the lock that keeps
+/// other tests from setting or restoring it meanwhile; dropping it restores
+/// the default limit.
+pub(super) struct RaisedTimeLimit(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl Drop for RaisedTimeLimit {
+    fn drop(&mut self) {
+        crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
+    }
+}
+
+/// Raises the search time limit to 600 s until the guard drops. The limit is
+/// one atomic shared by every test thread, so tests that raise it take turns.
+pub(super) fn raised_time_limit() -> RaisedTimeLimit {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let lock = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    crate::search::set_time_limit(std::time::Duration::from_secs(600));
+    RaisedTimeLimit(lock)
+}
+
 /// Steps `keys` through the reducer from nothing pending. Every key but the
 /// last must wait; returns what the last did.
 pub(super) fn run(keys: &str) -> Step {
