@@ -21,7 +21,7 @@ pub enum VimKey {
 pub struct KeyError(pub String);
 
 /// Reads vim key notation: plain characters, plus `<Esc>`, `<CR>`, `<BS>`,
-/// `<Tab>`, `<C-x>`, `<lt>` and the arrows `<Left>` `<Right>` `<Up>`
+/// `<Tab>`, `<C-x>`, `<lt>`, `<Space>`, `<Bar>`, `<Bslash>` and the arrows `<Left>` `<Right>` `<Up>`
 /// `<Down>`, case-insensitive inside `<…>`. As in Vim, a `<` that doesn't
 /// start a `<name>` (letters, digits and `-`) is itself, so `<<` is two
 /// `<`s.
@@ -58,6 +58,9 @@ fn named(name: &str) -> Result<VimKey, KeyError> {
         "bs" => VimKey::Backspace,
         "tab" => VimKey::Tab,
         "lt" => VimKey::Char('<'),
+        "space" => VimKey::Char(' '),
+        "bar" => VimKey::Char('|'),
+        "bslash" => VimKey::Char('\\'),
         "left" => VimKey::Left,
         "right" => VimKey::Right,
         "up" => VimKey::Up,
