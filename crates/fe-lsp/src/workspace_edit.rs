@@ -22,7 +22,12 @@
 //!   [`Rename`](EditTarget::Rename), [`Delete`](EditTarget::Delete)), with
 //!   the operation's options. Text edits to a file created or renamed to
 //!   earlier are [`EditTarget::Closed`], against empty text for a created
-//!   one. fe-lsp decodes them but doesn't advertise them yet
+//!   one. A version on such an edit is refused, as the server can't know
+//!   one for a file the edit makes; a null version is accepted. Operations
+//!   cover the paths under a directory, compared by components: a delete
+//!   removes them, a rename moves them (the old paths are gone, those
+//!   under the new name are fresh), and a later create makes a path fresh
+//!   again. fe-lsp decodes them but doesn't advertise them yet
 //!   (`resourceOperations` stays empty), and the workbench refuses them.
 //! - Both forms are read: `documentChanges` if the server sent it,
 //!   otherwise `changes`. Several `TextDocumentEdit`s for one file are
@@ -43,9 +48,9 @@
 //!   to it is dropped.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
@@ -205,8 +210,9 @@ struct Sent {
     /// The versions the server named for it, if any.
     versions: Vec<i32>,
     edits: Vec<TextEdit>,
-    /// The edit created it, or renamed another file to it, earlier: it's
-    /// closed, whatever the server has open under the path.
+    /// The edit created it, renamed another file to it, or renamed a
+    /// directory to a path above it, earlier: it's closed, whatever the
+    /// server has open under the path, and a version for it is refused.
     fresh: bool,
 }
 
@@ -224,16 +230,26 @@ struct Reader {
     steps: Vec<Step>,
     /// The current run of text edits.
     files: Vec<Sent>,
-    /// Created, or renamed to, earlier in the edit.
-    fresh: HashSet<PathBuf>,
-    /// Deleted or renamed away earlier in the edit, and which.
-    gone: HashMap<PathBuf, &'static str>,
+    /// What its operations did to paths, in order: `None` made the path
+    /// fresh (created, or renamed to), `Some(how)` removed it (deleted or
+    /// renamed away). An effect covers the path and every path under it,
+    /// by components; the last one that covers a path is the one that
+    /// holds.
+    effects: Vec<(PathBuf, Option<&'static str>)>,
 }
 
 impl Reader {
+    /// The latest effect an earlier operation had on `path`, if any.
+    fn effect(&self, path: &Path) -> Option<Option<&'static str>> {
+        (self.effects.iter().rev())
+            .find(|(under, _)| path.starts_with(under))
+            .map(|(_, how)| *how)
+    }
+
     fn add(&mut self, uri: Url, version: Option<i32>, edits: Vec<TextEdit>) -> Result<(), String> {
         let path = file_path(&uri)?;
-        if let Some(how) = self.gone.get(&path) {
+        let effect = self.effect(&path);
+        if let Some(Some(how)) = effect {
             return Err(format!(
                 "it edits {}, which it {how} earlier",
                 path.display()
@@ -244,7 +260,7 @@ impl Reader {
             None => {
                 self.files.push(Sent {
                     uri,
-                    fresh: self.fresh.contains(&path),
+                    fresh: effect == Some(None),
                     path,
                     versions: Vec::new(),
                     edits: Vec::new(),
@@ -266,8 +282,7 @@ impl Reader {
             ResourceOp::Create(create) => {
                 let path = file_path(&create.uri)?;
                 let options = create.options;
-                self.gone.remove(&path);
-                self.fresh.insert(path.clone());
+                self.effects.push((path.clone(), None));
                 let target = EditTarget::Create {
                     overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
                     ignore_if_exists: options
@@ -280,10 +295,8 @@ impl Reader {
             ResourceOp::Rename(rename) => {
                 let (from, to) = (file_path(&rename.old_uri)?, file_path(&rename.new_uri)?);
                 let options = rename.options;
-                self.fresh.remove(&from);
-                self.gone.insert(from.clone(), "renamed");
-                self.gone.remove(&to);
-                self.fresh.insert(to.clone());
+                self.effects.push((from.clone(), Some("renamed")));
+                self.effects.push((to.clone(), None));
                 let target = EditTarget::Rename {
                     to,
                     overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
@@ -297,8 +310,7 @@ impl Reader {
             ResourceOp::Delete(delete) => {
                 let path = file_path(&delete.uri)?;
                 let options = delete.options;
-                self.fresh.remove(&path);
-                self.gone.insert(path.clone(), "deleted");
+                self.effects.push((path.clone(), Some("deleted")));
                 let target = EditTarget::Delete {
                     recursive: options.as_ref().and_then(|o| o.recursive).unwrap_or(false),
                     ignore_if_not_exists: options
@@ -410,8 +422,12 @@ fn decode_file(
             }
         }
         (None, _) => {
-            if let Some(version) = file.versions.first().filter(|_| !file.fresh) {
-                return Err(format!("{display} isn't open at version {version}"));
+            if let Some(version) = file.versions.first() {
+                return Err(if file.fresh {
+                    format!("{display} is made by the edit, which can't know its version {version}")
+                } else {
+                    format!("{display} isn't open at version {version}")
+                });
             }
             let edits = sorted(file.edits).map_err(|why| format!("{display}: {why}"))?;
             EditTarget::Closed { edits, encoding }

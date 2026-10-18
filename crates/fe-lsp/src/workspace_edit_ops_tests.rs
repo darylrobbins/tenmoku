@@ -78,3 +78,80 @@ fn edits_after_a_delete_refuse_the_edit() {
         "isn't a file",
     );
 }
+
+#[test]
+fn a_version_on_a_fresh_path_is_refused() {
+    let s = Started::new();
+    let edit = |name: &str, version: serde_json::Value| {
+        json!({ "textDocument": { "uri": uri(name), "version": version },
+                "edits": [text_edit("", 0..0, "x")] })
+    };
+    assert_refused(
+        s.decode(json!({ "documentChanges": [
+            { "kind": "create", "uri": uri("b.rs") },
+            edit("b.rs", json!(7)),
+        ]})),
+        "b.rs",
+    );
+    assert_refused(
+        s.decode(json!({ "documentChanges": [
+            { "kind": "rename", "oldUri": uri("c.rs"), "newUri": uri("d.rs") },
+            { "textDocument": { "uri": uri("d.rs"), "version": 3 }, "edits": [] },
+        ]})),
+        "d.rs",
+    );
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            { "kind": "create", "uri": uri("b.rs") },
+            edit("b.rs", json!(null)),
+        ]}))
+        .unwrap();
+    assert!(matches!(decoded[1].target, EditTarget::Closed { .. }));
+}
+
+#[test]
+fn directory_operations_cover_the_paths_under_them() {
+    let mut s = Started::new();
+    let edit = |name: &str| {
+        json!({ "textDocument": { "uri": uri(name), "version": null },
+                "edits": [text_edit("", 0..0, "x")] })
+    };
+    assert_refused(
+        s.decode(json!({ "documentChanges": [
+            { "kind": "delete", "uri": uri("a") },
+            edit("a/x.rs"),
+        ]})),
+        "a/x.rs",
+    );
+    assert_refused(
+        s.decode(json!({ "documentChanges": [
+            { "kind": "rename", "oldUri": uri("a"), "newUri": uri("b") },
+            edit("a/x.rs"),
+        ]})),
+        "a/x.rs",
+    );
+    let mut buffer = Buffer::new("");
+    s.open(&mut buffer, "b/x.rs", "text\n");
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            { "kind": "rename", "oldUri": uri("a"), "newUri": uri("b") },
+            edit("b/x.rs"),
+        ]}))
+        .unwrap();
+    assert!(matches!(decoded[1].target, EditTarget::Closed { .. }));
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            { "kind": "delete", "uri": uri("a") },
+            { "kind": "create", "uri": uri("a/x.rs") },
+            edit("a/x.rs"),
+        ]}))
+        .unwrap();
+    assert!(matches!(decoded[2].target, EditTarget::Closed { .. }));
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            { "kind": "delete", "uri": uri("a/b") },
+            edit("a/bc"),
+        ]}))
+        .unwrap();
+    assert!(matches!(decoded[1].target, EditTarget::Closed { .. }));
+}
