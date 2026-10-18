@@ -9,9 +9,11 @@
 use std::{
     ffi::OsString,
     fs,
+    io::ErrorKind,
     panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use gpui::{
@@ -145,14 +147,24 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!(
-            "kiln-app-workspace-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let dir = std::env::temp_dir().join(name);
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        // A pid is reused, so a directory a past process leaked can bear
+        // this name: only ever open one just created.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        loop {
+            let name = format!(
+                "kiln-app-workspace-{}-{nanos}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            );
+            let dir = std::env::temp_dir().join(name);
+            match fs::create_dir(&dir) {
+                Ok(()) => return Self(dir),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("creating {}: {error}", dir.display()),
+            }
+        }
     }
 
     /// The app's directories under this one: `config` and `state`.
@@ -274,10 +286,10 @@ fn update(
 
 #[gpui::test]
 fn the_window_is_a_workspace_with_the_panel_status_palette_and_default_menus(
-    cx: &mut TestAppContext,
+    app_cx: &mut TestAppContext,
 ) {
     let dir = TempDir::new();
-    let (started, workspace, mut cx) = open(notes(dir.paths()), cx);
+    let (started, workspace, mut cx) = open(notes(dir.paths()), app_cx);
     let cx = &mut cx;
     assert_eq!(started.diagnostics, []);
     assert_eq!(started.windows, [started.window]);
@@ -303,6 +315,7 @@ fn the_window_is_a_workspace_with_the_panel_status_palette_and_default_menus(
             .collect::<Vec<_>>()
     });
     assert_eq!(names, [NAME, "View", "Window"]);
+    app_cx.quit();
 }
 
 /// kiln's keys: `secondary-shift-p` opens the palette, `escape` closes
@@ -323,9 +336,9 @@ fn palette_keys_work(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) 
 }
 
 #[gpui::test]
-fn an_empty_workspace_takes_kilns_keys(cx: &mut TestAppContext) {
+fn an_empty_workspace_takes_kilns_keys(app_cx: &mut TestAppContext) {
     let dir = TempDir::new();
-    let (_, workspace, mut cx) = open(bare(dir.paths()), cx);
+    let (_, workspace, mut cx) = open(bare(dir.paths()), app_cx);
     let cx = &mut cx;
     let [pane] = &panes(&workspace, cx)[..] else {
         panic!("one pane")
@@ -334,6 +347,7 @@ fn an_empty_workspace_takes_kilns_keys(cx: &mut TestAppContext) {
     let shell = workspace.read_with(cx, |workspace, _| workspace.shell().clone());
     assert_eq!(shell.read_with(cx, |shell, _| shell.title().clone()), NAME);
     palette_keys_work(&workspace, cx);
+    app_cx.quit();
 }
 
 #[gpui::test]
@@ -347,15 +361,16 @@ fn the_theme_follows_the_windows_appearance(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(cx.read(|cx| cx.theme().appearance), Appearance::Light);
+    cx.quit();
 }
 
 #[gpui::test]
-fn the_key_context_and_dock_size_are_the_apps(cx: &mut TestAppContext) {
+fn the_key_context_and_dock_size_are_the_apps(app_cx: &mut TestAppContext) {
     let dir = TempDir::new();
     let app = notes(dir.paths())
         .key_context("notes")
         .dock_size(DockPosition::Left, px(321.));
-    let (_, workspace, cx) = open(app, cx);
+    let (_, workspace, cx) = open(app, app_cx);
     let size = workspace.read_with(&cx, |workspace, cx| {
         let dock = workspace.dock(DockPosition::Left).unwrap().read(cx).dock();
         f32::from(dock.current_size())
@@ -366,6 +381,7 @@ fn the_key_context_and_dock_size_are_the_apps(cx: &mut TestAppContext) {
         shell.read_with(&cx, |shell, _| shell.key_context().clone()),
         "notes"
     );
+    app_cx.quit();
 }
 
 #[gpui::test]
@@ -402,6 +418,8 @@ fn the_layout_is_saved_and_the_next_start_restores_it(
         left_dock(&workspace, cx),
         (false, Some(PanelId("notes.list")))
     );
+    first.quit();
+    second.quit();
 }
 
 #[gpui::test]
@@ -437,6 +455,8 @@ fn without_restore_layout_a_fresh_window_saves_nothing(
         .map(|file| (file.clone(), fs::read(file).unwrap()))
         .collect();
     assert_eq!(now, saved);
+    first.quit();
+    second.quit();
 }
 
 const UNKNOWN: &str = "[[bindings]]\nkeys = \"secondary-n\"\ncommand = \"notes.no_such\"\n";
@@ -467,6 +487,7 @@ fn in_a_debug_build_an_unknown_command_in_the_keymap_panics_at_start(cx: &mut Te
     } else {
         assert_eq!(message, None);
     }
+    cx.quit();
 }
 
 #[gpui::test]
@@ -480,6 +501,7 @@ fn fail_fast_off_returns_the_diagnostic(cx: &mut TestAppContext) {
         panic!("one diagnostic: {:?}", started.diagnostics)
     };
     assert_eq!(diagnostic.file, Path::new("notes-keymap.toml"));
+    cx.quit();
 }
 
 struct View;
@@ -504,6 +526,7 @@ fn root_opens_a_root_window_that_saves_no_layout(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     assert_eq!(files(&dir.layouts()), Vec::<PathBuf>::new());
+    cx.quit();
 }
 
 #[gpui::test]
@@ -520,4 +543,5 @@ fn with_neither_a_root_nor_an_item_start_panics_naming_both(cx: &mut TestAppCont
     let message = start_panic(app, cx).expect("start panics");
     assert!(message.contains(".root(..)"), "{message}");
     assert!(message.contains(".item::<T>()"), "{message}");
+    cx.quit();
 }
