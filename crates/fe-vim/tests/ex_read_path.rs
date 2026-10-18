@@ -26,6 +26,6 @@ fn read_parses_to_a_host_command() {
     let (command, message) = run("r !ls");
     assert_eq!(command, None);
     assert!(message.is_some());
-    assert_eq!(run("reg").0, None);
-    assert!(run("reg").1.unwrap().starts_with("E492"));
+    assert_eq!(run("rege").0, None);
+    assert!(run("rege").1.unwrap().starts_with("E492"));
 }

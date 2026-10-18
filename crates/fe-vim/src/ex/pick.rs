@@ -1,5 +1,5 @@
 //! A list the host shows to pick from, [`HostCommand::Pick`]: what
-//! `:marks` leaves, and the commands that list things after it.
+//! `:marks` and `:registers` leave, and the commands that list things after it.
 
 use fe_command::{CommandId, Invocation};
 
@@ -29,18 +29,28 @@ pub struct PickRow {
 pub enum PickThen {
     /// Jump to the mark, as `` `x `` does.
     Jump(char),
+    /// Put the register after the caret, as `"xp` does.
+    Put(char),
 }
 
 impl PickThen {
     /// The command that does it.
     pub fn invocation(&self) -> Invocation {
-        let Self::Jump(name) = self;
-        let motion = Motion::Mark(MarkMotion {
-            name: *name,
-            exact: true,
-        });
-        let command = CommandId::parse("vim.move").expect("vim command IDs are valid");
-        Invocation::new(command).args(serde_json::json!({"motion": motion, "extend": false}))
+        match self {
+            Self::Jump(name) => {
+                let motion = Motion::Mark(MarkMotion {
+                    name: *name,
+                    exact: true,
+                });
+                let command = CommandId::parse("vim.move").expect("vim command IDs are valid");
+                Invocation::new(command)
+                    .args(serde_json::json!({"motion": motion, "extend": false}))
+            }
+            Self::Put(name) => {
+                let command = CommandId::parse("vim.put").expect("vim command IDs are valid");
+                Invocation::new(command).args(serde_json::json!({"register": name}))
+            }
+        }
     }
 }
 

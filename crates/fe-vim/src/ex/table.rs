@@ -30,6 +30,8 @@ use crate::VimTarget;
 mod marks;
 #[path = "put.rs"]
 mod put;
+#[path = "registers.rs"]
+mod registers;
 #[path = "set.rs"]
 mod set;
 #[path = "undo.rs"]
@@ -75,6 +77,8 @@ impl Entry {
 /// Every command in the table.
 pub(super) const COMMANDS: &[Entry] = &[
     marks::COMMAND,
+    registers::COMMAND,
+    registers::DISPLAY,
     put::COMMAND,
     set::COMMAND,
     undo::UNDO,
