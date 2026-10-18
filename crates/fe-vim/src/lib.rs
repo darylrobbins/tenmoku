@@ -380,7 +380,7 @@
 //!
 //! Not yet: the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
 //! `:normal`, `:m`, `:t`, `:co`, `:j`, `:y`, `:>`, `:<`, `:pu`, `:r`,
-//! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
+//! `:sort`, `:set`, `:reg`, `:undo`, `:!`, `|` between commands,
 //! `:s`'s `c` and print flags, `\=` in its string, `:s\/`, `:s\?`
 //! and `:s\&`, `g&`,
 //! the line's completion, marks other than those above (`:'A`
@@ -606,8 +606,10 @@
 //!   and text with line breaks put in at the start of a mark's row moves
 //!   the mark down, as a row opened above does, where nvim keeps it for a
 //!   charwise put.
+//! - `:marks [chars]` leaves a [`HostCommand::Pick`] of the marks fe-vim has, as nvim
+//!   lists them (it has no `0`-`9` or `"` rows).
 //! - Marks: uppercase and numbered marks, `'[ ']`, `'.`, `'^`, `'"`, the
-//!   changelist, `:jumps`, `:marks` and `:delmarks` aren't supported yet; `m<` and `m>` cancel. Undo doesn't put back a
+//!   changelist, `:jumps` and `:delmarks` aren't supported yet; `m<` and `m>` cancel. Undo doesn't put back a
 //!   mark its change deleted or moved (nvim's does). What other edits do to a mark
 //!   is read from the text they change, so where that's ambiguous fe-vim
 //!   can differ from nvim: a line break put in at the start of a row that
@@ -782,7 +784,9 @@ pub use args::{
     SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
-pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};
+pub use ex::{
+    Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
+};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};

@@ -569,3 +569,27 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
 
 #[path = "vim_read_tests.rs"]
 mod read_tests;
+
+#[gpui::test]
+fn read_puts_the_cursor_on_the_last_blank_of_a_blank_first_line(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("a.txt"), "a\nb\n").unwrap();
+    std::fs::write(root.join("f.txt"), "  \t\nx\n").unwrap();
+    let (workbench, mut vcx) = window(cx, root, &["a.txt"]);
+    let cx = &mut vcx;
+    let a = active(&workbench, cx);
+
+    ex("r f.txt", cx);
+    let cursor = a.read_with(cx, |a, _| {
+        let model = a.model();
+        let point = model
+            .text()
+            .offset_to_point(model.primary_selection().head());
+        (point.row, point.column)
+    });
+    assert_eq!(cursor, (1, 2));
+}
+
+#[path = "vim_pick_tests.rs"]
+mod pick_tests;

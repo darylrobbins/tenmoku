@@ -41,6 +41,9 @@ use super::{Workbench, open};
 use crate::Pane;
 use crate::dock::{DockOp, DockPanel, ProblemsOp};
 
+#[path = "vim_pick.rs"]
+mod vim_pick;
+
 const E32: &str = "E32: No file name";
 pub(crate) const E13: &str = "E13: File exists (add ! to override)";
 pub(super) const E37: &str = "E37: No write since last change (add ! to override)";
@@ -123,14 +126,13 @@ impl Workbench {
             | HostCommand::OldFiles
             | HostCommand::OpenProblems
             | HostCommand::CloseProblems
-            | HostCommand::ReplaceInFiles { .. }) => {
-                self.run_window_command(&editor, command, window, cx)
-            }
+            | HostCommand::ReplaceInFiles { .. }
+            | HostCommand::Pick(_)) => self.run_window_command(&editor, command, window, cx),
         }
     }
 
     /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
-    /// `:cclose` and `:Replace`, typed in `editor`, which act on the window
+    /// `:cclose`, `:Replace` and the lists to pick from (`:marks`), typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
@@ -155,6 +157,7 @@ impl Workbench {
             HostCommand::ReplaceInFiles { text } => {
                 self.vim_replace_in_files(editor, text, window, cx)
             }
+            HostCommand::Pick(pick) => self.show_vim_pick(editor, pick, window, cx),
             _ => {}
         }
     }
@@ -487,7 +490,9 @@ impl Workbench {
                 let text = model.text();
                 let start = text.row_start(row);
                 let blanks = lines[0].len() - lines[0].trim_start_matches([' ', '\t']).len();
-                model.set_cursor(start + blanks);
+                // A line of blanks only has the cursor on its last, as in
+                // normal mode.
+                model.set_cursor(start + blanks.min(lines[0].len().saturating_sub(1)));
             }
             editor.set_vim_message(report, cx);
             cx.notify();

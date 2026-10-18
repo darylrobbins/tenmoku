@@ -88,6 +88,8 @@ mod complete;
 mod global;
 mod lines;
 mod normal;
+mod pick;
+pub use pick::{Pick, PickRow, PickThen};
 mod table;
 
 /// A parsed ex line.
@@ -311,6 +313,9 @@ pub enum HostCommand {
     /// its Replace All does and with its question. `text` is the rest of
     /// the line, trimmed; none is `E471`.
     ReplaceInFiles { text: String },
+    /// A list the host shows to pick a row from (`:marks`); choosing one
+    /// runs its `then` in the editor the line was typed in.
+    Pick(Pick),
 }
 
 impl crate::VimState {
@@ -1262,9 +1267,15 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 HostCommand::User { range, .. } if lines == Some((0, 0)) => *range = Some(0..0),
                 HostCommand::User { range, .. } if lines.is_some() => *range = Some(rows(target)?),
                 HostCommand::Read { below, .. } => {
+                    // A line before the first, or a backwards range, fails
+                    // even where the last line is 0, the top.
+                    if lines.is_some_and(|(first, end)| first < 0 || end < 0) {
+                        return Err(ExError::InvalidRange);
+                    }
+                    let (_, end) = counted_lines(target, lines, None, last)?;
                     *below = match lines {
                         Some((_, 0)) => 0,
-                        _ => counted_lines(target, lines, None, last)?.1 as u32,
+                        _ => end as u32,
                     };
                 }
                 HostCommand::DiffGet { rows: at } | HostCommand::DiffPut { rows: at } => {

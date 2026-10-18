@@ -23,7 +23,17 @@
 use fe_command::Actor;
 
 use super::{Address, ExError, Handled};
+
 use crate::VimTarget;
+
+#[path = "marks.rs"]
+mod marks;
+#[path = "put.rs"]
+mod put;
+#[path = "set.rs"]
+mod set;
+#[path = "undo.rs"]
+mod undo;
 
 /// One ex command a module defines.
 pub(super) struct Entry {
@@ -63,14 +73,13 @@ impl Entry {
 }
 
 /// Every command in the table.
-#[path = "put.rs"]
-mod put;
-#[path = "set.rs"]
-mod set;
-#[path = "undo.rs"]
-mod undo;
-
-pub(super) const COMMANDS: &[Entry] = &[put::COMMAND, set::COMMAND, undo::UNDO, undo::REDO];
+pub(super) const COMMANDS: &[Entry] = &[
+    marks::COMMAND,
+    put::COMMAND,
+    set::COMMAND,
+    undo::UNDO,
+    undo::REDO,
+];
 
 /// The entry `name` names.
 pub(super) fn find(name: &str) -> Option<&'static Entry> {

@@ -353,9 +353,8 @@ pub(super) fn host_command(
         | HostCommand::OldFiles
         | HostCommand::OpenProblems
         | HostCommand::CloseProblems
-        | HostCommand::ReplaceInFiles { .. } => {
-            workbench.run_window_command(&editor, command, window, cx)
-        }
+        | HostCommand::ReplaceInFiles { .. }
+        | HostCommand::Pick(_) => workbench.run_window_command(&editor, command, window, cx),
     }
 }
 
