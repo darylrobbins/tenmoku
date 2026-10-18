@@ -170,3 +170,63 @@ name = "shift_after_noet_then_et_sw4"
 buffer = "abc\ndef"
 cursor = [0, 0]
 keys = ":set noet<CR>:set et sw=4<CR>>>"
+
+[[case]]
+name = "shift_after_sw_octal"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=010<CR>>>"
+
+[[case]]
+name = "shift_after_sw_hex"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0x6<CR>>>"
+
+[[case]]
+name = "shift_after_sw_hex_upper"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0X6<CR>>>"
+
+[[case]]
+name = "shift_after_sw_binary"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0b11<CR>>>"
+
+[[case]]
+name = "shift_after_sw_0o"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0o5<CR>>>"
+
+[[case]]
+name = "shift_after_sw_09_decimal"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=09<CR>>>"
+
+[[case]]
+name = "shift_after_sw_0010"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set sw=0010<CR>>>"
+
+[[case]]
+name = "shift_after_shiftwidth_colon_octal"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set shiftwidth:010<CR>>>j>>"
+
+[[case]]
+name = "shift_after_ts_octal_sw0"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=010 sw=0<CR>>>"
+
+[[case]]
+name = "shift_after_ts_hex_sw0"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":set ts=0x8 sw=0<CR>>>"

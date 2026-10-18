@@ -515,6 +515,186 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "shift_after_sw_octal",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=010<CR>>>",
+      "expect": {
+        "buffer": "        abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_hex",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=0x6<CR>>>",
+      "expect": {
+        "buffer": "      abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_hex_upper",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=0X6<CR>>>",
+      "expect": {
+        "buffer": "      abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_binary",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=0b11<CR>>>",
+      "expect": {
+        "buffer": "   abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_0o",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=0o5<CR>>>",
+      "expect": {
+        "buffer": "     abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_09_decimal",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=09<CR>>>",
+      "expect": {
+        "buffer": "         abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_sw_0010",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set sw=0010<CR>>>",
+      "expect": {
+        "buffer": "        abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_shiftwidth_colon_octal",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set shiftwidth:010<CR>>>j>>",
+      "expect": {
+        "buffer": "        abc\n        def",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_ts_octal_sw0",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set ts=010 sw=0<CR>>>",
+      "expect": {
+        "buffer": "        abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_after_ts_hex_sw0",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":set ts=0x8 sw=0<CR>>>",
+      "expect": {
+        "buffer": "        abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

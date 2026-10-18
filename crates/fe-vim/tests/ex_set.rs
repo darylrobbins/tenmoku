@@ -139,3 +139,99 @@ fn set_refuses_what_the_editor_cannot_hold() {
     run(&mut vim, "set sw=2");
     assert_eq!(vim.model().indent_style(), Some(IndentStyle::Tabs));
 }
+
+#[test]
+fn set_reads_numbers_in_nvims_bases() {
+    let mut vim = vim();
+    for (line, tab) in [
+        ("set ts=010", 8),
+        ("set ts:010", 8),
+        ("set ts=017", 15),
+        ("set ts=0x8", 8),
+        ("set ts=0X8", 8),
+        ("set ts=0x08", 8),
+        ("set ts=0xa", 10),
+        ("set ts=0xA", 10),
+        ("set ts=0o10", 8),
+        ("set ts=0O10", 8),
+        ("set ts=0b101", 5),
+        ("set ts=0B11", 3),
+        ("set ts=08", 8),
+        ("set ts=09", 9),
+    ] {
+        run(&mut vim, line);
+        assert!(!vim.state().failed(), "{line}");
+        assert_eq!(vim.model().tab_size(), tab, "{line}");
+    }
+    run(&mut vim, "set ts=4");
+    run(&mut vim, "set sw=0010");
+    assert_eq!(vim.model().indent_style(), Some(IndentStyle::Spaces(8)));
+    assert_eq!(run(&mut vim, "set sw?").as_deref(), Some("  shiftwidth=8"));
+    // A leading 0 before an 8 or 9 is decimal.
+    for (line, width, query) in [
+        ("set sw=018", 18, "  shiftwidth=18"),
+        ("set sw=0019", 19, "  shiftwidth=19"),
+    ] {
+        run(&mut vim, line);
+        assert!(!vim.state().failed(), "{line}");
+        assert_eq!(vim.model().indent_style(), Some(IndentStyle::Spaces(width)));
+        assert_eq!(run(&mut vim, "set sw?").as_deref(), Some(query));
+    }
+    // ts=018 is decimal 18: over MAX_TABSTOP, refused, tabstop unchanged.
+    run(&mut vim, "set ts=4");
+    run(&mut vim, "set ts=018");
+    assert!(vim.state().failed());
+    assert_eq!(vim.model().tab_size(), 4);
+    run(&mut vim, "set sw=8");
+    assert_eq!(
+        run(&mut vim, "set ts=010 ts?").as_deref(),
+        Some("  tabstop=8")
+    );
+    for line in [
+        "set sw=00",
+        "set sw=0x0",
+        "set sw=0b0",
+        "set sw=0o0",
+        "set sw=-0",
+        "set sw=-00",
+    ] {
+        run(&mut vim, "set sw=3");
+        run(&mut vim, line);
+        assert!(!vim.state().failed(), "{line}");
+        assert_eq!(vim.model().indent_style(), None, "{line}");
+    }
+    run(&mut vim, "set ts=4 sw=2");
+    let before = (vim.model().tab_size(), vim.model().indent_style());
+    for arg in [
+        "ts=00", "ts=0x0", "ts=-0", "ts=-010", "ts=-0x8", "ts=-08", "sw=-0x1",
+    ] {
+        let message = run(&mut vim, &format!("set {arg}"));
+        assert_eq!(
+            message.as_deref(),
+            Some(format!("E487: Argument must be positive: {arg}").as_str())
+        );
+        assert!(vim.state().failed(), "{arg}");
+        assert_eq!((vim.model().tab_size(), vim.model().indent_style()), before);
+    }
+    for arg in [
+        "ts=0x", "ts=0X", "ts=0xg", "ts=0x-8", "ts=0b", "ts=0b2", "ts=0b12", "ts=0o", "ts=0o8",
+        "ts=0o18", "ts=00x8", "ts=010x", "ts=8x", "ts=0_8", "ts=+8", "ts=1e1",
+    ] {
+        let message = run(&mut vim, &format!("set {arg}"));
+        assert_eq!(
+            message.as_deref(),
+            Some(format!("E521: Number required after =: {arg}").as_str())
+        );
+        assert!(vim.state().failed(), "{arg}");
+        assert_eq!((vim.model().tab_size(), vim.model().indent_style()), before);
+    }
+    run(&mut vim, "set ts=4 sw=3");
+    let message = run(&mut vim, "set sw=2 ts=0x");
+    assert_eq!(
+        message.as_deref(),
+        Some("E521: Number required after =: ts=0x")
+    );
+    assert!(vim.state().failed());
+    assert_eq!(vim.model().tab_size(), 4);
+    assert_eq!(vim.model().indent_style(), Some(IndentStyle::Spaces(2)));
+}

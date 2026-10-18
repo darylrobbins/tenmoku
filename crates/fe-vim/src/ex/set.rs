@@ -12,8 +12,9 @@
 //! Refused, changing nothing: `noexpandtab` (or `sw=N` under it) when
 //! shiftwidth isn't tabstop, `opt&`, `opt+=`, `opt-=`, `opt^=`, `:set`
 //! alone and `:set all`, `clipboard=unnamed`. Any other name is
-//! "not supported yet". A range is E481. These change the editor, not the
-//! saved settings.
+//! "not supported yet". A range is E481. A number is decimal, `0x` hex, `0b`
+//! binary, `0o` or leading-`0` octal, as nvim reads it. These change the
+//! editor, not the saved settings.
 
 use fe_command::{Actor, Dispatched, Effect};
 use fe_editor::IndentStyle;
@@ -221,24 +222,48 @@ fn set_clipboard(target: &mut VimTarget<'_>, arg: &str, value: &str) -> Result<(
     Ok(())
 }
 
+/// Reads a `:set` number as nvim does: an optional `-`, then `0x`/`0X` hex,
+/// `0b`/`0B` binary, `0o`/`0O` octal, a leading `0` with only digits 0 to 7
+/// (octal), or decimal (so `08` is 8). Returns the sign and magnitude (too
+/// large saturates), or `None` for anything else or anything left over.
+fn parse_number(value: &str) -> Option<(bool, usize)> {
+    let (negative, rest) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    let bytes = rest.as_bytes();
+    let (radix, digits) = match bytes {
+        [b'0', b'x' | b'X', ..] => (16, &rest[2..]),
+        [b'0', b'b' | b'B', ..] => (2, &rest[2..]),
+        [b'0', b'o' | b'O', ..] => (8, &rest[2..]),
+        [b'0', _, ..] if bytes.iter().all(|byte| (b'0'..=b'7').contains(byte)) => (8, &rest[1..]),
+        _ => (10, rest),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return None;
+    }
+    Some((
+        negative,
+        usize::from_str_radix(digits, radix).unwrap_or(usize::MAX),
+    ))
+}
+
 fn set_number(
     target: &mut VimTarget<'_>,
     which: Opt,
     arg: &str,
     value: &str,
 ) -> Result<(), ExError> {
-    let digits = value.strip_prefix('-').unwrap_or(value);
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let Some((negative, number)) = parse_number(value) else {
         return Err(ExError::Pattern(format!(
             "E521: Number required after =: {arg}"
         )));
-    }
-    if value.starts_with('-') {
+    };
+    if negative && number != 0 {
         return Err(ExError::Pattern(format!(
             "E487: Argument must be positive: {arg}"
         )));
     }
-    let number = value.parse::<usize>().unwrap_or(usize::MAX);
     let tab = target.model.tab_size();
     match which {
         Opt::Tabstop => {
