@@ -39,7 +39,7 @@ use serde_json::Value;
 
 use crate::clock::Clock;
 use crate::diagnostics::Inbox;
-use crate::event::{LspEvent, ServerId, SharedLog};
+use crate::event::{LspEvent, MessageReply, ServerId, SharedLog};
 use crate::readiness::Readiness;
 use crate::server::{Queue, Session, Sink, Taken};
 use crate::workspace_edit::Edits;
@@ -152,7 +152,20 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
         .request::<ApplyWorkspaceEdit, _>(|st, params| st.edits.ask(params, &*st.clock).map(Ok))
         .request::<ShowMessageRequest, _>(|st, params| {
             log::info!("{}: {:?}: {}", st.name, params.typ, params.message);
-            ready(Ok(None))
+            let actions = params.actions.unwrap_or_default();
+            let titles = actions.iter().map(|action| action.title.clone()).collect();
+            let (reply, answer) = MessageReply::new(actions);
+            let mut sink = st.sink.lock().unwrap_or_else(PoisonError::into_inner);
+            sink(LspEvent::ShowMessageRequest {
+                server: st.server,
+                name: st.name.clone(),
+                typ: params.typ,
+                message: params.message,
+                actions: titles,
+                reply,
+            });
+            // Every reply dropped unanswered cancels `answer`: dismissed.
+            answer.map(|answer| Ok(answer.ok().flatten()))
         })
         .request::<ShowDocument, _>(|_, _| ready(Ok(ShowDocumentResult { success: false })))
         .request::<WorkspaceDiagnosticRefresh, _>(|st, ()| {

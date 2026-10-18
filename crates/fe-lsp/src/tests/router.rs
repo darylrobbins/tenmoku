@@ -16,9 +16,11 @@ use lsp_types::{
 };
 use serde_json::{Value, json};
 
+mod message_request;
+
 use super::{capture_logs, logs_from, manager, wait_until};
 use crate::fake::{Echo, FakeError, FakeServer, Record, Reply, Script, Scripted};
-use crate::{LspError, ManualClock, ServerSpec};
+use crate::{LspError, LspEvent, ManualClock, ServerSpec};
 
 macro_rules! notification {
     ($name:ident, $method:literal) => {
@@ -91,7 +93,7 @@ fn server_requests_get_the_m4_answers() {
     let root = dir.path().join("workspace");
     std::fs::create_dir(&root).unwrap();
     let fake = FakeServer::new(Script::default());
-    let (mut manager, _events) = manager(fake.launcher(), None);
+    let (mut manager, events) = manager(fake.launcher(), None);
     manager
         .start(ServerSpec::new("server-requests", "fake-server"), &root)
         .unwrap();
@@ -123,7 +125,16 @@ fn server_requests_get_the_m4_answers() {
         message: "Reload the workspace?".into(),
         actions: None,
     };
-    assert_eq!(fake.request::<ShowMessageRequest>(message), Ok(Value::Null));
+    let asking = std::thread::spawn({
+        let fake = fake.clone();
+        move || fake.request::<ShowMessageRequest>(message)
+    });
+    // A host that ignores the event drops it: dismissed.
+    drop(events.until("a ShowMessageRequest", |event| match event {
+        event @ LspEvent::ShowMessageRequest { .. } => Some(event),
+        _ => None,
+    }));
+    assert_eq!(asking.join().unwrap(), Ok(Value::Null));
     let document = ShowDocumentParams {
         uri: uri.clone(),
         external: None,

@@ -1,7 +1,10 @@
 //! What fe-lsp reports: events through the manager's sink, and request
 //! errors.
 
+use std::sync::{Arc, Mutex, PoisonError};
+
 use fe_buffer::{BufferId, Version};
+use futures::channel::oneshot;
 
 use crate::diagnostics::Diagnostic;
 use crate::identity::{IncarnationId, SessionId};
@@ -33,6 +36,17 @@ pub enum LspEvent {
         typ: lsp_types::MessageType,
         message: String,
     },
+    /// The server asked a question (`window/showMessageRequest`) with
+    /// `actions` to choose from, the titles in the order it sent them.
+    /// Answer through `reply`; unanswered, it's answered `null`, dismissed.
+    ShowMessageRequest {
+        server: ServerId,
+        name: String,
+        typ: lsp_types::MessageType,
+        message: String,
+        actions: Vec<String>,
+        reply: MessageReply,
+    },
     /// A server's diagnostics for an open buffer: all of them, replacing
     /// those it sent before. Their ranges are bytes of the buffer at
     /// `version`, which the buffer may have moved on from.
@@ -62,6 +76,70 @@ pub enum LspEvent {
         edits: Vec<FileEdits>,
         reply: ApplyReply,
     },
+}
+
+/// The host's answer to a `window/showMessageRequest`, sent with
+/// [`LspEvent::ShowMessageRequest`]. Clones share it and only the first
+/// answer counts. Dropped unanswered by every clone, it answers `null`
+/// (dismissed). It has no timeout: the request blocks nothing, and if the
+/// server's session ends first the answer goes nowhere.
+#[derive(Clone)]
+pub struct MessageReply(Arc<MessageSlot>);
+
+pub(crate) struct MessageSlot {
+    /// The request's actions, as the server sent them.
+    actions: Vec<lsp_types::MessageActionItem>,
+    answer: Mutex<Option<oneshot::Sender<Option<lsp_types::MessageActionItem>>>>,
+}
+
+impl MessageReply {
+    pub(crate) fn new(
+        actions: Vec<lsp_types::MessageActionItem>,
+    ) -> (
+        Self,
+        oneshot::Receiver<Option<lsp_types::MessageActionItem>>,
+    ) {
+        let (send, receive) = oneshot::channel();
+        let slot = MessageSlot {
+            actions,
+            answer: Mutex::new(Some(send)),
+        };
+        (Self(Arc::new(slot)), receive)
+    }
+
+    /// Answers with the action at `index`, as the server sent it. An index
+    /// out of range answers `null`.
+    pub fn choose(self, index: usize) {
+        self.send(self.0.actions.get(index).cloned());
+    }
+
+    /// Answers `null`: the question was dismissed.
+    pub fn dismiss(self) {
+        self.send(None);
+    }
+
+    fn send(&self, answer: Option<lsp_types::MessageActionItem>) {
+        let taken = (self.0.answer.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(taken) = taken {
+            let _ = taken.send(answer);
+        }
+    }
+}
+
+impl PartialEq for MessageReply {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for MessageReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageReply")
+            .field("actions", &self.0.actions.len())
+            .finish()
+    }
 }
 
 /// Where a server is in its life.
