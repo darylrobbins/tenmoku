@@ -1,5 +1,7 @@
 //! Vim's per-editor state and the context keys it publishes.
 
+use std::sync::Arc;
+
 use fe_buffer::{TransactionId, Version};
 use fe_command::{ContextFrame, ContextStack, Dispatched, Effect, Invocation, Source};
 use fe_editor::{
@@ -8,6 +10,8 @@ use fe_editor::{
 };
 
 use crate::ex::HostCommand;
+use crate::macros::REPLAY_CAP;
+use crate::remap::{Origin, RemapSet, RemapState, Staged, TYPED};
 use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
@@ -130,6 +134,9 @@ pub struct VimState {
     /// Set while a `:s` with `c` waits for an answer: the keys
     /// [`VimState::feed`] reads answer it.
     pub(crate) confirm: Option<Box<crate::substitute::Confirm>>,
+    /// The remaps, the keys held for a longer match and the keys they
+    /// resolved to, for the host to feed.
+    pub(crate) remap: RemapState,
 }
 
 impl VimState {
@@ -322,19 +329,78 @@ impl VimState {
     /// chars, `s` and `S` start a jump when [`VimState::set_jump_on_s`] is
     /// on (as `/` is taken, with no prefix pending), and while labels wait
     /// every key goes to them first.
+    ///
+    /// Before the `q` that ends a recording, the key goes through the
+    /// remaps ([`VimState::set_remaps`]), in Normal and the visual modes
+    /// with nothing pending but a count, a register or an operator: while
+    /// it starts a longer map this returns [`Step::Wait`] with the pending
+    /// input as it was ([`VimState::remap_waiting`]), and a map that runs
+    /// leaves its keys for the host to feed, as a `@` does
+    /// ([`VimState::take_replay`]).
     pub fn feed(&mut self, key: VimKey) -> Step {
-        if let Some(step) = crate::substitute::confirm_key(self, key) {
+        let taken = self.remap.next_tag();
+        let tag = taken.unwrap_or(TYPED);
+        if let Some(step) = self.confirm_key(key, tag.origin) {
             return step;
         }
         self.message = None;
         self.failed = false;
-        let replayed = self.macros.count();
-        if let Some(step) = jump::label_key(self, key) {
+        let origin = tag.origin.unwrap_or_else(|| Origin::Typed {
+            replayed: self.macros.count(),
+        });
+        if taken.is_some() && self.remap.over_cap() {
+            self.pending = Pending::new();
+            self.fail(format!(
+                "macro stopped: it would replay more than {REPLAY_CAP} keys"
+            ));
+            return Step::Cancel;
+        }
+        if let Some(step) = self.unrecorded(origin, |state| jump::label_key(state, key)) {
             if let Step::Wait(pending) = &step {
                 self.pending = pending.clone();
             }
             return step;
         }
+        match crate::remap::stage(self, key, origin, tag.remap) {
+            Staged::Key(key, origin) => self.unrecorded(origin, |state| state.reduce(key, origin)),
+            Staged::Done(step) => step,
+        }
+    }
+
+    /// An answer to a `:s` with `c` ([`crate::substitute::confirm_key`]).
+    /// A key handed out with its `origin` was counted already, or is a
+    /// map's: the macros are set aside while it's read, and it's recorded
+    /// only if typed.
+    fn confirm_key(&mut self, key: VimKey, origin: Option<Origin>) -> Option<Step> {
+        let Some(origin) = origin else {
+            return crate::substitute::confirm_key(self, key);
+        };
+        let held = self.macros.hold();
+        let answer = crate::substitute::confirm_key(self, key);
+        self.macros.release(held);
+        if answer.is_some() && origin.recorded() {
+            self.macros.command_start();
+            self.macros.record(key);
+        }
+        answer
+    }
+
+    /// Runs `read` with the macros set aside if `origin` is a map's, as
+    /// `:normal` does: no recording takes its keys, nor a jump they make.
+    fn unrecorded<R>(&mut self, origin: Origin, read: impl FnOnce(&mut Self) -> R) -> R {
+        if origin != Origin::Expansion {
+            return read(self);
+        }
+        let held = self.macros.hold();
+        let result = read(self);
+        self.macros.release(held);
+        result
+    }
+
+    /// [`VimState::feed`] past the remaps: `key`, from `origin`.
+    fn reduce(&mut self, key: VimKey, origin: Origin) -> Step {
+        // A map's `q` acts as typed.
+        let replayed = origin == Origin::Typed { replayed: true };
         // `q` with nothing pending, in normal or a visual mode, ends a
         // recording (and isn't in it). A replay's `q` (after a count or a
         // register too, which it drops) does nothing, as nvim doesn't record
@@ -353,7 +419,9 @@ impl VimState {
         if before.is_none() {
             self.macros.command_start();
         }
-        self.macros.record(key);
+        if origin.recorded() {
+            self.macros.record(key);
+        }
         let kind = match self.mode {
             Mode::Visual(kind) => Some(kind),
             Mode::CmdLine(_) => return cmdline::fallback(key),
@@ -380,10 +448,48 @@ impl VimState {
     /// `<Esc>`) and on the command line. The host calls it for each such
     /// key, before running what the key does: it's how a recording gets
     /// them, and how a replay's keys are counted.
+    ///
+    /// A map's keys aren't recorded, nor counted as a replay's.
     pub fn record_key(&mut self, key: VimKey) {
         self.failed = false;
-        self.macros.count();
-        self.macros.record(key);
+        let origin = self
+            .remap
+            .next_tag()
+            .and_then(|tag| tag.origin)
+            .unwrap_or_else(|| Origin::Typed {
+                replayed: self.macros.count(),
+            });
+        self.remap.read(origin);
+        if origin.recorded() {
+            self.macros.record(key);
+        }
+    }
+
+    /// Replaces the remaps, at once: keys held for a longer match go on as
+    /// typed, unmapped, before the next key read
+    /// ([`VimState::take_replay`]).
+    pub fn set_remaps(&mut self, set: Arc<RemapSet>) {
+        self.remap.replace(set);
+    }
+
+    pub fn remaps(&self) -> &RemapSet {
+        self.remap.set()
+    }
+
+    /// Whether keys are held for a longer map: [`VimState::feed`] waits
+    /// for the next key or [`VimState::remap_timeout`], and `vim.pending`
+    /// is set with `vim.pending_kind` `remap`.
+    pub fn remap_waiting(&self) -> bool {
+        self.remap.waiting()
+    }
+
+    /// No key came for `CHORD_TIMEOUT` (nvim's 'timeoutlen') while keys
+    /// were held for a longer map: the longest complete map among them
+    /// runs, the keys after it to be matched again, or with none, the
+    /// first goes on as typed and the rest are matched again. Either way
+    /// the keys are the host's to feed ([`VimState::take_replay`]).
+    pub fn remap_timeout(&mut self) {
+        crate::remap::timeout(self);
     }
 
     /// The register `q` is recording into (`a` for `qA` too), while it
@@ -408,14 +514,21 @@ impl VimState {
     /// rest of the replay's keys and calls [`VimState::stop_replay`], as
     /// nvim's error stops it. A `@` that would take a replay past
     /// 1,000,000 keys in all fails with a message, so recursive macros end.
+    ///
+    /// The keys a map resolved to come after a `@`'s, and go the same way:
+    /// its right side, and the keys held for it that go on as typed. A map
+    /// whose key fails drops the rest of the map, so the host calls
+    /// [`VimState::stop_replay`] then too.
     pub fn take_replay(&mut self) -> Vec<VimKey> {
-        self.macros.take()
+        let replay = self.macros.take();
+        self.remap.take(replay)
     }
 
-    /// The host dropped the rest of a replay: it's over, and the keys read
-    /// from now are typed.
+    /// The host dropped the rest of a replay or a map's keys: it's over,
+    /// and the keys read from now are typed.
     pub fn stop_replay(&mut self) {
         self.macros.stop();
+        self.remap.stop();
     }
 
     /// Whether the last key read failed, as nvim's errors and beeps do,
@@ -437,7 +550,8 @@ impl VimState {
     /// `vim.visual` in a visual mode, `vim.cmdline_kind` in `cmdline` mode,
     /// plus the flag `vim.pending` and
     /// `vim.pending_kind` while anything is pending, a bare count or a
-    /// completed `"a` included.
+    /// completed `"a` included, and `remap` while keys are held for a
+    /// longer map.
     ///
     /// The host stamps the context for every key (and each frame), so an
     /// open insert session follows the buffer's edits made since then,
@@ -466,6 +580,7 @@ impl VimState {
             }
         }
         match self.pending.kind() {
+            _ if self.remap.waiting() => frame.flag(PENDING).set(PENDING_KIND, "remap"),
             Some(kind) => frame.flag(PENDING).set(PENDING_KIND, kind.name()),
             None => {
                 frame.flags.remove(PENDING);
