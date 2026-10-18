@@ -160,3 +160,6 @@ mod accept;
 
 #[path = "git_conflicts_lens_tests.rs"]
 mod lenses;
+
+#[path = "git_conflicts_compare_tests.rs"]
+mod compare;

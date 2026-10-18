@@ -29,10 +29,11 @@ const CURRENT_LABEL: &str = "(Current Change)";
 const INCOMING_LABEL: &str = "(Incoming Change)";
 
 /// A lens's items, in VS Code's order: title and command.
-const ACTIONS: [(&str, &str); 3] = [
+const ACTIONS: [(&str, &str); 4] = [
     ("Accept Current Change", "git.accept_current"),
     ("Accept Incoming Change", "git.accept_incoming"),
     ("Accept Both Changes", "git.accept_both"),
+    ("Compare Changes", "git.compare_conflict"),
 ];
 
 const WRAPPED_TO_FIRST: &str = "Wrapped to the first conflict";
@@ -219,7 +220,56 @@ fn plan_accept(model: &EditorModel, side: Side, which: Which) -> Vec<(Range<usiz
         .collect()
 }
 
+/// The current and incoming text of the conflict holding `row` (the primary
+/// caret's, if none is given) in `model`.
+fn sides_at(model: &EditorModel, row: Option<u32>) -> Option<(String, String)> {
+    let text = model.text();
+    let string = marked(model.snapshot())?;
+    let row = row.unwrap_or_else(|| text.offset_to_point(model.primary_selection().head()).row);
+    conflict_markers::parse(&string)
+        .iter()
+        .find_map(|conflict| {
+            let range = conflict.range();
+            let first = text.offset_to_point(range.start).row;
+            let last = text
+                .offset_to_point(range.end.saturating_sub(1).max(range.start))
+                .row;
+            (first..=last).contains(&row).then(|| {
+                (
+                    string[conflict.current.clone()].to_owned(),
+                    string[conflict.incoming.clone()].to_owned(),
+                )
+            })
+        })
+}
+
 impl Workbench {
+    /// `git.compare_conflict`: the current and incoming sides of the
+    /// conflict holding `row` (the caret's, if none is given) in a
+    /// read-only diff view, as VS Code's Compare Changes does.
+    pub(crate) fn compare_conflict(
+        &mut self,
+        row: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.active_editor(cx).cloned() else {
+            return;
+        };
+        let model = editor.read(cx).model();
+        let (Some(path), Some((current, incoming))) = (model.path(), sides_at(model, row)) else {
+            return toast::show(cx, Toast::info(NOT_IN_CONFLICT.to_owned()));
+        };
+        let path = path.to_path_buf();
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let left = (format!("{name}: Current Changes").into(), current);
+        let right = (format!("{name}: Incoming Changes").into(), incoming);
+        self.open_text_compare(left, right, &path, window, cx);
+    }
+
     /// `git.next_conflict` and `git.previous_conflict`: the caret to the
     /// start of the next or previous conflict's start marker row in the
     /// active editor, wrapping at the ends, a toast saying so (as

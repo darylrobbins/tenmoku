@@ -8,15 +8,17 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 
 use super::{TWO, dispatch, draw, open_text};
 
-const TITLES: [&str; 3] = [
+const TITLES: [&str; 4] = [
     "Accept Current Change",
     "Accept Incoming Change",
     "Accept Both Changes",
+    "Compare Changes",
 ];
-const COMMANDS: [&str; 3] = [
+const COMMANDS: [&str; 4] = [
     "git.accept_current",
     "git.accept_incoming",
     "git.accept_both",
+    "git.compare_conflict",
 ];
 
 fn row_args(row: u32) -> Value {

@@ -216,6 +216,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("git.accept_both", "Git: Accept Both Changes", "workbench"),
     (
+        "git.compare_conflict",
+        "Git: Compare Conflict Changes",
+        "workbench",
+    ),
+    (
         "git.accept_all_current",
         "Git: Accept All Current",
         "workbench",

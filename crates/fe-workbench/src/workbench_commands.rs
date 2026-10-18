@@ -185,6 +185,15 @@ impl Workbench {
         });
     }
 
+    /// Git: Compare Conflict Changes
+    #[command(id = "git.compare_conflict")]
+    fn git_compare_conflict(&mut self, cx: &mut Cx<Self>) {
+        let row = invocation_row(cx);
+        self.in_editor(cx, |this, window, cx| {
+            this.compare_conflict(row, window, cx)
+        });
+    }
+
     /// Git: Accept All Current
     #[command(id = "git.accept_all_current")]
     fn git_accept_all_current(&mut self, cx: &mut Cx<Self>) {

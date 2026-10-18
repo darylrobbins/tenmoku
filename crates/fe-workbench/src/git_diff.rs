@@ -1375,6 +1375,26 @@ impl Workbench {
         .detach();
     }
 
+    /// A diff view of two in-memory texts, `left` and `right` as (title,
+    /// text), both read-only and highlighted in the language of
+    /// `language_of`, whose name the tab bears; opened and focused in the
+    /// active pane. Nothing is written and no git command runs.
+    pub(crate) fn open_text_compare(
+        &mut self,
+        left: (gpui::SharedString, String),
+        right: (gpui::SharedString, String),
+        language_of: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (left, right) = (fixed_side(left.0, &left.1), fixed_side(right.0, &right.1));
+        let pane = self.active.downgrade();
+        let compared = (language_of.to_owned(), None, false);
+        let diff = self.new_diff(compared, left, Err(right), cx);
+        self.place_diff(&diff, &pane, cx);
+        self.show_diff(&diff, window, cx);
+    }
+
     /// `path` from the root, or whole if it's outside it.
     fn relative(&self, path: &Path) -> String {
         let relative = (self.root.as_deref()).and_then(|root| path.strip_prefix(root).ok());
