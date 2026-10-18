@@ -29,7 +29,7 @@ fn commands(keymap: &Keymap) -> BTreeSet<String> {
 fn run(keymap: &Keymap, keys: &str, vim: Option<(&str, bool)>) -> Option<String> {
     let mut editor = ContextFrame::new("editor");
     if let Some((mode, visual)) = vim {
-        editor = editor.set("vim.mode", mode);
+        editor = editor.flag("vim.enabled").set("vim.mode", mode);
         if visual {
             editor = editor.flag("vim.visual");
         }

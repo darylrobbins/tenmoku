@@ -98,6 +98,7 @@ pub fn init(cx: &mut App) {
     module(cx);
     picker::init(cx);
     search_panel::init(cx);
+    find_commands::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.

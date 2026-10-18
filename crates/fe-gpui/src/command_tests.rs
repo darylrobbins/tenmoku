@@ -56,10 +56,10 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // its rows. GPUI's own keymap stays empty.
     let keymap = default_keymap();
     let bindings = keymap.bindings();
-    // 75 for the editor and the app, 98 for fe-workbench (32 of them vim's
-    // `<C-w>` keys), 24 for vim, 5 for the completion menu, 2 for the ghost
+    // 75 for the editor and the app, 137 for fe-workbench (32 of them vim's
+    // `<C-w>` keys, 39 the day-one features'), 24 for vim, 5 for the completion menu, 2 for the ghost
     // text.
-    assert_eq!(bindings.len(), 221);
+    assert_eq!(bindings.len(), 260);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
@@ -81,6 +81,14 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "vim_line && text_input"
                         | "project_panel"
                         | "ReferencesPanel"
+                        | "search_results"
+                        | "search_results && vim"
+                        | "project_panel && vim"
+                        | "problems_panel"
+                        | "problems_panel && vim"
+                        | "find_bar && replace_input && text_input"
+                        | "editor && vim.mode == normal && !vim.pending"
+                        | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
                         | "editor && vim.mode == normal"
                         | "editor && vim.mode == insert"
                         | "editor && vim.mode == replace"

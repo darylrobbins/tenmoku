@@ -234,7 +234,7 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
     let moved = keymap(
         r#"
         [[bindings]]
-        keys = "alt-cmd-f"
+        keys = "alt-cmd-j"
         command = "search.show"
         context = "workbench"
         "#,
@@ -242,7 +242,7 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
     cx.update(|_, cx| fe_gpui::set_user_keymap(cx, moved));
     assert_eq!(
         hover(DockPanel::Search, cx),
-        shown("Search ⌥⌘F", "Search Alt+Super+F")
+        shown("Search ⌥⌘J", "Search Alt+Super+J")
     );
 
     let unbound = keymap(

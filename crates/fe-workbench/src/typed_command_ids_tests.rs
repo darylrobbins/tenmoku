@@ -155,7 +155,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     ("find.show", "Find", "editor"),
-    ("find.show_replace", "Replace…", "editor || find_bar"),
+    ("find.show_replace", "Replace…", "workbench"),
     ("find.next", "Find Next", "editor || find_bar"),
     ("find.previous", "Find Previous", "editor || find_bar"),
     ("find.close", "Close Find", "find_bar"),

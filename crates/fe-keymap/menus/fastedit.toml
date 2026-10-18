@@ -63,6 +63,20 @@ command = "workbench.open_folder"
 title = "Open File…"
 command = "workbench.open_file"
 
+# Its ctrl-r is vim's in a vim editor, which in insert mode leaves it
+# unhandled; on macOS a shortcut shown is an AppKit key equivalent, which
+# would then open Recent, so there it shows none (`shortcut_context`).
+[[menus.items]]
+title = "Open Recent…"
+command = "workbench.open_recent"
+platform = "!macos"
+
+[[menus.items]]
+title = "Open Recent…"
+command = "workbench.open_recent"
+shortcut_context = []
+platform = "macos"
+
 [[menus.items]]
 title = "Trust This Folder"
 command = "workbench.trust_folder"
@@ -214,8 +228,23 @@ command = "lsp.format_selection"
 separator = true
 
 [[menus.items]]
+title = "Find"
+command = "find.show"
+
+[[menus.items]]
+title = "Replace"
+command = "find.show_replace"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Find in Files"
 command = "search.show"
+
+[[menus.items]]
+title = "Replace in Files"
+command = "search.show_replace"
 
 [[menus]]
 name = "View"
@@ -231,6 +260,10 @@ command = "search.show"
 [[menus.items]]
 title = "Outline"
 command = "outline.show"
+
+[[menus.items]]
+title = "Problems"
+command = "problems.show"
 
 [[menus.items]]
 title = "Toggle Dock"
@@ -387,6 +420,14 @@ separator = true
 
 # VS Code's Go > Next Problem / Previous Change group (git.next_change runs
 # in a diff view too).
+[[menus.items]]
+title = "Next Problem"
+command = "diagnostics.next"
+
+[[menus.items]]
+title = "Previous Problem"
+command = "diagnostics.previous"
+
 [[menus.items]]
 title = "Next Change"
 command = "git.next_change"

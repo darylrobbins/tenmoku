@@ -122,11 +122,11 @@ fn f10_and_the_arrows_choose_an_item(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("up");
     assert_eq!(
         open_menu(&workbench, cx),
-        Some((1, Some(21))),
-        "wraps to Find in Files"
+        Some((1, Some(25))),
+        "wraps to Replace in Files"
     );
 
-    // From Find in Files: Undo, Redo, Cut, Copy, Paste, Select All.
+    // From Replace in Files: Undo, Redo, Cut, Copy, Paste, Select All.
     cx.simulate_keystrokes("down down down down down down enter");
     cx.run_until_parked();
     assert_eq!(open_menu(&workbench, cx), None);

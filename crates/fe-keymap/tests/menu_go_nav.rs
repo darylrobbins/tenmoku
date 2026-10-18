@@ -50,6 +50,8 @@ fn go_menu_lists_navigation_commands() {
             "-",
             "project_panel.reveal_active",
             "-",
+            "diagnostics.next",
+            "diagnostics.previous",
             "git.next_change",
             "git.previous_change",
         ]

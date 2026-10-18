@@ -456,6 +456,14 @@ keys = "secondary-,"
 command = "workbench.open_settings"
 context = "workbench"
 
+# Open Recent: VS Code's macOS ctrl-r, on every platform. In an editor with
+# vim on it stays vim's (redo, and insert mode's register key), as on vim's
+# command line, and in the terminal the shell's (reverse search).
+[[bindings]]
+keys = "ctrl-r"
+command = "workbench.open_recent"
+context = "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
+
 [[bindings]]
 keys = "secondary-p"
 command = "quick_open.toggle"
@@ -607,6 +615,51 @@ keys = "enter"
 command = "text_input.submit"
 context = "search_panel && text_input"
 
+# Replace in files, as VS Code binds it. Off macOS ctrl-shift-h is read as
+# vim's <C-h>, so there it's off in an editor with vim on.
+[[bindings]]
+keys = "cmd-shift-h"
+command = "search.show_replace"
+context = "workbench"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-shift-h"
+command = "search.show_replace"
+context = "workbench && !(editor && vim.enabled)"
+platform = "!macos"
+
+[[bindings]]
+keys = "secondary-alt-enter"
+command = "search.replace_all"
+context = "search_panel"
+
+# Search's results, when they have focus; with vim on, `j` and `k` too.
+[[bindings]]
+keys = "up"
+command = "search.select_previous"
+context = "search_results"
+
+[[bindings]]
+keys = "down"
+command = "search.select_next"
+context = "search_results"
+
+[[bindings]]
+keys = "enter"
+command = "search.open_selected"
+context = "search_results"
+
+[[bindings]]
+keys = "k"
+command = "search.select_previous"
+context = "search_results && vim"
+
+[[bindings]]
+keys = "j"
+command = "search.select_next"
+context = "search_results && vim"
+
 # Panes, as VS Code binds them. The secondary-k chords sit beside the
 # editor's secondary-k secondary-0 and secondary-k secondary-j: a chord's
 # second key picks the binding.
@@ -692,6 +745,91 @@ keys = "enter"
 command = "project_panel.open"
 context = "project_panel"
 
+[[bindings]]
+keys = "f2"
+command = "project_panel.rename"
+context = "project_panel"
+
+[[bindings]]
+keys = "secondary-backspace"
+command = "project_panel.delete"
+context = "project_panel"
+
+# With vim on, nvim-tree's keys, and netrw's where they don't clash (netrw's
+# `d`, a new folder, loses to nvim-tree's delete). The panel drops the `vim`
+# flag while its name field takes typing. `a` and `%` ask for a new file's
+# name, a trailing `/` making it a folder; `Y` and `gy` copy the relative
+# and the absolute path.
+[[bindings]]
+keys = "j"
+command = "project_panel.select_next"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "k"
+command = "project_panel.select_prev"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "h"
+command = "project_panel.collapse_or_parent"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "l"
+command = "project_panel.open"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "g g"
+command = "project_panel.select_first"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-g"
+command = "project_panel.select_last"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "a"
+command = "project_panel.new_file"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "%"
+command = "project_panel.new_file"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "r"
+command = "project_panel.rename"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-r"
+command = "project_panel.rename"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "d"
+command = "project_panel.delete"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-d"
+command = "project_panel.delete"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-y"
+command = "project_panel.copy_relative_path"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "g y"
+command = "project_panel.copy_path"
+context = "project_panel && vim"
+
 # Find references' results, when they have focus.
 [[bindings]]
 keys = "up"
@@ -708,6 +846,81 @@ keys = "enter"
 command = "references_panel.open"
 context = "ReferencesPanel"
 
+# Problems, as VS Code binds them. Off macOS ctrl-shift-m is read as vim's
+# <C-m>, so there it's off in an editor with vim on; f8 is no vim key. In an
+# editor in vim's normal mode, with nothing pending, nvim's `]d` and `[d`.
+[[bindings]]
+keys = "cmd-shift-m"
+command = "problems.show"
+context = "workbench"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-shift-m"
+command = "problems.show"
+context = "workbench && !(editor && vim.enabled)"
+platform = "!macos"
+
+[[bindings]]
+keys = "f8"
+command = "diagnostics.next"
+context = "workbench"
+
+[[bindings]]
+keys = "shift-f8"
+command = "diagnostics.previous"
+context = "workbench"
+
+[[bindings]]
+keys = "] d"
+command = "diagnostics.next"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "[ d"
+command = "diagnostics.previous"
+context = "editor && vim.mode == normal && !vim.pending"
+
+# The Problems panel's list, when it has focus; with vim on, `j` and `k` too.
+[[bindings]]
+keys = "up"
+command = "problems.select_previous"
+context = "problems_panel"
+
+[[bindings]]
+keys = "down"
+command = "problems.select_next"
+context = "problems_panel"
+
+[[bindings]]
+keys = "enter"
+command = "problems.open"
+context = "problems_panel"
+
+[[bindings]]
+keys = "k"
+command = "problems.select_previous"
+context = "problems_panel && vim"
+
+[[bindings]]
+keys = "j"
+command = "problems.select_next"
+context = "problems_panel && vim"
+
+# Dismiss every notification: VS Code's chord. Off macOS ctrl-k is read as
+# vim's <C-k>, so there it's off in an editor with vim on.
+[[bindings]]
+keys = "cmd-k escape"
+command = "toast.dismiss_all"
+context = "workbench"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-k escape"
+command = "toast.dismiss_all"
+context = "workbench && !(editor && vim.enabled)"
+platform = "!macos"
+
 # Vim's layer, last so that it wins over the plain editor's bindings in the
 # same frame. In normal and visual mode the arrows are vim's motions
 # (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
@@ -715,7 +928,7 @@ context = "ReferencesPanel"
 # off macOS ctrl-v (paste), ctrl-q (quit), ctrl-a (select all), ctrl-x
 # (cut), ctrl-y (redo), ctrl-f (find) and ctrl-b (the dock), is bound to
 # `vim.key` too, so it reaches vim; one bound
-# to nothing, such as ctrl-r, reaches it unmatched, as every one does on macOS, where no `ctrl-` binding applies in the editor.
+# to nothing in a vim editor, such as ctrl-r, reaches it unmatched, as every one does on macOS, where no `ctrl-` binding applies in the editor.
 [[bindings]]
 keys = "left"
 command = "vim.move"
@@ -978,6 +1191,38 @@ context = "find_bar"
 keys = { macos = "alt-cmd-r", default = "alt-r" }
 command = "find.toggle_regex"
 context = "find_bar"
+
+# Replace, as VS Code binds it on macOS, anywhere in the workbench: from a
+# panel it opens in the active pane. Off macOS ctrl-alt-f is read as vim's
+# <C-f>, so there it's off in an editor with vim on. Replace one is VS Code's cmd-shift-1, named by what it
+# types: GPUI reports it as cmd-! on macOS too. `enter` in the replace input
+# names `text_input` too, to beat `find.next`'s at its depth.
+[[bindings]]
+keys = "cmd-alt-f"
+command = "find.show_replace"
+context = "workbench"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-f"
+command = "find.show_replace"
+context = "workbench && !(editor && vim.enabled)"
+platform = "!macos"
+
+[[bindings]]
+keys = "secondary-!"
+command = "find.replace_next"
+context = "find_bar"
+
+[[bindings]]
+keys = "secondary-alt-enter"
+command = "find.replace_all"
+context = "find_bar"
+
+[[bindings]]
+keys = "enter"
+command = "find.replace_next"
+context = "find_bar && replace_input && text_input"
 
 # Vim's command line (`vim_line`), which the status bar shows for `/`, `?`
 # and `:`. Its input's other keys are `text_input`'s.

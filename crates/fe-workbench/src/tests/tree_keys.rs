@@ -385,14 +385,15 @@ fn the_default_keymap_binds_the_panel_commands() {
         let id = fe_command::CommandId::parse(command).unwrap();
         store.keymap().bindings_for(&id).len()
     };
-    for command in [
-        "project_panel.select_prev",
-        "project_panel.select_next",
-        "project_panel.collapse_or_parent",
-        "project_panel.expand_or_first_child",
-        "project_panel.open",
+    // The arrows and `enter`, and with vim on `k`, `j`, `h` and `l`.
+    for (command, count) in [
+        ("project_panel.select_prev", 2),
+        ("project_panel.select_next", 2),
+        ("project_panel.collapse_or_parent", 2),
+        ("project_panel.expand_or_first_child", 1),
+        ("project_panel.open", 2),
     ] {
-        assert_eq!(bound(command), 1, "{command}");
+        assert_eq!(bound(command), count, "{command}");
     }
     assert_eq!(bound("project_panel.reveal_active"), 0, "palette only");
     let registry = crate::project_panel::registry();

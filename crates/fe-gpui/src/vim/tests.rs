@@ -441,6 +441,14 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "editor || find_bar"
                             | "project_panel"
                             | "ReferencesPanel"
+                            | "search_results"
+                            | "search_results && vim"
+                            | "project_panel && vim"
+                            | "problems_panel"
+                            | "problems_panel && vim"
+                            | "find_bar && replace_input && text_input"
+                            | "editor && vim.mode == normal && !vim.pending"
+                            | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
                             | "vim_line"
                             | "vim_line && text_input"
                             | "editor"
@@ -495,7 +503,11 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
     // reducer reads as `<C-g>`, a key vim leaves unbound.
     let stack = ContextStack::new()
         .with(ContextFrame::new("workbench"))
-        .with(ContextFrame::new("editor").set("vim.mode", "normal"));
+        .with(
+            ContextFrame::new("editor")
+                .flag("vim.enabled")
+                .set("vim.mode", "normal"),
+        );
     let ctrl: Vec<_> = bindings
         .iter()
         .filter(|binding| {

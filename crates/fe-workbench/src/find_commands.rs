@@ -14,7 +14,10 @@
 //! ([`handle_in`]).
 
 use gpui::{App, Context, InteractiveElement, Window};
-use kiln::{Cx, platform::command_actions::typed_command};
+use kiln::{
+    Cx,
+    platform::command_actions::{dispatch_window, typed_command},
+};
 
 use crate::{Pane, find_bar::FindOp};
 
@@ -26,8 +29,10 @@ impl Pane {
         self.find_command(FindOp::Show, cx);
     }
 
+    // Anywhere in the workbench: from outside a pane, [`init`]'s listener
+    // runs it in the active one.
     /// Replace…
-    #[command(id = "find.show_replace", context = "editor || find_bar")]
+    #[command(id = "find.show_replace", context = "workbench")]
     pub(crate) fn show_replace(&mut self, cx: &mut Cx<Self>) {
         self.find_command(FindOp::ShowReplace, cx);
     }
@@ -95,6 +100,30 @@ impl Pane {
             self.run_find(op, cx.window, cx.cx);
         }
     }
+}
+
+/// Runs `find.show_replace` in the active pane when nothing on focus's
+/// path handled it: from a panel, such as the tree or a list, the pane's
+/// handler isn't on the way. After the dispatch, which has the window out.
+pub(crate) fn init(cx: &mut App) {
+    cx.on_action(|_: &ShowReplace, cx| {
+        let Some(handle) = dispatch_window(cx).or_else(|| cx.active_window()) else {
+            return;
+        };
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |_, window, cx| {
+                    let Some(Some(workbench)) = window.root::<crate::Workbench>() else {
+                        return;
+                    };
+                    let pane = workbench.read(cx).pane().clone();
+                    pane.update(cx, |pane, cx| {
+                        pane.run_find(FindOp::ShowReplace, window, cx);
+                    });
+                })
+                .ok();
+        });
+    });
 }
 
 /// Whether the find command running applies where it was invoked, as its

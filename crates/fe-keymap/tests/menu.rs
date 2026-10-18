@@ -288,6 +288,10 @@ fn hosts_extend_and_replace() {
         id = "search.show"
         remove = true
 
+        [[menus.items]]
+        id = "search.show_replace"
+        remove = true
+
         [[menus]]
         name = "File"
 
@@ -306,11 +310,12 @@ fn hosts_extend_and_replace() {
     );
     assert_eq!(ids(&bar, "Tools"), ["tools.run_tests"]);
     assert_eq!(
-        &ids(&bar, "View")[..8],
+        &ids(&bar, "View")[..9],
         [
             "dock.show_project",
             "search.show",
             "outline.show",
+            "problems.show",
             "dock.toggle",
             "terminal.toggle",
             "view.toggle_breadcrumbs",
@@ -320,12 +325,13 @@ fn hosts_extend_and_replace() {
     );
     // An item with a taken ID replaces it where it was.
     assert_eq!(
-        ids(&bar, "File")[..9],
+        ids(&bar, "File")[..10],
         [
             "workbench.new_file",
             "-",
             "workbench.open_folder",
             "workbench.open_file",
+            "workbench.open_recent",
             "workbench.trust_folder",
             "workbench.untrust_folder",
             "-",
@@ -334,7 +340,8 @@ fn hosts_extend_and_replace() {
         ]
     );
     assert_eq!(item(&bar, "File", "editor.save").title, "Save File");
-    // The separator before Find in Files went with it.
+    // The separator before Find in Files and Replace in Files went with
+    // them.
     assert_eq!(
         ids(&bar, "Edit"),
         [
@@ -357,7 +364,10 @@ fn hosts_extend_and_replace() {
             "lsp.rename",
             "lsp.code_actions",
             "lsp.format_document",
-            "lsp.format_selection"
+            "lsp.format_selection",
+            "-",
+            "find.show",
+            "find.show_replace"
         ]
     );
 

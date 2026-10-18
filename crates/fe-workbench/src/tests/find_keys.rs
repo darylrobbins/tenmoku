@@ -6,10 +6,14 @@ use std::{fs, ops::Range};
 use fe_command::{ContextFrame, ContextStack};
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, set_vim_enabled};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use kiln_shell::{
+    Picker,
+    command_palette::{COMMAND_PALETTE, CommandPalette},
+};
 
 use crate::{Launch, Pane, Workbench};
 
-const TABLE: [(&str, &str, &str); 9] = [
+const TABLE: [(&str, &str, &str); 13] = [
     ("cmd-f", "find.show", "editor"),
     ("cmd-g", "find.next", "editor || find_bar"),
     ("cmd-shift-g", "find.previous", "editor || find_bar"),
@@ -19,6 +23,14 @@ const TABLE: [(&str, &str, &str); 9] = [
     ("alt-cmd-c", "find.toggle_case", "find_bar"),
     ("alt-cmd-w", "find.toggle_whole_word", "find_bar"),
     ("alt-cmd-r", "find.toggle_regex", "find_bar"),
+    ("alt-cmd-f", "find.show_replace", "workbench"),
+    ("cmd-!", "find.replace_next", "find_bar"),
+    ("alt-cmd-enter", "find.replace_all", "find_bar"),
+    (
+        "enter",
+        "find.replace_next",
+        "find_bar && replace_input && text_input",
+    ),
 ];
 
 #[test]
@@ -142,5 +154,95 @@ fn keys_drive_the_bar(cx: &mut TestAppContext) {
         assert!(editor_focused(&editor, cx), "vim {vim}");
         // From the editor, with the bar closed, cmd-g still steps.
         assert_eq!(starts(cx, "cmd-g"), 16, "vim {vim}");
+    }
+}
+
+fn palette(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Option<Entity<Picker<CommandPalette>>> {
+    workbench.read_with(cx, |workbench, cx| {
+        let layer = workbench.shell().read(cx).modals().read(cx);
+        (layer.modal() == Some(COMMAND_PALETTE))
+            .then(|| layer.modal_view().unwrap().clone().downcast().unwrap())
+    })
+}
+
+/// Replace's key opens it in the active pane from a panel too, where the
+/// pane's own handler isn't on focus's path, and from the pane itself with
+/// no editor focused; the palette lists it from a panel.
+#[gpui::test]
+fn replace_opens_from_a_panel(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "foo one\nfoo two\n").unwrap();
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            crate::init(cx);
+            set_vim_enabled(cx, vim);
+        });
+        let launch = Launch {
+            root: Some(dir.path().to_owned()),
+            file: None,
+        };
+        let (workbench, cx) = cx.add_window_view(move |window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+        draw(cx);
+        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
+        draw(cx);
+        let editor = pane
+            .read_with(cx, |pane, _| pane.active_editor().cloned())
+            .unwrap();
+
+        // The project tree, then Problems, then the pane's own focus.
+        for panel in ["cmd-shift-e", "cmd-shift-m", "pane"] {
+            let name = format!("vim {vim}, {panel}");
+            if panel == "pane" {
+                cx.update(|window, cx| window.focus(&pane.focus_handle(cx), cx));
+                draw(cx);
+            } else {
+                keys(panel, cx);
+            }
+            assert!(!editor_focused(&editor, cx), "{name}: the panel has focus");
+            keys("alt-cmd-f", cx);
+            assert!(open(&pane, cx), "{name}");
+            let (replacing, focused) = cx.update(|window, cx| {
+                let bar = pane.read(cx).find_bar().unwrap();
+                let input = bar.replace_input().focus_handle(cx);
+                (bar.is_replacing(), input.is_focused(window))
+            });
+            assert!(replacing, "{name}");
+            assert!(focused, "{name}: the replace input has focus");
+            keys("escape", cx);
+            assert!(!open(&pane, cx), "{name}");
+        }
+
+        // The palette, opened from the tree, lists Replace with its key.
+        keys("cmd-shift-e", cx);
+        keys("cmd-shift-p", cx);
+        cx.simulate_input("Replace");
+        draw(cx);
+        let picker = palette(&workbench, cx).expect("the palette shows");
+        let titles: Vec<_> = picker.read_with(cx, |picker, cx| {
+            let palette = &picker.delegate;
+            (palette.matches().iter().enumerate())
+                .map(|(ix, entry)| {
+                    let key = palette.key_label(ix, cx).map(|key| key.to_string());
+                    (entry.title.to_string(), key)
+                })
+                .collect()
+        });
+        assert!(
+            titles
+                .iter()
+                .any(|(title, key)| title == "Replace…" && key.is_some()),
+            "vim {vim}: {titles:?}"
+        );
+        keys("escape", cx);
     }
 }
