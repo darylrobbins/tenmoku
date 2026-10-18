@@ -20,7 +20,7 @@
 use std::ops::Range;
 
 use fe_gpui::EditorView;
-use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, Syntax};
+use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineKind, Syntax};
 use fe_ui::{TreeRow, UiTheme};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, Focusable as _, InteractiveElement as _,
@@ -308,12 +308,37 @@ impl OutlinePanel {
                 Some(
                     TreeRow::new(("outline-row", ix), item.name.clone(), &self.ui)
                         .depth(item.depth as usize)
+                        .icon(symbol_icon(item.kind))
                         .on_click(cx.listener(move |panel, _, window, cx| {
                             panel.jump(generation, ix, window, cx)
                         })),
                 )
             })
             .collect()
+    }
+}
+
+/// The icon before a symbol of `kind`; every heading level shares one.
+pub(crate) fn symbol_icon(kind: OutlineKind) -> fe_ui::Icon {
+    use fe_ui::Icon;
+    match kind {
+        OutlineKind::Module => Icon::Box,
+        OutlineKind::Class => Icon::Component,
+        OutlineKind::Struct => Icon::Braces,
+        OutlineKind::Enum => Icon::List,
+        OutlineKind::Interface | OutlineKind::Trait => Icon::Plug,
+        OutlineKind::Impl => Icon::Link,
+        OutlineKind::Type => Icon::Type,
+        OutlineKind::Function | OutlineKind::Method => Icon::SquareFunction,
+        OutlineKind::Constant => Icon::Hash,
+        OutlineKind::Macro => Icon::Asterisk,
+        OutlineKind::Table => Icon::Table,
+        OutlineKind::Heading(_) => Icon::Heading,
+        OutlineKind::Field => Icon::CircleDot,
+        OutlineKind::Variant => Icon::Diamond,
+        OutlineKind::Variable => Icon::Variable,
+        // `OutlineKind` is non-exhaustive.
+        _ => Icon::Variable,
     }
 }
 

@@ -96,6 +96,22 @@ icons! {
     TriangleAlert => "triangle-alert",
     Server => "server",
     Lock => "lock",
+    // The outline's symbol kinds; not mapped from names.
+    Box => "box",
+    Component => "component",
+    Braces => "braces",
+    List => "list",
+    Plug => "plug",
+    Link => "link",
+    Type => "type",
+    SquareFunction => "square-function",
+    Hash => "hash",
+    Asterisk => "asterisk",
+    Table => "table",
+    Heading => "heading",
+    CircleDot => "circle-dot",
+    Diamond => "diamond",
+    Variable => "variable",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.
