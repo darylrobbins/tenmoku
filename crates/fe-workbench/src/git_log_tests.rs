@@ -317,7 +317,7 @@ fn expected(log: &[(String, Vec<String>, String)], labels: &[(&str, &str)]) -> R
         .map(|(id, _, summary)| {
             let label = labels.get(summary.as_str());
             let label = label.map(|label| label.to_string()).into_iter().collect();
-            let texts = vec![format!("{}  {summary}", &id[..7]), "t, just now".to_owned()];
+            let texts = vec![format!("{}  {summary}", &id[..7]), "just now".to_owned()];
             (label, texts)
         })
         .collect()
@@ -647,3 +647,6 @@ fn edges(cx: &mut TestAppContext) {
     assert_eq!(first.0, ["HEAD"]);
     assert!(first.1[0].ends_with("  merge topic"), "{first:?}");
 }
+
+#[path = "git_log_message_tests.rs"]
+mod message_tests;

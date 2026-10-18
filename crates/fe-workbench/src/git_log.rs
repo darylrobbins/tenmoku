@@ -19,7 +19,13 @@
 //! VS Code's five graph colours, its dot a ring for a merge), the refs
 //! pointing at it as small labels (HEAD's branch bold, a tag's prefixed
 //! `tag`, a remote-tracking branch's muted), then its short id and summary
-//! and, muted, its author and how long ago it was made ([`commit_rows`]).
+//! and, muted, how long ago it was made. Hovering a commit row shows its
+//! whole message in a popover, as VS Code's graph and GitLens do: the
+//! summary, bold, the body, its author and email, its date as
+//! `git.blame_line`'s popover gives it and how long ago that was, and its
+//! full id, muted ([`CommitPopover`]). It's no taller than the window: a
+//! longer message scrolls under the mouse, the popover staying open while
+//! the mouse is over it, its author, date and id kept in view below.
 //!
 //! The panel takes its keys as [`commit_rows`] says: up and down move the
 //! selection; with vim on, `j` and `k` move, `g g` and `G` go to the first
@@ -27,15 +33,20 @@
 //! `G` reads no further page: none is read until the selection moves or the
 //! list is scrolled (by the wheel, even at its end, or to other rows).
 //!
-//! Enter, `o` and a click on a commit expand it: its files
+//! Enter, `o` and a click on a commit expand it: its message's body, one
+//! muted row a line (its blank lines kept), then its files
 //! ([`Repo::commit_files`], against its first parent, read on the background
 //! executor, a `Loading…` row under it until they arrive and a muted row for
 //! an error) are listed under it, indented, as `A`, `M` or `D` and the path
 //! from the root, or `R old → new`; doing it again collapses it. Enter, `o`
 //! or a click on a file opens its change at that commit as the History panel
 //! opens one ([`Workbench::open_commit`]), so the same one is the same tab.
-//! The selection moves over commit and file rows alike.
+//! The selection moves over commit, body and file rows alike; Enter, `o`
+//! and a click on a body row do nothing. Rows too long for the panel end in
+//! an ellipsis.
 
+#[cfg(test)]
+use std::{cell::RefCell, rc::Rc};
 use std::{
     collections::BTreeMap,
     ops::Range,
@@ -44,20 +55,22 @@ use std::{
 };
 
 use fe_git::{
-    ChangeKind, CommitFile, FileCommit, Head, LogCommit, LogScope, RefKind, RefLabel, Repo,
+    ChangeKind, CommitFile, CommitInfo, FileCommit, Head, LogCommit, LogScope, RefKind, RefLabel,
+    Repo,
     graph::{GraphLayout, GraphRow},
 };
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, ElementId, FocusHandle,
     Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollStrategy, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle,
-    WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _, px, quad, size,
-    transparent_black, uniform_list,
+    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
+    UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
+    px, quad, size, transparent_black, uniform_list,
 };
 
 use super::{
+    super::git_blame,
     GitCommand, GitOp,
     commit_rows::{self, Key, ListKeys},
 };
@@ -95,6 +108,15 @@ const NO_COMMITS: &str = "No commits yet";
 /// What the last row says while a page is read.
 const LOADING: &str = "Loading…";
 
+/// The commit popover's widest.
+const POPOVER_WIDTH: Pixels = px(480.);
+
+/// How much shorter than the window the commit popover is, at most.
+const POPOVER_MARGIN: Pixels = px(16.);
+
+/// The commit popover's text size.
+const POPOVER_TEXT: Pixels = px(12.);
+
 /// A lane's width in the graph cell.
 const LANE_WIDTH: Pixels = px(12.);
 
@@ -130,23 +152,28 @@ fn lanes(row: &GraphRow) -> usize {
     widest.unwrap_or(0).max(row.column) + 1
 }
 
-/// What a row of the list is: a commit (by its index), one of its files
-/// (the commit's, then the file's index), or the row under a commit saying
-/// its files are loading or couldn't be read.
+/// What a row of the list is: a commit (by its index), a line of its
+/// message's body or one of its files (the commit's, then the line's or the
+/// file's index), or the row under a commit saying its files are loading or
+/// couldn't be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Line {
     Commit(usize),
+    Body(usize, usize),
     File(usize, usize),
     Note(usize),
 }
 
 impl Line {
     /// An identity for the row's element that holds whatever rows are
-    /// listed before it.
+    /// listed before it. Body rows' have the top bit set, so they're none
+    /// of a commit's, a file's or a note's.
     fn id(self) -> u64 {
         const ROW: u64 = 1 << 24;
+        const BODY: u64 = 1 << 63;
         match self {
             Line::Commit(ix) => ix as u64 * ROW,
+            Line::Body(ix, row) => BODY | (ix as u64 * ROW + row as u64),
             Line::File(ix, file) => ix as u64 * ROW + file as u64 + 1,
             Line::Note(ix) => ix as u64 * ROW + ROW - 1,
         }
@@ -155,8 +182,172 @@ impl Line {
     /// The index of the commit the row is or is under.
     fn commit(self) -> usize {
         match self {
-            Line::Commit(ix) | Line::File(ix, _) | Line::Note(ix) => ix,
+            Line::Commit(ix) | Line::Body(ix, _) | Line::File(ix, _) | Line::Note(ix) => ix,
         }
+    }
+}
+
+/// The body of `message`: what follows its first line with text, leading
+/// blank lines dropped and trailing whitespace trimmed, by line.
+fn body_lines(message: &str) -> Vec<&str> {
+    let mut lines = message.trim_end().lines();
+    lines.by_ref().find(|line| !line.trim().is_empty());
+    lines.skip_while(|line| line.trim().is_empty()).collect()
+}
+
+/// How long ago `commit` was made, at `now`: `just now`, `6 days ago`.
+fn age(commit: &CommitInfo, now: i64) -> String {
+    let [_, when] = commit_rows::texts(commit, now);
+    let author = format!("{}, ", commit.author);
+    when.strip_prefix(&author)
+        .map_or(when.clone(), str::to_owned)
+}
+
+/// What shows on hovering a commit row: its summary, bold; its message's
+/// body, wrapped, its blank lines kept; `<author> <email>`; `<date>
+/// (<ago>)`, the date as `git.blame_line`'s popover gives it; and its full
+/// id, muted. Wraps at [`POPOVER_WIDTH`]; no taller than the window less
+/// [`POPOVER_MARGIN`], the summary and body scrolling above the rest.
+struct CommitPopover {
+    summary: String,
+    body: Option<String>,
+    author: String,
+    date: String,
+    id: String,
+    ui: UiTheme,
+    /// The summary and body's scroll.
+    scroll: ScrollHandle,
+    #[cfg(test)]
+    probe: Rc<RefCell<PopoverProbe>>,
+}
+
+/// What the tests see of the last commit popover built.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct PopoverProbe {
+    /// Its text, as [`CommitPopover::text`] gives it.
+    pub(crate) text: Option<String>,
+    /// Its summary and body's scroll.
+    pub(crate) scroll: Option<ScrollHandle>,
+    /// Its parts' bounds as last drawn: the summary and body, then the
+    /// author, date and id.
+    pub(crate) drawn: Vec<Bounds<Pixels>>,
+}
+
+impl CommitPopover {
+    fn new(commit: &CommitInfo, now: i64, ui: UiTheme) -> Self {
+        let body = body_lines(&commit.message);
+        Self {
+            summary: commit.summary.clone(),
+            body: (!body.is_empty()).then(|| body.join("\n")),
+            author: format!("{} {}", commit.author, commit.email),
+            date: format!("{} ({})", git_blame::date(commit), age(commit, now)),
+            id: commit.id.clone(),
+            ui,
+            scroll: ScrollHandle::new(),
+            #[cfg(test)]
+            probe: Rc::default(),
+        }
+    }
+
+    /// It, telling `probe` what it is and how it's drawn.
+    #[cfg(test)]
+    fn probed(mut self, probe: &Rc<RefCell<PopoverProbe>>) -> Self {
+        probe.replace(PopoverProbe {
+            text: Some(self.text()),
+            scroll: Some(self.scroll.clone()),
+            drawn: Vec::new(),
+        });
+        self.probe = probe.clone();
+        self
+    }
+
+    /// Its lines, joined with `\n`.
+    #[cfg(test)]
+    fn text(&self) -> String {
+        let lines = [Some(&self.summary), self.body.as_ref()]
+            .into_iter()
+            .flatten();
+        let lines = lines.chain([&self.author, &self.date, &self.id]);
+        lines.map(String::as_str).collect::<Vec<_>>().join("\n")
+    }
+}
+
+impl CommitPopover {
+    /// Its width: its widest line's, up to [`POPOVER_WIDTH`]. GPUI lays a
+    /// tooltip out at its min-content size, so wrapped text needs a width
+    /// set to take the height it wraps to.
+    fn width(&self, window: &Window) -> Pixels {
+        let style = window.text_style();
+        let measure = |text: &str, weight: FontWeight| {
+            let mut run = style.to_run(text.len());
+            run.font.weight = weight;
+            let text = SharedString::from(text.to_owned());
+            (window
+                .text_system()
+                .shape_line(text, POPOVER_TEXT, &[run], None))
+            .width
+        };
+        let body = self.body.iter().flat_map(|body| body.lines());
+        let rest = body.chain([&self.author, &self.date, &self.id].map(String::as_str));
+        let widest = (rest.map(|line| measure(line, FontWeight::NORMAL)))
+            .fold(measure(&self.summary, FontWeight::BOLD), Pixels::max);
+        // Its padding and border, and a pixel so the widest doesn't wrap.
+        (widest + px(19.)).min(POPOVER_WIDTH)
+    }
+}
+
+impl Render for CommitPopover {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let ui = self.ui;
+        let message = div()
+            .id("commit-popover-message")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .child(
+                div()
+                    .font_weight(FontWeight::BOLD)
+                    .child(self.summary.clone()),
+            )
+            .when_some(self.body.clone(), |message, body| {
+                message.child(div().child(body))
+            });
+        #[cfg(test)]
+        let probe = self.probe.clone();
+        let popover = div()
+            .w(self.width(window))
+            .max_h(window.viewport_size().height - POPOVER_MARGIN)
+            .occlude()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(ui.panel_background)
+            .border_1()
+            .border_color(ui.border)
+            .text_size(POPOVER_TEXT)
+            .text_color(ui.text)
+            .whitespace_normal()
+            .child(message)
+            .child(div().flex_none().child(self.author.clone()))
+            .child(div().flex_none().child(self.date.clone()))
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(ui.muted_text)
+                    .child(self.id.clone()),
+            );
+        #[cfg(test)]
+        let popover = popover.on_children_prepainted(move |drawn, _, _| {
+            probe.borrow_mut().drawn = drawn;
+        });
+        popover
     }
 }
 
@@ -273,7 +464,7 @@ pub(crate) struct GitLogPanel {
     /// `Loading` names lands.
     requests: u64,
     /// The rows of the list: each commit, and under the expanded ones their
-    /// files.
+    /// bodies' lines and their files.
     lines: Vec<Line>,
     /// What file paths show relative to, if they're under it.
     root: Option<PathBuf>,
@@ -287,6 +478,9 @@ pub(crate) struct GitLogPanel {
     scroll: UniformListScrollHandle,
     ui: UiTheme,
     focus: FocusHandle,
+    /// What the tests see of the last commit popover built.
+    #[cfg(test)]
+    popover: Rc<RefCell<PopoverProbe>>,
 }
 
 impl GitLogPanel {
@@ -316,6 +510,8 @@ impl GitLogPanel {
             scroll: UniformListScrollHandle::new(),
             ui,
             focus: cx.focus_handle(),
+            #[cfg(test)]
+            popover: Rc::default(),
         }
     }
 
@@ -416,12 +612,16 @@ impl GitLogPanel {
         self.lines.clear();
         for ix in 0..self.commits.len() {
             self.lines.push(Line::Commit(ix));
-            match self.expanded.get(&ix) {
-                None => {}
-                Some(Listing::Files(files)) => {
+            let Some(listing) = self.expanded.get(&ix) else {
+                continue;
+            };
+            let body = body_lines(&self.commits[ix].commit.message).len();
+            (self.lines).extend((0..body).map(|row| Line::Body(ix, row)));
+            match listing {
+                Listing::Files(files) => {
                     (self.lines).extend((0..files.len()).map(|file| Line::File(ix, file)));
                 }
-                Some(_) => self.lines.push(Line::Note(ix)),
+                _ => self.lines.push(Line::Note(ix)),
             }
         }
         if let Some(was) = was {
@@ -439,6 +639,12 @@ impl GitLogPanel {
         let relative = (bases.into_iter().chain([workdir]).flatten())
             .find_map(|base| Some(path.strip_prefix(base).ok()?.to_owned()));
         relative.as_deref().unwrap_or(path).display().to_string()
+    }
+
+    /// Line `row` of commit `commit`'s message's body.
+    fn body_text(&self, commit: usize, row: usize) -> Option<String> {
+        let entry = self.commits.get(commit)?;
+        Some(body_lines(&entry.commit.message).get(row)?.to_string())
     }
 
     /// The text of file `file` of commit `commit`: `M path`, `R old → new`.
@@ -545,12 +751,12 @@ impl GitLogPanel {
     }
 
     /// Enter, `o` or a click on row `ix`: expands or collapses a commit,
-    /// opens a file.
+    /// opens a file; nothing on a body or note row.
     fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.lines.get(ix).copied() {
             Some(Line::Commit(commit)) => self.toggle(commit, cx),
             Some(Line::File(commit, file)) => self.open_file(commit, file, window, cx),
-            Some(Line::Note(_)) | None => {}
+            Some(Line::Body(..) | Line::Note(_)) | None => {}
         }
     }
 
@@ -741,6 +947,19 @@ impl GitLogPanel {
                 let indent = LANE_WIDTH * self.lanes as f32 + px(24.);
                 let row = match line {
                     Line::Commit(_) => row,
+                    Line::Body(commit, body) => {
+                        let text = self.body_text(commit, body).unwrap_or_default();
+                        return Some(
+                            row.pl(indent)
+                                .when(selected, |row| row.bg(selected_bg))
+                                .text_color(ui.muted_text)
+                                .on_click(cx.listener(move |panel, _, window, cx| {
+                                    panel.click(line, false, window, cx)
+                                }))
+                                .child(ellipsized(text))
+                                .into_any_element(),
+                        );
+                    }
                     Line::File(commit, file) => {
                         let text = self.file_text(commit, file).unwrap_or_default();
                         return Some(
@@ -750,7 +969,7 @@ impl GitLogPanel {
                                 .on_click(cx.listener(move |panel, _, window, cx| {
                                     panel.click(line, true, window, cx)
                                 }))
-                                .child(text)
+                                .child(ellipsized(text))
                                 .into_any_element(),
                         );
                     }
@@ -777,29 +996,42 @@ impl GitLogPanel {
                 let entry = self.commits.get(ix_commit)?;
                 let merge = entry.parents.len() > 1;
                 let graph = graph_cell(self.rows[ix_commit].clone(), merge, self.lanes);
-                let [summary, when] = commit_rows::texts(&entry.commit, self.now);
+                let [summary, _] = commit_rows::texts(&entry.commit, self.now);
+                let when = age(&entry.commit, self.now);
+                let (commit, now) = (entry.commit.clone(), self.now);
+                #[cfg(test)]
+                let probe = self.popover.clone();
                 Some(
                     row.when(selected, |row| row.bg(selected_bg))
                         .hover(move |row| row.bg(ui.row_hover))
                         .on_click(cx.listener(move |panel, _, window, cx| {
                             panel.click(line, true, window, cx)
                         }))
+                        .hoverable_tooltip(move |_, cx| {
+                            let popover = CommitPopover::new(&commit, now, ui);
+                            #[cfg(test)]
+                            let popover = popover.probed(&probe);
+                            cx.new(|_| popover).into()
+                        })
                         .child(graph)
                         .children(entry.refs.iter().map(|label| ref_label(label, ui)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .child(summary),
-                        )
+                        .child(ellipsized(summary))
                         .child(div().flex_none().text_color(ui.muted_text).child(when))
                         .into_any_element(),
                 )
             })
             .collect()
     }
+}
+
+/// `text` as a row's, ending in an ellipsis if it's too long for the row.
+fn ellipsized(text: String) -> impl IntoElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .text_ellipsis()
+        .child(text)
 }
 
 /// A ref label's text: a tag's prefixed `tag`.
@@ -945,7 +1177,8 @@ impl GitLogPanel {
     pub(crate) fn rows(&self) -> Vec<(Vec<String>, Vec<String>)> {
         let commits = self.commits.iter().map(|entry| {
             let labels = entry.refs.iter().map(label_text).collect();
-            (labels, commit_rows::texts(&entry.commit, self.now).to_vec())
+            let [summary, _] = commit_rows::texts(&entry.commit, self.now);
+            (labels, vec![summary, age(&entry.commit, self.now)])
         });
         let tail = self
             .tail_text()
@@ -960,6 +1193,7 @@ impl GitLogPanel {
                 Line::Commit(ix) => {
                     commit_rows::texts(&self.commits[ix].commit, self.now)[0].clone()
                 }
+                Line::Body(ix, row) => self.body_text(ix, row).unwrap_or_default(),
                 Line::File(ix, file) => self.file_text(ix, file).unwrap_or_default(),
                 Line::Note(ix) => match self.expanded.get(&ix) {
                     Some(Listing::Failed(error)) => error.clone(),
@@ -987,6 +1221,16 @@ impl GitLogPanel {
 
     pub(crate) fn selected(&self) -> Option<usize> {
         self.selected
+    }
+
+    /// The text of the last commit popover built.
+    pub(crate) fn last_popover(&self) -> Option<String> {
+        self.popover.borrow().text.clone()
+    }
+
+    /// What the tests see of the last commit popover built.
+    pub(crate) fn popover_probe(&self) -> Rc<RefCell<PopoverProbe>> {
+        self.popover.clone()
     }
 }
 

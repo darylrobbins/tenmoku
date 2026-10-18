@@ -683,7 +683,7 @@ fn ago(seconds: i64) -> String {
 }
 
 /// `commit`'s author time in its own offset: `2026-10-14 09:30 +0200`.
-fn date(commit: &CommitInfo) -> String {
+pub(super) fn date(commit: &CommitInfo) -> String {
     let offset = i64::from(commit.offset_minutes);
     let local = commit.time + offset * 60;
     let (days, seconds) = (local.div_euclid(86_400), local.rem_euclid(86_400));
