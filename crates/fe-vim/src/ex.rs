@@ -268,6 +268,10 @@ pub enum HostCommand {
     /// `:e[dit] [path]`: open `path`, or with none reload the file, which
     /// with `force` (`!`) discards changes.
     Edit { path: Option<String>, force: bool },
+    /// `:[line]r[ead] [path]`: put the lines of `path` (none: the buffer's
+    /// own file) below line `below`, from 1, the range's last line (the
+    /// cursor's with none); `0` puts them above the first line, as `:0r`.
+    Read { path: Option<String>, below: u32 },
     /// `:qa[ll]`, `:quita[ll]`: close every window.
     QuitAll { force: bool },
     /// `:wa[ll]`: save every modified buffer (`:wa!` is the same).
@@ -777,6 +781,10 @@ fn host(name: &str) -> Option<Build> {
             let path = (!path.is_empty()).then(|| path.to_string());
             HostCommand::Edit { path, force }
         },
+        _ if is("read", 1) => |_, path| {
+            let path = (!path.is_empty()).then(|| path.to_string());
+            HostCommand::Read { path, below: 0 }
+        },
         _ if is("qall", 2) || is("quitall", 5) => |force, _| HostCommand::QuitAll { force },
         _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
         _ if is("Explore", 2) => |_, _| HostCommand::Explore,
@@ -859,9 +867,6 @@ fn user_command(
 /// `:sav` take (`:sav` needs one). The day-one commands (`:Ex`, `:ol`,
 /// `:cope`, `:ccl`) take no `!`.
 fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExCommand, ExError> {
-    if !range.is_empty() {
-        return Err(ExError::NoRange);
-    }
     let (force, args) = match after.strip_prefix('!') {
         Some(args) => (true, args),
         None => (false, after),
@@ -869,6 +874,17 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
     let args = args.trim_start_matches([' ', '\t']);
     let args = trim_unescaped_end(args);
     let command = build(force, &unescape(args));
+    // `:r` alone takes a range; the shell's output (`:r !cmd`, `:r! cmd`) is
+    // refused, there being no shell to run it in.
+    if let HostCommand::Read { .. } = command {
+        if force || args.starts_with('!') {
+            return Err(ExError::Unsupported(":r !cmd".into()));
+        }
+        return Ok(ExCommand::Host(command));
+    }
+    if !range.is_empty() {
+        return Err(ExError::NoRange);
+    }
     let bangless = matches!(
         command,
         HostCommand::Explore
@@ -1245,6 +1261,12 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 // row 0, which `rows` would clamp to line 1.
                 HostCommand::User { range, .. } if lines == Some((0, 0)) => *range = Some(0..0),
                 HostCommand::User { range, .. } if lines.is_some() => *range = Some(rows(target)?),
+                HostCommand::Read { below, .. } => {
+                    *below = match lines {
+                        Some((_, 0)) => 0,
+                        _ => counted_lines(target, lines, None, last)?.1 as u32,
+                    };
+                }
                 HostCommand::DiffGet { rows: at } | HostCommand::DiffPut { rows: at } => {
                     *at = rows(target)?;
                 }

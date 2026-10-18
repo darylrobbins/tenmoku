@@ -35,6 +35,7 @@ use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use kiln_shell::{ItemHandle, PaneView as _};
 
 use super::git_commands::{self, GitCommand, GitOp};
+use super::git_diff::E21;
 use super::recent_picker::RecentOp;
 use super::{Workbench, open};
 use crate::Pane;
@@ -86,6 +87,7 @@ impl Workbench {
                 path: Some(path), ..
             } => self.vim_edit(&editor, &path, window, cx),
             HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
+            HostCommand::Read { path, below } => self.vim_read(&editor, path, below, cx),
             HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
             HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),
             HostCommand::User {
@@ -418,6 +420,78 @@ impl Workbench {
             }
         })
         .detach();
+    }
+
+    /// `:[line]r[ead] [path]`: puts the lines of `path` (none: `editor`'s
+    /// own file) below line `below`, from 1 (`0`: above the first), as one
+    /// edit with the caret on the first line read, at its first non-blank.
+    /// A file that can't be read leaves `E484` and the text as it was.
+    pub(super) fn vim_read(
+        &self,
+        editor: &Entity<EditorView>,
+        path: Option<String>,
+        below: u32,
+        cx: &mut App,
+    ) {
+        if editor.read(cx).is_read_only() {
+            return message(editor, E21, cx);
+        }
+        let own = editor.path(cx).map(|path| path.to_path_buf());
+        let named = match (&path, own) {
+            (Some(path), _) => path.clone(),
+            (None, Some(own)) => own.display().to_string(),
+            (None, None) => return message(editor, E32, cx),
+        };
+        let folder = (self.root.clone()).or_else(|| editor.path(cx)?.parent().map(Path::to_owned));
+        let read = resolve(&named, folder.as_deref())
+            .ok()
+            .and_then(|resolved| std::fs::read(resolved).ok())
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        let Some(contents) = read else {
+            return message(editor, format!("E484: Can't open file {named}"), cx);
+        };
+        let lines: Vec<&str> = contents
+            .strip_suffix('\n')
+            .unwrap_or(&contents)
+            .split('\n')
+            .collect();
+        let lines = if contents.is_empty() {
+            Vec::new()
+        } else {
+            lines
+        };
+        let noeol = if contents.is_empty() || contents.ends_with('\n') {
+            ""
+        } else {
+            "[noeol] "
+        };
+        let report = format!("\"{named}\" {noeol}{}L, {}B", lines.len(), contents.len());
+        editor.update(cx, |editor, cx| {
+            if !lines.is_empty() {
+                let model = editor.model_mut();
+                model.sync_display();
+                let text = model.text();
+                let row = below.min(text.row_count());
+                let (at, joined) = match row {
+                    0 => (0, format!("{}\n", lines.join("\n"))),
+                    row => {
+                        let end = match row < text.row_count() {
+                            true => text.row_start(row) - 1,
+                            false => text.len(),
+                        };
+                        (end, format!("\n{}", lines.join("\n")))
+                    }
+                };
+                model.set_cursor(at);
+                model.paste(&joined);
+                let text = model.text();
+                let start = text.row_start(row);
+                let blanks = lines[0].len() - lines[0].trim_start_matches([' ', '\t']).len();
+                model.set_cursor(start + blanks);
+            }
+            editor.set_vim_message(report, cx);
+            cx.notify();
+        });
     }
 
     /// `:e {path}`: opens `path` in `editor`'s pane, which keeps `editor`'s

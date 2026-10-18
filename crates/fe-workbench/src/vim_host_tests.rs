@@ -566,3 +566,6 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     assert!(shown.starts_with("E141"), "{shown}");
     assert_eq!(on_disk(&root.join("b.txt")), "ne\n");
 }
+
+#[path = "vim_read_tests.rs"]
+mod read_tests;

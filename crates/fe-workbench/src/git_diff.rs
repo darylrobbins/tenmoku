@@ -348,6 +348,7 @@ pub(super) fn host_command(
             path: Some(path), ..
         } => workbench.edit_from_diff(&diff, &editor, &path, window, cx),
         HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
+        HostCommand::Read { path, below } => workbench.vim_read(&editor, path, below, cx),
         HostCommand::Explore
         | HostCommand::OldFiles
         | HostCommand::OpenProblems
