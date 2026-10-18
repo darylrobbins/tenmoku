@@ -194,7 +194,11 @@ impl ExtensionSource {
     }
 
     /// Reads every loaded extension's themes again. Returns whether they
-    /// or their diagnostics changed.
+    /// or their diagnostics changed. Each theme's current path is
+    /// resolved, following links, and must still be under the extension's
+    /// directory, including for a theme listed by a kept last-good
+    /// manifest; one that isn't is not read, gets an error naming the
+    /// file, and keeps its last good theme.
     fn read_themes(&mut self) -> bool {
         let mut themes = BTreeMap::new();
         let mut diagnostics = Vec::new();

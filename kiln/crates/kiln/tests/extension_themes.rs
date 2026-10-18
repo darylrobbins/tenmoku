@@ -349,3 +349,50 @@ fn a_theme_leading_outside_is_not_read(cx: &mut TestAppContext) {
         "{errors:?}"
     );
 }
+
+/// A loaded theme swapped for a link to a file outside the extension's
+/// directory is never read, even though the manifest is kept from its
+/// last good version: the outside colours aren't applied, the file gets an
+/// error, and the extension's other theme still loads.
+#[cfg(unix)]
+#[gpui::test]
+fn a_theme_swapped_for_an_outside_symlink_is_not_read(cx: &mut TestAppContext) {
+    let state = tempfile::tempdir().unwrap();
+    let setup = setup(state.path(), cx);
+    cx.update(|cx| {
+        select_themes(
+            cx,
+            Some("acme.solarized/solarized-dark"),
+            Some("acme.solarized/solarized-light"),
+        )
+    });
+    let outside = state.path().join("outside.toml");
+    fs::write(&outside, DARK.replace("#002b36", "#ff00ff")).unwrap();
+    let themes_dir = setup.extensions.join("solarized/themes");
+    let file = themes_dir.join("solarized-dark.toml");
+    fs::remove_file(&file).unwrap();
+    std::os::unix::fs::symlink(&outside, &file).unwrap();
+    setup.sender.send(vec![setup.extensions.clone()]);
+    cx.run_until_parked();
+
+    let (dark, light) = cx.update(|cx| pair(cx));
+    assert_eq!(color(&dark.tokens, "surface.background"), "#002b36");
+    assert_eq!(color(&light.tokens, "surface.background"), "#fdf6e3");
+    assert_eq!(
+        listed(cx),
+        [
+            "acme.solarized/solarized-dark",
+            "acme.solarized/solarized-light"
+        ]
+    );
+    let errors: Vec<String> = cx.update(|cx| {
+        config::diagnostics(cx)
+            .iter()
+            .filter(|diagnostic| diagnostic.file == file)
+            .inspect(|diagnostic| assert_eq!(diagnostic.severity, Severity::Error))
+            .map(|diagnostic| diagnostic.message.clone())
+            .collect()
+    });
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("outside"), "{errors:?}");
+}
