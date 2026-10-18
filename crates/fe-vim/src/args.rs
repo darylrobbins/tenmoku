@@ -568,6 +568,10 @@ pub struct PutArgs {
     /// `gp` and `gP`: the caret ends just after the text put.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cursor_after: bool,
+    /// `]p`, `[p`, `]P` and `[P`: a linewise register's lines go in with
+    /// their indentation changed so the first's matches the caret row's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub indent: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -192,6 +192,7 @@ fn counts_are_bounded() {
             PutArgs {
                 before: false,
                 cursor_after: false,
+                indent: false,
                 count: Some(count),
                 register: None,
             },
@@ -216,6 +217,28 @@ fn counts_are_bounded() {
     let before = snapshot(&vim);
     assert!(matches!(
         vim.dispatch(&put(33_554_433)),
+        Err(DispatchError::Failed { .. })
+    ));
+    assert_eq!(snapshot(&vim), before);
+
+    // Indenting the lines counts: a 2 byte line put under a 100 column
+    // row a million times is past 64 MiB.
+    let deep = format!("{}x\nab", " ".repeat(100));
+    let mut vim = HeadlessVim::new(&deep, (1, 0));
+    vim.feed("yyk").unwrap();
+    let indented = invocation(
+        "vim.put",
+        PutArgs {
+            before: false,
+            cursor_after: false,
+            indent: true,
+            count: Some(1_000_000),
+            register: None,
+        },
+    );
+    let before = snapshot(&vim);
+    assert!(matches!(
+        vim.dispatch(&indented),
         Err(DispatchError::Failed { .. })
     ));
     assert_eq!(snapshot(&vim), before);

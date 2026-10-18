@@ -1,0 +1,151 @@
+# Indented-put cases for fe-vim's oracle: ]p, [p, ]P and [P put lines with
+# their indent moved to the cursor row's (below for ]p, above for the rest),
+# with deeper, shallower, mixed, tab, blank and whitespace-only lines, a count,
+# a register, and `.`; a charwise or blockwise register is the plain put; an
+# empty register fails and is the last case. Hand-written; what nvim does is
+# recorded in put_indent.expected.json by the ignored
+# `record_corpus_with_neovim` test.
+
+[[case]]
+name = "bracket_p_below_indents"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk]p'
+
+[[case]]
+name = "bracket_p_above_indents"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk[p'
+
+[[case]]
+name = "big_p_forms_go_above"
+buffer = "    foo\nbar\n  baz"
+cursor = [1, 0]
+keys = 'yyk]P'
+
+[[case]]
+name = "big_p_before_bracket_forms"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk[P'
+
+[[case]]
+name = "outdents_to_a_shallower_row"
+buffer = "        foo\nbar"
+cursor = [0, 0]
+keys = 'yyj]p'
+
+[[case]]
+name = "mixed_indents_keep_their_offsets"
+buffer = "    a\n  b\n      c\nx"
+cursor = [0, 0]
+keys = '3yyG]p'
+
+[[case]]
+name = "mixed_indents_clamp_at_zero"
+buffer = "        a\n  b\n    c\nx"
+cursor = [0, 0]
+keys = '3yyG]p'
+
+[[case]]
+name = "first_line_blank"
+buffer = "\n    a\n  b\n        x"
+cursor = [0, 0]
+keys = '3yyG]p'
+
+[[case]]
+name = "blank_line_stays_empty"
+buffer = "  a\n\n  b\n        x"
+cursor = [0, 0]
+keys = '3yyG]p'
+
+[[case]]
+name = "whitespace_line_shifts"
+buffer = "  a\n   \n  b\n        x"
+cursor = [0, 0]
+keys = '3yyG]p'
+
+[[case]]
+name = "tab_indented_row"
+buffer = "\tfoo\n\t\tbar\n    x"
+cursor = [0, 0]
+keys = '2yyG]p'
+
+[[case]]
+name = "tab_in_register_row"
+buffer = "  a\n  b\n\tx"
+cursor = [0, 0]
+keys = '2yyG]p'
+
+[[case]]
+name = "charwise_is_plain_put"
+buffer = "    foo\nbar"
+cursor = [0, 4]
+keys = 'yiwj$]p'
+
+[[case]]
+name = "charwise_before_is_plain_put"
+buffer = "    foo\nbar"
+cursor = [0, 4]
+keys = 'yiwj$[p'
+
+[[case]]
+name = "block_is_plain_put"
+buffer = "ab\ncd\n    x"
+cursor = [0, 0]
+keys = '<C-v>jlyG]p'
+
+[[case]]
+name = "with_count"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk3]p'
+
+[[case]]
+name = "count_above"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk2[p'
+
+[[case]]
+name = "into_register"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = '"ayyk"a]p'
+
+[[case]]
+name = "at_buffer_end"
+buffer = "bar\n    foo"
+cursor = [1, 0]
+keys = 'yyk]p'
+
+[[case]]
+name = "then_dot"
+buffer = "    foo\nbar\n  baz"
+cursor = [1, 0]
+keys = 'yyk]p.'
+
+[[case]]
+name = "dot_above"
+buffer = "    foo\nbar\n  baz"
+cursor = [1, 0]
+keys = 'yyk[p.'
+
+[[case]]
+name = "plain_p_unchanged"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yykp'
+
+[[case]]
+name = "marks_after"
+buffer = "    foo\nbar"
+cursor = [1, 0]
+keys = 'yyk]p`[iX<Esc>'
+
+[[case]]
+name = "empty_register_fails"
+buffer = "bar"
+cursor = [0, 0]
+keys = '"z]p'

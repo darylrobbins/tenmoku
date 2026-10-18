@@ -666,6 +666,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                     PutArgs {
                         before: ch == 'P',
                         cursor_after: false,
+                        indent: false,
                         count: pending.count,
                         register: pending.register,
                     },
@@ -712,6 +713,7 @@ impl Pending {
                     PutArgs {
                         before: ch == 'P',
                         cursor_after: false,
+                        indent: false,
                         count: self.count,
                         register: self.register,
                     },

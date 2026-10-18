@@ -1209,6 +1209,52 @@ fn shift(
     (spaces != line[..blanks]).then(|| (start..start + blanks, spaces))
 }
 
+/// The screen columns `line`'s leading blanks span.
+fn indent_width(line: &str, tab: usize) -> usize {
+    line.bytes()
+        .take_while(|&byte| byte == b' ' || byte == b'\t')
+        .fold(0, |column, byte| match byte {
+            b'\t' => column + tab - column % tab,
+            _ => column + 1,
+        })
+}
+
+/// `]p`: the `lines` with every indentation changed by the amount that
+/// makes the first non-empty line's `target` columns wide, rewritten from
+/// `unit` (tabs as many as fit, then spaces, if it is a tab). Empty lines
+/// stay empty. `None` if the result would pass `room` bytes.
+fn reindented(lines: &str, target: usize, tab: usize, unit: &str, room: usize) -> Option<String> {
+    let first = lines
+        .split_inclusive('\n')
+        .find(|line| !line.trim_end_matches('\n').is_empty())
+        .map_or(0, |line| indent_width(line, tab));
+    let mut out = String::with_capacity(lines.len());
+    for line in lines.split_inclusive('\n') {
+        let body = line.trim_end_matches('\n');
+        if body.is_empty() {
+            out.push_str(line);
+            continue;
+        }
+        let blanks = body
+            .bytes()
+            .take_while(|&b| b == b' ' || b == b'\t')
+            .count();
+        let width = (indent_width(line, tab) + target).saturating_sub(first);
+        if out.len().saturating_add(width).saturating_add(line.len()) > room {
+            return None;
+        }
+        match unit.starts_with('\t') {
+            true => {
+                out.push_str(&"\t".repeat(width / tab));
+                out.push_str(&" ".repeat(width % tab));
+            }
+            false => out.push_str(&" ".repeat(width)),
+        }
+        out.push_str(&line[blanks..]);
+    }
+    Some(out)
+}
+
 /// `vim.put`: the register after or before each caret (whole lines below
 /// or above its row), `count` times, in one transaction.
 pub(crate) fn put(
@@ -1311,7 +1357,27 @@ fn put_unless_failing(
     let mut puts: Vec<(usize, String, (usize, bool), usize)> = Vec::with_capacity(before.len());
     for selection in &before {
         let head = Cursor::at(&text, selection.head()).offset();
-        let repeated = payload.repeat(count);
+        let fixed;
+        let mut lines = payload.as_str();
+        if args.indent && value.linewise {
+            let tab = model.tab_size().max(1);
+            let room = MAX_PUT / count / before.len();
+            let Some(done) = reindented(
+                lines,
+                indent_width(&text.row_to_string(row(head)), tab),
+                tab,
+                &model.indent_unit(),
+                room,
+            ) else {
+                return Err(CommandError::new(format!(
+                    "putting {count} copies of {} bytes, indented, would insert more than {MAX_PUT} bytes",
+                    payload.len()
+                )));
+            };
+            fixed = done;
+            lines = &fixed;
+        }
+        let repeated = lines.repeat(count);
         if value.linewise {
             let row = row(head);
             // As `O` does, the rows go above the marks of the row they go

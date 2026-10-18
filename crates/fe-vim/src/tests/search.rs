@@ -214,6 +214,7 @@ fn search_effects() {
     let put = crate::PutArgs {
         before: false,
         cursor_after: false,
+        indent: false,
         count: None,
         register: Some('/'),
     };

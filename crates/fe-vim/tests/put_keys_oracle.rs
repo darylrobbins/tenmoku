@@ -49,6 +49,7 @@ fn put_args_without_cursor_after_serialize_as_before() {
     let plain = fe_vim::PutArgs {
         before: false,
         cursor_after: false,
+        indent: false,
         count: None,
         register: None,
     };
