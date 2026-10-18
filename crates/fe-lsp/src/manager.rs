@@ -1379,26 +1379,6 @@ impl LspManager {
         self.session(server, |session| session.encoding)
     }
 
-    /// The capabilities of the server `buffer` is on if `provides` says it
-    /// has `feature`: `Ok(None)` if they're not known yet, and
-    /// `Unavailable(feature)` if it hasn't.
-    pub(crate) fn provider_capabilities(
-        &self,
-        buffer: BufferId,
-        feature: &str,
-        provides: impl Fn(&ServerCapabilities) -> bool,
-    ) -> Result<Option<ServerCapabilities>, LspError> {
-        let capabilities = self
-            .server_of(buffer)
-            .and_then(|server| self.capabilities(server));
-        match capabilities {
-            Some(capabilities) if !provides(&capabilities) => {
-                Err(LspError::Unavailable(feature.into()))
-            }
-            capabilities => Ok(capabilities),
-        }
-    }
-
     /// As [`document_request`](Self::document_request), but the request is
     /// queued only once the capabilities of the server `buffer` is on are
     /// known, and only if `provides` says it has `feature`: otherwise
@@ -1415,16 +1395,12 @@ impl LspManager {
         provides: fn(&ServerCapabilities) -> bool,
         params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
     ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
-        /// How often the capabilities are looked at while unknown.
-        const POLL: std::time::Duration = std::time::Duration::from_millis(20);
-        let (answer, answered) = oneshot::channel();
-        let target = self
-            .server_of(buffer)
-            .and_then(|server| self.servers.get(&server))
-            .map(|handle| (handle.session.clone(), handle.commands.clone()));
-        let clock = self.clock.clone();
-        let mut send = Some(move |commands: mpsc::UnboundedSender<Command>| {
-            let admit: Admit = Box::new(move |admission| {
+        let timeout = self.timeout::<R>();
+        self.admit_once_known(buffer, version, timeout, move |capabilities, answer| {
+            if !provides(capabilities) {
+                return Err(LspError::Unavailable(feature.into()));
+            }
+            Ok(Box::new(move |admission| {
                 let admitted = match admission {
                     Ok(admitted) => admitted,
                     Err(err) => {
@@ -1436,14 +1412,53 @@ impl LspManager {
                 vec![call::<R, _>(answer, params, move |_, reply| {
                     reply.map(|reply| (reply, admitted))
                 })]
-            });
-            // A server that has gone drops the command, and `answer` with it.
-            let _ = commands.unbounded_send(Command::Admit {
-                buffer,
-                version,
-                admit,
-            });
-        });
+            }))
+        })
+    }
+
+    /// Admits `buffer` at `version` once the capabilities of the server it
+    /// is on are known: `decide` is given them, with the sender the answer
+    /// goes to, and builds the [`Admit`] that answers it, or the error that
+    /// does instead (nothing is then admitted). A server still initializing
+    /// is waited for on the manager's clock, and `timeout` (if any) covers
+    /// the wait too. `decide` runs at once if they're known already, so the
+    /// request is queued as [`admit`](Self::admit) queues it. A server that
+    /// stops while waited for answers `ServerDown`.
+    pub(crate) fn admit_once_known<T: Send + 'static>(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        timeout: Option<std::time::Duration>,
+        decide: impl FnOnce(
+            &ServerCapabilities,
+            oneshot::Sender<Result<T, LspError>>,
+        ) -> Result<Admit, LspError>
+        + Send
+        + 'static,
+    ) -> impl Future<Output = Result<T, LspError>> + Send + 'static {
+        /// How often the capabilities are looked at while unknown.
+        const POLL: std::time::Duration = std::time::Duration::from_millis(20);
+        let (answer, answered) = oneshot::channel();
+        let target = self
+            .server_of(buffer)
+            .and_then(|server| self.servers.get(&server))
+            .map(|handle| (handle.session.clone(), handle.commands.clone()));
+        let clock = self.clock.clone();
+        let mut decide = Some(decide);
+        let mut send = Some(
+            move |commands: mpsc::UnboundedSender<Command>,
+                  capabilities: &ServerCapabilities|
+                  -> Result<(), LspError> {
+                let admit = decide.take().unwrap()(capabilities, answer)?;
+                // A server that has gone drops the command, and `answer` with it.
+                let _ = commands.unbounded_send(Command::Admit {
+                    buffer,
+                    version,
+                    admit,
+                });
+                Ok(())
+            },
+        );
         let known = |session: &Mutex<Session>| {
             (session.lock().unwrap_or_else(PoisonError::into_inner))
                 .capabilities
@@ -1456,8 +1471,11 @@ impl LspManager {
         match target {
             None => refused = Some(LspError::Unavailable(NOT_OPEN.into())),
             Some((session, commands)) => match known(&session) {
-                Some(capabilities) if provides(&capabilities) => send.take().unwrap()(commands),
-                Some(_) => refused = Some(LspError::Unavailable(feature.into())),
+                Some(capabilities) => {
+                    if let Err(err) = send.take().unwrap()(commands, &capabilities) {
+                        refused = Some(err);
+                    }
+                }
                 None => waiting = Some((session, commands)),
             },
         }
@@ -1466,23 +1484,18 @@ impl LspManager {
                 return Err(err);
             }
             if let Some((session, commands)) = waiting {
-                loop {
+                let capabilities = loop {
                     match known(&session) {
-                        Some(capabilities) if provides(&capabilities) => break,
-                        Some(_) => return Err(LspError::Unavailable(feature.into())),
+                        Some(capabilities) => break capabilities,
+                        None if commands.is_closed() => return Err(LspError::ServerDown),
                         None => clock.sleep(POLL).await,
                     }
-                }
-                send.take().unwrap()(commands);
+                };
+                send.take().unwrap()(commands, &capabilities)?;
             }
             answered.await.unwrap_or(Err(LspError::ServerDown))
         };
-        within(
-            gated,
-            self.timeout::<R>(),
-            &*self.clock,
-            Err(LspError::Timeout),
-        )
+        within(gated, timeout, &*self.clock, Err(LspError::Timeout))
     }
 
     /// What `server` said it can do, once it has initialized.

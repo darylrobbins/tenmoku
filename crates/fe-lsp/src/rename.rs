@@ -21,9 +21,8 @@ use std::time::Duration;
 
 use fe_buffer::{BufferId, Version};
 use fe_text::{Bias, Text};
-use futures::channel::oneshot;
+use futures::FutureExt;
 use futures::future::BoxFuture;
-use futures::{FutureExt, future};
 use lsp_types::request::{PrepareRenameRequest, Rename};
 use lsp_types::{OneOf, PrepareRenameResponse, RenameParams, ServerCapabilities};
 
@@ -31,8 +30,7 @@ use crate::document::Admitted;
 use crate::encoding::from_lsp;
 use crate::event::LspError;
 use crate::manager::LspManager;
-use crate::requests::within;
-use crate::server::Admit;
+use crate::requests::{call, within};
 use crate::workspace_edit::FileEdits;
 
 /// How long a rename may take: more than a hover, as it walks the
@@ -74,35 +72,45 @@ impl LspManager {
         version: Version,
         offset: usize,
     ) -> impl Future<Output = Result<Option<RenameTarget>, LspError>> + Send + 'static + use<> {
-        let capabilities = match self.provider_capabilities(buffer, "rename", renames) {
-            Ok(capabilities) => capabilities,
-            Err(err) => return future::ready(Err(err)).boxed(),
-        };
-        if !capabilities.is_some_and(prepares) {
-            // No request: the version is checked, and the word read from
-            // the text the server has at it.
-            let (answer, answered) = oneshot::channel();
-            let admit: Admit = Box::new(move |admission| {
-                let _ = answer.send(admission.map(|at| default_target(&at, offset)));
-                Vec::new()
-            });
-            self.admit(buffer, version, admit);
-            return answered
-                .map(|answer| answer.unwrap_or(Err(LspError::ServerDown)))
-                .boxed();
-        }
-        let reply = self.document_request::<PrepareRenameRequest>(buffer, version, move |at| {
-            at.position(offset)
-        });
-        let reply = reply.map(move |answer| {
-            let (reply, at) = answer?;
-            Ok(reply.result.and_then(|reply| target(reply, &at, offset)))
-        });
-        within(
-            reply,
+        // Decided once the server's capabilities are known.
+        self.admit_once_known(
+            buffer,
+            version,
             Some(RENAME_TIMEOUT),
-            &*self.clock,
-            Err(LspError::Timeout),
+            move |capabilities, answer| {
+                if !renames(capabilities) {
+                    return Err(LspError::Unavailable("rename".into()));
+                }
+                if !prepares(capabilities) {
+                    // No request: the version is checked, and the word read
+                    // from the text the server has at it.
+                    return Ok(Box::new(move |admission| {
+                        let _ = answer.send(admission.map(|at| default_target(&at, offset)));
+                        Vec::new()
+                    }));
+                }
+                Ok(Box::new(move |admission| {
+                    let admitted = match admission {
+                        Ok(admitted) => admitted,
+                        Err(err) => {
+                            let _ = answer.send(Err(err));
+                            return Vec::new();
+                        }
+                    };
+                    let params = admitted.position(offset);
+                    vec![call::<PrepareRenameRequest, _>(
+                        answer,
+                        params,
+                        move |_, reply| {
+                            reply.map(|reply| {
+                                reply
+                                    .result
+                                    .and_then(|reply| target(reply, &admitted, offset))
+                            })
+                        },
+                    )]
+                }))
+            },
         )
         .boxed()
     }
@@ -121,14 +129,17 @@ impl LspManager {
         offset: usize,
         new_name: String,
     ) -> impl Future<Output = Result<Vec<FileEdits>, LspError>> + Send + 'static + use<> {
-        if let Err(err) = self.provider_capabilities(buffer, "rename", renames) {
-            return future::ready(Err(err)).boxed();
-        }
-        let reply = self.document_request::<Rename>(buffer, version, move |at| RenameParams {
-            text_document_position: at.position(offset),
-            new_name,
-            work_done_progress_params: Default::default(),
-        });
+        let reply = self.document_request_if_provided::<Rename>(
+            buffer,
+            version,
+            "rename",
+            renames,
+            move |at| RenameParams {
+                text_document_position: at.position(offset),
+                new_name,
+                work_done_progress_params: Default::default(),
+            },
+        );
         let reply: BoxFuture<'static, _> = reply
             .map(|answer| {
                 let (reply, at) = answer?;
@@ -157,9 +168,9 @@ fn renames(capabilities: &ServerCapabilities) -> bool {
 }
 
 /// Whether the server prepares renames.
-fn prepares(capabilities: ServerCapabilities) -> bool {
+fn prepares(capabilities: &ServerCapabilities) -> bool {
     matches!(
-        capabilities.rename_provider,
+        &capabilities.rename_provider,
         Some(OneOf::Right(options)) if options.prepare_provider == Some(true)
     )
 }

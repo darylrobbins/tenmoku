@@ -14,6 +14,7 @@ mod launcher;
 mod launcher_path_safety;
 mod lifecycle;
 mod navigation;
+mod provider_wait;
 mod pull_diagnostics;
 mod readiness;
 mod registration;

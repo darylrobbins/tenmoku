@@ -47,8 +47,9 @@ use lsp_types::request::{
 };
 use lsp_types::{
     DeclarationCapability, GotoDefinitionParams, GotoDefinitionResponse,
-    ImplementationProviderCapability, OneOf, ReferenceContext, ReferenceParams, SymbolKind,
-    TypeDefinitionProviderCapability, Url, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    ImplementationProviderCapability, OneOf, ReferenceContext, ReferenceParams, ServerCapabilities,
+    SymbolKind, TypeDefinitionProviderCapability, Url, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
 };
 
 use crate::document::{Admitted, SentDocument};
@@ -96,23 +97,45 @@ impl LspNavigation {
     }
 
     /// A definition-shaped request `R`, decoded as definitions are.
-    fn goto<R>(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError>
+    ///
+    /// With `provided`, the request is sent only once the server's
+    /// capabilities are known, and if they say it provides the feature.
+    fn goto<R>(
+        &self,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+        provided: Option<Provided>,
+    ) -> Result<Definitions, NavError>
     where
         R: Request<Params = GotoDefinitionParams, Result = Option<GotoDefinitionResponse>>,
     {
         let (buffer, version) = request_buffer(req)?;
         let offset = req.offset;
         let sent = self.with_manager(|manager| {
-            let reply =
-                manager.document_request::<R>(buffer, version, move |at| GotoDefinitionParams {
-                    text_document_position_params: at.position(offset),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                });
-            (reply.boxed(), manager.max_file_bytes())
+            let params = move |at: &Admitted| GotoDefinitionParams {
+                text_document_position_params: at.position(offset),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            };
+            let reply = match provided {
+                Some((feature, provides)) => manager
+                    .document_request_if_provided::<R>(buffer, version, feature, provides, params)
+                    .boxed(),
+                None => manager
+                    .document_request::<R>(buffer, version, params)
+                    .boxed(),
+            };
+            (reply, manager.max_file_bytes())
         });
         let (reply, max_bytes) = sent.ok_or_else(gone)?;
-        let (reply, admitted) = wait(reply, cancel)?;
+        let (reply, admitted) = wait(reply, cancel).map_err(|err| match (err, provided) {
+            (NavError::Unavailable(why), Some((feature, _)))
+                if why == LspError::Unavailable(feature.into()).to_string() =>
+            {
+                NavError::Unsupported
+            }
+            (err, _) => err,
+        })?;
         let targets = targets(reply.result);
         if targets.is_empty() && !reply.empty_is_final {
             return Err(NavError::Unavailable(NOT_FINAL.into()));
@@ -188,7 +211,7 @@ impl NavigationProvider for LspNavigation {
     }
 
     fn definitions(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError> {
-        self.goto::<GotoDefinition>(req, cancel)
+        self.goto::<GotoDefinition>(req, cancel, None)
     }
 
     /// The server's declarations, type definitions or implementations, if
@@ -199,35 +222,18 @@ impl NavigationProvider for LspNavigation {
         req: &NavRequest,
         cancel: &AtomicBool,
     ) -> Result<Definitions, NavError> {
-        let (buffer, _) = request_buffer(req)?;
-        let provided = self.with_manager(|manager| match kind {
-            Related::Declaration => manager.provider_capabilities(buffer, "declaration", |caps| {
-                caps.declaration_provider.as_ref().is_some_and(|provider| {
-                    !matches!(provider, DeclarationCapability::Simple(false))
-                })
-            }),
-            Related::TypeDefinition => {
-                manager.provider_capabilities(buffer, "typeDefinition", |caps| {
-                    (caps.type_definition_provider.as_ref()).is_some_and(|provider| {
-                        !matches!(provider, TypeDefinitionProviderCapability::Simple(false))
-                    })
-                })
-            }
-            Related::Implementation => {
-                manager.provider_capabilities(buffer, "implementation", |caps| {
-                    (caps.implementation_provider.as_ref()).is_some_and(|provider| {
-                        !matches!(provider, ImplementationProviderCapability::Simple(false))
-                    })
-                })
-            }
-        });
-        if provided.ok_or_else(gone)?.is_err() {
-            return Err(NavError::Unsupported);
-        }
         match kind {
-            Related::Declaration => self.goto::<GotoDeclaration>(req, cancel),
-            Related::TypeDefinition => self.goto::<GotoTypeDefinition>(req, cancel),
-            Related::Implementation => self.goto::<GotoImplementation>(req, cancel),
+            Related::Declaration => {
+                self.goto::<GotoDeclaration>(req, cancel, Some(("declaration", declares)))
+            }
+            Related::TypeDefinition => self.goto::<GotoTypeDefinition>(
+                req,
+                cancel,
+                Some(("typeDefinition", defines_types)),
+            ),
+            Related::Implementation => {
+                self.goto::<GotoImplementation>(req, cancel, Some(("implementation", implements)))
+            }
         }
     }
 
@@ -771,4 +777,27 @@ fn load(path: &Path, max_bytes: usize) -> Option<Text> {
     Text::from_reader_detecting(raw.as_slice())
         .ok()
         .map(|decoded| decoded.text)
+}
+
+/// A feature's name, and whether a server's capabilities provide it.
+type Provided = (&'static str, fn(&ServerCapabilities) -> bool);
+
+/// Whether the server provides declarations.
+fn declares(caps: &ServerCapabilities) -> bool {
+    (caps.declaration_provider.as_ref())
+        .is_some_and(|provider| !matches!(provider, DeclarationCapability::Simple(false)))
+}
+
+/// Whether the server provides type definitions.
+fn defines_types(caps: &ServerCapabilities) -> bool {
+    (caps.type_definition_provider.as_ref()).is_some_and(|provider| {
+        !matches!(provider, TypeDefinitionProviderCapability::Simple(false))
+    })
+}
+
+/// Whether the server provides implementations.
+fn implements(caps: &ServerCapabilities) -> bool {
+    (caps.implementation_provider.as_ref()).is_some_and(|provider| {
+        !matches!(provider, ImplementationProviderCapability::Simple(false))
+    })
 }
