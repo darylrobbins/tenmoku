@@ -361,7 +361,8 @@ impl VimState {
             }
             return step;
         }
-        match crate::remap::stage(self, key, origin, tag.remap) {
+        let remap = tag.remap && !self.remap.off;
+        match crate::remap::stage(self, key, origin, remap) {
             Staged::Key(key, origin) => self.unrecorded(origin, |state| state.reduce(key, origin)),
             Staged::Done(step) => step,
         }
@@ -385,10 +386,12 @@ impl VimState {
         answer
     }
 
-    /// Runs `read` with the macros set aside if `origin` is a map's, as
-    /// `:normal` does: no recording takes its keys, nor a jump they make.
+    /// Runs `read` with the macros set aside if `origin` is a map's or a
+    /// replay's, as `:normal` does: no recording takes its keys, nor a jump
+    /// they make. A replay's key released late (by a timeout) was counted
+    /// when it was first read, so the macros don't count it again.
     fn unrecorded<R>(&mut self, origin: Origin, read: impl FnOnce(&mut Self) -> R) -> R {
-        if origin != Origin::Expansion {
+        if origin.recorded() {
             return read(self);
         }
         let held = self.macros.hold();
@@ -490,6 +493,26 @@ impl VimState {
     /// the keys are the host's to feed ([`VimState::take_replay`]).
     pub fn remap_timeout(&mut self) {
         crate::remap::timeout(self);
+    }
+
+    /// Sets aside the remap stream's keys for a `:normal` (see
+    /// [`crate::remap::RemapState::save`]).
+    pub(crate) fn remap_save(&mut self) -> crate::remap::RemapState {
+        self.remap.save()
+    }
+
+    pub(crate) fn remap_restore(&mut self, saved: crate::remap::RemapState) {
+        self.remap.restore(saved);
+    }
+
+    /// Drops the keys the remap stage holds or has resolved.
+    pub(crate) fn remap_clear(&mut self) {
+        self.remap.held_clear();
+    }
+
+    /// Sets whether keys skip the maps (`:normal!`), returning what it was.
+    pub(crate) fn remap_off(&mut self, off: bool) -> bool {
+        std::mem::replace(&mut self.remap.off, off)
     }
 
     /// The register `q` is recording into (`a` for `qA` too), while it

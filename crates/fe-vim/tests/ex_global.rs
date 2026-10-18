@@ -110,15 +110,20 @@ fn ex_parses_global() {
 fn ex_parses_normal() {
     let normal = |keys: &str| ExCommand::Normal {
         keys: fe_vim::parse_keys(keys).unwrap(),
+        remap: true,
+    };
+    let bang = |keys: &str| ExCommand::Normal {
+        keys: fe_vim::parse_keys(keys).unwrap(),
+        remap: false,
     };
     for name in ["norm", "norma", "normal"] {
         assert_eq!(command(&format!("{name} dw")), normal("dw"), "{name}");
-        assert_eq!(command(&format!("{name}! dw")), normal("dw"), "{name}!");
+        assert_eq!(command(&format!("{name}! dw")), bang("dw"), "{name}!");
     }
     // Blanks before the keys are skipped; the rest are keys, in vim
     // notation, `"` and `|` among them.
     assert_eq!(command("normal   A;"), normal("A;"));
-    assert_eq!(command("normal!A;"), normal("A;"));
+    assert_eq!(command("normal!A;"), bang("A;"));
     assert_eq!(command("norm x  "), normal("x  "));
     assert_eq!(command("norm \"ayy|x"), normal("\"ayy|x"));
     assert_eq!(
@@ -131,6 +136,7 @@ fn ex_parses_normal() {
                 VimKey::Char('.'),
                 VimKey::Char('<'),
             ],
+            remap: true,
         }
     );
     assert_eq!(command("normal :d<CR>"), normal(":d<CR>"));

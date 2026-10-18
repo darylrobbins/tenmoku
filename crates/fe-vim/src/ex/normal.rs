@@ -13,8 +13,11 @@
 //! line, and `<Esc>` ends it after the last), and on a command line
 //! `<Esc>` runs it, as in a register. Going to a line keeps the goal
 //! column, as nvim's curswant, unless a change on the line before left it
-//! to be taken from where the cursor is: then it's the line's start. `!` is
-//! the same (fe-vim has no mappings). The whole is one undo step, `.` and
+//! to be taken from where the cursor is: then it's the line's start. The keys
+//! go through the remaps ([`crate::VimState::set_remaps`]), an expansion
+//! running to the end of its line like the rest of the line's keys; `!`
+//! skips them, and a prefix held for a longer map when the line's keys
+//! end resolves, as a timeout would. The whole is one undo step, `.` and
 //! the registers as the keys leave them (an undo or redo among the keys
 //! undoes what the line did so far, and what follows is the step);
 //! `:normal` itself never fails. Its keys aren't typed: a recording doesn't
@@ -56,7 +59,10 @@ pub(super) fn parse(
     after: &str,
     check: impl FnOnce(bool) -> Result<(), ExError>,
 ) -> Result<ExCommand, ExError> {
-    let args = after.strip_prefix('!').unwrap_or(after);
+    let (args, remap) = match after.strip_prefix('!') {
+        Some(args) => (args, false),
+        None => (after, true),
+    };
     check(true)?;
     let keys = args.trim_start_matches([' ', '\t']);
     if keys.is_empty() {
@@ -64,6 +70,7 @@ pub(super) fn parse(
     }
     Ok(ExCommand::Normal {
         keys: parse_keys(keys)?,
+        remap,
     })
 }
 
@@ -74,8 +81,11 @@ pub(super) fn run(
     actor: &Actor,
     rows: Option<RangeInclusive<u32>>,
     keys: &[VimKey],
+    remap: bool,
 ) -> Result<Handled, ExError> {
     let _depth = Depth::enter()?;
+    let outer = target.state.remap_save();
+    let unmapped = target.state.remap_off(!remap);
     // The keys aren't typed: what a recording or a replay under way counts
     // goes on once they've run.
     let held = target.state.macros.hold();
@@ -100,6 +110,8 @@ pub(super) fn run(
     let transactions: Vec<TransactionId> = group.end(target).into_iter().collect();
     target.state.macros.stop();
     target.state.macros.release(held);
+    target.state.remap_off(unmapped);
+    target.state.remap_restore(outer);
     target.state.failed = false;
     Ok(Ok(
         Dispatched::new(Effect::Changed).with_transactions(transactions)
@@ -117,7 +129,7 @@ impl Runner {
     /// `keys` once, then ends what they left unfinished.
     fn run(&mut self, target: &mut VimTarget<'_>, keys: &[VimKey]) {
         let mut queue: VecDeque<VimKey> = keys.iter().copied().collect();
-        while let Some(key) = queue.pop_front() {
+        while let Some(key) = queue.pop_front().or_else(|| held_keys(target, &mut queue)) {
             let before = history::pairs(target.model);
             let fed = self.key(target, key);
             Group::note(target, before);
@@ -142,12 +154,16 @@ impl Runner {
                 self.dispatch(target, "vim.substitute_answer", Some(args))
             }
             _ if *target.state.pending() != Pending::default() => {
+                // The `<Esc>` is ours, not typed: past the maps.
+                let unmapped = target.state.remap_off(true);
                 target.state.feed(VimKey::Esc);
+                target.state.remap_off(unmapped);
                 Ok(())
             }
             _ => Ok(()),
         };
         ended.ok();
+        target.state.remap_clear();
         Group::note(target, before);
     }
 
@@ -250,6 +266,17 @@ impl Runner {
         }
         dispatched.map(|_| ()).map_err(|_| ())
     }
+}
+
+/// The keys a prefix held for a longer map resolves to, as a timeout
+/// would, when the line's keys ran out; the first of them, the rest queued.
+fn held_keys(target: &mut VimTarget<'_>, queue: &mut VecDeque<VimKey>) -> Option<VimKey> {
+    if !target.state.remap_waiting() {
+        return None;
+    }
+    target.state.remap_timeout();
+    queue.extend(target.state.take_replay());
+    queue.pop_front()
 }
 
 /// Whether `invocation` joins rows: `J` (`vim.join`), `gJ` (`vim.join_raw`),

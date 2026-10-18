@@ -225,8 +225,9 @@ pub enum ExCommand {
         command: String,
     },
     /// `:norm[al][!] {keys}`: `keys` run on the cursor's row, or on each
-    /// line of the range.
-    Normal { keys: Vec<VimKey> },
+    /// line of the range. `remap` is false for `:normal!`: its keys skip
+    /// the maps.
+    Normal { keys: Vec<VimKey>, remap: bool },
     /// `:noh[lsearch]`: no highlight until the next search.
     NoHighlight,
     /// `:s[ubstitute]`, `:&` and `:&&`: see [`Substitute`].
@@ -1361,7 +1362,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 &command,
             );
         }
-        ExCommand::Normal { keys } => {
+        ExCommand::Normal { keys, remap } => {
             let rows = match lines {
                 Some(_) => {
                     let (first, end) = counted_lines(target, lines, None, last)?;
@@ -1369,7 +1370,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 }
                 None => None,
             };
-            return normal::run(target, actor, rows, &keys);
+            return normal::run(target, actor, rows, &keys, remap);
         }
         ExCommand::Sort { .. } => {
             let (first, end) = match lines {

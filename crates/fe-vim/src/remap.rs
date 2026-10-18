@@ -281,6 +281,8 @@ pub(crate) struct RemapState {
     /// The tags of the keys the host took and hasn't fed back, in the
     /// order it feeds them.
     taken: VecDeque<Tag>,
+    /// Keys skip the maps, as under `:normal!`.
+    pub(crate) off: bool,
     /// Maps run since a key that wasn't a map's.
     depth: u32,
     /// Keys handed out since a key was typed or the host fed all it took,
@@ -356,6 +358,34 @@ impl RemapState {
         self.taken.clear();
         self.depth = 0;
         self.handed = 0;
+    }
+
+    /// Drops the keys held, resolved and taken.
+    pub(crate) fn held_clear(&mut self) {
+        self.held.clear();
+        self.mode = None;
+        self.stop();
+    }
+
+    /// Sets aside the keys held, resolved and taken, and the counters, for
+    /// a `:normal` to have a stream of its own; [`RemapState::restore`]
+    /// puts them back. The set stays.
+    pub(crate) fn save(&mut self) -> RemapState {
+        let set = Arc::clone(&self.set);
+        let off = self.off;
+        let saved = std::mem::take(self);
+        self.set = set;
+        self.off = off;
+        saved
+    }
+
+    /// Puts back what [`RemapState::save`] set aside, dropping what the
+    /// `:normal` left, and keeping the set it ends with.
+    pub(crate) fn restore(&mut self, saved: RemapState) {
+        let (set, off) = (Arc::clone(&self.set), self.off);
+        *self = saved;
+        self.set = set;
+        self.off = off;
     }
 
     /// Replaces the set: keys held for a longer match go on as typed,

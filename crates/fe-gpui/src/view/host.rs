@@ -265,7 +265,7 @@ fn command_edits(text: &str) -> bool {
             false
         }
         ExCommand::Global { command, .. } => ex_edits(&command),
-        ExCommand::Normal { keys } => keys_edit(&keys),
+        ExCommand::Normal { keys, .. } => keys_edit(&keys),
         ExCommand::Table(command) => command.edits(),
         ExCommand::Delete { .. }
         | ExCommand::Join { .. }
