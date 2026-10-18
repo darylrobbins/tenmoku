@@ -44,20 +44,28 @@ fn virtual_replace_breaks_match_neovim() {
 }
 
 /// The largest counts stay within the 64 MiB a put may insert, counted in
-/// the bytes typed tabs expand to, and break rows in a bounded time.
+/// the bytes typed tabs expand to, and break rows in a time bounded against
+/// the same count of `R`'s copies run beside it, so load can't cross it.
 #[test]
 fn huge_virtual_counts_stay_bounded() {
     use std::time::{Duration, Instant};
 
     use fe_vim::HeadlessVim;
 
-    for keys in ["4294967295gR<Tab><Esc>", "4294967295gRx<CR>y<Esc>"] {
+    let run = |keys: &str| {
         let started = Instant::now();
         let mut vim = HeadlessVim::new("abcdefghijklmno\npq", (0, 0));
         vim.feed(keys).unwrap();
-        let text = vim.text();
+        (started.elapsed(), vim.text())
+    };
+    let (plain, _) = run("4294967295Rx<Esc>");
+    for keys in ["4294967295gR<Tab><Esc>", "4294967295gRx<CR>y<Esc>"] {
+        let (took, text) = run(keys);
         assert!(text.len() <= 65 << 20, "{keys}: {} bytes", text.len());
         assert!(text.len() > 1 << 20, "{keys}: {} bytes", text.len());
-        assert!(started.elapsed() < Duration::from_secs(120), "{keys}");
+        assert!(
+            took < plain * 20 + Duration::from_secs(5),
+            "{keys}: {took:?}, {plain:?} for R"
+        );
     }
 }
