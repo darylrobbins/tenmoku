@@ -1,9 +1,11 @@
 //! What [`kiln::init`] sets up for fastedit: [`shipped`] is everything the
 //! app owns, [`config`] adds the user's files.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use fe_config::SettingsStore;
+use fe_config::settings::LspServerSettings;
 use fe_gpui::fe_keymap;
 use gpui::App;
 use kiln::{Config, core::ApiVersion};
@@ -70,10 +72,49 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// `config` with the user's extensions, a directory each under `dir`,
 /// loaded and reloaded by kiln: their manifests name
 /// `[engine] fastedit = "1.0"`. Their themes are chosen by the settings'
-/// `theme.dark` and `theme.light` ([`theme::init`]).
+/// `theme.dark` and `theme.light` ([`theme::init`]). Their language
+/// servers, `[contributes.lsp.<name>]` tables of the keys
+/// `[lsp.servers.<name>]` takes, go to every workbench
+/// ([`fe_workbench::set_extension_servers`]), under the user's `[lsp]`
+/// settings.
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
     let api = ApiVersion { major: 1, minor: 0 };
-    config.extensions(dir, &fe_config::paths::app_id().short, api)
+    let lsp = schemars::schema_for!(BTreeMap<String, LspServerSettings>).to_value();
+    config
+        .extensions(dir, &fe_config::paths::app_id().short, api)
+        .extension_kind("lsp", lsp)
+        .on_extensions(|set, cx| {
+            fe_workbench::set_extension_servers(cx, extension_servers(set.extensions()));
+        })
+}
+
+/// The language servers `extensions` contribute, in their order: each
+/// enabled table with a `command`, as written ([`fe_lsp::extension_spec`]).
+fn extension_servers(extensions: &[kiln::core::Manifest]) -> Vec<fe_lsp::ServerSpec> {
+    let mut specs = Vec::new();
+    for manifest in extensions {
+        let Some(lsp) = manifest.app.get("lsp") else {
+            continue;
+        };
+        // The schema has checked it.
+        let servers: BTreeMap<String, LspServerSettings> = match lsp.clone().try_into() {
+            Ok(servers) => servers,
+            Err(error) => {
+                log::warn!("extension {}'s language servers: {error}", manifest.id);
+                continue;
+            }
+        };
+        for (name, settings) in servers.iter().filter(|(_, settings)| settings.enabled) {
+            match fe_lsp::extension_spec(name, settings) {
+                Some(spec) => specs.push(spec),
+                None => log::warn!(
+                    "extension {}'s language server {name} has no command, so it never starts",
+                    manifest.id
+                ),
+            }
+        }
+    }
+    specs
 }
 
 /// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.

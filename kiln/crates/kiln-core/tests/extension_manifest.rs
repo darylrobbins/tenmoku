@@ -395,6 +395,55 @@ fn plugins_and_unknown_kinds() {
 }
 
 #[test]
+fn an_app_kinds_map_values_are_checked() {
+    // A map of servers by name, as schemars writes one, through a `$defs`
+    // entry the kind's schema brings.
+    let mut api = api();
+    api.kinds[0].schema = json!({
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/Server" },
+        "$defs": {
+            "Server": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string" },
+                    "args": { "type": ["array", "null"] },
+                },
+            },
+        },
+    });
+    let servers = VALID.replacen("[contributes.lsp]\n", "[contributes.lsp.solarized]\n", 1);
+    let (_dir, loaded, diagnostics) = load_with(&servers, &api);
+    assert_eq!(diagnostics, []);
+    assert!(loaded.is_some());
+
+    let manifest = servers.replacen("args = [\"--stdio\"]", "args = \"--stdio\"", 1);
+    let (dir, loaded, diagnostics) = load_with(&manifest, &api);
+    assert!(loaded.is_none());
+    let found: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.severity, d.key.as_deref(), d.line, d.column))
+        .collect();
+    let (line, column) = position(&manifest, "\"--stdio\"");
+    let key = Some("contributes.lsp.solarized.args");
+    assert_eq!(found, [(Severity::Error, key, line, column)]);
+    assert_eq!(diagnostics[0].file, dir.path().join(MANIFEST_FILE));
+
+    // A key a value's schema doesn't list is a warning, as anywhere.
+    let manifest = servers.replacen("args =", "argz =", 1);
+    let (_dir, loaded, diagnostics) = load_with(&manifest, &api);
+    assert!(loaded.is_some());
+    let found: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.severity, d.key.as_deref()))
+        .collect();
+    assert_eq!(
+        found,
+        [(Severity::Warning, Some("contributes.lsp.solarized.argz"))]
+    );
+}
+
+#[test]
 fn too_many_contributed_files_is_an_error() {
     let entries = vec!["\"menus.toml\""; kiln_core::extension::MAX_CONTRIBUTED_FILES];
     let manifest = VALID.replacen(

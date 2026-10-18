@@ -3,7 +3,8 @@
 //!
 //! - **Starting.** The manager is made with the host's launcher
 //!   ([`set_server_launcher`], else [`LocalLauncher`]) and the effective
-//!   `[lsp]` settings ([`set_lsp_settings`], then each reload). With no
+//!   `[lsp]` settings ([`set_lsp_settings`], then each reload), and the
+//!   servers extensions contribute ([`set_extension_servers`]). With no
 //!   root there's none, and nothing starts. Servers start lazily, on the
 //!   first open file of their language (§3.2), and only once the root is
 //!   trusted ([`Workbench::root_trusted`]). A new root gets a new manager;
@@ -118,7 +119,7 @@ use fe_editor::{
 };
 use fe_lsp::{
     KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
-    ServerLauncher, ServerStatus,
+    ServerLauncher, ServerSpec, ServerStatus,
 };
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
@@ -145,6 +146,12 @@ impl Global for Launcher {}
 struct Settings(LspSettings);
 
 impl Global for Settings {}
+
+/// The servers extensions contribute, as the host last gave them.
+#[derive(Default)]
+struct ExtensionServers(Vec<ServerSpec>);
+
+impl Global for ExtensionServers {}
 
 /// The user's settings file's `lsp` table, for every window of the app:
 /// kept at its last good value while the file has errors, whatever the
@@ -251,6 +258,36 @@ pub fn set_server_launcher(cx: &mut App, launcher: Arc<dyn ServerLauncher>) {
 /// opens; [`Workbench::reload_settings`] applies later changes.
 pub fn set_lsp_settings(cx: &mut App, settings: LspSettings) {
     cx.set_global(Settings(settings));
+}
+
+/// The language servers extensions contribute, in extension order:
+/// every workbench's manager starts with them, and those running now get
+/// them at once, restarting only the servers whose spec changed
+/// ([`LspManager::set_extension_specs`]). The `[lsp]` settings apply
+/// over them. Not to be called while a workbench is being updated.
+pub fn set_extension_servers(cx: &mut App, specs: Vec<ServerSpec>) {
+    cx.set_global(ExtensionServers(specs.clone()));
+    let workbenches = match cx.try_global::<Shutdowns>() {
+        Some(shutdowns) => shutdowns.workbenches.clone(),
+        None => return,
+    };
+    for workbench in workbenches {
+        workbench
+            .update(cx, |workbench, _| {
+                if let Some(manager) = &workbench.lsp.manager {
+                    lock(manager).set_extension_specs(specs.clone());
+                }
+            })
+            .ok();
+    }
+}
+
+/// The language servers extensions contribute, as
+/// [`set_extension_servers`] last gave them: none until it's called.
+pub fn extension_servers(cx: &App) -> Vec<ServerSpec> {
+    cx.try_global::<ExtensionServers>()
+        .map(|servers| servers.0.clone())
+        .unwrap_or_default()
 }
 
 /// How long quitting waits for servers to stop: the longest a
@@ -886,6 +923,7 @@ impl Workbench {
             Some(clock) => LspManager::with_clock(launcher, clock.0.clone(), sink),
             None => LspManager::new(launcher, sink),
         };
+        manager.set_extension_specs(extension_servers(cx));
         manager.update_settings(&lsp.settings);
         #[cfg(test)]
         {

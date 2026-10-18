@@ -228,7 +228,8 @@ impl Layer {
     /// Checks the table against a JSON `schema` (as schemars writes them):
     /// keys the schema doesn't list are warnings at the key, and values not
     /// of the listed `type`, numbers outside `minimum`/`maximum` and strings
-    /// shorter than `minLength` are errors at the value.
+    /// shorter than `minLength` are errors at the value. A map's values (a
+    /// schema `additionalProperties`) are checked as listed keys' are.
     pub fn check_schema(&self, schema: &Json) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let index = LineIndex::new(&self.source);
@@ -253,12 +254,15 @@ impl Layer {
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         let node = resolve(node, root);
-        let Some(properties) = node.get("properties").and_then(Json::as_object) else {
+        let properties = node.get("properties").and_then(Json::as_object);
+        // A map's schema for each value; `true` and `false` aren't schemas.
+        let values = node.get("additionalProperties").filter(|v| v.is_object());
+        if properties.is_none() && values.is_none() {
             return;
-        };
+        }
         for (key, value) in table {
             path.push(key.clone());
-            match properties.get(key) {
+            match properties.and_then(|p| p.get(key)).or(values) {
                 Some(property) => {
                     let property = resolve(property, root);
                     let problem = wrong_type(value, property);

@@ -14,7 +14,9 @@
 //!   threads.
 //! - Every timeout is measured on an injected [`Clock`].
 //! - [`LspManager::open`] picks a document's server by its language, from
-//!   built-in specs, the user's `[lsp]` settings
+//!   built-in specs, specs extensions contribute
+//!   ([`LspManager::set_extension_specs`], each made by
+//!   [`extension_spec`]), the user's `[lsp]` settings
 //!   ([`LspManager::update_settings`]) and specs the host registers
 //!   ([`LspManager::register_spec`]), and starts one instance per (server,
 //!   workspace root) the first time a document needs it.
@@ -115,6 +117,7 @@ pub use launcher::{
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
+pub use registry::extension_spec;
 pub use requests::{ORPHANS_MAX, Reply};
 pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};
 pub use workspace_edit::{ApplyClaim, ApplyReply, EditTarget, FileEdits, decode_closed};

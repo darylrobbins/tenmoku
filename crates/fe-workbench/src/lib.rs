@@ -60,7 +60,7 @@ use gpui::App;
 pub use dock::{Dock, DockPanel};
 pub use git_panel::{GitPanel, GitPanelEvent};
 pub use kiln_shell::MenuBarView;
-pub use lsp::{set_lsp_settings, set_server_launcher};
+pub use lsp::{extension_servers, set_extension_servers, set_lsp_settings, set_server_launcher};
 pub use open::set_window_opener;
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};

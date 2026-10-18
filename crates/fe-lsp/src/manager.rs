@@ -4,7 +4,8 @@
 //! to the first enabled server listing its language (registry.rs), one
 //! instance per (server, root), started by the first document that needs
 //! it and left running when its last document closes. One with no server
-//! to go to waits, parked, until settings or a host spec give it one.
+//! to go to waits, parked, until settings, an extension or a host spec
+//! give it one.
 //!
 //! A server that crashes restarts itself (restart.rs); the manager keeps
 //! each (server, root)'s crash list and log ring across the instances it
@@ -300,9 +301,21 @@ impl LspManager {
         self.reconcile();
     }
 
-    /// Registers a host's `spec`, which wins over a built-in or settings
-    /// spec of the same name; settings may still turn it off. Applies as
-    /// [`update_settings`](Self::update_settings) does.
+    /// Sets the specs extensions contribute (in extension order), a tier
+    /// over the built-ins: the `[lsp]` settings apply over each as over a
+    /// built-in, and may turn it off. One named like a built-in or a host
+    /// spec is ignored, with a warning. Applies as
+    /// [`update_settings`](Self::update_settings) does: only servers whose
+    /// spec changed restart, and none for a change to its `settings` alone.
+    pub fn set_extension_specs(&mut self, specs: Vec<ServerSpec>) {
+        if self.registry.set_extension_specs(specs) {
+            self.reconcile();
+        }
+    }
+
+    /// Registers a host's `spec`, which wins over a built-in, extension or
+    /// settings spec of the same name; settings may still turn it off.
+    /// Applies as [`update_settings`](Self::update_settings) does.
     pub fn register_spec(&mut self, spec: ServerSpec) {
         self.registry.register(spec);
         self.reconcile();

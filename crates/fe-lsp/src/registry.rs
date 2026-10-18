@@ -1,6 +1,6 @@
 //! Which server a document gets (docs/decisions/lsp-client.md §3.2,
-//! §3.3): the built-in specs, the user's `[lsp]` settings over them, and
-//! specs the host registers.
+//! §3.3): the built-in specs, the specs extensions contribute, the user's
+//! `[lsp]` settings over both, and specs the host registers.
 //!
 //! The settings reaching here are the effective ones, whose project layer
 //! fe-config has already narrowed to turning servers off.
@@ -56,6 +56,9 @@ fn typescript_server(choice: TypescriptServer) -> (&'static str, &'static str) {
 #[derive(Default)]
 pub(crate) struct Registry {
     settings: LspSettings,
+    /// Contributed by extensions, in order, each name once; one named like
+    /// a built-in or a host spec is ignored.
+    extension: Vec<ServerSpec>,
     /// Registered by the host, in order, each name once.
     host: Vec<ServerSpec>,
 }
@@ -64,6 +67,7 @@ impl Registry {
     pub(crate) fn set_settings(&mut self, settings: LspSettings) {
         for (name, server) in &settings.servers {
             let known = builtin_specs().iter().any(|spec| spec.name == *name)
+                || self.extension.iter().any(|spec| spec.name == *name)
                 || self.host.iter().any(|spec| spec.name == *name);
             if server.enabled && server.command.is_none() && !known {
                 log::warn!("language server {name} has no command, so it never starts");
@@ -76,10 +80,37 @@ impl Registry {
         &self.settings
     }
 
+    /// Replaces the extensions' specs with `specs`, a tier between the
+    /// built-ins and the settings: the settings apply over each as over a
+    /// built-in. One named like a built-in, a host spec or an earlier one
+    /// is ignored, with a warning. Whether they changed.
+    pub(crate) fn set_extension_specs(&mut self, specs: Vec<ServerSpec>) -> bool {
+        if self.extension == specs {
+            return false;
+        }
+        let builtins = builtin_specs();
+        for (i, spec) in specs.iter().enumerate() {
+            let name = &spec.name;
+            if builtins.iter().any(|builtin| builtin.name == *name) {
+                log::warn!("an extension's language server {name} is ignored: it's built in");
+            } else if self.host.iter().any(|host| host.name == *name) {
+                log::warn!("an extension's language server {name} is ignored: the host has one");
+            } else if specs[..i].iter().any(|earlier| earlier.name == *name) {
+                log::warn!("an extension's language server {name} is ignored: another has it");
+            }
+        }
+        self.extension = specs;
+        true
+    }
+
     /// Adds `spec`, replacing a host spec of the same name. It wins over
-    /// a built-in or settings spec of that name, but settings can still
-    /// turn it off.
+    /// a built-in, extension or settings spec of that name, but settings
+    /// can still turn it off.
     pub(crate) fn register(&mut self, spec: ServerSpec) {
+        if self.extension.iter().any(|ext| ext.name == spec.name) {
+            let name = &spec.name;
+            log::warn!("an extension's language server {name} is ignored: the host has one");
+        }
         match self.host.iter_mut().find(|host| host.name == spec.name) {
             Some(host) => *host = spec,
             None => self.host.push(spec),
@@ -88,7 +119,8 @@ impl Registry {
 
     /// Every server that may run now, in the order a language's server is
     /// chosen: the built-ins, then servers only the settings define (by
-    /// name), then servers only the host does (in the order registered).
+    /// name), then those extensions contribute (in the order given), then
+    /// servers only the host does (in the order registered).
     /// None while `lsp.enabled` is false; none that its settings turn off,
     /// and only the TypeScript server `lsp.typescript_server` picks.
     pub(crate) fn specs(&self) -> Vec<ServerSpec> {
@@ -96,6 +128,9 @@ impl Registry {
             return Vec::new();
         }
         let builtins = builtin_specs();
+        let builtin = |name: &str| builtins.iter().any(|spec| spec.name == name);
+        let extension = self.extensions(&builtins);
+        let contributed = |name: &str| extension.iter().any(|spec| spec.name == name);
         let names = builtins
             .iter()
             .map(|spec| spec.name.clone())
@@ -103,27 +138,45 @@ impl Registry {
                 self.settings
                     .servers
                     .keys()
-                    .filter(|name| builtins.iter().all(|spec| spec.name != **name))
+                    .filter(|name| !builtin(name) && !contributed(name))
                     .cloned(),
             )
+            .chain(extension.iter().map(|spec| spec.name.clone()))
             .chain(
                 self.host
                     .iter()
                     .map(|spec| spec.name.clone())
-                    .filter(|name| {
-                        builtins.iter().all(|spec| spec.name != *name)
-                            && !self.settings.servers.contains_key(name)
-                    }),
+                    .filter(|name| !builtin(name) && !self.settings.servers.contains_key(name)),
             );
         let (_, not_chosen) = typescript_server(self.settings.typescript_server);
         names
             .filter(|name| name != not_chosen)
-            .filter_map(|name| self.spec(&name, &builtins))
+            .filter_map(|name| self.spec(&name, &builtins, &extension))
             .collect()
     }
 
+    /// The extensions' specs that aren't ignored: none named like a
+    /// built-in, a host spec or an earlier one.
+    fn extensions(&self, builtins: &[ServerSpec]) -> Vec<&ServerSpec> {
+        let mut kept: Vec<&ServerSpec> = Vec::new();
+        for spec in &self.extension {
+            let taken = builtins.iter().any(|builtin| builtin.name == spec.name)
+                || self.host.iter().any(|host| host.name == spec.name)
+                || kept.iter().any(|earlier| earlier.name == spec.name);
+            if !taken {
+                kept.push(spec);
+            }
+        }
+        kept
+    }
+
     /// The effective spec named `name`, if it's enabled and has a command.
-    fn spec(&self, name: &str, builtins: &[ServerSpec]) -> Option<ServerSpec> {
+    fn spec(
+        &self,
+        name: &str,
+        builtins: &[ServerSpec],
+        extension: &[&ServerSpec],
+    ) -> Option<ServerSpec> {
         let settings = self.settings.servers.get(name);
         if settings.is_some_and(|server| !server.enabled) {
             return None;
@@ -131,21 +184,33 @@ impl Registry {
         if let Some(host) = self.host.iter().find(|spec| spec.name == name) {
             return Some(host.clone());
         }
-        let builtin = builtins.iter().find(|spec| spec.name == name).cloned();
-        match (builtin, settings) {
-            (Some(builtin), Some(settings)) => Some(apply(builtin, settings)),
-            (Some(builtin), None) => Some(builtin),
-            (None, Some(settings)) => {
-                let command = settings.command.as_deref()?;
-                let base = ServerSpec {
-                    settings: Value::Object(serde_json::Map::new()),
-                    ..ServerSpec::new(name, command)
-                };
-                Some(apply(base, settings))
-            }
+        let base = builtins
+            .iter()
+            .chain(extension.iter().copied())
+            .find(|spec| spec.name == name)
+            .cloned();
+        match (base, settings) {
+            (Some(base), Some(settings)) => Some(apply(base, settings)),
+            (Some(base), None) => Some(base),
+            (None, Some(settings)) => extension_spec(name, settings),
             (None, None) => None,
         }
     }
+}
+
+/// The spec of a server `settings` define on their own, as an extension's
+/// `[contributes.lsp.<name>]` does: `None` without a `command`, or turned
+/// off.
+pub fn extension_spec(name: &str, settings: &LspServerSettings) -> Option<ServerSpec> {
+    if !settings.enabled {
+        return None;
+    }
+    let command = settings.command.as_deref()?;
+    let base = ServerSpec {
+        settings: Value::Object(serde_json::Map::new()),
+        ..ServerSpec::new(name, command)
+    };
+    Some(apply(base, settings))
 }
 
 /// The spec of the server a document in fe-syntax's `language` gets: the

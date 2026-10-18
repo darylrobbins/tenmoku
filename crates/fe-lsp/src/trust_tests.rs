@@ -15,6 +15,9 @@ use crate::event::NOT_OPEN;
 use crate::fake::{Echo, FakeServer, Record, Script, Writes};
 use crate::{LspError, LspEvent, LspManager, ManualClock, ServerId, ServerSpec, ServerStatus};
 
+#[path = "extension_servers_tests.rs"]
+mod extension_servers;
+
 const ROOT: &str = "/fake/root";
 const OTHER: &str = "/fake/other";
 

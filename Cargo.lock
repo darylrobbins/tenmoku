@@ -1702,13 +1702,16 @@ dependencies = [
  "fe-buffer",
  "fe-config",
  "fe-gpui",
+ "fe-lsp",
  "fe-workbench",
  "gpui-pre",
  "kiln",
  "kiln-platform",
  "libc",
  "log",
+ "schemars",
  "tempfile",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
