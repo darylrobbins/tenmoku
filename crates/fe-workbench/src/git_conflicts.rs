@@ -5,6 +5,7 @@
 
 use std::{cell::RefCell, ops::Range};
 
+use fe_buffer::Origin;
 use fe_buffer::{BufferSnapshot, Version};
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps};
 use fe_git::conflict_markers;
@@ -25,20 +26,42 @@ const PRIORITY: i32 = -200;
 const WRAPPED_TO_FIRST: &str = "Wrapped to the first conflict";
 const WRAPPED_TO_LAST: &str = "Wrapped to the last conflict";
 const NO_CONFLICTS: &str = "No merge conflicts found in this file";
+const NOT_IN_CONFLICT: &str = "Editor cursor is not within a merge conflict";
+const READ_ONLY: &str = "Cannot make changes, the editor is read-only";
+
+/// Which side of a conflict an accept command keeps.
+#[derive(Clone, Copy)]
+pub(crate) enum Side {
+    Current,
+    Incoming,
+    Both,
+}
+
+/// Which conflicts an accept command resolves: the one holding a row (the
+/// primary caret's, if none is given), or every one.
+#[derive(Clone, Copy)]
+pub(crate) enum Which {
+    At(Option<u32>),
+    All,
+}
 
 /// Whether `text` has a start marker at a row's start.
 fn has_marker(text: &str) -> bool {
     text.starts_with("<<<<<<<") || text.contains("\n<<<<<<<")
 }
 
-/// `snapshot`'s text, if it's small enough to scan and has a start marker.
-fn scannable(snapshot: &BufferSnapshot) -> Option<String> {
+/// `snapshot`'s text, if it has a start marker, however large.
+fn marked(snapshot: &BufferSnapshot) -> Option<String> {
     let text = snapshot.text();
-    if text.len() > MAX_SCAN_BYTES {
-        return None;
-    }
     let text = text.slice_to_string(0..text.len());
     has_marker(&text).then_some(text)
+}
+
+/// `snapshot`'s text, if it's small enough to band and has a start marker.
+fn scannable(snapshot: &BufferSnapshot) -> Option<String> {
+    (snapshot.text().len() <= MAX_SCAN_BYTES)
+        .then(|| marked(snapshot))
+        .flatten()
 }
 
 /// Bands each conflict in a snapshot's rows by side: the start marker and
@@ -114,7 +137,7 @@ impl Workbench {
         let (starts, row) = {
             let model = editor.read(cx).model();
             let text = model.text();
-            let starts: Vec<usize> = match scannable(model.snapshot()) {
+            let starts: Vec<usize> = match marked(model.snapshot()) {
                 Some(string) => (conflict_markers::parse(&string).iter())
                     .map(|conflict| conflict.start.line.start)
                     .collect(),
@@ -143,5 +166,72 @@ impl Workbench {
         if let Some(wrapped) = wrapped {
             toast::show(cx, Toast::info(wrapped.to_owned()));
         }
+    }
+
+    /// `git.accept_*`: replaces the chosen conflicts' marker blocks in the
+    /// active editor with `side`'s lines (both: current, then incoming),
+    /// the base dropped, in one user transaction, and puts the caret at the
+    /// start of the first replacement.
+    pub(crate) fn accept(
+        &mut self,
+        side: Side,
+        which: Which,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.active_editor(cx).cloned() else {
+            return;
+        };
+        if editor.read(cx).is_read_only() {
+            return toast::show(cx, Toast::info(READ_ONLY.to_owned()));
+        }
+        let edits = {
+            let model = editor.read(cx).model();
+            let text = model.text();
+            let string = marked(model.snapshot()).unwrap_or_default();
+            let mut conflicts = conflict_markers::parse(&string);
+            match which {
+                Which::All => {}
+                Which::At(row) => {
+                    let row = row.unwrap_or_else(|| {
+                        text.offset_to_point(model.primary_selection().head()).row
+                    });
+                    conflicts.retain(|conflict| {
+                        let range = conflict.range();
+                        let (first, last) = (
+                            text.offset_to_point(range.start).row,
+                            text.offset_to_point(range.end.saturating_sub(1).max(range.start))
+                                .row,
+                        );
+                        (first..=last).contains(&row)
+                    });
+                }
+            }
+            let edits: Vec<(Range<usize>, String)> = (conflicts.iter())
+                .map(|conflict| {
+                    let current = &string[conflict.current.clone()];
+                    let incoming = &string[conflict.incoming.clone()];
+                    let kept = match side {
+                        Side::Current => current.to_owned(),
+                        Side::Incoming => incoming.to_owned(),
+                        Side::Both => format!("{current}{incoming}"),
+                    };
+                    (conflict.range(), kept)
+                })
+                .collect();
+            edits
+        };
+        let Some((first, _)) = edits.first() else {
+            let message = match which {
+                Which::All => NO_CONFLICTS,
+                Which::At(_) => NOT_IN_CONFLICT,
+            };
+            return toast::show(cx, Toast::info(message.to_owned()));
+        };
+        let at = first.start;
+        editor.update(cx, |editor, cx| {
+            editor.model_mut().buffer_mut().edit(edits, Origin::User);
+            editor.select_and_reveal(at..at, cx);
+        });
     }
 }

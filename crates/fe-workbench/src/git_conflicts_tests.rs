@@ -154,3 +154,6 @@ fn no_conflicts_says_so(cx: &mut TestAppContext) {
         Some("No merge conflicts found in this file")
     );
 }
+
+#[path = "git_conflicts_accept_tests.rs"]
+mod accept;

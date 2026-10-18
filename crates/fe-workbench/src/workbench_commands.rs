@@ -11,8 +11,13 @@ use kiln::Cx;
 use kiln_shell::DockPosition;
 
 use crate::{
-    Axis, Direction, Pane, Workbench, dock_layout, nav::NavOp, open::OpenOp, persist,
-    workbench::git_commands::GitCommand, workbench::recent_picker::RecentOp,
+    Axis, Direction, Pane, Workbench, dock_layout,
+    git::git_conflicts::{Side, Which},
+    nav::NavOp,
+    open::OpenOp,
+    persist,
+    workbench::git_commands::GitCommand,
+    workbench::recent_picker::RecentOp,
 };
 
 #[kiln::command(context = "workbench")]
@@ -147,6 +152,57 @@ impl Workbench {
     fn git_previous_conflict(&mut self, cx: &mut Cx<Self>) {
         self.in_editor(cx, |this, window, cx| {
             this.go_to_conflict(false, window, cx)
+        });
+    }
+
+    /// Git: Accept Current Change
+    #[command(id = "git.accept_current")]
+    fn git_accept_current(&mut self, cx: &mut Cx<Self>) {
+        let row = invocation_row(cx);
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Current, Which::At(row), window, cx)
+        });
+    }
+
+    /// Git: Accept Incoming Change
+    #[command(id = "git.accept_incoming")]
+    fn git_accept_incoming(&mut self, cx: &mut Cx<Self>) {
+        let row = invocation_row(cx);
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Incoming, Which::At(row), window, cx)
+        });
+    }
+
+    /// Git: Accept Both Changes
+    #[command(id = "git.accept_both")]
+    fn git_accept_both(&mut self, cx: &mut Cx<Self>) {
+        let row = invocation_row(cx);
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Both, Which::At(row), window, cx)
+        });
+    }
+
+    /// Git: Accept All Current
+    #[command(id = "git.accept_all_current")]
+    fn git_accept_all_current(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Current, Which::All, window, cx)
+        });
+    }
+
+    /// Git: Accept All Incoming
+    #[command(id = "git.accept_all_incoming")]
+    fn git_accept_all_incoming(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Incoming, Which::All, window, cx)
+        });
+    }
+
+    /// Git: Accept All Both
+    #[command(id = "git.accept_all_both")]
+    fn git_accept_all_both(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.accept(Side::Both, Which::All, window, cx)
         });
     }
 
@@ -696,4 +752,11 @@ impl Workbench {
         #[cfg(not(test))]
         let _ = (self, cx);
     }
+}
+
+/// The `row` of the running command's args table, if it was given one.
+fn invocation_row(cx: &Cx<Workbench>) -> Option<u32> {
+    let invocation = kiln::current_invocation(cx.cx)?;
+    let row = invocation.args.get("row")?.as_u64()?;
+    u32::try_from(row).ok()
 }

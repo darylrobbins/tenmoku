@@ -155,6 +155,28 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Git: Previous Conflict",
         "workbench",
     ),
+    (
+        "git.accept_current",
+        "Git: Accept Current Change",
+        "workbench",
+    ),
+    (
+        "git.accept_incoming",
+        "Git: Accept Incoming Change",
+        "workbench",
+    ),
+    ("git.accept_both", "Git: Accept Both Changes", "workbench"),
+    (
+        "git.accept_all_current",
+        "Git: Accept All Current",
+        "workbench",
+    ),
+    (
+        "git.accept_all_incoming",
+        "Git: Accept All Incoming",
+        "workbench",
+    ),
+    ("git.accept_all_both", "Git: Accept All Both", "workbench"),
     ("git.stage_file", "Git: Stage File", "workbench"),
     ("git.unstage_file", "Git: Unstage File", "workbench"),
     ("git.discard_file", "Git: Discard File Changes", "workbench"),
