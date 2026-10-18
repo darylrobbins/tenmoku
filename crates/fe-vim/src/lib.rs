@@ -776,6 +776,7 @@ mod state;
 mod substitute;
 mod text_object;
 mod unmatched;
+mod vimrc;
 mod visual;
 
 pub use args::{
@@ -798,6 +799,7 @@ pub use remap::{Lookup, Remap, RemapIssue, RemapMode, RemapSet};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
+pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc};
 
 #[cfg(test)]
 mod tests;
