@@ -58,6 +58,7 @@
 use std::{
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::{Bias, Buffer, Origin};
@@ -223,6 +224,10 @@ struct Request {
     live: bool,
 }
 
+/// Tells whether an ask still stands as its diff lands, else nothing opens:
+/// see [`Landing`].
+pub(super) type Guard = Rc<dyn Fn(&Workbench, &mut App) -> bool>;
+
 impl Request {
     /// The diff of `path` against `base` asked for by `op`.
     fn asked(path: PathBuf, base: Base, then: Option<Reveal>, op: GitOp) -> Self {
@@ -273,8 +278,8 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     match op.command {
-        GitCommand::DiffIndex => workbench.diff_with_git(op, Base::Index, window, cx),
-        GitCommand::DiffHead => workbench.diff_with_git(op, Base::Head, window, cx),
+        GitCommand::DiffIndex => workbench.diff_with_git(op, Base::Index, None, window, cx),
+        GitCommand::DiffHead => workbench.diff_with_git(op, Base::Head, None, window, cx),
         GitCommand::CompareFile => workbench.compare_file(op, window, cx),
         GitCommand::NextChange => workbench.go_to_change(op, true, window, cx),
         GitCommand::PreviousChange => workbench.go_to_change(op, false, window, cx),
@@ -283,6 +288,23 @@ pub(super) fn run(
             workbench.answer_git_op(&op, text, cx);
         }
     }
+}
+
+/// Opens `op`'s file against HEAD, shown only if `guard` says its ask still
+/// stands as the diff lands.
+pub(super) fn diff_head_guarded(
+    workbench: &mut Workbench,
+    op: GitOp,
+    guard: Guard,
+    window: &mut Window,
+    cx: &mut Context<Workbench>,
+) {
+    // As `run_git_op` would route it.
+    #[cfg(test)]
+    workbench
+        .git_routed
+        .push(super::git_commands::Routed::Op(op.clone()));
+    workbench.diff_with_git(op, Base::Head, Some(guard), window, cx);
 }
 
 /// Runs `command`, typed in `editor`, a side of `diff`: see the module
@@ -676,6 +698,8 @@ struct Landing {
     opens: u64,
     /// The refreshes when asked.
     refreshes: u64,
+    /// Whether what asked for it still stands, if that matters.
+    guard: Option<Guard>,
 }
 
 /// What a git diff's sides were read from: the git text, whether the file
@@ -819,6 +843,7 @@ impl Workbench {
             navigations: pane_state.navigations(),
             opens: pane_state.open_serial(),
             refreshes,
+            guard: None,
         }
     }
 
@@ -827,13 +852,15 @@ impl Workbench {
     /// was navigated to or opened there meanwhile.
     fn may_show(&self, landing: &Landing, cx: &mut App) -> bool {
         let last = (landing.serial).is_some_and(|serial| serial == state(cx).opens);
+        let stands = (landing.guard.clone()).is_none_or(|guard| guard(self, cx));
         let pane = landing.pane.upgrade();
-        last && pane.is_some_and(|pane| {
-            let state = pane.read(cx);
-            pane == self.active
-                && state.navigations() == landing.navigations
-                && state.open_serial() == landing.opens
-        })
+        last && stands
+            && pane.is_some_and(|pane| {
+                let state = pane.read(cx);
+                pane == self.active
+                    && state.navigations() == landing.navigations
+                    && state.open_serial() == landing.opens
+            })
     }
 
     /// A diff view of `left` and the working side over `source`, a model of
@@ -951,6 +978,7 @@ impl Workbench {
         &mut self,
         op: GitOp,
         base: Base,
+        guard: Option<Guard>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -961,7 +989,7 @@ impl Workbench {
             Some(path) => {
                 let request = Request::asked(path, base, None, op);
                 let request = if live { request.live() } else { request };
-                self.request_git_diff(request, window, cx)
+                self.request_guarded_diff(request, guard, window, cx)
             }
             None => self.answer_git_op(&op, NO_FILE.to_owned(), cx),
         }
@@ -969,9 +997,15 @@ impl Workbench {
 
     /// Opens `request`'s diff, or shows the one open, whose git side and
     /// file are then looked at again: see the module docs.
-    fn request_git_diff(
+    fn request_git_diff(&mut self, request: Request, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_guarded_diff(request, None, window, cx)
+    }
+
+    /// The same, shown only if `guard` says its ask still stands as it lands.
+    fn request_guarded_diff(
         &mut self,
         mut request: Request,
+        guard: Option<Guard>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1002,7 +1036,8 @@ impl Workbench {
             .and_then(|(old, _)| old.upgrade())
             .and_then(|old| self.diff_tab(&old, cx));
         let pane = replaced.map_or_else(|| self.active.clone(), |(pane, _)| pane);
-        let landing = self.landing(&pane, request.asked, cx);
+        let mut landing = self.landing(&pane, request.asked, cx);
+        landing.guard = guard;
         let staged = request.base == Base::Staged;
         // The open buffer, else the file as it is on disk; neither for the
         // staged text, whose sides are both git's.
@@ -1053,6 +1088,10 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Asked for by something that has moved on: nothing opens.
+        if (landing.guard.clone()).is_some_and(|guard| !guard(self, cx)) {
+            return;
+        }
         let (text, exists, disk, index) = match read {
             Ok(read) => read,
             Err(answer) if request.asked => return self.answer_git_op(&request.op, answer, cx),

@@ -339,6 +339,10 @@ pub struct Workbench {
     /// Every git op run and owned editor's host command, oldest first.
     #[cfg(test)]
     pub(crate) git_routed: Vec<git_commands::Routed>,
+    /// How many times a pane has been made the active one, even the same
+    /// pane again: what an ask that a round trip through another pane
+    /// supersedes compares.
+    pub(crate) activations: u64,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -615,6 +619,7 @@ impl Workbench {
             vim_keys: None,
             #[cfg(test)]
             git_routed: Vec::new(),
+            activations: 0,
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -1576,6 +1581,7 @@ impl Workbench {
         let search = self.dock.read(cx).search().clone();
         search.update(cx, |search, _| search.set_pane(weak));
         self.active = pane;
+        self.activations += 1;
     }
 
     /// Makes `pane` the active pane, which files open in, and focuses it.

@@ -12,7 +12,10 @@ use fe_gpui::{
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::{EDIT_REST, REST, counts};
-use crate::{Launch, Workbench};
+use crate::{
+    Launch, Workbench,
+    workbench::git_commands::{GitCommand, Routed},
+};
 
 const DAY: i64 = 86_400;
 
@@ -994,4 +997,239 @@ fn repeated_carriage_returns(cx: &mut TestAppContext) {
     dispatch("git.open_line_commit", cx);
     assert_eq!(diff(&workbench, cx), by_c);
     assert_eq!(caret_row(&right, cx), 2);
+}
+
+/// Points `editor` at `path` as a Save As does, leaving the file alone.
+fn save_as(editor: &Entity<EditorView>, path: &Path, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.model_mut().set_path(Some(path.to_owned()));
+            cx.notify();
+        })
+    });
+}
+
+#[gpui::test]
+fn save_as_round_trip_keeps_cached_blame(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    fs::write(root.join("b.rs"), "b\n").unwrap();
+    let (workbench, mut cx) = window(cx, root, Some("a.rs"));
+    let cx = &mut cx;
+    let tab = tab_editor(&workbench, cx);
+    keys("2 j", cx);
+    dispatch("git.toggle_line_blame", cx);
+    settle(cx);
+    assert_eq!(annotations(&tab, cx), [(2, expected(root, 2))]);
+
+    // Save As b.rs and back before its blame is made: it's dropped, not
+    // kept over a.rs's.
+    save_as(&tab, &root.join("b.rs"), cx);
+    save_as(&tab, &root.join("a.rs"), cx);
+    settle(cx);
+    assert_eq!(annotations(&tab, cx), [(2, expected(root, 2))]);
+}
+
+/// Reads HEAD for the marked editor, as a git refresh does.
+fn check_head_now(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| workbench.update(cx, super::check_head));
+}
+
+/// Moves HEAD's commit, a reworded message and a new committer date.
+fn amend(root: &Path) {
+    let date = format!("@{} +0200", now() - 3 * DAY - 3600);
+    let env = [("GIT_COMMITTER_DATE", date.as_str())];
+    git_env(
+        root,
+        &["commit", "-q", "--amend", "-m", "Shout louder"],
+        &env,
+    );
+}
+
+#[gpui::test]
+fn head_change_during_blame_revalidates(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    fs::write(root.join("b.rs"), "b\n").unwrap();
+    let (workbench, mut cx) = window(cx, root, Some("a.rs"));
+    let cx = &mut cx;
+    let tab = tab_editor(&workbench, cx);
+    keys("2 j", cx);
+    dispatch("git.toggle_line_blame", cx);
+    settle(cx);
+    assert_eq!(annotations(&tab, cx), [(2, expected(root, 2))]);
+
+    // HEAD moves while the blame of another file is pending, which going back
+    // to the cached file cancels: the cached blame is of the old HEAD, and
+    // is made again.
+    amend(root);
+    save_as(&tab, &root.join("b.rs"), cx);
+    check_head_now(&workbench, cx);
+    save_as(&tab, &root.join("a.rs"), cx);
+    settle(cx);
+    assert_eq!(expected(root, 2), "Shout louder, Bob (3 days ago)");
+    assert_eq!(annotations(&tab, cx), [(2, expected(root, 2))]);
+}
+
+#[gpui::test]
+fn head_check_survives_cancelled_blame(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    fs::write(root.join("b.rs"), "b\n").unwrap();
+    let (workbench, mut cx) = window(cx, root, Some("a.rs"));
+    let cx = &mut cx;
+    let tab = tab_editor(&workbench, cx);
+    keys("2 j", cx);
+    dispatch("git.toggle_line_blame", cx);
+    settle(cx);
+
+    // A read deferred by a pending blame of b.rs, which is cancelled by
+    // going back to a.rs's cached one: the read still runs.
+    amend(root);
+    save_as(&tab, &root.join("b.rs"), cx);
+    check_head_now(&workbench, cx);
+    save_as(&tab, &root.join("a.rs"), cx);
+    settle(cx);
+    assert_eq!(expected(root, 2), "Shout louder, Bob (3 days ago)");
+    assert_eq!(annotations(&tab, cx), [(2, expected(root, 2))]);
+}
+
+/// Asks to open the caret row's commit, and runs tasks until the HEAD diff
+/// behind an uncommitted row's open has been asked for, and no further.
+fn ask_open(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    workbench.update(cx, |workbench, _| workbench.git_routed.clear());
+    send("git.open_line_commit", cx);
+    started(workbench, cx);
+}
+
+/// Runs tasks until the HEAD diff has been asked for.
+fn started(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    let asked = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            (workbench.git_routed.iter()).any(
+                |routed| matches!(routed, Routed::Op(op) if op.command == GitCommand::DiffHead),
+            )
+        })
+    };
+    for _ in 0..5000 {
+        if asked(cx) {
+            return;
+        }
+        // Idle while a read runs on its own thread.
+        if !cx.executor().tick() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    panic!("the HEAD diff was never asked for");
+}
+
+/// Types `text` at `editor`'s caret, without letting anything run.
+fn type_in(editor: &Entity<EditorView>, text: &str, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.model_mut().insert(text);
+            cx.notify();
+        })
+    });
+}
+
+#[gpui::test]
+fn superseded_diff_open_does_not_steal_focus(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    fs::write(root.join("b.rs"), "b\n").unwrap();
+    let (workbench, mut cx) = window(cx, root, Some("a.rs"));
+    let cx = &mut cx;
+    let tab = tab_editor(&workbench, cx);
+    keys("A ! escape", cx);
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| tab.focus_handle(cx).is_focused(window))
+    };
+    assert!(focused(cx));
+
+    // Row 0 isn't committed: its change opens against HEAD, unless asked
+    // about something else, moved off, edited or saved as meanwhile.
+    let supersede: [&dyn Fn(&mut VisualTestContext); 4] = [
+        &|cx| send("git.blame_line", cx),
+        &|cx| put_caret(&tab, 1, cx),
+        &|cx| type_in(&tab, "?", cx),
+        &|cx| save_as(&tab, &root.join("b.rs"), cx),
+    ];
+    for (n, supersede) in supersede.into_iter().enumerate() {
+        put_caret(&tab, 0, cx);
+        ask_open(&workbench, cx);
+        supersede(cx);
+        draw(cx);
+        assert_eq!(tab_count(&workbench, cx), 1, "superseded by {n}");
+        assert!(focused(cx), "superseded by {n}");
+    }
+
+    // Not superseded, it opens.
+    save_as(&tab, &root.join("a.rs"), cx);
+    put_caret(&tab, 0, cx);
+    dispatch("git.open_line_commit", cx);
+    assert_eq!(tab_count(&workbench, cx), 2);
+    assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Working Tree)");
+}
+
+#[gpui::test]
+fn pane_focus_round_trip_drops_pending_requests(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    let (workbench, mut cx) = window(cx, root, Some("a.rs"));
+    let cx = &mut cx;
+    keys("A ! escape", cx);
+    dispatch("pane.split_right", cx);
+    let panes = workbench.read_with(cx, |workbench, cx| workbench.panes(cx));
+    let [first, second] = panes.try_into().expect("two panes");
+    let active = |pane: &Entity<crate::Pane>, cx: &mut VisualTestContext| {
+        let pane = pane.clone();
+        cx.update(|window, cx| {
+            workbench.update(cx, |workbench, cx| workbench.activate(pane, window, cx))
+        });
+    };
+    put_caret(&tab_editor(&workbench, cx), 0, cx);
+    ask_open(&workbench, cx);
+    active(&first, cx);
+    active(&second, cx);
+    draw(cx);
+    let tabs = |pane: &Entity<crate::Pane>, cx: &mut VisualTestContext| {
+        pane.read_with(cx, |pane, _| pane.tabs().len())
+    };
+    assert_eq!([tabs(&first, cx), tabs(&second, cx)], [1, 1]);
+
+    // Asked again, it opens.
+    dispatch("git.open_line_commit", cx);
+    assert_eq!(tabs(&second, cx), 2);
+
+    // The round trip within one update, which notifies once, drops it too.
+    activate(&workbench, 0, cx);
+    put_caret(&tab_editor(&workbench, cx), 0, cx);
+    ask_open(&workbench, cx);
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| {
+            workbench.activate(first.clone(), window, cx);
+            workbench.activate(second.clone(), window, cx);
+        })
+    });
+    draw(cx);
+    assert_eq!(tabs(&second, cx), 2);
+}
+
+#[gpui::test]
+fn head_check_deferred_runs_when_blame_lands(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let root = dir.path();
+    fs::write(root.join("c.rs"), "c\n").unwrap();
+    let (workbench, mut cx) = window(cx, root, Some("c.rs"));
+    let cx = &mut cx;
+
+    // HEAD is read as c.rs's blame, which finds it untracked, is pending:
+    // the read waits for the blame to land, then runs, and, as the blame
+    // found nothing, blames again, without another refresh.
+    send("git.toggle_line_blame", cx);
+    check_head_now(&workbench, cx);
+    assert_eq!(counted(cx).blames, 0, "pending");
+    settle(cx);
+    assert_eq!(counted(cx).blames, 2, "blamed, then again");
 }

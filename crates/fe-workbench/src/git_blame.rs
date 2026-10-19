@@ -68,6 +68,7 @@ use kiln_shell::PaneView as _;
 use super::{
     Workbench,
     git_commands::{GitCommand, GitOp, Owner},
+    git_diff,
 };
 use crate::{Pane, git};
 
@@ -174,6 +175,8 @@ struct LineBlame {
     blaming: Option<(BufferId, PathBuf, Version, Task<()>)>,
     /// Reads HEAD's id after a git refresh, or as an editor is marked.
     head_check: Option<Task<()>>,
+    /// Whether HEAD is to be read again once the blame pending lands.
+    recheck: bool,
     /// Observes the marked editor.
     _marked: Option<Subscription>,
     /// Observes the workbench, its status bar (which follows the active
@@ -282,6 +285,7 @@ fn toggle(workbench: &mut Workbench, cx: &mut Context<Workbench>) {
             rest: None,
             blaming: None,
             head_check: None,
+            recheck: false,
             _marked: None,
             _subscriptions: subscriptions,
         },
@@ -332,6 +336,7 @@ fn mark(id: EntityId, editor: Option<&Entity<EditorView>>, cx: &mut Context<Work
     line._marked = None;
     line.head_check = None;
     line.blaming = None;
+    line.recheck = false;
     unmark(old, cx);
     let Some(editor) = editor else {
         return;
@@ -425,8 +430,14 @@ fn look(workbench: &mut Workbench, cx: &mut Context<Workbench>) {
     if pending {
         return;
     }
+    // Work for another file or version is of no use now.
+    let mut rechecking = false;
+    if let Some(line) = self::line(id, cx) {
+        // A HEAD read it deferred has no blame to wait for now.
+        rechecking = line.blaming.take().is_some() && std::mem::take(&mut line.recheck);
+    }
     if blamed(&seen, cx).is_some() {
-        if switched {
+        if switched || rechecking {
             check_head(workbench, cx);
         }
         return;
@@ -530,6 +541,11 @@ fn start_blame(
                 found,
             };
             landed(workbench, buffer, blamed, cx);
+            let recheck =
+                line(cx.entity_id(), cx).is_some_and(|line| std::mem::take(&mut line.recheck));
+            if recheck {
+                check_head(workbench, cx);
+            }
         }))
         .ok();
     });
@@ -583,6 +599,11 @@ fn check_head(_: &mut Workbench, cx: &mut Context<Workbench>) {
     let Some(seen) = seen(&marked.editor, cx) else {
         return;
     };
+    // Read once the blame pending has landed.
+    if let Some(line) = line(id, cx).filter(|line| line.blaming.is_some()) {
+        line.recheck = true;
+        return;
+    }
     let Some((head, found_none)) =
         blamed(&seen, cx).map(|blamed| (blamed.head.clone(), blamed.found.is_err()))
     else {
@@ -602,9 +623,12 @@ fn check_head(_: &mut Workbench, cx: &mut Context<Workbench>) {
                 return;
             };
             line.head_check = None;
-            let still = (line.marked.as_ref()).is_some_and(|marked| marked.editor == editor)
-                && line.blaming.is_none();
-            if still && self::seen(&editor, cx).is_some_and(|now| now.version == seen.version) {
+            let still = (line.marked.as_ref()).is_some_and(|marked| marked.editor == editor);
+            if still && line.blaming.is_some() {
+                line.recheck = true;
+            } else if still
+                && self::seen(&editor, cx).is_some_and(|now| now.version == seen.version)
+            {
                 start_blame(id, &editor, Duration::ZERO, cx);
             }
         }))
@@ -751,6 +775,9 @@ struct Ask {
     row: u32,
     pane: (Entity<Pane>, u64, u64),
     serial: u64,
+    /// The workbench's pane activations then: a round trip through another
+    /// pane leaves the pane's counters as they were.
+    activations: u64,
 }
 
 /// The active pane, and its navigations and opens so far.
@@ -786,6 +813,7 @@ fn ask(workbench: &Workbench, op: &GitOp, cx: &mut App) -> Result<Ask, &'static 
         row,
         pane,
         serial: state.asks,
+        activations: workbench.activations,
     })
 }
 
@@ -795,6 +823,7 @@ fn ask(workbench: &Workbench, op: &GitOp, cx: &mut App) -> Result<Ask, &'static 
 /// and caret row. A result for one that doesn't is dropped.
 fn stands(ask: &Ask, workbench: &Workbench, cx: &mut App) -> bool {
     if state(cx).asks != ask.serial
+        || workbench.activations != ask.activations
         || pane_now(workbench, cx) != ask.pane
         || workbench.active_editor(cx) != Some(&ask.editor)
     {
@@ -900,7 +929,11 @@ fn open_line_commit(
                         command: GitCommand::DiffHead,
                         ..op
                     };
-                    workbench.run_git_op(op, window, cx);
+                    // The ask holds through the diff's read.
+                    let guard = Rc::new(move |workbench: &Workbench, cx: &mut App| {
+                        stands(&ask, workbench, cx)
+                    });
+                    git_diff::diff_head_guarded(workbench, op, guard, window, cx);
                 }
                 Err(answer) => workbench.answer_git_op(&op, answer, cx),
             }
