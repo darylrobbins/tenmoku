@@ -1,0 +1,16 @@
+: A safety classifier declined before any output: no content blocks,
+: stop_reason refusal, and stop_details naming the category (here
+: reasoning_extraction, which no fallback retries). Shapes from the
+: claude-api skill's shared/model-migration.md (`refusal` stop reason, and
+: Stop details: type, category, explanation) and curl/examples.md
+: § Streaming (SSE).
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01RefusedEarly","type":"message","role":"assistant","model":"claude-opus-5-5","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":75,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"The request asks for the model's internal reasoning."}},"usage":{"output_tokens":0}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

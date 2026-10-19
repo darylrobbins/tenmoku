@@ -45,6 +45,7 @@ fe-git = { path = "crates/fe-git" }
 fe-markdown = { path = "crates/fe-markdown" }
 fe-markdown-view = { path = "crates/fe-markdown-view" }
 fe-chat = { path = "crates/fe-chat" }
+fe-chat-anthropic = { path = "crates/fe-chat-anthropic" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -116,6 +117,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 usvg = { version = "0.46", default-features = false }
 libc = "0.2"
 log = "0.4"
+# HTTP types for the chat's transport (fe-chat-anthropic): status codes and
+# header maps (MIT OR Apache-2.0; already in the lock through gpui).
+http = "1"
 # EditorConfig lookup and glob matching (Apache-2.0, no dependencies).
 ec4rs = "1.2"
 # SCIP indexes (fe-nav): the generated protobuf types (Apache-2.0) and the

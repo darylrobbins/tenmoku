@@ -2078,6 +2078,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-chat-anthropic"
+version = "0.1.0"
+dependencies = [
+ "fe-chat",
+ "futures",
+ "http",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fe-config"
 version = "0.1.0"
 dependencies = [
