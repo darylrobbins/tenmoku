@@ -17,6 +17,9 @@ use crate::{
     workbench::git_commands::{GitCommand, Routed},
 };
 
+#[path = "git_blame_head_race_tests.rs"]
+mod head_race;
+
 const DAY: i64 = 86_400;
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and

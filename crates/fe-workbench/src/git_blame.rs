@@ -209,6 +209,9 @@ struct BlameState {
     asks: u64,
     #[cfg(test)]
     counts: Counts,
+    /// The next blame waits for this once read, for the tests.
+    #[cfg(test)]
+    hold: Option<futures::channel::oneshot::Receiver<()>>,
 }
 
 impl Global for BlameState {}
@@ -528,7 +531,17 @@ fn start_blame(
             return;
         };
         let at = path.clone();
-        let (head, found) = cx.background_spawn(async move { blame(&at, &text) }).await;
+        #[cfg(test)]
+        let hold = cx.update(|cx| state(cx).hold.take());
+        let (head, found) = (cx.background_spawn(async move {
+            let blamed = blame(&at, &text);
+            #[cfg(test)]
+            if let Some(hold) = hold {
+                hold.await.ok();
+            }
+            blamed
+        }))
+        .await;
         (workbench.update(cx, |workbench, cx| {
             if let Some(line) = line(cx.entity_id(), cx) {
                 line.blaming = None;
