@@ -392,6 +392,11 @@ impl HeadlessVim {
         self.registers.set_clipboard_unnamed(on);
     }
 
+    /// 'ignorecase' and 'smartcase' for the registers ([`Registers::set_search_case`]).
+    pub fn set_search_case(&mut self, ignore_case: bool, smart_case: bool) {
+        self.registers.set_search_case(ignore_case, smart_case);
+    }
+
     /// The host, whose `clipboard` is `+` and `*`.
     pub fn host(&self) -> &HeadlessHost {
         &self.host

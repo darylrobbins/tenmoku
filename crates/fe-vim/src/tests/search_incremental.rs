@@ -153,6 +153,8 @@ fn offset_searches_list_rows_as_far_as_a_step_needs() {
             forward,
             offset,
             again: false,
+            word: false,
+            ignore_case: false,
         };
         let found =
             quick(|| offset::nth_match(&text, &pattern, 0, search(true), bs, &Deadline::new()));
@@ -185,6 +187,8 @@ fn offset_searches_back_list_rows_only_as_far_as_they_go_from() {
             forward: false,
             offset,
             again: false,
+            word: false,
+            ignore_case: false,
         };
         let landed = quick(|| offset::nth_match(&text, &pattern, 3, search, 1, &Deadline::new()));
         assert_eq!(landed, Some((found, false)), "{source} {offset:?}");

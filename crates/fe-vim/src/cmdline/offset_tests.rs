@@ -68,6 +68,8 @@ fn a_search_serializes_its_offset_only_if_it_has_one() {
             forward: true,
             offset,
             again: false,
+            word: false,
+            ignore_case: false,
         })
     };
     let plain = serde_json::json!({"search": {"pattern": "foo", "forward": true}});

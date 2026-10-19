@@ -120,6 +120,8 @@ fn motion_register_and_visual() {
         forward: false,
         offset: crate::SearchOffset::None,
         again: false,
+        word: false,
+        ignore_case: false,
     });
     assert_eq!(
         serde_json::to_value(search).unwrap(),
@@ -141,6 +143,8 @@ fn search_commands_check_their_pattern() {
             forward: true,
             offset: crate::SearchOffset::None,
             again: false,
+            word: false,
+            ignore_case: false,
         })
     };
     let moving = |pattern: &str| {
@@ -343,6 +347,8 @@ fn invalid_patterns_keep_the_last_search() {
         forward: false,
         offset: crate::SearchOffset::None,
         again: false,
+        word: false,
+        ignore_case: false,
     });
     let args = crate::MoveArgs {
         motion: backward,

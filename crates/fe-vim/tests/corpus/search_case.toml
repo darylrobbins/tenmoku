@@ -1,0 +1,247 @@
+# 'ignorecase' and 'smartcase' cases for fe-vim's oracle: `/ ? n N` ignore
+# case with 'ignorecase' on, unless 'smartcase' is on too and the pattern
+# has an uppercase letter (one after a backslash, as in `\S`, doesn't
+# count, but in a very magic pattern it does); `\c` and `\C` override both.
+# `*` and `#` (and `g*`, and `n`, `N` and `/<CR>` after them) use
+# 'ignorecase' only. The `/` register holds the pattern as typed. Each
+# case's `set` is run as `:set` before its keys, from both off. A failed
+# search is a case's last key.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column], keys in vim notation and set. What nvim
+# does with each is recorded in search_case.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "default_exact"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "/hello<CR>"
+
+[[case]]
+name = "ic_slash"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "/hello<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "ic_question"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "?HELLO<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "ic_n_and_N"
+buffer = "foo\nFOO\nFoo\nfOo"
+cursor = [0, 0]
+keys = "/foo<CR>nnN"
+set = "ic"
+
+[[case]]
+name = "noic_after_ic"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "/hello<CR>"
+set = "ic noic"
+
+[[case]]
+name = "scs_without_ic"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "/hello<CR>"
+set = "smartcase"
+
+[[case]]
+name = "scs_lowercase_ignores"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "/hello<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "scs_uppercase_exact"
+buffer = "x\nhello world\nHello"
+cursor = [0, 0]
+keys = "/Hello<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "scs_question_uppercase"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = "?Hello<CR>"
+set = "ic scs"
+
+[[case]]
+name = "scs_n_stays_exact"
+buffer = "Hello\nhello\nHELLO\nHello"
+cursor = [0, 0]
+keys = "/Hello<CR>n"
+set = "ic scs"
+
+[[case]]
+name = "scs_n_after_lowercase"
+buffer = "hello\nHELLO\nHello\nx"
+cursor = [0, 0]
+keys = "/hello<CR>nN"
+set = "ic scs"
+
+[[case]]
+name = "scs_backslash_class"
+buffer = "x\n HELLO\n hello"
+cursor = [0, 0]
+keys = "/\\Sello<CR>"
+set = "ic scs"
+
+[[case]]
+name = "scs_upper_class_not_folded"
+buffer = "x\nhello\nHello"
+cursor = [0, 0]
+keys = "/[[:upper:]]ello<CR>"
+set = "ic scs"
+
+[[case]]
+name = "scs_very_magic_class_counts"
+buffer = "x\n HELLO\n hello"
+cursor = [0, 0]
+keys = "/\\v\\Sello<CR>"
+set = "ic scs"
+
+[[case]]
+name = "scs_collection_uppercase"
+buffer = "x\nhello\nHello"
+cursor = [0, 0]
+keys = "/[H]ello<CR>"
+set = "ic scs"
+
+[[case]]
+name = "scs_multibyte_uppercase"
+buffer = "x\némile\nÉmile"
+cursor = [0, 0]
+keys = "/Émile<CR>"
+set = "ic scs"
+
+[[case]]
+name = "ic_multibyte"
+buffer = "x\nÉMILE\némile"
+cursor = [0, 0]
+keys = "/émile<CR>"
+set = "ic"
+
+[[case]]
+name = "lower_c_overrides"
+buffer = "x\nhello world\nHello"
+cursor = [0, 0]
+keys = "/\\cHello<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "lower_c_without_ic"
+buffer = "x\nHELLO world\nhello"
+cursor = [0, 0]
+keys = "/hello\\c<CR>"
+
+[[case]]
+name = "upper_c_overrides"
+buffer = "x\nHELLO world\nhello"
+cursor = [0, 0]
+keys = "/\\Chello<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "star_ic"
+buffer = "Foo bar\nfoo\nFOO"
+cursor = [0, 0]
+keys = "*"
+set = "ignorecase"
+
+[[case]]
+name = "star_exact"
+buffer = "Foo bar\nfoo\nFoo"
+cursor = [0, 0]
+keys = "*"
+
+[[case]]
+name = "star_ignores_scs"
+buffer = "Foo bar\nfoo\nFOO"
+cursor = [0, 0]
+keys = "*"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "hash_ic"
+buffer = "Foo bar\nFOO\nfoo"
+cursor = [0, 0]
+keys = "#"
+set = "ignorecase"
+
+[[case]]
+name = "hash_ignores_scs"
+buffer = "Foo bar\nFOO\nfoo"
+cursor = [0, 0]
+keys = "#N"
+set = "ic scs"
+
+[[case]]
+name = "gstar_ignores_scs"
+buffer = "Foo bar\nFOOBAR\nfoo"
+cursor = [0, 0]
+keys = "g*"
+set = "ic scs"
+
+[[case]]
+name = "n_after_star"
+buffer = "Foo bar\nfoo\nFOO\nx"
+cursor = [0, 0]
+keys = "*nn"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "slash_cr_after_star"
+buffer = "Foo bar\nfoo\nFOO\nx"
+cursor = [0, 0]
+keys = "*/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "slash_after_star_typed"
+buffer = "Foo bar\nfoo\nFOO\nFoo"
+cursor = [0, 0]
+keys = "*/Foo<CR>"
+set = "ic scs"
+
+[[case]]
+name = "ic_operator_search"
+buffer = "abc world WORLD"
+cursor = [0, 0]
+keys = "d/WORLD<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "scs_operator_n"
+buffer = "abc Foo foo FOO"
+cursor = [0, 0]
+keys = "/foo<CR>0dn"
+set = "ic scs"
+
+[[case]]
+name = "ic_visual_search"
+buffer = "abc world WORLD"
+cursor = [0, 0]
+keys = "v/WORLD<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "scs_visual_search_exact"
+buffer = "abc world WORLD"
+cursor = [0, 0]
+keys = "v/WORLD<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "ic_search_offset"
+buffer = "x\nHELLO world"
+cursor = [0, 0]
+keys = "/hello/e<CR>"
+set = "ic"

@@ -1,0 +1,850 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "default_exact",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_slash",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_question",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?HELLO<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "HELLO",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_n_and_N",
+      "buffer": "foo\nFOO\nFoo\nfOo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>nnN",
+      "set": "ic",
+      "expect": {
+        "buffer": "foo\nFOO\nFoo\nfOo",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "noic_after_ic",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>",
+      "set": "ic noic",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_without_ic",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>",
+      "set": "smartcase",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_lowercase_ignores",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_uppercase_exact",
+      "buffer": "x\nhello world\nHello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/Hello<CR>",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "x\nhello world\nHello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_question_uppercase",
+      "buffer": "x\nHello world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?Hello<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\nHello world\nhello",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_n_stays_exact",
+      "buffer": "Hello\nhello\nHELLO\nHello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/Hello<CR>n",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Hello\nhello\nHELLO\nHello",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_n_after_lowercase",
+      "buffer": "hello\nHELLO\nHello\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello<CR>nN",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "hello\nHELLO\nHello\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_backslash_class",
+      "buffer": "x\n HELLO\n hello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\Sello<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\n HELLO\n hello",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\Sello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_upper_class_not_folded",
+      "buffer": "x\nhello\nHello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/[[:upper:]]ello<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\nhello\nHello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[[:upper:]]ello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_very_magic_class_counts",
+      "buffer": "x\n HELLO\n hello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\v\\Sello<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\n HELLO\n hello",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\v\\Sello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_collection_uppercase",
+      "buffer": "x\nhello\nHello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/[H]ello<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\nhello\nHello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[H]ello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_multibyte_uppercase",
+      "buffer": "x\némile\nÉmile",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/Émile<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x\némile\nÉmile",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Émile",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_multibyte",
+      "buffer": "x\nÉMILE\némile",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/émile<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "x\nÉMILE\némile",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "émile",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "lower_c_overrides",
+      "buffer": "x\nhello world\nHello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\cHello<CR>",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "x\nhello world\nHello",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\cHello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "lower_c_without_ic",
+      "buffer": "x\nHELLO world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello\\c<CR>",
+      "expect": {
+        "buffer": "x\nHELLO world\nhello",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello\\c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "upper_c_overrides",
+      "buffer": "x\nHELLO world\nhello",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\Chello<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "x\nHELLO world\nhello",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\Chello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_ic",
+      "buffer": "Foo bar\nfoo\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_exact",
+      "buffer": "Foo bar\nfoo\nFoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFoo",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_ignores_scs",
+      "buffer": "Foo bar\nfoo\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_ic",
+      "buffer": "Foo bar\nFOO\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "#",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "Foo bar\nFOO\nfoo",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_ignores_scs",
+      "buffer": "Foo bar\nFOO\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "#N",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo bar\nFOO\nfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gstar_ignores_scs",
+      "buffer": "Foo bar\nFOOBAR\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo bar\nFOOBAR\nfoo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_after_star",
+      "buffer": "Foo bar\nfoo\nFOO\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*nn",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFOO\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_cr_after_star",
+      "buffer": "Foo bar\nfoo\nFOO\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFOO\nx",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<Foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_after_star_typed",
+      "buffer": "Foo bar\nfoo\nFOO\nFoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*/Foo<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo bar\nfoo\nFOO\nFoo",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_operator_search",
+      "buffer": "abc world WORLD",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/WORLD<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "world WORLD",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "/": {
+            "text": "WORLD",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "scs_operator_n",
+      "buffer": "abc Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dn",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo foo FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ic_visual_search",
+      "buffer": "abc world WORLD",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v/WORLD<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "abc world WORLD",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "WORLD",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "scs_visual_search_exact",
+      "buffer": "abc world WORLD",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v/WORLD<CR>",
+      "set": "ignorecase smartcase",
+      "expect": {
+        "buffer": "abc world WORLD",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "WORLD",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "ic_search_offset",
+      "buffer": "x\nHELLO world",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/hello/e<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "x\nHELLO world",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

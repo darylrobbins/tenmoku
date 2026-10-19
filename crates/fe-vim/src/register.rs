@@ -90,6 +90,13 @@ pub struct Registers {
     search_forward: bool,
     /// The last search's offset, which `n` and `N` keep.
     search_offset: SearchOffset,
+    /// Whether the last search's pattern is `*`'s or `#`'s, which
+    /// 'smartcase' doesn't apply to, nor to `n`, `N` and `/<CR>` repeating
+    /// it, as in nvim.
+    search_word: bool,
+    /// 'ignorecase' and 'smartcase', global as nvim's are.
+    ignore_case: bool,
+    smart_case: bool,
     /// The last `:s`, which `:&` repeats; shared like the last search.
     pub(crate) substitute: LastSubstitute,
     /// `clipboard=unnamedplus`: registers named by no command are `+`.
@@ -127,6 +134,28 @@ impl Registers {
     /// Whether `clipboard=unnamedplus` is on ([`Registers::set_clipboard_unnamed`]).
     pub fn clipboard_unnamed(&self) -> bool {
         self.clipboard_unnamed
+    }
+
+    /// Sets 'ignorecase' and 'smartcase' (`:help 'ignorecase'`): a search
+    /// with `/ ? n N` ignores case when `ignore_case` is on, unless
+    /// `smart_case` is on too and its pattern has an uppercase letter
+    /// ([`crate::search::has_uppercase`]); `* #` (and `n N` after them) take
+    /// `ignore_case` alone. `\c` and `\C` in a pattern override both.
+    pub fn set_search_case(&mut self, ignore_case: bool, smart_case: bool) {
+        self.ignore_case = ignore_case;
+        self.smart_case = smart_case;
+    }
+
+    /// 'ignorecase' and 'smartcase' ([`Registers::set_search_case`]).
+    pub fn search_case(&self) -> (bool, bool) {
+        (self.ignore_case, self.smart_case)
+    }
+
+    /// Whether a search for `pattern` ignores case, by 'ignorecase' and,
+    /// unless it's a `word`'s (`*`, `#`), 'smartcase'. `\c` and `\C` in
+    /// the pattern still override it.
+    pub(crate) fn ignores_case(&self, pattern: &str, word: bool) -> bool {
+        self.ignore_case && (word || !self.smart_case || !crate::search::has_uppercase(pattern))
     }
 
     /// Whether `name` is a register a command may write: `" 0-9 - a-z A-Z _
@@ -269,10 +298,23 @@ impl Registers {
     }
 
     /// Makes `pattern` the last search, as `/` (`forward`) or `?` does. Its
-    /// offset stays, as `:s` and `:g` leave it.
+    /// offset stays, as `:s` and `:g` leave it. 'smartcase' applies to it
+    /// until [`Registers::set_search_word`] says otherwise.
     pub(crate) fn set_search(&mut self, pattern: &str, forward: bool) {
         self.search = Some(Register::new(pattern, false));
         self.search_forward = forward;
+        self.search_word = false;
+    }
+
+    /// Whether the last search's pattern is `*`'s or `#`'s, which
+    /// 'smartcase' doesn't apply to.
+    pub(crate) fn last_search_word(&self) -> bool {
+        self.search_word
+    }
+
+    /// Marks the last search's pattern as `*`'s or `#`'s (`word`), or not.
+    pub(crate) fn set_search_word(&mut self, word: bool) {
+        self.search_word = word;
     }
 
     /// Makes `offset` the last search's, as `/` and `?` do (`*`, `#` and an

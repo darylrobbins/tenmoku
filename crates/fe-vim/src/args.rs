@@ -230,6 +230,18 @@ pub struct Search {
     #[serde(skip)]
     #[schemars(skip)]
     pub again: bool,
+    /// Whether the pattern is `*`'s or `#`'s (or `n`, `N` or `/<CR>`
+    /// repeating one), which 'smartcase' doesn't apply to. Set as `again`
+    /// is, and by the `/<CR>` that repeats one; never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub word: bool,
+    /// Whether it ignores case, by 'ignorecase' and 'smartcase' as they are
+    /// when it runs (`\c` and `\C` still override it): `vim.move` and
+    /// `vim.operate` work it out as they run; it's never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub ignore_case: bool,
 }
 
 /// Where a search lands from its match (`:help search-offset`): `lines` is
