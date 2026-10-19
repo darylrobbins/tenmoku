@@ -10,7 +10,7 @@ use crate::{
     CancelArgs, CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs,
     PutArgs, RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState,
     VisualArgs, cmdline, edit, feature, history, insert, jump, line_motions, macros, marks, motion,
-    operator, repeat, replace, substitute, visual,
+    operator, remap, repeat, replace, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it,
@@ -72,8 +72,8 @@ impl CommandTarget for VimCommands {
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
 /// `vim.reselect` and `vim.select`, and for the command line (searches and
 /// ex commands) `vim.command_line`, `vim.command_line_submit` and
-/// `vim.command_line_cancel`. Feature modules add their commands after these
-/// (see [`crate::feature`]).
+/// `vim.command_line_cancel`, and a map's `<Cmd>` ex line's `vim.ex_line`.
+/// Feature modules add their commands after these (see [`crate::feature`]).
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
@@ -582,6 +582,23 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(cmdline_mode)
         .mutates_buffer(false);
+    registry
+        .register_with_args(
+            remap::EX_LINE,
+            "Vim Run Ex Line",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: remap::ExLineArgs| {
+                follow(target);
+                let ran = remap::ex_line(target, actor, args);
+                marks::settle(target);
+                ran
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Runs `text` as an ex line, as a remap's `<Cmd>…<CR>` does: no command line opens or closes, and none goes into the history, so the mode and a visual selection stay as they are unless the command changes them. A line that fails leaves a message.",
+        )
+        .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
+        .mutates_buffer(true);
     feature::register(&mut registry);
     registry
 }

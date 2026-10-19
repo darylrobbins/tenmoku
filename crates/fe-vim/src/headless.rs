@@ -93,7 +93,9 @@ impl HeadlessVim {
     /// replace it with the next older or newer entry of its history that
     /// starts with what was typed ([`HistoryRecall`]); any other key is
     /// forwarded. In both, `<C-j>` (`<NL>`, a register's line break) is `<CR>`.
-    /// Either way the key goes to [`VimState::record_key`] first.
+    /// Either way the key goes to [`VimState::record_key`] first. A map's
+    /// `<Cmd>…<CR>` goes to [`VimState::feed`] in every mode
+    /// ([`VimState::remap_command_next`]).
     ///
     /// The keys a `@` leaves ([`VimState::take_replay`]) are fed next, as
     /// typed keys, before the rest of `keys`; a replay's `<Esc>` on the
@@ -131,7 +133,12 @@ impl HeadlessVim {
     }
 
     fn feed_mode_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
-        match self.state.mode() {
+        // A map's `<Cmd>…<CR>` goes to the reducer in every mode.
+        let mode = match self.state.remap_command_next() {
+            true => Mode::Normal,
+            false => self.state.mode(),
+        };
+        match mode {
             Mode::Insert => {
                 self.state.record_key(key);
                 return self.type_key(key);

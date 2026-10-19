@@ -796,7 +796,7 @@ pub use key::{KeyError, VimKey, parse_keys};
 pub use marks::Mark;
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
-pub use remap::{Lookup, Remap, RemapIssue, RemapMode, RemapSet};
+pub use remap::{ExLineArgs, Lookup, Remap, RemapCommand, RemapIssue, RemapMode, RemapSet};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};

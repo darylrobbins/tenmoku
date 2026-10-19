@@ -7,9 +7,14 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use fe_buffer::TransactionId;
+use fe_command::{Actor, CommandError, CommandId, Dispatched, Invocation, Source};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::key::{VimKey, parse_keys};
 use crate::macros::REPLAY_CAP;
-use crate::{Mode, Pending, PendingKind, Step, VimState};
+use crate::{Mode, Pending, PendingKind, Step, VimState, VimTarget};
 
 /// nvim's `n`, `x` and `o` map modes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -52,12 +57,41 @@ pub enum Lookup<'a> {
     },
 }
 
+/// A right side's `<Cmd>{text}<CR>` (§6): run where the expansion reaches
+/// it, without the command line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Cmd {
+    /// An ex line: `vim.ex_line`.
+    Ex(String),
+    /// `fe:{command id}`: a fastedit command, for the host to run
+    /// ([`VimState::take_remap_command`]).
+    Fe(CommandId),
+}
+
+/// The fastedit command a map's `<Cmd>fe:{command id}<CR>` ran, for the
+/// host to dispatch as a keymap binding's: from [`Source::Keyboard`], in
+/// the editor's context. [`VimState::take_remap_command`] returns it once.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemapCommand(pub Invocation);
+
+/// `vim.ex_line`'s args: the ex line a map's `<Cmd>{text}<CR>` runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExLineArgs {
+    pub text: String,
+}
+
+/// The ID of the command a map's `<Cmd>` ex line commits.
+pub(crate) const EX_LINE: &str = "vim.ex_line";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
     mode: RemapMode,
     text: String,
     from: Vec<VimKey>,
     to: Vec<VimKey>,
+    /// The right side's `<Cmd>`s, each with how many of `to`'s keys come
+    /// before it.
+    cmds: Vec<(usize, Arc<Cmd>)>,
     recursive: bool,
 }
 
@@ -74,7 +108,7 @@ impl RemapSet {
         let mut issues = Vec::new();
         for (index, remap) in remaps.iter().enumerate() {
             match load(remap, leader) {
-                Ok((from, to)) => {
+                Ok((from, (to, cmds))) => {
                     for &mode in &remap.modes {
                         set.entries.retain(|e| !(e.mode == mode && e.from == from));
                         set.entries.push(Entry {
@@ -82,6 +116,7 @@ impl RemapSet {
                             text: remap.from.clone(),
                             from: from.clone(),
                             to: to.clone(),
+                            cmds: cmds.clone(),
                             recursive: remap.recursive,
                         });
                     }
@@ -96,6 +131,8 @@ impl RemapSet {
         self.entries.is_empty()
     }
 
+    /// What `keys` mean in `mode`. A right side's `to` is its keys alone,
+    /// without its `<Cmd>`s.
     pub fn lookup(&self, mode: RemapMode, keys: &[VimKey]) -> Lookup<'_> {
         if keys.is_empty() {
             return Lookup::None;
@@ -154,18 +191,56 @@ fn hides(mode: RemapMode, from: &[VimKey]) -> bool {
     }
 }
 
-fn load(remap: &Remap, leader: &str) -> Result<(Vec<VimKey>, Vec<VimKey>), String> {
+/// A right side: its keys, and its `<Cmd>`s by how many keys come first.
+type RightSide = (Vec<VimKey>, Vec<(usize, Arc<Cmd>)>);
+
+fn load(remap: &Remap, leader: &str) -> Result<(Vec<VimKey>, RightSide), String> {
     let leader_keys = parse_keys(leader).map_err(|e| e.to_string())?;
     let from = side(&remap.from, &leader_keys, true)?;
     if from.is_empty() {
         return Err("empty left side".to_string());
     }
     let to = if remap.to.eq_ignore_ascii_case("<nop>") {
-        Vec::new()
+        (Vec::new(), Vec::new())
     } else {
-        side(&remap.to, &leader_keys, false)?
+        right_side(&remap.to, &leader_keys)?
     };
     Ok((from, to))
+}
+
+/// A right side's keys and its `<Cmd>{text}<CR>` pieces. The text is read
+/// as keys too (`<lt>`, `<Bar>`, `<leader>`), which must all be characters;
+/// it ends at the first `<CR>`.
+fn right_side(text: &str, leader: &[VimKey]) -> Result<RightSide, String> {
+    let mut parts = split_tag(text, "<cmd>").into_iter();
+    let mut keys = side(parts.next().unwrap_or_default(), leader, false)?;
+    let mut cmds = Vec::new();
+    for part in parts {
+        let read = side(part, leader, false)?;
+        let Some(end) = read.iter().position(|&key| key == VimKey::Enter) else {
+            return Err("<Cmd> without a <CR> to end it".to_string());
+        };
+        let line = read[..end]
+            .iter()
+            .map(|&key| match key {
+                VimKey::Char(ch) => Ok(ch),
+                _ => Err("<Cmd> holds a key that isn't text before its <CR>".to_string()),
+            })
+            .collect::<Result<String, String>>()?;
+        cmds.push((keys.len(), Arc::new(cmd(line)?)));
+        keys.extend_from_slice(&read[end + 1..]);
+    }
+    Ok((keys, cmds))
+}
+
+/// A `<Cmd>`'s text: `fe:{command id}`, or an ex line.
+fn cmd(line: String) -> Result<Cmd, String> {
+    match line.strip_prefix("fe:") {
+        Some(id) => CommandId::parse(id.trim())
+            .map(Cmd::Fe)
+            .map_err(|error| format!("<Cmd>{line}<CR>: {error}")),
+        None => Ok(Cmd::Ex(line)),
+    }
 }
 
 /// One side's keys, with each `<leader>` replaced by the leader's keys
@@ -181,7 +256,6 @@ fn side(text: &str, leader: &[VimKey], is_from: bool) -> Result<Vec<VimKey>, Str
             match name.to_ascii_lowercase().as_str() {
                 "nop" if is_from => return Err("<Nop> can't be a left side".to_string()),
                 "cmd" if is_from => return Err("<Cmd> in a left side is not supported".to_string()),
-                "cmd" => return Err("<Cmd> is not supported yet".to_string()),
                 other if unsupported(other) => return Err(format!("<{name}> is not supported")),
                 _ => {}
             }
@@ -220,13 +294,17 @@ fn names(text: &str) -> Vec<&str> {
 
 /// The text between each `<leader>` (any case).
 fn split_leader(text: &str) -> Vec<&str> {
-    const TAG: &str = "<leader>";
+    split_tag(text, "<leader>")
+}
+
+/// The text between each `tag`, lowercase, in any case.
+fn split_tag<'a>(text: &'a str, tag: &str) -> Vec<&'a str> {
     let lower = text.to_ascii_lowercase();
     let mut pieces = Vec::new();
     let mut at = 0;
-    while let Some(found) = lower[at..].find(TAG) {
+    while let Some(found) = lower[at..].find(tag) {
         pieces.push(&text[at..at + found]);
-        at += found + TAG.len();
+        at += found + tag.len();
     }
     pieces.push(&text[at..]);
     pieces
@@ -253,19 +331,37 @@ impl Origin {
 }
 
 /// What the engine knows of a key it handed the host to feed back.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Tag {
     /// `None` until the macros count it: a typed key or a `@`'s.
     pub(crate) origin: Option<Origin>,
     /// It may be matched against the maps.
     pub(crate) remap: bool,
+    /// The key stands for a map's `<Cmd>…<CR>`: [`CMD_KEY`], read as this.
+    pub(crate) cmd: Option<Arc<Cmd>>,
+}
+
+impl Tag {
+    fn new(origin: Origin, remap: bool) -> Tag {
+        Tag {
+            origin: Some(origin),
+            remap,
+            cmd: None,
+        }
+    }
 }
 
 /// A key the host feeds without a tag (typed), or a `@`'s.
 pub(crate) const TYPED: Tag = Tag {
     origin: None,
     remap: true,
+    cmd: None,
 };
+
+/// The key the host is handed for a map's `<Cmd>…<CR>`, which its tag
+/// says it is: one that no mode types or runs, if a host reads it other
+/// than through [`VimState::feed`] ([`VimState::remap_command_next`]).
+pub(crate) const CMD_KEY: VimKey = VimKey::Ctrl('@');
 
 /// The engine: the set, the keys held for a longer match, and the keys it
 /// resolved for the host to feed ([`VimState::take_replay`]).
@@ -295,6 +391,8 @@ pub(crate) struct RemapState {
 pub(crate) enum Staged {
     /// Read this key as typed: the one fed, or the first of those held.
     Key(VimKey, Origin),
+    /// The key fed stands for this `<Cmd>`: run it ([`run_cmd`]).
+    Cmd(Arc<Cmd>),
     /// The key was taken: return this.
     Done(Step),
 }
@@ -330,6 +428,11 @@ impl RemapState {
         if origin != Origin::Expansion {
             self.depth = 0;
         }
+    }
+
+    /// Whether the next key the host feeds stands for a map's `<Cmd>`.
+    pub(crate) fn cmd_next(&self) -> bool {
+        self.taken.front().is_some_and(|tag| tag.cmd.is_some())
     }
 
     /// Hands out `replay`, a `@`'s keys, and then the keys resolved, which
@@ -394,22 +497,15 @@ impl RemapState {
         self.set = set;
         self.mode = None;
         for (key, origin) in self.held.drain(..) {
-            let tag = Tag {
-                origin: Some(origin),
-                remap: false,
-            };
-            self.queued.push((key, tag));
+            self.queued.push((key, Tag::new(origin, false)));
         }
     }
 
     fn queue(&mut self, keys: impl IntoIterator<Item = (VimKey, Origin)>, remap: bool) {
-        self.queued.extend(keys.into_iter().map(|(key, origin)| {
-            let tag = Tag {
-                origin: Some(origin),
-                remap,
-            };
-            (key, tag)
-        }));
+        self.queued.extend(
+            keys.into_iter()
+                .map(|(key, origin)| (key, Tag::new(origin, remap))),
+        );
     }
 }
 
@@ -433,31 +529,40 @@ fn map_mode(state: &VimState, key: VimKey) -> Option<RemapMode> {
 }
 
 /// The remap stage of [`VimState::feed`] for `key`, which came from
-/// `origin` and may be matched if `remap` (§4 rule 3).
-pub(crate) fn stage(state: &mut VimState, key: VimKey, origin: Origin, remap: bool) -> Staged {
+/// `origin` and may be matched if `remap` (§4 rule 3), or stands for
+/// `cmd`, which is never matched.
+pub(crate) fn stage(
+    state: &mut VimState,
+    key: VimKey,
+    origin: Origin,
+    remap: bool,
+    cmd: Option<Arc<Cmd>>,
+) -> Staged {
     state.remap.read(origin);
+    let tag = |cmd| Tag {
+        origin: Some(origin),
+        remap,
+        cmd,
+    };
     if !state.remap.queued.is_empty() {
         // Keys a timeout or a new set resolved wait for the host: this
         // one goes after them.
-        let tag = Tag {
-            origin: Some(origin),
-            remap,
-        };
-        state.remap.queued.push((key, tag));
+        state.remap.queued.push((key, tag(cmd)));
         return Staged::Done(Step::Wait(state.pending.clone()));
     }
     let mode = match remap.then(|| map_mode(state, key)).flatten() {
         Some(mode) if state.remap.mode.is_none_or(|held| held == mode) => mode,
-        _ if state.remap.held.is_empty() => return Staged::Key(key, origin),
+        _ if state.remap.held.is_empty() => {
+            return match cmd {
+                Some(cmd) => Staged::Cmd(cmd),
+                None => Staged::Key(key, origin),
+            };
+        }
         // It breaks the match, and goes on after what it resolves to.
         _ => {
             let staged = resolve(state, true);
             if !state.failed {
-                let tag = Tag {
-                    origin: Some(origin),
-                    remap,
-                };
-                state.remap.queued.push((key, tag));
+                state.remap.queued.push((key, tag(cmd)));
             }
             return staged;
         }
@@ -532,8 +637,9 @@ fn resolve(state: &mut VimState, inline: bool) -> Staged {
 
 /// Runs the map of `from`'s keys in `mode`: they're recorded, as typed,
 /// and its right side is queued, matched again if it's recursive (but for
-/// a first key that starts the left side). A map after [`MAX_DEPTH`] in a
-/// row fails with E223 instead, dropping the queued keys.
+/// a first key that starts the left side), each `<Cmd>` as a [`CMD_KEY`]
+/// among its keys. A map after [`MAX_DEPTH`] in a row fails with E223
+/// instead, dropping the queued keys.
 fn run(state: &mut VimState, mode: RemapMode, from: &[(VimKey, Origin)]) -> Step {
     if state.remap.depth >= MAX_DEPTH {
         state.remap.queued.clear();
@@ -553,18 +659,77 @@ fn run(state: &mut VimState, mode: RemapMode, from: &[(VimKey, Origin)]) -> Step
     }
     let set = Arc::clone(&state.remap.set);
     let keys: Vec<VimKey> = from.iter().map(|&(key, _)| key).collect();
-    let (Lookup::Exact { to, recursive } | Lookup::ExactAndPrefix { to, recursive }) =
-        set.lookup(mode, &keys)
+    let Some(entry) = set
+        .entries
+        .iter()
+        .rfind(|e| e.mode == mode && e.from == keys)
     else {
         unreachable!("only a complete map runs")
     };
-    let exempt = recursive && to.starts_with(&keys);
-    for (i, &key) in to.iter().enumerate() {
-        let tag = Tag {
-            origin: Some(Origin::Expansion),
-            remap: recursive && !(exempt && i == 0),
-        };
-        state.remap.queued.push((key, tag));
+    let (to, recursive) = (&entry.to, entry.recursive);
+    // A `<Cmd>` among the left side's keys means the right side doesn't
+    // start with them.
+    let cmd_first = entry
+        .cmds
+        .first()
+        .is_some_and(|&(before, _)| before < keys.len());
+    let exempt = recursive && to.starts_with(&keys) && !cmd_first;
+    let mut cmds = entry.cmds.iter().peekable();
+    for i in 0..=to.len() {
+        while let Some((_, cmd)) = cmds.next_if(|&&(before, _)| before == i) {
+            let tag = Tag {
+                cmd: Some(Arc::clone(cmd)),
+                ..Tag::new(Origin::Expansion, false)
+            };
+            state.remap.queued.push((CMD_KEY, tag));
+        }
+        if let Some(&key) = to.get(i) {
+            let remap = recursive && !(exempt && i == 0);
+            state
+                .remap
+                .queued
+                .push((key, Tag::new(Origin::Expansion, remap)));
+        }
     }
     Step::Wait(state.pending.clone())
+}
+
+/// Runs a map's `<Cmd>`, in the mode the keys before it left, dropping
+/// what was pending (a count, a register, an operator, a jump's labels), as
+/// a command does, and ending a `:s` confirmation that waits: an ex line
+/// commits `vim.ex_line`, and a fastedit command is left for the host
+/// ([`VimState::take_remap_command`]).
+pub(crate) fn run_cmd(state: &mut VimState, cmd: &Cmd) -> Step {
+    state.pending = Pending::new();
+    state.confirm = None;
+    match cmd {
+        Cmd::Ex(text) => {
+            let args = ExLineArgs { text: text.clone() };
+            let invocation = Invocation::of(EX_LINE)
+                .expect("vim command IDs are valid")
+                .args(serde_json::to_value(args).expect("vim args serialize"))
+                .source(Source::Keyboard);
+            Step::Commit(invocation)
+        }
+        Cmd::Fe(id) => {
+            let invocation = Invocation::new(id.clone()).source(Source::Keyboard);
+            state.remap_commands.push_back(RemapCommand(invocation));
+            Step::Wait(Pending::new())
+        }
+    }
+}
+
+/// `vim.ex_line`: runs `text` as an ex line, with no command line opened,
+/// closed or put in the history: the mode and a visual selection stay,
+/// unless the command changes them. A pattern it sets goes into the search
+/// history, as a typed line's does.
+pub(crate) fn ex_line(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: ExLineArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    target.registers.enter_ex();
+    let ran = crate::ex::run(target, actor, &args.text);
+    target.registers.leave_ex();
+    ran
 }

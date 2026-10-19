@@ -20,7 +20,11 @@
 //! end resolves, as a timeout would. The whole is one undo step, `.` and
 //! the registers as the keys leave them (an undo or redo among the keys
 //! undoes what the line did so far, and what follows is the step);
-//! `:normal` itself never fails. Its keys aren't typed: a recording doesn't
+//! `:normal` itself never fails, but for a map's `<Cmd>fe:{command id}<CR>`
+//! among its keys: there it stops, the command not run and nothing after it
+//! (the rest of the line's keys, the lines after it) either, with
+//! [`FE_REFUSED`] as its error, as fastedit commands run only from the
+//! host's replay; a `:normal` it runs in stops the same way. Its keys aren't typed: a recording doesn't
 //! get them and a replay under way goes on after them, but a recording or
 //! `@` they start stays. Typed text goes in as the `:normal`'s actor.
 //!
@@ -42,6 +46,9 @@ use crate::{
     Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, Step, SubmitArgs,
     VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
 };
+
+/// What a `:normal` that reached a map's `<Cmd>fe:…<CR>` says.
+pub(crate) const FE_REFUSED: &str = "fe: commands don't run inside :normal";
 
 thread_local! {
     /// Vim's registry, which `:normal`'s keys run through, built once.
@@ -85,6 +92,10 @@ pub(super) fn run(
 ) -> Result<Handled, ExError> {
     let _depth = Depth::enter()?;
     let outer = target.state.remap_save();
+    // Fastedit commands left before it, which the host hasn't taken, wait
+    // for it after: only the `:normal`'s own stop it.
+    let outer_commands = std::mem::take(&mut target.state.remap_commands);
+    target.state.normal_refused = false;
     let unmapped = target.state.remap_off(!remap);
     // The keys aren't typed: what a recording or a replay under way counts
     // goes on once they've run.
@@ -93,6 +104,7 @@ pub(super) fn run(
     let mut runner = Runner {
         actor: actor.clone(),
         line: String::new(),
+        refused: false,
     };
     match rows {
         None => runner.run(target, keys),
@@ -101,6 +113,9 @@ pub(super) fn run(
             for row in rows {
                 to_row_start(target, row, row == first);
                 runner.run(target, keys);
+                if runner.refused {
+                    break;
+                }
             }
             if matches!(target.state.mode(), Mode::Visual(_)) {
                 runner.key(target, VimKey::Esc).ok();
@@ -112,7 +127,13 @@ pub(super) fn run(
     target.state.macros.release(held);
     target.state.remap_off(unmapped);
     target.state.remap_restore(outer);
+    target.state.remap_commands = outer_commands;
     target.state.failed = false;
+    // For a `:normal` this one ran in, which stops at the key that ran it.
+    target.state.normal_refused = runner.refused;
+    if runner.refused {
+        target.state.fail(FE_REFUSED);
+    }
     Ok(Ok(
         Dispatched::new(Effect::Changed).with_transactions(transactions)
     ))
@@ -123,6 +144,9 @@ struct Runner {
     actor: Actor,
     /// The command line's text, in `cmdline` mode.
     line: String,
+    /// A key left a fastedit command, or ran a `:normal` that stopped at one
+    /// ([`FE_REFUSED`]): this one stops.
+    refused: bool,
 }
 
 impl Runner {
@@ -133,6 +157,14 @@ impl Runner {
             let before = history::pairs(target.model);
             let fed = self.key(target, key);
             Group::note(target, before);
+            // A command this one's keys left, or a `:normal` they ran
+            // that stopped at one.
+            if target.state.has_remap_command() || target.state.normal_refused {
+                // Dropped with the rest: not run, nor left for the host.
+                self.refused = true;
+                target.state.stop_replay();
+                break;
+            }
             if fed.is_err() || target.state.failed() {
                 target.state.stop_replay();
                 break;
@@ -167,11 +199,16 @@ impl Runner {
         Group::note(target, before);
     }
 
-    /// One key, in the mode it's read in.
+    /// One key, in the mode it's read in; a map's `<Cmd>…<CR>` by the
+    /// reducer in every mode ([`crate::VimState::remap_command_next`]).
     fn key(&mut self, target: &mut VimTarget<'_>, key: VimKey) -> Result<(), ()> {
         target.state.sync_visual(target.model);
         let state = &mut target.state;
-        match state.mode() {
+        let mode = match state.remap_command_next() {
+            true => Mode::Normal,
+            false => state.mode(),
+        };
+        match mode {
             Mode::Insert | Mode::Replace | Mode::CmdLine(_) => state.record_key(key),
             _ => {
                 return match state.feed(key) {

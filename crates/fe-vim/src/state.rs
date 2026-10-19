@@ -11,7 +11,7 @@ use fe_editor::{
 
 use crate::ex::HostCommand;
 use crate::macros::REPLAY_CAP;
-use crate::remap::{Origin, RemapSet, RemapState, Staged, TYPED};
+use crate::remap::{Origin, RemapCommand, RemapSet, RemapState, Staged, TYPED};
 use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
@@ -143,6 +143,12 @@ pub struct VimState {
     /// The last key read, through [`VimState::feed`] or
     /// [`VimState::record_key`], was a map's.
     pub(crate) expanded: bool,
+    /// The fastedit commands maps' `<Cmd>fe:…<CR>` ran, for the host, in
+    /// order.
+    pub(crate) remap_commands: std::collections::VecDeque<RemapCommand>,
+    /// The last `:normal` to end stopped at a map's `<Cmd>fe:…<CR>`
+    /// ([`crate::ex::normal`]): one it ran in stops too.
+    pub(crate) normal_refused: bool,
     /// The row `U` undoes the latest changes on.
     pub(crate) line_undo: crate::feature::line_undo::LineUndo,
 }
@@ -373,12 +379,18 @@ impl VimState {
     /// it starts a longer map this returns [`Step::Wait`] with the pending
     /// input as it was ([`VimState::remap_waiting`]), and a map that runs
     /// leaves its keys for the host to feed, as a `@` does
-    /// ([`VimState::take_replay`]).
+    /// ([`VimState::take_replay`]). A map's `<Cmd>…<CR>` among them is a key
+    /// of its own, which the host feeds here whatever the mode
+    /// ([`VimState::remap_command_next`]): an ex line commits `vim.ex_line`,
+    /// and `fe:{command id}` waits, leaving the command for the host
+    /// ([`VimState::take_remap_command`]). It answers no `:s` confirmation
+    /// and picks no jump label: running, it ends them.
     pub fn feed(&mut self, key: VimKey) -> Step {
         let taken = self.remap.next_tag();
-        let tag = taken.unwrap_or(TYPED);
+        let tag = taken.clone().unwrap_or(TYPED);
         self.expanded = tag.origin == Some(Origin::Expansion);
-        if let Some(step) = self.confirm_key(key, tag.origin) {
+        let cmd = tag.cmd.is_some();
+        if !cmd && let Some(step) = self.confirm_key(key, tag.origin) {
             return step;
         }
         self.message = None;
@@ -393,15 +405,16 @@ impl VimState {
             ));
             return Step::Cancel;
         }
-        if let Some(step) = self.unrecorded(origin, |state| jump::label_key(state, key)) {
+        if !cmd && let Some(step) = self.unrecorded(origin, |state| jump::label_key(state, key)) {
             if let Step::Wait(pending) = &step {
                 self.pending = pending.clone();
             }
             return step;
         }
         let remap = tag.remap && !self.remap.off;
-        match crate::remap::stage(self, key, origin, remap) {
+        match crate::remap::stage(self, key, origin, remap, tag.cmd) {
             Staged::Key(key, origin) => self.unrecorded(origin, |state| state.reduce(key, origin)),
+            Staged::Cmd(cmd) => crate::remap::run_cmd(self, &cmd),
             Staged::Done(step) => step,
         }
     }
@@ -544,6 +557,29 @@ impl VimState {
         crate::remap::timeout(self);
     }
 
+    /// Whether the next key the host feeds of those it took
+    /// ([`VimState::take_replay`]) stands for a map's `<Cmd>…<CR>`: the host
+    /// feeds it through [`VimState::feed`] in any mode, insert and
+    /// `cmdline` too, where it would type or forward any other key.
+    pub fn remap_command_next(&self) -> bool {
+        self.remap.cmd_next()
+    }
+
+    /// The next fastedit command a map's `<Cmd>fe:{command id}<CR>` ran
+    /// ([`VimState::feed`]), each once, then `None`: the host dispatches it
+    /// as a keymap binding, from the keyboard in the editor's context,
+    /// before it feeds the map's next key. Those a `:normal` ran wait until
+    /// the command that ran it is over.
+    pub fn take_remap_command(&mut self) -> Option<RemapCommand> {
+        self.remap_commands.pop_front()
+    }
+
+    /// Whether a map left a fastedit command the host hasn't taken
+    /// ([`VimState::take_remap_command`]).
+    pub fn has_remap_command(&self) -> bool {
+        !self.remap_commands.is_empty()
+    }
+
     /// Whether the last key read, through [`VimState::feed`] or
     /// [`VimState::record_key`], was a map's right side: not typed, nor a
     /// `@`'s. A host tells by it a command line a map ran, whose file or
@@ -606,10 +642,12 @@ impl VimState {
     }
 
     /// The host dropped the rest of a replay or a map's keys: it's over,
-    /// and the keys read from now are typed.
+    /// and the keys read from now are typed. The fastedit commands maps left
+    /// ([`VimState::take_remap_command`]) are dropped too.
     pub fn stop_replay(&mut self) {
         self.macros.stop();
         self.remap.stop();
+        self.remap_commands.clear();
     }
 
     /// Whether the last key read failed, as nvim's errors and beeps do,

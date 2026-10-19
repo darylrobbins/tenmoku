@@ -176,11 +176,15 @@ impl EditorView {
     pub fn scroll_to_buffer_line(&mut self, line: f32, cx: &mut Context<Self>) {
         let Some(layout) = &self.layout else { return };
         let display = self.model.display();
-        let line = line.clamp(0., self.model.text().row_count().saturating_sub(1) as f32);
-        let buffer_row = line.floor() as u32;
+        // Within the last row too, so a soft-wrapped last row scrolls
+        // through its screen rows: the frame clamps what can't be reached.
+        let rows_in_text = self.model.text().row_count().max(1);
+        let line = line.clamp(0., rows_in_text as f32);
+        let buffer_row = (line.floor() as u32).min(rows_in_text - 1);
         let start = display.row_for_buffer_row(buffer_row);
         let rows = wrapped_rows(display, buffer_row, start);
-        let display_top = start as f32 + (line - buffer_row as f32) * rows as f32;
+        let within = (line - buffer_row as f32).min(1.);
+        let display_top = start as f32 + within * rows as f32;
         let top = layout.frame.block_map.to_screen_top(display_top);
         self.set_scroll_top(top, cx);
     }
@@ -224,8 +228,9 @@ impl EditorView {
 
     /// Whether read-only refuses `invocation`, one of vim's: one that edits,
     /// or opens an insert or replace session. Of those that may edit or not,
-    /// an operator refuses all but a yank, and a command line's submission
-    /// one that would edit ([`EditorView::line_edits`]).
+    /// an operator refuses all but a yank, and a command line's submission,
+    /// or a map's `<Cmd>` ex line (`vim.ex_line`), one that would edit
+    /// ([`EditorView::line_edits`]).
     pub(crate) fn refuses_vim(&self, invocation: &Invocation) -> bool {
         if !self.read_only {
             return false;
@@ -236,6 +241,8 @@ impl EditorView {
             vim::NORMAL_MODE | vim::REPLACE_NORMAL_MODE => false,
             "vim.operate" => !yanks(args),
             "vim.jump" => args.get("operator").is_some_and(|op| !op.is_null()) && !yanks(args),
+            // A map's `<Cmd>…<CR>` line, by what it runs, as a typed one.
+            "vim.ex_line" => ex_edits(args.get("text").and_then(Value::as_str).unwrap_or_default()),
             "vim.command_line_submit" => match self.vim.as_ref().map(VimState::mode) {
                 Some(Mode::CmdLine(CommandLineKind::Ex)) => {
                     ex_edits(args.get("text").and_then(Value::as_str).unwrap_or_default())
@@ -349,3 +356,6 @@ fn wrapped_rows(display: &fe_display::DisplayMap, buffer_row: u32, start: u32) -
     }
     rows
 }
+
+#[cfg(test)]
+mod scroll_line_tests;

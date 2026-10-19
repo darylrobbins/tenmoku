@@ -156,7 +156,7 @@ fn remap_set_reports_bad_entries() {
         ("a", "<SID>b"),
         ("<SNR>", "x"),
         ("<LocalLeader>a", "x"),
-        ("a", "<Cmd>w<CR>"),
+        ("a", "<Cmd>w"),
     ];
     let mut remaps = vec![map(&[N], "good", "ok")];
     remaps.extend(bad.iter().map(|(f, t)| map(&[N], f, t)));
