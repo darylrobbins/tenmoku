@@ -142,6 +142,9 @@ pub struct VimState {
     /// or `<C-r>` returns it to a state a linewise delete emptied, which a
     /// version check can't see.
     pub(crate) emptied: Option<Version>,
+    /// The last yank's ranges (one per row of a block) with its serial, for
+    /// a host to flash.
+    pub(crate) yank: Option<(u64, Vec<std::ops::Range<usize>>)>,
     /// Set while a `:s` with `c` waits for an answer: the keys
     /// [`VimState::feed`] reads answer it.
     pub(crate) confirm: Option<Box<crate::substitute::Confirm>>,
@@ -162,6 +165,20 @@ pub struct VimState {
 }
 
 impl VimState {
+    /// The last yank's serial (new for every yank) and the ranges it took,
+    /// in the text as yanked.
+    pub fn last_yank(&self) -> Option<(u64, &[std::ops::Range<usize>])> {
+        self.yank
+            .as_ref()
+            .map(|(serial, ranges)| (*serial, ranges.as_slice()))
+    }
+
+    /// Records a yank of `ranges` under the next serial.
+    pub(crate) fn record_yank(&mut self, ranges: Vec<std::ops::Range<usize>>) {
+        let serial = self.yank.as_ref().map_or(1, |(serial, _)| serial + 1);
+        self.yank = Some((serial, ranges));
+    }
+
     /// Whether the buffer is as a linewise delete left it, emptied.
     pub(crate) fn is_emptied(&self, model: &EditorModel) -> bool {
         self.emptied == Some(model.snapshot().version())

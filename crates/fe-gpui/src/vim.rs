@@ -105,11 +105,12 @@
 //! frame before matching ([`live_stack`]), not the context the last frame
 //! drew, which can trail the keys typed since.
 
-use std::{collections::VecDeque, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc, time::Duration};
 
-use fe_buffer::TransactionId;
+use fe_buffer::{TransactionId, Version};
 use fe_command::{CommandId, CommandMeta, Value};
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
+use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog as _};
 use fe_vim::{
@@ -127,6 +128,19 @@ use crate::{
     keymap::CHORD_TIMEOUT,
     view::synced_syntax,
 };
+
+/// How long a yank's text stays highlighted: nvim's `vim.hl.on_yank` default.
+const YANK_FLASH: Duration = Duration::from_millis(150);
+
+/// A yank's text highlighted for [`YANK_FLASH`], or until the buffer next
+/// changes. Dropped, its timer ends; [`EditorView::end_yank_flash`] also
+/// takes its provider off the model.
+pub(crate) struct YankFlash {
+    provider: ProviderId,
+    /// The buffer's version the ranges are of.
+    version: Version,
+    _timer: Task<()>,
+}
 
 /// The command a vim-layer binding names to hand its keystroke to the
 /// reducer. It's never dispatched from a key.
@@ -846,6 +860,66 @@ impl EditorView {
         if let Some(state) = &mut self.vim {
             state.sync_visual(&mut self.model);
         }
+    }
+
+    /// Ends the yank flash if the buffer changed since it began.
+    pub(crate) fn sync_yank_flash(&mut self) {
+        let version = self.model.snapshot().version();
+        if self
+            .yank_flash
+            .as_ref()
+            .is_some_and(|flash| flash.version != version)
+        {
+            self.end_yank_flash();
+        }
+    }
+
+    fn end_yank_flash(&mut self) {
+        if let Some(flash) = self.yank_flash.take() {
+            self.model.remove_decoration_provider(flash.provider);
+        }
+    }
+
+    /// If vim yanked since the last flash, highlights the yanked ranges,
+    /// replacing any flash under way, and ends it after [`YANK_FLASH`].
+    fn flash_new_yank(&mut self, cx: &mut Context<Self>) {
+        let Some((serial, ranges)) = self.vim.as_ref().and_then(VimState::last_yank) else {
+            return;
+        };
+        if serial == self.yank_seen {
+            return;
+        }
+        self.yank_seen = serial;
+        let ranges = ranges.to_vec();
+        self.end_yank_flash();
+        if ranges.is_empty() {
+            return;
+        }
+        let snapshot = self.model.snapshot().clone();
+        let version = snapshot.version();
+        let items = ranges
+            .into_iter()
+            .map(|range| Decoration::new(range, DecorationKind::Highlight, Tint::Accent))
+            .collect();
+        let mut set = DecorationSet::new();
+        set.apply(&snapshot, version, items);
+        let provider = self
+            .model
+            .add_decoration_provider(Rc::new(RefCell::new(set)));
+        let timer = cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(YANK_FLASH).await;
+            view.update(cx, |view, cx| {
+                view.end_yank_flash();
+                cx.notify();
+            })
+            .ok();
+        });
+        self.yank_flash = Some(YankFlash {
+            provider,
+            version,
+            _timer: timer,
+        });
+        cx.notify();
     }
 
     /// A frame was laid out: tells vim the view's height, so a counted
@@ -1745,6 +1819,8 @@ impl EditorView {
             return false;
         };
         let mut ok = result.is_ok();
+        self.sync_yank_flash();
+        self.flash_new_yank(cx);
         let mutates = registry
             .get(&invocation.command)
             .is_some_and(|meta| meta.mutates_buffer);

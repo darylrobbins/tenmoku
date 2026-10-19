@@ -391,6 +391,12 @@ pub(super) fn operate_block(
     // past the row's end where a row is short of its column (and on the last
     // row after `$`), as nvim's, whose visual cursor stops there.
     if args.operator == Operator::Yank {
+        state.record_yank(
+            cuts.iter()
+                .map(|cut| cut.range.clone())
+                .filter(|range| !range.is_empty())
+                .collect(),
+        );
         let row_end = |row| text.row_start(row) + text.row_len(row) as usize;
         let corner = |row, column| match column < width_from(&text.row_to_string(row), 0, tab) {
             true => at_column(&text, row, column, tab),

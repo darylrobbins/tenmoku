@@ -92,6 +92,9 @@ pub struct EditorView {
     pub(crate) frame_timings: FrameTimings,
     /// Vim's state, while vim is on ([`crate::vim`]).
     pub(crate) vim: Option<fe_vim::VimState>,
+    /// The serial of the last yank flashed, and the flash under way.
+    pub(crate) yank_seen: u64,
+    pub(crate) yank_flash: Option<crate::vim::YankFlash>,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
     /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
@@ -286,6 +289,8 @@ impl EditorView {
             before_taking_missing: None,
             frame_timings: FrameTimings::default(),
             vim: None,
+            yank_seen: 0,
+            yank_flash: None,
             vim_generation: 0,
             vim_replaying: false,
             vim_unrecorded_logged: false,

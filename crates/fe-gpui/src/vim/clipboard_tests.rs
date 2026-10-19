@@ -5,6 +5,9 @@ use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
+#[path = "yank_flash_tests.rs"]
+mod yank_flash_tests;
+
 use super::*;
 use crate::{EditorTheme, EditorView, init};
 

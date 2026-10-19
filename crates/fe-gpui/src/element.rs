@@ -652,6 +652,7 @@ impl Element for EditorElement {
             view.model.fit_wrap_width(wrap.max(em));
             view.model.sync_display();
             view.sync_visual();
+            view.sync_yank_flash();
             view.sync_inlay_hints();
             // Caught up with edits made through another view of the buffer:
             // count them.

@@ -1085,6 +1085,18 @@ fn operate_unless_failing(
 
     match args.operator {
         Operator::Yank => {
+            state.record_yank(
+                ops.iter()
+                    .flatten()
+                    // A last row has no newline of its own to take: the
+                    // flash covers its text, not the one before it.
+                    .map(|op| match op.linewise {
+                        true => text.row_start(*op.rows.start())..op.range.end,
+                        false => op.range.clone(),
+                    })
+                    .filter(|range| !range.is_empty())
+                    .collect(),
+            );
             // A yank edits nothing, so it sets `'[` and `']` itself.
             if let Some(op) = primary {
                 let yanked = match op.linewise {
