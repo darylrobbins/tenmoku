@@ -1316,15 +1316,24 @@ impl Actor {
             );
             return;
         };
-        let Some(version) = params.version else {
-            match self.spec.unversioned_diagnostics {
-                UnversionedDiagnostics::Drop => {
-                    log::debug!(
-                        "{}: dropped unversioned diagnostics for {}",
-                        self.spec.name,
-                        params.uri,
-                    );
-                    return;
+        let version = match params.version {
+            Some(version) => version,
+            None => {
+                let latest = match self.spec.unversioned_diagnostics {
+                    UnversionedDiagnostics::Drop => false,
+                    UnversionedDiagnostics::Latest => true,
+                    UnversionedDiagnostics::LatestUnlessPulled => !self.link.puller.pulls(),
+                };
+                match document.newest_version().filter(|_| latest) {
+                    Some(version) => version,
+                    None => {
+                        log::debug!(
+                            "{}: dropped unversioned diagnostics for {}",
+                            self.spec.name,
+                            params.uri,
+                        );
+                        return;
+                    }
                 }
             }
         };

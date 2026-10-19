@@ -18,6 +18,7 @@ use crate::{Diagnostic, DiagnosticTag, IncarnationId, LspEvent, SessionId, Sever
 
 mod related;
 mod unopened_files;
+mod unversioned;
 mod uri_scheme;
 mod uri_spelling;
 
@@ -206,23 +207,12 @@ fn dropped_publications() {
     let uri = s.open_synced(&mut buffer, "a.txt");
     let v0 = buffer.text().to_string();
 
-    // Unversioned, before the first edit.
-    publish(&s, &uri, None, vec![over(&v0, "two", false, "unversioned")]);
-    marker(
-        &s,
-        &uri,
-        0,
-        &v0,
-        "an unversioned publication before any edit",
-    );
-
     s.edit(&mut buffer, &uri, (0..0, "zero "), 1);
     s.edit(&mut buffer, &uri, (0..0, "minus "), 2);
     let v2 = buffer.text().to_string();
 
-    // Unversioned, after it.
-    publish(&s, &uri, None, vec![over(&v2, "two", false, "unversioned")]);
-    marker(&s, &uri, 2, &v2, "an unversioned publication after an edit");
+    // A current publication, so version 2 is the newest decoded.
+    marker(&s, &uri, 2, &v2, "a current publication");
 
     // Out of order: version 1 after version 2 was published.
     publish(&s, &uri, Some(1), vec![over(&v2, "two", false, "stale")]);
@@ -246,36 +236,10 @@ fn dropped_publications() {
     }
     marker(&s, &uri, 3, &v2, "the old incarnation's versions");
 
-    // An unversioned publication computed on the old incarnation's text,
-    // sent after the new didOpen and before any didChange.
-    s.manager.close(buffer.id());
-    s.fake
-        .wait_for_document(&uri, "didClose", |r| r.is_some_and(|r| !r.open));
-    let old_text = buffer.text().to_string();
-    buffer
-        .edit([(0..0, "new ")], fe_buffer::Origin::User)
-        .unwrap();
-    let new_text = buffer.text().to_string();
-    s.open_synced(&mut buffer, "a.txt");
-    assert_eq!(s.fake.document(&uri).unwrap().text, new_text);
-    publish(
-        &s,
-        &uri,
-        None,
-        vec![over(&old_text, "two", false, "old text")],
-    );
-    marker(
-        &s,
-        &uri,
-        4,
-        &new_text,
-        "an unversioned publication across a reopen",
-    );
-
     // A URI no document has open.
     let none = Url::from_file_path(format!("{}/none.txt", super::ROOT)).unwrap();
     publish(&s, &none, Some(0), vec![over(&v0, "one", false, "nobody")]);
-    marker(&s, &uri, 4, &new_text, "a publication for a URI not open");
+    marker(&s, &uri, 3, &v2, "a publication for a URI not open");
 }
 
 #[test]

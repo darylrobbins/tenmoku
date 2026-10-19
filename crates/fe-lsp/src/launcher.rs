@@ -80,8 +80,15 @@ pub enum ReadinessMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UnversionedDiagnostics {
     /// Dropped: nothing fixes the text they were computed on.
-    #[default]
     Drop,
+    /// Decoded against the newest version in the incarnation's ring, the
+    /// text the server was last sent, as VS Code shows them.
+    Latest,
+    /// [`Latest`](Self::Latest) while the session doesn't pull diagnostics,
+    /// [`Drop`](Self::Drop) while it does: a pulling server's pushes stay
+    /// dropped (typescript-language-server's, beside its tsserver pulls).
+    #[default]
+    LatestUnlessPulled,
 }
 
 /// How a server's diagnostics are pulled (§4.1, §7).
