@@ -107,6 +107,25 @@ pub struct GlobalSettings<S> {
     diagnostics: Vec<Diagnostic>,
 }
 
+/// The text each settings file's last good table of type `S` came from,
+/// the user's first: what the store accepted, not what the files hold now.
+/// Apart from [`GlobalSettings`] so that text that changes alone (a
+/// comment moving the lines) notifies no one watching the settings.
+struct AcceptedSources<S> {
+    sources: Vec<String>,
+    settings: std::marker::PhantomData<fn() -> S>,
+}
+
+impl<S: 'static> Global for AcceptedSources<S> {}
+
+/// The text each settings file of type `S` was accepted from, the user's
+/// first: empty with no settings service.
+pub fn accepted_sources<S: 'static>(cx: &App) -> Vec<String> {
+    (cx.try_global::<AcceptedSources<S>>())
+        .map(|accepted| accepted.sources.clone())
+        .unwrap_or_default()
+}
+
 impl<S: 'static> Global for GlobalSettings<S> {}
 
 impl<S> GlobalSettings<S> {
@@ -455,8 +474,26 @@ fn publish(sources: &[Box<dyn ConfigSource>], cx: &mut App) {
     }
 }
 
+fn accepted<S: SettingsType>(store: &SettingsStore<S>) -> Vec<String> {
+    (store.accepted_sources().into_iter())
+        .map(str::to_owned)
+        .collect()
+}
+
 struct SettingsSource<S> {
     store: SettingsStore<S>,
+}
+
+impl<S: SettingsType> SettingsSource<S> {
+    fn keep_sources(&self, cx: &mut App) {
+        let sources = accepted(&self.store);
+        if accepted_sources::<S>(cx) != sources {
+            cx.set_global(AcceptedSources::<S> {
+                sources,
+                settings: std::marker::PhantomData,
+            });
+        }
+    }
 }
 
 impl<S: SettingsType> ConfigSource for SettingsSource<S> {
@@ -479,10 +516,17 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
             settings,
             diagnostics: self.store.diagnostics().to_vec(),
         });
+        cx.set_global(AcceptedSources::<S> {
+            sources: accepted(&self.store),
+            settings: std::marker::PhantomData,
+        });
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         let Some(event) = self.store.reload(changed) else {
+            // The text may have changed with nothing else: a comment moves
+            // the lines other sources place their problems at.
+            self.keep_sources(cx);
             return;
         };
         let refresh = event.settings != event.previous;
@@ -494,6 +538,7 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
             previous: event.previous,
             diagnostics: event.diagnostics,
         });
+        self.keep_sources(cx);
         if refresh {
             cx.refresh_windows();
         }

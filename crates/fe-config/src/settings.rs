@@ -577,6 +577,12 @@ impl SettingsStore {
         self.0.diagnostics()
     }
 
+    /// The text each layer's last good table came from, the user's first:
+    /// what the store accepted, which may differ from the files now.
+    pub fn accepted_sources(&self) -> Vec<&str> {
+        self.0.accepted_sources()
+    }
+
     /// The settings files, for a [`crate::ConfigWatcher`].
     pub fn paths(&self) -> Vec<PathBuf> {
         self.0.paths()

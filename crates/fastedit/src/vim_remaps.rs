@@ -5,17 +5,11 @@
 //! Their problems go to the config problems list, each at its line: see
 //! `docs/decisions/vim-remaps.md` §1(c) and §7.
 //!
-//! Known limit: the settings store keeps each layer's last good table but
-//! not its text, so this source reads the settings files itself to place
-//! the table's and the leader's problems, taking a file's text only when
-//! the store's diagnostics show no error for it. If a project settings file
-//! changes between `SettingsStore::load` and [`VimRemaps::new`] (or the
-//! first watcher batch rejects it), what this source took can differ from
-//! what the store holds: the project's remap and leader warnings can then
-//! fall back to the user's file, or sit at the wrong line. Which maps apply,
-//! and the last good maps on a bad reload, are unaffected. Placing them
-//! exactly needs the store to keep each layer's accepted text or spans and
-//! hand that snapshot here, which T225 does.
+//! The text a settings file's problems are placed in is the text the
+//! settings store accepted ([`SettingsStore::accepted_sources`], and on a
+//! reload `accepted_sources`), never a fresh read of the
+//! files, so a file that changes after the store took it cannot misplace
+//! them.
 
 use std::{
     fs::OpenOptions,
@@ -87,7 +81,9 @@ impl VimRemaps {
         let vim = &settings.settings().vim;
         let mut remaps = Self {
             vimrc,
-            accepted: vec![String::new(); settings_files.len()],
+            accepted: (settings.accepted_sources().into_iter())
+                .map(str::to_owned)
+                .collect(),
             settings_files,
             vimrc_remaps: Vec::new(),
             vimrc_diagnostics: Vec::new(),
@@ -95,23 +91,9 @@ impl VimRemaps {
             leader: vim.leader.clone(),
             table_diagnostics: Vec::new(),
         };
-        remaps.accept(None, settings.diagnostics());
         remaps.read_vimrc();
         remaps.build(None);
         remaps
-    }
-
-    /// Keeps the text of each settings file in `changed` (every one if
-    /// `None`) that the store took, as `diagnostics` (the store's) say:
-    /// those with no error.
-    fn accept(&mut self, changed: Option<&[PathBuf]>, diagnostics: &[Diagnostic]) {
-        for (path, accepted) in self.settings_files.iter().zip(&mut self.accepted) {
-            let named = changed.is_none_or(|changed| changed.contains(path));
-            let rejected = (diagnostics.iter()).any(|d| d.is_error() && d.file == *path);
-            if named && !rejected {
-                *accepted = read(path).unwrap_or_default();
-            }
-        }
     }
 
     /// Reads the vimrc, a missing one being empty. One that can't be read
@@ -135,13 +117,13 @@ impl VimRemaps {
     }
 
     /// Takes `vim.remap` and `vim.leader` from the settings in use,
-    /// returning whether they changed, and the text of each file in
-    /// `changed` the store took.
-    fn take_settings(&mut self, changed: &[PathBuf], cx: &App) -> bool {
+    /// returning whether they changed, and the text the store accepted of
+    /// each file.
+    fn take_settings(&mut self, cx: &App) -> bool {
         let Some(global) = cx.try_global::<GlobalSettings<Settings>>() else {
             return false;
         };
-        self.accept(Some(changed), global.diagnostics());
+        self.accepted = kiln::platform::config::accepted_sources::<Settings>(cx);
         let vim = &global.settings().vim;
         if vim.remap == self.table && vim.leader == self.leader {
             return false;
@@ -281,15 +263,15 @@ impl ConfigSource for VimRemaps {
 
     fn install(&mut self, cx: &mut App) {
         self.read_vimrc();
-        // The store hasn't read its files since this source was made.
-        self.take_settings(&[], cx);
+        // The store's text is what it accepted, whatever the files hold.
+        self.take_settings(cx);
         self.build(Some(cx));
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         let named = self.paths().iter().any(|path| changed.contains(path));
         // The settings' source reloads first, so these are the new ones.
-        let table = self.take_settings(changed, cx);
+        let table = self.take_settings(cx);
         if !(named || table) {
             return;
         }
@@ -817,5 +799,101 @@ mod tests {
         fs::write(files.vimrc(), "nnoremap H 0\n").unwrap();
         edit(&files.settings(), "", &[files.settings()], &sender, cx);
         assert_eq!(normal("H", cx), keys("0"));
+    }
+
+    const ACCEPTED_USER: &str = "[[vim.remap]]\nmode = \"n\"\nfrom = \"a\"\nto = \"x\"\n";
+    const ACCEPTED_PROJECT: &str = "# project\n\n[vim]\nleader = \"<Bogus>\"\n\n\
+                           [[vim.remap]]\nmode = \"n\"\nfrom = \"b\"\nto = \"<Bogus>\"\n\n\
+                           [[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>w\"\nto = \"y\"\n";
+
+    struct AcceptedFiles {
+        dir: TempDir,
+    }
+
+    impl AcceptedFiles {
+        fn new() -> Self {
+            let files = Self {
+                dir: tempfile::tempdir().unwrap(),
+            };
+            fs::write(files.user(), ACCEPTED_USER).unwrap();
+            fs::write(files.project(), ACCEPTED_PROJECT).unwrap();
+            files
+        }
+
+        fn user(&self) -> PathBuf {
+            self.dir.path().join("settings.toml")
+        }
+
+        fn project(&self) -> PathBuf {
+            self.dir.path().join("project.toml")
+        }
+
+        fn store(&self) -> fe_config::SettingsStore {
+            fe_config::SettingsStore::load(Some(self.user()), Some(self.project()))
+        }
+    }
+
+    fn accepted_places(diagnostics: &[Diagnostic]) -> Vec<(PathBuf, &str, usize)> {
+        (diagnostics.iter())
+            .map(|d| {
+                assert_eq!(d.severity, Severity::Warning);
+                (d.file.clone(), d.key.as_deref().unwrap_or(""), d.line)
+            })
+            .collect()
+    }
+
+    fn accepted_expected(files: &AcceptedFiles) -> Vec<(PathBuf, &'static str, usize)> {
+        [
+            ("vim.leader", 4),
+            ("vim.remap[0].to", 9),
+            ("vim.remap[1].from", 13),
+        ]
+        .into_iter()
+        .map(|(key, line)| (files.project(), key, line))
+        .collect()
+    }
+
+    #[test]
+    fn a_project_file_changing_between_load_and_construction_keeps_its_warning_lines() {
+        let files = AcceptedFiles::new();
+        let store = files.store();
+        fs::write(files.project(), "not toml\n").unwrap();
+        let remaps = VimRemaps::new(None, &store);
+        assert_eq!(
+            accepted_places(&remaps.table_diagnostics),
+            accepted_expected(&files)
+        );
+    }
+
+    #[test]
+    fn construction_after_a_rejected_reload_keeps_the_accepted_lines() {
+        let files = AcceptedFiles::new();
+        let mut store = files.store();
+        fs::write(files.project(), "not toml\n").unwrap();
+        assert!(store.reload(&[files.project()]).is_some());
+        let remaps = VimRemaps::new(None, &store);
+        assert_eq!(
+            accepted_places(&remaps.table_diagnostics),
+            accepted_expected(&files)
+        );
+    }
+
+    #[test]
+    fn the_remaps_and_the_leader_keep_their_lines_when_the_file_moves() {
+        let files = AcceptedFiles::new();
+        let store = files.store();
+        fs::write(files.project(), format!("# moved\n\n{ACCEPTED_PROJECT}")).unwrap();
+        let remaps = VimRemaps::new(None, &store);
+        let lines: Vec<_> = (remaps.table_diagnostics.iter())
+            .map(|d| (d.key.clone().unwrap(), d.line))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("vim.leader".to_owned(), 4),
+                ("vim.remap[0].to".to_owned(), 9),
+                ("vim.remap[1].from".to_owned(), 13),
+            ]
+        );
     }
 }

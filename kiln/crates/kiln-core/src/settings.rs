@@ -268,6 +268,9 @@ struct LayerState {
     user: bool,
     /// The table last loaded without errors.
     good: Table,
+    /// The file's text that `good` came from: empty until it has loaded
+    /// cleanly once.
+    good_source: String,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -298,6 +301,7 @@ impl<S: SettingsType> SettingsStore<S> {
                     path: path?,
                     user,
                     good: Table::new(),
+                    good_source: String::new(),
                     diagnostics: Vec::new(),
                 })
             })
@@ -321,6 +325,15 @@ impl<S: SettingsType> SettingsStore<S> {
     /// Every layer's diagnostics, the user file's first.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    /// The text each layer's last good table came from, the user's first:
+    /// what the store accepted, which may differ from the file now. Empty
+    /// for a layer that has not loaded cleanly yet.
+    pub fn accepted_sources(&self) -> Vec<&str> {
+        (self.layers.iter())
+            .map(|layer| layer.good_source.as_str())
+            .collect()
     }
 
     /// The settings files, for a [`crate::ConfigWatcher`]: the user's, then
@@ -370,21 +383,22 @@ fn read<S: SettingsType>(layer: &mut LayerState, options: &SettingsOptions) {
     } else {
         &options.project_filters
     };
-    let (table, diagnostics) = validate::<S>(&layer.path, filters, options);
-    if let Some(table) = table {
+    let (accepted, diagnostics) = validate::<S>(&layer.path, filters, options);
+    if let Some((table, source)) = accepted {
         layer.good = table;
+        layer.good_source = source;
     }
     layer.diagnostics = diagnostics;
 }
 
-/// Loads the settings file at `path`: its table if it has no errors, and
+/// Loads the settings file at `path`: its table and text if it has no errors, and
 /// its diagnostics. `filters` narrow it first, so a bad value in a key
 /// they drop anyway rejects nothing.
 fn validate<S: SettingsType>(
     path: &Path,
     filters: &[ProjectFilter],
     options: &SettingsOptions,
-) -> (Option<Table>, Vec<Diagnostic>) {
+) -> (Option<(Table, String)>, Vec<Diagnostic>) {
     let section = options.section.as_ref();
     let mut layer = load_layer(path);
     // What loading found is the file's: a syntax error, or no reading it.
@@ -446,7 +460,7 @@ fn validate<S: SettingsType>(
         Some(section) => section.table_of(&layer.table),
         None => layer.table,
     };
-    ((!rejected).then_some(table), diagnostics)
+    ((!rejected).then_some((table, layer.source)), diagnostics)
 }
 
 /// Deserializes `S` from the TOML `source`, or from its table `section`,
