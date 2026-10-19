@@ -110,6 +110,8 @@ pub(crate) struct FrameLayout {
     pub(crate) proposal_texts: proposal::Texts,
     /// The ghost text's block rows in view ([`ghost_text`]).
     ghost: ghost_text::Placed,
+    /// The hints the frame laid out, shaped small.
+    inlay_hints: Vec<crate::inlay_hints::Shown>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -155,6 +157,31 @@ impl FrameLayout {
         let index = row.line.layout.index_for_x(px(line_x))?;
         let offset = row.shown().start + row.expanded.to_buffer(index, fe_buffer::Bias::Left);
         Some(grapheme_start(text, offset, row.start))
+    }
+
+    /// The buffer row and display column (in chars) nearest a window
+    /// position, read from the shaped row, so a position inside an expanded
+    /// tab keeps its column. `None` where the row's text isn't all shaped
+    /// from its start, as with a hint or inlay, a long row's slice or a soft
+    /// wrapped continuation, or off the frame's rows.
+    pub(crate) fn display_column_at(
+        &self,
+        text: &Text,
+        position: Point<Pixels>,
+    ) -> Option<(u32, usize)> {
+        let at = self.to_frame(position);
+        let frame = &self.frame;
+        let row = host_blocks::row_at(frame, at.y)?;
+        let whole = row.slice.is_none()
+            && row.hints.is_empty()
+            && row.expanded.inlay_range().is_none()
+            && row.start == text.row_start(row.buffer_row);
+        let line_x = at.x - frame.line_origin(row).x;
+        if !whole || line_x < 0. {
+            return None;
+        }
+        let index = row.line.x_to_boundary(line_x);
+        Some((row.buffer_row, row.expanded.char_column(index)))
     }
 
     /// The offset a buffer row ends at, if a window position is just past
@@ -275,6 +302,7 @@ fn shift_frame(frame: &mut Frame<Line>, dx: f32) {
     let rects = (frame.selections.iter_mut())
         .chain(&mut frame.cursors)
         .chain(&mut frame.inlay)
+        .chain(frame.hints.iter_mut().map(|(_, rect)| rect))
         .chain(markers);
     for rect in rects {
         rect.x -= dx;
@@ -307,7 +335,13 @@ impl Line {
         })
     }
 
-    fn paint(&self, origin: Point<Pixels>, line_height: Pixels, window: &mut Window, cx: &mut App) {
+    pub(crate) fn paint(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.layout
             .paint(
                 origin,
@@ -319,6 +353,13 @@ impl Line {
                 cx,
             )
             .ok();
+    }
+}
+
+impl Line {
+    /// The byte boundary of the shaped text closest to `x`.
+    fn x_to_boundary(&self, x: f32) -> usize {
+        MeasuredLine::index_for_x(self, x)
     }
 }
 
@@ -359,7 +400,7 @@ fn decoration_runs(runs: &[StyleRun<Hsla>]) -> Vec<DecorationRun> {
 }
 
 /// Measures text with the window's shaper, in the editor font.
-struct Shaper {
+pub(crate) struct Shaper {
     text_system: Arc<WindowTextSystem>,
     font: Font,
     font_size: Pixels,
@@ -600,6 +641,7 @@ impl Element for EditorElement {
             view.model.fit_wrap_width(wrap.max(em));
             view.model.sync_display();
             view.sync_visual();
+            view.sync_inlay_hints();
             // Caught up with edits made through another view of the buffer:
             // count them.
             view.sync_find(cx);
@@ -702,8 +744,10 @@ impl Element for EditorElement {
         let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
         let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
         let gutter = view.gutter;
+        let hints = crate::inlay_hints::inlays(view);
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
-            true => layout::layout_frame_with_annotation_column(
+            // fe-display lays hints out only beside no annotation column.
+            true if annotation_width > 0. => layout::layout_frame_with_annotation_column(
                 input,
                 annotation_width,
                 &blocks,
@@ -714,10 +758,22 @@ impl Element for EditorElement {
                 |range| styled_highlights(syntax, theme, range),
                 |rows| fold_headers(syntax, rows),
             ),
-            false => layout::layout_frame_without_gutter(
+            true => layout::layout_frame_with_hints(
                 input,
                 &blocks,
                 inlay.as_ref(),
+                &hints,
+                &mut shaper,
+                &mut long_rows,
+                &mut glyph_widths,
+                |range| styled_highlights(syntax, theme, range),
+                |rows| fold_headers(syntax, rows),
+            ),
+            false => layout::layout_frame_without_gutter_with_hints(
+                input,
+                &blocks,
+                inlay.as_ref(),
+                &hints,
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
@@ -858,6 +914,7 @@ impl Element for EditorElement {
             &mut glyph_widths,
             host_x,
         );
+        let inlay_hints = crate::inlay_hints::layout(&frame, view, &mut small);
         let annotations = annotation_column::layout(&frame, view, &mut shaper, em);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
@@ -916,6 +973,7 @@ impl Element for EditorElement {
             proposals,
             proposal_texts: mem::take(proposal_texts),
             ghost,
+            inlay_hints,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -1127,6 +1185,8 @@ impl Element for EditorElement {
         let mut painted_proposals = Vec::new();
         #[cfg(test)]
         let mut painted_ghost = None;
+        #[cfg(test)]
+        let mut painted_inlay_hints = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -1223,6 +1283,15 @@ impl Element for EditorElement {
                         cx,
                         #[cfg(test)]
                         &mut painted_ghost,
+                    );
+                    crate::inlay_hints::paint(
+                        &layout.inlay_hints,
+                        &layout,
+                        theme.gutter_foreground,
+                        window,
+                        cx,
+                        #[cfg(test)]
+                        &mut painted_inlay_hints,
                     );
                     #[cfg(test)]
                     decorations::note("text");
@@ -1396,6 +1465,7 @@ impl Element for EditorElement {
                 view.painted_annotations = painted_annotations;
                 view.painted_proposals = painted_proposals;
                 view.painted_ghost = painted_ghost;
+                view.painted_inlay_hints = painted_inlay_hints;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;

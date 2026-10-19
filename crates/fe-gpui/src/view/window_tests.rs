@@ -106,3 +106,6 @@ fn hidden_text_doesnt_move_the_window(cx: &mut TestAppContext) {
         "{rows:?}"
     );
 }
+
+#[path = "inlay_hints_tests.rs"]
+mod inlay_hints;

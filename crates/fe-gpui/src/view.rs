@@ -153,6 +153,8 @@ pub struct EditorView {
     pub(crate) lens_rows: Vec<crate::lens::PaintedRow>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
+    /// The host's inlay hints ([`crate::inlay_hints`]).
+    pub(crate) inlay_hints: crate::inlay_hints::Hints,
     /// The suggestion losing focus dropped, with the buffer's version then,
     /// for a palette pick that accepts it if the buffer hasn't changed since
     /// ([`ghost_text`]).
@@ -225,6 +227,9 @@ pub struct EditorView {
     /// rows, and the inline part's box in window coordinates.
     #[cfg(test)]
     pub(crate) painted_ghost: Option<(String, Vec<String>, Bounds<Pixels>)>,
+    /// The inlay hints the last frame painted: their text and boxes.
+    #[cfg(test)]
+    pub(crate) painted_inlay_hints: Vec<(String, Bounds<Pixels>)>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -301,6 +306,7 @@ impl EditorView {
             lens_providers: Vec::new(),
             lens_rows: Vec::new(),
             ghost_text: None,
+            inlay_hints: Default::default(),
             blurred_ghost_text: None,
             ghost_text_subscriptions: Vec::new(),
             reported_top: 0.,
@@ -337,6 +343,8 @@ impl EditorView {
             painted_proposals: Vec::new(),
             #[cfg(test)]
             painted_ghost: None,
+            #[cfg(test)]
+            painted_inlay_hints: Vec::new(),
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -1118,9 +1126,16 @@ impl EditorView {
     fn box_point_at(&mut self, position: Point<Pixels>) -> (u32, usize) {
         let offset = self.offset_for_position(position);
         let text = self.model.text();
-        let row = text.offset_to_point(offset).row;
-        let expanded = self.model.expanded_row(row);
-        let column = expanded.char_column(expanded.to_display(offset - text.row_start(row)));
+        // From the shaped row where it can, so a position inside an expanded
+        // tab keeps its column; else through the offset it snaps to.
+        let direct =
+            (self.layout.as_ref()).and_then(|layout| layout.display_column_at(text, position));
+        let (row, column) = direct.unwrap_or_else(|| {
+            let row = text.offset_to_point(offset).row;
+            let expanded = self.model.expanded_row(row);
+            let column = expanded.char_column(expanded.to_display(offset - text.row_start(row)));
+            (row, column)
+        });
         let past =
             (self.layout.as_mut()).map_or(0, |layout| layout.columns_past_row_end(text, position));
         (row, column + past)
