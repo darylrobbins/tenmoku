@@ -190,8 +190,16 @@ fn blocked_why(
 /// `md-image-<n>-loading`, and if it can't be read `md-image-<n>-failed`.
 pub(crate) fn render(dest: &str, alt: &str, cx: &mut RenderCx) -> AnyElement {
     let n = cx.next_image();
-    let resolved = resolve(dest, cx);
     let style = cx.style;
+    if cx.compact {
+        // Never loaded: the alt text stands in.
+        return div()
+            .debug_selector(|| format!("md-image-blocked-{n}-alt"))
+            .text_color(style.muted)
+            .child(alt.to_owned())
+            .into_any_element();
+    }
+    let resolved = resolve(dest, cx);
     let local = match blocked_why(&resolved, cx.window, cx.app) {
         Ok(local) => local,
         Err(why) => {
@@ -251,6 +259,9 @@ pub(crate) fn render(dest: &str, alt: &str, cx: &mut RenderCx) -> AnyElement {
 /// How wide [`render`] draws `dest` before the column narrows it: the
 /// file's width once loaded, else its alt text's or its placeholder's.
 pub(crate) fn width(dest: &str, alt: &str, cx: &mut RenderCx) -> f32 {
+    if cx.compact {
+        return cx.text_width(alt);
+    }
     let resolved = resolve(dest, cx);
     match blocked_why(&resolved, cx.window, cx.app) {
         Ok(local) => match cx.window.use_asset::<LocalImageLoader>(&local, cx.app) {

@@ -10,7 +10,7 @@ use gpui::{
     Styled as _, StyledText, TextRun, UnderlineStyle, Window, div, px,
 };
 
-use crate::{MarkdownStyle, MarkdownViewEvent, image, view::RenderCx};
+use crate::{MarkdownStyle, image, view::RenderCx};
 
 /// A block's inline content, laid out.
 pub(crate) enum Inlines {
@@ -300,27 +300,24 @@ impl Runs {
         };
         let layout = text.layout().clone();
         let text = {
-            let view = cx.view.clone();
+            let sink = cx.sink.clone();
             InteractiveText::new(("md-text", id), text)
-                .on_click(ranges, move |ix, _window: &mut Window, cx| {
-                    let dest = links[ix].to.dest.clone();
-                    view.update(cx, |_, cx| cx.emit(MarkdownViewEvent::LinkClicked { dest }))
-                        .ok();
+                .on_click(ranges, {
+                    let sink = sink.clone();
+                    move |ix, window: &mut Window, cx| {
+                        sink.clicked(links[ix].to.dest.clone(), window, cx);
+                    }
                 })
                 .on_hover({
-                    let (view, link_at) = (cx.view.clone(), link_at.clone());
-                    move |index, _event, _window, cx| {
-                        let link = link_at(index);
-                        view.update(cx, |view, cx| view.hover_text(id, link, cx))
-                            .ok();
-                    }
+                    let (sink, link_at) = (sink, link_at.clone());
+                    move |index, _event, _window, cx| sink.hovered(id, link_at(index), cx)
                 })
         };
         // The text reports the char under the pointer only while the
         // pointer is over it and the char changes, so the box around it
         // tells of the pointer leaving, and of it coming back to the char
         // it left from.
-        let view = cx.view.clone();
+        let sink = cx.sink.clone();
         div()
             .id(("md-link-text", id))
             .on_hover(move |hovered, window, cx| {
@@ -329,8 +326,7 @@ impl Runs {
                 } else {
                     None
                 };
-                view.update(cx, |view, cx| view.hover_text(id, link, cx))
-                    .ok();
+                sink.hovered(id, link, cx);
             })
             .child(text)
             .into_any_element()
@@ -368,15 +364,11 @@ impl Piece {
                 let Some(to) = link else {
                     return image;
                 };
-                let (id, view) = (cx.next_text(), cx.view.clone());
+                let (id, sink) = (cx.next_text(), cx.sink.clone());
                 div()
                     .id(("md-image-link", id))
                     .cursor_pointer()
-                    .on_click(move |_, _, cx| {
-                        let dest = to.dest.clone();
-                        view.update(cx, |_, cx| cx.emit(MarkdownViewEvent::LinkClicked { dest }))
-                            .ok();
-                    })
+                    .on_click(move |_, window, cx| sink.clicked(to.dest.clone(), window, cx))
                     .child(image)
                     .into_any_element()
             }

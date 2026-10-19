@@ -10,6 +10,10 @@
 //!   file outside; remote ones are blocked and never fetched. A link
 //!   click is a [`MarkdownViewEvent`]; acting on it is the host's job.
 //!
+//! - [`markdown_element`] lays a document out statelessly in a narrow,
+//!   unpadded column for hover popovers and completion docs: no scroll, no
+//!   focus, images shown as their alt text, link clicks to a callback.
+//!
 //! Test builds give elements `debug_selector`s: `md-block-<ix>` for each
 //! top-level block; `md-image-<n>` and `md-image-blocked-<n>` for the
 //! document's `n`th image, with `md-image-<n>-loading` and
@@ -17,11 +21,14 @@
 //! `md-task-<n>` for the `n`th task checkbox.
 
 mod blocks;
+mod compact;
 mod image;
 mod inlines;
 mod style;
 mod table;
 mod view;
 
+pub use compact::markdown_element;
 pub use style::MarkdownStyle;
+pub use view::LinkHandler;
 pub use view::{MarkdownView, MarkdownViewEvent};

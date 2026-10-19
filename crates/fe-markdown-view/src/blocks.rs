@@ -90,7 +90,11 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 weight: MarkdownStyle::HEADING_WEIGHT,
                 color: style.heading_color(level),
             };
-            let size = style.heading_size(level);
+            let mut size = style.heading_size(level);
+            if cx.compact {
+                // Hovers shouldn't shout.
+                size = size.min(style.text_size * 1.25);
+            }
             let inlines = inlines::layout(content, base, cx);
             div()
                 .flex()

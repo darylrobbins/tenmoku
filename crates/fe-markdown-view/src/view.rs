@@ -54,7 +54,7 @@ struct Region {
 
 /// What the last frame laid out, filled as it is painted.
 #[derive(Default)]
-struct Tracked {
+pub(crate) struct Tracked {
     /// Nested regions in window coordinates, until the top-level blocks
     /// give the origin.
     raw: Vec<(Range<u32>, Bounds<Pixels>)>,
@@ -337,6 +337,39 @@ fn span(region: &Region) -> u32 {
     region.lines.end.saturating_sub(region.lines.start).max(1)
 }
 
+/// Where a rendered link's click and hover go: the view that draws the
+/// document, or a host's callback, which has no hover.
+#[derive(Clone)]
+pub(crate) enum Sink {
+    View(WeakEntity<MarkdownView>),
+    Callback(Option<LinkHandler>),
+}
+
+pub type LinkHandler = Rc<dyn Fn(&str, &mut Window, &mut App)>;
+
+impl Sink {
+    pub(crate) fn clicked(&self, dest: String, window: &mut Window, cx: &mut App) {
+        match self {
+            Sink::View(view) => {
+                view.update(cx, |_, cx| cx.emit(MarkdownViewEvent::LinkClicked { dest }))
+                    .ok();
+            }
+            Sink::Callback(handler) => {
+                if let Some(handler) = handler {
+                    handler(&dest, window, cx);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn hovered(&self, text: usize, link: Option<LinkTo>, cx: &mut App) {
+        if let Sink::View(view) = self {
+            view.update(cx, |view, cx| view.hover_text(text, link, cx))
+                .ok();
+        }
+    }
+}
+
 /// What rendering a block needs: the style, where images resolve, the
 /// view for link events, and counters that give links, texts, images and
 /// task items their places in the document.
@@ -345,21 +378,25 @@ pub(crate) struct RenderCx<'a> {
     pub(crate) doc_path: &'a Path,
     pub(crate) root: Option<&'a Path>,
     pub(crate) images: &'a mut HashMap<String, Resolved>,
-    pub(crate) view: WeakEntity<MarkdownView>,
-    tracked: Rc<RefCell<Tracked>>,
+    /// Where link clicks and hovers go.
+    pub(crate) sink: Sink,
+    /// Whether this is [`crate::markdown_element`]'s layout: headings
+    /// capped, images shown as their alt text.
+    pub(crate) compact: bool,
+    pub(crate) tracked: Rc<RefCell<Tracked>>,
     pub(crate) window: &'a mut Window,
     pub(crate) app: &'a mut App,
     /// Body text's font: the window's default.
     pub(crate) font: Font,
     /// The links under the pointer, by their places among the document's.
-    hovered: Vec<usize>,
+    pub(crate) hovered: Vec<usize>,
     /// How deep in lists the block being rendered is.
     pub(crate) list_depth: usize,
-    links: usize,
-    texts: usize,
-    images_seen: usize,
-    tasks: usize,
-    codes: usize,
+    pub(crate) links: usize,
+    pub(crate) texts: usize,
+    pub(crate) images_seen: usize,
+    pub(crate) tasks: usize,
+    pub(crate) codes: usize,
 }
 
 impl RenderCx<'_> {
@@ -437,7 +474,8 @@ impl Render for MarkdownView {
             doc_path: &self.doc_path,
             root: self.root.as_deref(),
             images: &mut self.images,
-            view: cx.weak_entity(),
+            sink: Sink::View(cx.weak_entity()),
+            compact: false,
             tracked: self.tracked.clone(),
             font: window.text_style().font(),
             window,

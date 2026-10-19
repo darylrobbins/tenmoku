@@ -64,6 +64,16 @@ impl MarkdownStyle {
         }
     }
 
+    /// This style for a hover popover or completion docs, as VS Code sizes
+    /// their text: the editor's font size less one, at line height 1.4.
+    pub fn compact(&self) -> MarkdownStyle {
+        MarkdownStyle {
+            text_size: self.code_font_size - px(1.),
+            line_height: 1.4,
+            ..self.clone()
+        }
+    }
+
     /// A heading's text size, as VS Code's preview sizes them: h1 2em down
     /// to h6 0.85em.
     pub fn heading_size(&self, level: u8) -> Pixels {
