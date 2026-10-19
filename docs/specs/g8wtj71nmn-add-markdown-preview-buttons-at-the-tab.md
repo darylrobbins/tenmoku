@@ -75,13 +75,29 @@ Do not change `markdown.show_preview`, `markdown.show_preview_to_side`, their bi
 
 ## Implementation notes
 
-- `Tab` (pane.rs) holds `preview: Option<Entity<MarkdownPreview>>`. The
+- The preview shown in a tab is held per editor in `markdown_preview`'s
+  `InPlace` global, dropped when the editor is released, so it moves with
+  the tab to another pane (Move Tab, a drag, a move that splits). `Tab`
+  (pane.rs) keeps a copy, filled from it when a pane makes the tab. The
   editor stays the tab's item, so title, path, dirty marker, save, close
   prompts and saved layouts are the editor's; the preview isn't an item and
   isn't serialized. `Pane::render` draws the preview in a div carrying the
   `markdown_preview` key context; `PaneView::shown_item` (focus on pane
-  activation, `focus_target`, a split's copy) is the preview while it shows,
-  and `activated` refocuses it over kiln-shell's focus of the item.
+  activation, `focus_target`, a split's copy) and `Workbench::focus_handle`
+  (focus back from a hidden panel or the terminal) are the preview while it
+  shows, and `activated` refocuses it over kiln-shell's focus of the item.
+  `activated` and the pane's active tab go by the item, not its index: the
+  tabs are brought in step after kiln-shell activates an item.
+- Save works from the preview: the preview's div takes a key that runs
+  `editor.save` in the editor, as the keymap has it now (no binding names
+  `markdown_preview`, so the key reaches it unmatched), and an
+  `editor.save` dispatched to it, as the menu's, and hands either to its
+  editor's `EditorView::save_from_command` (made `pub`), which asks where
+  for an untitled buffer, as from the editor. No other editor command
+  applies there. The default keymap is unchanged (fe-gpui's tests count its
+  bindings). This touches `crates/fe-gpui/src/pane_item.rs` and
+  `crates/fe-workbench/src/workbench.rs`, outside the card's file list, for
+  review findings F1 and F3.
 - `markdown.toggle_preview` has context `editor || markdown_preview`, so the
   palette lists it in the editor and in the in-place preview. `invoked_in`
   now parses its context as a `ContextPredicate` (every other caller passes
@@ -102,3 +118,14 @@ Do not change `markdown.show_preview`, `markdown.show_preview_to_side`, their bi
 - The buttons' debug selectors are `icon-button:markdown-toggle` and
   `icon-button:markdown-side`: `IconButton` names its selector from its id,
   as the split buttons' are `icon-button:split-right` and so on.
+- C1, the files are Lucide's: each bundled file's git blob ID equals the
+  blob GitHub's contents API gives for `icons/<name>.svg` at
+  `500620a2e8123f8d1db191538886dc0c223f69a9` (checked 2026-10-19), so the
+  bytes are identical; `git rev-parse HEAD:kiln/crates/kiln-ui/assets/icons/<name>.svg`
+  shows the committed side offline.
+
+  | File | Git blob (local = upstream) | SHA-256 |
+  |---|---|---|
+  | `eye.svg` | `e5e78706b2be5dd6510cbcf20f6207486c037c34` | `5bf90197dd7629cad64a2e48d1186a71559deb6121207d10e3dc5b19ebaffdcf` |
+  | `code.svg` | `fe2378380d5d57637278b515cd15e9312a053833` | `83235d4a0352d74234f949c9fc23f89c65ff165f1b6d54a90e5f0ea5bfc2c3d7` |
+  | `panel-right-open.svg` | `613e58973fbac788d2b148cbc0fea4e7c0bcd993` | `7cea098473914c767e3a17561626df816a886de878cc943da79ae95bf726c9f0` |

@@ -15,7 +15,7 @@ use std::{
 };
 
 use fe_buffer::{Bias, ResolvedSelection};
-use fe_command::{ContextFrame, Invocation, Source};
+use fe_command::{ContextFrame, ContextStack, Invocation, Source};
 use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
@@ -29,8 +29,9 @@ use fe_ui::{
 };
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity, Window, div,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity,
+    Window, div,
 };
 use kiln::ViewCommands as _;
 pub use kiln_shell::PaneEvent;
@@ -44,7 +45,7 @@ use crate::{
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
     workbench::toast::{self, Toast},
     workbench_commands::markdown_preview::{
-        MARKDOWN_PREVIEW_CONTEXT, MarkdownPreview, TOGGLE_PREVIEW, is_markdown,
+        self, MARKDOWN_PREVIEW_CONTEXT, MarkdownPreview, TOGGLE_PREVIEW, is_markdown,
     },
 };
 
@@ -64,17 +65,20 @@ pub struct Tab {
     /// The editor's Markdown preview, while it's shown in the editor's
     /// place: `markdown.toggle_preview`. The editor stays the tab's item,
     /// so its title, saves, closes and saved layouts are the editor's, and
-    /// the preview isn't kept in a layout.
+    /// the preview isn't kept in a layout. A copy of what
+    /// [`markdown_preview::in_place`] holds for the editor, which keeps it
+    /// as the tab moves to another pane.
     preview: Option<Entity<MarkdownPreview>>,
 }
 
 impl Tab {
-    /// The tab for `item`, its path as it is now.
+    /// The tab for `item`, its path and in-place preview as they are now.
     fn of(item: &dyn ItemHandle, cx: &App) -> Self {
+        let editor = item.downcast_ref::<EditorView>();
         Self {
             path: item.path(cx),
             item: item.boxed_clone(),
-            preview: None,
+            preview: editor.and_then(|editor| markdown_preview::in_place(editor, cx).cloned()),
         }
     }
 
@@ -165,6 +169,22 @@ pub struct Pane {
     drawn_crumbs: Vec<(String, CrumbKind, Option<Icon>)>,
     #[cfg(test)]
     last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
+}
+
+/// Saves the file, in the editor and in its preview shown in its place.
+const SAVE: &str = "editor.save";
+
+/// Whether `keystroke` alone runs [`SAVE`] in the workbench's editor, as
+/// the keymap has it now: no binding names the preview shown in an
+/// editor's place, so its keys go unmatched to its key listener.
+fn saves_in_editor(keystroke: &gpui::Keystroke, cx: &App) -> bool {
+    let in_editor: ContextStack = [crate::KEY_CONTEXT, fe_editor::commands::CONTEXT]
+        .into_iter()
+        .map(ContextFrame::new)
+        .collect();
+    kiln_platform::keys::keystroke(keystroke)
+        .and_then(|keystroke| kiln_platform::keys::lookup(&keystroke, &in_editor, cx))
+        .is_some_and(|run| run.command.as_str() == SAVE)
 }
 
 /// What a Markdown tab shows: see [`Pane::markdown_shown`].
@@ -315,9 +335,19 @@ impl Pane {
         self.state.active()
     }
 
-    /// The active tab, whatever shows in its place.
+    /// The active tab, whatever shows in its place. By its item, which
+    /// kiln-shell has changed before [`PaneView::items_changed`] brings the
+    /// tabs in step.
     fn active_tab(&self) -> Option<&Tab> {
-        self.tabs.get(self.state.active()?)
+        let id = self.state.active_item()?.id();
+        self.tabs.iter().find(|tab| tab.id() == id)
+    }
+
+    /// The Markdown preview shown in the active tab's place, unless a file
+    /// being opened or a read error shows.
+    pub(crate) fn shown_preview(&self) -> Option<&Entity<MarkdownPreview>> {
+        self.active_item()?;
+        self.active_tab()?.preview()
     }
 
     /// Whether the active tab is a Markdown editor's showing its text, or
@@ -348,6 +378,7 @@ impl Pane {
             return;
         };
         tab.preview = preview.clone();
+        markdown_preview::set_in_place(&editor, preview.clone(), cx);
         if self.state.active() == Some(ix) {
             let focus = match &preview {
                 Some(preview) => preview.focus_handle(cx),
@@ -898,6 +929,7 @@ impl Pane {
         };
         // A place in the text shows the text.
         if let Some(preview) = self.tabs[ix].preview.take() {
+            markdown_preview::set_in_place(&editor, None, cx);
             if preview.focus_handle(cx).contains_focused(window, cx) {
                 window.focus(&editor.focus_handle(cx), cx);
             }
@@ -1426,9 +1458,12 @@ impl PaneView for Pane {
     }
 
     /// Focus goes to a Markdown preview shown in the tab's place, not to
-    /// its hidden editor.
+    /// its hidden editor. Read by the item: the tabs may not be in step
+    /// with the items yet, as for an item moved in.
     fn activated(&mut self, ix: usize, window: &mut Window, cx: &mut App) {
-        if let Some(preview) = self.tabs.get(ix).and_then(Tab::preview) {
+        let editor =
+            (self.state.items().get(ix)).and_then(|item| item.downcast_ref::<EditorView>());
+        if let Some(preview) = editor.and_then(|editor| markdown_preview::in_place(editor, cx)) {
             window.focus(&preview.focus_handle(cx), cx);
         }
         if !self.landing {
@@ -1468,9 +1503,29 @@ impl Render for Pane {
             self.message(format!("Loading {}…", file_name(Some(path))))
         } else if let Some((_, error)) = &self.error {
             self.message(error.clone())
-        } else if let Some(preview) = self.active_tab().and_then(Tab::preview) {
+        } else if let Some((tab, preview)) =
+            (self.active_tab()).and_then(|tab| Some((tab, tab.preview()?)))
+        {
+            // Saving saves the file, from the keys that save in the editor
+            // and from the menu; the editor's other commands don't apply.
+            let editor = tab.editor().cloned();
+            let saver = editor.clone();
             div()
                 .key_context(MARKDOWN_PREVIEW_CONTEXT)
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if let Some(editor) = &saver
+                        && saves_in_editor(&event.keystroke, cx)
+                    {
+                        editor.update(cx, |editor, cx| editor.save_from_command(window, cx));
+                        cx.stop_propagation();
+                    }
+                })
+                .on_action(move |run: &RunCommand, window, cx| match &editor {
+                    Some(editor) if run.0.command.as_str() == SAVE => {
+                        editor.update(cx, |editor, cx| editor.save_from_command(window, cx))
+                    }
+                    _ => cx.propagate(),
+                })
                 .size_full()
                 .child(preview.clone())
                 .into_any_element()

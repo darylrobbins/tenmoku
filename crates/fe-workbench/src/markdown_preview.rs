@@ -29,6 +29,7 @@
 //!   closed, nothing syncs.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -40,8 +41,8 @@ use fe_markdown::{Document, LinkTarget};
 use fe_markdown_view::{MarkdownStyle, MarkdownView, MarkdownViewEvent};
 use fe_ui::{ActiveUiTheme, ui_theme};
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement, Render,
-    SharedString, Subscription, Task, WeakEntity, Window,
+    App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global, IntoElement,
+    Render, SharedString, Subscription, Task, WeakEntity, Window,
 };
 use kiln_shell::{PaneItem, PaneView as _};
 
@@ -61,6 +62,44 @@ pub(crate) const MARKDOWN_PREVIEW_CONTEXT: &str = "markdown_preview";
 
 /// Shows a Markdown tab's preview in its editor's place, or its editor.
 pub(crate) const TOGGLE_PREVIEW: &str = "markdown.toggle_preview";
+
+/// The previews shown in their editors' places, by editor: kept as the
+/// editor's tab moves to another pane, and dropped with the editor.
+#[derive(Default)]
+struct InPlace(HashMap<EntityId, (Entity<MarkdownPreview>, Subscription)>);
+
+impl Global for InPlace {}
+
+/// The preview shown in `editor`'s place, if one is.
+pub(crate) fn in_place<'a>(
+    editor: &Entity<EditorView>,
+    cx: &'a App,
+) -> Option<&'a Entity<MarkdownPreview>> {
+    let shown = cx.try_global::<InPlace>()?;
+    shown.0.get(&editor.entity_id()).map(|(preview, _)| preview)
+}
+
+/// Shows `preview` in `editor`'s place, or with `None` the editor.
+pub(crate) fn set_in_place(
+    editor: &Entity<EditorView>,
+    preview: Option<Entity<MarkdownPreview>>,
+    cx: &mut App,
+) {
+    let id = editor.entity_id();
+    let entry = preview.map(|preview| {
+        let released = cx.observe_release(editor, move |_, cx| {
+            if cx.has_global::<InPlace>() {
+                cx.global_mut::<InPlace>().0.remove(&id);
+            }
+        });
+        (preview, released)
+    });
+    let shown = &mut cx.default_global::<InPlace>().0;
+    match entry {
+        Some(entry) => shown.insert(id, entry),
+        None => shown.remove(&id),
+    };
+}
 
 /// A read-only preview of a Markdown editor's text, as a pane item.
 pub(crate) struct MarkdownPreview {

@@ -2580,12 +2580,15 @@ impl Workbench {
 }
 
 impl Focusable for Workbench {
-    /// The active editor's (a diff view's focused side), or else the active
-    /// viewer's, or else the pane's, so the workbench's commands apply.
+    /// The active editor's (a diff view's focused side), or the Markdown
+    /// preview shown in its place, or else the active viewer's, or else the
+    /// pane's, so the workbench's commands apply.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.active_editor(cx) {
-            Some(editor) => editor.focus_handle(cx),
-            None => self.active.read(cx).focus_target(cx),
+        let pane = self.active.read(cx);
+        match (pane.shown_preview(), self.active_editor(cx)) {
+            (Some(preview), _) => preview.focus_handle(cx),
+            (None, Some(editor)) => editor.focus_handle(cx),
+            (None, None) => pane.focus_target(cx),
         }
     }
 }

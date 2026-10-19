@@ -618,3 +618,136 @@ fn the_command_toggles_and_in_place_state_is_not_persisted(cx: &mut TestAppConte
     assert_eq!(strip(&restored_pane, cx)[0], "markdown-toggle");
     assert_eq!(icon(&restored_pane, "markdown-toggle", cx), Some(Icon::Eye));
 }
+
+#[gpui::test]
+fn save_works_from_the_preview_shown_in_place(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = opened(&[("README.md", "# Readme\n")], cx);
+    let pane = pane(&workbench, cx);
+    let editor = active_editor(&workbench, cx);
+    cx.simulate_input("x");
+    draw(cx);
+    click("markdown-toggle", cx);
+    let preview = in_place(&pane, cx).expect("shown");
+    assert!(is_focused(&preview, cx));
+
+    // Cmd-S saves the file, with the preview still shown and focused.
+    cx.simulate_keystrokes("cmd-s");
+    draw(cx);
+    let saved = fs::read_to_string(dir.path().join("README.md")).unwrap();
+    assert_eq!(saved, "x# Readme\n");
+    assert!(!editor.read_with(cx, |editor, _| editor.model().is_dirty()));
+    assert_eq!(in_place(&pane, cx), Some(preview.clone()));
+    assert!(is_focused(&preview, cx));
+
+    // An untitled Markdown buffer asks where, as from its editor.
+    run_in("workbench.new_file", &[], cx);
+    let untitled = active_editor(&workbench, cx);
+    untitled.update(cx, |editor, cx| editor.set_language(Some("markdown"), cx));
+    draw(cx);
+    cx.simulate_input("# New\n");
+    draw(cx);
+    click("markdown-toggle", cx);
+    assert!(in_place(&pane, cx).is_some());
+    cx.simulate_keystrokes("cmd-s");
+    draw(cx);
+    assert!(cx.did_prompt_for_new_path(), "the save panel shows");
+    let path = fs::canonicalize(dir.path()).unwrap().join("new.md");
+    cx.simulate_new_path_selection(|_| Some(path.clone()));
+    draw(cx);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "# New\n");
+    let saved_as = untitled.read_with(cx, |editor, _| editor.model().path().map(Path::to_owned));
+    assert_eq!(saved_as, Some(path));
+}
+
+#[gpui::test]
+fn the_preview_stays_with_its_tab_as_tabs_close_and_move(cx: &mut TestAppContext) {
+    let files = [("a.txt", "a\n"), ("README.md", "# Readme\n")];
+    let (_dir, workbench, cx) = opened(&files, cx);
+    let left = pane(&workbench, cx);
+    click("markdown-toggle", cx);
+    let preview = in_place(&left, cx).expect("shown");
+    let names = |pane: &Entity<Pane>, cx: &mut VisualTestContext| {
+        pane.read_with(cx, |pane, cx| {
+            (pane.tabs().iter())
+                .map(|tab| tab.item().tab_title(cx).to_string())
+                .collect::<Vec<_>>()
+        })
+    };
+    // Shown, focused and drawn with its toggle wherever its tab goes.
+    let shows = |pane: &Entity<Pane>, what: &str, cx: &mut VisualTestContext| {
+        assert_eq!(in_place(pane, cx).as_ref(), Some(&preview), "{what}");
+        assert!(is_focused(&preview, cx), "{what}: focused");
+        assert!(
+            workbench.read_with(cx, |workbench, cx| {
+                workbench.focus_handle(cx) == preview.focus_handle(cx)
+            }),
+            "{what}: the workbench's focus"
+        );
+        assert_eq!(
+            icon(pane, "markdown-toggle", cx),
+            Some(Icon::Code),
+            "{what}"
+        );
+    };
+
+    // Reordered, both ways.
+    cx.update(|window, cx| left.update(cx, |pane, cx| pane.reorder(1, Some(0), window, cx)));
+    draw(cx);
+    assert_eq!(names(&left, cx), ["README.md", "a.txt"]);
+    shows(&left, "moved first", cx);
+    cx.update(|window, cx| left.update(cx, |pane, cx| pane.reorder(0, None, window, cx)));
+    draw(cx);
+    assert_eq!(names(&left, cx), ["a.txt", "README.md"]);
+    shows(&left, "moved last", cx);
+
+    // The tab before it closed.
+    activate(&left, 0, cx);
+    run_in("workbench.close_tab", &[], cx);
+    assert_eq!(names(&left, cx), ["README.md"]);
+    shows(&left, "after a close", cx);
+
+    // A panel shown and hidden gives focus back to it.
+    let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
+    cx.update(|window, cx| window.focus(&panel.focus_handle(cx), cx));
+    draw(cx);
+    run_in("dock.toggle", &[], cx);
+    shows(&left, "after the dock", cx);
+
+    // Moved to a split, and back, and in before another pane's tab.
+    open_file(&workbench, &files_root(&workbench, cx).join("a.txt"), cx);
+    activate(&left, 0, cx);
+    shows(&left, "shown again", cx);
+    run_in("pane.move_tab_right", &[], cx);
+    let [one, two] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("split");
+    assert_eq!(
+        (names(&one, cx), names(&two, cx)),
+        (vec!["a.txt".to_owned()], vec!["README.md".to_owned()])
+    );
+    shows(&two, "moved to a split", cx);
+    run_in("pane.move_tab_left", &[], cx);
+    let [left] = <[_; 1]>::try_from(panes(&workbench, cx)).expect("one pane");
+    assert_eq!(names(&left, cx), ["a.txt", "README.md"]);
+    shows(&left, "moved back", cx);
+    activate(&left, 0, cx);
+    run_in("pane.split_right", &[], cx);
+    let right = panes(&workbench, cx).remove(1);
+    assert_eq!(names(&right, cx), ["a.txt"]);
+    let id = left.read_with(cx, |pane, _| pane.tabs()[1].id());
+    let workspace = workbench.read_with(cx, |workbench, _| workbench.workspace().clone());
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            let to = kiln_shell::pane_group::Destination::Pane {
+                pane: right.clone(),
+                index: Some(0),
+            };
+            workspace.move_tab(&left, id, to, window, cx)
+        })
+    });
+    draw(cx);
+    assert_eq!(names(&right, cx), ["README.md", "a.txt"]);
+    shows(&right, "in before a tab", cx);
+}
+
+fn files_root(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> std::path::PathBuf {
+    workbench.read_with(cx, |workbench, _| workbench.root().unwrap().to_owned())
+}

@@ -659,7 +659,9 @@ impl EditorView {
     /// it failed, unless the user cancelled it. An untitled buffer runs
     /// [`SAVE_AS`] instead, in the window's context, for the host to ask
     /// where.
-    pub(crate) fn save_from_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// A host that shows the view's file another way, such as a preview in
+    /// its place, runs it for `editor.save` there.
+    pub fn save_from_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.model.path().is_none() {
             let stack = crate::keymap::context_stack(&window.context_stack());
             let invocation = Invocation::of(SAVE_AS)
