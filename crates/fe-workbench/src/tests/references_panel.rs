@@ -299,7 +299,6 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
     let rail = [
         Icon::Files,
         Icon::Search,
-        Icon::ListTree,
         Icon::GitBranch,
         crate::dock::panel_icon(DockPanel::GitLog),
         Icon::FileTerminal,
