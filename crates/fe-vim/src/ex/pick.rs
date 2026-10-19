@@ -31,6 +31,15 @@ pub enum PickThen {
     Jump(char),
     /// Put the register after the caret, as `"xp` does.
     Put(char),
+    /// Go `count` entries through the jumplist, as `<C-o>` (`older`) or
+    /// `<C-i>` does.
+    Jumps { older: bool, count: u32 },
+    /// Go `count` entries through the changelist, as `g;` (`older`) or `g,`
+    /// does.
+    Changes { older: bool, count: u32 },
+    /// Go to the byte column on the row (both from 0), as the list it is in
+    /// is at.
+    At { row: u32, column: u32 },
 }
 
 impl PickThen {
@@ -42,6 +51,31 @@ impl PickThen {
                     name: *name,
                     exact: true,
                 });
+                let command = CommandId::parse("vim.move").expect("vim command IDs are valid");
+                Invocation::new(command)
+                    .args(serde_json::json!({"motion": motion, "extend": false}))
+            }
+            Self::Jumps { older, count } => {
+                let command = match older {
+                    true => "vim.jump_older",
+                    false => "vim.jump_newer",
+                };
+                let command = CommandId::parse(command).expect("vim command IDs are valid");
+                Invocation::new(command).args(serde_json::json!({"count": count}))
+            }
+            Self::Changes { older, count } => {
+                let command = match older {
+                    true => "vim.change_older",
+                    false => "vim.change_newer",
+                };
+                let command = CommandId::parse(command).expect("vim command IDs are valid");
+                Invocation::new(command).args(serde_json::json!({"count": count}))
+            }
+            Self::At { row, column } => {
+                let motion = Motion::Position {
+                    row: *row,
+                    column: *column,
+                };
                 let command = CommandId::parse("vim.move").expect("vim command IDs are valid");
                 Invocation::new(command)
                     .args(serde_json::json!({"motion": motion, "extend": false}))

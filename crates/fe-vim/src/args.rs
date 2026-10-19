@@ -138,6 +138,12 @@ pub enum Motion {
         offset: usize,
         exact: bool,
     },
+    /// The byte column on the row (both from 0), clamped as a caret is: what
+    /// choosing a row in a list of positions goes to. Not a jump.
+    Position {
+        row: u32,
+        column: u32,
+    },
     ParagraphForward,
     ParagraphBackward,
     SentenceForward,
@@ -352,6 +358,7 @@ impl Motion {
             Self::Up | Self::Down | Self::DocumentStart | Self::DocumentEnd | Self::Line => {
                 RangeClass::Linewise
             }
+            Self::Position { .. } => RangeClass::Exclusive,
             Self::Mark(MarkMotion { exact, .. }) | Self::MarkAt { exact, .. } => match exact {
                 true => RangeClass::Exclusive,
                 false => RangeClass::Linewise,

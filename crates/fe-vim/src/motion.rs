@@ -47,11 +47,15 @@ fn move_carets(target: &mut VimTarget<'_>, args: MoveArgs) -> Dispatched<Transac
     if let Err(message) = cmdline::check_motion_search(target, args.motion, keep) {
         return target.state.fail(message);
     }
+    // A position, as a list's row goes to, resolves to a mark's motion but
+    // isn't a jump.
+    let positioned = matches!(args.motion, Motion::Position { .. });
     match marks::resolve(target, args.motion) {
         Ok(motion) => args.motion = motion,
         Err(message) => return target.state.fail(message),
     }
-    if let Some(from) = marks::jump(target, args.motion, args.count)
+    if !positioned
+        && let Some(from) = marks::jump(target, args.motion, args.count)
         && jump::lands(target, args.motion, args.count)
     {
         target.state.marks.jumped(from);
@@ -339,7 +343,8 @@ pub(crate) fn motion(
         | Motion::SearchWordBackward
         | Motion::SearchPartialWordForward
         | Motion::SearchPartialWordBackward
-        | Motion::Mark(_) => return Err(goal),
+        | Motion::Mark(_)
+        | Motion::Position { .. } => return Err(goal),
         // A mark's position is clamped as a caret is.
         Motion::MarkAt { offset, exact } => {
             cursor.goto(offset);

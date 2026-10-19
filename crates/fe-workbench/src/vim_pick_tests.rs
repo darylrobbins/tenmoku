@@ -122,3 +122,36 @@ fn registers_opens_a_picker_and_puts(cx: &mut TestAppContext) {
     assert!(focused(&editor, cx));
     assert_eq!(text(&editor, cx), "one\none\ntwo\nthree");
 }
+
+#[gpui::test]
+fn jumps_opens_a_picker_and_jumps(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("a.txt"), "one\ntwo\nthree\nfour").unwrap();
+    let (workbench, mut vcx) = window(cx, root, &["a.txt"]);
+    let cx = &mut vcx;
+    let editor = active(&workbench, cx);
+
+    // `G` and `gg` jump from rows 1 and 4; then the cursor is on row 2.
+    cx.simulate_keystrokes("G g g j");
+    assert_eq!(cursor(&editor, cx), (1, 0));
+    ex("jumps", cx);
+    let (rows, status, focus) = shown(&workbench, cx).expect("the picker shows");
+    assert_eq!(status.as_deref(), Some("jump line  col file/text"));
+    assert!(focus);
+    assert_eq!(
+        rows,
+        [
+            row(["2", "1", "0", "one"]),
+            row(["1", "4", "0", "four"]),
+            row([">", "", "", ""]),
+        ]
+    );
+
+    // Enter on the older entry goes there as `2<C-o>` does.
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("enter");
+    assert!(shown(&workbench, cx).is_none());
+    assert!(focused(&editor, cx));
+    assert_eq!(cursor(&editor, cx), (0, 0));
+}

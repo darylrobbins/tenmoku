@@ -30,6 +30,8 @@ use crate::VimTarget;
 mod clearjumps;
 #[path = "delmarks.rs"]
 mod delmarks;
+#[path = "jumps.rs"]
+mod jumps;
 #[path = "marks.rs"]
 mod marks;
 #[path = "put.rs"]
@@ -82,6 +84,8 @@ impl Entry {
 pub(super) const COMMANDS: &[Entry] = &[
     clearjumps::COMMAND,
     delmarks::COMMAND,
+    jumps::JUMPS,
+    jumps::CHANGES,
     marks::COMMAND,
     registers::COMMAND,
     registers::DISPLAY,

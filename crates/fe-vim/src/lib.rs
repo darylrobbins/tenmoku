@@ -622,8 +622,10 @@
 //!   charwise put.
 //! - `:marks [chars]` leaves a [`HostCommand::Pick`] of the marks fe-vim has, as nvim
 //!   lists them (it has no `0`-`9` or `"` rows).
-//! - Marks: uppercase and numbered marks, `'[ ']`, `'.`, `'^`, `'"`, the
-//!   changelist and `:jumps` aren't supported yet; `m<` and `m>` cancel. Undo doesn't put back a
+//! - `:jumps` and `:changes` leave a [`HostCommand::Pick`] of the jumplist and the
+//!   changelist, as nvim lists them (without the entry nvim adds opening a file).
+//! - Marks: uppercase and numbered marks, `'[ ']`, `'.`, `'^`, `'"` aren't
+//!   supported yet; `m<` and `m>` cancel. Undo doesn't put back a
 //!   mark its change deleted or moved (nvim's does). What other edits do to a mark
 //!   is read from the text they change, so where that's ambiguous fe-vim
 //!   can differ from nvim: a line break put in at the start of a row that

@@ -1523,24 +1523,10 @@ impl Marks {
         self.keeping = keep;
     }
 
-    /// Goes `count` entries back (`back`, `<C-o>`) or forward (`<C-i>`)
-    /// through the jumplist from the cursor at `from`, as nvim does. First an
-    /// earlier entry on a later one's row goes, and from past the newest
-    /// entry, the newest if it's on the cursor's row. Going back from there
-    /// adds where it goes from (sets the jump mark there), so `<C-i>` comes
-    /// back; while a `:g` runs ([`Marks::keep_jumps`]) it adds nothing, but
-    /// counts as if it had. It returns the entry's row and byte column
-    /// (which may lie past its row's end), or `Some(None)` for one past the
-    /// last row (E19); past either end of the list, `None`, with the jump
-    /// mark and cursor as they were (though once the count fits the list as
-    /// it was, the entry added and the step onto it stay, as nvim's do).
-    pub(crate) fn travel(
-        &mut self,
-        snapshot: &BufferSnapshot,
-        from: usize,
-        back: bool,
-        count: u32,
-    ) -> Option<Option<(u32, usize)>> {
+    /// Catches the list up with the batches and drops each entry that a
+    /// later one is on the row of (adjusting the position), as nvim's
+    /// `cleanup_jumplist` does before the list is used or shown.
+    fn tidy(&mut self, snapshot: &BufferSnapshot) {
         self.advance();
         // Entries past the last row are all on the row after it, as nvim's
         // line numbers are.
@@ -1562,6 +1548,55 @@ impl Marks {
         }
         self.list = kept;
         self.at = at;
+    }
+
+    /// The jumplist as `:jumps` lists it: each entry's row and byte column
+    /// (a row past the last for one that went), oldest first, and the
+    /// position `<C-o>` and `<C-i>` last went to (the length if neither has
+    /// since the last jump).
+    pub(crate) fn jump_entries(&mut self, snapshot: &BufferSnapshot) -> (Vec<(u32, usize)>, usize) {
+        self.tidy(snapshot);
+        let past = snapshot.text().row_count();
+        let list = self
+            .list
+            .iter()
+            .map(|entry| entry.spot(snapshot).unwrap_or((past, 0)))
+            .collect();
+        (list, self.at)
+    }
+
+    /// The changelist as `:changes` lists it, as [`Marks::jump_entries`]
+    /// does the jumplist, once the batches are read ([`catch_up`]).
+    pub(crate) fn change_entries(&self, snapshot: &BufferSnapshot) -> (Vec<(u32, usize)>, usize) {
+        let past = snapshot.text().row_count();
+        let list = self
+            .changes
+            .list
+            .iter()
+            .map(|spot| spot.entry(snapshot).unwrap_or((past, 0)))
+            .collect();
+        (list, self.changes.at)
+    }
+
+    /// Goes `count` entries back (`back`, `<C-o>`) or forward (`<C-i>`)
+    /// through the jumplist from the cursor at `from`, as nvim does. First an
+    /// earlier entry on a later one's row goes, and from past the newest
+    /// entry, the newest if it's on the cursor's row. Going back from there
+    /// adds where it goes from (sets the jump mark there), so `<C-i>` comes
+    /// back; while a `:g` runs ([`Marks::keep_jumps`]) it adds nothing, but
+    /// counts as if it had. It returns the entry's row and byte column
+    /// (which may lie past its row's end), or `Some(None)` for one past the
+    /// last row (E19); past either end of the list, `None`, with the jump
+    /// mark and cursor as they were (though once the count fits the list as
+    /// it was, the entry added and the step onto it stay, as nvim's do).
+    pub(crate) fn travel(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        from: usize,
+        back: bool,
+        count: u32,
+    ) -> Option<Option<(u32, usize)>> {
+        self.tidy(snapshot);
         // Not gone back yet, the newest entry goes if it's on the cursor's
         // row, even if going then fails.
         let row = snapshot.text().offset_to_point(from).row;
@@ -2082,6 +2117,16 @@ pub(crate) fn set(
 /// column at most its row's length, or E20 if it isn't set (E19 past the
 /// last row). Others come back as they are.
 pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Motion, String> {
+    if let Motion::Position { row, column } = motion {
+        target.model.sync_display();
+        let text = target.model.snapshot().text();
+        let row = row.min(text.row_count() - 1);
+        let offset = text.row_start(row) + (column as usize).min(text.row_len(row) as usize);
+        return Ok(Motion::MarkAt {
+            offset: text.clip_offset(offset, Bias::Left),
+            exact: true,
+        });
+    }
     let Motion::Mark(MarkMotion { name, exact }) = motion else {
         return Ok(motion);
     };
