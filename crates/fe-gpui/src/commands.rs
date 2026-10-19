@@ -220,6 +220,8 @@ thread_local! {
     /// What the last frame of the view about to dispatch showed: set by
     /// [`EditorView::page_rows`], which every dispatch asks first.
     pub(crate) static VIEWPORT: Cell<Option<Viewport>> = const { Cell::new(None) };
+    /// The display columns [`VIEWPORT`] shows of an unwrapped row, set with it.
+    pub(crate) static VIEW_COLUMNS: Cell<Option<std::ops::Range<u32>>> = const { Cell::new(None) };
     /// The display row [`VIEWPORT`] starts at, set with it.
     pub(crate) static TOP_DISPLAY_ROW: Cell<Option<u32>> = const { Cell::new(None) };
     /// The first row a command asked to show, which the view takes in
@@ -362,6 +364,12 @@ impl EditorHost for ViewHost<'_> {
     fn viewport(&self) -> Option<Viewport> {
         VIEWPORT_ASKED.set(true);
         VIEWPORT.get()
+    }
+
+    fn view_columns(&self) -> Option<std::ops::Range<u32>> {
+        let columns = VIEW_COLUMNS.take();
+        VIEW_COLUMNS.set(columns.clone());
+        columns
     }
 
     fn top_display_row(&self) -> Option<u32> {

@@ -1,9 +1,11 @@
 //! Line and screen motions (a feature module; see [`crate::feature`]):
 //! `ge` and `gE` back to the end of a word or WORD, `_ + -` to a row's first
 //! non-blank (`_` is [`Motion::Line`]), `|` to a screen column, `H M L` to
-//! the view's top, middle and bottom rows, and `gj gk` by display rows.
+//! the view's top, middle and bottom rows, `gj gk` by display rows, `g_` to a
+//! row's last non-blank, and `g$ gm` to the end and middle of what the view
+//! shows of a display row.
 //!
-//! `H M L` need the view and `gj gk` the display rows, which [`motion`]
+//! `H M L` need the view and `gj gk g$ gm` the display rows and columns, which [`motion`]
 //! isn't given: the `vim.move`, `vim.operate`, `vim.repeat` and
 //! `vim.select` handlers run inside [`with_view`], which holds them for the
 //! command. Outside it, the view is a [`HeadlessHost`]'s with no viewport,
@@ -51,13 +53,16 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
     Some(pending.clone().motion(motion))
 }
 
-/// `e E j k` after `g`.
+/// `e E j k _ $ m` after `g`.
 fn g(pending: &Pending, key: VimKey) -> Option<Step> {
     let motion = match key {
         VimKey::Char('e') => Motion::WordEndBackward,
         VimKey::Char('E') => Motion::BigWordEndBackward,
         VimKey::Char('j') => Motion::DisplayDown,
         VimKey::Char('k') => Motion::DisplayUp,
+        VimKey::Char('_') => Motion::LastNonBlank,
+        VimKey::Char('$') => Motion::DisplayLineEnd,
+        VimKey::Char('m') => Motion::DisplayMiddle,
         _ => return None,
     };
     Some(pending.clone().motion(motion))
@@ -66,7 +71,10 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
 /// `motion`'s class as an operator's target ([`Motion::class`]).
 pub(crate) fn class(motion: Motion) -> RangeClass {
     match motion {
-        Motion::WordEndBackward | Motion::BigWordEndBackward => RangeClass::Inclusive,
+        Motion::WordEndBackward
+        | Motion::BigWordEndBackward
+        | Motion::LastNonBlank
+        | Motion::DisplayLineEnd => RangeClass::Inclusive,
         Motion::NextLineFirstNonBlank
         | Motion::PrevLineFirstNonBlank
         | Motion::WindowTop
@@ -93,6 +101,7 @@ pub(crate) fn moves_when_failing(motion: Motion) -> bool {
             | Motion::BigWordEndBackward
             | Motion::DisplayDown
             | Motion::DisplayUp
+            | Motion::DisplayLineEnd
     )
 }
 
@@ -119,7 +128,9 @@ struct View {
     /// The vim cursor's offset, if it stands past the last character of a
     /// row that has one (after `$`): the motions see it clamped onto it.
     past_end: Option<usize>,
-    /// For `gj` and `gk`, each caret's display row and the one they go
+    /// The display columns of an unwrapped row the view shows.
+    columns: Range<u32>,
+    /// For `gj gk g$ gm`, each caret's display row and the one they go
     /// to, by offset.
     hops: Vec<Hop>,
     /// What `gj` and `gk` left for each caret they moved, for the state's
@@ -167,12 +178,27 @@ pub(crate) fn with_view<'a, R>(
     // Normal mode's goals as `motion::apply` reads them: all or none.
     let goals = crate::motion::valid_goals(target.state, version, &target.model.selections())
         .map(|(_, goals)| goals.clone());
+    let columns = target.host.view_columns().unwrap_or(0..80);
     let hops = match viewed {
         Some(Viewed {
             motion: motion @ (Motion::DisplayDown | Motion::DisplayUp),
             count,
             ..
-        }) => hops(target, motion == Motion::DisplayDown, count),
+        }) => hops(
+            target,
+            motion == Motion::DisplayDown,
+            count.unwrap_or(1).max(1),
+        ),
+        // `g$` goes `count - 1` display rows down, `gm` stays on the row.
+        Some(Viewed {
+            motion: Motion::DisplayLineEnd,
+            count,
+            ..
+        }) => hops(target, true, count.unwrap_or(1).max(1) - 1),
+        Some(Viewed {
+            motion: Motion::DisplayMiddle,
+            ..
+        }) => hops(target, true, 0),
         _ => Vec::new(),
     };
     // A display column holds while the buffer goal it came with does.
@@ -202,6 +228,7 @@ pub(crate) fn with_view<'a, R>(
         rows,
         visual,
         past_end,
+        columns,
         hops,
         alongs: Vec::new(),
         failed: false,
@@ -277,6 +304,8 @@ struct Hop {
     /// `to` ends its buffer row.
     to_last: bool,
     rows: u32,
+    /// `to` is a whole buffer row, not a part of a wrapped one.
+    to_whole: bool,
     /// The furthest display column along a display row that may be on one:
     /// one less than the most columns the wrap width can be, as how
     /// fe-display broke the display rows near `from` and `to` shows it;
@@ -300,7 +329,7 @@ pub(crate) struct DisplayGoal {
 
 /// The display rows `count` `gj`s (`down`) or `gk`s take each caret
 /// between: each selection's head, or in a visual mode the vim cursor.
-fn hops(target: &mut VimTarget<'_>, down: bool, count: Option<u32>) -> Vec<Hop> {
+fn hops(target: &mut VimTarget<'_>, down: bool, count: u32) -> Vec<Hop> {
     target.model.sync_display();
     let offsets = match target.state.visual_cursor(target.model) {
         Some(cursor) => vec![cursor],
@@ -308,7 +337,6 @@ fn hops(target: &mut VimTarget<'_>, down: bool, count: Option<u32>) -> Vec<Hop> 
     };
     let tab = target.model.tab_size().max(1);
     let (text, display) = (target.model.text(), target.model.display());
-    let count = count.unwrap_or(1).max(1);
     let last = display.row_count().saturating_sub(1);
     // fe-display breaks a row before the word that doesn't fit, or mid-word
     // if that word is the row's first, with tab stops from each display
@@ -359,6 +387,9 @@ fn hops(target: &mut VimTarget<'_>, down: bool, count: Option<u32>) -> Vec<Hop> 
                 false => from.saturating_sub(count),
             };
             let (from_row, to_row) = (display.row(from), display.row(to));
+            let start = text.row_start(to_row.buffer_row);
+            let to_whole =
+                to_row.range == (start..start + text.row_len(to_row.buffer_row) as usize);
             let limit = match (limit(from), limit(to)) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -369,6 +400,7 @@ fn hops(target: &mut VimTarget<'_>, down: bool, count: Option<u32>) -> Vec<Hop> 
                 to: to_row.range,
                 to_last: to_row.last,
                 rows: from.abs_diff(to),
+                to_whole,
                 limit,
                 along: None,
             }
@@ -394,6 +426,7 @@ fn row_hop(text: &Text, offset: usize, row: u32, down: bool, count: u32) -> Hop 
         to: range(to),
         to_last: true,
         rows: row.abs_diff(to),
+        to_whole: true,
         limit: None,
         along: None,
     }
@@ -464,6 +497,62 @@ pub(crate) fn motion(
                 past_end(cursor, visual, goal, tab);
             }
             Ok(goal)
+        }
+        // Like `+`, `g_` fails only where it can't move at all.
+        Motion::LastNonBlank if count > 1 && row == last_row => Err(goal),
+        Motion::LastNonBlank => {
+            cursor.enter(row.saturating_add(count - 1).min(last_row));
+            let blank = |ix: usize| matches!(cursor.line.grapheme(ix), " " | "\t");
+            cursor.ix = (0..cursor.line.len())
+                .rev()
+                .find(|&ix| !blank(ix))
+                .unwrap_or(0);
+            Ok(None)
+        }
+        Motion::DisplayLineEnd | Motion::DisplayMiddle => {
+            let offset = cursor.offset();
+            let end = args.motion == Motion::DisplayLineEnd;
+            let (hop, columns) = VIEW.with(|view| {
+                let view = view.borrow();
+                let hops = view.as_ref().map_or(&[][..], |view| &view.hops[..]);
+                let found = hops.binary_search_by_key(&offset, |hop| hop.offset);
+                let columns = view.as_ref().map_or(0..80, |view| view.columns.clone());
+                (found.ok().map(|ix| hops[ix].clone()), columns)
+            });
+            let rows = if end { count - 1 } else { 0 };
+            let hop = hop.unwrap_or_else(|| row_hop(cursor.text, offset, row, true, rows));
+            let width = columns.end.saturating_sub(columns.start).max(1) as usize;
+            // The display column along the row that is the view's right
+            // edge (`g$`) or middle (`gm`); a part of a wrapped row counts
+            // from its start, a whole one from the view's left column.
+            let along = match end {
+                true => width - 1,
+                false => width / 2,
+            };
+            let along = along
+                + if hop.to_whole {
+                    columns.start as usize
+                } else {
+                    0
+                };
+            cursor.goto(hop.to.start);
+            let first = first_grapheme(&cursor.line, hop.to.start);
+            let stop = first_grapheme(&cursor.line, hop.to.end);
+            let (mut ix, mut start) = (first, 0);
+            while ix < stop && start + cursor.line.width(ix, start, tab) <= along {
+                start += cursor.line.width(ix, start, tab);
+                ix += 1;
+            }
+            // Past the row's end, a visual cursor stands on its end;
+            // elsewhere on the last character.
+            cursor.ix = match ix >= stop && hop.to_last {
+                true if visual => cursor.line.len(),
+                _ => ix.min(stop.saturating_sub(1)).min(cursor.line.last()),
+            };
+            match end && hop.rows < rows {
+                true => failed(cursor, offset, false, visual, None),
+                false => Ok(None),
+            }
         }
         Motion::DisplayDown | Motion::DisplayUp => {
             let down = args.motion == Motion::DisplayDown;

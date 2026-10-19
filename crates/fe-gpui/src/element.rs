@@ -205,6 +205,14 @@ impl FrameLayout {
         (end <= at.x && at.x < end + space).then_some(row.end)
     }
 
+    /// The display columns of an unwrapped row the frame shows: from its
+    /// horizontal scroll to its right edge, in the width of a space.
+    pub(crate) fn view_columns(&self) -> Option<Range<u32>> {
+        let space = self.glyph_widths.clone().char_width(' ');
+        let frame = &self.frame;
+        visible_columns(frame.scroll.x, frame.width - frame.text_left, space)
+    }
+
     /// How many columns, each a space wide, a window position is past the
     /// end of the buffer row [`Self::offset_at`] finds there, to the
     /// nearest; 0 short of the end. Off the frame's rows, or below the last,
@@ -2437,6 +2445,17 @@ fn styled_highlights(
             })
         })
         .collect()
+}
+
+/// The columns, each `space` wide, of an unwrapped row that `text_width`
+/// shows once scrolled `scroll_x` right; `None` if a space has no width.
+fn visible_columns(scroll_x: f32, text_width: f32, space: f32) -> Option<Range<u32>> {
+    if space <= 0. {
+        return None;
+    }
+    let left = (scroll_x / space).round().max(0.) as u32;
+    let width = (text_width / space).floor().max(1.) as u32;
+    Some(left..left + width)
 }
 
 #[cfg(test)]

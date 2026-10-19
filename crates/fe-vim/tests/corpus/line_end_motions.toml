@@ -1,0 +1,386 @@
+# Line-end motion cases for fe-vim's oracle: g_ (with counts, under d, in
+# visual mode, failing past the last row), g$ and gm on rows shorter than the
+# window and on a 209-column row soft-wrapped at 80 columns (soft_wrap), each
+# in charwise visual mode. A key that fails is a case's last key.
+# Edit a case, then re-record line_end_motions.expected.json with the ignored
+# `record_corpus_with_neovim` test.
+
+[[case]]
+name = "g_"
+buffer = "foo bar   "
+cursor = [0, 0]
+keys = "g_"
+
+[[case]]
+name = "g_count"
+buffer = "foo bar  \nx  \nyy"
+cursor = [0, 0]
+keys = "2g_"
+
+[[case]]
+name = "dg_"
+buffer = "foo bar   "
+cursor = [0, 0]
+keys = "dg_"
+
+[[case]]
+name = "d2g_"
+buffer = "foo bar  \nx  \nyy"
+cursor = [0, 0]
+keys = "d2g_"
+
+[[case]]
+name = "d3g_one_row"
+buffer = "foo bar   "
+cursor = [0, 0]
+keys = "d3g_"
+
+[[case]]
+name = "g_past_last_row"
+buffer = "foo\nbar  "
+cursor = [0, 0]
+keys = "3g_"
+
+[[case]]
+name = "g_all_blank"
+buffer = "   \nx"
+cursor = [0, 1]
+keys = "g_"
+
+[[case]]
+name = "g_all_blank_count"
+buffer = "a\n   \nx"
+cursor = [0, 0]
+keys = "2g_"
+
+[[case]]
+name = "g_then_j"
+buffer = "ab  \ncdefgh"
+cursor = [0, 0]
+keys = "g_j"
+
+[[case]]
+name = "g_tab"
+buffer = "a	b	"
+cursor = [0, 0]
+keys = "g_"
+
+[[case]]
+name = "vg_d"
+buffer = "foo bar  \nx  \nyy"
+cursor = [0, 0]
+keys = "vg_d"
+
+[[case]]
+name = "v_g_"
+buffer = "foo bar   "
+cursor = [0, 0]
+keys = "vg_"
+
+[[case]]
+name = "v_2g_"
+buffer = "foo bar  \nx  \nyy"
+cursor = [0, 0]
+keys = "v2g_"
+
+[[case]]
+name = "g_back"
+buffer = "foo bar   "
+cursor = [0, 9]
+keys = "g_"
+
+[[case]]
+name = "g_empty_row"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "g_"
+
+[[case]]
+name = "g_dot"
+buffer = "a b \nc d \ne f "
+cursor = [0, 0]
+keys = "dg_j."
+
+[[case]]
+name = "g_dollar_short"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "g$j"
+
+[[case]]
+name = "dollar_j"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "$j"
+
+[[case]]
+name = "g_dollar_short_only"
+buffer = "abc"
+cursor = [0, 0]
+keys = "g$"
+
+[[case]]
+name = "g_dollar_empty"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "g$"
+
+[[case]]
+name = "dg_dollar"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "dg$"
+
+[[case]]
+name = "g_dollar_count"
+buffer = "abc\ndefgh\nij"
+cursor = [0, 0]
+keys = "2g$"
+
+[[case]]
+name = "g_dollar_count_past"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "5g$"
+
+[[case]]
+name = "v_g_dollar"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "vg$"
+
+[[case]]
+name = "v_g_dollar_j"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "vg$j"
+
+[[case]]
+name = "g_dollar_long_0"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "g$"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_long_100"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 100]
+keys = "g$"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_long_count"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "2g$"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_long_last"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 170]
+keys = "g$"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_long_count_past"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "5g$"
+soft_wrap = true
+
+[[case]]
+name = "v_g_dollar_long"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "vg$"
+soft_wrap = true
+
+[[case]]
+name = "dg_dollar_long"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "dg$"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_long_j"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi\nxyz"
+cursor = [0, 0]
+keys = "g$j"
+soft_wrap = true
+
+[[case]]
+name = "gm_short"
+buffer = "foo bar baz qux"
+cursor = [0, 0]
+keys = "gm"
+
+[[case]]
+name = "gm_long_0"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "gm"
+soft_wrap = true
+
+[[case]]
+name = "gm_long_100"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 100]
+keys = "gm"
+soft_wrap = true
+
+[[case]]
+name = "gm_long_200"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 200]
+keys = "gm"
+soft_wrap = true
+
+[[case]]
+name = "gm_count"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "2gm"
+soft_wrap = true
+
+[[case]]
+name = "dgm_short"
+buffer = "foo bar baz qux"
+cursor = [0, 0]
+keys = "dgm"
+
+[[case]]
+name = "dgm_long"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "dgm"
+soft_wrap = true
+
+[[case]]
+name = "gm_empty"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "gm"
+
+[[case]]
+name = "gm_back"
+buffer = "foo bar baz qux"
+cursor = [0, 14]
+keys = "gm"
+
+[[case]]
+name = "v_gm"
+buffer = "foo bar baz qux"
+cursor = [0, 0]
+keys = "vgm"
+
+[[case]]
+name = "v_gm_long"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 100]
+keys = "vgm"
+soft_wrap = true
+
+[[case]]
+name = "v_g_dollar_gm"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "vg$gm"
+soft_wrap = true
+
+[[case]]
+name = "g_dollar_count_one_row"
+buffer = "abc"
+cursor = [0, 0]
+keys = "2g$"
+
+[[case]]
+name = "d2g_dollar_one_row"
+buffer = "abc"
+cursor = [0, 0]
+keys = "d2g$"
+
+[[case]]
+name = "d5g_dollar"
+buffer = "abc\ndefgh"
+cursor = [0, 1]
+keys = "d5g$"
+
+[[case]]
+name = "d5g_dollar_long"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 0]
+keys = "d5g$"
+soft_wrap = true
+
+[[case]]
+name = "d2g_dollar_long_last"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 170]
+keys = "d2g$"
+soft_wrap = true
+
+[[case]]
+name = "v_g_dollar_long_last"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 170]
+keys = "vg$"
+soft_wrap = true
+
+[[case]]
+name = "v_g_dollar_long_100"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 100]
+keys = "vg$"
+soft_wrap = true
+
+[[case]]
+name = "v_gm_long_200"
+buffer = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi"
+cursor = [0, 200]
+keys = "vgm"
+soft_wrap = true
+
+[[case]]
+name = "v_2g_dollar_short"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "v2g$"
+
+[[case]]
+name = "g_dollar_empty_j"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "g$j"
+
+[[case]]
+name = "gm_dollar_short"
+buffer = "abc"
+cursor = [0, 2]
+keys = "gm"
+
+[[case]]
+name = "v_g_underscore_blank"
+buffer = "  \nx"
+cursor = [0, 0]
+keys = "vg_"
+
+[[case]]
+name = "v3g_past_last"
+buffer = "a  \nb  "
+cursor = [0, 0]
+keys = "v3g_"
+
+[[case]]
+name = "d3g_past_last_two_rows"
+buffer = "a  \nb  "
+cursor = [0, 0]
+keys = "d3g_"
+
+[[case]]
+name = "g_dollar_tab"
+buffer = "	abc\n	defgh"
+cursor = [0, 1]
+keys = "g$j"

@@ -39,6 +39,12 @@ pub trait EditorHost {
     fn viewport(&self) -> Option<Viewport> {
         None
     }
+    /// The display columns of an unwrapped row the view shows, from its
+    /// horizontal scroll to its right edge; `None` (the default) if that
+    /// isn't known.
+    fn view_columns(&self) -> Option<std::ops::Range<u32>> {
+        None
+    }
     /// The display row the view starts at, which may be partway down a
     /// soft-wrapped [`Viewport::top_row`]; `None` (the default) if that
     /// isn't known.

@@ -48,3 +48,11 @@ fn colours_do_not_change_the_shaped_layout(cx: &mut TestAppContext) {
         assert_eq!(split.decorations.len(), 2);
     });
 }
+
+#[test]
+fn the_visible_columns_run_from_the_scroll_to_the_text_edge() {
+    assert_eq!(visible_columns(0., 805., 10.), Some(0..80));
+    assert_eq!(visible_columns(300., 805., 10.), Some(30..110));
+    assert_eq!(visible_columns(0., 3., 10.), Some(0..1));
+    assert_eq!(visible_columns(0., 800., 0.), None);
+}

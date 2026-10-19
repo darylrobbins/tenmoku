@@ -365,7 +365,10 @@ pub(crate) fn motion(
         | Motion::WindowMiddle
         | Motion::WindowBottom
         | Motion::DisplayDown
-        | Motion::DisplayUp => return line_motions::motion(cursor, args, goal, tab),
+        | Motion::DisplayUp
+        | Motion::LastNonBlank
+        | Motion::DisplayLineEnd
+        | Motion::DisplayMiddle => return line_motions::motion(cursor, args, goal, tab),
         Motion::FoldNext | Motion::FoldPrevious => return folds::motion(cursor, args, goal, tab),
     }
     // nvim fails an operator whose `b` can't move at all, or would step

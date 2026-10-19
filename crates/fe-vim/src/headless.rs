@@ -488,6 +488,10 @@ impl EditorHost for ViewHost<'_> {
         Some(*self.view)
     }
 
+    fn view_columns(&self) -> Option<std::ops::Range<u32>> {
+        Some(0..80)
+    }
+
     fn scroll(&mut self, request: ScrollRequest) {
         match request {
             ScrollRequest::TopRow(row) => self.view.top_row = row,

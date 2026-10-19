@@ -1,0 +1,1252 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "g_",
+      "buffer": "foo bar   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g_",
+      "expect": {
+        "buffer": "foo bar   ",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_count",
+      "buffer": "foo bar  \nx  \nyy",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g_",
+      "expect": {
+        "buffer": "foo bar  \nx  \nyy",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dg_",
+      "buffer": "foo bar   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dg_",
+      "expect": {
+        "buffer": "   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2g_",
+      "buffer": "foo bar  \nx  \nyy",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2g_",
+      "expect": {
+        "buffer": "yy",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar  \nx  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo bar  \nx  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d3g_one_row",
+      "buffer": "foo bar   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3g_",
+      "expect": {
+        "buffer": "foo bar   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_past_last_row",
+      "buffer": "foo\nbar  ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3g_",
+      "expect": {
+        "buffer": "foo\nbar  ",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_all_blank",
+      "buffer": "   \nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "g_",
+      "expect": {
+        "buffer": "   \nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_all_blank_count",
+      "buffer": "a\n   \nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g_",
+      "expect": {
+        "buffer": "a\n   \nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_then_j",
+      "buffer": "ab  \ncdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g_j",
+      "expect": {
+        "buffer": "ab  \ncdefgh",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_tab",
+      "buffer": "a\tb\t",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g_",
+      "expect": {
+        "buffer": "a\tb\t",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vg_d",
+      "buffer": "foo bar  \nx  \nyy",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg_d",
+      "expect": {
+        "buffer": "  \nx  \nyy",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_g_",
+      "buffer": "foo bar   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg_",
+      "expect": {
+        "buffer": "foo bar   ",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_2g_",
+      "buffer": "foo bar  \nx  \nyy",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2g_",
+      "expect": {
+        "buffer": "foo bar  \nx  \nyy",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "g_back",
+      "buffer": "foo bar   ",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "g_",
+      "expect": {
+        "buffer": "foo bar   ",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_empty_row",
+      "buffer": "\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g_",
+      "expect": {
+        "buffer": "\nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dot",
+      "buffer": "a b \nc d \ne f ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dg_j.",
+      "expect": {
+        "buffer": " \n \ne f ",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c d",
+            "linewise": false
+          },
+          "-": {
+            "text": "c d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_dollar_short",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$j",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dollar_j",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "$j",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_short_only",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_empty",
+      "buffer": "\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$",
+      "expect": {
+        "buffer": "\nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dg_dollar",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "dg$",
+      "expect": {
+        "buffer": "a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc def",
+            "linewise": false
+          },
+          "-": {
+            "text": "bc def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_dollar_count",
+      "buffer": "abc\ndefgh\nij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g$",
+      "expect": {
+        "buffer": "abc\ndefgh\nij",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_count_past",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5g$",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_g_dollar",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg$",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_g_dollar_j",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg$j",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "g_dollar_long_0",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          79
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_long_100",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        100
+      ],
+      "keys": "g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          159
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_long_count",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          159
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_long_last",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        170
+      ],
+      "keys": "g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          208
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "g_dollar_long_count_past",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          208
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_g_dollar_long",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          79
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dg_dollar_long",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dg$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij",
+            "linewise": false
+          },
+          "-": {
+            "text": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_dollar_long_j",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$j",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi\nxyz",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_short",
+      "buffer": "foo bar baz qux",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gm",
+      "expect": {
+        "buffer": "foo bar baz qux",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_long_0",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          40
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_long_100",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        100
+      ],
+      "keys": "gm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          120
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_long_200",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        200
+      ],
+      "keys": "gm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          200
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_count",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          40
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dgm_short",
+      "buffer": "foo bar baz qux",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgm",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar baz qu",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar baz qu",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dgm_long",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdefghijabcdefghijabcdefghijabcdefghij",
+            "linewise": false
+          },
+          "-": {
+            "text": "abcdefghijabcdefghijabcdefghijabcdefghij",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gm_empty",
+      "buffer": "\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gm",
+      "expect": {
+        "buffer": "\nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_back",
+      "buffer": "foo bar baz qux",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "gm",
+      "expect": {
+        "buffer": "foo bar baz qux",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_gm",
+      "buffer": "foo bar baz qux",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vgm",
+      "expect": {
+        "buffer": "foo bar baz qux",
+        "cursor": [
+          0,
+          15
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_gm_long",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        100
+      ],
+      "keys": "vgm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          120
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          100
+        ]
+      }
+    },
+    {
+      "name": "v_g_dollar_gm",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg$gm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          40
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "g_dollar_count_one_row",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g$",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d2g_dollar_one_row",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2g$",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d5g_dollar",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d5g$",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d5g_dollar_long",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d5g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          208
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d2g_dollar_long_last",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        170
+      ],
+      "keys": "d2g$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          208
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_g_dollar_long_last",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        170
+      ],
+      "keys": "vg$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          209
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          170
+        ]
+      }
+    },
+    {
+      "name": "v_g_dollar_long_100",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        100
+      ],
+      "keys": "vg$",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          159
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          100
+        ]
+      }
+    },
+    {
+      "name": "v_gm_long_200",
+      "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+      "cursor": [
+        0,
+        200
+      ],
+      "keys": "vgm",
+      "soft_wrap": true,
+      "expect": {
+        "buffer": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi",
+        "cursor": [
+          0,
+          200
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          200
+        ]
+      }
+    },
+    {
+      "name": "v_2g_dollar_short",
+      "buffer": "abc\ndefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2g$",
+      "expect": {
+        "buffer": "abc\ndefgh",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "g_dollar_empty_j",
+      "buffer": "\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g$j",
+      "expect": {
+        "buffer": "\nabc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gm_dollar_short",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "gm",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_g_underscore_blank",
+      "buffer": "  \nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vg_",
+      "expect": {
+        "buffer": "  \nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v3g_past_last",
+      "buffer": "a  \nb  ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v3g_",
+      "expect": {
+        "buffer": "a  \nb  ",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "d3g_past_last_two_rows",
+      "buffer": "a  \nb  ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3g_",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a  \nb  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a  \nb  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "g_dollar_tab",
+      "buffer": "\tabc\n\tdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "g$j",
+      "expect": {
+        "buffer": "\tabc\n\tdefgh",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

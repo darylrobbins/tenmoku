@@ -152,6 +152,9 @@ pub enum Motion {
     WindowBottom,
     DisplayDown,
     DisplayUp,
+    LastNonBlank,
+    DisplayLineEnd,
+    DisplayMiddle,
     FoldNext,
     FoldPrevious,
 }
@@ -366,7 +369,10 @@ impl Motion {
             | Self::WindowMiddle
             | Self::WindowBottom
             | Self::DisplayDown
-            | Self::DisplayUp => line_motions::class(self),
+            | Self::DisplayUp
+            | Self::LastNonBlank
+            | Self::DisplayLineEnd
+            | Self::DisplayMiddle => line_motions::class(self),
         }
     }
 
@@ -425,6 +431,9 @@ impl Motion {
                 | Self::WindowBottom
                 | Self::DisplayDown
                 | Self::DisplayUp
+                | Self::LastNonBlank
+                | Self::DisplayLineEnd
+                | Self::DisplayMiddle
         )
     }
 }

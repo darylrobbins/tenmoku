@@ -671,6 +671,14 @@ impl EditorView {
         })
     }
 
+    /// The display columns of an unwrapped row the last frame showed: from
+    /// the horizontal scroll to the text's right edge, in the width of a
+    /// space; `None` before the first frame.
+    pub(crate) fn view_columns(&self) -> Option<std::ops::Range<u32>> {
+        let layout = self.layout.as_ref()?;
+        layout.view_columns()
+    }
+
     /// Whether the last frame laid out a display row of buffer row `row`,
     /// or `None` before one was drawn.
     pub fn shows_buffer_row(&self, row: u32) -> Option<bool> {
@@ -703,6 +711,7 @@ impl EditorView {
     pub(crate) fn page_rows(&self) -> u32 {
         crate::commands::VIEWPORT.set(self.viewport());
         crate::commands::TOP_DISPLAY_ROW.set(self.top_display_row());
+        crate::commands::VIEW_COLUMNS.set(self.view_columns());
         self.layout.as_ref().map_or(20, |layout| {
             layout.frame.visible_rows().saturating_sub(2).max(1)
         })
