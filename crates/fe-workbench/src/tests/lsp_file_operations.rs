@@ -382,7 +382,10 @@ fn a_renamed_path_keeps_its_spelling(cx: &mut TestAppContext) {
     // As on a case-insensitive disk after `new.rs` became `NEW.rs`, the old
     // path still names the file, here by a symlink: it's sent as given.
     fs::write(s.path("src/NEW.rs"), "").unwrap();
-    std::os::unix::fs::symlink("NEW.rs", s.path("src/new.rs")).unwrap();
+    // A case-insensitive disk (macOS) already names the file by `new.rs`.
+    if fs::symlink_metadata(s.path("src/new.rs")).is_err() {
+        std::os::unix::fs::symlink("NEW.rs", s.path("src/new.rs")).unwrap();
+    }
     let (from, to) = (s.path("src/new.rs"), s.path("src/NEW.rs"));
     (s.workbench).read_with(&s.cx, |w, _| w.lsp_files_renamed(&from, &to));
     wait_for(&mut s, "workspace/didRenameFiles", 1);
