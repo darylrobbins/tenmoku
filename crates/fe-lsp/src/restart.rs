@@ -227,6 +227,7 @@ impl Carry {
             }
             Command::Close(buffer) => self.openings.retain(|held| held.buffer != buffer),
             Command::Configure(settings) => self.settings = settings,
+            Command::Notify { .. } => {}
             Command::Drain => {}
             #[cfg(test)]
             Command::Ring(_, answer) => {

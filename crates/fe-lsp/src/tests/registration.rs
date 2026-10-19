@@ -1,6 +1,8 @@
 //! Dynamic registration (§3.6): only `workspace/didChangeConfiguration`
 //! is accepted, and the notification never depends on it.
 
+mod globs;
+
 use std::path::Path;
 use std::sync::Arc;
 

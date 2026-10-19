@@ -175,6 +175,14 @@ pub(crate) enum Command {
     /// New `settings` for the spec: they answer `workspace/configuration`
     /// from now on, and `workspace/didChangeConfiguration` carries them.
     Configure(serde_json::Value),
+    /// A notification on no document in particular, sent in order with the
+    /// requests and document sync queued before it (notify.rs).
+    // Nothing calls them until the watched-files and file-operation cards.
+    #[allow(dead_code)]
+    Notify {
+        method: &'static str,
+        params: serde_json::Value,
+    },
     /// Drain every open document: a backstop tick queued it, behind the
     /// commands already waiting, so drains can't starve them.
     Drain,
@@ -1133,6 +1141,12 @@ impl Actor {
                     .notify::<DidChangeConfiguration>(DidChangeConfigurationParams { settings });
                 let _ = self.socket.emit(Taken);
                 self.sent += 1;
+            }
+            Command::Notify { method, params } => {
+                if crate::notify::send(&self.socket, method, params) {
+                    let _ = self.socket.emit(Taken);
+                    self.sent += 1;
+                }
             }
             Command::Drain => {
                 self.drain_queued = false;

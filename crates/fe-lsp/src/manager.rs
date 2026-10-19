@@ -1380,6 +1380,14 @@ impl LspManager {
         }
     }
 
+    /// Every server this manager has running, in id order.
+    #[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
+    pub(crate) fn server_ids(&self) -> Vec<ServerId> {
+        let mut ids: Vec<ServerId> = self.servers.keys().copied().collect();
+        ids.sort();
+        ids
+    }
+
     pub(crate) fn send(&self, server: ServerId, command: Command) {
         if let Some(handle) = self.servers.get(&server) {
             // A server that has gone has no documents to sync.

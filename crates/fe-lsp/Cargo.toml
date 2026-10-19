@@ -16,6 +16,7 @@ async-io.workspace = true
 async-lsp.workspace = true
 async-process.workspace = true
 futures.workspace = true
+globset.workspace = true
 log.workspace = true
 lsp-types.workspace = true
 rustix.workspace = true

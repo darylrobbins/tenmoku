@@ -57,6 +57,8 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.9" }
 
 # Project tree: gitignore-aware directory listing and file watching.
 ignore = "0.4"
+# LSP glob patterns (fe-lsp); the version `ignore` already pulls in.
+globset = "0.4"
 notify = "8"
 # Git status and HEAD blobs (fe-git): gitoxide, pure Rust, MIT OR Apache-2.0.
 # Only `status` (which brings the index, dirwalk and blob diff), `blame`

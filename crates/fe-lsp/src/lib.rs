@@ -81,12 +81,16 @@ pub mod document_highlight;
 mod encoding;
 mod event;
 pub mod formatting;
+#[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
+mod glob;
 mod hover;
 mod identity;
 mod inlay_hint;
 mod launcher;
 mod manager;
 mod navigation;
+#[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
+mod notify;
 mod pull;
 mod readiness;
 mod registration;
