@@ -6,6 +6,9 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{Launch, Workbench};
 
+#[path = "complete_tests.rs"]
+mod complete_tests;
+
 const TEXT: &str = "one\nfoo\nbar foo\nfar";
 
 /// A workbench showing a file holding [`TEXT`], focused, with vim on.

@@ -21,7 +21,7 @@
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, vim_registers};
 use fe_ui::{ROW_HEIGHT, TextInput, TextInputEvent};
-use fe_vim::{CommandLineKind, HistoryRecall, HostCommand, Mode, VimKey, VimState};
+use fe_vim::{CommandLineKind, Ex, HistoryRecall, HostCommand, Mode, VimKey, VimState};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
@@ -58,11 +58,56 @@ pub(super) struct VimLine {
     open: Option<(WeakEntity<EditorView>, char)>,
     /// Where Up and Down are in the open line's history.
     recall: HistoryRecall,
+    /// The name completion a `tab` began, while the line still holds what
+    /// it put there.
+    complete: Option<NameCycle>,
     _blur: Option<Subscription>,
     _changed: Option<Subscription>,
     /// The mode segment's background and label colours in the last render.
     #[cfg(test)]
     drawn_mode: Option<(gpui::Hsla, gpui::Hsla)>,
+}
+
+/// A cycle of command-name completions, as nvim's wildmenu steps through
+/// them: the text as typed, then each completion, then the text again.
+struct NameCycle {
+    /// The text as typed, and where its command name starts.
+    typed: String,
+    start: usize,
+    names: Vec<&'static str>,
+    /// 0 is the text as typed, `n` the `n`th name.
+    at: usize,
+    /// What the line holds for `at`: any other text ends the cycle.
+    shown: String,
+}
+
+impl NameCycle {
+    /// The cycle for `line`, if it ends in a command name with completions.
+    fn of(line: &str) -> Option<Self> {
+        let (start, names) = Ex::completions(line)?;
+        (!names.is_empty()).then(|| Self {
+            typed: line.to_owned(),
+            start,
+            names,
+            at: 0,
+            shown: line.to_owned(),
+        })
+    }
+
+    /// Steps forward or back, and returns the text the line then holds.
+    fn step(&mut self, forward: bool) -> &str {
+        let count = self.names.len() + 1;
+        self.at = if forward {
+            (self.at + 1) % count
+        } else {
+            (self.at + count - 1) % count
+        };
+        self.shown = match self.at {
+            0 => self.typed.clone(),
+            at => format!("{}{}", &self.typed[..self.start], self.names[at - 1]),
+        };
+        &self.shown
+    }
 }
 
 /// The kind of line `editor` has open, if any.
@@ -166,6 +211,7 @@ impl StatusBar {
         input.update(cx, |input, cx| input.set_text(prefill, cx));
         self.line.open = Some((editor.downgrade(), prefix(kind)));
         self.line.recall = HistoryRecall::default();
+        self.line.complete = None;
         window.focus(&input.focus_handle(cx), cx);
         cx.notify();
     }
@@ -304,6 +350,7 @@ impl StatusBar {
         let older = match keystroke.key.as_str() {
             "up" => true,
             "down" => false,
+            "tab" => return self.on_line_tab(event, cx),
             _ => return,
         };
         if keystroke.modifiers.modified() {
@@ -328,6 +375,45 @@ impl StatusBar {
         if let Some(text) = self.line.recall.step(registers, kind, &line, older) {
             input.update(cx, |input, cx| input.set_text(text, cx));
         }
+    }
+
+    /// `tab` and `shift-tab` on a `:` line replace the command name being
+    /// typed with the next or previous completion, cycling back to the text
+    /// as typed. Text the cycle didn't put there starts a new one.
+    fn on_line_tab(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let modifiers = event.keystroke.modifiers;
+        let shift = modifiers.shift;
+        if modifiers.modified() && modifiers != gpui::Modifiers::shift() {
+            return;
+        }
+        let Some(input) = self.line.input.clone() else {
+            return;
+        };
+        let ex = self
+            .line
+            .open
+            .as_ref()
+            .and_then(|(editor, _)| editor.upgrade())
+            .and_then(|editor| open_kind(editor.read(cx)))
+            == Some(CommandLineKind::Ex);
+        if !ex {
+            return;
+        }
+        cx.stop_propagation();
+        let line = input.read(cx).text().to_owned();
+        if self
+            .line
+            .complete
+            .as_ref()
+            .is_none_or(|cycle| cycle.shown != line)
+        {
+            self.line.complete = NameCycle::of(&line);
+        }
+        let Some(cycle) = self.line.complete.as_mut() else {
+            return;
+        };
+        let text = cycle.step(!shift).to_owned();
+        input.update(cx, |input, cx| input.set_text(text, cx));
     }
 
     /// The line, while it's open: a `COMMAND` segment in the editor
