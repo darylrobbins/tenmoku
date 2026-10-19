@@ -99,3 +99,6 @@ Do not change `markdown.show_preview`, `markdown.show_preview_to_side`, their bi
   `table` (colebemis a contributor at the pinned commit). The host
   repository's `THIRD_PARTY.md` carries the same row but is outside this
   card's scope; it still needs the same update.
+- The buttons' debug selectors are `icon-button:markdown-toggle` and
+  `icon-button:markdown-side`: `IconButton` names its selector from its id,
+  as the split buttons' are `icon-button:split-right` and so on.
