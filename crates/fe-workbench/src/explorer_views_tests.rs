@@ -22,7 +22,9 @@ use crate::{
 
 /// A workbench on a folder of `a.rs`, showing it, focused as the app
 /// focuses it.
-fn opened(cx: &mut TestAppContext) -> (tempfile::TempDir, Entity<Workbench>, &mut VisualTestContext) {
+fn opened(
+    cx: &mut TestAppContext,
+) -> (tempfile::TempDir, Entity<Workbench>, &mut VisualTestContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
@@ -167,7 +169,9 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
     // A new root's tree takes the old one's place, the views as they were.
     let root = tempfile::tempdir().unwrap();
     let path = root.path().to_owned();
-    workbench.update_in(cx, |workbench, window, cx| workbench.set_root(path, window, cx));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.set_root(path, window, cx)
+    });
     draw(cx);
     let (panel, folders_view) = workbench.read_with(cx, |workbench, cx| {
         let dock = workbench.dock().read(cx);

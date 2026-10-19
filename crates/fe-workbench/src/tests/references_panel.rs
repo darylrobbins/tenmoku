@@ -318,7 +318,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         Some("References to `helper`")
     );
     // References joins above the Terminal button.
-    let after = [&rail[..5], &[Icon::FileSymlink, Icon::FileTerminal]].concat();
+    let after = [&rail[..4], &[Icon::FileSymlink, Icon::FileTerminal]].concat();
     assert_eq!(tabs(cx), (after, true));
 
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));
