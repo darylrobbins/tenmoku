@@ -154,6 +154,37 @@ impl EditorView {
         cx.notify();
     }
 
+    /// The buffer row at the top of the view plus the fraction of it
+    /// scrolled past: a soft-wrapped row counts its screen rows, and folds
+    /// and blocks are skipped. `None` before the first frame.
+    pub fn top_buffer_line(&self) -> Option<f32> {
+        let frame = &self.layout.as_ref()?.frame;
+        let display_top = frame.block_map.to_display_top(self.scroll_top());
+        let first = display_top.floor().max(0.) as u32;
+        let display = self.model.display();
+        let buffer_row = display.row(first).buffer_row;
+        let start = display.row_for_buffer_row(buffer_row);
+        let rows = wrapped_rows(display, buffer_row, start);
+        let within = (display_top - start as f32).max(0.);
+        Some(buffer_row as f32 + (within / rows as f32).min(1.))
+    }
+
+    /// Scrolls so [`EditorView::top_buffer_line`] is `line` from the next
+    /// frame, which clamps it, leaving the caret where it is. Like
+    /// [`EditorView::set_scroll_top`] it emits no
+    /// [`EditorViewEvent::Scrolled`]. Nothing before the first frame.
+    pub fn scroll_to_buffer_line(&mut self, line: f32, cx: &mut Context<Self>) {
+        let Some(layout) = &self.layout else { return };
+        let display = self.model.display();
+        let line = line.clamp(0., self.model.text().row_count().saturating_sub(1) as f32);
+        let buffer_row = line.floor() as u32;
+        let start = display.row_for_buffer_row(buffer_row);
+        let rows = wrapped_rows(display, buffer_row, start);
+        let display_top = start as f32 + (line - buffer_row as f32) * rows as f32;
+        let top = layout.frame.block_map.to_screen_top(display_top);
+        self.set_scroll_top(top, cx);
+    }
+
     /// Whether the frame about to be laid out starts where the host last
     /// put it ([`EditorView::set_scroll_top`]), with nothing scrolled since:
     /// no wheel, vim scroll or caret to reveal. Its clamp of that top is
@@ -307,4 +338,14 @@ fn reads_only(invocation: &Invocation) -> bool {
         "vim.jump" => args.get("operator").is_none_or(Value::is_null) || yanks(args),
         _ => false,
     }
+}
+
+/// The display rows `buffer_row` takes, from its first, `start`: more than
+/// one when it is soft-wrapped.
+fn wrapped_rows(display: &fe_display::DisplayMap, buffer_row: u32, start: u32) -> u32 {
+    let mut rows = 1;
+    while start + rows < display.row_count() && display.row(start + rows).buffer_row == buffer_row {
+        rows += 1;
+    }
+    rows
 }

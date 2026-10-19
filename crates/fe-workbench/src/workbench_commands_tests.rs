@@ -162,3 +162,7 @@ fn the_catalog_knows_the_tab_commands_with_no_app() {
 #[cfg(test)]
 #[path = "markdown_preview_tests.rs"]
 mod markdown_preview_tests;
+
+#[cfg(test)]
+#[path = "markdown_scroll_sync_tests.rs"]
+mod markdown_scroll_sync_tests;

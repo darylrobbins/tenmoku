@@ -14,6 +14,12 @@
 //! - A link click opens a file in the preview's pane, at the `#L12` line it
 //!   names; a web or mail link in the browser; and an `#anchor` scrolls to
 //!   its heading ([`fe_markdown::link_target`]).
+//! - It scrolls with its source, both ways, to the same fractional source
+//!   line, as VS Code's `scrollPreviewWithEditor` and
+//!   `scrollEditorWithPreview` do. The scroll one side makes of the other
+//!   emits nothing, so there's no echo, and a re-render puts the preview
+//!   back at the source's line once it has laid out. With the source
+//!   closed, nothing syncs.
 
 use std::{
     path::{Path, PathBuf},
@@ -22,7 +28,7 @@ use std::{
 };
 
 use fe_buffer::Version;
-use fe_gpui::{ActivePalette, EditorTheme, EditorView};
+use fe_gpui::{ActivePalette, EditorTheme, EditorView, commands::EditorViewEvent};
 use fe_markdown::{Document, LinkTarget};
 use fe_markdown_view::{MarkdownStyle, MarkdownView, MarkdownViewEvent};
 use fe_ui::{ActiveUiTheme, ui_theme};
@@ -97,7 +103,7 @@ impl MarkdownPreview {
         let doc_path = doc_path(path.as_deref(), root.as_deref());
         let view = cx.new(|cx| MarkdownView::new(document, doc_path, root.clone(), style, cx));
         let mut subscriptions = vec![
-            cx.subscribe_in(&view, window, Self::link_clicked),
+            cx.subscribe_in(&view, window, Self::view_event),
             cx.subscribe(workbench, |this, _, RootChanged(root), cx| {
                 this.root = Some(root.clone());
                 this.relocate(cx);
@@ -108,6 +114,7 @@ impl MarkdownPreview {
         let open = source.upgrade();
         if let Some(open) = &open {
             subscriptions.push(cx.observe(open, Self::source_changed));
+            subscriptions.push(cx.subscribe(open, Self::source_event));
         }
         let mut this = Self {
             view,
@@ -175,6 +182,7 @@ impl MarkdownPreview {
                 if this.version == Some(version) {
                     this.shown = Some(version);
                     (this.view).update(cx, |view, cx| view.set_document(document, cx));
+                    this.follow_source(cx);
                 }
             })
             .ok();
@@ -199,15 +207,47 @@ impl MarkdownPreview {
             .update(cx, |view, cx| view.set_paths(doc_path, root, cx));
     }
 
-    /// Follows a clicked link: see the module's docs.
-    fn link_clicked(
+    /// Puts the preview at the source's top line, as of its last frame.
+    fn follow_source(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self.source.upgrade() else {
+            return;
+        };
+        if let Some(line) = source.read(cx).top_buffer_line() {
+            (self.view).update(cx, |view, cx| view.scroll_to_source_line(line, cx));
+        }
+    }
+
+    /// Follows the source's scrolling.
+    fn source_event(
+        &mut self,
+        _: Entity<EditorView>,
+        event: &EditorViewEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(event, EditorViewEvent::Scrolled { .. }) {
+            self.follow_source(cx);
+        }
+    }
+
+    /// Follows a clicked link, or the preview's scrolling: see the
+    /// module's docs.
+    fn view_event(
         &mut self,
         _: &Entity<MarkdownView>,
         event: &MarkdownViewEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let MarkdownViewEvent::LinkClicked { dest } = event;
+        let dest = match event {
+            MarkdownViewEvent::LinkClicked { dest } => dest,
+            MarkdownViewEvent::Scrolled => {
+                let line = self.view.read(cx).source_line_at_top();
+                if let (Some(line), Some(source)) = (line, self.source.upgrade()) {
+                    source.update(cx, |source, cx| source.scroll_to_buffer_line(line, cx));
+                }
+                return;
+            }
+        };
         let doc_path = doc_path(self.path.as_deref(), self.root.as_deref());
         match fe_markdown::link_target(dest, &doc_path, self.root.as_deref()) {
             LinkTarget::Anchor(slug) => {

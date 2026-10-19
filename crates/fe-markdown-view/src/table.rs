@@ -55,7 +55,8 @@ struct TableColumn {
 pub(crate) fn render(
     align: &[Align],
     head: &[Cell],
-    rows: &[Row],
+    source_rows: &[Row],
+    lines: &std::ops::Range<u32>,
     cx: &mut RenderCx,
 ) -> AnyElement {
     let style = cx.style;
@@ -67,13 +68,13 @@ pub(crate) fn render(
         weight: FontWeight::NORMAL,
         color: style.foreground,
     };
-    let mut grid: Vec<Vec<Inlines>> = Vec::with_capacity(rows.len() + 1);
+    let mut grid: Vec<Vec<Inlines>> = Vec::with_capacity(source_rows.len() + 1);
     grid.push(
         head.iter()
             .map(|cell| inlines::layout(cell, header, cx))
             .collect(),
     );
-    for row in rows {
+    for row in source_rows {
         grid.push(
             row.cells
                 .iter()
@@ -111,15 +112,18 @@ pub(crate) fn render(
         })
         .collect();
     let total_w = columns.iter().map(|c| c.max + c.divider).sum::<f32>() + TABLE_BORDER_PX;
+    let row_lines: Vec<_> = std::iter::once(lines.start..lines.start + 1)
+        .chain(source_rows.iter().map(|row| row.lines.clone()))
+        .collect();
     let rows = render_rows(grid, align, &columns, cx);
-    div()
+    let table = div()
         .w_full()
         .max_w(px(total_w))
         .overflow_hidden()
         .border_1()
         .border_color(style.border)
-        .children(rows)
-        .into_any_element()
+        .children(rows);
+    cx.track(table, row_lines).into_any_element()
 }
 
 /// The max-content width of every table column: the widest cell's

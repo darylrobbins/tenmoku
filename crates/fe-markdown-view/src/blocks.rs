@@ -60,12 +60,11 @@ fn gap(tight: bool) -> gpui::Pixels {
 
 /// `blocks` one under another.
 pub(crate) fn render_blocks(blocks: &[Block], tight: bool, cx: &mut RenderCx) -> Div {
-    div().flex().flex_col().gap(gap(tight)).children(
-        blocks
-            .iter()
-            .enumerate()
-            .map(|(ix, block)| render(block, ix == 0, cx)),
-    )
+    let children: Vec<_> = (blocks.iter().enumerate())
+        .map(|(ix, block)| render(block, ix == 0, cx))
+        .collect();
+    let container = div().flex().flex_col().gap(gap(tight)).children(children);
+    cx.track(container, blocks.iter().map(|b| b.lines.clone()).collect())
 }
 
 /// One block. `first` says whether it starts its container, where a
@@ -118,14 +117,12 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
         } => {
             let depth = cx.list_depth;
             cx.list_depth += 1;
-            let list = div()
-                .flex()
-                .flex_col()
-                .gap(gap(*tight))
-                .children(
-                    (items.iter().enumerate())
-                        .map(|(ix, item)| render_item(item, ix, *start, *tight, depth, cx)),
-                )
+            let rendered: Vec<_> = (items.iter().enumerate())
+                .map(|(ix, item)| render_item(item, ix, *start, *tight, depth, cx))
+                .collect();
+            let list = div().flex().flex_col().gap(gap(*tight)).children(rendered);
+            let list = cx
+                .track(list, items.iter().map(|item| item.lines.clone()).collect())
                 .into_any_element();
             cx.list_depth = depth;
             list
@@ -150,7 +147,9 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .child(StyledText::new(code.to_owned()).with_runs(runs))
                 .into_any_element()
         }
-        BlockKind::Table { align, head, rows } => table::render(align, head, rows, cx),
+        BlockKind::Table { align, head, rows } => {
+            table::render(align, head, rows, &block.lines, cx)
+        }
         BlockKind::Rule => div().w_full().h(px(1.)).bg(style.border).into_any_element(),
         // Shown as written: the preview doesn't render HTML.
         BlockKind::Html(html) => div()
