@@ -27,6 +27,7 @@ fn template_is_all_defaults() {
             "font_size",
             "format_on_save",
             "indent_guides",
+            "inline_blame",
             "line_height",
             "soft_wrap",
             "tab_size"

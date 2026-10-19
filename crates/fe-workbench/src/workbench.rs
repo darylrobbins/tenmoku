@@ -361,6 +361,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Self {
         let format_on_save = settings.format_on_save;
+        let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
@@ -634,6 +635,9 @@ impl Workbench {
         workbench.lsp.format_on_save.set(format_on_save);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);
+        if inline_blame {
+            git_blame::set_line_blame(&mut workbench, true, cx);
+        }
         workbench
     }
 
@@ -2491,6 +2495,10 @@ impl Workbench {
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
         self.reload_auto_save(&event.settings.editor, cx);
+        let inline_blame = event.settings.editor.inline_blame;
+        if inline_blame != event.previous.editor.inline_blame {
+            git_blame::set_line_blame(self, inline_blame, cx);
+        }
     }
 
     /// Runs a typed command (the `workbench.*` tab commands, the `pane.*`

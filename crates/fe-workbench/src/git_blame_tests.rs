@@ -23,6 +23,9 @@ mod head_race;
 #[path = "git_blame_column_tests.rs"]
 mod column_tests;
 
+#[path = "git_blame_setting_tests.rs"]
+mod setting_tests;
+
 const DAY: i64 = 86_400;
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and
@@ -134,6 +137,16 @@ fn window(
     root: &Path,
     file: Option<&str>,
 ) -> (Entity<Workbench>, VisualTestContext) {
+    window_with(cx, root, file, EditorSettings::default())
+}
+
+/// [`window`], made with `settings`.
+fn window_with(
+    cx: &mut TestAppContext,
+    root: &Path,
+    file: Option<&str>,
+    settings: EditorSettings,
+) -> (Entity<Workbench>, VisualTestContext) {
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -144,7 +157,7 @@ fn window(
     };
     let window = cx.add_window(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);
-        Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        Workbench::new(launch, theme, settings, window, cx)
     });
     let workbench = window.root(cx).unwrap();
     let mut vcx = VisualTestContext::from_window(window.into(), cx);

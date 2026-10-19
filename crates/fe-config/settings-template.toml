@@ -39,6 +39,10 @@
 # Draw a thin vertical line at each indent level.
 # indent_guides = true
 
+# Show the caret row's git blame after the line in every new window; Git:
+# Toggle Line Blame turns it on or off for one window.
+# inline_blame = false
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

@@ -220,6 +220,9 @@ pub struct EditorSettings {
     pub auto_save_delay: u64,
     /// Draw a thin vertical line at each indent level.
     pub indent_guides: bool,
+    /// Show the caret row's git blame after the line in every new window; Git:
+    /// Toggle Line Blame turns it on or off for one window.
+    pub inline_blame: bool,
 }
 
 /// `editor.auto_save`.
@@ -254,6 +257,7 @@ impl Default for EditorSettings {
             auto_save: AutoSave::default(),
             auto_save_delay: 1000,
             indent_guides: true,
+            inline_blame: false,
         }
     }
 }

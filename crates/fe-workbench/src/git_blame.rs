@@ -255,7 +255,11 @@ pub(super) fn run(
     cx: &mut Context<Workbench>,
 ) {
     match op.command {
-        GitCommand::ToggleLineBlame => toggle(workbench, cx),
+        GitCommand::ToggleLineBlame => {
+            let id = cx.entity_id();
+            let on = !state(cx).windows.contains_key(&id);
+            set_line_blame(workbench, on, cx);
+        }
         GitCommand::ToggleBlameAnnotations => column::toggle(workbench, op, cx),
         GitCommand::BlameLine => blame_line(workbench, op, window, cx),
         GitCommand::OpenLineCommit => open_line_commit(workbench, op, None, window, cx),
@@ -266,11 +270,17 @@ pub(super) fn run(
     }
 }
 
-/// `git.toggle_line_blame`: turns the window's line blame on or off.
-fn toggle(workbench: &mut Workbench, cx: &mut Context<Workbench>) {
+/// Turns the window's line blame on or off: `git.toggle_line_blame`, and
+/// `editor.inline_blame` for a new window and a changed setting.
+pub(super) fn set_line_blame(workbench: &mut Workbench, on: bool, cx: &mut Context<Workbench>) {
     let id = cx.entity_id();
-    if let Some(line) = state(cx).windows.remove(&id) {
-        unmark(line.marked, cx);
+    if !on {
+        if let Some(line) = state(cx).windows.remove(&id) {
+            unmark(line.marked, cx);
+        }
+        return;
+    }
+    if state(cx).windows.contains_key(&id) {
         return;
     }
     let status_bar = workbench.status_bar.clone();

@@ -77,6 +77,11 @@
           "description": "Draw a thin vertical line at each indent level.",
           "type": "boolean"
         },
+        "inline_blame": {
+          "default": false,
+          "description": "Show the caret row's git blame after the line in every new window; Git:\nToggle Line Blame turns it on or off for one window.",
+          "type": "boolean"
+        },
         "line_height": {
           "default": 1.6,
           "description": "The line height, as a multiple of the font size.",
@@ -483,6 +488,7 @@
         "font_size": 13.0,
         "format_on_save": false,
         "indent_guides": true,
+        "inline_blame": false,
         "line_height": 1.6,
         "soft_wrap": false,
         "tab_size": 4
