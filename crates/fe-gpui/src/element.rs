@@ -770,6 +770,10 @@ impl Element for EditorElement {
         let gutter = view.gutter;
         let hints = crate::inlay_hints::inlays(view);
         let unnecessary = unnecessary_ranges(&model.diagnostics());
+        let queried = decorations::Queried::default();
+        // The colours of the frame's `Foreground` decorations, found once
+        // the frame's rows are known.
+        let foreground: std::cell::RefCell<Vec<StyledSpan<Hsla>>> = Default::default();
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
             // fe-display lays hints out only beside no annotation column.
             true if annotation_width > 0. => layout::layout_frame_with_annotation_column(
@@ -780,7 +784,7 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
                 |rows| fold_headers(syntax, rows),
             ),
             true => layout::layout_frame_with_hints(
@@ -791,7 +795,7 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
                 |rows| fold_headers(syntax, rows),
             ),
             false => layout::layout_frame_without_gutter_with_hints(
@@ -802,10 +806,30 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, range),
+                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
             ),
         };
-        let mut frame = lay_out(&input);
+        // A frame laid out, and again with the colours of the `Foreground`
+        // decorations over its rows where they change the spans. The
+        // providers are asked once for the rows' range, as the painted
+        // decorations then are.
+        let mut settle = |input: &FrameInput<Hsla>| {
+            let mut frame = lay_out(input);
+            for _ in 0..2 {
+                let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
+                    break;
+                };
+                let decorations = queried.get(view, first.start..last.end);
+                let found = foreground_spans(&decorations, theme);
+                if found == *foreground.borrow() {
+                    break;
+                }
+                *foreground.borrow_mut() = found;
+                frame = lay_out(input);
+            }
+            frame
+        };
+        let mut frame = settle(&input);
         // Next or previous hunk: its block comes into view too, though that
         // leaves the caret, at the hunk's start, out of it.
         let reveal = view.reveal_hunk.and_then(|id| {
@@ -814,7 +838,7 @@ impl Element for EditorElement {
             proposal::reveal(&hunks, id, &frame.block_map, top, rows)
         });
         if let Some(top) = reveal {
-            frame = lay_out(&FrameInput {
+            frame = settle(&FrameInput {
                 scroll: Vec2 {
                     x: frame.scroll.x,
                     y: top * frame.line_height,
@@ -845,7 +869,7 @@ impl Element for EditorElement {
         let mut kept_scroll = None;
         if let Some(past) = past_edge(&frame) {
             if model.display().wrap_width().is_none() {
-                let scrolled = lay_out(&FrameInput {
+                let scrolled = settle(&FrameInput {
                     scroll: Vec2 {
                         x: frame.scroll.x + past,
                         y: frame.scroll.y,
@@ -1012,7 +1036,7 @@ impl Element for EditorElement {
         layout.current_match = current_match_rects(&mut layout, view);
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
-        layout.decorations = Decorations::layout(&mut layout, view, em, window);
+        layout.decorations = Decorations::layout(&mut layout, view, &queried, em, window);
         // Without a gutter, its marks aren't drawn, nor can be clicked.
         if !gutter {
             (layout.decorations.placed)
@@ -2629,11 +2653,13 @@ fn fold_headers(syntax: Option<&Syntax>, rows: Range<u32>) -> Vec<u32> {
 }
 
 /// The highlights in `range` that the theme colours, with bracket pairs in
-/// their depth's colour over them when the theme colours pairs.
+/// their depth's colour over them when the theme colours pairs, and the
+/// `Foreground` colours over those.
 fn styled_highlights(
     syntax: Option<&Syntax>,
     theme: &EditorTheme,
     unnecessary: &[Range<usize>],
+    foreground: &[StyledSpan<Hsla>],
     range: Range<usize>,
 ) -> Vec<StyledSpan<Hsla>> {
     let spans: Vec<_> = syntax
@@ -2659,10 +2685,56 @@ fn styled_highlights(
         }
         _ => spans,
     };
+    let spans = over(spans, clipped(foreground, &range));
     if unnecessary.is_empty() {
         return spans;
     }
     fade_spans(spans, unnecessary, &range, theme.foreground)
+}
+
+/// The colours of the `Foreground` decorations among `decorations`, in paint
+/// order, sorted and non-overlapping, later decorations winning where they
+/// overlap. A name the theme doesn't colour is left out.
+fn foreground_spans(
+    decorations: &[fe_editor::decorations::Decoration],
+    theme: &EditorTheme,
+) -> Vec<StyledSpan<Hsla>> {
+    let mut out: Vec<StyledSpan<Hsla>> = Vec::new();
+    for decoration in decorations {
+        let DecorationKind::Foreground(name) = &decoration.kind else {
+            continue;
+        };
+        if decoration.range.is_empty() {
+            continue;
+        }
+        let Some(style) = fe_syntax::Highlight::from_capture(name)
+            .and_then(|highlight| theme.syntax_color(highlight))
+        else {
+            continue;
+        };
+        let span = StyledSpan {
+            style,
+            range: decoration.range.clone(),
+        };
+        match out.last() {
+            Some(last) if last.range.end > span.range.start => out = over(out, [span]),
+            _ => out.push(span),
+        }
+    }
+    out
+}
+
+/// The part of the sorted, non-overlapping `spans` within `range`.
+fn clipped(spans: &[StyledSpan<Hsla>], range: &Range<usize>) -> Vec<StyledSpan<Hsla>> {
+    let first = spans.partition_point(|span| span.range.end <= range.start);
+    spans[first..]
+        .iter()
+        .take_while(|span| span.range.start < range.end)
+        .map(|span| StyledSpan {
+            style: span.style,
+            range: span.range.start.max(range.start)..span.range.end.min(range.end),
+        })
+        .collect()
 }
 
 /// `spans` with `top` laid over them, cutting them where they overlap. Both
@@ -2673,8 +2745,11 @@ fn over(
 ) -> Vec<StyledSpan<Hsla>> {
     let mut top = top.into_iter().peekable();
     let mut merged = Vec::with_capacity(spans.len());
+    // Where the last span laid over them ends: a span it crosses is cut
+    // short there, or dropped.
+    let mut covered = 0;
     for span in spans {
-        let mut start = span.range.start;
+        let mut start = span.range.start.max(covered);
         while let Some(above) = top.next_if(|above| above.range.start < span.range.end) {
             if above.range.start > start {
                 merged.push(StyledSpan {
@@ -2682,6 +2757,7 @@ fn over(
                     style: span.style,
                 });
             }
+            covered = covered.max(above.range.end);
             start = start.max(above.range.end);
             merged.push(above);
         }
