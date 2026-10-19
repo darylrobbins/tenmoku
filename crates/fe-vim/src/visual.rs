@@ -52,6 +52,9 @@ pub(crate) struct Visual {
     /// The display column along its row `gj` and `gk` aimed for with the
     /// goal (see [`crate::line_motions::DisplayGoal`]): `select` clears it.
     along: Option<usize>,
+    /// Whether a text object that grows from its own selection made this
+    /// one (`ia`): `select` clears it.
+    by_object: bool,
 }
 
 /// A position as nvim keeps a mark: a byte column on a row. The row is
@@ -360,6 +363,7 @@ fn select(model: &mut EditorModel, state: &mut VimState, ends: Ends) {
         cursor: snapshot.anchor_after(ends.cursor),
         goal: ends.goal,
         along: None,
+        by_object: false,
     });
     state.goals = None;
     state.display_goals = None;
@@ -742,6 +746,19 @@ pub(crate) fn jump_cursor(model: &mut EditorModel, state: &mut VimState, offset:
 }
 
 impl VimState {
+    /// Whether a text object that grows from its own selection made the
+    /// visual selection, which hasn't moved since.
+    pub(crate) fn visual_by_object(&self) -> bool {
+        self.visual.as_ref().is_some_and(|visual| visual.by_object)
+    }
+
+    /// Marks the visual selection as the one a text object just made.
+    pub(crate) fn set_visual_by_object(&mut self) {
+        if let Some(visual) = self.visual.as_mut() {
+            visual.by_object = true;
+        }
+    }
+
     /// The display column `gj` and `gk` left the visual cursor aiming for.
     pub(crate) fn visual_along(&self) -> Option<usize> {
         let visual = self.visual.as_ref()?;

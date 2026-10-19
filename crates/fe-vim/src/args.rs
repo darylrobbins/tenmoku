@@ -427,7 +427,8 @@ impl Motion {
 /// `a_angle` `inner_tag` `a_tag` `inner_backtick` `a_backtick` are `` i[ a[
 /// i< a< it at i` a` `` (`delimiters.rs`); `inner_entire` `a_entire`
 /// `inner_indent` `a_indent` `a_big_indent` are `ie ae ii ai aI`
-/// (`feature/objects.rs`).
+/// (`feature/objects.rs`); `inner_argument` `a_argument` are `ia aa`
+/// (`feature/argument.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextObject {
@@ -460,6 +461,8 @@ pub enum TextObject {
     InnerIndent,
     AIndent,
     ABigIndent,
+    InnerArgument,
+    AArgument,
 }
 
 /// What an operator acts on.

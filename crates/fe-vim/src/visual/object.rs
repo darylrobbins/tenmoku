@@ -67,6 +67,9 @@ pub(crate) fn select_object(
     if crate::feature::objects::is_object(args.text_object) {
         return crate::feature::objects::select_visual(target, args);
     }
+    if crate::feature::argument::is_object(args.text_object) {
+        return crate::feature::argument::select_visual(target, args);
+    }
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let Some(ends) = ends(model, state) else {

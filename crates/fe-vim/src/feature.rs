@@ -22,6 +22,7 @@
 //! [`line_motions`], [`delimiters`], [`g_operators`]; [`jumplist`] takes
 //! keys only).
 
+pub(crate) mod argument;
 pub(crate) mod objects;
 
 use fe_command::Registry;
@@ -92,6 +93,7 @@ pub(crate) const FEATURES: [&Feature; 18] = [
     &line_undo::FEATURE,
     &changelist::FEATURE,
     &objects::FEATURE,
+    &argument::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

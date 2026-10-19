@@ -8,7 +8,7 @@ use fe_text::Text;
 
 use crate::{
     TextObject, delimiters,
-    feature::objects,
+    feature::{argument, objects},
     motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
     prose,
@@ -46,6 +46,7 @@ pub(crate) fn select(
         InnerEntire | AEntire | InnerIndent | AIndent | ABigIndent => {
             objects::select(text, offset, object, count, tab)
         }
+        InnerArgument | AArgument => argument::select(text, offset, object, count),
     }
 }
 
