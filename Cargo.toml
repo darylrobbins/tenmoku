@@ -162,8 +162,9 @@ toml = "1"
 toml_edit = "0.25"
 
 # Tree-sitter and grammars (all MIT; each grammar's license and queries audited
-# when added, see THIRD_PARTY.md).
-tree-sitter = "0.27"
+# when added, see THIRD_PARTY.md). `wasm` loads extensions' grammars at run time
+# through wasmtime (Apache-2.0 WITH LLVM-exception).
+tree-sitter = { version = "0.27", features = ["wasm"] }
 tree-sitter-bash = "0.25"
 tree-sitter-c = "0.24"
 tree-sitter-c-sharp = "0.23"
@@ -230,5 +231,10 @@ codegen-units = 1
 # tree-sitter-yaml 0.7.2's scanner counts rows in an int16_t, so YAML over
 # 32,768 lines gets error nodes (upstream issue #49). This is 0.7.2 with
 # upstream PR #35 applied; see vendor/tree-sitter-yaml/README.md for when to drop it.
+#
+# tree-sitter 0.27.0's Wasm store has no execution deadline and aborts on a
+# mistyped module export; this is 0.27.0 with both fixed, for extensions'
+# grammars. See vendor/tree-sitter/README.md for when to drop it.
 [patch.crates-io]
+tree-sitter = { path = "vendor/tree-sitter" }
 tree-sitter-yaml = { path = "vendor/tree-sitter-yaml" }

@@ -51,13 +51,14 @@ use std::{
 
 use fe_buffer::Text;
 use tree_sitter::{
-    InputEdit, Node, Parser, Query, QueryCursorOptions, QueryError, StreamingIterator as _, Tree,
+    InputEdit, Node, Query, QueryCursorOptions, QueryError, StreamingIterator as _, Tree,
 };
 
 use crate::{
     Language,
     highlight::{Painted, clip, overlay},
     language::{Injected, injected_language},
+    runtime::ThreadParser,
     syntax::{
         chunks, for_each_query_root, highlight_query_finished, out_of_time, parse_text, until,
     },
@@ -328,7 +329,7 @@ struct Painter<'a> {
     host_parsed: bool,
     layers: &'a mut Layers,
     /// Shared by the layers parsed in one call.
-    parser: Option<Parser>,
+    parser: Option<ThreadParser>,
     complete: bool,
 }
 
@@ -577,10 +578,10 @@ impl Painter<'_> {
                 end_point: point(range.end),
             });
         }
-        let parser = self.parser.get_or_insert_with(Parser::new);
-        parser
-            .set_language(&language.grammar)
-            .expect("grammar ABI is supported by this tree-sitter");
+        let parser = self.parser.get_or_insert_with(ThreadParser::take);
+        // Only a WebAssembly grammar's store can fail, which leaves the
+        // layer plain.
+        parser.set_language(language).ok()?;
         // Sorted, disjoint and non-empty, as tree-sitter requires.
         parser.set_included_ranges(&ranges).ok()?;
         let old = kept.map(|ix| &layers.kept[ix].tree);

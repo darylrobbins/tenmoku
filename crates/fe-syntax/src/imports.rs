@@ -14,10 +14,11 @@ use std::{
 };
 
 use fe_buffer::{Buffer, Text};
-use tree_sitter::{Parser, Query, QueryCursor, QueryCursorOptions, StreamingIterator as _, Tree};
+use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator as _, Tree};
 
 use crate::{
     Language, Syntax,
+    runtime::ThreadParser,
     syntax::{chunks, parse_text},
 };
 
@@ -471,10 +472,9 @@ fn parse_corrected(
     };
     let buffer = Buffer::new(&corrected);
     recovery_reads(corrected.len());
-    let mut parser = Parser::new();
-    if parser.set_language(&language.grammar).is_err() {
+    let Ok(mut parser) = ThreadParser::for_language(language) else {
         return Ok(None);
-    }
+    };
     match parse_text(&mut parser, buffer.text(), None, poll) {
         Some(tree) => Ok(Some((tree, buffer))),
         None if poll() => Err(ImportsError::Cancelled),

@@ -12,6 +12,7 @@ fe-buffer.workspace = true
 fe-config.workspace = true
 fe-gpui.workspace = true
 fe-lsp.workspace = true
+fe-syntax.workspace = true
 fe-vim.workspace = true
 fe-workbench.workspace = true
 kiln.workspace = true
@@ -20,6 +21,7 @@ gpui.workspace = true
 libc.workspace = true
 log.workspace = true
 schemars.workspace = true
+serde.workspace = true
 toml.workspace = true
 
 [dev-dependencies]

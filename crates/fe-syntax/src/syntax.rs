@@ -8,14 +8,14 @@ use std::{
 
 use fe_buffer::{BufferId, BufferSnapshot, Text, Version};
 use tree_sitter::{
-    InputEdit, Node, ParseOptions, Parser, QueryCursor, QueryCursorOptions, StreamingIterator as _,
-    Tree,
+    InputEdit, Node, ParseOptions, QueryCursor, QueryCursorOptions, StreamingIterator as _, Tree,
 };
 
 use crate::{
     HighlightSpan, Language,
     highlight::{Capture, Painted, flatten, highlighted},
     injection::{self, Layers},
+    runtime::ThreadParser,
 };
 
 /// How much of a file over its language's [`Language::parse_limit`] is parsed around the visible
@@ -880,9 +880,7 @@ impl ParseJob {
         old_tree: Option<&Tree>,
         out_of_time: impl FnMut() -> bool,
     ) -> Option<Tree> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&self.language.grammar)
+        let mut parser = ThreadParser::for_language(self.language)
             .expect("grammar ABI is supported by this tree-sitter");
         if let Some(window) = &self.window {
             let text = self.snapshot.text();
@@ -904,26 +902,40 @@ impl ParseJob {
 }
 
 /// Parses `text` with `parser`, set up with its language and any included
-/// ranges. `None` if `out_of_time` stopped it.
+/// ranges. `None` if `out_of_time` stopped it, or a WebAssembly language's
+/// parse deadline did ([`ThreadParser::parse`]).
 pub(crate) fn parse_text(
-    parser: &mut Parser,
+    parser: &mut ThreadParser,
     text: &Text,
     old_tree: Option<&Tree>,
-    mut out_of_time: impl FnMut() -> bool,
+    out_of_time: impl FnMut() -> bool,
 ) -> Option<Tree> {
     // Tree-sitter calls `read` and `progress` from C, which a panic can't
     // unwind through (it aborts), so it's caught there, the parse stopped,
-    // and the panic resumed after.
+    // and the panic resumed after. A WebAssembly grammar's code asks `stop`
+    // too, as it runs.
+    let out_of_time = RefCell::new(out_of_time);
     let panic = RefCell::new(None);
-    let mut progress =
-        |_: &tree_sitter::ParseState| match catch_unwind(AssertUnwindSafe(&mut out_of_time)) {
-            Ok(false) => ControlFlow::Continue(()),
-            Ok(true) => ControlFlow::Break(()),
+    let stop = || {
+        // Not asked while it's running: Wasm code runs between its calls.
+        let Ok(mut out_of_time) = out_of_time.try_borrow_mut() else {
+            return false;
+        };
+        match catch_unwind(AssertUnwindSafe(&mut *out_of_time)) {
+            Ok(stop) => stop,
             Err(payload) => {
                 panic.borrow_mut().get_or_insert(payload);
-                ControlFlow::Break(())
+                true
             }
-        };
+        }
+    };
+    let mut progress = |_: &tree_sitter::ParseState| {
+        if stop() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
     let mut read = |offset: usize, _: tree_sitter::Point| {
         let bytes = catch_unwind(AssertUnwindSafe(|| {
             fault_point("read");
@@ -934,11 +946,13 @@ pub(crate) fn parse_text(
             &[]
         })
     };
-    let tree = parser.parse_with_options(
-        &mut read,
-        old_tree,
-        Some(ParseOptions::new().progress_callback(&mut progress)),
-    );
+    let tree = parser.parse(&stop, |parser| {
+        parser.parse_with_options(
+            &mut read,
+            old_tree,
+            Some(ParseOptions::new().progress_callback(&mut progress)),
+        )
+    });
     if let Some(payload) = panic.into_inner() {
         resume_unwind(payload);
     }

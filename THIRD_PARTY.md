@@ -83,7 +83,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 
 | Feature | Crate | Version | Upstream | License | Query |
 |---|---|---|---|---|---|
-| (runtime) | tree-sitter | 0.27.0 | https://github.com/tree-sitter/tree-sitter | MIT | |
+| (runtime) | tree-sitter | 0.27.0, patched¹⁰ | https://github.com/tree-sitter/tree-sitter | MIT | |
 | rust | tree-sitter-rust | 0.24.2 | https://github.com/tree-sitter/tree-sitter-rust | MIT | `HIGHLIGHTS_QUERY` |
 | python | tree-sitter-python | 0.25.0 | https://github.com/tree-sitter/tree-sitter-python | MIT | `HIGHLIGHTS_QUERY` |
 | javascript | tree-sitter-javascript | 0.25.0 | https://github.com/tree-sitter/tree-sitter-javascript | MIT | `HIGHLIGHT_QUERY` + `JSX_HIGHLIGHT_QUERY`; `INJECTIONS_QUERY` |
@@ -154,6 +154,16 @@ leave out.
 ⁹ `(code_fence_content) @text.literal`, written for fastedit, in
 `crates/fe-syntax/src/language.rs`. The crate's query clears fenced code with
 `@none`; this keeps it `markup.raw`.
+
+¹⁰ Vendored in `vendor/tree-sitter/` and used through `[patch.crates-io]`.
+It's 0.27.0 (upstream commit `6070dbf`) with a fastedit patch to
+`src/wasm_store.c`, `src/parser.c` and `binding_rust/wasm_language.rs`, for
+extensions' WebAssembly grammars. Each Wasm store gets an epoch deadline and
+a callback that stops code the thread's check says to stop. The assertions
+after calls into a module become errors. The lexer and scanner functions a
+module supplies are type-checked, and so are the tokens they return and the
+host callbacks they make. The licence is unchanged. The
+vendored README lists the changes and says when to drop it.
 
 How patterns take precedence follows tree-sitter-highlight 0.25 (MIT), which
 was read for the rule, not copied: see `earlier_patterns_win` in

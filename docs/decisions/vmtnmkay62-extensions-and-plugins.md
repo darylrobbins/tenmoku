@@ -64,7 +64,8 @@ Two stages.
    later snippets. A stage-1 extension has no general-purpose plugin API and
    loads no native code, but it is **not code-free**: a grammar is a
    WebAssembly module whose initializer and scanner run in a wasmtime sandbox
-   (§6), and an `lsp` contribution names a **program the app then spawns with
+   (§6; a malformed grammar's tables can still crash the editor until T1005),
+   and an `lsp` contribution names a **program the app then spawns with
    the user's rights, outside any sandbox**. That second one is real execution
    authority. It is the same power as the user writing the `command` in their
    own `[lsp]` settings, but an installed extension is third-party, so an `lsp`
@@ -222,7 +223,8 @@ runtime. Options:
   (Apache-2.0 WITH LLVM-exception, already allowed in `deny.toml`). A grammar is
   the `.wasm` file `tree-sitter build --wasm` makes, external scanner included.
   Pros: portable (one file for every OS and CPU); sandboxed (a broken or
-  hostile grammar can't touch memory or files outside its instance); no code
+  hostile grammar's Wasm code can't touch memory or files outside its
+  instance; see the narrowed claim below for its tables); no code
   signing issue; keeps stage 1's "no native code" promise (the module still executes, sandboxed); the same wasmtime is
   stage 2's runtime. Cons: binary size grows by wasmtime with Cranelift (the
   card measures it); parsing is slower than a native grammar and compiling a
@@ -252,6 +254,19 @@ tree-sitter's `WasmStore` is built with, which the card must find a way to set;
 if tree-sitter's API gives no such hook, the grammar card is blocked until
 that is solved, e.g. running parses in a killable helper process). Epoch limits
 in §7 are the stage-2 plugins' and are not a substitute.
+
+**Met by T845, with the sandbox claim narrowed (user decision, 2026-10-19).**
+T845 vendors tree-sitter 0.27 (`vendor/tree-sitter`, README there) with a
+patch that does three things. Each store gets an epoch deadline, so loads and
+parses stop at their deadline or the caller's budget. Failed calls into a
+module become errors instead of aborts. Host callbacks and returned tokens are
+checked. **The narrowed claim:** a grammar's Wasm code can't touch host
+memory, but a malformed grammar's static tables can still crash the editor.
+The loader copies the parse table, actions, lex modes, alias sequences, field
+and supertype maps and symbol names out of the module's memory after checking
+only that they lie inside it, and the native parser indexes them unchecked.
+Grammars are user-installed, so the user accepted this until **T1005**
+validates the tables and restores the full claim.
 
 **Licence policy (user decision, 2026-10-17, "option 3").**
 

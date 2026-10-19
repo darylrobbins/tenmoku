@@ -4,6 +4,8 @@
 //!   chosen by file name with [`language_for_path`]. Each uses the highlight
 //!   and injections queries its grammar ships. Injected languages, such as
 //!   Markdown's inline markup and fenced code, are highlighted too.
+//!   [`register_language`] adds more at run time, from WebAssembly grammars
+//!   (an extension's).
 //! - [`Syntax`] keeps a buffer's tree up to date incrementally from
 //!   [`fe_buffer::BufferSnapshot`]s. Parsing can run on another thread via
 //!   [`ParseJob`], so a UI never has to wait for it. [`SyntaxDriver`] decides
@@ -34,6 +36,7 @@ mod injection;
 mod language;
 mod outline;
 mod parse_limit;
+mod runtime;
 mod select;
 mod syntax;
 
@@ -55,6 +58,10 @@ pub use outline::{
     outline_job, outline_supported, symbols, symbols_job, symbols_supported,
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
+pub use runtime::{
+    Clash, GrammarDeadlines, GrammarError, GrammarSpec, MAX_GRAMMAR_BYTES, register_language,
+    set_grammar_deadlines,
+};
 pub use select::larger_syntax_node;
 pub use syntax::{ParseJob, Parsed, Syntax};
 

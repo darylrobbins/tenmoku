@@ -1,8 +1,15 @@
-use std::{path::Path, sync::OnceLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
-use tree_sitter::Query;
+use tree_sitter::{Query, QueryError};
 
-use crate::{Highlight, injection::InjectionQuery};
+use crate::{
+    Highlight,
+    injection::InjectionQuery,
+    runtime::{self, Clash, GrammarSpec},
+};
 
 /// A grammar with its highlight query, compiled on first use.
 pub struct Language {
@@ -19,6 +26,9 @@ pub struct Language {
     /// be queried one at a time. True of every query so far.
     pub(crate) local_patterns: bool,
     pub(crate) injections: Option<InjectionQuery>,
+    /// The module a [registered](crate::register_language) language was
+    /// loaded from.
+    pub(crate) wasm: Option<PathBuf>,
 }
 
 impl Language {
@@ -27,10 +37,28 @@ impl Language {
     }
 
     fn compile(def: &Def) -> Self {
-        let grammar = (def.grammar)();
         let source = (def.highlights)().concat();
-        let query = Query::new(&grammar, &source)
-            .unwrap_or_else(|error| panic!("{} highlights query: {error}", def.name));
+        Self::new(
+            def.name,
+            (def.grammar)(),
+            &source,
+            def.earlier_patterns_win,
+            def.injections,
+        )
+        .unwrap_or_else(|(kind, error)| panic!("{} {kind} query: {error}", def.name))
+    }
+
+    /// A language of `grammar` with these queries; an error says which query
+    /// failed.
+    pub(crate) fn new(
+        name: &'static str,
+        grammar: tree_sitter::Language,
+        highlights: &str,
+        earlier_patterns_win: bool,
+        injections: Option<&str>,
+    ) -> Result<Self, (QueryKind, QueryError)> {
+        let query =
+            Query::new(&grammar, highlights).map_err(|error| (QueryKind::Highlights, error))?;
         let highlights = query
             .capture_names()
             .iter()
@@ -40,19 +68,36 @@ impl Language {
             })
             .collect();
         let local_patterns = (0..query.pattern_count()).all(|ix| !query.is_pattern_non_local(ix));
-        let injections = def.injections.map(|source| {
-            InjectionQuery::new(&grammar, source)
-                .unwrap_or_else(|error| panic!("{} injections query: {error}", def.name))
-        });
-        Self {
-            name: def.name,
+        let injections = injections
+            .map(|source| InjectionQuery::new(&grammar, source))
+            .transpose()
+            .map_err(|error| (QueryKind::Injections, error))?;
+        Ok(Self {
+            name,
             grammar,
             query,
             highlights,
-            earlier_patterns_win: def.earlier_patterns_win,
+            earlier_patterns_win,
             local_patterns,
             injections,
-        }
+            wasm: None,
+        })
+    }
+}
+
+/// Which of a language's queries [`Language::new`] couldn't compile.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum QueryKind {
+    Highlights,
+    Injections,
+}
+
+impl std::fmt::Display for QueryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Highlights => "highlights",
+            Self::Injections => "injections",
+        })
     }
 }
 
@@ -62,7 +107,8 @@ impl std::fmt::Debug for Language {
     }
 }
 
-/// The name of the language for a file, chosen by its extension or name.
+/// The name of the language for a file, chosen by its extension or name:
+/// a built-in language's, else a [registered](crate::register_language) one's.
 pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
     let file_name = path.file_name()?.to_str()?;
     let extension = path.extension().and_then(|ext| ext.to_str());
@@ -78,6 +124,7 @@ pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
                 })
         })
         .map(|def| def.name)
+        .or_else(|| runtime::name_for_file(file_name, extension))
 }
 
 /// The language for a file. See [`language_by_name`].
@@ -86,21 +133,51 @@ pub fn language_for_path(path: &Path) -> Option<&'static Language> {
 }
 
 /// The language with this name. Compiles its query on first use, which takes
-/// up to about 20 ms; see [`loaded_language`] to avoid waiting.
+/// up to about 20 ms; see [`loaded_language`] to avoid waiting. A
+/// [registered](crate::register_language) language is compiled already.
 pub fn language_by_name(name: &str) -> Option<&'static Language> {
-    let ix = DEFS.iter().position(|def| def.name == name)?;
+    let Some(ix) = DEFS.iter().position(|def| def.name == name) else {
+        return runtime::by_name(name);
+    };
     Some(COMPILED[ix].get_or_init(|| Language::compile(&DEFS[ix])))
 }
 
 /// The language with this name if its query is already compiled.
 pub fn loaded_language(name: &str) -> Option<&'static Language> {
-    let ix = DEFS.iter().position(|def| def.name == name)?;
+    let Some(ix) = DEFS.iter().position(|def| def.name == name) else {
+        return runtime::by_name(name);
+    };
     COMPILED[ix].get()
 }
 
-/// Every language compiled into this build.
+/// Every language compiled into this build, then those
+/// [registered](crate::register_language) so far.
 pub fn language_names() -> impl Iterator<Item = &'static str> {
-    listed().map(|def| def.name)
+    listed().map(|def| def.name).chain(runtime::names())
+}
+
+/// The built-in language `spec` would take a name, extension or file name
+/// from, and which.
+pub(crate) fn built_in_clash(spec: &GrammarSpec) -> Option<(&'static str, Clash)> {
+    DEFS.iter().find_map(|def| {
+        if def.name.eq_ignore_ascii_case(&spec.language) {
+            return Some((def.name, Clash::Name));
+        }
+        let extension = spec.extensions.iter().find(|extension| {
+            def.extensions
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+        });
+        if let Some(extension) = extension {
+            return Some((def.name, Clash::Extension(extension.clone())));
+        }
+        let file_name = spec.file_names.iter().find(|file_name| {
+            def.file_names
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(file_name))
+        });
+        file_name.map(|file_name| (def.name, Clash::FileName(file_name.clone())))
+    })
 }
 
 fn listed() -> impl Iterator<Item = &'static Def> {
@@ -171,7 +248,7 @@ pub(crate) enum Injected {
     /// A language of this build whose query isn't compiled yet. Compiling it
     /// here could take a few frames; see [`crate::Syntax::take_missing_languages`].
     Missing(&'static str),
-    /// Not a language of this build.
+    /// Neither a language of this build nor a registered one.
     Unknown,
 }
 
@@ -191,7 +268,7 @@ pub(crate) fn injected_language(name: &str) -> Injected {
         .position(|def| def.name == name)
         .or_else(|| DEFS.iter().position(|def| def.extensions.contains(&name)))
     else {
-        return Injected::Unknown;
+        return runtime::injected(name).map_or(Injected::Unknown, Injected::Ready);
     };
     match COMPILED[ix].get() {
         Some(language) => Injected::Ready(language),
