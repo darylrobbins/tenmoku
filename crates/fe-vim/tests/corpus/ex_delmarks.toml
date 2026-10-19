@@ -1,0 +1,317 @@
+# `:delm[arks]` and `:cle[arjumps]` cases for fe-vim's oracle: letters,
+# ranges, spaces between, `A`-`Z`, the visual marks `<` and `>` (one at a
+# time, forward and backward), `[ ] ^ .`, `:delmarks!`, digits (nvim has
+# `0`-`9`, fe-vim none), the jump mark (E475), the errors (E471, E474, E475,
+# E481) and the marks deleted before a bad one; then a `'x` that fails or
+# a `<C-o>` after `:clearjumps`. An error ends a case: nvim flushes the keys
+# after it.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in ex_delmarks.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "delmarks_one"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcgg:delmarks b<CR>'b"
+
+[[case]]
+name = "delmarks_one_others_stay"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcgg:delmarks b<CR>'a"
+
+[[case]]
+name = "delmarks_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcjmdgg:delmarks a-c<CR>'b"
+
+[[case]]
+name = "delmarks_range_keeps_next"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcjmdgg:delmarks a-c<CR>'d"
+
+[[case]]
+name = "delmarks_spaced"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcjmdgg:delmarks a  c d<CR>'b"
+
+[[case]]
+name = "delmarks_spaced_gone"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcjmdgg:delm a  c d<CR>'c"
+
+[[case]]
+name = "delmarks_bang"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbjmcgg:delmarks!<CR>'b"
+
+[[case]]
+name = "delmarks_bang_upper"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "mAjmbgg:delmarks!<CR>'A"
+
+[[case]]
+name = "delmarks_upper"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "mAjmBgg:delmarks A<CR>'A"
+
+[[case]]
+name = "delmarks_upper_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "mAjmBgg:delmarks A-Z<CR>'B"
+
+[[case]]
+name = "delmarks_jump_mark"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jjGgg:delmarks '<CR>"
+
+[[case]]
+name = "delmarks_jump_mark_stays"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jjGgg:delmarks a-z<CR>''"
+
+[[case]]
+name = "delmarks_visual_marks"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jlvj<Esc>gg:delmarks <><CR>'<"
+
+[[case]]
+name = "delmarks_visual_start"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [2, 0]
+keys = "jlvj<Esc>gg:delmarks <<CR>'>"
+
+[[case]]
+name = "delmarks_visual_end"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [3, 0]
+keys = "jlvj<Esc>gg:delmarks ><CR>'<"
+
+[[case]]
+name = "delmarks_visual_start_backward"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "3Gllvhh<Esc>gg:delmarks <<CR>`>"
+
+[[case]]
+name = "delmarks_visual_end_backward"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "3Gllvhh<Esc>gg:delmarks ><CR>`<"
+
+[[case]]
+name = "delmarks_change_marks"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwcwxx<Esc>gg:delmarks .<CR>`."
+
+[[case]]
+name = "delmarks_bracket_start"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwyiwgg:delmarks [<CR>`["
+
+[[case]]
+name = "delmarks_bracket_end"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwyiwgg:delmarks ]<CR>`]"
+
+[[case]]
+name = "delmarks_caret"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwiab<Esc>gg:delmarks ^<CR>`^"
+
+[[case]]
+name = "delmarks_bang_change_marks"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwcwxx<Esc>gg:delmarks!<CR>`."
+
+[[case]]
+name = "delmarks_bang_bracket"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jwyiwgg:delmarks!<CR>`["
+
+[[case]]
+name = "delmarks_bang_keeps_visual"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jlvj<Esc>gg:delmarks!<CR>'<"
+
+[[case]]
+name = "delmarks_digits_ok"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks 1<CR>'a"
+
+[[case]]
+name = "delmarks_digit_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks 0-9 a<CR>'a"
+
+[[case]]
+name = "delmarks_unset_ok"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jgg:delmarks z<CR>jx"
+
+[[case]]
+name = "delmarks_dot_letter_mix"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majwcwxx<Esc>gg:delmarks a .<CR>`a"
+
+[[case]]
+name = "delmarks_error_after_deleting"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbgg:delmarks a,b<CR>'a"
+
+[[case]]
+name = "delmarks_error_keeps_later"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbgg:delmarks a,b<CR>'b"
+
+[[case]]
+name = "delmarks_bad_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks c-a<CR>'a"
+
+[[case]]
+name = "delmarks_dangling_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks a-<CR>'a"
+
+[[case]]
+name = "delmarks_mixed_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks a-B<CR>'a"
+
+[[case]]
+name = "delmarks_none"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks<CR>'a"
+
+[[case]]
+name = "delmarks_bang_arg"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks! a<CR>'a"
+
+[[case]]
+name = "delmarks_comment"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbgg:delmarks a \"b<CR>'b"
+
+[[case]]
+name = "delmarks_bar"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majmbgg:delmarks a|delmarks b<CR>'b"
+
+[[case]]
+name = "delmarks_range_not_allowed"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:2delmarks a<CR>'a"
+
+[[case]]
+name = "delmarks_wrong_chars"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks a-c-e<CR>'a"
+
+[[case]]
+name = "delmarks_one_then_set_again"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "majgg:delmarks a<CR>jma'a"
+
+[[case]]
+name = "delmarks_dot_unset_fails"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "gg:delmarks .<CR>`."
+
+[[case]]
+name = "clearjumps_then_ctrl_o_fails"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Gggj:clearjumps<CR><C-o>"
+
+[[case]]
+name = "clearjumps_then_ctrl_i_fails"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "GggG<C-o><C-o>:clearjumps<CR><C-i>"
+
+[[case]]
+name = "clearjumps_keeps_jump_mark"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jjGgg:clearjumps<CR>''"
+
+[[case]]
+name = "clearjumps_abbrev"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Ggg:cle<CR><C-o>"
+
+[[case]]
+name = "clearjumps_then_new_jump"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Ggg:clearjumps<CR>jGgg<C-o>"
+
+[[case]]
+name = "clearjumps_with_arg"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Ggg:clearjumps x<CR><C-o>"
+
+[[case]]
+name = "clearjumps_bang"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Ggg:clearjumps!<CR><C-o>"
+
+[[case]]
+name = "clearjumps_range"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "Ggg:2clearjumps<CR><C-o>"
+
+[[case]]
+name = "clearjumps_empty_ok"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "j:clearjumps<CR>x"
+
+[[case]]
+name = "jumps_without_clear"
+buffer = "one two\n  three four\nfive six\nseven\neight nine"
+cursor = [0, 0]
+keys = "jjGgg<C-o>"

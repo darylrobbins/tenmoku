@@ -1,0 +1,1155 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "delmarks_one",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcgg:delmarks b<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ],
+          "c": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_one_others_stay",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcgg:delmarks b<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ],
+          "c": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcjmdgg:delmarks a-c<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "d": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_range_keeps_next",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcjmdgg:delmarks a-c<CR>'d",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "d": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_spaced",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcjmdgg:delmarks a  c d<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_spaced_gone",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcjmdgg:delm a  c d<CR>'c",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_bang",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbjmcgg:delmarks!<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_bang_upper",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "mAjmbgg:delmarks!<CR>'A",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_upper",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "mAjmBgg:delmarks A<CR>'A",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_upper_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "mAjmBgg:delmarks A-Z<CR>'B",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_jump_mark",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jjGgg:delmarks '<CR>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_jump_mark_stays",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jjGgg:delmarks a-z<CR>''",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_visual_marks",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jlvj<Esc>gg:delmarks <><CR>'<",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_visual_start",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "jlvj<Esc>gg:delmarks <<CR>'>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            4,
+            1
+          ],
+          ">": [
+            4,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_visual_end",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "jlvj<Esc>gg:delmarks ><CR>'<",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            4,
+            1
+          ],
+          ">": [
+            4,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_visual_start_backward",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3Gllvhh<Esc>gg:delmarks <<CR>`>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_visual_end_backward",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3Gllvhh<Esc>gg:delmarks ><CR>`<",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            2
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_change_marks",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwcwxx<Esc>gg:delmarks .<CR>`.",
+      "expect": {
+        "buffer": "one two\n  xx four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "-": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_bracket_start",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwyiwgg:delmarks [<CR>`[",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "0": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_bracket_end",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwyiwgg:delmarks ]<CR>`]",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "0": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_caret",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwiab<Esc>gg:delmarks ^<CR>`^",
+      "expect": {
+        "buffer": "one two\n  abthree four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_bang_change_marks",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwcwxx<Esc>gg:delmarks!<CR>`.",
+      "expect": {
+        "buffer": "one two\n  xx four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "-": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_bang_bracket",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jwyiwgg:delmarks!<CR>`[",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "0": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_bang_keeps_visual",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jlvj<Esc>gg:delmarks!<CR>'<",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_digits_ok",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks 1<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_digit_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks 0-9 a<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_unset_ok",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jgg:delmarks z<CR>jx",
+      "expect": {
+        "buffer": "one two\n three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_dot_letter_mix",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majwcwxx<Esc>gg:delmarks a .<CR>`a",
+      "expect": {
+        "buffer": "one two\n  xx four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three",
+            "linewise": false
+          },
+          "-": {
+            "text": "three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delmarks_error_after_deleting",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbgg:delmarks a,b<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_error_keeps_later",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbgg:delmarks a,b<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_bad_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks c-a<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_dangling_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks a-<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_mixed_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks a-B<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_none",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_bang_arg",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks! a<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_comment",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbgg:delmarks a \"b<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_bar",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majmbgg:delmarks a|delmarks b<CR>'b",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_range_not_allowed",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:2delmarks a<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_wrong_chars",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks a-c-e<CR>'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "delmarks_one_then_set_again",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majgg:delmarks a<CR>jma'a",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "delmarks_dot_unset_fails",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gg:delmarks .<CR>`.",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_then_ctrl_o_fails",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Gggj:clearjumps<CR><C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_then_ctrl_i_fails",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "GggG<C-o><C-o>:clearjumps<CR><C-i>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_keeps_jump_mark",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jjGgg:clearjumps<CR>''",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_abbrev",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg:cle<CR><C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_then_new_jump",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg:clearjumps<CR>jGgg<C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_with_arg",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg:clearjumps x<CR><C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_bang",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg:clearjumps!<CR><C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_range",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg:2clearjumps<CR><C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "clearjumps_empty_ok",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "j:clearjumps<CR>x",
+      "expect": {
+        "buffer": "one two\n three four\nfive six\nseven\neight nine",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "jumps_without_clear",
+      "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jjGgg<C-o>",
+      "expect": {
+        "buffer": "one two\n  three four\nfive six\nseven\neight nine",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

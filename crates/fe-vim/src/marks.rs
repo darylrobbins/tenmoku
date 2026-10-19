@@ -2169,6 +2169,68 @@ pub(crate) fn jump(
     lands.then(|| Place::at(target.model.snapshot(), from))
 }
 
+/// `:delmarks`' deletion of the mark `name`: `a` to `z`, `A` to `Z`, `'^`,
+/// `'[`, `']`, `'.`, `'<` or `'>`. Others (the jump mark, `0` to `9`) it
+/// doesn't delete.
+pub(crate) fn delete(state: &mut VimState, name: char) {
+    match name {
+        'a'..='z' | '^' => {
+            state.marks.named.remove(&name);
+        }
+        'A'..='Z' => {
+            state.marks.files.remove(&name);
+        }
+        '[' | ']' | '.' => {
+            // Batches still pending would set them after.
+            catch_up(state);
+            let changes = &mut state.marks.changes;
+            match name {
+                '[' => {
+                    changes.newer(Newer {
+                        start: true,
+                        ..Newer::default()
+                    });
+                    changes.start = None;
+                }
+                ']' => {
+                    changes.newer(Newer {
+                        end: true,
+                        ..Newer::default()
+                    });
+                    changes.end = None;
+                }
+                _ => {
+                    changes.newer(Newer {
+                        change: true,
+                        ..Newer::default()
+                    });
+                    changes.change = None;
+                }
+            }
+        }
+        '<' | '>' => {
+            let gone = state.last_visual.as_mut();
+            if gone.is_some_and(|visual| visual.delete(name == '>')) {
+                state.last_visual = None;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `:delmarks!`: every lowercase mark, and `'^`, `'[`, `']` and `'.`.
+pub(crate) fn delete_lowercase(state: &mut VimState) {
+    for name in ('a'..='z').chain(['^', '[', ']', '.']) {
+        delete(state, name);
+    }
+}
+
+/// `:clearjumps`: the jumplist is emptied (the jump mark stays).
+pub(crate) fn clear_jumps(state: &mut VimState) {
+    state.marks.list.clear();
+    state.marks.at = 0;
+}
+
 /// Reads the batches pending for `'[`, `']` and `'.` ([`Changes`]): those
 /// of the transactions fe-vim noted carets for are vim's own.
 pub(crate) fn catch_up(state: &mut VimState) {

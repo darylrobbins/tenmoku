@@ -26,6 +26,10 @@ use super::{Address, ExError, Handled};
 
 use crate::VimTarget;
 
+#[path = "clearjumps.rs"]
+mod clearjumps;
+#[path = "delmarks.rs"]
+mod delmarks;
 #[path = "marks.rs"]
 mod marks;
 #[path = "put.rs"]
@@ -76,6 +80,8 @@ impl Entry {
 
 /// Every command in the table.
 pub(super) const COMMANDS: &[Entry] = &[
+    clearjumps::COMMAND,
+    delmarks::COMMAND,
     marks::COMMAND,
     registers::COMMAND,
     registers::DISPLAY,

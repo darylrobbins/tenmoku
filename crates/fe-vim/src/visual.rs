@@ -107,9 +107,26 @@ pub(crate) struct LastVisual {
     /// The cursor was the start.
     cursor_first: bool,
     goal: Option<usize>,
+    /// Which of `'<` and `'>` `:delmarks` deleted.
+    deleted: [bool; 2],
 }
 
 impl LastVisual {
+    /// Deletes `'>` (`end`) or `'<` as `:delmarks` does: nvim keeps the
+    /// extent's anchor and cursor apart, and both marks then read the one
+    /// left (the cursor end after `'<` goes, the anchor after `'>` does).
+    /// Returns whether both are deleted.
+    pub(crate) fn delete(&mut self, end: bool) -> bool {
+        self.deleted[usize::from(end)] = true;
+        let (cursor, anchor) = match self.cursor_first {
+            true => (self.start.clone(), self.end.clone()),
+            false => (self.end.clone(), self.start.clone()),
+        };
+        let left = if end { anchor } else { cursor };
+        (self.start, self.end) = (left.clone(), left);
+        self.deleted == [true, true]
+    }
+
     /// Its start and end, for `'<` and `'>`, and whether it's linewise.
     pub(crate) fn marks(&self) -> ([Pos; 2], bool) {
         let ends = [self.start.clone(), self.end.clone()];
@@ -362,6 +379,7 @@ fn leave(model: &EditorModel, state: &mut VimState, ends: Ends) {
             end,
             cursor_first: ends.cursor < ends.anchor,
             goal: ends.goal,
+            deleted: [false; 2],
         });
     }
     state.mode = Mode::Normal;
