@@ -1,0 +1,1478 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "U_after_x",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        5
+      ],
+      "keys": "xU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_several",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxxwxU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "UU_redoes",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        5
+      ],
+      "keys": "xxUU",
+      "expect": {
+        "buffer": "zero\none two three\nfour ve six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "UUU_restores_again",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        5
+      ],
+      "keys": "xxUUU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_then_u",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        5
+      ],
+      "keys": "xxUu",
+      "expect": {
+        "buffer": "zero\none two three\nfour ve six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_then_u_then_u",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        5
+      ],
+      "keys": "xxUuu",
+      "expect": {
+        "buffer": "zero\none two three\nfour ive six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_insert",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "A!!<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_insert_then_x",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "A!<Esc>xU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "!",
+            "linewise": false
+          },
+          "-": {
+            "text": "!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_other_row_change",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjxkU",
+      "expect": {
+        "buffer": "zero\nne two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_other_row_change_cursor_there",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjxU",
+      "expect": {
+        "buffer": "zero\nne two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_back_to_first_row_starts_new_run",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xjxkxU",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\neven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_with_nothing_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "U",
+      "oracle_keys": "O<Esc>\"_ddU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_with_nothing_fails_then_x",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "Ux",
+      "oracle_keys": "O<Esc>\"_ddUx",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_count_x",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "3xU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fou",
+            "linewise": false
+          },
+          "-": {
+            "text": "fou",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_count_ignored",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xx2U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_on_row_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xddU",
+      "expect": {
+        "buffer": "zero\none two three\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "our five six\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "our five six\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_elsewhere_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xjddU",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "seven eight\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "seven eight\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_above_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xggddU",
+      "expect": {
+        "buffer": "one two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "zero\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "zero\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_below_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xjjddU",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nseven eight",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "nine ten\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "nine ten\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_o",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xonew<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\n\nseven eight\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_o_no_typing",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xo<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\n\nseven eight\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_O_above",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xggO<Esc>U",
+      "expect": {
+        "buffer": "\nzero\none two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_O_typed",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xOnew<Esc>kU",
+      "expect": {
+        "buffer": "zero\none two three\n\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_J_below",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xjJU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight nine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_J_on_row",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xJU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_J_above",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xggJU",
+      "expect": {
+        "buffer": "zero one two three\nour five six\nfour five six\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_put_linewise",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xGyypggU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "nine ten\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          },
+          "0": {
+            "text": "nine ten\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_undo_elsewhere",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xjxuU",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "s",
+            "linewise": false
+          },
+          "-": {
+            "text": "s",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_undo",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxuU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_undo_all",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxuuU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_substitute_range",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": ":2,$s/e/E/<CR>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour fivE six\nsEven eight\nninE ten",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_dot_repeats_the_change",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxU.",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_dot_on_next_row",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxUj.",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\neven eight\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "s",
+            "linewise": false
+          },
+          "-": {
+            "text": "s",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_dot_after_dot",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "x.U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_x_U_x_U",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xUxU",
+      "expect": {
+        "buffer": "zero\none two three\nour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_x_U_x_u",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xUxu",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_run_continues_after_U",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xxUxU",
+      "expect": {
+        "buffer": "zero\none two three\nur five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_cursor_elsewhere",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": "xxjU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "v",
+            "linewise": false
+          },
+          "-": {
+            "text": "v",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_cursor_column_kept",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": "xxhhhhhU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "v",
+            "linewise": false
+          },
+          "-": {
+            "text": "v",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_cursor_end",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        10
+      ],
+      "keys": "xxU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "UU_cursor_moved_between",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": "xxhhhUhhU",
+      "expect": {
+        "buffer": "zero\none two three\nfour fe six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "v",
+            "linewise": false
+          },
+          "-": {
+            "text": "v",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "UU_cursor_elsewhere",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        6
+      ],
+      "keys": "xxUjU",
+      "expect": {
+        "buffer": "zero\none two three\nfour fe six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "v",
+            "linewise": false
+          },
+          "-": {
+            "text": "v",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_empties_row",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "ccabc<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four five six\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four five six\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_cc",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "cc<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four five six\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four five six\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_r",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "rzU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_tilde",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "~~U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_indent",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": ">>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_dw",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "dwdwU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "five ",
+            "linewise": false
+          },
+          "-": {
+            "text": "five ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dj_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "djU",
+      "expect": {
+        "buffer": "zero\nseven eight\nnine ten",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two three\nfour five six\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one two three\nfour five six\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_substitute",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": ":s/five/5/<CR>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "five",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_visual_d",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "vlldU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fou",
+            "linewise": false
+          },
+          "-": {
+            "text": "fou",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "U_after_split_fails",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "i<CR><Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfou\nr five six\nseven eight\nnine ten",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_gU",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "gUiwU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "U_after_put_charwise",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "ylwpU",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "0": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_C",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Cabc<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " five six",
+            "linewise": false
+          },
+          "-": {
+            "text": " five six",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_S",
+      "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "Sxyz<Esc>U",
+      "expect": {
+        "buffer": "zero\none two three\nfour five six\nseven eight\nnine ten",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four five six\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four five six\n",
+            "linewise": true
+          }
+        }
+      }
+    }
+  ]
+}

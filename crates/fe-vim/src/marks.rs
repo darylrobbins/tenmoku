@@ -1988,6 +1988,7 @@ pub(crate) fn follow(target: &mut VimTarget<'_>) {
     catch_up(target.state);
     target.state.marks.follow(target.model.snapshot());
     target.state.marks.watch(target.model);
+    crate::feature::line_undo::follow(target.state, target.model);
 }
 
 /// What a yank took, for `'[` and `']`.

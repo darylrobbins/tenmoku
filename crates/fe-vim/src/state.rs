@@ -140,6 +140,8 @@ pub struct VimState {
     /// The remaps, the keys held for a longer match and the keys they
     /// resolved to, for the host to feed.
     pub(crate) remap: RemapState,
+    /// The row `U` undoes the latest changes on.
+    pub(crate) line_undo: crate::feature::line_undo::LineUndo,
 }
 
 impl VimState {

@@ -30,6 +30,7 @@ use crate::{
     unmatched,
 };
 
+pub(crate) mod line_undo;
 pub(crate) mod reindent;
 
 /// A feature's answer to the key after `[` or `]` (`true`).
@@ -69,7 +70,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 15] = [
+pub(crate) const FEATURES: [&Feature; 16] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -85,6 +86,7 @@ pub(crate) const FEATURES: [&Feature; 15] = [
     &partial_word::FEATURE,
     &put_keys::FEATURE,
     &reindent::FEATURE,
+    &line_undo::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

@@ -1,0 +1,351 @@
+# `U` cases for fe-vim's oracle: changes on one row then U, UU, Uu, a change
+# on another row in between, an insert session, x with a count, rows added,
+# deleted, joined and put, the caret's column, and . after U. The harness
+# loads a buffer as a change on its first row, which nvim keeps as a U line
+# there, so the cases change the second row on, and the two with no U line
+# to find clear it first (oracle_keys). A key that fails is a case's last
+# key except where noted.
+# Hand-written (by a script): name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column], keys in vim notation and
+# oracle_keys. What nvim does with each is recorded in
+# line_undo.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+[[case]]
+name = "U_after_x"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 5]
+keys = "xU"
+
+[[case]]
+name = "U_after_several"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxxwxU"
+
+[[case]]
+name = "UU_redoes"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 5]
+keys = "xxUU"
+
+[[case]]
+name = "UUU_restores_again"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 5]
+keys = "xxUUU"
+
+[[case]]
+name = "U_then_u"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 5]
+keys = "xxUu"
+
+[[case]]
+name = "U_then_u_then_u"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 5]
+keys = "xxUuu"
+
+[[case]]
+name = "U_after_insert"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 4]
+keys = "A!!<Esc>U"
+
+[[case]]
+name = "U_after_insert_then_x"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 4]
+keys = "A!<Esc>xU"
+
+[[case]]
+name = "U_after_other_row_change"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [1, 0]
+keys = "xjxkU"
+
+[[case]]
+name = "U_after_other_row_change_cursor_there"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [1, 0]
+keys = "xjxU"
+
+[[case]]
+name = "U_back_to_first_row_starts_new_run"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xjxkxU"
+
+[[case]]
+name = "U_with_nothing_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "U"
+oracle_keys = "O<Esc>\"_ddU"
+
+[[case]]
+name = "U_with_nothing_fails_then_x"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "Ux"
+oracle_keys = "O<Esc>\"_ddUx"
+
+[[case]]
+name = "U_after_count_x"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "3xU"
+
+[[case]]
+name = "U_count_ignored"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xx2U"
+
+[[case]]
+name = "U_after_dd_on_row_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xddU"
+
+[[case]]
+name = "U_after_dd_elsewhere_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xjddU"
+
+[[case]]
+name = "U_after_dd_above_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xggddU"
+
+[[case]]
+name = "U_after_dd_below_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xjjddU"
+
+[[case]]
+name = "U_after_o"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xonew<Esc>U"
+
+[[case]]
+name = "U_after_o_no_typing"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xo<Esc>U"
+
+[[case]]
+name = "U_after_O_above"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xggO<Esc>U"
+
+[[case]]
+name = "U_after_O_typed"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xOnew<Esc>kU"
+
+[[case]]
+name = "U_after_J_below"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xjJU"
+
+[[case]]
+name = "U_after_J_on_row"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xJU"
+
+[[case]]
+name = "U_after_J_above"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xggJU"
+
+[[case]]
+name = "U_after_put_linewise"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xGyypggU"
+
+[[case]]
+name = "U_after_undo_elsewhere"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xjxuU"
+
+[[case]]
+name = "U_after_undo"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxuU"
+
+[[case]]
+name = "U_after_undo_all"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxuuU"
+
+[[case]]
+name = "U_after_substitute_range"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = ":2,$s/e/E/<CR>U"
+
+[[case]]
+name = "U_dot_repeats_the_change"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxU."
+
+[[case]]
+name = "U_dot_on_next_row"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxUj."
+
+[[case]]
+name = "U_dot_after_dot"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "x.U"
+
+[[case]]
+name = "U_x_U_x_U"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xUxU"
+
+[[case]]
+name = "U_x_U_x_u"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xUxu"
+
+[[case]]
+name = "U_run_continues_after_U"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "xxUxU"
+
+[[case]]
+name = "U_cursor_elsewhere"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 6]
+keys = "xxjU"
+
+[[case]]
+name = "U_cursor_column_kept"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 6]
+keys = "xxhhhhhU"
+
+[[case]]
+name = "U_cursor_end"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 10]
+keys = "xxU"
+
+[[case]]
+name = "UU_cursor_moved_between"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 6]
+keys = "xxhhhUhhU"
+
+[[case]]
+name = "UU_cursor_elsewhere"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 6]
+keys = "xxUjU"
+
+[[case]]
+name = "U_empties_row"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "ccabc<Esc>U"
+
+[[case]]
+name = "U_after_cc"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = "cc<Esc>U"
+
+[[case]]
+name = "U_after_r"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = "rzU"
+
+[[case]]
+name = "U_after_tilde"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = "~~U"
+
+[[case]]
+name = "U_after_indent"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = ">>U"
+
+[[case]]
+name = "U_after_dw"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = "dwdwU"
+
+[[case]]
+name = "U_after_dj_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [1, 3]
+keys = "djU"
+
+[[case]]
+name = "U_after_substitute"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = ":s/five/5/<CR>U"
+
+[[case]]
+name = "U_after_visual_d"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "vlldU"
+
+[[case]]
+name = "U_after_split_fails"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 3]
+keys = "i<CR><Esc>U"
+
+[[case]]
+name = "U_after_gU"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "gUiwU"
+
+[[case]]
+name = "U_after_put_charwise"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "ylwpU"
+
+[[case]]
+name = "U_after_C"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 4]
+keys = "Cabc<Esc>U"
+
+[[case]]
+name = "U_after_S"
+buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
+cursor = [2, 0]
+keys = "Sxyz<Esc>U"
+
