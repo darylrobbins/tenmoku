@@ -83,6 +83,13 @@ pub enum PanelEvent {
         to: PathBuf,
         moves: Vec<(gpui::Entity<fe_gpui::EditorView>, PathBuf)>,
     },
+    /// The panel made these, each with whether it's a folder: a new file or
+    /// folder, or a duplicate. Language servers are told
+    /// (`workspace/didCreateFiles`). A failed operation sends none.
+    Created(Vec<(PathBuf, bool)>),
+    /// The panel moved these, each with whether it's a folder, to the
+    /// Trash. Language servers are told (`workspace/didDeleteFiles`).
+    Deleted(Vec<(PathBuf, bool)>),
 }
 
 enum State {

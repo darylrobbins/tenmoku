@@ -234,3 +234,6 @@ fn failed_listings_retry_once_anything_changes(cx: &mut TestAppContext) {
     assert!(shown("two.txt", cx), "{:?}", rows(&panel, cx));
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+#[path = "lsp_file_operations.rs"]
+mod file_operations;

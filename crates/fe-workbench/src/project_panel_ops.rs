@@ -450,6 +450,10 @@ impl ProjectPanel {
                 .and_then(|id| tree.row(id))
                 .is_some_and(|row| row.expanded);
         self.apply_fs_changes(&changes, cx);
+        if kind != EditKind::Rename {
+            let folder = kind == EditKind::NewFolder || name.ends_with('/');
+            cx.emit(PanelEvent::Created(vec![(new.clone(), folder)]));
+        }
         if let Some(id) = (self.tree().and_then(|tree| tree.find(&path))).filter(|_| expanded) {
             self.expand(id, cx);
         }
@@ -471,6 +475,7 @@ impl ProjectPanel {
         // What was asked about: an entry renamed meanwhile, and another put
         // at its path, isn't it.
         let asked = entry_identity(&path);
+        let folder = path.symlink_metadata().is_ok_and(|meta| meta.is_dir());
         let question = format!("Move “{name}” to the Trash?");
         let answer = window.prompt(PromptLevel::Warning, &question, None, &TRASH_BUTTONS, cx);
         cx.spawn_in(window, async move |panel, cx| {
@@ -495,7 +500,9 @@ impl ProjectPanel {
             panel
                 .update_in(cx, |panel, window, cx| match trashed {
                     Ok(()) => {
-                        panel.changed(&path, cx);
+                        if let Some(shown) = panel.changed(&path, cx) {
+                            cx.emit(PanelEvent::Deleted(vec![(shown, folder)]));
+                        }
                     }
                     Err(error) => {
                         let message = format!("“{name}” couldn’t be moved to the Trash.");
@@ -529,6 +536,8 @@ impl ProjectPanel {
                 .update_in(cx, |panel, window, cx| match copied {
                     Ok(copy) => {
                         if let Some(copy) = panel.changed(&copy, cx) {
+                            let folder = copy.symlink_metadata().is_ok_and(|meta| meta.is_dir());
+                            cx.emit(PanelEvent::Created(vec![(copy.clone(), folder)]));
                             panel.reveal(copy, cx);
                         }
                     }

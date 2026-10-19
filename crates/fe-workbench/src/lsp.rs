@@ -2280,6 +2280,9 @@ impl Global for TestClock {}
 #[path = "lsp_highlights.rs"]
 mod highlights;
 
+#[path = "lsp_file_operations.rs"]
+mod file_operations;
+
 #[cfg(test)]
 #[path = "lsp_trust_tests.rs"]
 mod trust_tests;

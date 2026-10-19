@@ -697,7 +697,12 @@ impl Workbench {
                     workbench.disk_fs_changed(changes, window, cx);
                 }
                 PanelEvent::Opened => workbench.git.update(cx, GitState::refresh_once),
-                PanelEvent::Renamed { moves, .. } => workbench.panel_renamed(moves, window, cx),
+                PanelEvent::Renamed { from, to, moves } => {
+                    workbench.lsp_files_renamed(from, to);
+                    workbench.panel_renamed(moves, window, cx)
+                }
+                PanelEvent::Created(paths) => workbench.lsp_files_created(paths),
+                PanelEvent::Deleted(paths) => workbench.lsp_files_deleted(paths),
             },
         )
     }
