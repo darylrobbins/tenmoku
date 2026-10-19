@@ -121,7 +121,7 @@ pub use diagnostics::{Diagnostic, DiagnosticTag, Related, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use document_highlight::{DocumentHighlight, HighlightKind};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
-pub use event::{LspError, LspEvent, MessageReply, ServerId, ServerStatus};
+pub use event::{LspError, LspEvent, MessageReply, Refresh, ServerId, ServerStatus};
 pub use hover::Hover;
 pub use identity::{IncarnationId, SessionId};
 pub use inlay_hint::{InlayHint, InlayHintKind};

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 
 use async_lsp::router::Router;
-use async_lsp::{AnyNotification, ServerSocket};
+use async_lsp::{AnyNotification, ResponseError, ServerSocket};
 use futures::FutureExt;
 use lsp_types::notification::{
     LogMessage, Notification, Progress, PublishDiagnostics, ShowMessage,
@@ -39,7 +39,7 @@ use serde_json::Value;
 
 use crate::clock::Clock;
 use crate::diagnostics::Inbox;
-use crate::event::{LspEvent, MessageReply, ServerId, SharedLog};
+use crate::event::{LspEvent, MessageReply, Refresh, ServerId, SharedLog};
 use crate::readiness::Readiness;
 use crate::server::{Queue, Session, Sink, Taken};
 use crate::workspace_edit::Edits;
@@ -172,9 +172,9 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
             st.refresh.raise();
             ready(Ok(()))
         })
-        .request::<SemanticTokensRefresh, _>(|_, ()| ready(Ok(())))
-        .request::<InlayHintRefreshRequest, _>(|_, ()| ready(Ok(())))
-        .request::<CodeLensRefresh, _>(|_, ()| ready(Ok(())))
+        .request::<SemanticTokensRefresh, _>(|st, ()| st.refreshed(Refresh::SemanticTokens))
+        .request::<InlayHintRefreshRequest, _>(|st, ()| st.refreshed(Refresh::InlayHints))
+        .request::<CodeLensRefresh, _>(|st, ()| st.refreshed(Refresh::CodeLens))
         .request::<RegisterCapability, _>(|st, params| {
             ready(st.session().registrations.register(params))
         })
@@ -197,6 +197,16 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
 }
 
 impl ClientState {
+    /// Reports a server's request to ask for `what` again, and answers it.
+    fn refreshed(&self, what: Refresh) -> std::future::Ready<Result<(), ResponseError>> {
+        let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
+        sink(LspEvent::Refresh {
+            server: self.server,
+            what,
+        });
+        ready(Ok(()))
+    }
+
     fn session(&self) -> std::sync::MutexGuard<'_, Session> {
         self.session.lock().unwrap_or_else(PoisonError::into_inner)
     }

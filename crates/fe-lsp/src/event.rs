@@ -14,6 +14,18 @@ use crate::workspace_edit::{ApplyReply, FileEdits};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerId(pub(crate) u64);
 
+/// What a server's refresh request asks the client to ask for again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Refresh {
+    /// `workspace/semanticTokens/refresh`.
+    SemanticTokens,
+    /// `workspace/inlayHint/refresh`.
+    InlayHints,
+    /// `workspace/codeLens/refresh`.
+    CodeLens,
+}
+
 /// Sent to the manager's sink, on the server's thread.
 ///
 /// A host showing diagnostics applies a `Diagnostics` only while its
@@ -67,6 +79,10 @@ pub enum LspEvent {
         incarnation: IncarnationId,
         server: ServerId,
     },
+    /// The server asked for a feature's answers to be asked for again, in
+    /// every document it has open. The client capabilities that invite
+    /// these requests are advertised by the feature cards, not here.
+    Refresh { server: ServerId, what: Refresh },
     /// The server asked for `edits` to be applied (`workspace/applyEdit`,
     /// a code action's command, say), under `label` for undo. Answer
     /// through `reply`: unanswered after 5 s, it's answered not applied.

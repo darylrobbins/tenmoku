@@ -17,6 +17,7 @@ use lsp_types::{
 use serde_json::{Value, json};
 
 mod message_request;
+mod refresh;
 
 use super::{capture_logs, logs_from, manager, wait_until};
 use crate::fake::{Echo, FakeError, FakeServer, Record, Reply, Script, Scripted};
