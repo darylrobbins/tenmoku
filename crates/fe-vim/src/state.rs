@@ -140,6 +140,9 @@ pub struct VimState {
     /// The remaps, the keys held for a longer match and the keys they
     /// resolved to, for the host to feed.
     pub(crate) remap: RemapState,
+    /// The last key read, through [`VimState::feed`] or
+    /// [`VimState::record_key`], was a map's.
+    pub(crate) expanded: bool,
     /// The row `U` undoes the latest changes on.
     pub(crate) line_undo: crate::feature::line_undo::LineUndo,
 }
@@ -222,6 +225,12 @@ impl VimState {
         self.host_command.take()
     }
 
+    /// Whether an ex line left a file or window command
+    /// ([`VimState::take_host_command`]) the host hasn't taken.
+    pub fn has_host_command(&self) -> bool {
+        self.host_command.is_some()
+    }
+
     /// The pattern a host paints as matches ('hlsearch', on as in nvim): the
     /// last search's, set by every search, `n`, `N`, `*` and `#` (even one
     /// that finds no match) and a pattern in an ex line's range, or `None`
@@ -238,6 +247,17 @@ impl VimState {
         self.cmdline
             .as_ref()
             .map_or("", |line| line.prefill.as_str())
+    }
+
+    /// Makes `text` what the open command line starts with: for a host
+    /// whose map typed it into a line it doesn't show, so its own line
+    /// opens showing it, and a recording takes only what's typed after it
+    /// ([`VimState::command_line_prefill`]). With no line open it does
+    /// nothing.
+    pub fn set_command_line_prefill(&mut self, text: impl Into<String>) {
+        if let Some(line) = &mut self.cmdline {
+            line.prefill = text.into();
+        }
     }
 
     /// The last `f t F T` motion run, for `;` and `,`.
@@ -357,6 +377,7 @@ impl VimState {
     pub fn feed(&mut self, key: VimKey) -> Step {
         let taken = self.remap.next_tag();
         let tag = taken.unwrap_or(TYPED);
+        self.expanded = tag.origin == Some(Origin::Expansion);
         if let Some(step) = self.confirm_key(key, tag.origin) {
             return step;
         }
@@ -447,6 +468,16 @@ impl VimState {
             Mode::CmdLine(_) => return cmdline::fallback(key),
             _ => None,
         };
+        // An arrow with nothing pending is `h`, `l`, `k` or `j`, as the
+        // keymap's `vim.move` makes a typed one: here one a map or a replay
+        // left. After anything pending, `step` reads it so itself.
+        let key = match (key, self.pending.kind().is_none() && kind.is_none()) {
+            (VimKey::Left, true) => VimKey::Char('h'),
+            (VimKey::Right, true) => VimKey::Char('l'),
+            (VimKey::Up, true) => VimKey::Char('k'),
+            (VimKey::Down, true) => VimKey::Char('j'),
+            (key, _) => key,
+        };
         let pending = std::mem::take(&mut self.pending).in_visual(kind);
         let result = match jump::key(self, pending, key).or_else(|p| p.command_line(key)) {
             Ok(step) => step,
@@ -479,6 +510,7 @@ impl VimState {
             .unwrap_or_else(|| Origin::Typed {
                 replayed: self.macros.count(),
             });
+        self.expanded = origin == Origin::Expansion;
         self.remap.read(origin);
         if origin.recorded() {
             self.macros.record(key);
@@ -510,6 +542,15 @@ impl VimState {
     /// the keys are the host's to feed ([`VimState::take_replay`]).
     pub fn remap_timeout(&mut self) {
         crate::remap::timeout(self);
+    }
+
+    /// Whether the last key read, through [`VimState::feed`] or
+    /// [`VimState::record_key`], was a map's right side: not typed, nor a
+    /// `@`'s. A host tells by it a command line a map ran, whose file or
+    /// window command ([`VimState::take_host_command`]) it runs, from a
+    /// macro's, whose it drops.
+    pub fn expanding(&self) -> bool {
+        self.expanded
     }
 
     /// Sets aside the remap stream's keys for a `:normal` (see

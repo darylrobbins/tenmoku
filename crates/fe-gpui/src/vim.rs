@@ -43,6 +43,33 @@
 //! through the same paths, the command line's into a line it doesn't show,
 //! with no keystroke dispatched ([`EditorView::replay_vim`]).
 //!
+//! A remap (`vim.remap`) runs the same way: the reducer leaves its keys for
+//! the editor to feed ([`VimState::take_replay`]), in the keystroke that
+//! completed it. While keys are held for a longer map
+//! ([`VimState::remap_waiting`]) the editor owns the next keystroke, as with
+//! a pending command, and after [`CHORD_TIMEOUT`] with none, or a click or
+//! a focus change, they resolve ([`VimState::remap_timeout`]). An ex line a
+//! map runs leaves its file or window command for the host
+//! ([`EditorView::take_vim_host_command`]), and one it leaves open opens on
+//! the host's line with the map's text ([`VimState::command_line_prefill`]).
+//!
+//! Two known limits, each a card of its own:
+//!
+//! - **A map ends at its first host command.** The keys before a file or
+//!   window command (`:w<CR>`, or `do` and `dp`) run, the command is left
+//!   for the host as a typed line's is, and the keys after it aren't
+//!   replayed: the status bar says "a map's keys after a file or window
+//!   command aren't run". The host runs the command once the keystroke is
+//!   over, asynchronously for a write, and nothing reports its outcome back
+//!   to resume the map. So `:w<CR>:q<CR>` only writes (`:wq` and `:x` do
+//!   both).
+//! - **Only a plain click resolves a held prefix.** A click goes through
+//!   [`EditorView::cancel_vim`], which resolves the held keys as a timeout
+//!   would and then drops what they leave pending. Shift, double and triple
+//!   clicks select without it, so the prefix stays held until its timeout,
+//!   and a click's destination is measured before the held keys resolve,
+//!   which can edit the text: both are the view's mouse handling.
+//!
 //! In the visual modes (`v`, `V`, `ctrl-v` or `ctrl-q`) the model's
 //! selection is the visual extent, which `fe-vim` keeps it as; each frame
 //! also makes it so again before its layout ([`EditorView::sync_visual`]),
@@ -68,13 +95,14 @@ use fe_vim::{
     Registers, Remap, RemapMode, RemapSet, Step, VimCommands, VimKey, VimState, VimTarget,
 };
 use gpui::{
-    App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, WeakEntity,
-    WeakFocusHandle, Window,
+    App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Subscription, Task,
+    WeakEntity, WeakFocusHandle, Window,
 };
 
 use crate::{
     EditorView,
     commands::{ViewHost, loaded_language},
+    keymap::CHORD_TIMEOUT,
     view::synced_syntax,
 };
 
@@ -163,6 +191,18 @@ struct Vim {
     jump_on_s: bool,
     /// `vim.remap` and `vim.leader`, built.
     remaps: Arc<RemapSet>,
+    /// The editor holding keys for a longer map: one at a time, as only the
+    /// focused editor takes keys.
+    remap_wait: Option<RemapWait>,
+}
+
+/// What ends an editor's wait for the rest of a map: [`CHORD_TIMEOUT`]
+/// with no key, as nvim's 'timeoutlen', or its focus going. Dropped, it
+/// ends neither.
+struct RemapWait {
+    editor: WeakEntity<EditorView>,
+    _timer: Task<()>,
+    _blur: Subscription,
 }
 
 impl Global for Vim {}
@@ -230,7 +270,8 @@ pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
 }
 
 /// Gives every editor the remaps of `vim.remap` and `vim.leader`, and any
-/// opened or switched on later, replacing the set before. An entry that
+/// opened or switched on later, replacing the set before: keys an editor
+/// holds for a longer map go on at once, unmapped. An entry that
 /// can't load is left out alone and comes back as `vim.remap[N]: …`.
 pub fn set_vim_remaps(cx: &mut App, settings: &VimSettings) -> Vec<String> {
     let remaps: Vec<Remap> = settings
@@ -250,10 +291,12 @@ pub fn set_vim_remaps(cx: &mut App, settings: &VimSettings) -> Vec<String> {
     let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
     for editor in editors {
         editor
-            .update(cx, |view, _| {
+            .update(cx, |view, cx| {
                 if let Some(state) = &mut view.vim {
                     state.set_remaps(Arc::clone(&set));
                 }
+                // Keys held for a longer map go on now, unmapped.
+                view.replay_vim(cx);
             })
             .ok();
     }
@@ -364,8 +407,8 @@ pub(crate) fn feed(
 /// The context a keystroke is matched in: `stack`, the focused element's
 /// as last drawn, with the focused editor's frame stamped from its live
 /// vim state, or with no vim keys if vim is off. Also whether a vim
-/// command is pending there, in which case the editor owns the keystroke
-/// (§9.1).
+/// command is pending there, or keys are held for a longer map, in which
+/// case the editor owns the keystroke (§9.1).
 pub(crate) fn live_stack(
     stack: ContextStack,
     window: &Window,
@@ -387,7 +430,7 @@ pub(crate) fn live_stack(
         let pending = view
             .vim
             .as_ref()
-            .is_some_and(|state| state.pending().kind().is_some());
+            .is_some_and(|state| state.pending().kind().is_some() || state.remap_waiting());
         // And the completion menu as it is now, not as the last frame
         // drew it: a key after the menu closed is the editor's again.
         view.drop_stale_completion();
@@ -655,10 +698,14 @@ impl EditorView {
     /// Drops a pending command (as `escape` does), then leaves a visual
     /// mode through `vim.visual_exit`, so `gv` brings its extent back:
     /// before a click or a jump puts the caret somewhere else, so no count,
-    /// operator or `r` waiting for its key acts there. Outside a visual mode
-    /// with nothing pending it does nothing.
+    /// operator or `r` waiting for its key acts there. Keys held for a
+    /// longer map resolve first, as at a timeout. Outside a visual mode with
+    /// nothing pending or held it does nothing.
     pub(crate) fn cancel_vim(&mut self, cx: &mut Context<Self>) {
         self.sync_vim(cx);
+        if self.vim.as_ref().is_some_and(VimState::remap_waiting) {
+            self.resolve_remap(cx);
+        }
         let Some(state) = &mut self.vim else {
             return;
         };
@@ -666,12 +713,13 @@ impl EditorView {
             return;
         }
         // One `escape` drops the whole command; in a visual mode it may
-        // also leave it.
-        if state.pending().kind().is_some()
-            && let Step::Commit(invocation) = state.feed(VimKey::Esc)
-        {
-            let context = stamp(fe_editor::commands::context(), Some(state));
-            self.run_vim(&invocation.context(context), cx);
+        // also leave it. Keys still held for a map go on before it.
+        if state.pending().kind().is_some() || state.remap_waiting() {
+            if let Step::Commit(invocation) = state.feed(VimKey::Esc) {
+                let context = stamp(fe_editor::commands::context(), Some(state));
+                self.run_vim(&invocation.context(context), cx);
+            }
+            self.replay_vim(cx);
         }
         let Some(state) = &self.vim else {
             return;
@@ -824,7 +872,9 @@ impl EditorView {
 
     /// Feeds `keystroke` to the reducer, in any mode but insert. Returns
     /// whether vim took it: it waits, cancels or commits.
-    /// Otherwise it's forwarded, to do nothing.
+    /// Otherwise it's forwarded, to do nothing. The keys a map it completes
+    /// resolves to run before it returns, and if it leaves keys held for a
+    /// longer map, they wait [`CHORD_TIMEOUT`] for the next.
     fn feed_vim(
         &mut self,
         keystroke: &gpui::Keystroke,
@@ -832,49 +882,172 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> bool {
         self.sync_vim(cx);
+        self.drop_remap_wait(cx);
         if self.accepts_text() {
             return false;
         }
         let Some(state) = &mut self.vim else {
             return false;
         };
-        let Some(key) = vim_key(keystroke) else {
-            // A key vim has no name for cancels a pending command, and
-            // otherwise goes on, to do nothing.
-            if state.pending().kind().is_none() {
-                return false;
+        let taken = match vim_key(keystroke) {
+            // A key vim has no name for cancels a pending command, or keys
+            // held for a map, and otherwise goes on, to do nothing.
+            None if state.pending().kind().is_none() && !state.remap_waiting() => false,
+            None => {
+                state.feed(VimKey::Esc);
+                cx.notify();
+                true
             }
-            state.feed(VimKey::Esc);
-            cx.notify();
-            return true;
+            Some(key) => match state.feed(key) {
+                Step::Wait(_) | Step::Cancel => {
+                    // The key context changes.
+                    cx.notify();
+                    true
+                }
+                Step::Forward => false,
+                Step::Commit(invocation) => {
+                    // The stack the key came in, stamped as the reducer left
+                    // the state: nothing pending.
+                    let stack = crate::keymap::context_stack(&window.context_stack());
+                    let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
+                    self.run_vim(&invocation, cx);
+                    cx.notify();
+                    true
+                }
+            },
         };
-        match state.feed(key) {
-            Step::Wait(_) | Step::Cancel => {
-                // The key context changes.
-                cx.notify();
-                true
+        self.replay_vim(cx);
+        self.wait_for_remap(window, cx);
+        taken
+    }
+
+    /// If keys are held for a longer map, ends the wait for the next after
+    /// [`CHORD_TIMEOUT`], or when the editor loses focus, as nvim's
+    /// 'timeoutlen' does ([`EditorView::resolve_remap`]).
+    /// Only the editor keys go to waits ([`EditorView::takes_keys`]): one
+    /// that doesn't resolves what it holds at once, and another editor's
+    /// wait resolves before this one takes its place.
+    fn wait_for_remap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.vim.as_ref().is_some_and(VimState::remap_waiting) {
+            return;
+        }
+        if !self.takes_keys(window) {
+            self.resolve_remap(cx);
+            return;
+        }
+        let id = cx.entity_id();
+        let other = (cx.default_global::<Vim>().remap_wait)
+            .take_if(|wait| wait.editor.entity_id() != id)
+            .map(|wait| wait.editor.clone());
+        if let Some(other) = other {
+            other.update(cx, |view, cx| view.resolve_remap(cx)).ok();
+        }
+        let timer = cx.spawn_in(window, async move |view, cx| {
+            cx.background_executor().timer(CHORD_TIMEOUT).await;
+            view.update_in(cx, |view, window, cx| view.remap_timed_out(window, cx))
+                .ok();
+        });
+        let blur = cx.on_blur(&self.focus, window, Self::remap_timed_out);
+        let wait = RemapWait {
+            editor: cx.weak_entity(),
+            _timer: timer,
+            _blur: blur,
+        };
+        let replaced = cx.default_global::<Vim>().remap_wait.replace(wait);
+        drop(replaced);
+    }
+
+    /// [`EditorView::wait_for_remap`] once the update under way is over, in
+    /// the active window if it has the editor focused, if this editor holds keys
+    /// for a longer map and doesn't wait yet: for a replay that came some
+    /// other way than a key fed here, such as a `@` the keymap dispatched
+    /// or a click. With no window focusing it, what it holds resolves.
+    fn wait_for_remap_later(&self, cx: &mut Context<Self>) {
+        let view = cx.weak_entity();
+        cx.defer(move |cx| {
+            let Some(view) = view.upgrade() else {
+                return;
+            };
+            let id = view.entity_id();
+            let waits = cx.try_global::<Vim>().is_some_and(|vim| {
+                (vim.remap_wait.as_ref()).is_some_and(|wait| wait.editor.entity_id() == id)
+            });
+            let editor = view.read(cx);
+            if waits || !editor.vim.as_ref().is_some_and(VimState::remap_waiting) {
+                return;
             }
-            Step::Forward => false,
-            Step::Commit(invocation) => {
-                // The stack the key came in, stamped as the reducer left
-                // the state: nothing pending.
-                let stack = crate::keymap::context_stack(&window.context_stack());
-                let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
-                self.run_vim(&invocation, cx);
-                cx.notify();
-                true
+            let active = cx.active_window();
+            let armed = active.and_then(|handle| {
+                handle
+                    .update(cx, |_, window, cx| {
+                        view.update(cx, |view, cx| {
+                            let takes = view.takes_keys(window);
+                            if takes {
+                                view.wait_for_remap(window, cx);
+                            }
+                            takes
+                        })
+                    })
+                    .ok()
+            });
+            if armed != Some(true) {
+                view.update(cx, |view, cx| view.resolve_remap(cx));
             }
+        });
+    }
+
+    /// Whether keys typed now come to this editor: it's focused in the
+    /// active window. Another window's editor keeps its focus there.
+    fn takes_keys(&self, window: &Window) -> bool {
+        window.is_window_active() && self.focus.is_focused(window)
+    }
+
+    /// The wait for the rest of a map is over: what was held resolves, and
+    /// if that holds keys again, they wait anew.
+    fn remap_timed_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.resolve_remap(cx);
+        self.wait_for_remap(window, cx);
+    }
+
+    /// Resolves the keys held for a longer map as a timeout does
+    /// ([`VimState::remap_timeout`]) and runs what they resolve to.
+    fn resolve_remap(&mut self, cx: &mut Context<Self>) {
+        self.drop_remap_wait(cx);
+        let Some(state) = self.vim.as_mut().filter(|state| state.remap_waiting()) else {
+            return;
+        };
+        state.remap_timeout();
+        self.replay_vim(cx);
+        cx.notify();
+    }
+
+    /// Drops this editor's wait for the rest of a map, if it has one.
+    fn drop_remap_wait(&self, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        let Some(vim) = cx.try_global::<Vim>() else {
+            return;
+        };
+        if vim
+            .remap_wait
+            .as_ref()
+            .is_some_and(|wait| wait.editor.entity_id() == id)
+        {
+            let dropped = cx.global_mut::<Vim>().remap_wait.take();
+            drop(dropped);
         }
     }
 
-    /// Feeds the keys a `@` left ([`VimState::take_replay`]), synchronously
-    /// and in order, each where a typed key would go by the mode at that
-    /// moment: no keystroke is dispatched, which could leave GPUI's
-    /// propagation flag stopped. A `@` inside the macro leaves keys that
-    /// are fed before the rest. A key that fails drops the rest of the
+    /// Feeds the keys a `@` or a map left ([`VimState::take_replay`]),
+    /// synchronously and in order, each where a typed key would go by the
+    /// mode at that moment: no keystroke is dispatched, which could leave
+    /// GPUI's propagation flag stopped. A `@` inside the macro leaves keys
+    /// that are fed before the rest. A key that fails drops the rest of the
     /// replay ([`VimState::stop_replay`]). The command line's keys edit a
     /// line kept here, which isn't shown, and its `<CR>` or `<Esc>`
-    /// submits it.
+    /// submits it. A map's keys that leave it open put its text on the
+    /// host's line, as the line's prefill
+    /// ([`VimState::set_command_line_prefill`]); known limit: a `<Left>` or
+    /// `<Right>` in it isn't followed, and the caret starts at the end.
     fn replay_vim(&mut self, cx: &mut Context<Self>) {
         if self.vim_replaying {
             // A key of the replay under way ran this: the loop below takes
@@ -890,11 +1063,21 @@ impl EditorView {
         }
         self.vim_replaying = true;
         let mut line = None;
+        let mut handed = false;
         while let Some(key) = queue.pop_front() {
-            if !self.replay_key(key, &mut line, cx) {
+            if !self.replay_key(key, &mut line, &mut handed, cx) {
+                let rest = !queue.is_empty();
                 queue.clear();
                 if let Some(state) = &mut self.vim {
+                    // Known limit: the host runs the command after this
+                    // update, so what the map does after it isn't run.
+                    let rest = rest || !state.take_replay().is_empty();
                     state.stop_replay();
+                    if handed && rest {
+                        let note = "a map's keys after a file or window command aren't run";
+                        log::warn!("{note}");
+                        state.set_host_message(note);
+                    }
                 }
                 break;
             }
@@ -906,18 +1089,30 @@ impl EditorView {
             }
         }
         self.vim_replaying = false;
-        if line.is_some() {
-            log::warn!("a macro replay ended with the command line open: its text is dropped");
+        self.wait_for_remap_later(cx);
+        if let Some(text) = line
+            && let Some(state) = &mut self.vim
+        {
+            match state.expanding() {
+                true => state.set_command_line_prefill(text),
+                false => log::warn!(
+                    "a macro replay ended with the command line open: its text is dropped"
+                ),
+            }
         }
         cx.notify();
     }
 
     /// Feeds one replayed `key`, `line` holding the command line's text
-    /// while it's open. Returns whether it worked.
+    /// while it's open. Returns whether it worked, and whether the replay
+    /// goes on: an ex line a map ran that left a file or window command
+    /// (`:w`) ends it, `handed` set, as the host runs the command only once
+    /// this update is over.
     fn replay_key(
         &mut self,
         key: VimKey,
         line: &mut Option<String>,
+        handed: &mut bool,
         cx: &mut Context<Self>,
     ) -> bool {
         self.sync_visual();
@@ -963,6 +1158,8 @@ impl EditorView {
             }
             fe_vim::Mode::CmdLine(_) => {
                 state.record_key(key);
+                // Read before the line runs, which may read keys of its own.
+                let mapped = state.expanding();
                 let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
                 let invocation = match key {
                     VimKey::Char(ch) => {
@@ -987,32 +1184,35 @@ impl EditorView {
                 let invocation = invocation.source(Source::Keyboard).context(context);
                 let ok = self.run_vim_once(&invocation, cx);
                 // A file or window command (`:w`) is the host's line's to
-                // run, not a replay's.
+                // run, not a macro replay's; but a map's is left for the
+                // host, which takes it from the editor, and ends the map.
+                if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
+                    *handed = true;
+                    return false;
+                }
                 if let Some(command) = self.take_vim_host_command() {
                     log::warn!("a macro replay doesn't run {command:?}");
                 }
                 ok && self.vim.as_ref().is_some_and(|s| !s.failed())
             }
-            // With nothing pending, the arrows are the keymap's `vim.move`s.
-            _ if state.pending().kind().is_none() && arrow_motion(key).is_some() => {
-                state.record_key(key);
-                let motion = arrow_motion(key).expect("an arrow");
-                let moved = Invocation::of("vim.move")
-                    .expect("a valid command ID")
-                    .args(fe_command::Value::from_iter([("motion", motion)]))
-                    .source(Source::Keyboard);
-                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
-                self.run_vim_once(&moved.context(context), cx)
-                    && self.vim.as_ref().is_some_and(|s| !s.failed())
-            }
+            // The arrows too, so a map's are matched against the maps: with
+            // nothing pending the reducer reads them as the keymap's
+            // `vim.move`s do.
             _ => match state.feed(key) {
                 Step::Wait(_) | Step::Cancel => self.vim.as_ref().is_some_and(|s| !s.failed()),
                 Step::Forward => false,
                 Step::Commit(invocation) => {
+                    let mapped = state.expanding();
                     let stack = fe_editor::commands::context();
                     let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
-                    self.run_vim_once(&invocation, cx)
-                        && self.vim.as_ref().is_some_and(|s| !s.failed())
+                    let ok = self.run_vim_once(&invocation, cx);
+                    // A map's `do` or `dp` hands the host a command too, and
+                    // ends the map, as an ex line's does.
+                    if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
+                        *handed = true;
+                        return false;
+                    }
+                    ok && self.vim.as_ref().is_some_and(|s| !s.failed())
                 }
             },
         }
@@ -1119,6 +1319,9 @@ mod remap_setting_tests;
 
 #[cfg(test)]
 mod macro_tests;
+
+#[cfg(test)]
+mod remap_tests;
 
 #[cfg(test)]
 mod replace_tests;
