@@ -514,3 +514,6 @@ fn selection_kept(cx: &mut TestAppContext) {
 
 #[path = "problems_related_tests.rs"]
 mod problems_related_tests;
+
+#[path = "problems_unopened_tests.rs"]
+mod unopened;

@@ -118,8 +118,8 @@ use fe_editor::{
     diagnostics::{Diagnostic, DiagnosticTag, RelatedInfo, Severity},
 };
 use fe_lsp::{
-    KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
-    ServerLauncher, ServerSpec, ServerStatus,
+    FileDiagnostic, KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager,
+    LspNavigation, PositionEncoding, ServerId, ServerLauncher, ServerSpec, ServerStatus,
 };
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
@@ -439,7 +439,7 @@ pub(crate) struct Lsp {
     manager: Option<Arc<Mutex<LspManager>>>,
     watch: Option<Watch>,
     /// The root the manager serves.
-    root: Option<PathBuf>,
+    pub(crate) root: Option<PathBuf>,
     /// Bumped with each manager, so a replaced one's events are dropped.
     generation: u64,
     sender: async_channel::Sender<(u64, LspEvent)>,
@@ -457,6 +457,14 @@ pub(crate) struct Lsp {
     /// Each server's latest `window/showMessage`, shown in place of its
     /// status until its next one.
     messages: HashMap<ServerId, String>,
+    /// Each server's diagnostics for files it doesn't have open, by the
+    /// file's resolved path, as it sent them, until it sends none for the
+    /// file, restarts or stops: the Problems panel lists them while no
+    /// editor shows the file.
+    pub(crate) file_diagnostics:
+        HashMap<(ServerId, PathBuf), (PositionEncoding, Vec<FileDiagnostic>)>,
+    /// Those files' texts on disk and rows, as the panel lists them.
+    pub(crate) unopened: crate::dock::problems_panel::Unopened,
     /// The workbench's effective `[lsp]` settings, as last reloaded: the
     /// project layer's narrowed, for an untrusted root.
     settings: LspSettings,
@@ -503,7 +511,7 @@ pub(crate) struct Lsp {
     #[cfg(test)]
     delivered: Vec<(u64, LspEvent, Option<bool>)>,
     /// Each shown buffer's file, resolved, or `None` if it can't be.
-    resolved: HashMap<BufferId, Option<PathBuf>>,
+    pub(crate) resolved: HashMap<BufferId, Option<PathBuf>>,
     /// The path each buffer's file was last resolved from, or is being:
     /// a buffer saved under another name is resolved, and opened, anew.
     resolved_from: HashMap<BufferId, PathBuf>,
@@ -642,6 +650,8 @@ impl Lsp {
             reserved: HashMap::new(),
             servers: HashMap::new(),
             messages: HashMap::new(),
+            file_diagnostics: HashMap::new(),
+            unopened: Default::default(),
             settings: LspSettings::default(),
             project: None,
             project_path: None,
@@ -692,6 +702,21 @@ impl Lsp {
     /// The manager, if there is one.
     pub(crate) fn manager(&self) -> Option<Arc<Mutex<LspManager>>> {
         self.manager.clone()
+    }
+
+    /// Drops `server`'s diagnostics for files it doesn't have open, or
+    /// every server's: whether there were any.
+    fn drop_file_diagnostics(&mut self, server: Option<ServerId>) -> bool {
+        let before = self.file_diagnostics.len();
+        let unopened = &mut self.unopened;
+        self.file_diagnostics.retain(|(of, path), _| {
+            let keep = server.is_some_and(|server| server != *of);
+            if !keep {
+                unopened.forget(path);
+            }
+            keep
+        });
+        self.file_diagnostics.len() != before
     }
 }
 
@@ -826,6 +851,7 @@ impl Workbench {
         lsp.reserved.clear();
         lsp.servers.clear();
         lsp.messages.clear();
+        let dropped = lsp.drop_file_diagnostics(None);
         lsp.resolved.clear();
         lsp.resolved_from.clear();
         lsp.resolving.clear();
@@ -842,6 +868,10 @@ impl Workbench {
         lsp.gate_open = false;
         lsp._project_changes = None;
         lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
+        if dropped {
+            self.sync_problems(cx);
+        }
+        let lsp = &mut self.lsp;
         let Some(root) = self.root.clone() else {
             return;
         };
@@ -892,7 +922,7 @@ impl Workbench {
         let sent = lsp.diagnostics_sent.clone();
         #[cfg(test)]
         let restarting = lsp.restarting_sent.clone();
-        let sink = move |event: LspEvent| {
+        let sink = move |mut event: LspEvent| {
             #[cfg(test)]
             if matches!(event, LspEvent::Diagnostics { .. }) {
                 sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -913,6 +943,15 @@ impl Workbench {
             } = &event
             {
                 cleanup.stop.send(()).ok();
+            }
+            // Here, on the server's thread, in the order sent: the main
+            // thread doesn't touch the disk for it.
+            if let LspEvent::FileDiagnostics {
+                path: Some(path), ..
+            } = &mut event
+                && let Some(resolved) = resolve(path)
+            {
+                *path = resolved;
             }
             sender.send_blocking((generation, event)).ok();
         };
@@ -957,6 +996,10 @@ impl Workbench {
         let lsp = &mut self.lsp;
         lsp.gate_open = false;
         lsp._project_changes = None;
+        if lsp.drop_file_diagnostics(None) {
+            self.sync_problems(cx);
+        }
+        let lsp = &mut self.lsp;
         if let Some(manager) = lsp.manager.clone() {
             let mut manager = lock(&manager);
             manager.set_trust(|_| false);
@@ -1528,8 +1571,16 @@ impl Workbench {
                 name,
                 status,
             } => {
+                // The session that sent them has ended.
+                let ended = matches!(
+                    status,
+                    ServerStatus::Restarting(_) | ServerStatus::Stopped(_)
+                );
                 lsp.messages.remove(&server);
                 lsp.servers.insert(server, (name, status));
+                if ended && lsp.drop_file_diagnostics(Some(server)) {
+                    self.sync_problems(cx);
+                }
             }
             LspEvent::ShowMessage {
                 server,
@@ -1627,6 +1678,25 @@ impl Workbench {
                             cx.notify();
                         }
                     });
+                }
+            }
+            LspEvent::FileDiagnostics {
+                server,
+                path: Some(path),
+                encoding,
+                items,
+                ..
+            } => {
+                let key = (server, path);
+                lsp.unopened.forget(&key.1);
+                let changed = if items.is_empty() {
+                    lsp.file_diagnostics.remove(&key).is_some()
+                } else {
+                    lsp.file_diagnostics.insert(key, (encoding, items));
+                    true
+                };
+                if changed {
+                    self.sync_problems(cx);
                 }
             }
             LspEvent::ApplyEdit {
