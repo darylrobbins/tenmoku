@@ -1026,6 +1026,12 @@ fn named(key: &str) -> Option<VimKey> {
 }
 
 impl EditorView {
+    /// The keyword completion vim has under way in this view, for the
+    /// completion menu to show.
+    pub(crate) fn keyword_completion(&self) -> Option<fe_vim::KeywordCompletion> {
+        self.vim.as_ref()?.completion(&self.model)
+    }
+
     /// `stack` with the editor's frame stamped as a keystroke is matched
     /// against it: its vim state, the completion menu and the suggestion as
     /// they are now, not as the last frame drew them, so a key after the
@@ -1561,6 +1567,15 @@ impl EditorView {
                     self.record_vim_key(key);
                     self.one_command_typing(cx)
                 }
+                // `<C-e>` and `<C-y>` are vim's only while completing.
+                Some(key @ VimKey::Ctrl('n' | 'p')) | Some(key @ VimKey::Ctrl('e' | 'y'))
+                    if self.typing_mode().is_some()
+                        && (matches!(key, VimKey::Ctrl('n' | 'p'))
+                            || self.keyword_completion().is_some()) =>
+                {
+                    self.record_vim_key(key);
+                    self.complete_typing(key, cx)
+                }
                 _ => false,
             };
         }
@@ -1755,6 +1770,45 @@ impl EditorView {
             VimKey::Ctrl('t') => state.indent_in(model),
             _ => state.indent_out(model),
         });
+        let result: Result<_, DispatchError> =
+            Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
+        self.dispatched(result, &invocation, true, cx).is_ok()
+    }
+
+    /// `<C-n>`, `<C-p>`, `<C-e>` or `<C-y>` (`key`) in insert mode: the
+    /// keyword before the caret completes, or the completion under way
+    /// goes back or is kept ([`VimState::complete_next`] and the others).
+    /// Returns whether it ran.
+    fn complete_typing(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+        if self.typing_mode().is_none() {
+            return false;
+        }
+        if self.read_only {
+            self.refuse_edit(cx);
+            return true;
+        }
+        let invocation = Invocation::of(KEY)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        let origin = fe_editor::commands::origin(&invocation.actor);
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        let (ran, transactions) = self.model.run_as(origin, |model| match key {
+            VimKey::Ctrl('n') => {
+                state.complete_next(model);
+                true
+            }
+            VimKey::Ctrl('p') => {
+                state.complete_previous(model);
+                true
+            }
+            VimKey::Ctrl('e') => state.complete_cancel(model),
+            _ => state.complete_accept(model),
+        });
+        if !ran {
+            return false;
+        }
         let result: Result<_, DispatchError> =
             Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
         self.dispatched(result, &invocation, true, cx).is_ok()
@@ -2197,6 +2251,7 @@ impl EditorView {
                     VimKey::Backspace => BACKSPACE,
                     VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
                     VimKey::Ctrl('o') => return self.one_command_typing(cx),
+                    VimKey::Ctrl('n' | 'p') => return self.complete_typing(key, cx),
                     VimKey::Esc => {
                         let normal = match mode {
                             fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,

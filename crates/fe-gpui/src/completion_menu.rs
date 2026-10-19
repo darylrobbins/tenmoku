@@ -14,6 +14,10 @@
 //!   `completion.select_prev` and `select_next`, `completion.accept` and
 //!   `completion.dismiss`. `escape`, or the caret leaving the word, closes
 //!   it without editing.
+//! - **Vim's keyword completion** (`<C-n>`, `<C-p>`) shows its candidates in
+//!   the same rows, label only, the current one selected, at the typed
+//!   text's start. It asks the provider nothing, closes a language
+//!   server's menu, and sets no key context: its keys stay vim's.
 //! - **Rows.** Each shows the item's label and label detail, its detail and
 //!   its kind. It goes below the word, or above it where there's more room,
 //!   and only the rows that fit there are built, [`MAX_ROWS`] at most,
@@ -25,6 +29,7 @@ use std::{collections::HashSet, future::Future, pin::Pin, rc::Rc};
 use fe_buffer::{BufferId, Version};
 use fe_command::ContextStack;
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionSession, CompletionTrigger};
+use fe_vim::KeywordCompletion;
 use gpui::{
     AnyElement, AvailableSpace, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -94,6 +99,9 @@ pub(crate) struct Menu {
     place: Option<Place>,
     /// Its bounds, as the frame being drawn has laid it out.
     laid_out: Option<gpui::Bounds<Pixels>>,
+    /// Vim's keyword completion this shows in place of an answer, if it
+    /// does: its candidates are the rows, and the menu takes no keys.
+    keyword: Option<KeywordCompletion>,
 }
 
 /// Where the menu goes: by its word's start, below it or, with more room
@@ -122,6 +130,26 @@ pub(crate) struct Painted {
     pub(crate) bounds: Option<gpui::Bounds<Pixels>>,
 }
 
+impl Menu {
+    fn new(
+        session: CompletionSession,
+        asked: (Version, usize),
+        keyword: Option<KeywordCompletion>,
+    ) -> Self {
+        Menu {
+            session,
+            asked,
+            top: 0,
+            resolved: HashSet::new(),
+            resolving: None,
+            request: None,
+            place: None,
+            laid_out: None,
+            keyword,
+        }
+    }
+}
+
 impl EditorView {
     /// Sets where completions come from, or none. A menu open on the last
     /// one's answer goes.
@@ -137,7 +165,8 @@ impl EditorView {
     /// Whether the menu shows: there's an answer with items matching the
     /// word.
     pub fn completion_shown(&self) -> bool {
-        (self.completion.as_ref()).is_some_and(|menu| !menu.session.matches().is_empty())
+        (self.completion.as_ref())
+            .is_some_and(|menu| menu.keyword.is_none() && !menu.session.matches().is_empty())
     }
 
     /// Asks the provider for completions at the caret, outside vim's
@@ -166,15 +195,15 @@ impl EditorView {
             })
             .ok();
         });
-        let menu = self.completion.get_or_insert_with(|| Menu {
-            session: CompletionSession::new(snapshot, offset, CompletionList::default()),
-            asked: (version, offset),
-            top: 0,
-            resolved: HashSet::new(),
-            resolving: None,
-            request: None,
-            place: None,
-            laid_out: None,
+        if (self.completion.as_ref()).is_some_and(|menu| menu.keyword.is_some()) {
+            self.completion = None;
+        }
+        let menu = self.completion.get_or_insert_with(|| {
+            Menu::new(
+                CompletionSession::new(snapshot, offset, CompletionList::default()),
+                (version, offset),
+                None,
+            )
         });
         menu.asked = (version, offset);
         menu.request = Some(request);
@@ -206,6 +235,9 @@ impl EditorView {
         let Some(menu) = &mut self.completion else {
             return;
         };
+        if menu.keyword.is_some() {
+            return;
+        }
         menu.request = None;
         // Nothing, a timeout among others, closes it, even over items an
         // earlier answer gave.
@@ -244,6 +276,10 @@ impl EditorView {
         let Some(menu) = &mut self.completion else {
             return;
         };
+        if menu.keyword.is_some() {
+            cx.notify();
+            return;
+        }
         if !accepts_text || !menu.session.update(&self.model) {
             // Cut back, or moved within the word: ask again there.
             let again = accepts_text && menu.session.may_ask_again(&self.model);
@@ -269,10 +305,29 @@ impl EditorView {
     /// key context: whatever moved the caret (a jump, a vim command, a
     /// drag) may not have synced it.
     pub(crate) fn drop_stale_completion(&mut self) {
+        // Vim's keyword completion under way shows its candidates, over a
+        // language server's menu, which it closes.
+        if let Some(keyword) = self.keyword_completion() {
+            let (top, place) = match &self.completion {
+                Some(menu) if menu.keyword.is_some() => (menu.top, menu.place),
+                _ => (0, None),
+            };
+            let snapshot = self.model.snapshot().clone();
+            let at = self.model.primary_selection().head();
+            let mut menu = Menu::new(
+                CompletionSession::new(snapshot.clone(), at, CompletionList::default()),
+                (snapshot.version(), at),
+                Some(keyword),
+            );
+            (menu.top, menu.place) = (top, place);
+            self.completion = Some(menu);
+            self.scroll_to_selected();
+            return;
+        }
         let accepts_text = self.accepts_text();
-        if (self.completion.as_ref())
-            .is_some_and(|menu| !accepts_text || !menu.session.is_live(&self.model))
-        {
+        if (self.completion.as_ref()).is_some_and(|menu| {
+            menu.keyword.is_some() || !accepts_text || !menu.session.is_live(&self.model)
+        }) {
             self.completion = None;
         }
     }
@@ -308,7 +363,9 @@ impl EditorView {
             TRIGGER => self.trigger_completion(CompletionTrigger::Invoked, cx),
             SELECT_PREV | SELECT_NEXT => {
                 self.drop_stale_completion();
-                if let Some(menu) = &mut self.completion {
+                if let Some(menu) = &mut self.completion
+                    && menu.keyword.is_none()
+                {
                     menu.session.select_next(command == SELECT_PREV);
                     self.scroll_to_selected();
                     self.resolve_selected(cx);
@@ -318,6 +375,7 @@ impl EditorView {
             ACCEPT => {
                 self.drop_stale_completion();
                 if let Some(menu) = self.completion.take()
+                    && menu.keyword.is_none()
                     && let Err(error) = menu.session.accept(&mut self.model)
                 {
                     log::debug!("completion not applied: {error}");
@@ -336,8 +394,13 @@ impl EditorView {
             return;
         };
         let rows = menu.place.map_or(MAX_ROWS, |place| place.rows);
-        let count = menu.session.matches().len();
-        let selected = menu.session.selected_match().unwrap_or(0);
+        let (count, selected) = match &menu.keyword {
+            Some(keyword) => (keyword.candidates.len(), keyword.selected.unwrap_or(0)),
+            None => (
+                menu.session.matches().len(),
+                menu.session.selected_match().unwrap_or(0),
+            ),
+        };
         menu.top = (menu.top.min(selected))
             .max((selected + 1).saturating_sub(rows))
             .min(count.saturating_sub(rows));
@@ -377,6 +440,9 @@ impl EditorView {
     /// menu below, if it shows.
     pub(crate) fn completion_word_start(&self) -> Option<usize> {
         let menu = self.completion.as_ref()?;
+        if let Some(keyword) = &menu.keyword {
+            return (!keyword.candidates.is_empty()).then_some(keyword.typed.start);
+        }
         (!menu.session.matches().is_empty()).then(|| menu.session.word_start_in(&self.model))
     }
 
@@ -447,26 +513,38 @@ impl EditorView {
         menu.laid_out = None;
         let menu = &*menu;
         let session = &menu.session;
-        if session.matches().is_empty() {
-            return None;
-        }
         let place = menu.place?;
         let theme = &self.theme;
-        let selected = session.selected();
-        let shown =
-            &session.matches()[menu.top..(menu.top + place.rows).min(session.matches().len())];
-        let rows: Vec<(String, String, String)> = (shown.iter())
-            .map(|&ix| {
-                let item = &session.items()[ix];
-                let label = item.label.clone() + item.label_detail.as_deref().unwrap_or("");
-                let detail = item.detail.clone().unwrap_or_default();
-                (label, detail, item.kind.clone().unwrap_or_default())
-            })
-            .collect();
-        let selected_row = shown.iter().position(|&ix| Some(ix) == selected);
-        let documentation = selected
-            .and_then(|ix| session.items()[ix].documentation.clone())
-            .filter(|text| !text.trim().is_empty());
+        let (rows, selected_row, documentation): (Vec<(String, String, String)>, _, _) =
+            if let Some(keyword) = &menu.keyword {
+                let end = (menu.top + place.rows).min(keyword.candidates.len());
+                let shown = keyword.candidates.get(menu.top..end)?;
+                let rows = (shown.iter())
+                    .map(|label| (label.clone(), String::new(), String::new()))
+                    .collect();
+                let selected = keyword.selected.and_then(|ix| ix.checked_sub(menu.top));
+                (rows, selected.filter(|&row| row < shown.len()), None)
+            } else {
+                if session.matches().is_empty() {
+                    return None;
+                }
+                let selected = session.selected();
+                let shown = &session.matches()
+                    [menu.top..(menu.top + place.rows).min(session.matches().len())];
+                let rows = (shown.iter())
+                    .map(|&ix| {
+                        let item = &session.items()[ix];
+                        let label = item.label.clone() + item.label_detail.as_deref().unwrap_or("");
+                        let detail = item.detail.clone().unwrap_or_default();
+                        (label, detail, item.kind.clone().unwrap_or_default())
+                    })
+                    .collect();
+                let selected_row = shown.iter().position(|&ix| Some(ix) == selected);
+                let documentation = selected
+                    .and_then(|ix| session.items()[ix].documentation.clone())
+                    .filter(|text| !text.trim().is_empty());
+                (rows, selected_row, documentation)
+            };
         #[cfg(test)]
         {
             self.painted_completion = Some(Painted {

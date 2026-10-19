@@ -433,3 +433,6 @@ fn asking_again(cx: &mut TestAppContext) {
     );
     assert_eq!(rows(&view, cx).0, ["value", "values"]);
 }
+
+#[path = "keyword_menu_tests.rs"]
+mod keyword_menu_tests;
