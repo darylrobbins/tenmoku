@@ -27,8 +27,8 @@ use gpui::{
 use self::recent_picker::{RecentOp, RecentPicker};
 use self::toast::Toast;
 use crate::{
-    Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
-    ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
+    Dock, GitLogPanel, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane,
+    PaneGroup, Picker, ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     auto_save::AutoSave,
     config_problems::ConfigProblemsPicker,
     disk_sync::DiskSync,
@@ -405,6 +405,8 @@ impl Workbench {
         let changes = cx.new(|cx| GitPanel::new(root.clone(), ui, cx));
         let references = cx.weak_entity();
         let references = cx.new(|cx| ReferencesPanel::new(references, ui, cx));
+        let workbench = cx.weak_entity();
+        let git_log = cx.new(|cx| GitLogPanel::new(workbench, ui, cx));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
             Dock::new(
@@ -412,6 +414,7 @@ impl Workbench {
                 search,
                 outline.clone(),
                 changes.clone(),
+                git_log,
                 references,
                 problems,
                 cx,

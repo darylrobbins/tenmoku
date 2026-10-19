@@ -231,6 +231,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             Icon::Search,
             Icon::ListTree,
             Icon::GitBranch,
+            crate::dock::panel_icon(DockPanel::GitLog),
             Icon::FileTerminal
         ]
     );

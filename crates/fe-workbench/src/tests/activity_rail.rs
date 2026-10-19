@@ -269,6 +269,7 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
         Icon::Search,
         Icon::ListTree,
         Icon::GitBranch,
+        crate::dock::panel_icon(DockPanel::GitLog),
         Icon::FileTerminal,
     ];
     assert_eq!(drawn(cx), icons);

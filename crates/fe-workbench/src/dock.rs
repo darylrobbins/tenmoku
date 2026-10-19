@@ -3,10 +3,10 @@
 //! file's git history or the repository's log, under a title row naming it,
 //! and picked from the activity rail on the window's right edge, which
 //! stays when the dock hides. Switching keeps each panel's state. The
-//! References, Problems, History and Git Log buttons join the rail once
-//! their panel has shown; the History panel is made the first time
-//! `git.file_history` runs ([`Dock::set_history`]), the Git Log panel the
-//! first time `git.log` or `git.log_all` does ([`Dock::set_git_log`]).
+//! References, Problems and History buttons join the rail once their panel
+//! has shown; the History panel is made the first time `git.file_history`
+//! runs ([`Dock::set_history`]). The Git Log panel is on the rail from the
+//! start, under Changes, and made with the dock.
 //!
 //! Its commands (`dock.show_project`, `dock.toggle`, the panels' show
 //! commands, `search.show_replace`, `search.replace_all` and `git.refresh`)
@@ -48,9 +48,9 @@ impl DockPanel {
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References, Problems,
-    /// History and Git Log follow once they have shown.
-    pub const ALL: [DockPanel; 4] = always_on_rail();
+    /// The panels the rail always has, in its order; References, Problems
+    /// and History follow once they have shown.
+    pub const ALL: [DockPanel; 5] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
     pub(crate) const fn new(id: &'static str) -> Self {
@@ -116,10 +116,10 @@ const PANELS: &[&SidebarPanel] = &[
     &search_panel::SIDEBAR,
     &crate::outline_panel::SIDEBAR,
     &crate::git_panel::SIDEBAR,
+    &crate::workbench::git_commands::git_log::SIDEBAR,
     &crate::references_panel::SIDEBAR,
     &problems_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
-    &crate::workbench::git_commands::git_log::SIDEBAR,
 ];
 
 const _: () = {
@@ -236,12 +236,14 @@ pub struct Dock {
 }
 
 impl Dock {
-    /// Shows `project` first.
+    /// Shows `project` first; `git_log` follows `changes` on the rail.
+    #[allow(clippy::too_many_arguments, private_interfaces)]
     pub fn new(
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
         changes: Entity<GitPanel>,
+        git_log: Entity<GitLogPanel>,
         references: Entity<ReferencesPanel>,
         problems: Entity<ProblemsPanel>,
         cx: &App,
@@ -253,6 +255,9 @@ impl Dock {
         state.add_panel(search.clone(), cx);
         state.add_panel(outline.clone(), cx);
         state.add_panel(changes.clone(), cx);
+        // Registered here, not after the References and Problems panels,
+        // as the rail lists the panels in the order they were added.
+        state.add_panel(git_log.clone(), cx);
         state.add_panel(references.clone(), cx);
         state.add_panel(problems.clone(), cx);
         Self {
@@ -264,7 +269,7 @@ impl Dock {
             references,
             problems,
             history: None,
-            git_log: None,
+            git_log: Some(git_log),
             #[cfg(test)]
             ops: Vec::new(),
         }
@@ -324,14 +329,6 @@ impl Dock {
 
     pub(crate) fn git_log(&self) -> Option<&Entity<GitLogPanel>> {
         self.git_log.as_ref()
-    }
-
-    /// Registers `git_log`, the Git Log panel made on first use, as
-    /// [`Dock::set_history`] does.
-    pub(crate) fn set_git_log(&mut self, git_log: Entity<GitLogPanel>, cx: &mut Context<Self>) {
-        self.state.add_panel(git_log.clone(), cx);
-        self.git_log = Some(git_log);
-        cx.notify();
     }
 
     /// The dock's state, in kiln-shell.

@@ -61,8 +61,8 @@ use fe_git::{
 };
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, Div, ElementId, FocusHandle,
-    Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
+    AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, Div, ElementId, Entity,
+    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
     ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
     UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
@@ -76,16 +76,16 @@ use super::{
 };
 use crate::{Workbench, dock::DockOp, git};
 
-/// The repository's log in the sidebar: on the rail once it has shown; focused
+/// The repository's log in the sidebar: on the rail under Changes; focused
 /// when shown, as its rows take keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("git_log"),
     name: "Git Log",
-    icon: fe_ui::Icon::GitBranch,
+    icon: fe_ui::Icon::GitGraph,
     show_command: "git.log",
     show_op: crate::dock::DockOp::ShowGitLog,
-    order: 80,
-    always_on_rail: false,
+    order: 45,
+    always_on_rail: true,
     focus_on_show: true,
 };
 
@@ -384,8 +384,7 @@ fn read_first(at: &Path, scope: LogScope) -> Found {
 
 impl Workbench {
     /// Lists `op`'s log, of the active file's repository or else the
-    /// root's, in the Git Log panel, made now if it hasn't been, and shows
-    /// it.
+    /// root's, in the Git Log panel and shows it.
     fn show_git_log(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
         let scope = match op.command {
             GitCommand::LogAll => LogScope::All,
@@ -396,19 +395,33 @@ impl Workbench {
         let Some(at) = path.or_else(|| self.root.clone()) else {
             return self.answer_git_op(&op, NO_REPO.to_owned(), cx);
         };
-        let panel = match self.dock.read(cx).git_log().cloned() {
-            Some(panel) => panel,
-            None => {
-                let (workbench, ui) = (cx.weak_entity(), self.ui);
-                let panel = cx.new(|cx| GitLogPanel::new(workbench, ui, cx));
-                self.dock
-                    .update(cx, |dock, cx| dock.set_git_log(panel.clone(), cx));
-                panel
-            }
-        };
+        let panel =
+            (self.dock.read(cx).git_log().cloned()).expect("the dock has its Git Log panel");
         let root = self.root.clone();
-        panel.update(cx, |panel, cx| panel.list(at, root, scope, op, cx));
+        panel.update(cx, |panel, cx| panel.list(at, root, scope, Some(op), cx));
         self.run_dock_op(DockOp::ShowGitLog, window, cx);
+    }
+
+    /// Lists HEAD's log of the active file's repository or else the root's
+    /// in `panel`, if nothing has listed it since it was asked to. Without
+    /// a command, so outside a repository it says so without a toast.
+    fn list_first_git_log(&mut self, panel: &Entity<GitLogPanel>, cx: &mut Context<Self>) {
+        let path = (self.active_editor(cx))
+            .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
+        let at = path.or_else(|| self.root.clone());
+        let root = self.root.clone();
+        panel.update(cx, |panel, cx| {
+            if panel.read != 0 {
+                return;
+            }
+            match at {
+                Some(at) => panel.list(at, root, LogScope::Head, None, cx),
+                None => {
+                    panel.not_repository = true;
+                    cx.notify();
+                }
+            }
+        });
     }
 }
 
@@ -475,6 +488,9 @@ pub(crate) struct GitLogPanel {
     keys: ListKeys,
     /// The last list started's number: only its pages land.
     read: u64,
+    /// Whether the workbench was asked to list the panel the first time it
+    /// was drawn.
+    first_asked: bool,
     scroll: UniformListScrollHandle,
     ui: UiTheme,
     focus: FocusHandle,
@@ -486,7 +502,11 @@ pub(crate) struct GitLogPanel {
 }
 
 impl GitLogPanel {
-    fn new(workbench: WeakEntity<Workbench>, ui: UiTheme, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        workbench: WeakEntity<Workbench>,
+        ui: UiTheme,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             workbench,
             scope: LogScope::Head,
@@ -509,6 +529,7 @@ impl GitLogPanel {
             hold: Hold::None,
             keys: ListKeys::default(),
             read: 0,
+            first_asked: false,
             scroll: UniformListScrollHandle::new(),
             ui,
             focus: cx.focus_handle(),
@@ -530,14 +551,14 @@ impl GitLogPanel {
     }
 
     /// Reads the first page of the `scope` log of `at`'s repository on the
-    /// background executor, showing it loading until it lands; `op` is
-    /// answered if it's outside a repository.
+    /// background executor, showing it loading until it lands; `op`, if
+    /// any, is answered if it's outside a repository.
     fn list(
         &mut self,
         at: PathBuf,
         root: Option<PathBuf>,
         scope: LogScope,
-        op: GitOp,
+        op: Option<GitOp>,
         cx: &mut Context<Self>,
     ) {
         self.read += 1;
@@ -568,7 +589,7 @@ impl GitLogPanel {
     }
 
     /// Shows the first page read `read` found, unless a later read started.
-    fn land(&mut self, read: u64, found: Found, op: GitOp, cx: &mut Context<Self>) {
+    fn land(&mut self, read: u64, found: Found, op: Option<GitOp>, cx: &mut Context<Self>) {
         if read != self.read {
             return;
         }
@@ -585,7 +606,7 @@ impl GitLogPanel {
             }
             Ok(None) => {
                 self.not_repository = true;
-                if let Some(workbench) = self.workbench.upgrade() {
+                if let (Some(op), Some(workbench)) = (op, self.workbench.upgrade()) {
                     workbench.update(cx, |workbench, cx| {
                         workbench.answer_git_op(&op, NO_REPO.to_owned(), cx)
                     });
@@ -851,6 +872,22 @@ impl GitLogPanel {
             Err(error) => self.tail = Tail::Failed(error),
         }
         cx.notify();
+    }
+
+    /// Asks the workbench to list HEAD's log, once, if the panel is drawn
+    /// before anything has listed it: a rail click only shows it.
+    fn ask_for_first_list(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.read != 0 || self.first_asked {
+            return;
+        }
+        let Some(workbench) = self.workbench.upgrade() else {
+            return;
+        };
+        self.first_asked = true;
+        let panel = cx.entity();
+        window.defer(cx, move |_, cx| {
+            workbench.update(cx, |workbench, cx| workbench.list_first_git_log(&panel, cx));
+        });
     }
 
     /// What shows in place of the list, if anything.
@@ -1355,8 +1392,9 @@ impl Focusable for GitLogPanel {
 }
 
 impl Render for GitLogPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = self.ui;
+        self.ask_for_first_list(window, cx);
         let list = uniform_list(
             "git-log-rows",
             self.row_count(),

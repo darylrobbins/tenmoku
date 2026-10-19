@@ -60,6 +60,7 @@ icons! {
     Package => "package",
     FileLock => "file-lock",
     GitBranch => "git-branch",
+    GitGraph => "git-graph",
     Container => "container",
     FileTerminal => "file-terminal",
     FileKey => "file-key",
