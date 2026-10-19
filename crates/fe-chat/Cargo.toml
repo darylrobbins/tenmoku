@@ -1,0 +1,16 @@
+[package]
+name = "fe-chat"
+description = "The AI chat's headless core: conversations, the provider seam and request assembly. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

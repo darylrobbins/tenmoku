@@ -44,6 +44,7 @@ fe-terminal-view = { path = "crates/fe-terminal-view" }
 fe-git = { path = "crates/fe-git" }
 fe-markdown = { path = "crates/fe-markdown" }
 fe-markdown-view = { path = "crates/fe-markdown-view" }
+fe-chat = { path = "crates/fe-chat" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to

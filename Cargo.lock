@@ -1763,6 +1763,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-chat"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fe-config"
 version = "0.1.0"
 dependencies = [
