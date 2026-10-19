@@ -117,6 +117,13 @@ colors! {
         vim_mode_command,
         /// The label on every vim mode's segment.
         vim_mode_foreground,
+        /// The brackets of an outermost pair, with `editor.bracket_pair_colors`.
+        bracket_1,
+        /// The brackets of a pair inside a `bracket_1` pair.
+        bracket_2,
+        /// The brackets of a pair inside a `bracket_2` pair. A pair inside
+        /// this one takes `bracket_1` again.
+        bracket_3,
     }
 }
 

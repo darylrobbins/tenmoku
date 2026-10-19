@@ -394,6 +394,10 @@ pub struct EditorSettings {
     /// Show the caret row's git blame after the line in every new window; Git:
     /// Toggle Line Blame turns it on or off for one window.
     pub inline_blame: bool,
+    /// Colour bracket pairs by how deeply they nest, in the theme's
+    /// `bracket_1`, `bracket_2` and `bracket_3`, then round again. Brackets
+    /// in strings and comments, and ones without a pair, keep their colour.
+    pub bracket_pair_colors: bool,
 }
 
 /// `editor.auto_save`.
@@ -434,6 +438,7 @@ impl Default for EditorSettings {
             auto_save_delay: 1000,
             indent_guides: true,
             inline_blame: false,
+            bracket_pair_colors: false,
         }
     }
 }

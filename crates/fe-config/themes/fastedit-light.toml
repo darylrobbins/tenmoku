@@ -38,6 +38,11 @@ vim_mode_visual = "#9a2fa0"
 vim_mode_replace = "#c42b3a"
 vim_mode_command = "#8a5800"
 vim_mode_foreground = "#ffffff"
+# Bracket pairs by nesting depth, with editor.bracket_pair_colors: the
+# outermost pair, the one inside it and the next, then round again.
+bracket_1 = "#0431fa"
+bracket_2 = "#319331"
+bracket_3 = "#7b3814"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

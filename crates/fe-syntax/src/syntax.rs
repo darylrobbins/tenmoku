@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     ops::{ControlFlow, Range},
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     time::{Duration, Instant},
@@ -13,6 +13,7 @@ use tree_sitter::{
 
 use crate::{
     HighlightSpan, Language,
+    brackets::Paired,
     highlight::{Capture, Painted, flatten, highlighted},
     injection::{self, Layers},
     runtime::ThreadParser,
@@ -134,6 +135,10 @@ pub struct Syntax {
     /// The version `window` was last parsed at.
     window_parsed: Option<Version>,
     cache: RefCell<Cache>,
+    /// The paired bracket children of `tree`'s widest nodes, by node id, so
+    /// [`crate::bracket_depths`] pairs each once a parse, not once a frame.
+    /// Emptied when the tree is edited or replaced.
+    wide_brackets: RefCell<HashMap<usize, Paired>>,
     /// Set when parsing or highlighting panicked.
     failed: Cell<bool>,
     /// How long the last incremental reparse took, if there's been one since
@@ -152,6 +157,7 @@ impl Syntax {
             window: None,
             window_parsed: None,
             cache: RefCell::default(),
+            wide_brackets: RefCell::default(),
             failed: Cell::new(false),
             last_reparse: None,
         }
@@ -182,6 +188,7 @@ impl Syntax {
         let cache = self.cache.get_mut();
         if snapshot.id() != self.snapshot.id() || snapshot.version() != version {
             cache.forget_ranges();
+            self.wide_brackets.get_mut().clear();
         }
         let mapped = snapshot.id() == self.snapshot.id()
             && snapshot.version() >= version
@@ -351,6 +358,7 @@ impl Syntax {
             self.last_reparse = Some(parsed.elapsed);
         }
         self.tree = Some(tree);
+        self.wide_brackets.get_mut().clear();
         self.parsed = Some(version);
         self.window = None;
         self.window_parsed = None;
@@ -359,6 +367,20 @@ impl Syntax {
 
     pub fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref()
+    }
+
+    /// The paired bracket children of `tree`'s node `id`, from `pair` the
+    /// first time this tree is asked.
+    pub(crate) fn wide_brackets(
+        &self,
+        id: usize,
+        pair: impl FnOnce() -> Vec<(usize, bool)>,
+    ) -> Paired {
+        self.wide_brackets
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| pair().into())
+            .clone()
     }
 
     /// Highlights within `range` of the current snapshot, sorted and

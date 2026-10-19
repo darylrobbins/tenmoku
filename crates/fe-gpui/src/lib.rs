@@ -146,6 +146,12 @@ pub struct EditorTheme {
     pub vim_mode_foreground: Hsla,
     /// Whether indent guides are drawn, from `editor.indent_guides`.
     pub indent_guides: bool,
+    /// The brackets of pairs by nesting depth, outermost first, round again
+    /// past the third.
+    pub brackets: [Hsla; 3],
+    /// Whether bracket pairs take `brackets`, from
+    /// `editor.bracket_pair_colors`.
+    pub bracket_pair_colors: bool,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,
@@ -164,12 +170,18 @@ impl EditorTheme {
     }
 
     /// Takes the font family, size and line height from `settings`, and
-    /// whether indent guides are drawn.
+    /// whether indent guides are drawn and bracket pairs coloured.
     pub fn set_metrics(&mut self, settings: &EditorSettings, cx: &App) {
         self.font_family = font_family(settings, cx);
         self.font_size = px(settings.font_size as f32);
         self.line_height = settings.line_height as f32;
         self.indent_guides = settings.indent_guides;
+        self.bracket_pair_colors = settings.bracket_pair_colors;
+    }
+
+    /// The colour of a bracket pair `depth` pairs deep.
+    pub fn bracket_color(&self, depth: usize) -> Hsla {
+        self.brackets[depth % self.brackets.len()]
     }
 
     pub fn syntax_color(&self, highlight: Highlight) -> Option<Hsla> {

@@ -1,4 +1,5 @@
-//! The outline of the bracket pair at the caret.
+//! The outline of the bracket pair at the caret, and pairs coloured by depth
+//! while a reparse is pending.
 
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
@@ -163,4 +164,74 @@ fn nothing_while_a_reparse_runs(cx: &mut TestAppContext) {
     }
     let rects = painted(&view, cx);
     assert_eq!(xs(&rects), lefts(&view, &[9, 19], cx));
+}
+
+/// Quotes typed around brackets while reparses run in the background: the
+/// edited tree still has the quoted brackets as leaves, so no pair is
+/// coloured until the tree is reparsed, and then the quoted ones aren't.
+#[gpui::test]
+fn depth_colours_wait_for_a_reparse(cx: &mut TestAppContext) {
+    let rust = fe_syntax::language_by_name("rust").expect("rust loads");
+    let text = format!(
+        "fn f() {{ g([1, [2] , [3]]); }}\n{}",
+        "fn g() {}\n".repeat(200)
+    );
+    let (view, cx) = editor(&text, Some("main.rs"), cx);
+    let inner = text.find("[2]").unwrap();
+    view.update(cx, |view, _| {
+        view.theme.bracket_pair_colors = true;
+        // A clock that moves a second on at each read is always over the sync
+        // budget, so a reparse goes to the background.
+        let start = std::time::Instant::now();
+        let elapsed = std::cell::Cell::new(std::time::Duration::ZERO);
+        let clock = move || {
+            elapsed.set(elapsed.get() + std::time::Duration::from_secs(1));
+            start + elapsed.get()
+        };
+        let mut syntax = Syntax::new(rust, view.model.snapshot());
+        syntax.finish(syntax.parse_job().run());
+        view.syntax =
+            Some(SyntaxDriver::new(syntax, std::time::Duration::from_millis(1)).with_clock(clock));
+    });
+    draw(&view, cx);
+    let colors = view.read_with(cx, |view, _| view.theme.brackets);
+    let g = text.find("g(").unwrap() + 1;
+    assert_eq!(
+        view.read_with(cx, |view, _| view.drawn_color(g)),
+        Some(colors[1])
+    );
+
+    // `"[2] "`: a quote before `[2]`, drawn, then one after it, drawn.
+    for at in [inner, inner + 5] {
+        view.update(cx, |view, cx| {
+            view.model.set_cursor(at);
+            view.model.insert("\"");
+            view.changed(cx);
+        });
+        draw(&view, cx);
+        view.read_with(cx, |view, _| {
+            assert!(view.syntax.as_ref().unwrap().syntax().needs_parse());
+            let text = view.model.text().to_string();
+            for (at, _) in text[..40].match_indices(['(', ')', '[', ']', '{', '}']) {
+                let color = view.drawn_color(at).unwrap();
+                assert!(!colors.contains(&color), "{at} of {text:?}");
+            }
+        });
+    }
+    for _ in 0..2 {
+        cx.run_until_parked();
+        draw(&view, cx);
+    }
+    view.read_with(cx, |view, _| {
+        assert!(!view.syntax().unwrap().needs_parse());
+        let quote = view.drawn_color(inner).unwrap();
+        assert!(!colors.contains(&quote));
+        for at in inner..inner + 6 {
+            assert_eq!(view.drawn_color(at), Some(quote), "{at}");
+        }
+        assert_eq!(view.drawn_color(g), Some(colors[1]));
+        // `[3]` is three deep, in the first colour again.
+        let three = view.model.text().to_string().find("[3]").unwrap();
+        assert_eq!(view.drawn_color(three), Some(colors[0]));
+    });
 }

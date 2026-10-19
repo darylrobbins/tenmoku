@@ -23,6 +23,7 @@ fn template_is_all_defaults() {
             "auto_close_pairs",
             "auto_save",
             "auto_save_delay",
+            "bracket_pair_colors",
             "code_actions_on_save",
             "code_lens",
             "font_family",

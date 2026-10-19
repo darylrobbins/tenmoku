@@ -2628,7 +2628,8 @@ fn fold_headers(syntax: Option<&Syntax>, rows: Range<u32>) -> Vec<u32> {
     headers
 }
 
-/// The highlights in `range` that the theme colours.
+/// The highlights in `range` that the theme colours, with bracket pairs in
+/// their depth's colour over them when the theme colours pairs.
 fn styled_highlights(
     syntax: Option<&Syntax>,
     theme: &EditorTheme,
@@ -2646,10 +2647,68 @@ fn styled_highlights(
             })
         })
         .collect();
+    let spans = match syntax {
+        Some(syntax) if theme.bracket_pair_colors => {
+            let brackets = fe_syntax::bracket_depths(syntax, range.clone())
+                .into_iter()
+                .map(|bracket| StyledSpan {
+                    style: theme.bracket_color(bracket.depth),
+                    range: bracket.range,
+                });
+            over(spans, brackets)
+        }
+        _ => spans,
+    };
     if unnecessary.is_empty() {
         return spans;
     }
     fade_spans(spans, unnecessary, &range, theme.foreground)
+}
+
+/// `spans` with `top` laid over them, cutting them where they overlap. Both
+/// are sorted and non-overlapping, and so is the result.
+fn over(
+    spans: Vec<StyledSpan<Hsla>>,
+    top: impl IntoIterator<Item = StyledSpan<Hsla>>,
+) -> Vec<StyledSpan<Hsla>> {
+    let mut top = top.into_iter().peekable();
+    let mut merged = Vec::with_capacity(spans.len());
+    for span in spans {
+        let mut start = span.range.start;
+        while let Some(above) = top.next_if(|above| above.range.start < span.range.end) {
+            if above.range.start > start {
+                merged.push(StyledSpan {
+                    range: start..above.range.start,
+                    style: span.style,
+                });
+            }
+            start = start.max(above.range.end);
+            merged.push(above);
+        }
+        if start < span.range.end {
+            merged.push(StyledSpan {
+                range: start..span.range.end,
+                style: span.style,
+            });
+        }
+    }
+    merged.extend(top);
+    merged
+}
+
+impl EditorView {
+    /// The colour the last frame drew the text at buffer `offset` in: None
+    /// before the first frame, or when `offset` wasn't drawn.
+    pub fn drawn_color(&self, offset: usize) -> Option<Hsla> {
+        let frame = &self.layout.as_ref()?.frame;
+        let row = frame
+            .rows
+            .iter()
+            .find(|row| row.shown().contains(&offset))?;
+        let shown = row.shown();
+        row.line
+            .color_at(row.expanded.to_display(offset - shown.start))
+    }
 }
 
 /// The columns, each `space` wide, of an unwrapped row that `text_width`

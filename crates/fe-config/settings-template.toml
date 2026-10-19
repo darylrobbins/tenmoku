@@ -60,6 +60,10 @@
 # Toggle Line Blame turns it on or off for one window.
 # inline_blame = false
 
+# Colour bracket pairs by how deeply they nest, in the theme's three bracket
+# colours.
+# bracket_pair_colors = false
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

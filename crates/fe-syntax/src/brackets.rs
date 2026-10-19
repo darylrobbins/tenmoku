@@ -1,10 +1,11 @@
-//! The bracket pair at the caret, from the syntax tree.
+//! The bracket pair at the caret, and the nesting depth of the brackets in a
+//! range, from the syntax tree.
 //!
 //! Brackets are anonymous leaves of the node they delimit, so a bracket's
 //! counterpart is a sibling. Brackets inside strings and comments are not
 //! leaves at all, which is what text-only matching gets wrong.
 
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use tree_sitter::{Node, TreeCursor};
 
@@ -130,6 +131,217 @@ fn pair_of(root: Node, start: usize, end: usize) -> Option<BracketPair> {
         open: open.byte_range(),
         close: close.byte_range(),
     })
+}
+
+/// A paired bracket and how many pairs enclose it: 0 for an outermost pair.
+/// Both brackets of a pair have the same depth.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BracketDepth {
+    pub range: Range<usize>,
+    pub depth: usize,
+}
+
+/// The paired brackets overlapping `range`, in order, with their depths, for
+/// colouring pairs by nesting. Empty without a tree.
+///
+/// Pairs are found as [`bracket_pair`] finds them, among siblings, so
+/// brackets in strings and comments are never included, nor are brackets
+/// whose counterpart is missing or a `MISSING` node, or brackets that are
+/// children of an `ERROR` node. Brackets that don't pair don't count towards
+/// the depth of the brackets inside them.
+///
+/// Empty while the tree has been edited but not reparsed
+/// ([`Syntax::needs_parse`]): an edited tree's leaves are moved, not
+/// re-lexed, so a bracket that quotes now enclose would still be a leaf.
+///
+/// Only the part of the tree touching `range` is walked, apart from pairing
+/// each walked node's children. The pairing of a node with more than 4,096
+/// children, a long list, is kept until the tree is edited or reparsed, so
+/// its children are stepped through once a parse, not once a call.
+///
+/// Known limits: injected layers (Markdown code fences, HTML `<script>`) are
+/// not looked at, only the root tree.
+pub fn bracket_depths(syntax: &Syntax, range: Range<usize>) -> Vec<BracketDepth> {
+    let mut found = Vec::new();
+    let Some(tree) = syntax.tree() else {
+        return found;
+    };
+    if range.is_empty() || syntax.needs_parse() || syntax.failed() {
+        return found;
+    }
+    let mut cursor = tree.walk();
+    // The levels entered, the innermost last, each on the cursor's node at
+    // that level.
+    let mut levels = Vec::new();
+    if !enter(syntax, &mut cursor, &range, 0, &mut levels) {
+        return found;
+    }
+    loop {
+        let level = levels.last_mut().expect("a level is entered");
+        let node = cursor.node();
+        let past = node.start_byte() >= range.end;
+        if !past {
+            let bracket = level
+                .paired
+                .get(level.next)
+                .filter(|&&(index, _)| index == level.index)
+                .map(|&(_, opens)| opens);
+            if let Some(opens) = bracket {
+                level.next += 1;
+                if !opens {
+                    level.depth -= 1;
+                }
+                if node.end_byte() > range.start {
+                    found.push(BracketDepth {
+                        range: node.byte_range(),
+                        depth: level.depth,
+                    });
+                }
+                if opens {
+                    level.depth += 1;
+                }
+            } else if node.child_count() > 0 && node.end_byte() > range.start {
+                let depth = level.depth;
+                if enter(syntax, &mut cursor, &range, depth, &mut levels) {
+                    continue;
+                }
+            }
+        }
+        // On to the next sibling, or out of levels that are done.
+        let mut done = past;
+        loop {
+            if !done && cursor.goto_next_sibling() {
+                levels.last_mut().expect("a level is entered").index += 1;
+                break;
+            }
+            levels.pop();
+            if levels.is_empty() {
+                return found;
+            }
+            cursor.goto_parent();
+            done = false;
+        }
+    }
+}
+
+/// A node's paired bracket children: child index and whether it opens, in
+/// child order.
+pub(crate) type Paired = Arc<[(usize, bool)]>;
+
+/// A node whose children [`bracket_depths`] is walking.
+struct Level {
+    /// The paired brackets among the children: child index and whether it
+    /// opens, in child order.
+    paired: Paired,
+    /// The first of `paired` not yet passed.
+    next: usize,
+    /// The depth of a bracket opening at the cursor.
+    depth: usize,
+    /// The cursor's child index.
+    index: usize,
+}
+
+/// Moves `cursor` from its node to the first child that reaches `range`,
+/// pushing the level. False, with the cursor unmoved, when no child does.
+fn enter(
+    syntax: &Syntax,
+    cursor: &mut TreeCursor,
+    range: &Range<usize>,
+    depth: usize,
+    levels: &mut Vec<Level>,
+) -> bool {
+    let node = cursor.node();
+    let paired: Paired = if node.is_error() {
+        Arc::new([])
+    } else if node.child_count() as usize > SCAN_LIMIT {
+        syntax.wide_brackets(node.id(), || children_paired(cursor))
+    } else {
+        children_paired(cursor).into()
+    };
+    let index = match cursor.goto_first_child_for_byte(range.start) {
+        Some(index) => index,
+        // The seek gives up in some gaps between children, such as Go's
+        // blank lines: step to the first child ending past the start.
+        None => {
+            if !cursor.goto_first_child() {
+                return false;
+            }
+            let mut index = 0;
+            while cursor.node().end_byte() <= range.start {
+                if !cursor.goto_next_sibling() {
+                    cursor.goto_parent();
+                    return false;
+                }
+                index += 1;
+            }
+            index
+        }
+    };
+    // Pairs opened, and closed, before the first child walked.
+    let next = paired.partition_point(|&(at, _)| at < index);
+    let depth = paired[..next].iter().fold(
+        depth,
+        |depth, &(_, opens)| if opens { depth + 1 } else { depth - 1 },
+    );
+    levels.push(Level {
+        paired,
+        next,
+        depth,
+        index,
+    });
+    true
+}
+
+/// Whether `node` is a bracket: the kind it pairs with, and whether it opens.
+fn bracket_kind(node: Node) -> Option<(&'static str, bool)> {
+    if node.is_named() || node.child_count() > 0 {
+        return None;
+    }
+    Some(match node.kind() {
+        "(" => (")", true),
+        "[" => ("]", true),
+        "{" => ("}", true),
+        ")" => ("(", false),
+        "]" => ("[", false),
+        "}" => ("{", false),
+        _ => return None,
+    })
+}
+
+/// The paired brackets among the children of the cursor's node, by child
+/// index, nested pairs counted. A pair with a `MISSING` bracket isn't one.
+/// Leaves the cursor where it was.
+fn children_paired(cursor: &mut TreeCursor) -> Vec<(usize, bool)> {
+    let mut paired = Vec::new();
+    if !cursor.goto_first_child() {
+        return paired;
+    }
+    // Open brackets: child index, kind, and whether it's `MISSING`.
+    let mut open: Vec<(usize, &str, bool)> = Vec::new();
+    let mut index = 0;
+    loop {
+        let node = cursor.node();
+        if let Some((other, opens)) = bracket_kind(node) {
+            if opens {
+                open.push((index, node.kind(), node.is_missing()));
+            } else if let Some(at) = open.iter().rposition(|&(_, kind, _)| kind == other) {
+                // Unpaired opens inside this pair stay unpaired.
+                let (start, _, missing) = open[at];
+                open.truncate(at);
+                if !missing && !node.is_missing() {
+                    paired.push((start, true));
+                    paired.push((index, false));
+                }
+            }
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+        index += 1;
+    }
+    cursor.goto_parent();
+    paired.sort_unstable();
+    paired
 }
 
 /// How many siblings [`scan`] steps over before giving up.

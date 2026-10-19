@@ -21,9 +21,10 @@ impl EditorTheme {
     /// Takes every colour from `palette`, leaving the metrics alone.
     pub fn set_colors(&mut self, palette: &EditorPalette) {
         let font_family = std::mem::take(&mut self.font_family);
-        let indent_guides = self.indent_guides;
+        let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
         self.indent_guides = indent_guides;
+        self.bracket_pair_colors = bracket_pair_colors;
     }
 
     /// `palette`'s colours with the given metrics.
@@ -69,6 +70,8 @@ impl EditorTheme {
             vim_mode_command: hsla(editor.vim_mode_command),
             vim_mode_foreground: hsla(editor.vim_mode_foreground),
             indent_guides: true,
+            brackets: [editor.bracket_1, editor.bracket_2, editor.bracket_3].map(hsla),
+            bracket_pair_colors: false,
             syntax: fe_syntax::resolve_theme(&syntax),
         }
     }
