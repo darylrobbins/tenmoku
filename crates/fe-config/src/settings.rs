@@ -50,6 +50,9 @@ pub struct Settings {
     /// The project tree.
     #[serde(default)]
     pub tree: TreeSettings,
+    /// The AI chat.
+    #[serde(default)]
+    pub chat: ChatSettings,
 }
 
 /// Settings for the project tree.
@@ -66,6 +69,63 @@ impl Default for TreeSettings {
     fn default() -> Self {
         Self { show_ignored: true }
     }
+}
+
+/// Settings for the AI chat (docs/decisions/*-ai-chat.md §12). A project
+/// file can't set them: a cloned repo shouldn't pick the model, raise the
+/// spend or turn fallbacks off.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ChatSettings {
+    /// The Claude model new chats use. A chat keeps the model it started with.
+    #[schemars(length(min = 1))]
+    pub model: String,
+    /// How much Claude thinks before it answers: lower is faster and
+    /// cheaper. Applies to new chats.
+    pub effort: ChatEffort,
+    /// Show a summary of Claude's reasoning above each reply. Applies to new
+    /// chats.
+    pub show_thinking: bool,
+    /// The most a reply may use, its thinking included.
+    #[schemars(range(min = 1024, max = 128000))]
+    pub max_tokens: u32,
+    /// The most tokens of attached context (files, selection, diagnostics)
+    /// one message sends.
+    #[schemars(range(min = 0, max = 500000))]
+    pub context_budget: u32,
+    /// When Claude declines a request, let Anthropic's API answer with its
+    /// recommended fallback model.
+    pub fallbacks: bool,
+}
+
+impl Default for ChatSettings {
+    fn default() -> Self {
+        Self {
+            model: "claude-opus-5-5".into(),
+            effort: ChatEffort::default(),
+            show_thinking: false,
+            max_tokens: 64_000,
+            context_budget: 32_000,
+            fallbacks: true,
+        }
+    }
+}
+
+/// `chat.effort`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatEffort {
+    /// The least thinking.
+    Low,
+    /// A balance of speed and depth.
+    #[default]
+    Medium,
+    /// More thinking.
+    High,
+    /// Even more thinking.
+    Xhigh,
+    /// The most thinking.
+    Max,
 }
 
 /// Settings for the terminal panel. A project file may set all but the
@@ -629,6 +689,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
         .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
+        .project_filter(ProjectFilter::new("chat", drop_chat))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -887,6 +948,28 @@ fn drop_theme(layer: &mut Layer) {
             layer.diagnostic_at(Severity::Warning, Some(key), offset, PROJECT_THEME.into());
         layer.diagnostics.push(warning);
     }
+}
+
+/// The warning for a project file's `[chat]` table.
+pub const PROJECT_CHAT: &str =
+    "A project's settings can't set `chat`; set it in your own settings.toml";
+
+/// Drops a project layer's `chat` table, with one [`PROJECT_CHAT`] warning at
+/// the table.
+fn drop_chat(layer: &mut Layer) {
+    if layer.table.remove("chat").is_none() {
+        return;
+    }
+    let offset = DeTable::parse(&layer.source)
+        .ok()
+        .map_or(0, |document| key_offset(document.get_ref(), "chat", &[]));
+    let warning = layer.diagnostic_at(
+        Severity::Warning,
+        Some("chat".into()),
+        offset,
+        PROJECT_CHAT.into(),
+    );
+    layer.diagnostics.push(warning);
 }
 
 /// The warning for each `terminal.shell` and `terminal.shell_args` a project

@@ -119,3 +119,21 @@
 # order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
 # Or set font_family to a Nerd Font, such as "JetBrainsMono Nerd Font Mono".
 # font_fallbacks = []
+
+[chat]
+# The Claude model new chats use. A chat keeps the model it started with. A
+# project file can't set any [chat] key.
+# model = "claude-opus-5-5"
+# How much Claude thinks before it answers: low, medium, high, xhigh or max.
+# Lower is faster and cheaper. Applies to new chats.
+# effort = "medium"
+# Show a summary of Claude's reasoning above each reply. Applies to new chats.
+# show_thinking = false
+# The most a reply may use, its thinking included (1024 to 128000).
+# max_tokens = 64000
+# The most tokens of attached context (files, selection, diagnostics) one
+# message sends (0 to 500000).
+# context_budget = 32000
+# When Claude declines a request, let Anthropic's API answer with its
+# recommended fallback model.
+# fallbacks = true

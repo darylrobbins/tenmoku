@@ -30,6 +30,79 @@
         }
       ]
     },
+    "ChatEffort": {
+      "description": "`chat.effort`.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "The least thinking.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "A balance of speed and depth.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "More thinking.",
+          "type": "string"
+        },
+        {
+          "const": "xhigh",
+          "description": "Even more thinking.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "The most thinking.",
+          "type": "string"
+        }
+      ]
+    },
+    "ChatSettings": {
+      "description": "Settings for the AI chat (docs/decisions/*-ai-chat.md §12). A project\nfile can't set them: a cloned repo shouldn't pick the model, raise the\nspend or turn fallbacks off.",
+      "properties": {
+        "context_budget": {
+          "default": 32000,
+          "description": "The most tokens of attached context (files, selection, diagnostics)\none message sends.",
+          "format": "uint32",
+          "maximum": 500000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effort": {
+          "$ref": "#/$defs/ChatEffort",
+          "default": "medium",
+          "description": "How much Claude thinks before it answers: lower is faster and\ncheaper. Applies to new chats."
+        },
+        "fallbacks": {
+          "default": true,
+          "description": "When Claude declines a request, let Anthropic's API answer with its\nrecommended fallback model.",
+          "type": "boolean"
+        },
+        "max_tokens": {
+          "default": 64000,
+          "description": "The most a reply may use, its thinking included.",
+          "format": "uint32",
+          "maximum": 128000,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "model": {
+          "default": "claude-opus-5-5",
+          "description": "The Claude model new chats use. A chat keeps the model it started with.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "show_thinking": {
+          "default": false,
+          "description": "Show a summary of Claude's reasoning above each reply. Applies to new\nchats.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "EditorSettings": {
       "description": "Settings for the text editor.",
       "properties": {
@@ -609,6 +682,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "fastedit's settings, as written in `settings.toml`.",
   "properties": {
+    "chat": {
+      "$ref": "#/$defs/ChatSettings",
+      "default": {
+        "context_budget": 32000,
+        "effort": "medium",
+        "fallbacks": true,
+        "max_tokens": 64000,
+        "model": "claude-opus-5-5",
+        "show_thinking": false
+      },
+      "description": "The AI chat."
+    },
     "editor": {
       "$ref": "#/$defs/EditorSettings",
       "default": {
