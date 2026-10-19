@@ -2,11 +2,16 @@
 //! of every buffer open in the window, once per file however many splits
 //! show it, grouped by file. A file's row has its path, from the root if
 //! it's under it, and how many problems it has; one row per problem
-//! follows, with its severity, message, source and `row:col`. Clicking a
-//! problem, or `problems.open` on the selected one, activates the file's
-//! editor (the active pane's, else the first pane's showing it) and selects
-//! the problem's range; `problems.select_next` and
-//! `problems.select_previous` move the selection over the problems.
+//! follows, with its severity, message, source and `row:col`, then an
+//! indented row per location it's related to, with its message and
+//! `file:row` (`row` alone in the problem's file). Clicking a problem, or
+//! `problems.open` on the selected one, activates the file's editor (the
+//! active pane's, else the first pane's showing it) and selects the
+//! problem's range; a related location in the same file opens the same way,
+//! and one in another file opens it, in the active pane if no pane shows
+//! it, with the caret at its row's start. `problems.select_next` and
+//! `problems.select_previous` move the selection over the problems and
+//! their related rows.
 //!
 //! The workbench lists the problems again whenever an open editor changes,
 //! as a diagnostic arriving or clearing notifies it, and as tabs open and
@@ -37,7 +42,9 @@ use std::{
 };
 
 use fe_command::Invocation;
-use fe_editor::diagnostics::{DiagnosticCounts, FileProblems, Problem, Severity, group_problems};
+use fe_editor::diagnostics::{
+    DiagnosticCounts, FileProblems, Problem, RelatedInfo, Severity, group_problems,
+};
 use fe_gpui::{EditorTheme, EditorView, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
@@ -98,11 +105,22 @@ pub(crate) enum ProblemsOp {
     Previous,
 }
 
-/// A row: a file's, or one of its problems.
+/// A row: a file's, one of its problems, or one of a problem's related
+/// locations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Row {
     File(usize),
     Problem(usize, usize),
+    Related(usize, usize, usize),
+}
+
+/// Where opening a row goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Target {
+    /// A range of a file shown in a pane.
+    Range(PathBuf, Range<usize>),
+    /// A row's start, in a file that may not be open.
+    Row(PathBuf, u32),
 }
 
 pub struct ProblemsPanel {
@@ -113,7 +131,7 @@ pub struct ProblemsPanel {
     /// By path; none without problems.
     files: Vec<FileProblems>,
     rows: Vec<Row>,
-    /// A `Row::Problem`'s index in `rows`.
+    /// A `Row::Problem`'s or a `Row::Related`'s index in `rows`.
     selected: Option<usize>,
     /// Bumped as the list changes, for the rows' element ids.
     generation: u64,
@@ -158,8 +176,8 @@ impl ProblemsPanel {
 
     /// Lists `files`, with paths relative to `root`, keeping the selected
     /// problem selected if it's still listed: the nearest with its message,
-    /// severity and source. The window's counts, if the status item doesn't
-    /// show them yet.
+    /// severity and source (and the same related row of it, if it has
+    /// one). The window's counts, if the status item doesn't show them yet.
     fn set_files(
         &mut self,
         root: Option<PathBuf>,
@@ -174,6 +192,10 @@ impl ProblemsPanel {
         if files == self.files && root == self.root {
             return item;
         }
+        let related = match self.selected.and_then(|ix| self.rows.get(ix)) {
+            Some(Row::Related(_, _, related)) => Some(*related),
+            _ => None,
+        };
         let selected = self.selected_problem().map(|(path, problem)| {
             let path = path.to_owned();
             (path, problem.clone())
@@ -183,7 +205,12 @@ impl ProblemsPanel {
         self.rows.clear();
         for (ix, file) in self.files.iter().enumerate() {
             self.rows.push(Row::File(ix));
-            (self.rows).extend((0..file.problems.len()).map(|problem| Row::Problem(ix, problem)));
+            for (problem_ix, problem) in file.problems.iter().enumerate() {
+                self.rows.push(Row::Problem(ix, problem_ix));
+                (self.rows).extend(
+                    (0..problem.related.len()).map(|related| Row::Related(ix, problem_ix, related)),
+                );
+            }
         }
         self.selected = selected.and_then(|(path, was)| {
             let file = self.files.iter().position(|file| file.path == path)?;
@@ -200,37 +227,43 @@ impl ProblemsPanel {
                     .min_by_key(|(_, p)| distance(p))
                     .map(|(ix, _)| ix)
             })?;
-            self.rows
-                .iter()
-                .position(|row| *row == Row::Problem(file, problem))
+            let related = related.filter(|&ix| ix < problems[problem].related.len());
+            let row = match related {
+                Some(related) => Row::Related(file, problem, related),
+                None => Row::Problem(file, problem),
+            };
+            self.rows.iter().position(|r| *r == row)
         });
         self.generation += 1;
         cx.notify();
         item
     }
 
-    /// The selected problem, and its file's path.
+    /// The selected problem, or the problem of the selected related row,
+    /// and its file's path.
     fn selected_problem(&self) -> Option<(&Path, &Problem)> {
-        let Row::Problem(file, problem) = *self.rows.get(self.selected?)? else {
+        let (Row::Problem(file, problem) | Row::Related(file, problem, _)) =
+            *self.rows.get(self.selected?)?
+        else {
             return None;
         };
         let file = &self.files[file];
         Some((&file.path, &file.problems[problem]))
     }
 
-    /// The problem rows' indices in `rows`.
-    fn problem_rows(&self) -> Vec<usize> {
+    /// The problem and related rows' indices in `rows`.
+    fn selectable_rows(&self) -> Vec<usize> {
         (self.rows.iter().enumerate())
-            .filter(|(_, row)| matches!(row, Row::Problem(..)))
+            .filter(|(_, row)| !matches!(row, Row::File(..)))
             .map(|(ix, _)| ix)
             .collect()
     }
 
-    /// Moves the selection to the next problem, or the previous, stopping
-    /// at the last and the first; with none selected, selects the first,
-    /// or the last.
+    /// Moves the selection to the next problem or related row, or the
+    /// previous, stopping at the last and the first; with none selected,
+    /// selects the first, or the last.
     fn move_selection(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let problems = self.problem_rows();
+        let problems = self.selectable_rows();
         let (Some(&first), Some(&last)) = (problems.first(), problems.last()) else {
             return;
         };
@@ -253,30 +286,39 @@ impl ProblemsPanel {
         cx.notify();
     }
 
-    /// Selects row `ix`, if it's still `generation`'s and a problem's, and
-    /// opens it.
+    /// Selects row `ix`, if it's still `generation`'s and a problem's or a
+    /// related location's, and opens it.
     fn open(&mut self, generation: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if generation != self.generation || !matches!(self.rows.get(ix), Some(Row::Problem(..))) {
+        if generation != self.generation || matches!(self.rows.get(ix), None | Some(Row::File(_))) {
             return;
         }
         self.select(ix, cx);
         self.open_selected(window, cx);
     }
 
-    /// The selected problem's file and range.
-    fn selected_target(&self) -> Option<(PathBuf, Range<usize>)> {
+    /// Where the selected row goes: a problem's range in its file, a
+    /// related location's in the same file, or another file's row. None
+    /// for a location in no file.
+    fn selected_target(&self) -> Option<Target> {
         let (path, problem) = self.selected_problem()?;
-        Some((path.to_owned(), problem.range.clone()))
+        let Row::Related(_, _, related) = *self.rows.get(self.selected?)? else {
+            return Some(Target::Range(path.to_owned(), problem.range.clone()));
+        };
+        let related = &problem.related[related];
+        match &related.range {
+            Some(range) => Some(Target::Range(path.to_owned(), range.clone())),
+            None => Some(Target::Row(related.path.clone()?, related.row)),
+        }
     }
 
-    /// Opens the selected problem through the workbench, for a click.
+    /// Opens the selected row through the workbench, for a click.
     fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((path, range)) = self.selected_target() else {
+        let Some(target) = self.selected_target() else {
             return;
         };
         if let Some(workbench) = self.workbench.upgrade() {
             workbench.update(cx, |workbench, cx| {
-                workbench.open_problem(&path, range, window, cx)
+                workbench.open_problem(target, window, cx)
             });
         }
     }
@@ -389,6 +431,29 @@ impl ProblemsPanel {
                                     .child(position(problem)),
                             )
                     }
+                    Row::Related(file, problem, related) => {
+                        let related = &self.files[file].problems[problem].related[related];
+                        row.pl(px(44.))
+                            .when(self.selected == Some(ix), |row| row.bg(selected_bg))
+                            .hover(move |row| row.bg(ui.row_hover))
+                            .on_click(cx.listener(move |panel, _, window, cx| {
+                                panel.open(generation, ix, window, cx)
+                            }))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(first_line(&related.message).to_owned()),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_color(ui.muted_text)
+                                    .child(related_position(related)),
+                            )
+                    }
                 };
                 Some(row.into_any_element())
             })
@@ -414,6 +479,19 @@ fn first_line(message: &str) -> &str {
 /// A problem's `row:col`, one-based.
 fn position(problem: &Problem) -> String {
     format!("{}:{}", problem.row + 1, problem.column + 1)
+}
+
+/// A related location's `file:row`, one-based: `row` alone in the
+/// problem's own file.
+fn related_position(related: &RelatedInfo) -> String {
+    let row = related.row + 1;
+    let name = (related.range.is_none())
+        .then(|| related.path.as_deref()?.file_name())
+        .flatten();
+    match name {
+        Some(name) => format!("{}:{row}", name.to_string_lossy()),
+        None => row.to_string(),
+    }
 }
 
 /// How many problems of each severity `files` have.
@@ -570,8 +648,8 @@ impl Workbench {
                 panel.update(cx, |panel, cx| panel.move_selection(false, cx))
             }
             ProblemsOp::Open => {
-                if let Some((path, range)) = panel.read(cx).selected_target() {
-                    self.open_problem(&path, range, window, cx);
+                if let Some(target) = panel.read(cx).selected_target() {
+                    self.open_problem(target, window, cx);
                 }
             }
             ProblemsOp::Next => self.go_to_diagnostic(true, cx),
@@ -595,19 +673,30 @@ impl Workbench {
         });
     }
 
-    /// Activates `path`'s editor, the active pane's or else the first
-    /// pane's showing it, focused, with `range` selected. With vim on, the
+    /// Activates the target's file's editor, the active pane's or else the
+    /// first pane's showing it, focused, with the range selected or the
+    /// caret at the row's start. A row's file that no pane shows opens in
+    /// the active pane, which focuses it once it's read. With vim on, the
     /// caret goes to the range's start, in normal mode: an editor left in
     /// insert or replace mode leaves it once it's drawn
     /// ([`Workbench::land_problem`]).
-    fn open_problem(
-        &mut self,
-        path: &Path,
-        range: Range<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let shows = |pane: &Entity<Pane>, cx: &App| pane.read(cx).position(path).is_some();
+    fn open_problem(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        let vim = fe_gpui::vim_enabled(cx);
+        let (path, reveal) = match target {
+            Target::Range(path, range) => {
+                let range = if vim { range.start..range.start } else { range };
+                (path, Reveal::bytes(range))
+            }
+            Target::Row(path, row) => (
+                path,
+                Reveal {
+                    row,
+                    columns: 0..0,
+                    within_row: true,
+                },
+            ),
+        };
+        let shows = |pane: &Entity<Pane>, cx: &App| pane.read(cx).position(&path).is_some();
         let pane = Some(self.pane().clone())
             .filter(|pane| shows(pane, cx))
             .or_else(|| {
@@ -615,29 +704,29 @@ impl Workbench {
                     .find(|pane| shows(pane, cx))
                     .cloned()
             });
-        let Some(pane) = pane else {
-            return;
+        let pane = match pane {
+            Some(pane) => pane,
+            None if reveal.within_row => self.pane().clone(),
+            None => return,
         };
         if pane != *self.pane() {
             self.activate(pane.clone(), window, cx);
         }
-        let vim = fe_gpui::vim_enabled(cx);
-        let range = if vim { range.start..range.start } else { range };
         pane.update(cx, |pane, cx| {
-            pane.open_at(
-                path.to_owned(),
-                Some(Reveal::bytes(range.clone())),
-                window,
-                cx,
-            )
+            pane.open_at(path.clone(), Some(reveal), window, cx)
         });
+        // Not shown yet: it's being read.
+        if !shows(&pane, cx) {
+            return;
+        }
         let Some(editor) = pane.read(cx).active_editor().cloned() else {
             return;
         };
         window.focus(&editor.focus_handle(cx), cx);
         // Selecting left a visual mode and dropped a pending command.
         if vim && typing(&editor, cx) {
-            self.problem_landing = Some((editor.downgrade(), range.start));
+            let at = editor.read(cx).model().primary_selection().range.start;
+            self.problem_landing = Some((editor.downgrade(), at));
             cx.notify();
         }
     }
@@ -684,6 +773,8 @@ pub(crate) enum ShownRow {
     File(String, usize),
     /// A problem's severity mark, message, source and `row:col`.
     Problem(&'static str, String, Option<String>, String),
+    /// A related location's message and `file:row`.
+    Related(String, String),
 }
 
 #[cfg(test)]
@@ -702,6 +793,13 @@ impl ProblemsPanel {
                         first_line(&problem.message).to_owned(),
                         problem.source.clone(),
                         position(problem),
+                    )
+                }
+                Row::Related(file, problem, related) => {
+                    let related = &self.files[file].problems[problem].related[related];
+                    ShownRow::Related(
+                        first_line(&related.message).to_owned(),
+                        related_position(related),
                     )
                 }
             })

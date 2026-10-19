@@ -83,6 +83,8 @@ fn problem(row: u32, column: u32, severity: Severity) -> Problem {
         severity,
         message: format!("{row}:{column}"),
         source: None,
+        related: Vec::new(),
+        code_href: None,
     }
 }
 

@@ -66,6 +66,23 @@ pub struct Diagnostic {
     pub source: Option<String>,
     pub code: Option<String>,
     pub tags: Vec<DiagnosticTag>,
+    /// Where else it points, as rustc's "first borrow here".
+    pub related: Vec<RelatedInfo>,
+    /// A page describing `code`.
+    pub code_href: Option<String>,
+}
+
+/// A location a diagnostic points to besides its own range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelatedInfo {
+    /// The file it's in, if the server named one by path.
+    pub path: Option<PathBuf>,
+    /// The zero-based row it starts on.
+    pub row: u32,
+    /// Its bytes, set only when it's in the diagnostic's own file: moved
+    /// with edits as the diagnostic's range is.
+    pub range: Option<Range<usize>>,
+    pub message: String,
 }
 
 impl Diagnostic {
@@ -76,6 +93,8 @@ impl Diagnostic {
             source: None,
             code: None,
             tags: Vec::new(),
+            related: Vec::new(),
+            code_href: None,
         }
     }
 }
@@ -85,6 +104,9 @@ impl Diagnostic {
 pub struct DiagnosticEntry<'a> {
     pub range: Range<usize>,
     pub diagnostic: &'a Diagnostic,
+    /// The diagnostic's related locations in the same snapshot: a
+    /// same-file one's range and row as they've moved.
+    pub related: Vec<RelatedInfo>,
 }
 
 impl Deref for DiagnosticEntry<'_> {
@@ -104,6 +126,22 @@ const END: Bias = Bias::Left;
 struct Entry {
     range: Range<Anchor>,
     diagnostic: Diagnostic,
+    /// The ranges of `diagnostic.related`, by index, of those that have one.
+    related: Vec<Option<Range<Anchor>>>,
+}
+
+impl Entry {
+    /// Its anchors: its range's ends, then each related range's.
+    fn anchors(&self) -> impl Iterator<Item = Anchor> + '_ {
+        let related = self.related.iter().flatten();
+        [self.range.start, self.range.end]
+            .into_iter()
+            .chain(related.flat_map(|range| [range.start, range.end]))
+    }
+
+    fn anchor_count(&self) -> usize {
+        2 + 2 * self.related.iter().flatten().count()
+    }
 }
 
 /// One server's diagnostics.
@@ -181,20 +219,32 @@ impl<S: Copy + Eq, I: Copy + Eq> DiagnosticSet<S, I> {
         {
             return false;
         }
+        let rebase = |range: Range<usize>| {
+            let start = snapshot.map_offset(range.start, START, version);
+            let end = snapshot.map_offset(range.end, END, version).max(start);
+            start..end
+        };
         let mut entries: Vec<(Range<usize>, Diagnostic)> = items
             .into_iter()
-            .map(|(range, diagnostic)| {
-                let start = snapshot.map_offset(range.start, START, version);
-                let end = snapshot.map_offset(range.end, END, version).max(start);
-                (start..end, diagnostic)
+            .map(|(range, mut diagnostic)| {
+                for related in &mut diagnostic.related {
+                    related.range = related.range.take().map(rebase);
+                }
+                (rebase(range), diagnostic)
             })
             .collect();
         entries.sort_by_key(|(range, _)| (range.start, range.end));
+        let anchor = |range: &Range<usize>| {
+            snapshot.anchor_at(range.start, START)..snapshot.anchor_at(range.end, END)
+        };
         let set = self.server_mut(server);
         set.entries = entries
             .into_iter()
             .map(|(range, diagnostic)| Entry {
-                range: snapshot.anchor_at(range.start, START)..snapshot.anchor_at(range.end, END),
+                range: anchor(&range),
+                related: (diagnostic.related.iter())
+                    .map(|related| related.range.as_ref().map(anchor))
+                    .collect(),
                 diagnostic,
             })
             .collect();
@@ -242,13 +292,17 @@ impl<S: Copy + Eq, I: Copy + Eq> DiagnosticSet<S, I> {
                 set.from = None;
                 continue;
             }
-            let anchors: Vec<Anchor> = (set.entries.iter())
-                .flat_map(|entry| [entry.range.start, entry.range.end])
-                .collect();
+            let anchors: Vec<Anchor> = set.entries.iter().flat_map(Entry::anchors).collect();
             let offsets = snapshot.resolve_many(&anchors);
-            for (entry, ends) in set.entries.iter_mut().zip(offsets.chunks(2)) {
+            let mut offsets = offsets.chunks(2);
+            let mut rebase = |range: &mut Range<Anchor>| {
+                let ends = offsets.next().expect("an anchor pair per range");
                 let end = ends[1].max(ends[0]);
-                entry.range = snapshot.anchor_at(ends[0], START)..snapshot.anchor_at(end, END);
+                *range = snapshot.anchor_at(ends[0], START)..snapshot.anchor_at(end, END);
+            };
+            for entry in &mut set.entries {
+                rebase(&mut entry.range);
+                entry.related.iter_mut().flatten().for_each(&mut rebase);
             }
             set.version = snapshot.version();
         }
@@ -282,14 +336,33 @@ fn resolve<'a, S, I>(
     if set.entries.is_empty() || set.version < snapshot.oldest_version() {
         return Vec::new();
     }
-    let anchors: Vec<Anchor> = (set.entries.iter())
-        .flat_map(|entry| [entry.range.start, entry.range.end])
-        .collect();
+    let anchors: Vec<Anchor> = set.entries.iter().flat_map(Entry::anchors).collect();
     let offsets = snapshot.resolve_many(&anchors);
-    (set.entries.iter().zip(offsets.chunks(2)))
-        .map(|(entry, ends)| DiagnosticEntry {
-            range: ends[0]..ends[1].max(ends[0]),
-            diagnostic: &entry.diagnostic,
+    let mut at = 0;
+    (set.entries.iter())
+        .map(|entry| {
+            let ends = &offsets[at..at + entry.anchor_count()];
+            at += ends.len();
+            let range = |ends: &[usize]| ends[0]..ends[1].max(ends[0]);
+            let mut moved = ends[2..].chunks(2).map(range);
+            let related = (entry.diagnostic.related.iter().zip(&entry.related))
+                .map(|(related, anchors)| match anchors {
+                    Some(_) => {
+                        let range = moved.next().expect("an anchor pair per range");
+                        RelatedInfo {
+                            row: snapshot.text().offset_to_point(range.start).row,
+                            range: Some(range),
+                            ..related.clone()
+                        }
+                    }
+                    None => related.clone(),
+                })
+                .collect();
+            DiagnosticEntry {
+                range: range(ends),
+                diagnostic: &entry.diagnostic,
+                related,
+            }
         })
         .collect()
 }
@@ -345,6 +418,9 @@ pub struct Problem {
     pub severity: Severity,
     pub message: String,
     pub source: Option<String>,
+    /// Where else it points, rows and ranges as of the same text.
+    pub related: Vec<RelatedInfo>,
+    pub code_href: Option<String>,
 }
 
 /// The problems of one file.
@@ -423,6 +499,8 @@ impl EditorModel {
                     severity: entry.severity,
                     message: entry.message.clone(),
                     source: entry.source.clone(),
+                    related: entry.related.clone(),
+                    code_href: entry.code_href.clone(),
                 }
             })
             .collect()

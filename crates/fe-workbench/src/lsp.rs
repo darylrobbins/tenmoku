@@ -115,7 +115,7 @@ use fe_config::settings::{LspLayer, LspSettings};
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
 use fe_editor::{
     EditorModel,
-    diagnostics::{Diagnostic, DiagnosticTag, Severity},
+    diagnostics::{Diagnostic, DiagnosticTag, RelatedInfo, Severity},
 };
 use fe_lsp::{
     KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
@@ -2030,12 +2030,22 @@ fn diagnostic(item: fe_lsp::Diagnostic) -> (std::ops::Range<usize>, Diagnostic) 
             fe_lsp::DiagnosticTag::Deprecated => DiagnosticTag::Deprecated,
         })
         .collect();
+    let related = (item.related.into_iter())
+        .map(|related| RelatedInfo {
+            path: related.path,
+            row: related.row,
+            range: related.range,
+            message: related.message,
+        })
+        .collect();
     let diagnostic = Diagnostic {
         severity,
         message: item.message,
         source: item.source,
         code: item.code,
         tags,
+        related,
+        code_href: item.code_description.map(String::from),
     };
     (item.range, diagnostic)
 }

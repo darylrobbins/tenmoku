@@ -1,9 +1,9 @@
 //! The editor's hover popover: what the text under a still pointer says,
 //! shown after [`HOVER_DELAY`] beside it, or at the caret on
 //! `editor.show_hover` (docs/decisions/lsp-client.md §7). It holds the
-//! message of each diagnostic there, then what the view's
-//! [`HoverProvider`] (a language server's hover, say) says about the word
-//! there, once it answers.
+//! message of each diagnostic there, with its related locations and its
+//! code's link, then what the view's [`HoverProvider`] (a language
+//! server's hover, say) says about the word there, once it answers.
 //!
 //! - **Asking.** The provider is asked once the delay is up, once per word
 //!   rested on: moves within the word don't ask again. Leaving the word
@@ -187,7 +187,8 @@ impl Under {
         }
     }
 
-    /// The range and message of each of `entries` here, by start.
+    /// The range and text of each of `entries` here, by start
+    /// ([`diagnostic_text`]).
     fn items(self, entries: &[DiagnosticEntry<'_>]) -> Vec<(Range<usize>, String)> {
         let offset = self.offset();
         (entries.iter())
@@ -198,9 +199,30 @@ impl Under {
                     Self::RowEnd(_) => empty_here,
                 }
             })
-            .map(|entry| (entry.range.clone(), entry.message.clone()))
+            .map(|entry| (entry.range.clone(), diagnostic_text(entry)))
             .collect()
     }
+}
+
+/// A diagnostic as the popover says it: its message, then a line per
+/// related location, `↳ main.rs:4: first borrow here` (`line 4` in its own
+/// file), then its code and the page describing it, if it has both.
+fn diagnostic_text(entry: &DiagnosticEntry<'_>) -> String {
+    let mut text = entry.message.clone();
+    for related in &entry.related {
+        let name = (related.range.is_none())
+            .then(|| related.path.as_deref()?.file_name())
+            .flatten();
+        let at = match name {
+            Some(name) => format!("{}:{}", name.to_string_lossy(), related.row + 1),
+            None => format!("line {}", related.row + 1),
+        };
+        text += &format!("\n↳ {at}: {}", related.message);
+    }
+    if let (Some(code), Some(href)) = (&entry.code, &entry.code_href) {
+        text += &format!("\n{code}: {href}");
+    }
+    text
 }
 
 /// A part of the popover's text.
@@ -245,8 +267,8 @@ impl Current {
         }
     }
 
-    /// What it says: the diagnostics' messages, a line each, then the
-    /// provider's text.
+    /// What it says: the diagnostics' messages, each with its related
+    /// locations and code link, then the provider's text.
     fn blocks(&self) -> Vec<Block> {
         let mut blocks = Vec::new();
         if !self.hovered.items.is_empty() {

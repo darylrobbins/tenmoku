@@ -511,3 +511,6 @@ fn selection_kept(cx: &mut TestAppContext) {
     });
     assert_eq!(selected(&mut s), Some(2));
 }
+
+#[path = "problems_related_tests.rs"]
+mod problems_related_tests;

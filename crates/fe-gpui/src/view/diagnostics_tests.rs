@@ -384,3 +384,6 @@ fn moves_within_a_range_follow_the_pointer(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(painted(&view, cx).2, None);
 }
+
+#[path = "diagnostic_related_tests.rs"]
+mod diagnostic_related_tests;
