@@ -21,9 +21,19 @@
 //! already in place, each delegating to its stub module ([`prose`],
 //! [`line_motions`], [`delimiters`], [`g_operators`]; [`jumplist`] takes
 //! keys only).
+//!
+//! A feature waits on keys of its own, as `ds{char}` and `cs{old}{new}` do
+//! ([`surround`]), with a [`FeaturePrefix`]: a hook returns
+//! [`Pending::with_feature_prefix`], naming itself, and its `prefix` hook
+//! gets the next key with what it has gathered so far (the keys in the
+//! prefix, the operator and count in the [`Pending`]). It waits again on the
+//! prefix with a key added ([`FeaturePrefix::then`]) or commits; `<Esc>`, and
+//! any key it refuses, cancel. While it waits `vim.pending_kind` is the
+//! feature's name.
 
 pub(crate) mod argument;
 pub(crate) mod objects;
+pub(crate) mod surround;
 
 use fe_command::Registry;
 
@@ -39,6 +49,51 @@ pub(crate) mod reindent;
 
 /// A feature's answer to the key after `[` or `]` (`true`).
 pub(crate) type BracketHook = fn(&Pending, bool, VimKey) -> Option<Step>;
+
+/// A feature's answer to the key after its own prefix.
+pub(crate) type PrefixHook = fn(&Pending, FeaturePrefix, VimKey) -> Option<Step>;
+
+/// A prefix a feature owns, waiting for its next key: which feature, by
+/// name (`vim.pending_kind`), and the keys it has gathered since it began.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FeaturePrefix {
+    feature: &'static str,
+    keys: [char; FeaturePrefix::MAX_KEYS],
+    len: u8,
+}
+
+impl FeaturePrefix {
+    /// How many keys a prefix holds.
+    pub(crate) const MAX_KEYS: usize = 4;
+
+    /// `feature`'s prefix, with no keys gathered yet.
+    pub(crate) const fn new(feature: &'static str) -> Self {
+        Self {
+            feature,
+            keys: ['\0'; Self::MAX_KEYS],
+            len: 0,
+        }
+    }
+
+    /// The name of the feature that owns it.
+    pub(crate) fn feature(&self) -> &'static str {
+        self.feature
+    }
+
+    /// The keys gathered, in the order typed.
+    pub(crate) fn keys(&self) -> &[char] {
+        &self.keys[..usize::from(self.len)]
+    }
+
+    /// The same prefix with `ch` gathered too; `None` if it holds
+    /// [`Self::MAX_KEYS`] already.
+    pub(crate) fn then(mut self, ch: char) -> Option<Self> {
+        let slot = self.keys.get_mut(usize::from(self.len))?;
+        *slot = ch;
+        self.len += 1;
+        Some(self)
+    }
+}
 
 /// One feature's hooks into the reducer and the registry.
 pub(crate) struct Feature {
@@ -57,6 +112,10 @@ pub(crate) struct Feature {
     /// The char after `i` or `a` (`true` for `i`) in operator-pending or a
     /// visual mode that the reducer maps to no text object.
     pub(crate) object: fn(&Pending, char, bool) -> Option<TextObject>,
+    /// The key after a [`FeaturePrefix`], any feature's: `None` from a
+    /// feature that doesn't own it, or for a key it refuses. `None` if the
+    /// feature has no prefix of its own.
+    pub(crate) prefix: Option<PrefixHook>,
     /// Adds its commands to vim's registry.
     pub(crate) register: fn(&mut Registry<VimCommands>),
 }
@@ -70,11 +129,12 @@ impl Feature {
         big_z: None,
         bracket: None,
         object: |_, _, _| None,
+        prefix: None,
         register: |_| {},
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 18] = [
+pub(crate) const FEATURES: [&Feature; 20] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -94,6 +154,7 @@ pub(crate) const FEATURES: [&Feature; 18] = [
     &changelist::FEATURE,
     &objects::FEATURE,
     &argument::FEATURE,
+    &surround::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.
@@ -147,6 +208,14 @@ pub(crate) fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<S
         .iter()
         .filter_map(|feature| feature.bracket)
         .find_map(|bracket| bracket(pending, forward, key))
+}
+
+/// The owning feature's answer to the key after its prefix.
+pub(crate) fn prefix(pending: &Pending, prefix: FeaturePrefix, key: VimKey) -> Option<Step> {
+    FEATURES
+        .iter()
+        .filter_map(|feature| feature.prefix)
+        .find_map(|hook| hook(pending, prefix, key))
 }
 
 /// The first feature's text object for the char after `i` (`inner`) or

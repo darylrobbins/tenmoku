@@ -12,7 +12,7 @@ use crate::{
         Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RecordArgs, ReplaceCharArgs,
         SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
     },
-    feature,
+    feature::{self, FeaturePrefix},
     jump::JumpPrefix,
     marks,
 };
@@ -74,6 +74,8 @@ enum Prefix {
     Play,
     /// `gs` or `gS`, awaiting the chars to jump to.
     Jump(JumpPrefix),
+    /// A feature's own prefix (`ds`), awaiting its next key.
+    Feature(FeaturePrefix),
 }
 
 /// What a [`Pending`] is waiting on, for `vim.pending_kind` and which-key.
@@ -98,11 +100,15 @@ pub enum PendingKind {
     Mark,
     /// `gs` or `gS`.
     Jump,
+    /// A feature's own prefix, by the feature's name ([`FeaturePrefix`]):
+    /// `surround` after `ds` or `cs`.
+    Feature(&'static str),
 }
 
 impl PendingKind {
     /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`, `z`,
-    /// `find`, `text_object`, `replace`, `set_mark`, `mark` or `jump`.
+    /// `find`, `text_object`, `replace`, `set_mark`, `mark` or `jump`, or the
+    /// name of the feature whose prefix waits (`surround`).
     pub fn name(self) -> &'static str {
         match self {
             Self::Count => "count",
@@ -118,6 +124,7 @@ impl PendingKind {
             Self::SetMark => "set_mark",
             Self::Mark => "mark",
             Self::Jump => "jump",
+            Self::Feature(name) => name,
         }
     }
 }
@@ -192,6 +199,7 @@ impl Pending {
             Some(Prefix::SetMark) => PendingKind::SetMark,
             Some(Prefix::Mark { .. }) => PendingKind::Mark,
             Some(Prefix::Jump(_)) => PendingKind::Jump,
+            Some(Prefix::Feature(prefix)) => PendingKind::Feature(prefix.feature()),
             None if self.typing.is_some() => PendingKind::Count,
             None if self.operator.is_some() => PendingKind::Operator,
             None if self.register.is_some() => PendingKind::Register,
@@ -275,6 +283,14 @@ impl Pending {
     #[allow(dead_code, reason = "for the feature modules' hooks")]
     pub(crate) fn motion(self, motion: Motion) -> Step {
         self.commit(Target::Motion(motion))
+    }
+
+    /// Waits on `prefix`, a feature's own, for the hook's next key
+    /// ([`feature::prefix`]), the count ended.
+    pub(crate) fn with_feature_prefix(mut self, prefix: FeaturePrefix) -> Step {
+        self.end_count();
+        self.prefix = Some(Prefix::Feature(prefix));
+        Step::Wait(self)
     }
 
     /// A jump's labels awaited, after `register` and `operator`.
@@ -395,6 +411,12 @@ impl Pending {
         if let Prefix::Bracket { forward } = prefix {
             self.end_count();
             return feature::bracket(&self, forward, key).unwrap_or(Step::Cancel);
+        }
+        if let Prefix::Feature(prefix) = prefix {
+            if key == VimKey::Esc {
+                return Step::Cancel;
+            }
+            return feature::prefix(&self, prefix, key).unwrap_or(Step::Cancel);
         }
         let ch = match key {
             VimKey::Char(ch) => ch,
