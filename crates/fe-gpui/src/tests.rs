@@ -215,7 +215,8 @@ const CASES: &[Case] = &[
 /// fe-keymap's `editing_bindings`, and the language-server keys (`f2`,
 /// `cmd-.`, `cmd-k cmd-f`, `cmd-shift-space`) by its
 /// `lsp_bindings`. The git keys (`alt-f3`, `shift-alt-f3`, `cmd-alt-z`) are
-/// checked by its `git_keys`. The Markdown preview keys (`cmd-shift-v`,
+/// checked by its `git_keys`, and `cmd-alt-g b` by its
+/// `blame_annotation_keys`. The Markdown preview keys (`cmd-shift-v`,
 /// `cmd-k v`) by its `markdown_preview_bindings`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
@@ -234,6 +235,7 @@ const DEDICATED: &[&str] = &[
     "alt-f3",
     "shift-alt-f3",
     "cmd-alt-z",
+    "cmd-alt-g b",
     "cmd-shift-v",
     "cmd-k v",
 ];

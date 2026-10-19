@@ -287,6 +287,12 @@ impl Workbench {
         self.run_typed_git(GitCommand::ToggleLineBlame, cx);
     }
 
+    /// Git: Toggle Blame Annotations
+    #[command(id = "git.toggle_blame_annotations")]
+    fn git_toggle_blame_annotations(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::ToggleBlameAnnotations, cx);
+    }
+
     /// Git: Show Line Blame
     #[command(id = "git.blame_line")]
     fn git_blame_line(&mut self, cx: &mut Cx<Self>) {

@@ -1,10 +1,10 @@
 //! A line's blame and its commit: `git.toggle_line_blame`,
 //! `git.blame_line` and `git.open_line_commit`, routed here by
-//! `git_commands`.
+//! `git_commands`; and `git.toggle_blame_annotations`, every row's in the
+//! gutter, in [`column`].
 //!
-//! Line blame (`:Gitsigns toggle_current_line_blame`, or `:Git blame`,
-//! which in fugitive opens a blame split; here it toggles) is off by
-//! default, per window. On, the active editor's caret row shows, after its
+//! Line blame (`:Gitsigns toggle_current_line_blame`) is off by default,
+//! per window. On, the active editor's caret row shows, after its
 //! text and in `Muted`, VS Code's `<summary>, <author> (<time ago>)`, or
 //! `Not Committed Yet` for a row edited or added since HEAD. It follows the
 //! caret however it moves (vim motions, search, clicks), in every mode,
@@ -18,7 +18,9 @@
 //! (the Changes panel's), or an editor becoming the active one, reads
 //! HEAD's id and blames again if HEAD moved, or if the last blame found
 //! nothing to show. Of two blames of a buffer landing out of order, the
-//! later one asked for wins. A file outside a repository, untracked (in
+//! later one asked for wins. Blame annotations follow their buffer the
+//! same way, sharing its last blame, and neither blames a version the
+//! other is blaming. A file outside a repository, untracked (in
 //! neither HEAD nor the index) or over 5 MiB has none, and shows nothing.
 //!
 //! Each editor marked gets a provider of its own; a model split from it
@@ -202,6 +204,8 @@ struct BlameState {
     windows: HashMap<EntityId, LineBlame>,
     blamed: HashMap<BufferId, Blamed>,
     commits: Vec<(WeakEntity<DiffView>, PathBuf, String)>,
+    /// The editors annotated, by id.
+    columns: HashMap<EntityId, column::Column>,
     /// Bumped by each blame started.
     serials: u64,
     /// Bumped by each `git.open_line_commit` and `git.blame_line`: only
@@ -252,8 +256,9 @@ pub(super) fn run(
 ) {
     match op.command {
         GitCommand::ToggleLineBlame => toggle(workbench, cx),
+        GitCommand::ToggleBlameAnnotations => column::toggle(workbench, op, cx),
         GitCommand::BlameLine => blame_line(workbench, op, window, cx),
-        GitCommand::OpenLineCommit => open_line_commit(workbench, op, window, cx),
+        GitCommand::OpenLineCommit => open_line_commit(workbench, op, None, window, cx),
         _ => {
             let text = format!("Not supported yet: {}", op.command.title());
             workbench.answer_git_op(&op, text, cx);
@@ -445,11 +450,25 @@ fn look(workbench: &mut Workbench, cx: &mut Context<Workbench>) {
         }
         return;
     }
+    // Annotations blaming it land it here too.
+    if column::blaming(seen.buffer, &seen.path, seen.version, cx) {
+        return;
+    }
     let edited = before.is_some_and(|before| {
         before.buffer == seen.buffer && before.path == seen.path && before.version != seen.version
     });
     let delay = if edited { EDIT_REST } else { Duration::ZERO };
     start_blame(id, &editor, delay, cx);
+}
+
+/// Whether a window's line blame is blaming `buffer`'s file `path` at
+/// `version`.
+fn line_blaming(buffer: BufferId, path: &Path, version: Version, cx: &mut App) -> bool {
+    (state(cx).windows.values()).any(|line| {
+        (line.blaming.as_ref()).is_some_and(|(blaming, at, asked, _)| {
+            (*blaming, at.as_path(), *asked) == (buffer, path, version)
+        })
+    })
 }
 
 /// Hides the annotation, and its popover.
@@ -569,7 +588,7 @@ fn start_blame(
 
 /// Keeps `blamed`, `buffer`'s, unless a blame of a later version, or a
 /// later blame of the same version, landed first; then shows it if the
-/// caret has rested.
+/// caret has rested, and in the buffer's annotations.
 fn landed(
     workbench: &mut Workbench,
     buffer: BufferId,
@@ -597,6 +616,7 @@ fn landed(
     if !resting {
         show(workbench, cx);
     }
+    column::landed(workbench, buffer, cx);
 }
 
 /// After a git refresh, or as an editor is marked: reads HEAD's id for the
@@ -641,6 +661,7 @@ fn check_head(_: &mut Workbench, cx: &mut Context<Workbench>) {
                 line.recheck = true;
             } else if still
                 && self::seen(&editor, cx).is_some_and(|now| now.version == seen.version)
+                && !column::blaming(seen.buffer, &seen.path, seen.version, cx)
             {
                 start_blame(id, &editor, Duration::ZERO, cx);
             }
@@ -687,8 +708,24 @@ fn blame(path: &Path, text: &str) -> (Option<String>, Found) {
     (head, found)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// What [`now`] says while a test has pinned it.
+    static PINNED: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Has [`now`] say `at`, or the clock's time again.
+#[cfg(test)]
+pub(crate) fn pin_now(at: Option<i64>) {
+    PINNED.with(|pinned| pinned.set(at));
+}
+
 /// Seconds since the epoch.
 fn now() -> i64 {
+    #[cfg(test)]
+    if let Some(at) = PINNED.with(|pinned| pinned.get()) {
+        return at;
+    }
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     since.map_or(0, |since| since.as_secs() as i64)
 }
@@ -777,7 +814,8 @@ fn popover(commit: Option<&CommitInfo>, now: i64) -> HoverContent {
 }
 
 /// What `git.blame_line` or `git.open_line_commit` was asked about: the
-/// editor, its file, its buffer's version and text, and its caret's row;
+/// editor, its file, its buffer's version and text, and its caret's row,
+/// or the row of an annotation clicked;
 /// the active pane and its navigations and opens then; and the ask's
 /// number, as only the last ask lands.
 struct Ask {
@@ -786,6 +824,8 @@ struct Ask {
     version: Version,
     text: String,
     row: u32,
+    /// Whether `row` is the caret's, which is then to stay on it.
+    caret: bool,
     pane: (Entity<Pane>, u64, u64),
     serial: u64,
     /// The workbench's pane activations then: a round trip through another
@@ -803,12 +843,17 @@ fn pane_now(workbench: &Workbench, cx: &App) -> (Entity<Pane>, u64, u64) {
     (pane, navigations, opens)
 }
 
-/// What `op` asks about; or the answer.
-fn ask(workbench: &Workbench, op: &GitOp, cx: &mut App) -> Result<Ask, &'static str> {
+/// What `op` asks about, of `row` or the caret's row; or the answer.
+fn ask(
+    workbench: &Workbench,
+    op: &GitOp,
+    row: Option<u32>,
+    cx: &mut App,
+) -> Result<Ask, &'static str> {
     let editor = op.editor.clone().ok_or(NO_FILE)?;
     let model = editor.read(cx).model();
     let path = model.path().ok_or(NO_FILE)?.to_owned();
-    let row = (model.text())
+    let caret = (model.text())
         .offset_to_point(model.primary_selection().head())
         .row;
     let (version, text) = {
@@ -823,7 +868,8 @@ fn ask(workbench: &Workbench, op: &GitOp, cx: &mut App) -> Result<Ask, &'static 
         path,
         version,
         text,
-        row,
+        row: row.unwrap_or(caret),
+        caret: row.is_none(),
         pane,
         serial: state.asks,
         activations: workbench.activations,
@@ -832,8 +878,9 @@ fn ask(workbench: &Workbench, op: &GitOp, cx: &mut App) -> Result<Ask, &'static 
 
 /// Whether what `ask` asked about stands: it's the last ask; its pane is
 /// still the active one, nothing navigated to or opened there since; and
-/// its editor is still the active one, with the same file, buffer version
-/// and caret row. A result for one that doesn't is dropped.
+/// its editor is still the active one, with the same file and buffer
+/// version, and the caret on the row asked about if it was then. A result
+/// for one that doesn't is dropped.
 fn stands(ask: &Ask, workbench: &Workbench, cx: &mut App) -> bool {
     if state(cx).asks != ask.serial
         || workbench.activations != ask.activations
@@ -848,7 +895,7 @@ fn stands(ask: &Ask, workbench: &Workbench, cx: &mut App) -> bool {
         .row;
     model.path() == Some(ask.path.as_path())
         && model.buffer().version() == ask.version
-        && row == ask.row
+        && (!ask.caret || row == ask.row)
 }
 
 /// Has `then` take the blame of `ask`'s buffer, blamed now in the
@@ -888,7 +935,7 @@ fn blame_line(
     window: &mut Window,
     cx: &mut Context<Workbench>,
 ) {
-    let ask = match ask(workbench, &op, cx) {
+    let ask = match ask(workbench, &op, None, cx) {
         Ok(ask) => ask,
         Err(answer) => return workbench.answer_git_op(&op, answer.to_owned(), cx),
     };
@@ -913,15 +960,17 @@ fn blame_line(
     with_blame(ask, window, cx, then);
 }
 
-/// `git.open_line_commit`: the change the caret row's commit made to the
-/// file, or the file against HEAD for a row not committed yet.
+/// `git.open_line_commit`: the change the commit of `row`, or of the
+/// caret's row, made to the file, or the file against HEAD for a row not
+/// committed yet.
 fn open_line_commit(
     workbench: &mut Workbench,
     op: GitOp,
+    row: Option<u32>,
     window: &mut Window,
     cx: &mut Context<Workbench>,
 ) {
-    let ask = match ask(workbench, &op, cx) {
+    let ask = match ask(workbench, &op, row, cx) {
         Ok(ask) => ask,
         Err(answer) => return workbench.answer_git_op(&op, answer.to_owned(), cx),
     };
@@ -1289,6 +1338,9 @@ fn show_commit(
     });
     show_tab(workbench, &diff, pane, ix, row, window, cx);
 }
+
+#[path = "git_blame_column.rs"]
+mod column;
 
 #[cfg(test)]
 #[path = "git_blame_tests.rs"]

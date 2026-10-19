@@ -1453,6 +1453,21 @@ command = "git.revert_hunk"
 context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
 platform = "!macos"
 
+# Toggle blame annotations in the gutter: Zed's git::Blame chord. Off macOS
+# ctrl-alt-g is read as vim's <C-g>, so it stays out of vim's normal, visual
+# and operator-pending modes, as ctrl-alt-y does.
+[[bindings]]
+keys = "cmd-alt-g b"
+command = "git.toggle_blame_annotations"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-g b"
+command = "git.toggle_blame_annotations"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
 # Commit from the Changes panel's message box: VS Code's cmd-enter and
 # ctrl-enter. Without cmd, ctrl-enter stays out of vim's normal, visual and
 # operator-pending modes.

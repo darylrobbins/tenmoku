@@ -62,6 +62,7 @@ pub(crate) enum GitCommand {
     Commit,
     CommitAmend,
     ToggleLineBlame,
+    ToggleBlameAnnotations,
     BlameLine,
     OpenLineCommit,
     SwitchBranch,
@@ -105,6 +106,7 @@ impl GitCommand {
             Commit => "Git: Commit Staged",
             CommitAmend => "Git: Commit Staged (Amend)",
             ToggleLineBlame => "Git: Toggle Line Blame",
+            ToggleBlameAnnotations => "Git: Toggle Blame Annotations",
             BlameLine => "Git: Show Line Blame",
             OpenLineCommit => "Git: Open Line's Commit Change",
             SwitchBranch => "Git: Switch Branch…",
@@ -121,7 +123,7 @@ impl GitCommand {
             StageFile | UnstageFile | DiscardFile | ResetBuffer | StageHunk | UnstageHunk
             | RevertHunk => Feature::Stage,
             Commit | CommitAmend => Feature::Commit,
-            ToggleLineBlame | BlameLine | OpenLineCommit => Feature::Blame,
+            ToggleLineBlame | ToggleBlameAnnotations | BlameLine | OpenLineCommit => Feature::Blame,
             SwitchBranch | CreateBranch => Feature::Branch,
             FileHistory => Feature::History,
             Log | LogAll => Feature::Log,
@@ -197,7 +199,7 @@ const EX_FORMS: &[(&[&str], &[&str], Takes, GitCommand)] = &[
         Takes::Nothing,
         ToggleLineBlame,
     ),
-    (GIT, &["blame"], Takes::Nothing, ToggleLineBlame),
+    (GIT, &["blame"], Takes::Nothing, ToggleBlameAnnotations),
     (&[GITSIGNS], &["blame_line"], Takes::Nothing, BlameLine),
     (
         &[GITSIGNS],

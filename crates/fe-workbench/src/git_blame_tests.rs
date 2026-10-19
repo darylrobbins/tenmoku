@@ -20,6 +20,9 @@ use crate::{
 #[path = "git_blame_head_race_tests.rs"]
 mod head_race;
 
+#[path = "git_blame_column_tests.rs"]
+mod column_tests;
+
 const DAY: i64 = 86_400;
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and
@@ -374,10 +377,10 @@ fn ex_and_popover(cx: &mut TestAppContext) {
     ex("Gitsigns toggle_current_line_blame", cx);
     settle(cx);
     assert_eq!(annotations(&tab, cx), []);
-    ex("Git blame", cx);
+    ex("Gitsigns toggle_current_line_blame", cx);
     settle(cx);
     assert_eq!(annotations(&tab, cx), [(0, expected(root, 0))]);
-    ex("Git blame", cx);
+    ex("Gitsigns toggle_current_line_blame", cx);
     settle(cx);
     assert_eq!(annotations(&tab, cx), []);
 

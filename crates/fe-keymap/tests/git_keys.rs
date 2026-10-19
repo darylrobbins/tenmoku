@@ -225,7 +225,8 @@ fn in_vim(command: &str, mode: ContextFrame) -> ContextStack {
 #[test]
 fn no_vim_keys() {
     for (os, generated, table) in platforms() {
-        // Every binding the card adds: those of its commands.
+        // Every binding the card adds: those of its commands. Blame
+        // annotations' chord is blame_annotation_keys.rs's.
         let added: Vec<_> = table
             .bindings()
             .iter()
@@ -233,6 +234,7 @@ fn no_vim_keys() {
                 let command = b.command.as_str();
                 command.starts_with("git.") || command.starts_with("diff.")
             })
+            .filter(|b| b.command.as_str() != "git.toggle_blame_annotations")
             .map(|b| (b.keys.to_string(), b.command.as_str().to_owned()))
             .collect();
         assert_eq!(added.len(), card(os).len(), "{os:?} {added:?}");

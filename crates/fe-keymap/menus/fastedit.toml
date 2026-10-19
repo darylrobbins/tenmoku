@@ -331,6 +331,10 @@ title = "Toggle Line Blame"
 command = "git.toggle_line_blame"
 
 [[menus.items]]
+title = "Toggle Blame Annotations"
+command = "git.toggle_blame_annotations"
+
+[[menus.items]]
 title = "Toggle Inline Diff"
 command = "diff.toggle_inline"
 

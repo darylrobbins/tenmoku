@@ -264,6 +264,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("git.file_history", "Git: File History", "workbench"),
     ("git.log", "Git: Log", "workbench"),
     ("git.log_all", "Git: Log (All Branches)", "workbench"),
+    (
+        "git.toggle_blame_annotations",
+        "Git: Toggle Blame Annotations",
+        "workbench",
+    ),
 ];
 
 #[gpui::test]

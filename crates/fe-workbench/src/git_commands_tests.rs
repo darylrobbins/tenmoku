@@ -196,7 +196,7 @@ fn ex_routes(cx: &mut TestAppContext) {
         ("Gread", op(ResetBuffer, "", None)),
         ("Git commit", op(Commit, "", None)),
         ("Git commit --amend", op(CommitAmend, "", None)),
-        ("G blame", op(ToggleLineBlame, "", None)),
+        ("G blame", op(ToggleBlameAnnotations, "", None)),
         ("Git switch", op(SwitchBranch, "", None)),
         ("Git checkout main", op(SwitchBranch, "main", None)),
         ("Git switch -c x", op(CreateBranch, "x", None)),
@@ -217,6 +217,8 @@ fn ex_routes(cx: &mut TestAppContext) {
             DiffIndex | DiffHead | StageFile | ResetBuffer | Commit | CommitAmend => {
                 "Not in a git repository".to_owned()
             }
+            // `:G blame` annotates.
+            ToggleBlameAnnotations => "Not in a git repository".to_owned(),
             NextChange => "No changes".to_owned(),
             RevertHunk => "No change to revert at this line".to_owned(),
             CompareFile => {
