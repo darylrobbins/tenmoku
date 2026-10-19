@@ -93,6 +93,24 @@ pub(crate) fn apply_steps(
     applied
 }
 
+/// [`apply_planned`] returning what [`apply`] does: the transaction the
+/// edits made, and the snapshot right after them.
+pub(crate) fn apply_plan(
+    model: &mut EditorModel,
+    origin: Origin,
+    plan: impl FnOnce(&BufferSnapshot) -> Vec<(Range<usize>, String)>,
+) -> (Option<TransactionId>, BufferSnapshot) {
+    let applied = {
+        let mut buffer = model.buffer_mut();
+        let edits = plan(&buffer.snapshot());
+        let id = buffer.edit(edits, origin);
+        (id, buffer.snapshot())
+    };
+    #[cfg(test)]
+    measured(model, true);
+    applied
+}
+
 /// Catches the model up (`EditorModel::sync_display`), which measures text
 /// as [`apply`] does.
 pub(crate) fn sync(model: &mut EditorModel) {
@@ -557,7 +575,7 @@ fn keeping_last_change<R>(
 
 /// `vim.operate`: over a motion or text object in normal mode, or over the
 /// selection in a visual mode (see `visual::operate`). Over a motion or
-/// object, an operator but `d y c > <` is `g_operators::operate`'s.
+/// object, an operator but `d y c > < =` is `g_operators::operate`'s.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -625,7 +643,12 @@ fn operate_over(
     }
     if !matches!(
         args.operator,
-        Operator::Delete | Operator::Yank | Operator::Change | Operator::Indent | Operator::Outdent
+        Operator::Delete
+            | Operator::Yank
+            | Operator::Change
+            | Operator::Indent
+            | Operator::Outdent
+            | Operator::Reindent
     ) {
         return keeping_last_change(target, |target| g_operators::operate(target, actor, args));
     }
@@ -634,7 +657,7 @@ fn operate_over(
     })
 }
 
-/// `d y c > <` over a visual selection's `span`, from one caret at the vim
+/// `d y c > < =` over a visual selection's `span`, from one caret at the vim
 /// cursor, its goal column held in the state: the operator code as for a
 /// motion, without the adjustments motions get (`:help exclusive`). A count
 /// is how many times `>` and `<` shift.
@@ -827,7 +850,7 @@ fn operate_unless_failing(
     if resolved
         && matches!(
             args.operator,
-            Operator::Delete | Operator::Indent | Operator::Outdent
+            Operator::Delete | Operator::Indent | Operator::Outdent | Operator::Reindent
         )
     {
         state.set_last_change(Change::Operate(args).into());
@@ -876,7 +899,7 @@ fn operate_unless_failing(
             })
             .collect()
     };
-    if let Operator::Indent | Operator::Outdent = args.operator {
+    if let Operator::Indent | Operator::Outdent | Operator::Reindent = args.operator {
         // Each caret's rows: an empty range (`>h` at column 0) still has
         // its own.
         let rows: Vec<Option<RangeInclusive<u32>>> = spans
@@ -903,17 +926,25 @@ fn operate_unless_failing(
             .collect();
         shifted.sort_unstable();
         shifted.dedup();
-        let indent = args.operator == Operator::Indent;
-        let (unit, tabs) = shift_unit(model);
-        let times = match selected {
-            Some(_) => args.count.unwrap_or(1).max(1) as usize,
-            None => 1,
+        let reindent = args.operator == Operator::Reindent;
+        let (transaction, snapshot) = match reindent {
+            true => crate::feature::reindent::rows(model, &**host, &shifted, origin(actor)),
+            false => {
+                let indent = args.operator == Operator::Indent;
+                let (unit, tabs) = shift_unit(model);
+                let times = match selected {
+                    Some(_) => args.count.unwrap_or(1).max(1) as usize,
+                    None => 1,
+                };
+                let edits: Vec<(Range<usize>, String)> = shifted
+                    .into_iter()
+                    .filter_map(|row| {
+                        shift(&text, row, indent, (tab, tabs), unit.saturating_mul(times))
+                    })
+                    .collect();
+                apply(model, edits, origin(actor))
+            }
         };
-        let edits: Vec<(Range<usize>, String)> = shifted
-            .into_iter()
-            .filter_map(|row| shift(&text, row, indent, (tab, tabs), unit.saturating_mul(times)))
-            .collect();
-        let (transaction, snapshot) = apply(model, edits, origin(actor));
         if let Some(id) = transaction {
             let firsts = rows
                 .iter()
@@ -946,7 +977,7 @@ fn operate_unless_failing(
         );
         let after = snapshot.text().clone();
         // The caret goes to the first row at its goal column; `$` aims it at
-        // the row's end.
+        // the row's end. `=`'s goes to the first row's first non-blank.
         let carets: Vec<usize> = before
             .iter()
             .zip(&rows)
@@ -954,6 +985,9 @@ fn operate_unless_failing(
             .zip(&goals)
             .map(|(((selection, rows), span), goal)| {
                 let (at, goal) = match (rows, span) {
+                    (Some(rows), _) if reindent => {
+                        return on_row(&after, *rows.start(), None, tab, true);
+                    }
                     (Some(rows), _) if args.target == Target::Motion(Motion::LineEnd) => {
                         (*rows.start(), Some(usize::MAX))
                     }
@@ -1210,7 +1244,7 @@ fn shift(
 }
 
 /// The screen columns `line`'s leading blanks span.
-fn indent_width(line: &str, tab: usize) -> usize {
+pub(crate) fn indent_width(line: &str, tab: usize) -> usize {
     line.bytes()
         .take_while(|&byte| byte == b' ' || byte == b'\t')
         .fold(0, |column, byte| match byte {
@@ -1418,10 +1452,11 @@ fn put_unless_failing(
                 true => head,
                 false => head + grapheme_len(&text, head),
             };
-            // A multi-row text leaves the caret at its start, or, when it
-            // begins with a line break, on the first non-blank of the row
-            // after that; otherwise on its last grapheme.
-            let after_break = repeated.starts_with('\n');
+            // A multi-row text leaves the caret at its start, or, from `.`
+            // (typed again, as nvim puts it) when it begins with a line
+            // break, on the first non-blank of the row after that;
+            // otherwise on its last grapheme.
+            let after_break = args.register == Some('.') && repeated.starts_with('\n');
             let land = match repeated.contains('\n') {
                 true if after_break => 1,
                 true => 0,

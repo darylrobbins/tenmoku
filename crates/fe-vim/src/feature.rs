@@ -30,6 +30,8 @@ use crate::{
     unmatched,
 };
 
+pub(crate) mod reindent;
+
 /// A feature's answer to the key after `[` or `]` (`true`).
 pub(crate) type BracketHook = fn(&Pending, bool, VimKey) -> Option<Step>;
 
@@ -67,7 +69,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 14] = [
+pub(crate) const FEATURES: [&Feature; 15] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -82,6 +84,7 @@ pub(crate) const FEATURES: [&Feature; 14] = [
     &unmatched::FEATURE,
     &partial_word::FEATURE,
     &put_keys::FEATURE,
+    &reindent::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

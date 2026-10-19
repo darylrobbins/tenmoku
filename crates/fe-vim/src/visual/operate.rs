@@ -290,10 +290,11 @@ fn operate_as_wide(
             )));
         }
     }
-    // `S`, `R` and `J` take a block's rows; the rest act on the block.
+    // `S`, `R`, `J` and `=` take a block's rows; the rest act on the block.
     let rows_of_block = matches!(
         (args.operator, args.target),
-        (Operator::Change, Target::SelectedLines) | (Operator::Join | Operator::JoinRaw, _)
+        (Operator::Change, Target::SelectedLines)
+            | (Operator::Join | Operator::JoinRaw | Operator::Reindent, _)
     );
     if ends.kind == VisualKind::Block && !rows_of_block {
         return operate_block(target, actor, args, ends, columns);
@@ -376,7 +377,8 @@ fn operate_as_wide(
         | Operator::Yank
         | Operator::Change
         | Operator::Indent
-        | Operator::Outdent => operator::operate_span(target, actor, args, span)?,
+        | Operator::Outdent
+        | Operator::Reindent => operator::operate_span(target, actor, args, span)?,
         // A linewise `J` starts from the first row's start, where it stays if
         // it joins nothing; `.` joins as `J` does, from the caret.
         Operator::Join | Operator::JoinRaw => {

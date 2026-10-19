@@ -12,10 +12,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{line_motions, prose};
 
-/// `d y c > <`, and over a visual selection only, `~ u U J r{char}`, and
+/// `d y c > < =`, and over a visual selection only, `~ u U J r{char}`, and
 /// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
 /// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
-/// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object.
+/// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
+/// `reindent` (`=`) to `feature/reindent.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -45,6 +46,9 @@ pub enum Operator {
     Format,
     /// `gw`.
     FormatKeep,
+    /// `=`: each row takes the indentation the host suggests for the
+    /// buffer's language (`feature/reindent.rs`).
+    Reindent,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
