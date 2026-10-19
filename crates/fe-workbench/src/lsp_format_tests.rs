@@ -384,4 +384,6 @@ fn caught_up_options_and_one_step(cx: &mut TestAppContext) {
             "end": { "line": 5, "character": 0 },
         })
     );
+    // The format task holds an EditorView clone until its reply is applied.
+    s.until("the range formatted", |s| text(s, &editor).contains("gg()"));
 }
