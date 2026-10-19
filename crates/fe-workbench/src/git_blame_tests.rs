@@ -26,6 +26,9 @@ mod column_tests;
 #[path = "git_blame_setting_tests.rs"]
 mod setting_tests;
 
+#[path = "git_blame_activation_tests.rs"]
+mod activation;
+
 const DAY: i64 = 86_400;
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and

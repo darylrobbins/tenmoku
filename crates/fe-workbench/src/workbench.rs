@@ -1543,8 +1543,10 @@ impl Workbench {
                 self.drops.remove(id);
             }
             // The workspace notifies as it changes, so the workbench follows
-            // it then ([`Workbench::follow_workspace`]).
-            WorkspaceEvent::ActiveChanged => {}
+            // it then ([`Workbench::follow_workspace`]), which sees only
+            // where it ended up: each change is counted here, so a round
+            // trip through another pane within one update still counts.
+            WorkspaceEvent::ActiveChanged => self.activations += 1,
         }
     }
 
