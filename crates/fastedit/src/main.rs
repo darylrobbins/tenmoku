@@ -130,6 +130,8 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         let (now, before) = (global.settings(), global.previous());
         let jump_on_s = now.vim.jump_on_s;
+        let remaps = (now.vim.remap != before.vim.remap || now.vim.leader != before.vim.leader)
+            .then(|| now.vim.clone());
         let now_limit = now.vim.regex_time_limit;
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
         let (enabled, unnamed) = (
@@ -143,6 +145,9 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
+        if let Some(vim) = remaps {
+            warn_remap_issues(fe_gpui::set_vim_remaps(cx, &vim));
+        }
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
@@ -151,6 +156,13 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Logs each `vim.remap` entry that didn't load.
+fn warn_remap_issues(issues: Vec<String>) {
+    for issue in issues {
+        log::warn!(target: "fastedit", "{issue}");
+    }
 }
 
 /// Gives `window` the settings of its root: the config service's for the
@@ -396,6 +408,7 @@ fn main() {
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
+        warn_remap_issues(fe_gpui::set_vim_remaps(cx, &settings.vim));
         fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,

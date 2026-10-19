@@ -54,6 +54,14 @@
 # How long, in milliseconds, a vim search or :s may run before it stops and
 # changes nothing.
 # regex_time_limit = 2000
+# The key <leader> stands for in a remap, in vim notation.
+# leader = "\\"
+# Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", or a list
+# of them; recursive = true remaps the keys `to` produces too.
+# [[vim.remap]]
+# mode = "n"
+# from = "<leader>w"
+# to = ":w<CR>"
 
 [status_bar]
 # Whether the status bar shows at the bottom of the window.

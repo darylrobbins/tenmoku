@@ -30,7 +30,8 @@ pub use paths::{
 pub use recent::{RecentList, recent_path};
 pub use settings::{
     EditorSettings, PROJECT_TERMINAL_SHELL, Settings, SettingsEvent, SettingsStore,
-    TerminalSettings, ThemeModeSetting, ThemeSettings, settings_schema,
+    TerminalSettings, ThemeModeSetting, ThemeSettings, VimRemap, VimRemapMode, VimRemapModes,
+    VimSettings, settings_schema,
 };
 pub use theme::{Color, EditorColors, EditorPalette};
 pub use watch::ConfigWatcher;

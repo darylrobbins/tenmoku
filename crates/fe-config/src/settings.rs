@@ -143,6 +143,13 @@ pub struct VimSettings {
     /// 'redrawtime' is the same default).
     #[schemars(range(min = 1))]
     pub regex_time_limit: u64,
+    /// The leader key `<leader>` stands for in a remap, in vim notation
+    /// (`"<Space>"` works).
+    pub leader: String,
+    /// Key remaps, as vim's `:map` makes them. Each is a `[[vim.remap]]`
+    /// table; a later one for the same keys in the same mode replaces an
+    /// earlier one.
+    pub remap: Vec<VimRemap>,
 }
 
 impl Default for VimSettings {
@@ -153,8 +160,60 @@ impl Default for VimSettings {
             jump_on_s: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,
+            leader: "\\".to_string(),
+            remap: Vec::new(),
         }
     }
+}
+
+/// One `[[vim.remap]]` entry.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct VimRemap {
+    /// The modes the remap applies in: one of `"n"` (normal), `"x"` or `"v"`
+    /// (visual), `"o"` (operator-pending), or a list of them.
+    pub mode: VimRemapModes,
+    /// The keys to map, in vim notation (`"<leader>w"`, `"H"`).
+    pub from: String,
+    /// The keys they stand for, in vim notation (`":w<CR>"`).
+    pub to: String,
+    /// true: the keys `to` produces are themselves remapped, as `:map` does
+    /// rather than `:noremap`.
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+/// `vim.remap.mode`: one mode or a list.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum VimRemapModes {
+    One(VimRemapMode),
+    Many(Vec<VimRemapMode>),
+}
+
+impl VimRemapModes {
+    pub fn modes(&self) -> &[VimRemapMode] {
+        match self {
+            Self::One(mode) => std::slice::from_ref(mode),
+            Self::Many(modes) => modes,
+        }
+    }
+}
+
+/// A map mode of `vim.remap`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum VimRemapMode {
+    /// Normal mode.
+    #[serde(rename = "n")]
+    Normal,
+    /// Visual mode.
+    #[serde(rename = "x")]
+    Visual,
+    /// Visual mode, as `x` (vim's `v` also maps select mode).
+    #[serde(rename = "v")]
+    VisualSelect,
+    /// Operator-pending mode.
+    #[serde(rename = "o")]
+    OperatorPending,
 }
 
 /// `vim.clipboard`.

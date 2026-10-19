@@ -58,12 +58,15 @@
 //! frame before matching ([`live_stack`]), not the context the last frame
 //! drew, which can trail the keys typed since.
 
-use std::{collections::VecDeque, rc::Rc};
+use std::{collections::VecDeque, rc::Rc, sync::Arc};
 
 use fe_buffer::TransactionId;
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
+use fe_config::{VimRemapMode, VimSettings};
 use fe_editor::{EditorModel, commands::EditorHost};
-use fe_vim::{Registers, Step, VimCommands, VimKey, VimState, VimTarget};
+use fe_vim::{
+    Registers, Remap, RemapMode, RemapSet, Step, VimCommands, VimKey, VimState, VimTarget,
+};
 use gpui::{
     App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, WeakEntity,
     WeakFocusHandle, Window,
@@ -158,6 +161,8 @@ struct Vim {
     registers: Registers,
     /// `vim.jump_on_s`: whether `s` and `S` start the jump.
     jump_on_s: bool,
+    /// `vim.remap` and `vim.leader`, built.
+    remaps: Arc<RemapSet>,
 }
 
 impl Global for Vim {}
@@ -222,6 +227,56 @@ pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
             })
             .ok();
     }
+}
+
+/// Gives every editor the remaps of `vim.remap` and `vim.leader`, and any
+/// opened or switched on later, replacing the set before. An entry that
+/// can't load is left out alone and comes back as `vim.remap[N]: …`.
+pub fn set_vim_remaps(cx: &mut App, settings: &VimSettings) -> Vec<String> {
+    let remaps: Vec<Remap> = settings
+        .remap
+        .iter()
+        .map(|remap| Remap {
+            modes: remap_modes(remap.mode.modes()),
+            from: remap.from.clone(),
+            to: remap.to.clone(),
+            recursive: remap.recursive,
+        })
+        .collect();
+    let (set, issues) = RemapSet::new(&remaps, &settings.leader);
+    let set = Arc::new(set);
+    let vim = cx.default_global::<Vim>();
+    vim.remaps = Arc::clone(&set);
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, _| {
+                if let Some(state) = &mut view.vim {
+                    state.set_remaps(Arc::clone(&set));
+                }
+            })
+            .ok();
+    }
+    issues
+        .into_iter()
+        .map(|issue| format!("vim.remap[{}]: {}", issue.index, issue.message))
+        .collect()
+}
+
+/// `v` means `x`; a mode listed twice counts once.
+fn remap_modes(modes: &[VimRemapMode]) -> Vec<RemapMode> {
+    let mut out = Vec::new();
+    for mode in modes {
+        let mode = match mode {
+            VimRemapMode::Normal => RemapMode::Normal,
+            VimRemapMode::Visual | VimRemapMode::VisualSelect => RemapMode::Visual,
+            VimRemapMode::OperatorPending => RemapMode::OperatorPending,
+        };
+        if !out.contains(&mode) {
+            out.push(mode);
+        }
+    }
+    out
 }
 
 /// Applies a settings reload's `vim.enabled` and `vim.clipboard`, each as
@@ -534,7 +589,10 @@ impl EditorView {
         let was_on = self.vim.is_some();
         self.vim = enabled.then(|| {
             let mut state = VimState::new();
-            state.set_jump_on_s(cx.try_global::<Vim>().is_some_and(|vim| vim.jump_on_s));
+            if let Some(vim) = cx.try_global::<Vim>() {
+                state.set_jump_on_s(vim.jump_on_s);
+                state.set_remaps(Arc::clone(&vim.remaps));
+            }
             state
         });
         was_on || enabled
@@ -1055,6 +1113,9 @@ mod viewport_resize_tests;
 
 #[cfg(test)]
 mod jump_setting_tests;
+
+#[cfg(test)]
+mod remap_setting_tests;
 
 #[cfg(test)]
 mod macro_tests;
