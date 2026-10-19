@@ -763,7 +763,7 @@ fn operate_unless_failing(
                     motion_span(&text, head, motion, args.count, last_find, tab)
                 }
                 Target::TextObject(object) => {
-                    text_object::select(&text, head, object, args.count.unwrap_or(1))
+                    text_object::select(&text, head, object, args.count.unwrap_or(1), tab)
                 }
                 Target::Selection | Target::SelectedLines | Target::SelectedToEnd => {
                     selected.clone().unwrap_or(Span::Failed)

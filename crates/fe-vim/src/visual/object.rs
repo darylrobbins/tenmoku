@@ -64,15 +64,19 @@ pub(crate) fn select_object(
     if let InnerParagraph | AParagraph | InnerSentence | ASentence = args.text_object {
         return crate::prose::select_visual(target, args);
     }
+    if crate::feature::objects::is_object(args.text_object) {
+        return crate::feature::objects::select_visual(target, args);
+    }
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let Some(ends) = ends(model, state) else {
         return failed(state);
     };
     let text = model.text().clone();
+    let tab = model.tab_size().max(1);
     let count = args.count.unwrap_or(1).max(1);
     let object = |offset: usize, count: u32| {
-        let span = text_object::select(&text, offset, args.text_object, count);
+        let span = text_object::select(&text, offset, args.text_object, count, tab);
         object_ends(&text, span, args.text_object)
     };
     let words = matches!(

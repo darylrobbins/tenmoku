@@ -8,13 +8,20 @@ use fe_text::Text;
 
 use crate::{
     TextObject, delimiters,
+    feature::objects,
     motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
     prose,
 };
 
 /// What `object` covers around the caret at `offset`, `count` times.
-pub(crate) fn select(text: &Text, offset: usize, object: TextObject, count: u32) -> Span {
+pub(crate) fn select(
+    text: &Text,
+    offset: usize,
+    object: TextObject,
+    count: u32,
+    tab: usize,
+) -> Span {
     use TextObject::*;
     let count = count.max(1);
     match object {
@@ -36,6 +43,9 @@ pub(crate) fn select(text: &Text, offset: usize, object: TextObject, count: u32)
         }
         InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag | InnerBacktick
         | ABacktick => delimiters::select(text, offset, object, count),
+        InnerEntire | AEntire | InnerIndent | AIndent | ABigIndent => {
+            objects::select(text, offset, object, count, tab)
+        }
     }
 }
 

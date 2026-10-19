@@ -518,7 +518,8 @@ fn cover(
                     };
                 }
                 Target::TextObject(object) => {
-                    covered.span = text_object::select(text, head, object, args.count.unwrap_or(1));
+                    covered.span =
+                        text_object::select(text, head, object, args.count.unwrap_or(1), tab);
                     covered.rows = rows_of(text, &covered.span);
                     // Rows from an object: `i{`'s, ending before a row that
                     // starts with its `}`.
