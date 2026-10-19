@@ -104,6 +104,8 @@ pub fn init(cx: &mut App) {
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
     kiln_shell::command_palette::add_commands(cx, command_list());
+    // A vim map's `fe:` command of any of them isn't E492.
+    fe_gpui::set_host_catalog(command_catalog());
     // Saved layouts restore their editors, and their viewers of files too
     // large to edit.
     kiln_shell::layout::register_item::<fe_gpui::EditorView>(cx);

@@ -132,7 +132,7 @@ use fe_command::{CommandId, CommandMeta, Value};
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_editor::{EditorModel, commands::EditorHost};
-use fe_keymap::{CatalogError, CommandCatalog as _};
+use fe_keymap::{CatalogError, CommandCatalog};
 use fe_vim::{
     CommandLineKind, Registers, Remap, RemapCommand, RemapIssue, RemapSet, Step, VimCommands,
     VimKey, VimState, VimTarget, search::Pattern,
@@ -712,6 +712,18 @@ fn editor_command(id: &CommandId) -> Option<CommandMeta> {
     (crate::commands::command_list().into_iter()).find(|meta| meta.id == *id)
 }
 
+thread_local! {
+    /// The host's full command catalog, for [`known_command`].
+    static HOST_CATALOG: RefCell<Option<Box<dyn CommandCatalog>>> = const { RefCell::new(None) };
+}
+
+/// Hands fe-gpui the host's full command catalog, which knows the commands
+/// that live above it (the workbench's panels), so a map's `fe:` command
+/// of one isn't E492. Call after [`init`].
+pub fn set_host_catalog(catalog: Box<dyn CommandCatalog>) {
+    HOST_CATALOG.with_borrow_mut(|host| *host = Some(catalog));
+}
+
 /// Whether some command has `id`, where a key in an editor reaches: the
 /// editor's, the diff view's, the app's, or a typed command (the
 /// workbench's).
@@ -720,7 +732,14 @@ fn known_command(id: &CommandId, cx: &App) -> bool {
     !matches!(
         catalog.check(id, &Value::Null),
         Err(CatalogError::UnknownCommand)
-    ) || kiln_platform::command_actions::typed_command(id, cx).is_some()
+    ) || HOST_CATALOG.with_borrow(|host| {
+        host.as_ref().is_some_and(|host| {
+            !matches!(
+                host.check(id, &Value::Null),
+                Err(CatalogError::UnknownCommand)
+            )
+        })
+    }) || kiln_platform::command_actions::typed_command(id, cx).is_some()
         || kiln_platform::commands::app_command_list(cx)
             .iter()
             .any(|meta| meta.id == *id)
@@ -780,11 +799,11 @@ fn run_remap_command(
         return false;
     };
     if !focused && editor_command(&invocation.command).is_some() {
-        view.update(cx, |view, cx| {
+        return view.update(cx, |view, cx| {
             view.run_command(invocation, Some(window), cx)
         });
-        return true;
     }
+    view.update(cx, |view, _| view.command_failed = false);
     let id = invocation.command.clone();
     match kiln_platform::command_actions::dispatch_invocation(invocation, window, cx) {
         Ok(()) => true,
@@ -2140,6 +2159,9 @@ impl EditorView {
                     // Deferred, so it follows a dispatch the window deferred.
                     cx.defer(move |cx| {
                         target.update(cx, |view, cx| {
+                            // A command the editor ran as it was dispatched
+                            // has failed by now, if it did.
+                            let ok = ok && !view.command_failed;
                             view.resume_replay(ok, handed, queue, line, origin, cx)
                         })
                     });
@@ -2523,6 +2545,9 @@ mod remap_tests;
 
 #[cfg(test)]
 mod remap_cmd_tests;
+
+#[cfg(test)]
+mod remap_catalog_tests;
 
 #[cfg(test)]
 mod replace_tests;

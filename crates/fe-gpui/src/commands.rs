@@ -461,6 +461,10 @@ impl EditorView {
     /// suggestion
     /// ([`EditorView::refuse_edit`]).
     ///
+    /// Returns whether it ran without failing (a refused edit, a command's
+    /// own error); [`EditorView::command_failed`] keeps that for a command
+    /// the keymap dispatches, as a remap's `<Cmd>fe:…<CR>` does.
+    ///
     /// Given the window, the view takes [`SAVE`] over from fe-editor's
     /// synchronous command: it saves off the main thread
     /// ([`EditorView::save_from_command`]).
@@ -469,7 +473,18 @@ impl EditorView {
         invocation: Invocation,
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        let ok = self.run_command_inner(invocation, window, cx);
+        self.command_failed = !ok;
+        ok
+    }
+
+    fn run_command_inner(
+        &mut self,
+        invocation: Invocation,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let in_editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
         let mut invocation = if in_editor.eval(&invocation.context) {
             invocation
@@ -486,20 +501,18 @@ impl EditorView {
                     .expect("a valid command ID");
             }
             invocation.context = vim::stamp(invocation.context, self.vim.as_ref());
-            self.run_vim(&invocation, cx);
-            return;
+            return self.run_vim(&invocation, cx);
         }
         let registry = EDITOR_COMMANDS.with(Rc::clone);
         if registry.get(&invocation.command).is_none() {
             let proposals = crate::view::proposal_registry();
             if proposals.get(&invocation.command).is_some() {
-                self.run_proposal_command(&proposals, &invocation, cx);
-                return;
+                return self.run_proposal_command(&proposals, &invocation, cx);
             }
         }
         if self.read_only && refused(&registry, &invocation) {
             self.refuse_edit(cx);
-            return;
+            return false;
         }
         let replace = self.typing_mode();
         if replace.is_some() && registry.validate(&invocation).is_ok() {
@@ -600,6 +613,7 @@ impl EditorView {
             // command did.
             self.changed(cx);
         }
+        let failed = matches!(result, Err(DispatchError::Failed { .. }));
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
             Ok(()) if invocation.command.as_str() == signature_help::SHOW => {
@@ -622,6 +636,7 @@ impl EditorView {
             }
             Err(error) => log::error!("{error}"),
         }
+        !failed
     }
 
     /// Runs `invocation`, one of the proposal commands: dispatched through
@@ -632,7 +647,7 @@ impl EditorView {
         proposals: &Registry<crate::view::ProposalCommands>,
         invocation: &Invocation,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let mut op = None;
         let result = match proposals.dispatch(&mut op, invocation) {
             Ok(_) => {
@@ -641,7 +656,7 @@ impl EditorView {
                     .is_some_and(|meta| meta.mutates_buffer);
                 if self.read_only && mutates {
                     self.refuse_edit(cx);
-                    return;
+                    return false;
                 }
                 let op = op.expect("a dispatched proposal command sets its op");
                 self.run_proposal_op(op, cx)
@@ -653,9 +668,11 @@ impl EditorView {
             }
             Err(error) => Err(error),
         };
+        let failed = matches!(result, Err(DispatchError::Failed { .. }));
         if let Err(error) = self.dispatched(result, invocation, true, cx) {
             log::error!("{error}");
         }
+        !failed
     }
 
     /// Applies a dispatch's effect and tells the observers, or logs a

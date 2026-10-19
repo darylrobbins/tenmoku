@@ -103,6 +103,9 @@ pub struct EditorView {
     /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
     /// typing paths they go through don't record them again.
     pub(crate) vim_replaying: bool,
+    /// The last [`EditorView::run_command`] failed: a remap's `<Cmd>fe:…<CR>`
+    /// the keymap dispatched reads it, there being no result to return.
+    pub(crate) command_failed: bool,
     /// A press that waited for a held prefix runs again, which then goes on
     /// without waiting ([`EditorView::settle_press`]).
     press_settled: bool,
@@ -312,6 +315,7 @@ impl EditorView {
             search_preview: None,
             vim_generation: 0,
             vim_replaying: false,
+            command_failed: false,
             press_settled: false,
             vim_unrecorded_logged: false,
             fold_column_hovered: false,

@@ -61,8 +61,8 @@ pub use view::EditorView;
 pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
 pub use vim::{
-    apply_vim_reload, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s, set_vim_remaps,
-    vim_enabled, vim_registers,
+    apply_vim_reload, set_host_catalog, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s,
+    set_vim_remaps, vim_enabled, vim_registers,
 };
 
 /// Key context active while an editor is focused: the `fe-command`
