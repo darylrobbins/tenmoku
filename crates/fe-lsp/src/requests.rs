@@ -68,11 +68,13 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         | "textDocument/implementation" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
         "textDocument/references" => timeouts.references,
-        "textDocument/hover" | "textDocument/documentHighlight" => timeouts.hover,
+        "textDocument/hover" | "textDocument/documentHighlight" | "textDocument/inlayHint" => {
+            timeouts.hover
+        }
         "textDocument/codeAction" => timeouts.code_action,
         "textDocument/signatureHelp" => timeouts.signature_help,
         "textDocument/completion" => timeouts.completion,
-        "completionItem/resolve" | "codeAction/resolve" => timeouts.resolve,
+        "completionItem/resolve" | "codeAction/resolve" | "inlayHint/resolve" => timeouts.resolve,
         _ => return None,
     };
     Some(Duration::from_millis(ms.max(1)))

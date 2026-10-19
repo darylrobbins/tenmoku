@@ -38,6 +38,9 @@
 //!   session ends.
 //! - [`LspManager::hover`] asks for a [`Hover`] at an offset of an open
 //!   buffer: its text, and its range in that buffer's version.
+//! - [`LspManager::inlay_hints`] asks for the [`InlayHint`]s in a byte range of
+//!   an open buffer, and [`LspManager::resolve_inlay_hint`] fills in a hint's
+//!   tooltip and edits.
 //! - [`LspManager::completion`] asks for [`Completions`] at an offset of
 //!   an open buffer, as edits in that buffer's version, and
 //!   [`LspManager::resolve`] fills in an item's documentation.
@@ -76,6 +79,7 @@ mod event;
 pub mod formatting;
 mod hover;
 mod identity;
+mod inlay_hint;
 mod launcher;
 mod manager;
 mod navigation;
@@ -111,6 +115,7 @@ pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use hover::Hover;
 pub use identity::{IncarnationId, SessionId};
+pub use inlay_hint::{InlayHint, InlayHintKind};
 pub use launcher::{
     ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, PullDiagnostics,
     ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,

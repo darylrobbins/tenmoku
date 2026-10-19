@@ -76,12 +76,14 @@ use lsp_types::{
     CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
     DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, FailureHandlingKind,
     GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, InitializeParams,
-    InitializeResult, InitializedParams, MarkupKind, NumberOrString, ParameterInformationSettings,
-    PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
-    RenameClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
-    TextDocumentSyncClientCapabilities, Url, WindowClientCapabilities, WorkspaceClientCapabilities,
-    WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceSymbolClientCapabilities,
+    InitializeResult, InitializedParams, InlayHintClientCapabilities,
+    InlayHintResolveClientCapabilities, InlayHintWorkspaceClientCapabilities, MarkupKind,
+    NumberOrString, ParameterInformationSettings, PositionEncodingKind,
+    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
+    ServerCapabilities, SignatureHelpClientCapabilities, SignatureInformationSettings, TagSupport,
+    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
@@ -2210,6 +2212,9 @@ fn client_capabilities() -> ClientCapabilities {
                 symbol_kind: symbol_kinds,
                 ..Default::default()
             }),
+            inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             workspace_folders: Some(true),
             configuration: Some(true),
             // Answered by the host, through `LspEvent::ApplyEdit`
@@ -2269,6 +2274,14 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             document_highlight: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
+            }),
+            inlay_hint: Some(InlayHintClientCapabilities {
+                dynamic_registration: dynamic,
+                resolve_support: Some(InlayHintResolveClientCapabilities {
+                    properties: ["tooltip", "textEdits", "label.tooltip"]
+                        .map(String::from)
+                        .to_vec(),
+                }),
             }),
             references: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,

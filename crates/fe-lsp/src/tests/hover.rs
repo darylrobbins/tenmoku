@@ -2,6 +2,8 @@
 //! range in bytes of the version asked about, and the 3 s timeout as no
 //! hover.
 
+mod inlay_hints;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
