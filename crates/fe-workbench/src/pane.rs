@@ -1594,7 +1594,7 @@ impl Pane {
             .filter(|editor| chain.editor == Some(editor.entity_id()));
         if let Some(editor) = editor {
             let mut names = Vec::new();
-            for (item, name) in &chain.items {
+            for (item, name, kind) in &chain.items {
                 names.push(name.clone());
                 let request = ToolbarRequest::Symbols {
                     editor: editor.downgrade(),
@@ -1603,9 +1603,11 @@ impl Pane {
                     names: names.clone(),
                 };
                 crumbs.push(
-                    Crumb::new(name.clone(), CrumbKind::Symbol).on_click(cx.listener(
-                        move |pane, _, window, cx| pane.request(request.clone(), window, cx),
-                    )),
+                    Crumb::new(name.clone(), CrumbKind::Symbol)
+                        .icon(crate::outline_panel::symbol_icon(*kind))
+                        .on_click(cx.listener(move |pane, _, window, cx| {
+                            pane.request(request.clone(), window, cx)
+                        })),
                 );
             }
         }

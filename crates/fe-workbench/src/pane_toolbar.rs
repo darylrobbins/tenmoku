@@ -16,7 +16,7 @@ use std::{ffi::OsString, path::PathBuf};
 
 use fe_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_syntax::Outline;
+use fe_syntax::{Outline, OutlineKind};
 use gpui::{App, EntityId, SharedString, WeakEntity, Window};
 
 /// Which of back and forward can run. The workbench pushes it into each
@@ -49,14 +49,14 @@ impl Default for Toolbar {
 }
 
 /// The outline items enclosing an editor's caret, at `caret`, outermost
-/// first, as `(index in the outline's items, name)`, from the outline of
+/// first, as `(index in the outline's items, name, kind)`, from the outline of
 /// `generation`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SymbolChain {
     pub(crate) editor: Option<EntityId>,
     pub(crate) caret: usize,
     pub(crate) generation: u64,
-    pub(crate) items: Vec<(u32, SharedString)>,
+    pub(crate) items: Vec<(u32, SharedString, OutlineKind)>,
 }
 
 /// What a click on a crumb or the "…" button asks the workbench to list,
@@ -84,12 +84,15 @@ pub(crate) use kiln_shell::crumbs::path_crumbs;
 
 /// The items enclosing `offset`, outermost first: the innermost by binary
 /// search, then up its parents.
-pub(crate) fn symbol_chain(outline: &Outline, offset: usize) -> Vec<(u32, SharedString)> {
+pub(crate) fn symbol_chain(
+    outline: &Outline,
+    offset: usize,
+) -> Vec<(u32, SharedString, OutlineKind)> {
     let mut chain = Vec::new();
     let mut ix = outline.item_at(offset);
     while let Some(i) = ix {
         let item = &outline.items[i];
-        chain.push((i as u32, SharedString::from(item.name.clone())));
+        chain.push((i as u32, SharedString::from(item.name.clone()), item.kind));
         ix = item.parent.map(|parent| parent as usize);
     }
     chain.reverse();
