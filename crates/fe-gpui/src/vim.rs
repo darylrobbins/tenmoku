@@ -94,12 +94,12 @@
 //!   replay could wait for it. A `:normal` stops at a `<Cmd>fe:…<CR>`
 //!   among its keys, which it doesn't run: "fe: commands don't run inside
 //!   :normal".
-//! - **Only a plain click resolves a held prefix.** A click goes through
-//!   [`EditorView::cancel_vim`], which resolves the held keys as a timeout
-//!   would and then drops what they leave pending. Shift, double and triple
-//!   clicks select without it, so the prefix stays held until its timeout,
-//!   and a click's destination is measured before the held keys resolve,
-//!   which can edit the text: both are the view's mouse handling.
+//! - **Every mouse press resolves a held prefix first.** The view resolves
+//!   the held keys as a timeout would ([`EditorView::resolve_held_prefix`]);
+//!   if that edited the text or left a map's `<Cmd>fe:…<CR>` replay waiting,
+//!   the press runs again once the replay is done and a frame has laid out
+//!   the new text, so its destination is measured on it. A plain click then
+//!   drops what the keys leave pending ([`EditorView::cancel_vim`]).
 //!
 //! In the visual modes (`v`, `V`, `ctrl-v` or `ctrl-q`) the model's
 //! selection is the visual extent, which `fe-vim` keeps it as; each frame
@@ -1355,6 +1355,16 @@ impl EditorView {
         }
     }
 
+    /// Resolves keys held for a longer map as a timeout would, before a
+    /// mouse press measures where it landed: they can edit the text.
+    pub(crate) fn resolve_held_prefix(&mut self, cx: &mut Context<Self>) {
+        if self.vim.as_ref().is_some_and(VimState::remap_waiting) {
+            self.sync_vim(cx);
+            self.end_host_wait(cx);
+            self.resolve_remap(cx);
+        }
+    }
+
     /// Drops a pending command (as `escape` does), then leaves a visual
     /// mode through `vim.visual_exit`, so `gv` brings its extent back:
     /// before a click or a jump puts the caret somewhere else, so no count,
@@ -2252,6 +2262,10 @@ impl EditorView {
                     VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
                     VimKey::Ctrl('o') => return self.one_command_typing(cx),
                     VimKey::Ctrl('n' | 'p') => return self.complete_typing(key, cx),
+                    // Vim's only while completing, as live.
+                    VimKey::Ctrl('e' | 'y') if self.keyword_completion().is_some() => {
+                        return self.complete_typing(key, cx);
+                    }
                     VimKey::Esc => {
                         let normal = match mode {
                             fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,

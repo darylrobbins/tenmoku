@@ -103,6 +103,9 @@ pub struct EditorView {
     /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
     /// typing paths they go through don't record them again.
     pub(crate) vim_replaying: bool,
+    /// A press that waited for a held prefix runs again, which then goes on
+    /// without waiting ([`EditorView::settle_press`]).
+    press_settled: bool,
     /// An editor command a recording can't hold was logged since the
     /// recording began ([`EditorView::record_typing`]).
     pub(crate) vim_unrecorded_logged: bool,
@@ -267,6 +270,14 @@ enum Drag {
     Box((u32, usize)),
 }
 
+/// Which mouse button's press waits for a held prefix
+/// ([`EditorView::settle_press`]).
+#[derive(Clone, Copy)]
+enum Press {
+    Left,
+    Middle,
+}
+
 impl EditorView {
     /// An editor for `model`, highlighted according to its file's language.
     pub fn new(mut model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
@@ -301,6 +312,7 @@ impl EditorView {
             search_preview: None,
             vim_generation: 0,
             vim_replaying: false,
+            press_settled: false,
             vim_unrecorded_logged: false,
             fold_column_hovered: false,
             hover: None,
@@ -460,6 +472,9 @@ impl EditorView {
             self.refuse_edit(cx);
             return;
         }
+        if !self.settle_press(event, Press::Middle, window, cx) {
+            return;
+        }
         window.focus(&self.focus, cx);
         // A middle click ends a composition, typing nothing, as a click does.
         self.composition = None;
@@ -470,15 +485,15 @@ impl EditorView {
         } else {
             self.offset_for_position(event.position)
         };
+        // Ending an insert session can drop unused autoindent before the
+        // click, so the offset follows the text, not its number.
+        let at = self.model.snapshot().anchor_before(offset);
         // Like nvim (mouse=a), a middle-click paste leaves Visual mode for
         // normal, so vim's visual extent doesn't restore the old selection
         // over the caret.
         if vim {
             self.cancel_vim(cx);
         }
-        // Ending an insert session can drop unused autoindent before the
-        // click, so the offset follows the text, not its number.
-        let at = self.model.snapshot().anchor_before(offset);
         self.split_session(
             fe_vim::Splits::Edits,
             |model| {
@@ -753,6 +768,73 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        if !self.settle_press(event, Press::Left, window, cx) {
+            return;
+        }
+        self.press_proceeds(event, window, cx);
+    }
+
+    /// Resolves keys held for a longer map before a press acts, whatever it
+    /// hits. If that edited the text, or left a replay waiting on a map's
+    /// `<Cmd>fe:…<CR>` command, the press waits for the replay to finish and
+    /// a frame to lay out the new text, then runs again
+    /// ([`EditorView::press_when_settled`]), so its destination is measured
+    /// on that text. Returns whether the press goes on now.
+    fn settle_press(
+        &mut self,
+        event: &MouseDownEvent,
+        press: Press,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if std::mem::take(&mut self.press_settled) {
+            return true;
+        }
+        let version = self.model.snapshot().version();
+        self.resolve_held_prefix(cx);
+        if !self.vim_replaying && self.model.snapshot().version() == version {
+            return true;
+        }
+        self.press_when_settled(event.clone(), press, window, cx);
+        false
+    }
+
+    /// Runs `event` as a `press` once no replay is suspended and the last
+    /// frame laid out the current text.
+    fn press_when_settled(
+        &mut self,
+        event: MouseDownEvent,
+        press: Press,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.entity();
+        window.on_next_frame(move |window, cx| {
+            view.update(cx, |view, cx| {
+                let version = view.model.snapshot().version();
+                let laid_out =
+                    (view.layout.as_ref()).is_none_or(|layout| layout.version == version);
+                if view.vim_replaying || !laid_out {
+                    view.press_when_settled(event, press, window, cx);
+                    return;
+                }
+                view.press_settled = true;
+                match press {
+                    Press::Left => view.on_mouse_down(&event, window, cx),
+                    Press::Middle => view.on_middle_down(&event, window, cx),
+                }
+                view.press_settled = false;
+            })
+        });
+        window.refresh();
+    }
+
+    fn press_proceeds(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // A click ends a composition, typing nothing.
         self.composition = None;
         // A proposal's button leaves the carets where they are, as a lens
@@ -1572,6 +1654,9 @@ mod window_tests;
 
 #[cfg(test)]
 mod reveal_tests;
+
+#[cfg(test)]
+mod click_prefix_tests;
 
 #[cfg(test)]
 mod find_tests;
