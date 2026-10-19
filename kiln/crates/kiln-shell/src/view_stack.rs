@@ -10,6 +10,11 @@
 //! top, the rest of the column empty: the last expanded view collapses as
 //! the others do, to its header, not out of the column.
 //!
+//! A divider sits on the border between two adjacent expanded views:
+//! dragging it moves weight between them, down to [`MIN_VIEW_BODY_HEIGHT`]
+//! of body each, and a double-click gives the pair equal weights. A
+//! collapsed view has no divider either side.
+//!
 //! [`ViewStack::save`] keeps each view's collapse and weight by its
 //! [`ViewId`], for a saved layout, and [`ViewStack::restore`] puts them
 //! back.
@@ -26,16 +31,22 @@
 use std::f32::consts::FRAC_PI_2;
 
 use gpui::{
-    AnyView, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Pixels, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Transformation, Window, div,
-    prelude::FluentBuilder as _, px, radians, svg,
+    AnyView, AppContext as _, Bounds, Context, CursorStyle, DragMoveEvent, EntityId, FocusHandle,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
+    Point, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Transformation, Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
 use kiln_command::Value;
 use kiln_ui::{CHEVRON_WIDTH, Icon, ui_theme};
 
 /// A view header's height, its bottom border included.
 pub const VIEW_HEADER_HEIGHT: Pixels = px(22.);
+
+/// The least body height dragging a divider leaves a view.
+pub const MIN_VIEW_BODY_HEIGHT: Pixels = px(40.);
+
+/// How tall a divider's handle is, over the top of the header below it.
+const DIVIDER_HANDLE: Pixels = px(5.);
 
 /// A view's identity among a stack's views: `"folders"`, `"outline"`, …
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,8 +99,43 @@ impl StackedView {
     }
 }
 
+fn near_height(a: Pixels, b: Pixels) -> bool {
+    (a - b).abs() < px(1.)
+}
+
 fn valid_weight(weight: f32) -> bool {
     weight.is_finite() && weight > 0.
+}
+
+/// The border above a view, as dragged.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Divider {
+    /// The stack it's in, which another stack's drag may reach by GPUI's
+    /// dispatch to every `on_drag_move`.
+    stack: EntityId,
+    /// The view below it.
+    after: ViewId,
+}
+
+/// A divider's drag draws nothing at the pointer.
+struct NoGhost;
+
+impl Render for NoGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+/// Where a divider's drag started: the pointer, and the two views' weights
+/// and body heights either side of it.
+struct Press {
+    divider: Divider,
+    at: Point<Pixels>,
+    above: (ViewId, f32, Pixels),
+    below: (ViewId, f32, Pixels),
+    /// The two weights as the drag last left them, so a change from
+    /// elsewhere ends the drag.
+    applied: (f32, f32),
 }
 
 /// A view in a stack, with its header's focus and where it was drawn.
@@ -106,6 +152,7 @@ pub struct ViewStack {
     views: Vec<Entry>,
     /// The column's views.
     drawn: ScrollHandle,
+    press: Option<Press>,
 }
 
 impl Default for ViewStack {
@@ -121,6 +168,7 @@ impl ViewStack {
         Self {
             views: Vec::new(),
             drawn: ScrollHandle::new(),
+            press: None,
         }
     }
 
@@ -236,7 +284,7 @@ impl ViewStack {
     /// Where `view`'s body was last drawn: none while collapsed.
     pub fn body_bounds(&self, view: ViewId) -> Option<Bounds<Pixels>> {
         let entry = self.entry(view)?;
-        (entry.drawn.children_count() == 2)
+        (entry.drawn.children_count() >= 2)
             .then(|| entry.drawn.bounds_for_item(1))
             .flatten()
     }
@@ -282,6 +330,87 @@ impl ViewStack {
             }
         }
         cx.notify();
+    }
+
+    /// The view above `view`, if both are expanded: the pair a divider
+    /// between them resizes.
+    fn divided_above(&self, view: ViewId) -> Option<ViewId> {
+        let ix = self.views.iter().position(|entry| entry.view.id == view)?;
+        let (above, below) = (&self.views[ix.checked_sub(1)?].view, &self.views[ix].view);
+        (!above.collapsed && !below.collapsed).then_some(above.id)
+    }
+
+    /// A press on the divider above `divider.after`: the start of a drag,
+    /// or, pressed twice, equal weights for the pair, keeping their total.
+    fn press_divider(&mut self, divider: Divider, event: &MouseDownEvent) -> Option<()> {
+        let above = self.divided_above(divider.after)?;
+        self.press = None;
+        if event.click_count == 2 {
+            // In f64, which two f32 weights can't overflow.
+            let total = f64::from(self.weight(above)?) + f64::from(self.weight(divider.after)?);
+            let even = (total / 2.) as f32;
+            self.entry_mut(above)?.view.weight = even;
+            self.entry_mut(divider.after)?.view.weight = even;
+            return Some(());
+        }
+        let state = |stack: &Self, view| {
+            let height = stack.body_bounds(view)?.size.height;
+            Some((view, stack.weight(view)?, height))
+        };
+        self.press = Some(Press {
+            divider,
+            at: event.position,
+            above: state(self, above)?,
+            below: state(self, divider.after)?,
+            applied: (self.weight(above)?, self.weight(divider.after)?),
+        });
+        Some(())
+    }
+
+    /// Moves the pressed divider with the pointer, now at `to`, as far as
+    /// the views' minimum body heights let it. Only the pair's weights
+    /// change, and their total doesn't.
+    fn drag_divider(&mut self, divider: Divider, to: Point<Pixels>) -> Option<()> {
+        let press = self
+            .press
+            .as_ref()
+            .filter(|press| press.divider == divider)?;
+        let ((above, above_weight, above_height), (below, below_weight, below_height)) =
+            (press.above, press.below);
+        let (at, applied) = (press.at, press.applied);
+        // A drag ends when its pair stops being two expanded views, their
+        // weights change from elsewhere, or the column's height does.
+        let pair_height = above_height + below_height;
+        let current = (self.body_bounds(above)).zip(self.body_bounds(below));
+        let live = self.divided_above(below) == Some(above)
+            && (self.weight(above), self.weight(below)) == (Some(applied.0), Some(applied.1))
+            && current
+                .is_some_and(|(a, b)| near_height(a.size.height + b.size.height, pair_height));
+        if !live {
+            self.press = None;
+            return None;
+        }
+        let max = pair_height - MIN_VIEW_BODY_HEIGHT;
+        if MIN_VIEW_BODY_HEIGHT > max {
+            return None;
+        }
+        let height = (above_height + (to.y - at.y)).clamp(MIN_VIEW_BODY_HEIGHT, max);
+        // The pair's total stays, so the other views' shares do. In f64,
+        // and held to splits where both weights still fit an f32.
+        let total = f64::from(above_weight) + f64::from(below_weight);
+        let fit = f64::from(f32::MAX) / total;
+        let share = f64::from(height / pair_height).clamp(1. - fit, fit);
+        let new_above = (total * share) as f32;
+        let new_below = (total - f64::from(new_above)) as f32;
+        if !valid_weight(new_above) || !valid_weight(new_below) {
+            return None;
+        }
+        self.entry_mut(above)?.view.weight = new_above;
+        self.entry_mut(below)?.view.weight = new_below;
+        if let Some(press) = &mut self.press {
+            press.applied = (new_above, new_below);
+        }
+        Some(())
     }
 
     fn entry(&self, view: ViewId) -> Option<&Entry> {
@@ -351,6 +480,29 @@ impl ViewStack {
                     .child(view.title.clone()),
             )
             .children(actions);
+        let divider = self.divided_above(id).map(|_| {
+            let divider = Divider {
+                stack: cx.entity_id(),
+                after: id,
+            };
+            div()
+                .id(("view-stack-divider", ix))
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(DIVIDER_HANDLE)
+                .occlude()
+                .cursor(CursorStyle::ResizeUpDown)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |stack, event: &MouseDownEvent, _, cx| {
+                        stack.press_divider(divider, event);
+                        cx.notify();
+                    }),
+                )
+                .on_drag(divider, |_, _, _, cx| cx.new(|_| NoGhost))
+        });
         let body = (!view.collapsed).then(|| {
             div()
                 .flex_1()
@@ -364,6 +516,7 @@ impl ViewStack {
             .flex()
             .flex_col()
             .w_full()
+            .relative()
             .min_h(VIEW_HEADER_HEIGHT)
             .map(|section| match view.collapsed {
                 true => section.flex_none(),
@@ -378,6 +531,7 @@ impl ViewStack {
             .track_scroll(&entry.drawn)
             .child(header)
             .children(body)
+            .children(divider)
     }
 }
 
@@ -398,6 +552,13 @@ impl Render for ViewStack {
             .flex_col()
             .overflow_hidden()
             .track_scroll(&self.drawn)
+            .on_drag_move(cx.listener(|stack, event: &DragMoveEvent<Divider>, _, cx| {
+                let divider = *event.drag(cx);
+                if divider.stack == cx.entity_id() {
+                    stack.drag_divider(divider, event.event.position);
+                    cx.notify();
+                }
+            }))
             .children(sections)
     }
 }
