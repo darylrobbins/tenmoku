@@ -36,6 +36,21 @@ use crate::{
 /// them to it too.
 pub const SEARCH_PREVIEW_LIMIT: Duration = Duration::from_millis(100);
 
+/// [`SEARCH_PREVIEW_LIMIT`] in nanoseconds, or `u64::MAX` for the default.
+static PREVIEW_LIMIT_OVERRIDE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// Replaces [`SEARCH_PREVIEW_LIMIT`] for [`VimState::search_preview`],
+/// process-wide, or restores it with `None`. For tests whose preview must not
+/// give up on a loaded machine; nothing else sets it.
+#[doc(hidden)]
+pub fn set_search_preview_limit(limit: Option<Duration>) {
+    let nanos = limit.map_or(u64::MAX, |l| {
+        u64::try_from(l.as_nanos()).unwrap_or(u64::MAX - 1)
+    });
+    PREVIEW_LIMIT_OVERRIDE.store(nanos, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// An open command line: what it's for and carries, the mode it came from,
 /// which submitting or cancelling it returns to, and the text it starts
 /// with.
@@ -104,7 +119,11 @@ impl VimState {
             again: false,
         };
         let count = args.count.unwrap_or(1).max(1) as usize;
-        let deadline = Deadline::after(SEARCH_PREVIEW_LIMIT.min(search::time_limit()));
+        let limit = match PREVIEW_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+            u64::MAX => SEARCH_PREVIEW_LIMIT,
+            nanos => Duration::from_nanos(nanos),
+        };
+        let deadline = Deadline::after(limit.min(search::time_limit()));
         let (found, _) = offset::nth_match(model.text(), &parsed, from, search, count, &deadline)?;
         Some(found)
     }

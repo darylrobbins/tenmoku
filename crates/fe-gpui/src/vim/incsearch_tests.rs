@@ -204,6 +204,15 @@ fn a_preview_reveals_a_match_past_the_right_edge(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_preview_opens_the_fold_hiding_its_match(cx: &mut TestAppContext) {
+    // The previews don't give up on a loaded machine's clock.
+    struct Unhurried;
+    impl Drop for Unhurried {
+        fn drop(&mut self) {
+            fe_vim::set_search_preview_limit(None);
+        }
+    }
+    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(60)));
+    let _unhurried = Unhurried;
     let (view, cx) = editor(cx);
     let folded = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
         view.read_with(cx, |view, _| {

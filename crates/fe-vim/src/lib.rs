@@ -803,6 +803,8 @@ pub use args::{
     SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use cmdline::SEARCH_PREVIEW_LIMIT;
+#[doc(hidden)]
+pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, dispatch, registry};
 pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
