@@ -614,6 +614,12 @@ fn operate_over(
     actor: &Actor,
     mut args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    // `ys` waits for its pair in the reducer: `vim.surround_add` runs it.
+    if let Operator::Surround { .. } = args.operator {
+        return Err(CommandError::new(
+            "the surround operator acts through vim.surround_add",
+        ));
+    }
     // `n N * #` are the search they run, which `.` finds again when it
     // repeats the operator: the args keep them. A search target is checked
     // as `/` checks it, and a mark's must be set.

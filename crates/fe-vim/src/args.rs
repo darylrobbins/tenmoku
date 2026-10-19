@@ -16,7 +16,8 @@ use crate::{line_motions, prose};
 /// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
 /// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
 /// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
-/// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`.
+/// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`;
+/// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -51,6 +52,13 @@ pub enum Operator {
     Reindent,
     /// `zf`: closes a fold over the rows (`folds.rs`).
     Fold,
+    /// `ys`, or `yS` (`rows`), waiting for its target and then its pair
+    /// (`feature/surround.rs`): only the reducer holds it, and
+    /// `vim.surround_add` runs it.
+    Surround {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rows: bool,
+    },
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are

@@ -29,7 +29,10 @@
 //! prefix, the operator and count in the [`Pending`]). It waits again on the
 //! prefix with a key added ([`FeaturePrefix::then`]) or commits; `<Esc>`, and
 //! any key it refuses, cancel. While it waits `vim.pending_kind` is the
-//! feature's name.
+//! feature's name. An operator of the feature's that waits for keys after
+//! its target (`ys{motion}{char}`) has the reducer's commit hand the target
+//! to the feature, which waits on a prefix holding it
+//! ([`FeaturePrefix::with_target`]).
 
 pub(crate) mod argument;
 pub(crate) mod objects;
@@ -38,9 +41,9 @@ pub(crate) mod surround;
 use fe_command::Registry;
 
 use crate::{
-    Pending, Step, TextObject, VimCommands, VimKey, changes, delimiters, folds, g_operators,
-    increment, jump, jumplist, line_motions, partial_word, prose, put_keys, quit_keys, scroll,
-    unmatched,
+    Pending, Step, Target, TextObject, VimCommands, VimKey, changes, delimiters, folds,
+    g_operators, increment, jump, jumplist, line_motions, partial_word, prose, put_keys, quit_keys,
+    scroll, unmatched,
 };
 
 pub(crate) mod changelist;
@@ -51,27 +54,37 @@ pub(crate) mod reindent;
 pub(crate) type BracketHook = fn(&Pending, bool, VimKey) -> Option<Step>;
 
 /// A feature's answer to the key after its own prefix.
-pub(crate) type PrefixHook = fn(&Pending, FeaturePrefix, VimKey) -> Option<Step>;
+pub(crate) type PrefixHook = fn(&Pending, &FeaturePrefix, VimKey) -> Option<Step>;
 
 /// A prefix a feature owns, waiting for its next key: which feature, by
-/// name (`vim.pending_kind`), and the keys it has gathered since it began.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// name (`vim.pending_kind`), the keys it has gathered since it began, and
+/// the target of the operator it waits to finish, if one is
+/// ([`FeaturePrefix::with_target`]: `ys{motion}` waiting for its pair).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FeaturePrefix {
     feature: &'static str,
-    keys: [char; FeaturePrefix::MAX_KEYS],
-    len: u8,
+    keys: Vec<char>,
+    target: Option<Target>,
 }
 
 impl FeaturePrefix {
-    /// How many keys a prefix holds.
-    pub(crate) const MAX_KEYS: usize = 4;
+    /// How many keys a prefix holds: enough for an HTML tag's attributes.
+    pub(crate) const MAX_KEYS: usize = 1024;
 
     /// `feature`'s prefix, with no keys gathered yet.
     pub(crate) const fn new(feature: &'static str) -> Self {
         Self {
             feature,
-            keys: ['\0'; Self::MAX_KEYS],
-            len: 0,
+            keys: Vec::new(),
+            target: None,
+        }
+    }
+
+    /// The same prefix, holding the target its operator acts on.
+    pub(crate) fn with_target(self, target: Target) -> Self {
+        Self {
+            target: Some(target),
+            ..self
         }
     }
 
@@ -82,16 +95,30 @@ impl FeaturePrefix {
 
     /// The keys gathered, in the order typed.
     pub(crate) fn keys(&self) -> &[char] {
-        &self.keys[..usize::from(self.len)]
+        &self.keys
+    }
+
+    /// The target its operator acts on, if it holds one.
+    pub(crate) fn target(&self) -> Option<Target> {
+        self.target
     }
 
     /// The same prefix with `ch` gathered too; `None` if it holds
     /// [`Self::MAX_KEYS`] already.
-    pub(crate) fn then(mut self, ch: char) -> Option<Self> {
-        let slot = self.keys.get_mut(usize::from(self.len))?;
-        *slot = ch;
-        self.len += 1;
-        Some(self)
+    pub(crate) fn then(&self, ch: char) -> Option<Self> {
+        if self.keys.len() >= Self::MAX_KEYS {
+            return None;
+        }
+        let mut next = self.clone();
+        next.keys.push(ch);
+        Some(next)
+    }
+
+    /// The same prefix without the last key gathered.
+    pub(crate) fn back(&self) -> Self {
+        let mut next = self.clone();
+        next.keys.pop();
+        next
     }
 }
 
@@ -211,7 +238,7 @@ pub(crate) fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<S
 }
 
 /// The owning feature's answer to the key after its prefix.
-pub(crate) fn prefix(pending: &Pending, prefix: FeaturePrefix, key: VimKey) -> Option<Step> {
+pub(crate) fn prefix(pending: &Pending, prefix: &FeaturePrefix, key: VimKey) -> Option<Step> {
     FEATURES
         .iter()
         .filter_map(|feature| feature.prefix)

@@ -41,7 +41,7 @@ pub struct Pending {
     block: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Prefix {
     /// `"`, awaiting a register name.
     Register,
@@ -74,7 +74,8 @@ enum Prefix {
     Play,
     /// `gs` or `gS`, awaiting the chars to jump to.
     Jump(JumpPrefix),
-    /// A feature's own prefix (`ds`), awaiting its next key.
+    /// A feature's own prefix (`ds`, or `ys` and its target), awaiting
+    /// its next key.
     Feature(FeaturePrefix),
 }
 
@@ -101,7 +102,7 @@ pub enum PendingKind {
     /// `gs` or `gS`.
     Jump,
     /// A feature's own prefix, by the feature's name ([`FeaturePrefix`]):
-    /// `surround` after `ds` or `cs`.
+    /// `surround` after `ds` or `cs`, or `ys` and its target.
     Feature(&'static str),
 }
 
@@ -187,7 +188,7 @@ impl Pending {
     /// What it waits on, by the last thing typed; `None` if nothing is
     /// pending.
     pub fn kind(&self) -> Option<PendingKind> {
-        Some(match self.prefix {
+        Some(match &self.prefix {
             Some(Prefix::Register | Prefix::Record | Prefix::Play) => PendingKind::Register,
             Some(Prefix::G) => PendingKind::G,
             Some(Prefix::Z) => PendingKind::Z,
@@ -333,6 +334,10 @@ impl Pending {
 
     fn commit(mut self, target: Target) -> Step {
         self.end_count();
+        // `ys` has its target: it waits for the pair.
+        if let Some(Operator::Surround { .. }) = self.operator {
+            return feature::surround::target(self, target);
+        }
         match (self.operator, target) {
             (Some(operator), target) => invocation(
                 "vim.operate",
@@ -368,6 +373,7 @@ impl Pending {
         };
         if self.prefix.is_some()
             || (kind == CommandLineKind::SearchBackward && self.operator == Some(Operator::Rot13))
+            || matches!(self.operator, Some(Operator::Surround { .. }))
         {
             return Err(self);
         }
@@ -416,7 +422,7 @@ impl Pending {
             if key == VimKey::Esc {
                 return Step::Cancel;
             }
-            return feature::prefix(&self, prefix, key).unwrap_or(Step::Cancel);
+            return feature::prefix(&self, &prefix, key).unwrap_or(Step::Cancel);
         }
         let ch = match key {
             VimKey::Char(ch) => ch,
@@ -726,7 +732,9 @@ impl Pending {
             'C' if self.block => (Change, Target::SelectedToEnd),
             'X' | 'D' => (Delete, Target::SelectedLines),
             'Y' => (Yank, Target::SelectedLines),
-            'C' | 'S' | 'R' => (Change, Target::SelectedLines),
+            // `S` is surround's (`feature/surround.rs`), as vim-surround
+            // takes it.
+            'C' | 'R' => (Change, Target::SelectedLines),
             'I' if self.block => (Insert, Target::Selection),
             'A' if self.block => (Append, Target::Selection),
             'p' | 'P' => {

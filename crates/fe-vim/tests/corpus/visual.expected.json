@@ -1527,43 +1527,6 @@
       }
     },
     {
-      "name": "v_S",
-      "buffer": "  abc def\n  ghi jkl\nmno",
-      "cursor": [
-        0,
-        5
-      ],
-      "keys": "vjSX<Esc>",
-      "expect": {
-        "buffer": "  X\nmno",
-        "cursor": [
-          0,
-          2
-        ],
-        "mode": "n",
-        "registers": {
-          "\"": {
-            "text": "  abc def\n  ghi jkl\n",
-            "linewise": true
-          },
-          "1": {
-            "text": "  abc def\n  ghi jkl\n",
-            "linewise": true
-          }
-        },
-        "marks": {
-          "<": [
-            0,
-            5
-          ],
-          ">": [
-            1,
-            5
-          ]
-        }
-      }
-    },
-    {
       "name": "v_R",
       "buffer": "  abc def\n  ghi jkl\nmno",
       "cursor": [
@@ -2285,43 +2248,6 @@
         5
       ],
       "keys": "VkCX<Esc>",
-      "expect": {
-        "buffer": "  X\nmno",
-        "cursor": [
-          0,
-          2
-        ],
-        "mode": "n",
-        "registers": {
-          "\"": {
-            "text": "  abc def\n  ghi jkl\n",
-            "linewise": true
-          },
-          "1": {
-            "text": "  abc def\n  ghi jkl\n",
-            "linewise": true
-          }
-        },
-        "marks": {
-          "<": [
-            0,
-            0
-          ],
-          ">": [
-            1,
-            2
-          ]
-        }
-      }
-    },
-    {
-      "name": "V_S",
-      "buffer": "  abc def\n  ghi jkl\nmno",
-      "cursor": [
-        1,
-        5
-      ],
-      "keys": "VkSX<Esc>",
       "expect": {
         "buffer": "  X\nmno",
         "cursor": [

@@ -911,12 +911,13 @@ fn opt_in_s() {
     assert_eq!(opted((0, 0), "fs").cursor(), (0, 0));
     assert_eq!(opted((0, 0), "rs").text(), "sb x ab\ncd ab");
 
-    // Off by default: `s` `S` `v_s` `v_S` are what they were.
+    // Off by default: `s` `S` `v_s` `v_S` are what they were (`v_S`
+    // surround's, `feature/surround.rs`).
     let plain = |keys: &str| session(text, (0, 0), 10, keys).text();
     assert_eq!(plain("sX<Esc>"), "Xb x ab\ncd ab");
     assert_eq!(plain("SX<Esc>"), "X\ncd ab");
     assert_eq!(plain("vlsX<Esc>"), "X x ab\ncd ab");
-    assert_eq!(plain("vSX<Esc>"), "X\ncd ab");
+    assert_eq!(plain("vS)"), "(a)b x ab\ncd ab");
     assert_eq!(session(text, (0, 0), 10, "gsab").cursor(), (0, 5));
     let mut vim = HeadlessVim::new(text, (0, 0));
     vim.set_jump_on_s(true);

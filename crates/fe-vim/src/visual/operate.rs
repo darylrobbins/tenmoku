@@ -400,6 +400,7 @@ fn operate_as_wide(
         Operator::Insert | Operator::Append => unreachable!("refused but over a block"),
         Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
         Operator::Fold => unreachable!("folds' own"),
+        Operator::Surround { .. } => unreachable!("refused by operator::operate"),
         Operator::ToggleCase
         | Operator::Lowercase
         | Operator::Uppercase

@@ -344,12 +344,6 @@ cursor = [0, 5]
 keys = "vjCX<Esc>"
 
 [[case]]
-name = "v_S"
-buffer = "  abc def\n  ghi jkl\nmno"
-cursor = [0, 5]
-keys = "vjSX<Esc>"
-
-[[case]]
 name = "v_R"
 buffer = "  abc def\n  ghi jkl\nmno"
 cursor = [0, 5]
@@ -481,12 +475,6 @@ name = "V_C"
 buffer = "  abc def\n  ghi jkl\nmno"
 cursor = [1, 5]
 keys = "VkCX<Esc>"
-
-[[case]]
-name = "V_S"
-buffer = "  abc def\n  ghi jkl\nmno"
-cursor = [1, 5]
-keys = "VkSX<Esc>"
 
 [[case]]
 name = "V_R"

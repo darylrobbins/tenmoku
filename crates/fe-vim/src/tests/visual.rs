@@ -91,7 +91,6 @@ fn reducer_and_commands() {
         ("D", "delete"),
         ("Y", "yank"),
         ("C", "change"),
-        ("S", "change"),
         ("R", "change"),
     ] {
         assert_eq!(
@@ -100,6 +99,14 @@ fn reducer_and_commands() {
             "{key}"
         );
     }
+    // `S` waits for surround's pair (`feature/surround.rs`).
+    assert_eq!(
+        visual_commit("S)"),
+        (
+            "vim.surround_add".into(),
+            json!({"target": "selection", "pair": ")"})
+        )
+    );
     assert_eq!(
         visual_commit("3>"),
         (

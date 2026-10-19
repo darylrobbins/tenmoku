@@ -175,7 +175,7 @@ fn surround_changes_pairs() {
 #[test]
 fn feature_prefix_waits_and_cancels() {
     let text = "say \"hi\" (x)";
-    for keys in ["ds", "cs", "cs\"", "2ds"] {
+    for keys in ["ds", "cs", "cs\"", "2ds", "cs\"<lt>", "cs\"t"] {
         let mut vim = run(text, (0, 6), keys);
         assert_eq!(pending_kind(&vim).as_deref(), Some("surround"), "{keys}");
         vim.feed("<Esc>").unwrap();
@@ -186,7 +186,7 @@ fn feature_prefix_waits_and_cancels() {
         );
     }
     // A char naming no pair, or no replacement, cancels.
-    for keys in ["dsx", "ds1", "csx", "cs\"x", "cs\"<", "cs\"t", "ds<CR>"] {
+    for keys in ["dsx", "ds1", "csx", "cs\"x", "ds<CR>"] {
         let vim = run(text, (0, 6), keys);
         assert_eq!(pending_kind(&vim), None, "{keys}");
         assert_eq!(
@@ -198,7 +198,8 @@ fn feature_prefix_waits_and_cancels() {
     // After the cancel the next key is read afresh.
     let vim = run(text, (0, 6), "dsxx");
     assert_eq!(vim.text(), "say \"h\" (x)");
-    // `s` after `y`, or in a visual mode, isn't surround's.
+    // `s` after `y` starts surround's operator, not its prefix
+    // (`surround_add.rs`).
     let vim = run(text, (0, 6), "ys");
-    assert_eq!(pending_kind(&vim), None);
+    assert_eq!(pending_kind(&vim).as_deref(), Some("operator"));
 }

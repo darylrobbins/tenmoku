@@ -1120,13 +1120,13 @@
       }
     },
     {
-      "name": "block_S",
+      "name": "block_R_tab_row",
       "buffer": "abcd\nab\n\tx\nabcd",
       "cursor": [
         0,
         1
       ],
-      "keys": "<C-v>3jlS12<Esc>",
+      "keys": "<C-v>3jlR12<Esc>",
       "expect": {
         "buffer": "12",
         "cursor": [
