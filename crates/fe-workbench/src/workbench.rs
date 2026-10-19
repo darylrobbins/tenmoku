@@ -1108,6 +1108,13 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A vim map waiting for this save goes on, or ends, when it's done.
+        let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
+        let finish = move |editor: &Entity<EditorView>, ok: bool, cx: &mut App| {
+            if let Some(hold) = hold {
+                editor.update(cx, |editor, cx| editor.finish_vim_host(hold, ok, cx));
+            }
+        };
         let name = fe_gpui::pane_item::file_name(Some(&path));
         let identity = open::file_identity(&path);
         let same = |other: &Path| {
@@ -1135,7 +1142,7 @@ impl Workbench {
                 &[PromptButton::ok("OK")],
                 cx,
             ));
-            return;
+            return finish(editor, false, cx);
         }
         let reservation = open::reserve(buffer, path.clone(), identity);
         // Read here, so Save As requests keep their order.
@@ -1162,14 +1169,14 @@ impl Workbench {
                     }
                     drop(reservation);
                     let Err(error) = result else {
-                        return;
+                        return finish(&editor, true, cx);
                     };
                     let exists = (error.downcast_ref::<std::io::Error>())
                         .and_then(|error| error.get_ref())
                         .is_some_and(|inner| inner.is::<fe_editor::SaveError>());
                     if exists && !overwrite {
                         editor.update(cx, |editor, cx| editor.set_vim_message(vim_host::E13, cx));
-                        return;
+                        return finish(&editor, false, cx);
                     }
                     let detail = format!("{error:#}");
                     drop(window.prompt(
@@ -1179,6 +1186,7 @@ impl Workbench {
                         &[PromptButton::ok("OK")],
                         cx,
                     ));
+                    finish(&editor, false, cx);
                 })
                 .ok();
         })

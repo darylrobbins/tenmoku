@@ -298,12 +298,10 @@ fn host_commands(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<H
     })
 }
 
-/// A map's ex line that leaves a file or window command ends the map: the
-/// host runs that command once the keystroke is over, so nothing after it
-/// runs before it, or with the host's answer unknown; the editor says what
-/// it left out.
+/// A map's ex line that leaves a file or window command, with no host to
+/// take it, ends the map there: the editor says what it left out.
 #[gpui::test]
-fn a_mapped_host_command_ends_the_map(cx: &mut TestAppContext) {
+fn a_mapped_host_command_no_one_takes_ends_the_map(cx: &mut TestAppContext) {
     let remaps = vec![
         noremap(RemapMode::Normal, "<leader>w", ":w<CR>"),
         noremap(RemapMode::Normal, "<leader>n", ":w<CR>:nohlsearch<CR>"),
@@ -519,4 +517,207 @@ fn macro_in_a_map_keeps_the_maps_command(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("shift-l");
     assert_eq!(host_commands(&view, cx), []);
     assert_eq!(mode(&view, cx), Some("normal"));
+}
+
+/// What a stand-in for the workbench saw: the host commands it took from the
+/// editor, each with the text at that moment, and the hold it claimed.
+#[derive(Default)]
+struct Host {
+    taken: Vec<(HostCommand, String)>,
+    hold: Option<VimHostHold>,
+    claim: bool,
+    /// What an unclaimed command leaves before it's settled: a message, and
+    /// whether it's a report.
+    answer: Option<(&'static str, bool)>,
+}
+
+/// Has `view`'s host commands taken as the workbench does: when it notifies,
+/// recording each, and with `claim` claiming its report for the test to
+/// give with [`finish`].
+fn host(view: &Entity<EditorView>, claim: bool, cx: &mut VisualTestContext) -> Rc<RefCell<Host>> {
+    let seen = Rc::new(RefCell::new(Host {
+        claim,
+        ..Host::default()
+    }));
+    let log = seen.clone();
+    cx.update(|_, cx| {
+        cx.observe(view, move |view, cx| {
+            let command = view.update(cx, |view, _| view.take_vim_host_command());
+            let Some(command) = command else {
+                return;
+            };
+            let text = view.read(cx).model().text().to_string();
+            let mut seen = log.borrow_mut();
+            seen.taken.push((command, text));
+            if seen.claim {
+                seen.hold = view.update(cx, |view, cx| view.hold_vim_host(cx));
+                return;
+            }
+            let answer = seen.answer;
+            drop(seen);
+            view.update(cx, |view, cx| {
+                match answer {
+                    Some((text, true)) => view.report_vim_message(text, cx),
+                    Some((text, false)) => view.set_vim_message(text, cx),
+                    None => {}
+                }
+                view.settle_vim_host(cx);
+            });
+        })
+        .detach();
+    });
+    seen
+}
+
+/// Reports the command `host` claimed.
+fn finish(
+    view: &Entity<EditorView>,
+    host: &Rc<RefCell<Host>>,
+    ok: bool,
+    cx: &mut VisualTestContext,
+) {
+    let hold = host.borrow_mut().hold.take().expect("a claimed command");
+    view.update(cx, |view, cx| view.finish_vim_host(hold, ok, cx));
+    cx.run_until_parked();
+}
+
+fn write() -> HostCommand {
+    HostCommand::Write {
+        force: false,
+        path: None,
+    }
+}
+
+/// With `nnoremap X :w<CR>dd`, `X` writes through the host, and deletes the
+/// line once the write is done; a write that failed stops the map before the
+/// delete. Keys typed meanwhile wait, and go on after.
+#[gpui::test]
+fn mapped_write_then_delete_runs_both(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>dd")];
+    let (view, cx) = vim_editor(cx, "abc\ndef\nghi", (0, 0), remaps);
+    let host = host(&view, true, cx);
+    cx.simulate_keystrokes("shift-x");
+    // The write is the host's, and nothing is deleted before it's done.
+    assert_eq!(host.borrow().taken, [(write(), "abc\ndef\nghi".to_owned())]);
+    assert_eq!(text(&view, cx), "abc\ndef\nghi");
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&view, cx), "abc\ndef\nghi");
+    finish(&view, &host, true, cx);
+    // The write, then `dd`, then the key typed meanwhile.
+    assert_eq!(text(&view, cx), "ef\nghi");
+    assert_eq!(mode(&view, cx), Some("normal"));
+    assert_eq!(host.borrow().taken.len(), 1);
+
+    // A write that failed ends the map: no delete, and keys are typed again.
+    cx.simulate_keystrokes("shift-x");
+    assert_eq!(host.borrow().taken.len(), 2);
+    finish(&view, &host, false, cx);
+    assert_eq!(text(&view, cx), "ef\nghi");
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&view, cx), "f\nghi");
+}
+
+/// A host that answers at once is settled as it returns: an answer that is
+/// an error ends the map, a report doesn't.
+#[gpui::test]
+fn settled_host_command_resumes_or_ends_the_map(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>dd")];
+    let (view, cx) = vim_editor(cx, "abc\ndef\nghi", (0, 0), remaps);
+    let host = host(&view, false, cx);
+    let answer = |answer, cx: &mut VisualTestContext| {
+        host.borrow_mut().answer = answer;
+        cx.simulate_keystrokes("shift-x");
+    };
+    answer(Some(("E37: No write since last change", false)), cx);
+    assert_eq!(text(&view, cx), "abc\ndef\nghi");
+    answer(Some(("\"a\" 3L, 11B", true)), cx);
+    assert_eq!(text(&view, cx), "def\nghi");
+    answer(None, cx);
+    assert_eq!(text(&view, cx), "ghi");
+    assert_eq!(host.borrow().taken.len(), 3);
+}
+
+/// Edits made while the host command is pending are what the keys after it
+/// run on.
+#[gpui::test]
+fn edits_while_a_host_command_is_pending(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>dd")];
+    let (view, cx) = vim_editor(cx, "abc\ndef\nghi", (0, 0), remaps);
+    let host = host(&view, true, cx);
+    cx.simulate_keystrokes("shift-x");
+    view.update(cx, |view, cx| {
+        let model = view.model_mut();
+        model.paste("new\n");
+        cx.notify();
+    });
+    finish(&view, &host, true, cx);
+    assert_eq!(text(&view, cx), "new\ndef\nghi");
+    assert_eq!(caret(&view, cx), (1, 0));
+
+    // The line the caret was on is gone by the time the write is done.
+    view.update(cx, |view, _| view.model_mut().set_cursor(0));
+    cx.simulate_keystrokes("shift-x");
+    view.update(cx, |view, cx| {
+        let model = view.model_mut();
+        model.set_cursor(0);
+        model.delete_forward();
+        cx.notify();
+    });
+    finish(&view, &host, true, cx);
+    assert_eq!(mode(&view, cx), Some("normal"));
+}
+
+/// A click ends the wait: the map's rest isn't run, and the report that
+/// comes late is ignored.
+#[gpui::test]
+fn a_click_ends_a_pending_host_command(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>dd")];
+    let (view, cx) = vim_editor(cx, "abc\ndef", (0, 0), remaps);
+    let host = host(&view, true, cx);
+    cx.simulate_keystrokes("shift-x");
+    view.update(cx, |view, cx| view.cancel_vim(cx));
+    finish(&view, &host, true, cx);
+    assert_eq!(text(&view, cx), "abc\ndef");
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&view, cx), "bc\ndef");
+}
+
+/// A second host command in the map suspends it again, and the last one,
+/// with no keys after it, doesn't: `do:w<CR>`.
+#[gpui::test]
+fn a_map_waits_at_each_host_command(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>:w<CR>dd:w<CR>")];
+    let (view, cx) = vim_editor(cx, "abc\ndef", (0, 0), remaps);
+    let host = host(&view, true, cx);
+    cx.simulate_keystrokes("shift-x");
+    assert_eq!(host.borrow().taken.len(), 1);
+    finish(&view, &host, true, cx);
+    assert_eq!(host.borrow().taken.len(), 2);
+    assert_eq!(text(&view, cx), "abc\ndef");
+    finish(&view, &host, true, cx);
+    assert_eq!(host.borrow().taken.len(), 3);
+    assert_eq!(text(&view, cx), "def");
+    // Nothing follows the last, so nothing waits for it.
+    assert!(host.borrow().hold.is_none());
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&view, cx), "ef");
+}
+
+/// A wait that vim's state was reset under (switched off and on) is over: the
+/// late report doesn't run the map's keys on the new state, and keys typed
+/// meanwhile aren't swallowed.
+#[gpui::test]
+fn a_reset_ends_a_pending_host_command(cx: &mut TestAppContext) {
+    let remaps = vec![noremap(RemapMode::Normal, "X", ":w<CR>dd")];
+    let (view, cx) = vim_editor(cx, "abc\ndef", (0, 0), remaps);
+    let host = host(&view, true, cx);
+    cx.simulate_keystrokes("shift-x");
+    cx.update(|_, cx| set_vim_enabled(cx, false));
+    cx.run_until_parked();
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    cx.run_until_parked();
+    finish(&view, &host, true, cx);
+    assert_eq!(text(&view, cx), "abc\ndef");
+    cx.simulate_keystrokes("x");
+    assert_eq!(text(&view, cx), "bc\ndef");
 }

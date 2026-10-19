@@ -53,7 +53,10 @@ const NO_SEARCH: &str = "No search to replace";
 
 impl Workbench {
     /// Runs `command`, typed on the line in `editor`: see the module docs.
-    /// An editor closed by now runs nothing.
+    /// An editor closed by now runs nothing. A map in `editor` waiting for
+    /// the command goes on, or ends if it failed, once it's done: a command
+    /// that runs past this call claims that report itself
+    /// ([`EditorView::hold_vim_host`]), and any other is settled here.
     pub(super) fn run_vim_host_command(
         &mut self,
         editor: &WeakEntity<EditorView>,
@@ -64,6 +67,49 @@ impl Workbench {
         let Some(editor) = editor.upgrade() else {
             return;
         };
+        // Only these report an outcome, themselves (a write claims it) or as
+        // they return: a message is a failure. Any other ends a map there: it
+        // closes what the map's keys are for (a quit), or finishes on its
+        // own time with no report back (`:e`, a git command, a stage or a
+        // commit).
+        // The commit box hands `:wa` to the active file editor, which claims
+        // the report, not the box.
+        let in_box = (self.owned_editors.iter()).any(|(owned, owner)| {
+            *owned == editor.downgrade() && matches!(owner, git_commands::Owner::CommitBox)
+        });
+        let delegated = in_box && matches!(command, HostCommand::WriteAll);
+        let reports = !delegated
+            && matches!(
+                command,
+                HostCommand::Write { .. }
+                    | HostCommand::SaveAs { .. }
+                    | HostCommand::WriteAll
+                    | HostCommand::Read { .. }
+                    | HostCommand::DiffGet { .. }
+                    | HostCommand::Explore
+                    | HostCommand::OpenProblems
+                    | HostCommand::CloseProblems
+            );
+        let what = match command {
+            HostCommand::Quit { .. }
+            | HostCommand::WriteQuit { .. }
+            | HostCommand::QuitAll { .. } => "a quit",
+            _ => "a command that finishes later",
+        };
+        self.run_host_command(editor.clone(), command, window, cx);
+        editor.update(cx, |editor, cx| match reports {
+            true => editor.settle_vim_host(cx),
+            false => editor.end_vim_host(what, cx),
+        });
+    }
+
+    fn run_host_command(
+        &mut self,
+        editor: Entity<EditorView>,
+        command: HostCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.tab_of(&editor, cx).is_none() {
             return git_commands::owned_host_command(self, editor, command, window, cx);
         }
@@ -236,6 +282,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A map waiting for the write goes on, or ends, once the tab is
+        // closed too, with `quit`, which ends it either way.
+        let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
         let saved = save(&editor, E32.to_owned(), window, cx);
         let editor = editor.downgrade();
         cx.spawn_in(window, async move |workbench, cx| {
@@ -245,6 +294,7 @@ impl Workbench {
                     let Some(editor) = editor.upgrade() else {
                         return;
                     };
+                    let ok = failed.is_none();
                     match failed {
                         Some(failed) => message(&editor, failed, cx),
                         // Still open, as nothing waited for it.
@@ -252,6 +302,12 @@ impl Workbench {
                             workbench.vim_quit(&editor, false, window, cx)
                         }
                         None => {}
+                    }
+                    // A quit ends the map, as it ends vim, closed or refused.
+                    if let Some(hold) = hold {
+                        editor.update(cx, |editor, cx| {
+                            editor.finish_vim_host(hold, ok && !quit, cx)
+                        });
                     }
                 })
                 .ok();
@@ -304,22 +360,30 @@ impl Workbench {
             #[cfg(test)]
             after_check(&resolved);
             let written = editor.update(cx, |editor, cx| editor.write_copy(resolved, force, cx));
+            let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
             let editor = editor.downgrade();
             cx.spawn(async move |_, cx| {
                 let written = written.await;
                 drop(reservation);
-                if let Err(error) = written {
+                let ok = written.is_ok();
+                let failed = written.err().map(|error| {
                     let exists = (error.get_ref())
                         .is_some_and(|inner| inner.downcast_ref::<SaveError>().is_some());
-                    let error = if exists {
-                        E13.to_owned()
-                    } else {
-                        format!("{error:#}")
-                    };
-                    editor
-                        .update(cx, |editor, cx| editor.set_vim_message(error, cx))
-                        .ok();
-                }
+                    match exists {
+                        true => E13.to_owned(),
+                        false => format!("{error:#}"),
+                    }
+                });
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(error) = failed {
+                            editor.set_vim_message(error, cx);
+                        }
+                        if let Some(hold) = hold {
+                            editor.finish_vim_host(hold, ok, cx);
+                        }
+                    })
+                    .ok();
             })
             .detach();
         } else {
@@ -395,6 +459,8 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Before the saves, which claim for their own editors.
+        let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
         let mut saving: Vec<Entity<EditorView>> = Vec::new();
         for tab in self.file_editors(cx) {
             let shared = (saving.iter()).any(|saved| saved.shares_document(&tab, cx));
@@ -416,11 +482,17 @@ impl Workbench {
                 let failed = saved.await;
                 first = first.or(failed);
             }
-            if let Some(failed) = first {
-                editor
-                    .update(cx, |editor, cx| editor.set_vim_message(failed, cx))
-                    .ok();
-            }
+            let ok = first.is_none();
+            editor
+                .update(cx, |editor, cx| {
+                    if let Some(failed) = first {
+                        editor.set_vim_message(failed, cx);
+                    }
+                    if let Some(hold) = hold {
+                        editor.finish_vim_host(hold, ok, cx);
+                    }
+                })
+                .ok();
         })
         .detach();
     }
@@ -494,7 +566,7 @@ impl Workbench {
                 // normal mode.
                 model.set_cursor(start + blanks.min(lines[0].len().saturating_sub(1)));
             }
-            editor.set_vim_message(report, cx);
+            editor.report_vim_message(report, cx);
             cx.notify();
         });
     }
@@ -550,6 +622,10 @@ mod write_path_tests;
 #[cfg(test)]
 #[path = "vim_write_no_clobber_tests.rs"]
 mod write_no_clobber_tests;
+
+#[cfg(test)]
+#[path = "vim_remap_host_tests.rs"]
+mod remap_host_tests;
 
 #[cfg(test)]
 #[path = "vim_day_one_tests.rs"]

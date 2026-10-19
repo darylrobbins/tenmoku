@@ -1505,14 +1505,29 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A map waiting for the write goes on, or ends, once the diff is
+        // closed too, with `close`, which ends it either way.
+        let hold = editor.update(cx, |editor, cx| editor.hold_vim_host(cx));
         let saved = vim_host::save(&editor, NO_FILE.to_owned(), window, cx);
         cx.spawn_in(window, async move |workbench, cx| {
             let failed = saved.await;
             workbench
-                .update_in(cx, |workbench, window, cx| match (failed, close) {
-                    (Some(failed), _) => message(&editor, failed, cx),
-                    (None, Some(diff)) => workbench.close_diff(&diff, &editor, false, window, cx),
-                    (None, None) => {}
+                .update_in(cx, |workbench, window, cx| {
+                    let ok = failed.is_none();
+                    let closes = close.clone();
+                    match (failed, close) {
+                        (Some(failed), _) => message(&editor, failed, cx),
+                        (None, Some(diff)) => {
+                            workbench.close_diff(&diff, &editor, false, window, cx)
+                        }
+                        (None, None) => {}
+                    }
+                    // A close ends the map, as a quit ends vim.
+                    if let Some(hold) = hold {
+                        editor.update(cx, |editor, cx| {
+                            editor.finish_vim_host(hold, ok && closes.is_none(), cx)
+                        });
+                    }
                 })
                 .ok();
         })

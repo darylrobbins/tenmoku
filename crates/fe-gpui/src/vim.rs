@@ -71,18 +71,29 @@
 //! ([`EditorView::run_remap_command_later`]). With no command of that ID it
 //! says `E492: Not an editor command: fe:…`.
 //!
+//! A file or window command a map leaves (`:w<CR>`, or `do` and `dp`)
+//! suspends the replay if keys follow it, as a `<Cmd>fe:…<CR>` command does:
+//! the editor holds typed keys, and the host reports the outcome back
+//! ([`EditorView::finish_vim_host`]), so `:w<CR>dd` writes, then deletes
+//! the line, and a write that failed ends the map before the delete. The
+//! host that runs a command on its own time claims the report
+//! ([`EditorView::hold_vim_host`]); one that answers at once is settled
+//! after it runs ([`EditorView::settle_vim_host`]), failed if it left a
+//! message that wasn't a report ([`EditorView::report_vim_message`]). Text
+//! edited meanwhile is what the keys after it run on. A click ends the
+//! wait. With no host taking the command the map ends there, and the status
+//! bar says "a map's keys after a file or window command aren't run".
+//!
 //! Two known limits, each a card of its own:
 //!
-//! - **A map ends at its first host command.** The keys before a file or
-//!   window command (`:w<CR>`, or `do` and `dp`) run, the command is left
-//!   for the host as a typed line's is, and the keys after it aren't
-//!   replayed: the status bar says "a map's keys after a file or window
-//!   command aren't run". The host runs the command once the keystroke is
-//!   over, asynchronously for a write, and nothing reports its outcome back
-//!   to resume the map. So `:w<CR>:q<CR>` only writes (`:wq` and `:x` do
-//!   both). A `<Cmd>fe:…<CR>` command that leaves one (`vim.diff_get`)
-//!   ends the map too. A `:normal` stops at a `<Cmd>fe:…<CR>` among its
-//!   keys, which it doesn't run: "fe: commands don't run inside :normal".
+//! - **Some host commands end the map.** One that finishes on its own
+//!   time with no report back (`:e`, a git command) ends the map there
+//!   ([`EditorView::end_vim_host`]), as does a quit (`:wq`), as it ends vim;
+//!   a `<Cmd>fe:…<CR>` command that leaves a file or window command
+//!   (`vim.diff_get`) does too, as its host takes the command before the
+//!   replay could wait for it. A `:normal` stops at a `<Cmd>fe:…<CR>`
+//!   among its keys, which it doesn't run: "fe: commands don't run inside
+//!   :normal".
 //! - **Only a plain click resolves a held prefix.** A click goes through
 //!   [`EditorView::cancel_vim`], which resolves the held keys as a timeout
 //!   would and then drops what they leave pending. Shift, double and triple
@@ -107,14 +118,14 @@
 
 use std::{
     cell::RefCell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     ops::{Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
     time::Duration,
 };
 
-use fe_buffer::{TransactionId, Version};
+use fe_buffer::{BufferEvent, Subscription as BufferSubscription, Text, TransactionId, Version};
 use fe_command::{CommandId, CommandMeta, Value};
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
@@ -154,8 +165,11 @@ pub(crate) struct YankFlash {
 pub(crate) struct SearchPreview {
     /// Where the view was before the line opened.
     place: ViewPlace,
-    /// The folds hiding the shown match, opened to show it.
+    /// The folds hiding the shown match, opened to show it, and the text
+    /// their rows are of, with the buffer's edits since: they move the
+    /// folds ([`follow_fold_edits`]).
     opened: Vec<RangeInclusive<u32>>,
+    opened_in: Option<(Text, BufferSubscription)>,
     /// The match shown, in the text at its version, and the line's
     /// pattern, whose matches paint in place of any other: `None` while the
     /// line previews nothing.
@@ -163,6 +177,69 @@ pub(crate) struct SearchPreview {
     /// Where the next frame scrolls to, as it does to a caret: the shown
     /// match's start.
     reveal: Option<usize>,
+}
+
+/// `folds`, row ranges of the text `before`, followed through the batches
+/// of edits `events` received since, as the display's own folds follow each
+/// batch: a fold whose hidden rows an edit touched, or whose header it split
+/// or joined, is dropped, and one after it shifts.
+fn follow_fold_edits(
+    mut folds: Vec<RangeInclusive<u32>>,
+    before: &Text,
+    events: &BufferSubscription,
+) -> Vec<RangeInclusive<u32>> {
+    let mut before = before.clone();
+    for event in events.drain() {
+        let BufferEvent::Edited { edits, text, .. } = event else {
+            continue;
+        };
+        folds = follow_row_edits(folds, &before, &text, &edits);
+        before = text;
+    }
+    folds
+}
+
+/// [`follow_fold_edits`] through one batch, from the text `old` to `new`.
+fn follow_row_edits(
+    mut folds: Vec<RangeInclusive<u32>>,
+    old: &Text,
+    new: &Text,
+    batch: &[fe_buffer::Edit],
+) -> Vec<RangeInclusive<u32>> {
+    for edit in batch {
+        let (old_start, old_end) = (
+            old.offset_to_point(edit.old.start),
+            old.offset_to_point(edit.old.end),
+        );
+        let (new_start, new_end) = (
+            new.offset_to_point(edit.new.start),
+            new.offset_to_point(edit.new.end),
+        );
+        // Rows an edit only ends at the start of are untouched.
+        let whole_rows = [old_start, old_end, new_start, new_end]
+            .iter()
+            .all(|point| point.column == 0);
+        let touched = u32::from(!whole_rows);
+        let start = new_start.row;
+        let old_rows = old_end.row - old_start.row + touched;
+        let new_rows = new_end.row - new_start.row + touched;
+        let old_end = start + old_rows;
+        let delta = i64::from(new_rows) - i64::from(old_rows);
+        folds.retain_mut(|fold| {
+            let (first, last) = (*fold.start(), *fold.end());
+            let touches_hidden = start <= last && old_end.max(start + 1) > first + 1;
+            let touches_header = start <= first && old_end > first;
+            if touches_hidden || (touches_header && delta != 0) {
+                return false;
+            }
+            if first >= old_end {
+                let shift = |row: u32| (i64::from(row) + delta) as u32;
+                *fold = shift(first)..=shift(last);
+            }
+            true
+        });
+    }
+    folds
 }
 
 /// Where a view is scrolled: its scroll, the buffer and display rows first
@@ -273,7 +350,36 @@ struct Vim {
     /// The keystrokes each editor took while its replay held for a map's
     /// `<Cmd>fe:…<CR>` command, in order, to go on once the map is over.
     held_keys: Vec<(gpui::EntityId, gpui::Keystroke)>,
+    /// The replay each editor suspended at a map's file or window command,
+    /// until the host reports it ([`EditorView::finish_vim_host`]).
+    host_waits: HashMap<gpui::EntityId, HostWait>,
+    /// The last [`VimHostHold`] handed out.
+    host_token: u64,
 }
+
+/// A map's replay, suspended while the host runs the file or window command
+/// the map left: the keys after it, and what the loop held.
+struct HostWait {
+    token: u64,
+    /// The vim switch's generation it was suspended in: a reset of vim's
+    /// state ends it ([`EditorView::end_stale_host_wait`]).
+    generation: u64,
+    queue: VecDeque<VimKey>,
+    line: Option<String>,
+    origin: Option<ReplayOrigin>,
+    /// The host's command runs on, past its own update (a write): it
+    /// reports back itself ([`EditorView::hold_vim_host`]).
+    claimed: bool,
+    /// The host answered with a report, not an error
+    /// ([`EditorView::report_vim_message`]).
+    reported: bool,
+}
+
+/// The host's claim on the completion of the file or window command it
+/// took from an editor whose map waits for it: report the outcome with
+/// [`EditorView::finish_vim_host`].
+#[derive(Clone, Copy, Debug)]
+pub struct VimHostHold(u64);
 
 /// What ends an editor's wait for the rest of a map: [`CHORD_TIMEOUT`]
 /// with no key, as nvim's 'timeoutlen', or its focus going. Dropped, it
@@ -424,6 +530,103 @@ fn switch(cx: &App) -> (bool, u64) {
         .map_or((false, 0), |vim| (vim.enabled, vim.generation))
 }
 
+/// The host's side of a map's file or window command: see the module docs.
+impl EditorView {
+    /// Claims the report of the command the host took from this editor, whose
+    /// map waits for it, for a host that runs it past its own update: a
+    /// write. Then [`EditorView::finish_vim_host`] reports it. `None` if no
+    /// map waits for it, or another claim holds it.
+    pub fn hold_vim_host(&mut self, cx: &mut Context<Self>) -> Option<VimHostHold> {
+        if self.vim.as_ref().is_none_or(VimState::has_host_command) {
+            return None;
+        }
+        let id = cx.entity_id();
+        let wait = cx.default_global::<Vim>().host_waits.get_mut(&id)?;
+        if std::mem::replace(&mut wait.claimed, true) {
+            return None;
+        }
+        Some(VimHostHold(wait.token))
+    }
+
+    /// Reports the outcome of the command `hold` claimed, `ok` if it
+    /// worked: the map goes on, or, if it failed, ends. Nothing if the map
+    /// no longer waits, such as after a click.
+    pub fn finish_vim_host(&mut self, hold: VimHostHold, ok: bool, cx: &mut Context<Self>) {
+        if self.end_stale_host_wait(cx) {
+            return;
+        }
+        let Some(wait) = self.take_host_wait(hold.0, cx) else {
+            return;
+        };
+        let HostWait {
+            queue,
+            line,
+            origin,
+            ..
+        } = wait;
+        self.resume_replay(ok, false, queue, line, origin, cx);
+    }
+
+    /// Reports the outcome of the command the host just ran, if it claimed
+    /// no report ([`EditorView::hold_vim_host`]) and a map waits for it: it
+    /// failed if it left a message, which a report
+    /// ([`EditorView::report_vim_message`]) isn't.
+    pub fn settle_vim_host(&mut self, cx: &mut Context<Self>) {
+        if self.vim.as_ref().is_none_or(VimState::has_host_command) {
+            return;
+        }
+        let id = cx.entity_id();
+        let Some(wait) = cx.default_global::<Vim>().host_waits.get(&id) else {
+            return;
+        };
+        if wait.claimed {
+            return;
+        }
+        let (token, reported) = (wait.token, wait.reported);
+        let failed = self
+            .vim
+            .as_ref()
+            .is_some_and(|state| state.message().is_some());
+        self.finish_vim_host(VimHostHold(token), reported || !failed, cx);
+    }
+
+    /// Ends the map waiting for the command the host just ran, which
+    /// finishes on its own time with no report (`what`, such as `:e`): the
+    /// keys after it aren't run, and the status bar says so, unless the
+    /// command left a message of its own.
+    pub fn end_vim_host(&mut self, what: &str, cx: &mut Context<Self>) {
+        if self.vim.as_ref().is_none_or(VimState::has_host_command) {
+            return;
+        }
+        let id = cx.entity_id();
+        let Some(wait) = cx.default_global::<Vim>().host_waits.get(&id) else {
+            return;
+        };
+        if wait.claimed {
+            return;
+        }
+        let token = wait.token;
+        let unsaid = self
+            .vim
+            .as_ref()
+            .is_some_and(|state| state.message().is_none());
+        self.finish_vim_host(VimHostHold(token), false, cx);
+        if unsaid && let Some(state) = &mut self.vim {
+            state.set_host_message(format!("a map's keys after {what} aren't run"));
+        }
+    }
+
+    /// Shows `message` as vim's, as [`EditorView::set_vim_message`] does,
+    /// as a report of what the command did, not an error: a map goes on.
+    pub fn report_vim_message(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        if let Some(wait) = cx.default_global::<Vim>().host_waits.get_mut(&id) {
+            wait.reported = true;
+        }
+        self.set_vim_message(message, cx);
+    }
+}
+
 /// Lists `view`'s editor, focused by `focus`, until it's released.
 pub(crate) fn register(focus: &FocusHandle, cx: &mut Context<EditorView>) {
     let view = cx.weak_entity();
@@ -435,6 +638,7 @@ pub(crate) fn register(focus: &FocusHandle, cx: &mut Context<EditorView>) {
         let vim = cx.default_global::<Vim>();
         vim.editors.retain(|(_, view)| view.entity_id() != id);
         vim.origins.retain(|(editor, _)| *editor != id);
+        vim.host_waits.remove(&id);
     })
     .detach();
 }
@@ -614,6 +818,7 @@ pub(crate) fn live_stack(
     note_origin(editor.entity_id(), origin, cx);
     editor.update(cx, |view, cx| {
         view.sync_vim(cx);
+        view.end_stale_host_wait(cx);
         // A key ends vim's message, whether it's bound or fed to the reducer.
         if let Some(state) = view.vim.as_mut().filter(|state| state.message().is_some()) {
             state.clear_message();
@@ -993,10 +1198,13 @@ impl EditorView {
             Some((found, pattern))
         });
         if let Some((found, pattern)) = shown {
+            let before = self.model.text().clone();
+            let events = self.model.buffer_mut().subscribe();
             let opened = self.open_folds_at(found.start);
             let version = self.model.snapshot().version();
             if let Some(preview) = &mut self.search_preview {
                 preview.opened = opened;
+                preview.opened_in = Some((before, events));
                 preview.reveal = Some(found.start);
                 preview.shown = Some((found, pattern, version));
                 // The frame scrolls to it as it would to the caret.
@@ -1112,7 +1320,14 @@ impl EditorView {
         preview.shown = None;
         preview.reveal = None;
         let opened = std::mem::take(&mut preview.opened);
+        let opened_in = preview.opened_in.take();
         let place = preview.place;
+        // The buffer may have changed since the folds were opened.
+        self.model.sync_display();
+        let opened = match opened_in {
+            Some((before, events)) => follow_fold_edits(opened, &before, &events),
+            None => opened,
+        };
         for fold in opened {
             self.model.fold_rows(fold);
         }
@@ -1142,6 +1357,7 @@ impl EditorView {
     /// nothing pending or held it does nothing.
     pub(crate) fn cancel_vim(&mut self, cx: &mut Context<Self>) {
         self.sync_vim(cx);
+        self.end_host_wait(cx);
         if self.vim.as_ref().is_some_and(VimState::remap_waiting) {
             self.resolve_remap(cx);
         }
@@ -1326,7 +1542,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.vim_replaying {
+        if self.vim_replaying && !self.end_stale_host_wait(cx) {
             let held = (cx.entity_id(), keystroke.clone());
             cx.default_global::<Vim>().held_keys.push(held);
             return true;
@@ -1624,8 +1840,11 @@ impl EditorView {
                 break;
             };
             if !self.replay_key(key, &mut line, &mut handed, cx) {
-                // Known limit: the host runs a file or window command after
-                // this update, so what the map does after it isn't run.
+                // The host runs a file or window command after this update:
+                // what the map does after it waits for the host's report.
+                if handed.is_some() && self.wait_for_host(&mut queue, &mut line, &origin, cx) {
+                    return;
+                }
                 self.stop_map(!queue.is_empty(), handed);
                 break;
             }
@@ -1650,6 +1869,110 @@ impl EditorView {
             }
         }
         cx.notify();
+    }
+
+    /// Suspends the replay at the file or window command the last key left
+    /// for the host, if keys follow it: they wait in `queue` and `line`
+    /// until the host reports ([`EditorView::finish_vim_host`]), which
+    /// resumes them. Returns whether it did; if not, the replay ends. The
+    /// editor notifies for the host to take the command; one still there
+    /// once the update is over was taken by no one, and the map ends.
+    fn wait_for_host(
+        &mut self,
+        queue: &mut VecDeque<VimKey>,
+        line: &mut Option<String>,
+        origin: &Option<ReplayOrigin>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.vim.as_mut().filter(|state| state.has_host_command()) else {
+            return false;
+        };
+        for key in state.take_replay().into_iter().rev() {
+            queue.push_front(key);
+        }
+        if queue.is_empty() && !state.has_remap_command() {
+            return false;
+        }
+        // The host's answer is what comes after.
+        state.clear_message();
+        let id = cx.entity_id();
+        let generation = switch(cx).1;
+        let vim = cx.default_global::<Vim>();
+        vim.host_token += 1;
+        let token = vim.host_token;
+        let wait = HostWait {
+            token,
+            generation,
+            queue: std::mem::take(queue),
+            line: line.take(),
+            origin: origin.clone(),
+            claimed: false,
+            reported: false,
+        };
+        vim.host_waits.insert(id, wait);
+        cx.notify();
+        let view = cx.weak_entity();
+        cx.defer(move |cx| {
+            (view.update(cx, |view, cx| view.host_untaken(token, cx))).ok();
+        });
+        true
+    }
+
+    /// The replay suspended as `token` ends: its host command is still the
+    /// editor's, so no host took it.
+    fn host_untaken(&mut self, token: u64, cx: &mut Context<Self>) {
+        let untaken = self.vim.as_ref().is_some_and(VimState::has_host_command);
+        if !untaken {
+            return;
+        }
+        let Some(wait) = self.take_host_wait(token, cx) else {
+            return;
+        };
+        self.vim_replaying = false;
+        self.stop_map(true, Some(HANDED_HOST_COMMAND));
+        self.release_held_keys(cx);
+        self.wait_for_remap_later(wait.origin, cx);
+        cx.notify();
+    }
+
+    /// This editor's suspended replay, if it's `token`'s.
+    fn take_host_wait(&self, token: u64, cx: &mut Context<Self>) -> Option<HostWait> {
+        let id = cx.entity_id();
+        let waits = &mut cx.default_global::<Vim>().host_waits;
+        match waits.get(&id) {
+            Some(wait) if wait.token == token => waits.remove(&id),
+            _ => None,
+        }
+    }
+
+    /// Ends this editor's suspended replay, if it has one, dropping the
+    /// rest of the map: a click, say, which the map's keys can't come
+    /// before.
+    fn end_host_wait(&mut self, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        let ended = cx.default_global::<Vim>().host_waits.remove(&id);
+        let Some(wait) = ended else {
+            return;
+        };
+        self.vim_replaying = false;
+        self.stop_map(true, None);
+        self.release_held_keys(cx);
+        self.wait_for_remap_later(wait.origin, cx);
+        cx.notify();
+    }
+
+    /// Ends this editor's suspended replay if vim's state was reset since,
+    /// by being switched off and on or the like: what it holds is of a
+    /// state that's gone. Returns whether it did.
+    pub(crate) fn end_stale_host_wait(&mut self, cx: &mut Context<Self>) -> bool {
+        let id = cx.entity_id();
+        let generation = switch(cx).1;
+        let stale = (cx.default_global::<Vim>().host_waits.get(&id))
+            .is_some_and(|wait| wait.generation != generation);
+        if stale {
+            self.end_host_wait(cx);
+        }
+        stale
     }
 
     /// Drops the rest of a replay, `rest` whether keys were left of it, and
@@ -2084,6 +2407,9 @@ mod search_tests;
 mod incsearch_tests;
 
 #[cfg(test)]
+mod incsearch_fold_tests;
+
+#[cfg(test)]
 mod yank_flash_reset_tests;
 
 #[cfg(test)]
@@ -2119,6 +2445,7 @@ mod auto_indent_tests;
 impl From<ViewPlace> for SearchPreview {
     fn from(place: ViewPlace) -> Self {
         Self {
+            opened_in: None,
             place,
             opened: Vec::new(),
             shown: None,
