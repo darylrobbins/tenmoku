@@ -61,7 +61,7 @@ use fe_git::{
 };
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, ElementId, FocusHandle,
+    AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, Div, ElementId, FocusHandle,
     Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
     ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -481,6 +481,8 @@ pub(crate) struct GitLogPanel {
     /// What the tests see of the last commit popover built.
     #[cfg(test)]
     popover: Rc<RefCell<PopoverProbe>>,
+    /// What the tests see of the rows drawn.
+    rows_seen: RowsProbe,
 }
 
 impl GitLogPanel {
@@ -512,6 +514,7 @@ impl GitLogPanel {
             focus: cx.focus_handle(),
             #[cfg(test)]
             popover: Rc::default(),
+            rows_seen: RowsProbe::default(),
         }
     }
 
@@ -648,6 +651,7 @@ impl GitLogPanel {
     }
 
     /// The text of file `file` of commit `commit`: `M path`, `R old → new`.
+    #[cfg(test)]
     fn file_text(&self, commit: usize, file: usize) -> Option<String> {
         let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
             return None;
@@ -660,6 +664,46 @@ impl GitLogPanel {
             (None, ChangeKind::Deleted) => format!("D {path}"),
             (None, _) => format!("M {path}"),
         })
+    }
+
+    /// File `file` of commit `commit` as its row shows it: the change's
+    /// letter, the file's name, then its directory (a rename's old path
+    /// after it) dimmed.
+    fn file_parts(&self, commit: usize, file: usize) -> Option<FileParts> {
+        let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
+            return None;
+        };
+        let file = files.get(file)?;
+        let path = self.display_path(&file.path);
+        let (dir, name) = match path.rsplit_once('/') {
+            Some((dir, name)) => (dir.to_owned(), name.to_owned()),
+            None => (String::new(), path),
+        };
+        let kind = match (&file.from, file.kind) {
+            (Some(_), _) => 'R',
+            (None, ChangeKind::Added) => 'A',
+            (None, ChangeKind::Deleted) => 'D',
+            (None, _) => 'M',
+        };
+        let dir = match &file.from {
+            Some(from) if dir.is_empty() => format!("← {}", self.display_path(from)),
+            Some(from) => format!("{dir} ← {}", self.display_path(from)),
+            None => dir,
+        };
+        Some(FileParts { kind, name, dir })
+    }
+
+    /// The lanes' columns and colours running through the rows under
+    /// commit `commit`'s own: its row's bottom half's lines, ending where
+    /// the next row's top half's begin.
+    fn rail(&self, commit: usize) -> Vec<(usize, usize)> {
+        let Some(row) = self.rows.get(commit) else {
+            return Vec::new();
+        };
+        row.bottom
+            .iter()
+            .map(|line| (line.to, line.color))
+            .collect()
     }
 
     /// Expands commit `ix`, reading its files on the background executor, or
@@ -944,32 +988,34 @@ impl GitLogPanel {
                         return Some(row.text_color(color).child(text).into_any_element());
                     }
                 };
-                let indent = LANE_WIDTH * self.lanes as f32 + px(24.);
+                let seen = self.rows_seen.clone();
+                let rail =
+                    |commit: usize| rail_cell(self.rail(commit), self.lanes, ix, seen.clone());
                 let row = match line {
                     Line::Commit(_) => row,
                     Line::Body(commit, body) => {
                         let text = self.body_text(commit, body).unwrap_or_default();
                         return Some(
-                            row.pl(indent)
-                                .when(selected, |row| row.bg(selected_bg))
+                            row.when(selected, |row| row.bg(selected_bg))
                                 .text_color(ui.muted_text)
                                 .on_click(cx.listener(move |panel, _, window, cx| {
                                     panel.click(line, false, window, cx)
                                 }))
+                                .child(rail(commit))
                                 .child(ellipsized(text))
                                 .into_any_element(),
                         );
                     }
                     Line::File(commit, file) => {
-                        let text = self.file_text(commit, file).unwrap_or_default();
+                        let parts = self.file_parts(commit, file)?;
                         return Some(
-                            row.pl(indent)
-                                .when(selected, |row| row.bg(selected_bg))
+                            row.when(selected, |row| row.bg(selected_bg))
                                 .hover(move |row| row.bg(ui.row_hover))
                                 .on_click(cx.listener(move |panel, _, window, cx| {
                                     panel.click(line, true, window, cx)
                                 }))
-                                .child(ellipsized(text))
+                                .child(rail(commit))
+                                .child(file_cell(parts, ui, ix, seen.clone()))
                                 .into_any_element(),
                         );
                     }
@@ -979,12 +1025,12 @@ impl GitLogPanel {
                             _ => (LOADING.to_owned(), ui.muted_text),
                         };
                         return Some(
-                            row.pl(indent)
-                                .when(selected, |row| row.bg(selected_bg))
+                            row.when(selected, |row| row.bg(selected_bg))
                                 .text_color(color)
                                 .on_click(cx.listener(move |panel, _, window, cx| {
                                     panel.click(line, false, window, cx)
                                 }))
+                                .child(rail(commit))
                                 .child(text)
                                 .into_any_element(),
                         );
@@ -995,7 +1041,13 @@ impl GitLogPanel {
                 };
                 let entry = self.commits.get(ix_commit)?;
                 let merge = entry.parents.len() > 1;
-                let graph = graph_cell(self.rows[ix_commit].clone(), merge, self.lanes);
+                let graph = graph_cell(
+                    self.rows[ix_commit].clone(),
+                    merge,
+                    self.lanes,
+                    ix,
+                    seen.clone(),
+                );
                 let [summary, _] = commit_rows::texts(&entry.commit, self.now);
                 let when = age(&entry.commit, self.now);
                 let (commit, now) = (entry.commit.clone(), self.now);
@@ -1059,12 +1111,141 @@ fn ref_label(label: &RefLabel, ui: UiTheme) -> impl IntoElement {
         .child(label_text(label))
 }
 
-/// A commit's graph cell, [`LANE_WIDTH`] per lane of `lanes`: its row's
-/// lines and its dot, a ring for a merge.
-fn graph_cell(row: GraphRow, merge: bool, lanes: usize) -> impl IntoElement {
+/// A file row's text: the change's letter, the file's name, then its
+/// directory dimmed, the name shrinking only after the directory has.
+fn file_cell(parts: FileParts, ui: UiTheme, ix: usize, probe: RowsProbe) -> impl IntoElement {
+    let kind = div().flex_none();
+    let name = div().min_w_0().overflow_hidden().text_ellipsis();
+    let dir = (div().flex_shrink(100.).min_w_0().overflow_hidden())
+        .text_ellipsis()
+        .text_color(ui.muted_text);
+    let mut cells = [
+        (parts.kind.to_string(), kind),
+        (parts.name, name),
+        (parts.dir, dir),
+    ];
+    probe.cells(
+        ix,
+        cells.iter_mut().map(|(text, cell)| (text.clone(), cell)),
+    );
+    let cell = (div().flex_1().min_w_0().flex().gap_2().overflow_hidden())
+        .children(cells.into_iter().map(|(text, cell)| cell.child(text)));
+    #[cfg(test)]
+    let cell = cell.on_children_prepainted(move |drawn, _, _| probe.bounds(ix, &drawn));
+    cell
+}
+
+/// What the tests see of the rows drawn, by the row's index in the list.
+#[derive(Clone, Default)]
+struct RowsProbe(#[cfg(test)] Rc<RefCell<RowsSeen>>);
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct RowsSeen {
+    /// The segments painted in a graph cell or a rail, as `(from, to,
+    /// colour)`.
+    pub(crate) segments: BTreeMap<usize, Vec<Segment>>,
+    /// A file row's cells in order: text, text colour set on it and bounds.
+    pub(crate) cells: BTreeMap<usize, Vec<CellSeen>>,
+}
+
+/// A painted segment: from, to and colour.
+#[cfg(test)]
+pub(crate) type Segment = (Point<Pixels>, Point<Pixels>, Hsla);
+
+#[cfg(test)]
+pub(crate) struct CellSeen {
+    pub(crate) text: String,
+    pub(crate) color: Option<Hsla>,
+    pub(crate) bounds: Option<Bounds<Pixels>>,
+}
+
+impl RowsProbe {
+    /// Forgets the segments row `ix` painted last frame.
+    fn begin(&self, _ix: usize) {
+        #[cfg(test)]
+        self.0.borrow_mut().segments.remove(&_ix);
+    }
+
+    /// Notes a segment painted in row `ix`.
+    fn segment(&self, _ix: usize, _from: Point<Pixels>, _to: Point<Pixels>, _color: Hsla) {
+        #[cfg(test)]
+        (self.0.borrow_mut().segments.entry(_ix).or_default()).push((_from, _to, _color));
+    }
+
+    /// Notes row `ix`'s cells, text and style.
+    fn cells<'a>(&self, _ix: usize, _cells: impl Iterator<Item = (String, &'a mut Div)>) {
+        #[cfg(test)]
+        {
+            let cells = _cells.map(|(text, cell)| CellSeen {
+                text,
+                color: cell.style().text.color,
+                bounds: None,
+            });
+            self.0.borrow_mut().cells.insert(_ix, cells.collect());
+        }
+    }
+
+    /// Notes row `ix`'s cells' bounds.
+    #[cfg(test)]
+    fn bounds(&self, ix: usize, drawn: &[Bounds<Pixels>]) {
+        if let Some(cells) = self.0.borrow_mut().cells.get_mut(&ix) {
+            for (cell, bounds) in cells.iter_mut().zip(drawn) {
+                cell.bounds = Some(*bounds);
+            }
+        }
+    }
+}
+
+/// A file row's parts: see [`GitLogPanel::file_parts`].
+struct FileParts {
+    kind: char,
+    name: String,
+    dir: String,
+}
+
+/// The lanes `rail` runs through a row under a commit, [`LANE_WIDTH`] per
+/// lane of `lanes`: a vertical line the row's height each.
+fn rail_cell(
+    rail: Vec<(usize, usize)>,
+    lanes: usize,
+    ix: usize,
+    probe: RowsProbe,
+) -> impl IntoElement {
     canvas(
         |_, _, _| {},
-        move |bounds, (), window, _| paint_graph(bounds, &row, merge, window),
+        move |bounds, (), window, _| {
+            probe.begin(ix);
+            for &(column, color) in &rail {
+                let x = bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
+                let mut path = PathBuilder::stroke(LINE);
+                path.move_to(point(x, bounds.top()));
+                path.line_to(point(x, bounds.bottom()));
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, lane_color(color));
+                    let (top, bottom) = (point(x, bounds.top()), point(x, bounds.bottom()));
+                    probe.segment(ix, top, bottom, lane_color(color));
+                }
+            }
+        },
+    )
+    .flex_none()
+    .w(LANE_WIDTH * lanes as f32)
+    .h(ROW_HEIGHT)
+}
+
+/// A commit's graph cell, [`LANE_WIDTH`] per lane of `lanes`: its row's
+/// lines and its dot, a ring for a merge.
+fn graph_cell(
+    row: GraphRow,
+    merge: bool,
+    lanes: usize,
+    ix: usize,
+    probe: RowsProbe,
+) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| paint_graph(bounds, &row, merge, window, ix, &probe),
     )
     .flex_none()
     .w(LANE_WIDTH * lanes as f32)
@@ -1075,7 +1256,15 @@ fn graph_cell(row: GraphRow, merge: bool, lanes: usize) -> impl IntoElement {
 /// to the middle and of its bottom half from the middle to the bottom
 /// edge, then the commit's dot. A merge's is a ring the lines meeting it
 /// stop at, so the row's background, selected or hovered, shows inside.
-fn paint_graph(bounds: Bounds<Pixels>, row: &GraphRow, merge: bool, window: &mut Window) {
+fn paint_graph(
+    bounds: Bounds<Pixels>,
+    row: &GraphRow,
+    merge: bool,
+    window: &mut Window,
+    ix: usize,
+    probe: &RowsProbe,
+) {
+    probe.begin(ix);
     let x = |column: usize| bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
     let middle = bounds.center().y;
     let radius = DOT / 2.;
@@ -1099,6 +1288,7 @@ fn paint_graph(bounds: Bounds<Pixels>, row: &GraphRow, merge: bool, window: &mut
             path.line_to(to);
             if let Ok(path) = path.build() {
                 window.paint_path(path, lane_color(line.color));
+                probe.segment(ix, from, to, lane_color(line.color));
             }
         }
     }
@@ -1226,6 +1416,16 @@ impl GitLogPanel {
     /// The text of the last commit popover built.
     pub(crate) fn last_popover(&self) -> Option<String> {
         self.popover.borrow().text.clone()
+    }
+
+    /// The muted text colour rows use.
+    pub(crate) fn muted_text(&self) -> Hsla {
+        self.ui.muted_text
+    }
+
+    /// What the tests see of the rows drawn.
+    pub(crate) fn rows_seen(&self) -> Rc<RefCell<RowsSeen>> {
+        self.rows_seen.0.clone()
     }
 
     /// What the tests see of the last commit popover built.

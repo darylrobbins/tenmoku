@@ -481,3 +481,6 @@ fn a_release_over_a_row_that_replaced_the_pressed_one_clicks_nothing(cx: &mut Te
 
 #[path = "git_log_tab_names_tests.rs"]
 mod tab_names;
+
+#[path = "git_log_rail_tests.rs"]
+mod rail;
