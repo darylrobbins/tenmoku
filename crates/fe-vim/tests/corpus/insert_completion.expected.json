@@ -1,0 +1,1167 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "ctrl_n_first_match",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_cycles",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfood\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_cycles_to_last",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfool\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_wraps_to_typed",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nf\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_wraps_past_typed",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_backward",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-p><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfool\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_cycles",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfood\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_wraps_to_typed",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-p><C-p><C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nf\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_then_ctrl_p",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-p><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_from_typed_to_last",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfool\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_then_ctrl_n",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-p><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_after_caret_first",
+      "buffer": "fa fb\nfc  fd\nfe",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "if<C-n><Esc>",
+      "expect": {
+        "buffer": "fa fb\nfc fd fd\nfe",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_wraps_buffer",
+      "buffer": "fa fb\nfc  fd\nfe",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "if<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "fa fb\nfc fa fd\nfe",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_before_caret_first",
+      "buffer": "fa fb\nfc  fd\nfe",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "if<C-p><Esc>",
+      "expect": {
+        "buffer": "fa fb\nfc fc fd\nfe",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_wraps_buffer",
+      "buffer": "fa fb\nfc  fd\nfe",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "if<C-p><C-p><C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "fa fb\nfc fe fd\nfe",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_match_fails",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "iz<C-n>x<Esc>",
+      "expect": {
+        "buffer": "foo food fool\nzx\n-",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_match_in_macro",
+      "buffer": "z\n\n-",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qqaq<C-n>x<Esc>q@q",
+      "expect": {
+        "buffer": "zqxqx\n\n-",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "q": {
+            "text": "aq\u000ex\u001b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_two_chars",
+      "buffer": "a bb\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><Esc>",
+      "expect": {
+        "buffer": "a bb\nbb\n-",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_after_blank",
+      "buffer": "ab ac\nzz ",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "a<C-n><Esc>",
+      "expect": {
+        "buffer": "ab ac\nzz ab",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_word_at_caret",
+      "buffer": "ab ac\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><Esc>",
+      "expect": {
+        "buffer": "ab ac\nabcabc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_wraps",
+      "buffer": "foo bar\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo bar\n\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_no_prefix",
+      "buffer": "foo bar\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-p><Esc>",
+      "expect": {
+        "buffer": "foo bar\nbar\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_skips_own_word",
+      "buffer": "ab ac\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "a<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "ab ac\nacbc",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_skips_own_word_wraps",
+      "buffer": "ab ac\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "a<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "ab ac\nabc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_skips_own_word",
+      "buffer": "ab ac\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "a<C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "ab ac\nabbc",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_text_after_caret",
+      "buffer": "x\naab",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "a<C-n><Esc>",
+      "expect": {
+        "buffer": "x\nabab",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_mid_word",
+      "buffer": "fo fox foo\nfoz",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "i<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "fo fox foo\nfoooz",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_keyword_equal_word",
+      "buffer": "fo fox foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ifo<C-n><Esc>",
+      "expect": {
+        "buffer": "fo fox foo\nfo\n-",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_keyword_equal_word_cycles",
+      "buffer": "fo fox foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ifo<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "fo fox foo\nfox\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_own_word_only",
+      "buffer": "zz zza\nab ac",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "a<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "zza zza\nab ac",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_at_text_start",
+      "buffer": "zz\nfoo fab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "if<C-n><Esc>",
+      "expect": {
+        "buffer": "foozz\nfoo fab",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_one_row",
+      "buffer": "fa fb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A f<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "fa fb fb",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_after_punctuation",
+      "buffer": "x.foo fob\nab.f",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "a<C-n><Esc>",
+      "expect": {
+        "buffer": "x.foo fob\nab.foo",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_e_restores",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-e><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nf\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_e_then_type",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-e>x<Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfx\n-",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_y_accepts",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-y><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfood\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_y_then_type",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-y>x<Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoox\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "typing_accepts",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n>x<Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoox\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "typing_then_ctrl_n_again",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><Space>f<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo food\n-",
+        "cursor": [
+          1,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "backspace_accepts",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><BS><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfo\n-",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "enter_accepts",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><CR>x<Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoo\nx\n-",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_dedupes",
+      "buffer": "foo food foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food foo\nf\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_dedupes_second",
+      "buffer": "foo food foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "foo food foo\nfood\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_unicode_word",
+      "buffer": "café cafés\ncaf",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "a<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "café cafés\ncafés",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_unicode_first",
+      "buffer": "café cafés\ncaf",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "a<C-n><Esc>",
+      "expect": {
+        "buffer": "café cafés\ncafé",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_cjk_word",
+      "buffer": "日本語 日本人\n日",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "a<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "日本語 日本人\n日本人",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_dot_repeat",
+      "buffer": "foo food fool\n\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><Esc>j.",
+      "expect": {
+        "buffer": "foo food fool\nfood\nfoodx",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_dot_repeat_keyword_before",
+      "buffer": "foo food fool\nfo\nx",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "a<C-n><Esc>j.",
+      "expect": {
+        "buffer": "foo food fool\nfoo\nxo",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_count",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "3if<C-n><Esc>",
+      "expect": {
+        "buffer": "foo food fool\nfoofoofoo\n-",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_undo",
+      "buffer": "foo food fool\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><C-n><Esc>u",
+      "expect": {
+        "buffer": "foo food fool\n\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_macro",
+      "buffer": "foo food fool\nx\ny",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "qqA f<C-n><C-n><Esc>jq@q",
+      "expect": {
+        "buffer": "foo food fool\nx food\ny food",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "q": {
+            "text": "A f\u000e\u000e\u001bj",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_n_after_long_grapheme",
+      "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-n><Esc>",
+      "expect": {
+        "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_after_long_grapheme",
+      "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "if<C-p><Esc>",
+      "expect": {
+        "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\nfoo\n-",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_long_grapheme",
+      "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><Esc>",
+      "expect": {
+        "buffer": "🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́foo\n🙂́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_word_with_long_grapheme",
+      "buffer": "foo é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́x\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ie<C-n><Esc>",
+      "expect": {
+        "buffer": "foo é́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́x\né́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́́x\n-",
+        "cursor": [
+          1,
+          71
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_hidden_word",
+      "buffer": "a日本語\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><Esc>",
+      "expect": {
+        "buffer": "a日本語\na\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_hidden_word_cycles",
+      "buffer": "a日本語\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "a日本語\n\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_no_prefix_hidden_word",
+      "buffer": "a日本語\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-p><Esc>",
+      "expect": {
+        "buffer": "a日本語\na\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_alternating",
+      "buffer": "a日b本c語d\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "a日b本c語d\nc\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_alternating_wraps",
+      "buffer": "a日b本c語d\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "a日b本c語d\n\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_p_no_prefix_alternating",
+      "buffer": "a日b本c語d\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-p><C-p><Esc>",
+      "expect": {
+        "buffer": "a日b本c語d\nb\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_after_match",
+      "buffer": "ab日本 cd\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "ab日本 cd\n日本\n-",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_n_no_prefix_cjk_first",
+      "buffer": "日a本\n\n-",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-n><C-n><Esc>",
+      "expect": {
+        "buffer": "日a本\n\n-",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

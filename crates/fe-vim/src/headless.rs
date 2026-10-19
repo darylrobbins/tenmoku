@@ -84,7 +84,10 @@ impl HeadlessVim {
     /// [`VimState::line_break`], as the host's `Enter` does), `<BS>` to
     /// [`EditorModel::backspace`], `<C-t>` and `<C-d>` to
     /// [`VimState::indent_in`] and [`VimState::indent_out`], `<C-o>` to
-    /// [`VimState::one_command`], and `<Esc>` dispatches `vim.normal_mode`;
+    /// [`VimState::one_command`], `<C-n>` and `<C-p>` to
+    /// [`VimState::complete_next`] and [`VimState::complete_previous`],
+    /// `<C-e>` and `<C-y>` while completing to [`VimState::complete_cancel`]
+    /// and [`VimState::complete_accept`], and `<Esc>` dispatches `vim.normal_mode`;
     /// any other key is forwarded. In replace mode the same, but a character
     /// goes to [`VimState::replace_text`], `<BS>` to
     /// [`VimState::replace_backspace`] and `<Esc>` dispatches
@@ -178,6 +181,10 @@ impl HeadlessVim {
             VimKey::Ctrl('t') => self.state.indent_in(&mut self.model),
             VimKey::Ctrl('d') => self.state.indent_out(&mut self.model),
             VimKey::Ctrl('o') => self.state.one_command(&mut self.model),
+            VimKey::Ctrl('n') => self.state.complete_next(&mut self.model),
+            VimKey::Ctrl('p') => self.state.complete_previous(&mut self.model),
+            VimKey::Ctrl('e') if self.state.complete_cancel(&mut self.model) => {}
+            VimKey::Ctrl('y') if self.state.complete_accept(&mut self.model) => {}
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.normal_mode")
                     .expect("vim command IDs are valid")

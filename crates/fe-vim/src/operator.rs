@@ -599,6 +599,9 @@ pub(crate) fn operate(
         Target::Motion(motion) => Some(motion),
         _ => None,
     };
+    if let Some(motion) = motion {
+        crate::insert::began_line(target.state, motion);
+    }
     let mut dispatched =
         folds::with_candidates(target, motion, |target| operate_over(target, actor, args))?;
     // A search that changed nothing still set the last search and the

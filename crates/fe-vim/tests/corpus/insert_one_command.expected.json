@@ -1293,6 +1293,69 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "ctrl_o_zero_one_char_row",
+      "buffer": "a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>0X<Esc>",
+      "expect": {
+        "buffer": "Xa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_caret_one_char_row",
+      "buffer": "  a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>^X<Esc>",
+      "expect": {
+        "buffer": "  Xa",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_delete_to_zero_one_char_row",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>d0X<Esc>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

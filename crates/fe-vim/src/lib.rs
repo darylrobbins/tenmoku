@@ -802,7 +802,7 @@ pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
 };
 pub use headless::{FeedError, HeadlessVim};
-pub use insert::Splits;
+pub use insert::{KeywordCompletion, Splits};
 pub use key::{KeyError, VimKey, parse_keys};
 pub use marks::Mark;
 pub use reducer::{Pending, PendingKind, Step, step};

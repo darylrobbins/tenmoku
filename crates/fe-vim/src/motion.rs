@@ -35,6 +35,7 @@ pub(crate) fn move_command(
 
 fn move_carets(target: &mut VimTarget<'_>, args: MoveArgs) -> Dispatched<TransactionId> {
     let mut args = args;
+    crate::insert::began_line(target.state, args.motion);
     let keep = match cmdline::resolve(target, args.motion) {
         Ok((motion, keep)) => {
             args.motion = motion;

@@ -59,8 +59,9 @@ use block_rows::{Fate, Watch};
 
 mod keys;
 use keys::IndentKey;
+pub use keys::KeywordCompletion;
 pub(crate) use keys::retype as retype_keys;
-pub(crate) use keys::{OneCommand, finish_one_command};
+pub(crate) use keys::{Completion, OneCommand, began_line, finish_one_command};
 
 #[cfg(test)]
 mod indent_tests;
@@ -2086,6 +2087,8 @@ fn end(
     let esc = matches!(how, Ending::Esc);
     state.mode = Mode::Normal;
     state.goals = None;
+    // As any key but its own ends a keyword completion, so does this.
+    state.completion = None;
     // A replace session's copies and `.` type its keys again.
     let replace = state.replace.take();
     let mut session = state.session.take()?;

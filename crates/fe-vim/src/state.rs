@@ -17,7 +17,7 @@ use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
     cmdline::{self, CommandLine},
     history::Carets,
-    insert::{Closing, OneCommand, Session},
+    insert::{Closing, Completion, OneCommand, Session},
     jump,
     macros::Macros,
     marks::Marks,
@@ -87,6 +87,9 @@ pub struct VimState {
     /// Set while `<C-o>` left a session for one normal-mode command: what
     /// resumes once it's done ([`VimState::one_command`]).
     pub(crate) one_command: Option<OneCommand>,
+    /// Set while `<C-n>` or `<C-p>` completes a keyword in insert mode
+    /// ([`VimState::completion`]).
+    pub(crate) completion: Option<Completion>,
     /// A session this state left while a clone was ending it: the outcome
     /// is adopted once it's published (see `insert::adopt_closing`).
     pub(crate) closing: Option<Closing>,
@@ -538,9 +541,12 @@ impl VimState {
     /// key, before running what the key does: it's how a recording gets
     /// them, and how a replay's keys are counted.
     ///
-    /// A map's keys aren't recorded, nor counted as a replay's.
+    /// A map's keys aren't recorded, nor counted as a replay's. A key
+    /// other than `<C-n>`, `<C-p>`, `<C-e>` and `<C-y>` ends a keyword
+    /// completion ([`VimState::completion`]).
     pub fn record_key(&mut self, key: VimKey) {
         self.failed = false;
+        self.completion_key(key);
         let origin = self
             .remap
             .next_tag()

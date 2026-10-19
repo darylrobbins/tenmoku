@@ -11,6 +11,9 @@
 //!
 //! `<C-o>` runs one normal-mode command and comes back
 //! ([`VimState::one_command`], `:help i_CTRL-O`).
+//!
+//! `<C-n>` and `<C-p>` complete the keyword before the caret from the
+//! buffer's words ([`VimState::complete_next`], `:help i_CTRL-N`).
 
 use fe_buffer::Origin;
 use fe_editor::{EditorModel, IndentStyle, commands::EditorHost};
@@ -25,6 +28,11 @@ use crate::{
 #[cfg(test)]
 #[path = "keys_tests.rs"]
 mod tests;
+
+#[path = "complete.rs"]
+mod complete;
+pub(crate) use complete::Completion;
+pub use complete::KeywordCompletion;
 
 /// Where `shift` notes a key in the session, if it does.
 enum Note {
@@ -940,6 +948,17 @@ impl VimState {
             && !self.remap.waiting()
             && !self.remap.resolved()
             && !self.macros.held()
+    }
+}
+
+/// `0` or `^` (`motion`) after `<C-o>`, moving or under an operator: once
+/// the command is done, the carets no longer go back past their rows' ends
+/// for having been there, as nvim's `nv_beginline` clears `ins_at_eol`.
+pub(crate) fn began_line(state: &mut VimState, motion: crate::Motion) {
+    if let (Some(one), crate::Motion::LineStart | crate::Motion::FirstNonBlank) =
+        (&mut state.one_command, motion)
+    {
+        one.eol_rows.clear();
     }
 }
 
