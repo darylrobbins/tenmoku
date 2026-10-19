@@ -1477,6 +1477,14 @@ impl Workbench {
         &self.dock
     }
 
+    /// What the Git Log lists, as each commit's summary, and what it shows
+    /// in place of the list, for tests of the restored first listing.
+    #[doc(hidden)]
+    pub fn git_log_listing(&self, cx: &App) -> Option<(Vec<String>, Option<&'static str>)> {
+        let panel = self.dock.read(cx).git_log()?;
+        Some(panel.read(cx).listing())
+    }
+
     /// The active pane, which files open in.
     pub fn pane(&self) -> &Entity<Pane> {
         &self.active
@@ -1570,6 +1578,10 @@ impl Workbench {
             let active = self.workspace.read(cx).active_pane().clone();
             self.activate(active, window, cx);
             self.adopt_orphans(cx);
+            // A Git Log drawn meanwhile waited for the active file.
+            if let Some(panel) = self.dock.read(cx).git_log().cloned() {
+                panel.update(cx, |_, cx| cx.notify());
+            }
             let panes = self.pane_group(cx).panes();
             if self.root.is_none() && panes.iter().all(|pane| pane.read(cx).tabs().is_empty()) {
                 let welcome = EditorModel::new(Buffer::new(WELCOME), None);

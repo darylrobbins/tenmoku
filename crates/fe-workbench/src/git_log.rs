@@ -406,6 +406,12 @@ impl Workbench {
     /// in `panel`, if nothing has listed it since it was asked to. Without
     /// a command, so outside a repository it says so without a toast.
     fn list_first_git_log(&mut self, panel: &Entity<GitLogPanel>, cx: &mut Context<Self>) {
+        if self.restoring {
+            // The restored active file isn't in yet: ask again, once the
+            // workbench has taken up the restored layout.
+            panel.update(cx, |panel, _| panel.first_asked = false);
+            return;
+        }
         let path = (self.active_editor(cx))
             .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
         let at = path.or_else(|| self.root.clone());
@@ -888,6 +894,14 @@ impl GitLogPanel {
         window.defer(cx, move |_, cx| {
             workbench.update(cx, |workbench, cx| workbench.list_first_git_log(&panel, cx));
         });
+    }
+
+    /// Each listed commit's summary, and what shows in place of the list.
+    pub(crate) fn listing(&self) -> (Vec<String>, Option<&'static str>) {
+        let summaries = (self.commits.iter())
+            .map(|entry| commit_rows::texts(&entry.commit, self.now)[0].clone())
+            .collect();
+        (summaries, self.message())
     }
 
     /// What shows in place of the list, if anything.
