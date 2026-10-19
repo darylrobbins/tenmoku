@@ -235,6 +235,8 @@ fn refuses_edits() {
         "editor.add_cursor_below",
         "editor.select_next_occurrence",
         "editor.select_all_occurrences",
+        "editor.add_caret_at_next_occurrence",
+        "editor.add_carets_at_all_occurrences",
         "editor.split_selection_into_lines",
         "editor.single_selection",
         "editor.expand_selection",

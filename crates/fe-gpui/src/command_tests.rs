@@ -57,9 +57,9 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     let keymap = default_keymap();
     let bindings = keymap.bindings();
     // 75 for the editor and the app, 149 for fe-workbench (32 of them vim's
-    // `<C-w>` keys, 40 the day-one features'), 24 for vim, 5 for the completion menu, 2 for the ghost
-    // text.
-    assert_eq!(bindings.len(), 275);
+    // `<C-w>` keys, 40 the day-one features'), 24 for vim, 5 for vim's
+    // normal-mode carets, 5 for the completion menu, 2 for the ghost text.
+    assert_eq!(bindings.len(), 280);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);

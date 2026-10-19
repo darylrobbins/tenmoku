@@ -16,6 +16,10 @@
 //!    `Forward` lets it go on, to type nothing: no input handler is
 //!    registered outside insert mode.
 //!
+//! In normal mode with nothing pending, `escape` also keeps only the primary
+//! caret, as with vim off: the keymap adds carets there (`gb`), and vim's
+//! commands act at each.
+//!
 //! In insert mode the reducer isn't called: an unmatched keystroke goes on
 //! as text, and the editor's keys work as with vim off, but for `escape`
 //! and `ctrl-[`, bound to `vim.normal_mode`. Text typed or composed by an
@@ -606,6 +610,14 @@ pub(crate) fn vim_key(keystroke: &gpui::Keystroke) -> Option<VimKey> {
     })
 }
 
+/// Whether `key` is normal mode's `<Esc>` with nothing pending, which goes
+/// back to one caret: the reducer only cancels it.
+fn single_caret_key(state: &VimState, key: VimKey) -> bool {
+    key == VimKey::Esc
+        && matches!(state.mode(), fe_vim::Mode::Normal)
+        && state.pending().kind().is_none()
+}
+
 fn named(key: &str) -> Option<VimKey> {
     Some(match key {
         "escape" => VimKey::Esc,
@@ -898,14 +910,17 @@ impl EditorView {
                 cx.notify();
                 true
             }
-            Some(key) => match state.feed(key) {
-                Step::Wait(_) | Step::Cancel => {
+            Some(key) => match (single_caret_key(state, key), state.feed(key)) {
+                (single, Step::Wait(_) | Step::Cancel) => {
+                    if single {
+                        self.keep_primary_caret(cx);
+                    }
                     // The key context changes.
                     cx.notify();
                     true
                 }
-                Step::Forward => false,
-                Step::Commit(invocation) => {
+                (_, Step::Forward) => false,
+                (_, Step::Commit(invocation)) => {
                     // The stack the key came in, stamped as the reducer left
                     // the state: nothing pending.
                     let stack = crate::keymap::context_stack(&window.context_stack());
@@ -1198,10 +1213,15 @@ impl EditorView {
             // The arrows too, so a map's are matched against the maps: with
             // nothing pending the reducer reads them as the keymap's
             // `vim.move`s do.
-            _ => match state.feed(key) {
-                Step::Wait(_) | Step::Cancel => self.vim.as_ref().is_some_and(|s| !s.failed()),
-                Step::Forward => false,
-                Step::Commit(invocation) => {
+            _ => match (single_caret_key(state, key), state.feed(key)) {
+                (single, Step::Wait(_) | Step::Cancel) => {
+                    if single {
+                        self.keep_primary_caret(cx);
+                    }
+                    self.vim.as_ref().is_some_and(|s| !s.failed())
+                }
+                (_, Step::Forward) => false,
+                (_, Step::Commit(invocation)) => {
                     let mapped = state.expanding();
                     let stack = fe_editor::commands::context();
                     let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
@@ -1215,6 +1235,17 @@ impl EditorView {
                     ok && self.vim.as_ref().is_some_and(|s| !s.failed())
                 }
             },
+        }
+    }
+
+    /// Keeps only the primary caret, if there are more, as `escape` does
+    /// with vim off (`editor.single_selection`).
+    fn keep_primary_caret(&mut self, cx: &mut Context<Self>) {
+        if self.model.selections().len() > 1 {
+            let single = Invocation::of("editor.single_selection")
+                .expect("a valid command ID")
+                .source(Source::Keyboard);
+            self.run_command(single, None, cx);
         }
     }
 

@@ -164,8 +164,9 @@ command = "editor.select_all"
 context = "editor"
 
 # Multi-cursor, as VS Code binds it, with vim off: with vim on, its keys
-# (escape, ctrl-d and the rest) stay vim's in every mode. Completion's
-# escape, later, wins while its menu shows.
+# (escape, ctrl-d and the rest) stay vim's in every mode, but for the ones
+# that add carets in normal mode, in vim's layer. Completion's escape, later,
+# wins while its menu shows.
 
 [[bindings]]
 keys = { macos = "cmd-alt-up", default = "alt-shift-up" }
@@ -1704,3 +1705,36 @@ context = "editor && vim.mode == normal && !vim.pending"
 keys = "g r a"
 command = "lsp.code_actions"
 context = "editor && vim.visual"
+
+# Carets in vim's normal mode, which acts at each of them, and whose
+# `escape` with nothing pending goes back to one: VSCodeVim's `gb` adds one
+# at the word's next occurrence everywhere. On macOS, where no cmd key
+# reaches vim, VS Code's cmd keys add them too; elsewhere `alt-shift-up` and
+# `down`, which vim would read as the arrows.
+
+[[bindings]]
+keys = "g b"
+command = "editor.add_caret_at_next_occurrence"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = "cmd-d"
+command = "editor.add_caret_at_next_occurrence"
+context = "editor && vim.mode == normal && !vim.pending"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-shift-l"
+command = "editor.add_carets_at_all_occurrences"
+context = "editor && vim.mode == normal && !vim.pending"
+platform = "macos"
+
+[[bindings]]
+keys = { macos = "cmd-alt-up", default = "alt-shift-up" }
+command = "editor.add_cursor_above"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = { macos = "cmd-alt-down", default = "alt-shift-down" }
+command = "editor.add_cursor_below"
+context = "editor && vim.mode == normal && !vim.pending"

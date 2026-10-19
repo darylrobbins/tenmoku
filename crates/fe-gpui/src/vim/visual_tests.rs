@@ -547,3 +547,6 @@ fn a_word_drag_onto_an_empty_row_ends_on_it(cx: &mut TestAppContext) {
     assert_eq!(vim_cursor(&view, cx), Some(4));
     assert_eq!(selection(&view, cx), 0..5);
 }
+
+#[path = "multi_caret_tests.rs"]
+mod multi_caret_tests;

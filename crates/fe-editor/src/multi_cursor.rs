@@ -1,6 +1,7 @@
 //! More than one selection: adding carets above and below, selecting the
-//! next or every occurrence of the primary selection, splitting selections
-//! into lines and going back to one. Plus what the mouse needs: toggling a
+//! next or every occurrence of the primary selection, adding carets at the
+//! next or every occurrence of the word at the primary caret, splitting
+//! selections into lines and going back to one. Plus what the mouse needs: toggling a
 //! caret and a box selection.
 
 use std::ops::Range;
@@ -13,7 +14,8 @@ use crate::{
     commands::{Editor, add},
 };
 
-/// The most selections [`EditorModel::select_all_occurrences`] makes.
+/// The most selections [`EditorModel::select_all_occurrences`] and
+/// [`EditorModel::add_carets_at_all_occurrences`] make.
 pub const MAX_OCCURRENCES: usize = 10_000;
 
 /// A command's name and title, and the model method it runs.
@@ -21,7 +23,7 @@ type Command = (&'static str, &'static str, fn(&mut EditorModel));
 
 /// Registers the multi-cursor commands. None edits the buffer.
 pub(crate) fn register(registry: &mut Registry<Editor>) {
-    let commands: [Command; 6] = [
+    let commands: [Command; 8] = [
         (
             "add_cursor_above",
             "Add Cursor Above",
@@ -41,6 +43,16 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
             "select_all_occurrences",
             "Select All Occurrences",
             EditorModel::select_all_occurrences,
+        ),
+        (
+            "add_caret_at_next_occurrence",
+            "Add Caret at Next Occurrence",
+            EditorModel::add_caret_at_next_occurrence,
+        ),
+        (
+            "add_carets_at_all_occurrences",
+            "Add Carets at All Occurrences",
+            EditorModel::add_carets_at_all_occurrences,
         ),
         (
             "split_selection_into_lines",
@@ -239,6 +251,106 @@ impl EditorModel {
         }
         let whole_word = self.word_range_at(primary.range.start) == primary.range;
         Some((self.text().slice_to_string(primary.range), whole_word))
+    }
+
+    /// Adds a caret at the next whole-word, case-sensitive occurrence of the
+    /// word at the primary caret after the bottommost caret, wrapping once,
+    /// as far into it as the primary caret is into its word. An occurrence
+    /// holding a caret is skipped. Every selection becomes a caret at its
+    /// head, even with no caret to add (on whitespace, none is).
+    pub fn add_caret_at_next_occurrence(&mut self) {
+        self.sync_display();
+        let mut carets = self.heads();
+        let Some((word, into)) = self.caret_word() else {
+            self.set_selections(carets.into_iter().map(caret));
+            return;
+        };
+        let from = *carets.last().expect("one selection");
+        let (mut first, mut next) = (None, None);
+        self.each_occurrence(word, into, &carets, |start| {
+            first.get_or_insert(start);
+            if start < from {
+                return Step::Take;
+            }
+            next = Some(start);
+            Step::Stop
+        });
+        if let Some(start) = next.or(first) {
+            carets.push(start + into);
+        }
+        self.set_selections(carets.into_iter().map(caret));
+    }
+
+    /// Adds a caret at every whole-word, case-sensitive occurrence of the
+    /// word at the primary caret not holding one, as far into it as the
+    /// primary caret is into its word, up to [`MAX_OCCURRENCES`] carets.
+    /// Every selection becomes a caret at its head, even with no caret to
+    /// add (on whitespace, none is).
+    pub fn add_carets_at_all_occurrences(&mut self) {
+        self.sync_display();
+        let held = self.heads();
+        let mut carets = held.clone();
+        let Some((word, into)) = self.caret_word() else {
+            self.set_selections(carets.into_iter().map(caret));
+            return;
+        };
+        self.each_occurrence(word, into, &held, |start| {
+            if carets.len() >= MAX_OCCURRENCES {
+                log::warn!("add carets at all occurrences: stopped at {MAX_OCCURRENCES} carets");
+                return Step::Stop;
+            }
+            carets.push(start + into);
+            Step::Take
+        });
+        self.set_selections(carets.into_iter().map(caret));
+    }
+
+    /// The word at the primary caret (as [`EditorModel::seed_carets`] takes
+    /// it), and how far the caret is into it; `None` on whitespace, and at
+    /// the end of the text after it.
+    fn caret_word(&self) -> Option<(Range<usize>, usize)> {
+        let head = self.primary_selection().head();
+        let blank = |offset: usize| {
+            self.text()
+                .char_at(offset)
+                .is_some_and(|ch| CharClass::of(ch) == CharClass::Whitespace)
+        };
+        let word = self.word_range_at(head);
+        (!blank(head) && !word.is_empty() && !blank(word.start))
+            .then(|| (word.clone(), head - word.start))
+    }
+
+    /// Each selection's head, in order.
+    fn heads(&self) -> Vec<usize> {
+        self.selections()
+            .iter()
+            .map(ResolvedSelection::head)
+            .collect()
+    }
+
+    /// Calls `found` with the start of each whole-word occurrence of the
+    /// text at `word`, in order, but those holding one of `carets` (sorted):
+    /// on one of its chars, or `into` it, where its caret would go.
+    fn each_occurrence(
+        &self,
+        word: Range<usize>,
+        into: usize,
+        carets: &[usize],
+        mut found: impl FnMut(usize) -> Step,
+    ) {
+        let text = self.text();
+        let n = word.len();
+        let needle = text.slice_to_string(word);
+        each_match(text, needle.as_bytes(), 0..text.len(), |start| {
+            let ix = carets.partition_point(|&caret| caret < start);
+            let held = carets
+                .get(ix)
+                .is_some_and(|&caret| caret < start + n || caret == start + into);
+            if held || !is_whole_word(text, start..start + n) {
+                return Step::Take;
+            }
+            found(start)
+        });
     }
 
     /// Splits each selection over more than one row into one per row,

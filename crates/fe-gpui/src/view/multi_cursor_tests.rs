@@ -233,7 +233,11 @@ fn vim_keeps_its_keys(cx: &mut TestAppContext) {
             view.update(cx, |view, _| view.model_mut().set_cursor(1));
             keys(visual, cx);
             keys(key, cx);
-            assert_eq!(selections(&view, cx).len(), 1, "{key} in {label} mode");
+            // In normal mode the cmd keys add carets, in vim's layer
+            // (`vim::visual_tests::multi_caret_tests`); escape drops them.
+            if !(visual.is_empty() && key.starts_with("cmd-")) {
+                assert_eq!(selections(&view, cx).len(), 1, "{key} in {label} mode");
+            }
             keys("escape", cx);
             assert_eq!(selections(&view, cx).len(), 1, "escape in {label} mode");
             assert_eq!(mode(cx), Some("normal"), "{key} in {label} mode");

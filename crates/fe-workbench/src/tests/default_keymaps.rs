@@ -55,8 +55,14 @@ fn every_default_binding_names_a_known_command() {
 fn linux_keymap_binds_the_macos_commands_with_ctrl() {
     let macos = keymap(DEFAULT_MACOS);
     let linux = keymap(DEFAULT_LINUX);
-    // macOS's own, with no Linux convention to follow.
-    let macos_only = ["app.hide", "app.hide_others", "window.minimize"];
+    // macOS's own, with no Linux convention to follow; and vim normal
+    // mode's `cmd-shift-l`, whose `ctrl-shift-l` is vim's off macOS.
+    let macos_only = [
+        "app.hide",
+        "app.hide_others",
+        "window.minimize",
+        "editor.add_carets_at_all_occurrences",
+    ];
     let mut expected: BTreeSet<_> = commands(&macos)
         .into_iter()
         .filter(|command| !macos_only.contains(&command.as_str()))

@@ -99,6 +99,8 @@ fn every_editor_command_is_registered() {
             "add_cursor_below",
             "select_next_occurrence",
             "select_all_occurrences",
+            "add_caret_at_next_occurrence",
+            "add_carets_at_all_occurrences",
             "split_selection_into_lines",
             "single_selection",
         ]
