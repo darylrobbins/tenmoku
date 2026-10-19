@@ -1550,6 +1550,30 @@ impl Workbench {
                 }
                 lsp.messages.insert(server, message);
             }
+            LspEvent::ShowMessageRequest {
+                name,
+                typ,
+                message,
+                actions,
+                reply,
+                ..
+            } => {
+                log::info!("{name} asks ({typ:?}): {message}");
+                let toast = match format!("{typ:?}").as_str() {
+                    "Error" => Toast::error(name),
+                    "Warning" => Toast::warning(name),
+                    _ => Toast::info(name),
+                };
+                // Dropped unanswered (no window, closed, dismissed), the
+                // reply answers none.
+                let toast = toast
+                    .detail(message)
+                    .choices(actions, move |choice| match choice {
+                        Some(index) => reply.choose(index),
+                        None => reply.dismiss(),
+                    });
+                toast::show(cx, toast);
+            }
             LspEvent::Diagnostics {
                 buffer,
                 session,

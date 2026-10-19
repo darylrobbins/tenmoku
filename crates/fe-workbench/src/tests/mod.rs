@@ -15,6 +15,7 @@ mod lsp_aliases_reroute;
 mod lsp_completion;
 mod lsp_diagnostics;
 mod lsp_hover;
+mod lsp_message_request;
 mod lsp_nav;
 mod lsp_quit;
 mod lsp_resolve_retry;

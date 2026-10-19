@@ -13,6 +13,12 @@
 //! Clicking an action runs its command where focus is, as the command
 //! palette would, and dismisses the toast.
 //!
+//! A toast can instead ask a question: [`Choices`], a button per title and
+//! a reply that gets the index clicked, or none if the toast goes any other
+//! way (closed, dismissed, dropped from a full queue, or its window
+//! closing). It stays until then, whatever its level, and never merges
+//! with another.
+//!
 //! Showing, hovering, clicking or dismissing a toast leaves focus where it
 //! is, and with it the editor's vim mode: a toast has no focus handle, and
 //! occludes what's under it, so a click on it focuses nothing beneath.
@@ -23,7 +29,9 @@
 //! `toast.dismiss_all` is a typed command on the workbench.
 
 use std::{
+    cell::RefCell,
     collections::VecDeque,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -56,6 +64,62 @@ pub(crate) enum Level {
     Error,
 }
 
+/// The question a toast asks: a button per title, and who to tell which
+/// was chosen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Choices {
+    titles: Vec<String>,
+    reply: Rc<Reply>,
+}
+
+impl Choices {
+    #[cfg(test)]
+    pub(crate) fn titles(&self) -> &[String] {
+        &self.titles
+    }
+
+    /// Answers `choice` (an index into the titles, or none), unless it was
+    /// answered already.
+    fn answer(&self, choice: Option<usize>) {
+        self.reply.answer(choice);
+    }
+}
+
+/// A reply to a question, which is answered once: with the choice, or none
+/// when the last handle to it is dropped unanswered.
+struct Reply(RefCell<Option<Answer>>);
+
+type Answer = Box<dyn FnOnce(Option<usize>)>;
+
+impl Reply {
+    fn answer(&self, choice: Option<usize>) {
+        let reply = self.0.borrow_mut().take();
+        if let Some(reply) = reply {
+            reply(choice);
+        }
+    }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        self.answer(None);
+    }
+}
+
+impl PartialEq for Reply {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Eq for Reply {}
+
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Reply")
+    }
+}
+
 /// A notification to show: see [`show`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Toast {
@@ -65,6 +129,8 @@ pub(crate) struct Toast {
     pub detail: Option<String>,
     /// A button's label, and the command it runs.
     pub action: Option<(String, CommandId)>,
+    /// A question, with a button per answer.
+    pub choices: Option<Choices>,
 }
 
 impl Toast {
@@ -74,6 +140,7 @@ impl Toast {
             message: message.into(),
             detail: None,
             action: None,
+            choices: None,
         }
     }
 
@@ -97,6 +164,21 @@ impl Toast {
     #[cfg_attr(not(test), allow(dead_code, reason = "no caller outside tests yet"))]
     pub(crate) fn action(mut self, label: impl Into<String>, command: CommandId) -> Self {
         self.action = Some((label.into(), command));
+        self
+    }
+
+    /// Asks a question: a button per title, in the place of the action's.
+    /// `reply` gets the index of the one clicked, or none if the toast goes
+    /// without one. The toast stays until then.
+    pub(crate) fn choices(
+        mut self,
+        titles: Vec<String>,
+        reply: impl FnOnce(Option<usize>) + 'static,
+    ) -> Self {
+        self.choices = Some(Choices {
+            titles,
+            reply: Rc::new(Reply(RefCell::new(Some(Box::new(reply))))),
+        });
         self
     }
 }
@@ -138,6 +220,7 @@ impl Entry {
     /// pointer.
     fn start(&mut self, now: Instant) {
         self.timer = match (self.toast.level, self.timer) {
+            _ if self.toast.choices.is_some() => Timer::Stays,
             (Level::Error, _) => Timer::Stays,
             (_, Timer::Paused(_)) => Timer::Paused(LIFETIME),
             _ => Timer::Runs(now + LIFETIME),
@@ -160,12 +243,14 @@ impl ToastQueue {
     /// already do. One identical to a toast shown or waiting counts that one
     /// up instead, a shown one's timer starting again.
     pub(crate) fn push(&mut self, toast: Toast, now: Instant) -> ToastId {
-        if let Some(entry) = self.shown.iter_mut().find(|entry| entry.toast == toast) {
+        let merges = toast.choices.is_none();
+        if let Some(entry) = (self.shown.iter_mut()).find(|entry| merges && entry.toast == toast) {
             entry.count += 1;
             entry.start(now);
             return entry.id;
         }
-        if let Some(entry) = self.waiting.iter_mut().find(|entry| entry.toast == toast) {
+        if let Some(entry) = (self.waiting.iter_mut()).find(|entry| merges && entry.toast == toast)
+        {
             entry.count += 1;
             return entry.id;
         }
@@ -406,6 +491,36 @@ impl ToastLayer {
                 .text_color(colors.text.muted)
                 .child(detail)
         });
+        let choices = entry.toast.choices.clone().map(|choices| {
+            let buttons = choices
+                .titles
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(i, title)| {
+                    let (layer, choices) = (layer.clone(), choices.clone());
+                    div()
+                        .debug_selector(move || format!("toast-choice-{ix}-{i}"))
+                        .child(
+                            Button::new(
+                                SharedString::from(format!("toast-choice-{ix}-{i}")),
+                                title,
+                            )
+                            .small()
+                            .on_click(move |_, _, cx| {
+                                choices.answer(Some(i));
+                                layer.update(cx, |layer, cx| layer.dismiss(id, cx)).ok();
+                            }),
+                        )
+                });
+            div()
+                .self_end()
+                .flex()
+                .flex_wrap()
+                .justify_end()
+                .gap_1()
+                .children(buttons)
+        });
         let action = entry.toast.action.clone().map(|(label, command)| {
             let layer = layer.clone();
             div()
@@ -462,6 +577,7 @@ impl ToastLayer {
             )
             .children(detail)
             .children(action)
+            .children(choices)
     }
 }
 
