@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use fe_buffer::{BufferId, Version};
 use futures::channel::oneshot;
 
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, FileDiagnostic};
+use crate::encoding::PositionEncoding;
 use crate::identity::{IncarnationId, SessionId};
 use crate::workspace_edit::{ApplyReply, FileEdits};
 
@@ -69,6 +70,20 @@ pub enum LspEvent {
         version: Version,
         server: ServerId,
         items: Vec<Diagnostic>,
+    },
+    /// `server`'s diagnostics for a file it doesn't have open, replacing
+    /// those it sent for `uri` before (none clears them). Their ranges are
+    /// as sent, in `encoding`: decode them against the file's text with
+    /// [`decode_file_diagnostics`](crate::decode_file_diagnostics). `path`
+    /// is set for a `file:` URI only. The host keeps them until the next for
+    /// that URI, or until the server's `Status` becomes `Restarting` or
+    /// `Stopped` (the session that sent them has ended).
+    FileDiagnostics {
+        server: ServerId,
+        uri: lsp_types::Url,
+        path: Option<std::path::PathBuf>,
+        encoding: PositionEncoding,
+        items: Vec<FileDiagnostic>,
     },
     /// The incarnation `(session, incarnation)` of `buffer` on `server` has
     /// ended (its `didClose`, or its session's end), and was retired from

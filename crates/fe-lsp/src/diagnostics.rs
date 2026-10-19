@@ -17,8 +17,14 @@
 //! - one older than the newest decoded (out of order);
 //! - one whose version isn't in the ring: older than the ring, of an
 //!   earlier incarnation (whose versions are all lower, §4.1), or never sent;
-//! - one for a URI with no current incarnation, or with two (two buffers
-//!   for one file, whose texts may differ).
+//! - one for a URI whose document is still opening, or with two (two
+//!   buffers for one file, whose texts may differ).
+//!
+//! A URI that matches no document of the session is a file the server
+//! reports on without the client having it open. There's no text to decode
+//! against on the server's thread, so the publication leaves as it came
+//! ([`LspEvent::FileDiagnostics`](crate::LspEvent::FileDiagnostics)), its
+//! ranges for [`decode_file_diagnostics`] to decode against the file's text.
 //!
 //! Diagnostics already shown stay, anchored, until a decoded publication
 //! replaces them.
@@ -70,6 +76,67 @@ pub struct Related {
     /// when the location is in that document.
     pub range: Option<Range<usize>>,
     pub message: String,
+}
+
+/// A diagnostic for a file the client doesn't have open: its range as the
+/// server sent it, which [`decode_file_diagnostics`] turns into bytes of
+/// the file's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct FileDiagnostic {
+    pub range: lsp_types::Range,
+    /// `None` when the server left it out; the client decides then.
+    pub severity: Option<Severity>,
+    pub message: String,
+    /// What produced it, as `rustc` or `clippy`.
+    pub source: Option<String>,
+    /// A number is given as its decimal digits.
+    pub code: Option<String>,
+    pub tags: Vec<DiagnosticTag>,
+}
+
+impl FileDiagnostic {
+    pub(crate) fn new(diagnostic: lsp_types::Diagnostic) -> Self {
+        Self {
+            range: diagnostic.range,
+            severity: diagnostic.severity.and_then(severity),
+            message: diagnostic.message,
+            source: diagnostic.source,
+            code: diagnostic.code.map(code),
+            tags: (diagnostic.tags.into_iter().flatten())
+                .filter_map(tag)
+                .collect(),
+        }
+    }
+}
+
+/// `items` with their ranges decoded against `text`, the file's current
+/// text, in the encoding the event named, ordered as `decode` orders them.
+pub fn decode_file_diagnostics(
+    text: &Text,
+    items: &[FileDiagnostic],
+    encoding: PositionEncoding,
+) -> Vec<Diagnostic> {
+    items
+        .iter()
+        .map(|item| {
+            let (start, end) = byte_range(text, item.range, encoding);
+            let mut diagnostic = Diagnostic::new(start..end, item.message.clone());
+            diagnostic.severity = item.severity;
+            diagnostic.source = item.source.clone();
+            diagnostic.code = item.code.clone();
+            diagnostic.tags = item.tags.clone();
+            diagnostic
+        })
+        .collect()
+}
+
+/// `range` in bytes of `text`. A server's end before its start is read as
+/// an empty range.
+fn byte_range(text: &Text, range: lsp_types::Range, encoding: PositionEncoding) -> (usize, usize) {
+    let start = from_lsp(text, range.start, encoding);
+    let end = from_lsp(text, range.end, encoding).max(start);
+    (start, end)
 }
 
 impl Diagnostic {
@@ -158,18 +225,13 @@ pub(crate) fn decode_in(
     diagnostics
         .into_iter()
         .map(|diagnostic| {
-            let start = from_lsp(text, diagnostic.range.start, encoding);
-            // A server's end before its start is read as an empty range.
-            let end = from_lsp(text, diagnostic.range.end, encoding).max(start);
+            let (start, end) = byte_range(text, diagnostic.range, encoding);
             Diagnostic {
                 range: start..end,
                 severity: diagnostic.severity.and_then(severity),
                 message: diagnostic.message,
                 source: diagnostic.source,
-                code: diagnostic.code.map(|code| match code {
-                    NumberOrString::Number(n) => n.to_string(),
-                    NumberOrString::String(s) => s,
-                }),
+                code: diagnostic.code.map(code),
                 tags: (diagnostic.tags.into_iter().flatten())
                     .filter_map(tag)
                     .collect(),
@@ -183,8 +245,7 @@ pub(crate) fn decode_in(
                                 || (document_path.is_some() && document_path == path)
                         });
                         let range = here.then(|| {
-                            let start = from_lsp(text, location.range.start, encoding);
-                            let end = from_lsp(text, location.range.end, encoding).max(start);
+                            let (start, end) = byte_range(text, location.range, encoding);
                             start..end
                         });
                         Related {
@@ -207,6 +268,13 @@ fn file_path(uri: &Url) -> Option<PathBuf> {
         uri.to_file_path().ok()
     } else {
         None
+    }
+}
+
+fn code(code: NumberOrString) -> String {
+    match code {
+        NumberOrString::Number(n) => n.to_string(),
+        NumberOrString::String(s) => s,
     }
 }
 

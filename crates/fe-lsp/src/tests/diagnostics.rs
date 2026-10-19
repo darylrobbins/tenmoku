@@ -17,6 +17,7 @@ use crate::fake::{InitializeReply, Record, Script, initialize_result};
 use crate::{Diagnostic, DiagnosticTag, IncarnationId, LspEvent, SessionId, Severity};
 
 mod related;
+mod unopened_files;
 mod uri_scheme;
 mod uri_spelling;
 

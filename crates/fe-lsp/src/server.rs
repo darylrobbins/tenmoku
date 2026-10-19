@@ -89,7 +89,7 @@ use lsp_types::{
 };
 
 use crate::clock::Clock;
-use crate::diagnostics::Inbox;
+use crate::diagnostics::{FileDiagnostic, Inbox};
 use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SentDocument, SyncPolicy};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
@@ -1289,12 +1289,27 @@ impl Actor {
         let path = (params.uri.scheme() == "file")
             .then(|| params.uri.to_file_path().ok())
             .flatten();
+        if !(self.documents.values()).any(|document| same_file(document.uri(), &params.uri, &path))
+        {
+            // No text to decode against here: the host does, with the file.
+            let items = (params.diagnostics.into_iter())
+                .map(FileDiagnostic::new)
+                .collect();
+            self.link.report(LspEvent::FileDiagnostics {
+                server: self.status.id,
+                uri: params.uri,
+                path,
+                encoding: self.link.encoding,
+                items,
+            });
+            return;
+        }
         let mut current = (self.documents.values_mut()).filter(|document| {
             document.is_synced() && same_file(document.uri(), &params.uri, &path)
         });
         let (Some(document), None) = (current.next(), current.next()) else {
             log::debug!(
-                "{}: dropped diagnostics for {}, with no current incarnation or several",
+                "{}: dropped diagnostics for {}, still opening or several",
                 self.spec.name,
                 params.uri,
             );
