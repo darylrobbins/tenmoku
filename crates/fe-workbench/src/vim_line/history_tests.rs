@@ -1,13 +1,17 @@
 //! Up and Down in the vim line recall its history: earlier `/` and `?`
-//! lines, or earlier `:` lines, by the prefix typed.
+//! lines, or earlier `:` lines, by the prefix typed. A line cancelled
+//! without a key goes into a macro recording as its text and `<C-c>`.
 
-use fe_gpui::{EditorSettings, EditorTheme, EditorView, set_vim_enabled};
-use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use fe_gpui::{EditorSettings, EditorTheme, EditorView, set_vim_enabled, vim_registers};
+use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, px};
 
 use crate::{Launch, Workbench};
 
 #[path = "complete_tests.rs"]
 mod complete_tests;
+
+#[path = "incsearch_tests.rs"]
+mod incsearch_tests;
 
 const TEXT: &str = "one\nfoo\nbar foo\nfar";
 
@@ -20,9 +24,27 @@ fn opened(
     Entity<EditorView>,
     &mut VisualTestContext,
 ) {
+    opened_files(cx, &[("a.txt", TEXT)])
+}
+
+/// A workbench showing `files`, each name with its text, opened in order,
+/// the last focused, with vim on.
+fn opened_files<'a>(
+    cx: &'a mut TestAppContext,
+    files: &[(&str, &str)],
+) -> (
+    tempfile::TempDir,
+    Entity<Workbench>,
+    Entity<EditorView>,
+    &'a mut VisualTestContext,
+) {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("a.txt");
-    std::fs::write(&path, TEXT).unwrap();
+    let mut paths = Vec::new();
+    for (name, text) in files {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        paths.push(path);
+    }
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -39,8 +61,10 @@ fn opened(
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
     draw(cx);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
-    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
-    draw(cx);
+    for path in paths {
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
+        draw(cx);
+    }
     cx.update(|_, cx| set_vim_enabled(cx, true));
     draw(cx);
     let editor = workbench
@@ -205,4 +229,68 @@ fn an_escaped_line_stays_in_its_history(cx: &mut TestAppContext) {
     // A backspace on an empty line adds nothing.
     cx.simulate_keystrokes("/ backspace / up");
     assert_eq!(line(&workbench, cx), Some(('/', "bar".into())));
+}
+
+/// What register `name` holds.
+fn register(name: char, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| Some(vim_registers(cx)?.get(name)?.text.clone()))
+}
+
+fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
+    workbench
+        .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
+        .expect("a tab is shown")
+}
+
+#[gpui::test]
+fn a_line_cancelled_without_a_key_records_ctrl_c(cx: &mut TestAppContext) {
+    let (_dir, workbench, b, cx) = opened_files(cx, &[("a.txt", TEXT), ("b.txt", TEXT)]);
+
+    // Focus leaving the line.
+    cx.simulate_keystrokes("q a /");
+    cx.simulate_input("foo");
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    cx.update(|window, cx| window.focus(&b.focus_handle(cx), cx));
+    cx.simulate_keystrokes("x q");
+    assert_eq!(register('a', cx).as_deref(), Some("/foo\x03x"));
+
+    // A click outside it.
+    cx.simulate_keystrokes("q b /");
+    cx.simulate_input("bar");
+    let toolbar = cx.debug_bounds("pane-toolbar").expect("drawn");
+    let below = gpui::point(toolbar.left() + px(60.), toolbar.bottom() + px(30.));
+    cx.simulate_click(below, Modifiers::none());
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    cx.simulate_keystrokes("q");
+    assert_eq!(register('b', cx).as_deref(), Some("/bar\x03"));
+
+    // Switching tabs, and back to stop.
+    cx.simulate_keystrokes("q c /");
+    cx.simulate_input("far");
+    cx.simulate_keystrokes("cmd-shift-]");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_ne!(active(&workbench, cx), b);
+    cx.simulate_keystrokes("cmd-shift-]");
+    draw(cx);
+    assert_eq!(active(&workbench, cx), b);
+    cx.simulate_keystrokes("q");
+    assert_eq!(register('c', cx).as_deref(), Some("/far\x03"));
+
+    // A replay cancels the line as it was, leaving no line open.
+    cx.simulate_keystrokes("g g 0 @ a");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(
+        b.read_with(cx, |editor, _| editor.vim_mode()),
+        Some("normal")
+    );
+    assert_eq!(caret(&b, cx), (0, 0));
+    assert_eq!(
+        b.read_with(cx, |editor, _| editor.model().text().to_string()),
+        TEXT[2..]
+    );
 }

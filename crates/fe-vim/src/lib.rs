@@ -259,7 +259,9 @@
 //! E486 in [`VimState::message`]. [`VimState::highlight`] is the last
 //! search's pattern for the host to paint ('hlsearch'). In a visual mode
 //! nvim's own mappings make `*` and `#` search the selection; fe-vim's
-//! search for the keyword at the cursor.
+//! search for the keyword at the cursor. While a `/` or `?` line is typed,
+//! [`VimState::search_preview`] gives the match it would land on, for the
+//! host to highlight and reveal ('incsearch', [`VimState::set_incsearch`]).
 //!
 //! # Ex commands
 //!
@@ -601,8 +603,9 @@
 //! - A search motion's pattern is interned, so that the args holding it
 //!   stay `Copy`: each distinct pattern searched for (or deserialized) stays
 //!   in memory for the life of the process.
-//! - `;` chained searches (`/foo/;/bar`) and 'incsearch' aren't
-//!   supported: a line chaining searches fails, changing nothing.
+//! - `;` chained searches (`/foo/;/bar`) aren't supported: a line
+//!   chaining searches fails, changing nothing, and gives no
+//!   'incsearch' preview ([`VimState::search_preview`]).
 //! - The command-line histories ([`Registers::recall`]) aren't kept across
 //!   runs (nvim's ShaDa).
 //! - `'<` and `'>` keep a byte column on a row anchored at its start, as
@@ -797,6 +800,7 @@ pub use args::{
     PutArgs, RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern,
     SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
+pub use cmdline::SEARCH_PREVIEW_LIMIT;
 pub use commands::{VimCommands, VimTarget, dispatch, registry};
 pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,

@@ -11,18 +11,30 @@
 //! it. A `;` chained search (`/foo/;/bar`) or any other offset text fails
 //! with nothing changed. [`offset`] says where a search with an offset
 //! lands.
+//!
+//! While a search line is typed, [`VimState::search_preview`] gives the
+//! match submitting it would land on ('incsearch', on as in nvim), for the
+//! host to highlight and reveal; it changes nothing.
+
+use std::{ops::Range, time::Duration};
 
 use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
+use fe_editor::EditorModel;
 
 use crate::{
     CancelArgs, CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending,
     SearchOffset, Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
     ex, insert, motion, operator,
-    search::{self, Pattern},
+    search::{self, Deadline, Pattern},
     visual,
 };
+
+/// The most a [`VimState::search_preview`] spends matching, so typing never
+/// waits on a slow pattern; a host painting the preview's matches can hold
+/// them to it too.
+pub const SEARCH_PREVIEW_LIMIT: Duration = Duration::from_millis(100);
 
 /// An open command line: what it's for and carries, the mode it came from,
 /// which submitting or cancelling it returns to, and the text it starts
@@ -37,6 +49,66 @@ pub(crate) struct CommandLine {
 pub(crate) mod offset;
 
 type Handled = Result<Dispatched<TransactionId>, CommandError>;
+
+impl VimState {
+    /// Turns 'incsearch' on or off: with it off,
+    /// [`VimState::search_preview`] gives nothing. On by default, as in
+    /// nvim.
+    pub fn set_incsearch(&mut self, on: bool) {
+        self.incsearch_off = !on;
+    }
+
+    /// Whether 'incsearch' is on ([`VimState::set_incsearch`]).
+    pub fn incsearch(&self) -> bool {
+        !self.incsearch_off
+    }
+
+    /// The match submitting the open search line as `line` would land on
+    /// now, in `model`'s text: the `count`th the line's `/` or `?`, its
+    /// pattern and its offset find from the caret (in a visual mode, the
+    /// vim cursor), going round an end of the text as a search does, and
+    /// with an `e` offset taken by its last character as submit takes it.
+    /// The match itself, not where its offset moves the caret. `None` with
+    /// no search line open, for an empty pattern (which would be the last
+    /// search's) or an invalid one, an offset fe-vim doesn't take, no match,
+    /// 'incsearch' off, or past [`SEARCH_PREVIEW_LIMIT`] (or
+    /// [`search::time_limit`], if shorter), so a slow pattern gives up
+    /// rather than hold up typing. It changes nothing: the last search, its
+    /// highlight and the history are submit's.
+    pub fn search_preview(&self, model: &EditorModel, line: &str) -> Option<Range<usize>> {
+        if self.incsearch_off {
+            return None;
+        }
+        let args = self.cmdline.as_ref()?.args;
+        let forward = match args.kind {
+            CommandLineKind::SearchForward => true,
+            CommandLineKind::SearchBackward => false,
+            CommandLineKind::Ex => return None,
+        };
+        let (pattern, offset_text) = search::split_search(line, if forward { '/' } else { '?' });
+        if pattern.is_empty() {
+            return None;
+        }
+        let offset = offset::parse(offset_text.unwrap_or_default())?;
+        let parsed = Pattern::parse(&pattern).ok()?;
+        // As submit's move or operator takes the caret: past its row's last
+        // character, on it.
+        let from = self.visual_cursor(model).unwrap_or_else(|| {
+            motion::Cursor::at(model.text(), model.primary_selection().head()).offset()
+        });
+        let search = Search {
+            // Not interned: the walk reads only the direction and offset.
+            pattern: SearchPattern::new(""),
+            forward,
+            offset,
+            again: false,
+        };
+        let count = args.count.unwrap_or(1).max(1) as usize;
+        let deadline = Deadline::after(SEARCH_PREVIEW_LIMIT.min(search::time_limit()));
+        let (found, _) = offset::nth_match(model.text(), &parsed, from, search, count, &deadline)?;
+        Some(found)
+    }
+}
 
 /// `vim.command_line`: enters `cmdline` mode from normal or a visual mode.
 /// A search line keeps the mode (and its selection) to return to. An ex

@@ -162,6 +162,9 @@ pub struct VimState {
     pub(crate) normal_refused: bool,
     /// The row `U` undoes the latest changes on.
     pub(crate) line_undo: crate::feature::line_undo::LineUndo,
+    /// 'incsearch' is off ([`VimState::set_incsearch`]): on by default, as
+    /// in nvim.
+    pub(crate) incsearch_off: bool,
 }
 
 impl VimState {

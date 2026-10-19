@@ -95,6 +95,9 @@ pub struct EditorView {
     /// The serial of the last yank flashed, and the flash under way.
     pub(crate) yank_seen: u64,
     pub(crate) yank_flash: Option<crate::vim::YankFlash>,
+    /// An open vim search line's preview, and the view to put back
+    /// ([`EditorView::preview_search`]).
+    pub(crate) search_preview: Option<crate::vim::SearchPreview>,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
     /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
@@ -186,6 +189,10 @@ pub struct EditorView {
     /// The bracket outlines the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_brackets: Vec<Bounds<Pixels>>,
+    /// The previewed search match painted in the last frame
+    /// ([`EditorView::search_preview`]).
+    #[cfg(test)]
+    pub(crate) painted_current_match: Vec<Bounds<Pixels>>,
     /// The hover range's underlines the last frame painted, in window
     /// coordinates, and whether it set the pointing hand.
     #[cfg(test)]
@@ -291,6 +298,7 @@ impl EditorView {
             vim: None,
             yank_seen: 0,
             yank_flash: None,
+            search_preview: None,
             vim_generation: 0,
             vim_replaying: false,
             vim_unrecorded_logged: false,
@@ -330,6 +338,8 @@ impl EditorView {
             painted_chevrons: Vec::new(),
             #[cfg(test)]
             painted_brackets: Vec::new(),
+            #[cfg(test)]
+            painted_current_match: Vec::new(),
             #[cfg(test)]
             painted_hover: (Vec::new(), false),
             #[cfg(test)]
@@ -657,7 +667,7 @@ impl EditorView {
 
     /// The buffer row first in view: where the last frame began, or a vim
     /// scroll since.
-    fn top_buffer_row(&self) -> Option<u32> {
+    pub(crate) fn top_buffer_row(&self) -> Option<u32> {
         self.scrolled_top.or_else(|| {
             let frame = &self.layout.as_ref()?.frame;
             Some(self.model.display().row(frame.first_row).buffer_row)
@@ -667,7 +677,7 @@ impl EditorView {
     /// The display row first in view: where a vim scroll put it since the
     /// last frame, or where that frame began, partway down a wrapped row as
     /// it may be.
-    fn top_display_row(&self) -> Option<u32> {
+    pub(crate) fn top_display_row(&self) -> Option<u32> {
         let frame = &self.layout.as_ref()?.frame;
         Some(self.scrolled_display_top.unwrap_or(frame.first_row))
     }

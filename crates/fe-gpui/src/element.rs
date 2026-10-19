@@ -89,6 +89,9 @@ pub(crate) struct FrameLayout {
     annotation_hitbox: Option<Hitbox>,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
+    /// The previewed search match to paint over them
+    /// ([`current_match_rects`]).
+    current_match: Vec<Rect>,
     /// The pattern ([`fe_vim::search::Pattern::regex_str`]) and text version
     /// of a frame whose highlighting ran out of time, until either changes.
     highlight_ran_out: Option<(String, fe_buffer::Version)>,
@@ -288,6 +291,12 @@ impl FrameLayout {
         let line_x = at.x - self.frame.line_origin(row).x;
         let index = row.line.index_for_x(line_x);
         (line_x >= 0. && (shown.start..=shown.end).contains(&index)).then(|| index - shown.start)
+    }
+
+    /// Whether the frame's search highlighting ran out of time.
+    #[cfg(test)]
+    pub(crate) fn highlight_ran_out(&self) -> bool {
+        self.highlight_ran_out.is_some()
     }
 
     pub(crate) fn bounds(&self, rect: Rect) -> Bounds<Pixels> {
@@ -717,7 +726,10 @@ impl Element for EditorElement {
             display: model.display(),
             tab_size,
             selections: &selections,
-            primary_head: model.primary_selection().head(),
+            // A search preview's match is revealed as the caret would be.
+            primary_head: view
+                .preview_reveal()
+                .unwrap_or_else(|| model.primary_selection().head()),
             scroll: Vec2 {
                 x: view.scroll.x.into(),
                 y: view.scroll.y.into(),
@@ -958,6 +970,7 @@ impl Element for EditorElement {
             view.scroll = scroll;
             view.autoscroll = false;
             view.reveal_hunk = None;
+            view.preview_revealed();
             view.report_scroll_top(host_top, cx);
             view.load_injected_languages(cx);
         });
@@ -975,6 +988,7 @@ impl Element for EditorElement {
             annotation_column: annotations,
             annotation_hitbox: None,
             matches: Vec::new(),
+            current_match: Vec::new(),
             highlight_ran_out: None,
             brackets: Vec::new(),
             jump: None,
@@ -995,6 +1009,7 @@ impl Element for EditorElement {
         layout.annotation_hitbox = column;
         layout.clickable.extend(entries);
         layout.matches = match_rects(&mut layout, view);
+        layout.current_match = current_match_rects(&mut layout, view);
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, em, window);
@@ -1149,6 +1164,7 @@ impl Element for EditorElement {
         });
         let selections = selection_rects(&mut layout, view);
         let matches = mem::take(&mut layout.matches);
+        let current_match = mem::take(&mut layout.current_match);
         let brackets = mem::take(&mut layout.brackets);
         let (squiggles, mut marks, strikes) = {
             let diagnostics = view.model.diagnostics();
@@ -1184,6 +1200,8 @@ impl Element for EditorElement {
         let mut painted_selections = Vec::new();
         #[cfg(test)]
         let mut painted_matches = Vec::new();
+        #[cfg(test)]
+        let mut painted_current_match = Vec::new();
         #[cfg(test)]
         let mut painted_chevrons = Vec::new();
         #[cfg(test)]
@@ -1258,6 +1276,13 @@ impl Element for EditorElement {
                             painted_matches.push(found);
                             decorations::note("matches");
                         }
+                    }
+                    // As the find bar's current match shows, selected.
+                    for &found in &current_match {
+                        let found = layout.bounds(found);
+                        window.paint_quad(fill(found, theme.selection));
+                        #[cfg(test)]
+                        painted_current_match.push(found);
                     }
                     for &selection in &selections {
                         let selection = layout.bounds(selection);
@@ -1475,6 +1500,7 @@ impl Element for EditorElement {
                 view.painted_carets = painted;
                 view.painted_selections = painted_selections;
                 view.painted_matches = painted_matches;
+                view.painted_current_match = painted_current_match;
                 view.painted_chevrons = painted_chevrons;
                 view.painted_brackets = painted_brackets;
                 view.painted_blocks = painted_blocks;
@@ -2165,9 +2191,10 @@ thread_local! {
 }
 
 /// The rects of the search matches in the frame's displayed rows, at most
-/// [`MAX_MATCHES`] of them, the first in view: the find pattern's
-/// ([`EditorView::set_find`]) while one is set, else vim's, none with vim
-/// off or after `:noh`. Folded rows aren't searched, and for vim's matches
+/// [`MAX_MATCHES`] of them, the first in view, of
+/// [`EditorView::match_pattern`]: a vim search line's preview, else the
+/// find pattern ([`EditorView::set_find`]) while one is set, else vim's
+/// last search, none with vim off or after `:noh`. Folded rows aren't searched, and for vim's matches
 /// off the displayed part of a wrapped or scrolled line don't use the
 /// budget. A zero-width match is one space wide.
 ///
@@ -2186,13 +2213,12 @@ thread_local! {
 fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
-    let clip = view.find_pattern().is_some();
-    let (pattern, mut budget) = match view.find_pattern() {
+    let previewed = view.previewed_pattern();
+    let find = view.find_pattern().filter(|_| previewed.is_none());
+    let clip = find.is_some();
+    let (pattern, mut budget) = match find {
         Some(pattern) => (Some(pattern), MAX_MATCHES),
-        None => (
-            view.vim.as_ref().and_then(|vim| vim.highlight()),
-            usize::MAX,
-        ),
+        None => (view.match_pattern(), usize::MAX),
     };
     let Some(pattern) = pattern else {
         return Vec::new();
@@ -2226,6 +2252,12 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let limit = fe_vim::search::time_limit();
     #[cfg(test)]
     let limit = TEST_LIMIT.with(|l| l.get()).unwrap_or(limit);
+    // A preview's, which changes as the line is typed, as quickly as its
+    // match is found.
+    let limit = match previewed {
+        Some(_) => limit.min(fe_vim::SEARCH_PREVIEW_LIMIT),
+        None => limit,
+    };
     let mut deadline = fe_vim::search::Deadline::after(limit);
     // A buffer row's matches that reach the text area on its displayed rows,
     // kept for its other wrapped rows: found once a frame, searched from the
@@ -2332,6 +2364,47 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     }
     layout.highlight_ran_out = latch;
     rects
+}
+
+/// The rects of the match a vim search line's preview shows
+/// ([`EditorView::search_preview`]) on the frame's displayed rows: one per
+/// row it covers, an empty match one space wide.
+fn current_match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+    let Some(range) = view.search_preview() else {
+        return Vec::new();
+    };
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let space = glyph_widths.char_width(' ');
+    frame
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let (start, end) = (range.start.max(row.start), range.end.min(row.end));
+            let shown = match range.is_empty() {
+                true => row.contains(range.start),
+                false => start < end,
+            };
+            if !shown {
+                return None;
+            }
+            let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
+            let width = match range.is_empty() {
+                true => space,
+                false => frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)) - left,
+            };
+            Some(Rect {
+                x: left,
+                y: frame.row_top(row.row),
+                width,
+                height: frame.line_height,
+            })
+        })
+        .collect()
 }
 
 /// What a pending vim jump paints, in frame coordinates.

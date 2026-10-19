@@ -105,7 +105,14 @@
 //! frame before matching ([`live_stack`]), not the context the last frame
 //! drew, which can trail the keys typed since.
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    ops::{Range, RangeInclusive},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use fe_buffer::{TransactionId, Version};
 use fe_command::{CommandId, CommandMeta, Value};
@@ -114,12 +121,12 @@ use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, Provider
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog as _};
 use fe_vim::{
-    Registers, Remap, RemapCommand, RemapIssue, RemapSet, Step, VimCommands, VimKey, VimState,
-    VimTarget,
+    CommandLineKind, Registers, Remap, RemapCommand, RemapIssue, RemapSet, Step, VimCommands,
+    VimKey, VimState, VimTarget, search::Pattern,
 };
 use gpui::{
-    AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent,
-    Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Pixels,
+    Point, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
 };
 
 use crate::{
@@ -140,6 +147,32 @@ pub(crate) struct YankFlash {
     /// The buffer's version the ranges are of.
     version: Version,
     _timer: Task<()>,
+}
+
+/// An open `/` or `?` line's preview ('incsearch'), from the line opening
+/// until it closes: see [`EditorView::preview_search`].
+pub(crate) struct SearchPreview {
+    /// Where the view was before the line opened.
+    place: ViewPlace,
+    /// The folds hiding the shown match, opened to show it.
+    opened: Vec<RangeInclusive<u32>>,
+    /// The match shown, in the text at its version, and the line's
+    /// pattern, whose matches paint in place of any other: `None` while the
+    /// line previews nothing.
+    shown: Option<(Range<usize>, Pattern, Version)>,
+    /// Where the next frame scrolls to, as it does to a caret: the shown
+    /// match's start.
+    reveal: Option<usize>,
+}
+
+/// Where a view is scrolled: its scroll, the buffer and display rows first
+/// in view (`None` before a frame), and whether the next frame reveals the
+/// caret.
+#[derive(Clone, Copy)]
+pub(crate) struct ViewPlace {
+    scroll: Point<Pixels>,
+    top: Option<(u32, u32)>,
+    autoscroll: bool,
 }
 
 /// The command a vim-layer binding names to hand its keystroke to the
@@ -809,6 +842,10 @@ impl EditorView {
         }
         self.vim_generation = generation;
         let was_on = self.vim.is_some();
+        // A new state's yank serials start again, and its line is closed.
+        self.yank_seen = 0;
+        self.end_yank_flash();
+        self.end_search_preview(true);
         self.vim = enabled.then(|| {
             let mut state = VimState::new();
             if let Some(vim) = cx.try_global::<Vim>() {
@@ -881,8 +918,11 @@ impl EditorView {
     }
 
     /// If vim yanked since the last flash, highlights the yanked ranges,
-    /// replacing any flash under way, and ends it after [`YANK_FLASH`].
-    fn flash_new_yank(&mut self, cx: &mut Context<Self>) {
+    /// replacing any flash under way, and ends it after [`YANK_FLASH`]. The
+    /// ranges are of the text the command yanked from: one that also edited
+    /// (`:normal yiwx`), leaving the buffer other than at `before`, flashes
+    /// nothing, as its ranges may no longer be the text yanked.
+    fn flash_new_yank(&mut self, before: Version, cx: &mut Context<Self>) {
         let Some((serial, ranges)) = self.vim.as_ref().and_then(VimState::last_yank) else {
             return;
         };
@@ -892,11 +932,11 @@ impl EditorView {
         self.yank_seen = serial;
         let ranges = ranges.to_vec();
         self.end_yank_flash();
-        if ranges.is_empty() {
-            return;
-        }
         let snapshot = self.model.snapshot().clone();
         let version = snapshot.version();
+        if ranges.is_empty() || version != before {
+            return;
+        }
         let items = ranges
             .into_iter()
             .map(|range| Decoration::new(range, DecorationKind::Highlight, Tint::Accent))
@@ -920,6 +960,166 @@ impl EditorView {
             _timer: timer,
         });
         cx.notify();
+    }
+
+    /// While vim has a `/` or `?` line open, shows what submitting it as
+    /// `line` would land on now ([`VimState::search_preview`], 'incsearch'):
+    /// the match as the current one, painted as the find bar's is, with the
+    /// line's pattern's matches in place of any other highlight; a fold
+    /// hiding it opened; and from where the view was before the line
+    /// opened, scrolled as a caret there would be, leaving the caret where
+    /// it is. A line that previews nothing (empty, invalid, not found) puts
+    /// back that view, the folds and the highlight. The host's line calls it
+    /// after each edit. Cancelling the line puts them back too; submitting
+    /// leaves them, the caret landing on the match in view.
+    pub fn preview_search(&mut self, line: &str, cx: &mut Context<Self>) {
+        self.sync_vim(cx);
+        let delimiter = match self.vim.as_ref().map(VimState::mode) {
+            Some(fe_vim::Mode::CmdLine(CommandLineKind::SearchForward)) => '/',
+            Some(fe_vim::Mode::CmdLine(CommandLineKind::SearchBackward)) => '?',
+            _ => return,
+        };
+        if self.search_preview.is_none() {
+            self.search_preview = Some(SearchPreview::from(self.place()));
+        }
+        self.undo_search_preview();
+        self.model.sync_display();
+        let Some(state) = &self.vim else {
+            return;
+        };
+        let shown = state.search_preview(&self.model, line).and_then(|found| {
+            let (pattern, _) = fe_vim::search::split_search(line, delimiter);
+            let pattern = Pattern::parse(&pattern).ok()?;
+            Some((found, pattern))
+        });
+        if let Some((found, pattern)) = shown {
+            let opened = self.open_folds_at(found.start);
+            let version = self.model.snapshot().version();
+            if let Some(preview) = &mut self.search_preview {
+                preview.opened = opened;
+                preview.reveal = Some(found.start);
+                preview.shown = Some((found, pattern, version));
+                // The frame scrolls to it as it would to the caret.
+                self.autoscroll = true;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Opens the folds hiding `offset`, returning them.
+    fn open_folds_at(&mut self, offset: usize) -> Vec<RangeInclusive<u32>> {
+        let row = self.model.text().offset_to_point(offset).row;
+        if self.model.display().hidden_rows(row).is_none() {
+            return Vec::new();
+        }
+        let folds = |model: &EditorModel| model.display().folds().to_vec();
+        let before = folds(&self.model);
+        self.model.unfold_rows(row..=row);
+        let after = folds(&self.model);
+        before
+            .into_iter()
+            .filter(|fold| !after.contains(fold))
+            .map(|fold| fold.start..=fold.end)
+            .collect()
+    }
+
+    /// The match an open search line's preview shows
+    /// ([`EditorView::preview_search`]), in the text as it is: `None` with
+    /// none shown, or once the text has changed.
+    pub fn search_preview(&self) -> Option<Range<usize>> {
+        let (found, _, version) = self.search_preview.as_ref()?.shown.as_ref()?;
+        (*version == self.model.snapshot().version()).then(|| found.clone())
+    }
+
+    /// The pattern whose matches the view paints: an open search line's
+    /// previewed one ([`EditorView::preview_search`]), else the find bar's
+    /// ([`EditorView::set_find`]), else the last vim search's ('hlsearch',
+    /// [`VimState::highlight`]). `None` with none of them, as after `:noh`.
+    pub fn match_pattern(&self) -> Option<&Pattern> {
+        self.previewed_pattern()
+            .or_else(|| self.find_pattern())
+            .or_else(|| self.vim.as_ref()?.highlight())
+    }
+
+    /// The pattern of the match [`EditorView::search_preview`] shows.
+    pub(crate) fn previewed_pattern(&self) -> Option<&Pattern> {
+        let (_, pattern, version) = self.search_preview.as_ref()?.shown.as_ref()?;
+        (*version == self.model.snapshot().version()).then_some(pattern)
+    }
+
+    /// Where the next frame scrolls to in place of the caret: a preview's
+    /// match not yet revealed.
+    pub(crate) fn preview_reveal(&self) -> Option<usize> {
+        self.search_preview.as_ref()?.reveal
+    }
+
+    /// A frame was laid out, revealing the preview's match if it had one to.
+    pub(crate) fn preview_revealed(&mut self) {
+        if let Some(preview) = &mut self.search_preview {
+            preview.reveal = None;
+        }
+    }
+
+    fn place(&self) -> ViewPlace {
+        ViewPlace {
+            scroll: self.scroll,
+            top: self.top_buffer_row().zip(self.top_display_row()),
+            autoscroll: self.autoscroll,
+        }
+    }
+
+    /// Whether vim's command line is open.
+    fn vim_line_open(&self) -> bool {
+        self.vim
+            .as_ref()
+            .is_some_and(|state| matches!(state.mode(), fe_vim::Mode::CmdLine(_)))
+    }
+
+    /// After a vim command ran: starts a search preview if it opened a `/`
+    /// or `?` line, from `place`, where the view was before it; and ends
+    /// one if it closed the line, a submit leaving what the preview showed
+    /// and anything else putting the view and folds back.
+    fn settle_search_preview(&mut self, was_open: bool, place: ViewPlace, invocation: &Invocation) {
+        let searching = matches!(
+            self.vim.as_ref().map(VimState::mode),
+            Some(fe_vim::Mode::CmdLine(
+                CommandLineKind::SearchForward | CommandLineKind::SearchBackward
+            ))
+        );
+        if searching && !was_open {
+            self.search_preview = Some(SearchPreview::from(place));
+        } else if self.search_preview.is_some() && !self.vim_line_open() {
+            let submitted = invocation.command.as_str() == "vim.command_line_submit";
+            self.end_search_preview(!submitted);
+        }
+    }
+
+    /// Ends the search preview, if any, with `restore` putting back the
+    /// view and folds as they were before the line opened.
+    fn end_search_preview(&mut self, restore: bool) {
+        if restore {
+            self.undo_search_preview();
+        }
+        self.search_preview = None;
+    }
+
+    /// Puts back the folds the search preview opened and the view as it
+    /// was before the line opened, showing no match.
+    fn undo_search_preview(&mut self) {
+        let Some(preview) = &mut self.search_preview else {
+            return;
+        };
+        preview.shown = None;
+        preview.reveal = None;
+        let opened = std::mem::take(&mut preview.opened);
+        let place = preview.place;
+        for fold in opened {
+            self.model.fold_rows(fold);
+        }
+        self.scroll = place.scroll;
+        self.scrolled_top = place.top.map(|(row, _)| row);
+        self.scrolled_display_top = place.top.map(|(_, row)| row);
+        self.autoscroll = place.autoscroll;
     }
 
     /// A frame was laid out: tells vim the view's height, so a counted
@@ -1814,13 +2014,17 @@ impl EditorView {
             self.vim_unrecorded_logged = false;
         }
         let registry = registry();
+        // Caught up first, so only the command's own edits count.
+        self.model.sync_display();
+        let before = self.model.snapshot().version();
+        let (was_open, place) = (self.vim_line_open(), self.place());
         let Some(result) = self.dispatch_vim(&registry, invocation, cx) else {
             log::warn!("{} needs vim on", invocation.command);
             return false;
         };
         let mut ok = result.is_ok();
         self.sync_yank_flash();
-        self.flash_new_yank(cx);
+        self.flash_new_yank(before, cx);
         let mutates = registry
             .get(&invocation.command)
             .is_some_and(|meta| meta.mutates_buffer);
@@ -1828,6 +2032,7 @@ impl EditorView {
             log::warn!("{error}");
             ok = false;
         }
+        self.settle_search_preview(was_open, place, invocation);
         ok
     }
 
@@ -1876,6 +2081,12 @@ mod visual_tests;
 mod search_tests;
 
 #[cfg(test)]
+mod incsearch_tests;
+
+#[cfg(test)]
+mod yank_flash_reset_tests;
+
+#[cfg(test)]
 mod clipboard_tests;
 
 #[cfg(test)]
@@ -1904,6 +2115,17 @@ mod replace_tests;
 
 #[cfg(test)]
 mod auto_indent_tests;
+
+impl From<ViewPlace> for SearchPreview {
+    fn from(place: ViewPlace) -> Self {
+        Self {
+            place,
+            opened: Vec::new(),
+            shown: None,
+            reveal: None,
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "vim_indent_keys_tests.rs"]

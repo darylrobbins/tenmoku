@@ -17,6 +17,15 @@
 //! typed ([`HistoryRecall`]). The [`fe_vim::HostCommand`] a submit may
 //! leave (`:w`) is for the host to run, not the line: the bar emits it as a
 //! [`VimHostCommand`].
+//!
+//! After each edit or recall of a `/` or `?` line, the editor shows the
+//! match submitting it would land on ('incsearch',
+//! [`EditorView::preview_search`]), scrolled into view; cancelling the line
+//! puts the view back.
+//!
+//! A line cancelled other than by a key (focus leaving it, a click outside
+//! it, a tab switch) tells the editor its text and `<C-c>`, which a replay
+//! cancels with too.
 
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, vim_registers};
@@ -194,9 +203,10 @@ impl StatusBar {
                 self.line._blur = Some(cx.on_blur(&focus, window, Self::line_blurred));
                 // An edit makes what the line then holds the prefix the
                 // next Up or Down recalls by.
-                self.line._changed = Some(cx.subscribe(&input, |bar, _, event, _| {
+                self.line._changed = Some(cx.subscribe(&input, |bar, _, event, cx| {
                     if *event == TextInputEvent::Changed {
                         bar.line.recall.edited();
+                        bar.preview_line(cx);
                     }
                 }));
                 self.line.input = Some(input.clone());
@@ -250,14 +260,37 @@ impl StatusBar {
         cx.propagate();
     }
 
-    /// Cancels the open line in its editor, focus staying where it is.
+    /// Cancels the open line in its editor, focus staying where it is. A
+    /// macro recording takes what was typed, then `<C-c>`, which cancels a
+    /// replayed line as this did (a replay's `<Esc>` would run it).
     fn cancel_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((editor, _)) = self.line.open.take() {
             if let Some(editor) = editor.upgrade() {
+                let typed = (self.line.input.as_ref())
+                    .map(|input| input.read(cx).text().to_owned())
+                    .unwrap_or_default();
+                editor.update(cx, |editor, _| {
+                    editor.record_command_line(&typed, VimKey::Ctrl('c'))
+                });
                 run_in(&editor, cancel(), window, cx);
             }
             cx.notify();
         }
+    }
+
+    /// Shows in its editor what the open `/` or `?` line would land on.
+    fn preview_line(&self, cx: &mut Context<Self>) {
+        let Some((editor, prefix)) = &self.line.open else {
+            return;
+        };
+        let (Some(editor), Some(input)) = (editor.upgrade(), &self.line.input) else {
+            return;
+        };
+        if *prefix == ':' {
+            return;
+        }
+        let text = input.read(cx).text().to_owned();
+        editor.update(cx, |editor, cx| editor.preview_search(&text, cx));
     }
 
     /// Ends the line by `key`: submits `text`, or cancels with `None`, in
@@ -374,6 +407,7 @@ impl StatusBar {
         };
         if let Some(text) = self.line.recall.step(registers, kind, &line, older) {
             input.update(cx, |input, cx| input.set_text(text, cx));
+            self.preview_line(cx);
         }
     }
 
