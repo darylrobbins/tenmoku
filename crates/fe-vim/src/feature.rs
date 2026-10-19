@@ -30,6 +30,7 @@ use crate::{
     unmatched,
 };
 
+pub(crate) mod changelist;
 pub(crate) mod line_undo;
 pub(crate) mod reindent;
 
@@ -70,7 +71,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 16] = [
+pub(crate) const FEATURES: [&Feature; 17] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -87,6 +88,7 @@ pub(crate) const FEATURES: [&Feature; 16] = [
     &put_keys::FEATURE,
     &reindent::FEATURE,
     &line_undo::FEATURE,
+    &changelist::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

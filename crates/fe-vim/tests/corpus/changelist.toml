@@ -1,0 +1,279 @@
+# Changelist cases for fe-vim's oracle: `g;` and `g,` with and without
+# counts, past both ends and with no change made (the failing key last:
+# nvim flushes the keys after it); changes close on a row taking the
+# newest entry's place (within 79 columns) and far ones adding one; where
+# an insert session's entry is; `.`, `u` and the 100-entry limit; entries
+# following rows deleted or put in above; `'.` and `` `. `` as motions and
+# operator targets; the keys in a visual mode (nvim beeps) and after an
+# operator (cancelled); and the entries `o`, `cw`, `:s`, `:d`, `J`, `p`,
+# `u` and `<C-r>` make. The 100 changes are typed out: a macro's run is one
+# undoable change in nvim, adding one entry.
+# The oracle's load (nvim_buf_set_lines) is itself a change: nvim's list
+# starts with an entry at (0, 0), which no file loaded has. So each case's
+# first change is on row 0 within 79 columns of column 0, which takes that
+# entry's place, and the cases with no change are fed `<Esc>` in nvim, which
+# changes nothing, as `g;` and `g,` do with an empty list (E664).
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in changelist.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "g_semicolon_last_change"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjjlxggg;"
+
+[[case]]
+name = "g_semicolon_count"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxgg2g;"
+
+[[case]]
+name = "g_semicolon_twice"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggg;g;"
+
+[[case]]
+name = "g_semicolon_count_past_oldest"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxG9g;"
+
+[[case]]
+name = "g_comma_back"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggg;g;g;g,"
+
+[[case]]
+name = "g_comma_count"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggg;g;g;2g,"
+
+[[case]]
+name = "g_comma_count_past_newest"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggg;g;g;9g,"
+
+[[case]]
+name = "g_comma_after_a_change"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggg,"
+
+[[case]]
+name = "at_oldest_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxg;g;Gg;"
+
+[[case]]
+name = "at_newest_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxg;Gg,"
+
+[[case]]
+name = "g_comma_after_g_semicolon_at_newest_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxg;Gg,"
+
+[[case]]
+name = "empty_list_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [2, 3]
+keys = "g;"
+oracle_keys = "<Esc>"
+
+[[case]]
+name = "empty_list_g_comma_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [2, 3]
+keys = "g,"
+oracle_keys = "<Esc>"
+
+[[case]]
+name = "close_changes_merge"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xwxwxjg;jg;"
+
+[[case]]
+name = "near_change_on_the_row_merges"
+buffer = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\nsecond row"
+cursor = [0, 0]
+keys = "x79lxjg;jg;"
+
+[[case]]
+name = "far_change_on_the_row_adds"
+buffer = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\nsecond row"
+cursor = [0, 0]
+keys = "x80lxjg;g;"
+
+[[case]]
+name = "insert_session_position"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjifoo<Esc>Gg;"
+
+[[case]]
+name = "insert_session_over_rows"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjAfoo<CR>bar<Esc>Gg;g;"
+
+[[case]]
+name = "insert_session_over_rows_one_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjAfoo<CR>bar<Esc>Gg;g;g;"
+
+[[case]]
+name = "repeat_adds_an_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjl.Gg;"
+
+[[case]]
+name = "undo_takes_the_newest_place"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxuGg;g;"
+
+[[case]]
+name = "quote_dot"
+buffer = "alpha beta\n    gamma delta\n  epsilon\nzeta eta"
+cursor = [0, 0]
+keys = "xjwlxgg'."
+
+[[case]]
+name = "backtick_dot"
+buffer = "alpha beta\n    gamma delta\n  epsilon\nzeta eta"
+cursor = [0, 0]
+keys = "xjwlxgg`."
+
+[[case]]
+name = "d_quote_dot"
+buffer = "alpha beta\n    gamma delta\n  epsilon\nzeta eta"
+cursor = [0, 0]
+keys = "xjjwxggd'."
+
+[[case]]
+name = "d_backtick_dot"
+buffer = "alpha beta\n    gamma delta\n  epsilon\nzeta eta"
+cursor = [0, 0]
+keys = "xjwlxggd`."
+
+[[case]]
+name = "changes_follow_deleted_rows"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggjddg;g;g;"
+
+[[case]]
+name = "changes_follow_rows_put_above"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjllxggyyPGg;g;g;"
+
+[[case]]
+name = "deleted_last_row_entry_fails"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxGddg;"
+
+[[case]]
+name = "g_semicolon_isnt_a_jump"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxggGg;''"
+
+[[case]]
+name = "visual_g_semicolon"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjvg;"
+
+[[case]]
+name = "visual_line_g_comma"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjg;jVg,"
+
+[[case]]
+name = "operator_g_semicolon_cancels"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxjjdg;"
+
+[[case]]
+name = "hundred_entries_kept"
+buffer = "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101"
+cursor = [0, 0]
+keys = "xjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjx200g;"
+
+[[case]]
+name = "insert_session_from_the_newest_row"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxAfoo<CR>bar<Esc>Gg;g;"
+
+[[case]]
+name = "insert_session_from_the_newest_row_twice_back"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxAfoo<CR>bar<Esc>Gg;g;g;"
+
+[[case]]
+name = "open_line_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjofoo<Esc>Gg;g;"
+
+[[case]]
+name = "change_word_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjwcwxy<Esc>Gg;"
+
+[[case]]
+name = "substitute_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "x:3s/s/S/g<CR>Gg;"
+
+[[case]]
+name = "ex_delete_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlx:4d<CR>ggg;g;"
+
+[[case]]
+name = "undo_after_a_merge"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjlxxuGg;g;"
+
+[[case]]
+name = "redo_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjlxu<C-r>Gg;"
+
+[[case]]
+name = "join_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjjJGg;"
+
+[[case]]
+name = "put_rows_entry"
+buffer = "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve"
+cursor = [0, 0]
+keys = "xjyyjjpggg;g;"

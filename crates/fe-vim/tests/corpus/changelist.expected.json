@@ -1,0 +1,1190 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "g_semicolon_last_change",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjjlxggg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nseven eight\nnne ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "i",
+            "linewise": false
+          },
+          "-": {
+            "text": "i",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_semicolon_count",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxgg2g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_semicolon_twice",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggg;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_semicolon_count_past_oldest",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxG9g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_comma_back",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggg;g;g;g,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_comma_count",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggg;g;g;2g,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_comma_count_past_newest",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggg;g;g;9g,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_comma_after_a_change",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggg,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_oldest_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxg;g;Gg;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_newest_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxg;Gg,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          5,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_comma_after_g_semicolon_at_newest_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxg;Gg,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          5,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_list_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "g;",
+      "oracle_keys": "<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "empty_list_g_comma_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "g,",
+      "oracle_keys": "<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "close_changes_merge",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xwxwxjg;jg;",
+      "expect": {
+        "buffer": "ne wo hree\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "near_change_on_the_row_merges",
+      "buffer": "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\nsecond row",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x79lxjg;jg;",
+      "expect": {
+        "buffer": "12345678901234567890123456789012345678901234567890123456789012345678901234567891234567890123456789\nsecond row",
+        "cursor": [
+          1,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "0",
+            "linewise": false
+          },
+          "-": {
+            "text": "0",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "far_change_on_the_row_adds",
+      "buffer": "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\nsecond row",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x80lxjg;g;",
+      "expect": {
+        "buffer": "12345678901234567890123456789012345678901234567890123456789012345678901234567890234567890123456789\nsecond row",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "1",
+            "linewise": false
+          },
+          "-": {
+            "text": "1",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_session_position",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjifoo<Esc>Gg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nfooseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_session_over_rows",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjAfoo<CR>bar<Esc>Gg;g;",
+      "expect": {
+        "buffer": "ne two three\nfour five sixfoo\nbar\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_session_over_rows_one_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjAfoo<CR>bar<Esc>Gg;g;g;",
+      "expect": {
+        "buffer": "ne two three\nfour five sixfoo\nbar\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "repeat_adds_an_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjl.Gg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nsven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_takes_the_newest_place",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxuGg;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "quote_dot",
+      "buffer": "alpha beta\n    gamma delta\n  epsilon\nzeta eta",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjwlxgg'.",
+      "expect": {
+        "buffer": "lpha beta\n    gmma delta\n  epsilon\nzeta eta",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backtick_dot",
+      "buffer": "alpha beta\n    gamma delta\n  epsilon\nzeta eta",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjwlxgg`.",
+      "expect": {
+        "buffer": "lpha beta\n    gmma delta\n  epsilon\nzeta eta",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_quote_dot",
+      "buffer": "alpha beta\n    gamma delta\n  epsilon\nzeta eta",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjwxggd'.",
+      "expect": {
+        "buffer": "zeta eta",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "lpha beta\n    gamma delta\n  psilon\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          },
+          "1": {
+            "text": "lpha beta\n    gamma delta\n  psilon\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d_backtick_dot",
+      "buffer": "alpha beta\n    gamma delta\n  epsilon\nzeta eta",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjwlxggd`.",
+      "expect": {
+        "buffer": "lpha mma delta\n  epsilon\nzeta eta",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "beta\n    g",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "beta\n    g",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "changes_follow_deleted_rows",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggjddg;g;g;",
+      "expect": {
+        "buffer": "ne two three\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fur five six\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          },
+          "1": {
+            "text": "fur five six\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "changes_follow_rows_put_above",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjllxggyyPGg;g;g;",
+      "expect": {
+        "buffer": "ne two three\nne two three\nfur five six\nseven eight\nnin ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ne two three\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          },
+          "0": {
+            "text": "ne two three\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "deleted_last_row_entry_fails",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxGddg;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven",
+        "cursor": [
+          4,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "twelve\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          },
+          "1": {
+            "text": "twelve\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "g_semicolon_isnt_a_jump",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxggGg;''",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_g_semicolon",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjvg;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "v",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        },
+        "visual": [
+          3,
+          1
+        ]
+      }
+    },
+    {
+      "name": "visual_line_g_comma",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjg;jVg,",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "V",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        },
+        "visual": [
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "name": "operator_g_semicolon_cancels",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxjjdg;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hundred_entries_kept",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjxjx200g;",
+      "expect": {
+        "buffer": "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n71\n72\n73\n74\n75\n76\n77\n78\n79\n80\n81\n82\n83\n84\n85\n86\n87\n88\n89\n90\n91\n92\n93\n94\n95\n96\n97\n98\n99\n100\n101",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "r",
+            "linewise": false
+          },
+          "-": {
+            "text": "r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_session_from_the_newest_row",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxAfoo<CR>bar<Esc>Gg;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five sixfoo\nbar\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          1,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "insert_session_from_the_newest_row_twice_back",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxAfoo<CR>bar<Esc>Gg;g;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five sixfoo\nbar\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "open_line_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjofoo<Esc>Gg;g;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nfoo\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "change_word_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjwcwxy<Esc>Gg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nseven xy\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "eight",
+            "linewise": false
+          },
+          "-": {
+            "text": "eight",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:3s/s/S/g<CR>Gg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nSeven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          },
+          "/": {
+            "text": "s",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ex_delete_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlx:4d<CR>ggg;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\neleven\ntwelve",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "nine ten\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          },
+          "1": {
+            "text": "nine ten\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_after_a_merge",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjlxxuGg;g;",
+      "expect": {
+        "buffer": "ne two three\nfur five six\nseven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "u",
+            "linewise": false
+          },
+          "-": {
+            "text": "u",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "redo_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjlxu<C-r>Gg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nsven eight\nnine ten\neleven\ntwelve",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "join_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjjJGg;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nseven eight nine ten\neleven\ntwelve",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "put_rows_entry",
+      "buffer": "one two three\nfour five six\nseven eight\nnine ten\neleven\ntwelve",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjyyjjpggg;g;",
+      "expect": {
+        "buffer": "ne two three\nfour five six\nseven eight\nnine ten\nfour five six\neleven\ntwelve",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four five six\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          },
+          "0": {
+            "text": "four five six\n",
+            "linewise": true
+          }
+        }
+      }
+    }
+  ]
+}

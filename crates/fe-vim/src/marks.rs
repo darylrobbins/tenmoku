@@ -45,8 +45,23 @@ pub(crate) const NOT_SET: &str = "E20: Mark not set";
 /// What going to a jumplist entry past the last row says.
 pub(crate) const INVALID_ROW: &str = "E19: Mark has invalid line number";
 
-/// How many entries the jumplist keeps, as nvim's: the oldest go.
+/// How many entries the jumplist keeps, as nvim's: the oldest go. The
+/// changelist keeps as many.
 const JUMPS: usize = 100;
+
+/// What going older than the changelist's oldest entry says.
+const AT_START: &str = "E662: At start of changelist";
+
+/// What going newer than the changelist's newest entry says.
+const AT_END: &str = "E663: At end of changelist";
+
+/// What going through the changelist with no change made says.
+const NO_CHANGES: &str = "E664: Changelist is empty";
+
+/// How many columns from the changelist's newest entry a change on its row
+/// may be and still take its place rather than add one: nvim's, with
+/// 'textwidth' 0.
+const NEAR: usize = 79;
 
 /// Whether `m{ch}` sets a mark: `a` to `z`, `A` to `Z`, `'` and `` ` ``
 /// (the jump mark), and `[` and `]`.
@@ -628,6 +643,14 @@ impl Entry {
 /// spans the rows its batches changed, column 0. A row past the last (`dd`
 /// there) leaves the mark there, which a jump can't go to (E19).
 ///
+/// Each of vim's batches that sets `'.` also makes it the changelist's
+/// newest entry (`:help changelist`), as nvim's `changed_common` does: until
+/// a transaction (nvim's undoable change) has added an entry, its batches
+/// add one unless the newest is on the same row within [`NEAR`] columns, in
+/// which case they take its place, as every later batch of the transaction
+/// does (an undo or a redo starts no new transaction). Entries follow edits
+/// as jumplist entries do: a deleted row doesn't delete one.
+///
 /// The batches wait in `pending` until a command with the vim state at hand
 /// reads them ([`catch_up`]), which knows whose they are.
 #[derive(Clone, Debug, Default)]
@@ -662,6 +685,15 @@ struct Changes {
     /// since: those are newer than what it left, which the batches ending
     /// it ([`Note::Ending`]) don't set and adopting it doesn't either.
     closing: Option<Newer>,
+    /// The changelist, oldest first, at most [`JUMPS`] entries: each one
+    /// followed as a [`Spot`], placed as an [`Entry`] is ([`Spot::entry`]).
+    list: Vec<Spot>,
+    /// The entry `g;` and `g,` last went to, or the list's length when
+    /// neither has since the last change.
+    at: usize,
+    /// The transaction last read has added no entry yet: its next batch
+    /// setting `'.` may (nvim's `b_new_change`).
+    fresh: bool,
 }
 
 /// Which of the marks an insert session sets were set since it was left to
@@ -768,6 +800,9 @@ impl PartialEq for Changes {
             && self.last == other.last
             && self.owned == other.owned
             && self.closing == other.closing
+            && self.list == other.list
+            && self.at == other.at
+            && self.fresh == other.fresh
     }
 }
 
@@ -868,6 +903,58 @@ impl Spot {
         Some((row, column))
     }
 
+    /// As a jumplist entry: placed, or past the last row.
+    fn of_entry(entry: Entry) -> Self {
+        match entry {
+            Entry::At(place) => Self::placed(place),
+            Entry::Past => Self {
+                row: Row::Past,
+                column: Column::Own,
+            },
+        }
+    }
+
+    /// Where it is as a changelist entry, which a deleted row doesn't
+    /// delete: placed, as [`Place::spot`] says; followed, as
+    /// [`Spot::position`] does (one whose row went with the batches it was
+    /// followed through is past the last row).
+    fn entry(&self, snapshot: &BufferSnapshot) -> Option<(u32, usize)> {
+        match &self.row {
+            Row::Placed(place) => place.spot(snapshot),
+            _ => self.position(snapshot),
+        }
+    }
+
+    /// Its row and byte column in `text`, the text right after the batch it
+    /// was last advanced through, at `version`, if it's followed there.
+    fn point_in(&self, text: &Text, version: Version) -> Option<(u32, usize)> {
+        let (life, column) = match &self.row {
+            Row::Followed { life, column } => (life, *column),
+            Row::Placed(place) => (&place.life, place.column),
+            Row::Past => return None,
+        };
+        (life.version == version && !life.dead)
+            .then(|| (text.offset_to_point(life.start).row, column))
+    }
+
+    /// Placed afresh in `snapshot` as a changelist entry: where
+    /// [`Spot::entry`] says, else past the last row; as it is if it's newer
+    /// than `snapshot` (or, followed, not as new).
+    fn place_entry(&self, snapshot: &BufferSnapshot) -> Self {
+        let newer = match &self.row {
+            Row::Followed { life, .. } => life.version != snapshot.version(),
+            Row::Placed(place) => place.newer_than(snapshot),
+            Row::Past => false,
+        };
+        if newer {
+            return self.clone();
+        }
+        Self::of_entry(match self.entry(snapshot) {
+            Some((row, column)) => Entry::At(Place::on(snapshot, row, column)),
+            None => Entry::Past,
+        })
+    }
+
     /// Anchored in `snapshot` where it is, `None` once its row is gone, or
     /// as it is if it's newer than `snapshot`.
     fn place(&self, snapshot: &BufferSnapshot) -> Option<Self> {
@@ -904,7 +991,11 @@ impl Changes {
     }
 
     fn is_set(&self) -> bool {
-        self.start.is_some() || self.end.is_some() || self.change.is_some() || self.began.is_some()
+        self.start.is_some()
+            || self.end.is_some()
+            || self.change.is_some()
+            || self.began.is_some()
+            || !self.list.is_empty()
     }
 
     fn mark(&self, name: char) -> Option<&Spot> {
@@ -939,6 +1030,9 @@ impl Changes {
             };
             for spot in self.spots().flatten() {
                 spot.advance(batch);
+            }
+            for entry in &mut self.list {
+                entry.advance(batch);
             }
             let typed = self
                 .typing
@@ -982,7 +1076,12 @@ impl Changes {
             }
             None => None,
         };
-        self.set(batch, before, typed, caret, noted);
+        let changed = self.set(batch, before, typed, caret, noted);
+        // `'.` set since the session was left stays, and so does the
+        // changelist.
+        if changed && !kept.as_ref().is_some_and(|(newer, _)| newer.change) {
+            self.record(batch);
+        }
         if let Some((newer, [start, end, change])) = kept {
             let marks = [&mut self.start, &mut self.end, &mut self.change];
             for ((mark, kept), newer) in marks.into_iter().zip([start, end, change]).zip([
@@ -997,7 +1096,8 @@ impl Changes {
         }
     }
 
-    /// [`Changes::read`], for whichever state's command made `batch`.
+    /// [`Changes::read`], for whichever state's command made `batch`:
+    /// whether it set `'.`.
     fn set(
         &mut self,
         batch: &Batch,
@@ -1005,13 +1105,13 @@ impl Changes {
         typed: bool,
         caret: &dyn Fn(TransactionId) -> Option<usize>,
         noted: &[&Note],
-    ) {
+    ) -> bool {
         let (Some(first), Some(last)) = (batch.edits.first(), batch.edits.last()) else {
-            return;
+            return false;
         };
         let note = noted.iter().find(|note| ***note != Note::Ending);
         if note.is_some_and(|note| **note == Note::Unchanged) {
-            return;
+            return false;
         }
         let (text, version) = (&batch.text, batch.to);
         let point = |offset: usize| {
@@ -1026,6 +1126,11 @@ impl Changes {
         };
         let run = self.run.take();
         let previous = self.last.replace((batch.transaction, batch.kind));
+        // A new undoable change, as nvim's undo block: an undo or a redo
+        // starts none.
+        if batch.kind == EditKind::Edit && previous.is_none_or(|(id, _)| id != batch.transaction) {
+            self.fresh = true;
+        }
         if batch.kind != EditKind::Edit {
             let mut top = point(first.new.start).0;
             let mut bottom = match last.new.is_empty() {
@@ -1039,7 +1144,7 @@ impl Changes {
                 bottom = row(&self.end).map_or(bottom, |row| row.max(bottom));
             }
             (self.start, self.end, self.change) = (on(top, 0), on(bottom, 0), on(top, 0));
-            return;
+            return true;
         }
         let note = note.map(|note| (*note).clone());
         let one_line = |range: &Range<usize>| point(range.start).0 == point(range.end).0;
@@ -1114,7 +1219,42 @@ impl Changes {
         }) = note
         {
             self.change = on(row, column);
+            return true;
         }
+        !keeps_change
+    }
+
+    /// `'.`, just set from `batch`, made the changelist's newest entry,
+    /// added or in the newest's place (see [`Changes`]).
+    fn record(&mut self, batch: &Batch) {
+        let Some(change) = self.change.clone() else {
+            return;
+        };
+        let (text, version) = (&batch.text, batch.to);
+        let add = match self.list.last() {
+            None => true,
+            Some(_) if !self.fresh => false,
+            Some(newest) => match (
+                newest.point_in(text, version),
+                change.point_in(text, version),
+            ) {
+                (Some((row, column)), Some((at, own))) => {
+                    row != at || column + NEAR < own || own + NEAR < column
+                }
+                _ => true,
+            },
+        };
+        match self.list.last_mut() {
+            Some(newest) if !add => *newest = change,
+            _ => {
+                self.fresh = false;
+                if self.list.len() == JUMPS {
+                    self.list.remove(0);
+                }
+                self.list.push(change);
+            }
+        }
+        self.at = self.list.len();
     }
 
     /// `marks` were set since a session was left to the state ending it.
@@ -1142,9 +1282,13 @@ impl Changes {
                 spot => spot.and_then(|spot| spot.place(snapshot)),
             };
         }
+        for entry in &mut self.list {
+            *entry = entry.place_entry(snapshot);
+        }
     }
 
-    /// Each placed mark becomes what `f` makes of it, or goes.
+    /// Each placed mark becomes what `f` makes of it, or goes; a
+    /// changelist entry `f` would delete stays as it is.
     fn update(&mut self, f: impl Fn(&Place) -> Option<Place>) {
         for spot in self.spots() {
             if let Some(Spot {
@@ -1156,6 +1300,31 @@ impl Changes {
                     row: Row::Placed(place),
                     column: *column,
                 });
+            }
+        }
+        for entry in &mut self.list {
+            if let Row::Placed(place) = &mut entry.row
+                && let Some(moved) = f(place)
+            {
+                *place = moved;
+            }
+        }
+    }
+
+    /// Each placed changelist entry becomes what `f` makes of where it is
+    /// as a jumplist entry ([`Spot::entry`]), if anything: what moves
+    /// jumplist entries ([`Marks::displace`], [`Marks::cutting`]) moves
+    /// these too. One followed has yet to be placed, after the edit.
+    fn move_entries(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        f: impl Fn((u32, usize)) -> Option<Entry>,
+    ) {
+        for entry in &mut self.list {
+            if let Row::Placed(place) = &entry.row
+                && let Some(moved) = place.spot(snapshot).and_then(&f)
+            {
+                *entry = Spot::of_entry(moved);
             }
         }
     }
@@ -1437,6 +1606,35 @@ impl Marks {
         Some(found)
     }
 
+    /// Goes `count` entries back (`older`, `g;`) or forward (`g,`) through
+    /// the changelist, as nvim's `get_changelist` does, once the batches are
+    /// read ([`catch_up`]): a count past either end goes to that end, unless
+    /// the entry last gone to is already there (E662 or E663; E664 with no
+    /// entry), with nothing changed. From past the newest entry (no `g;` or
+    /// `g,` since the last change), `g,` goes to the newest. It returns the
+    /// entry's row and byte column (which may lie past its row's end), or
+    /// `None` for one past the last row (E19).
+    pub(crate) fn go_change(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        older: bool,
+        count: u32,
+    ) -> Result<Option<(u32, usize)>, &'static str> {
+        let changes = &mut self.changes;
+        let len = changes.list.len();
+        if len == 0 {
+            return Err(NO_CHANGES);
+        }
+        let (at, count) = (changes.at, count.max(1) as usize);
+        changes.at = match older {
+            true if at == 0 => return Err(AT_START),
+            true => at.saturating_sub(count),
+            false if at == len - 1 => return Err(AT_END),
+            false => (at + count).min(len - 1),
+        };
+        Ok(changes.list[changes.at].entry(snapshot))
+    }
+
     /// Before the rows from `first` through `last` go: their jumplist
     /// entries go to the row after them, which takes their place, at the
     /// same column, as nvim's do; past the last row if none does, or onto
@@ -1444,19 +1642,19 @@ impl Marks {
     fn displace(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
         self.advance();
         let rows = snapshot.text().row_count();
-        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
-            let Some((row, column)) = entry.spot(snapshot) else {
-                continue;
-            };
-            if !(first..=last).contains(&row) {
-                continue;
-            }
-            *entry = match () {
+        let moved = |(row, column): (u32, usize)| {
+            (first..=last).contains(&row).then(|| match () {
                 _ if last + 1 < rows => Entry::At(Place::on(snapshot, last + 1, column)),
                 _ if first == 0 => Entry::At(Place::joined(snapshot, 0, column)),
                 _ => Entry::Past,
-            };
+            })
+        };
+        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
+            if let Some(moved) = entry.spot(snapshot).and_then(moved) {
+                *entry = moved;
+            }
         }
+        self.changes.move_entries(snapshot, moved);
     }
 
     /// Before a linewise change over the rows from `first` through `last`,
@@ -1559,16 +1757,18 @@ impl Marks {
         if first == last {
             return;
         }
-        // Jumplist entries on the rows between go with the last row's text.
+        // Jumplist and changelist entries on the rows between go with the
+        // last row's text.
         self.advance();
+        let moved = |(row, column): (u32, usize)| {
+            (row > first && row < last).then(|| Entry::At(Place::joined(snapshot, last, column)))
+        };
         for entry in self.list.iter_mut().chain(self.files.values_mut()) {
-            if let Some((row, column)) = entry.spot(snapshot)
-                && row > first
-                && row < last
-            {
-                *entry = Entry::At(Place::joined(snapshot, last, column));
+            if let Some(moved) = entry.spot(snapshot).and_then(moved) {
+                *entry = moved;
             }
         }
+        self.changes.move_entries(snapshot, moved);
         self.update(|place| match place.position(snapshot)? {
             (row, column) if row == first => Some(Place::through(snapshot, row, last, column)),
             // Its row is joined, never deleted.
