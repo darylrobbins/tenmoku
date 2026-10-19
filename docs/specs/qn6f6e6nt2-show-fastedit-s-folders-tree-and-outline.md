@@ -38,7 +38,7 @@ Build the project panel's file tree and the Outline panel as two views (Folders,
   restore it; `DockPanel::Project` is now `DockPanel::Explorer`, and
   `DockPanel::Outline` is gone, as is the Outline rail button. A saved
   `"active": "outline"` is read as the Explorer.
-- The sidebar is the dock on the window's right by default (`dock.move_left`
+- The sidebar is the dock on the window's right by default (`dock.move_sidebar_left`
   moves it), so "the Left rail" is read as the sidebar's rail wherever it is.
 - `dock.show_project` shows the Explorer and expands Folders, since it focuses
   the tree; `outline.show` shows it and expands Outline, focus staying where it
