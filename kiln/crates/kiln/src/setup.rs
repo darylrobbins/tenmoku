@@ -42,6 +42,7 @@
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -56,8 +57,7 @@ use kiln_core::{
 use kiln_platform::{
     Capabilities, WindowSpec, commands,
     config::{
-        Batches, ConfigService, ConfigSource as _, DEFAULT_LOG_TARGET, batch_channel,
-        log_diagnostics_as,
+        Batches, ConfigService, ConfigSource, DEFAULT_LOG_TARGET, batch_channel, log_diagnostics_as,
     },
     keys, menus,
 };
@@ -110,6 +110,48 @@ struct Section {
 type AddSection =
     fn(ConfigService, Option<PathBuf>, &[&'static str]) -> (ConfigService, Vec<Diagnostic>);
 
+/// Adds an app's own source to the service ([`Config::source`]), which
+/// puts its diagnostics in the list given once it's installed.
+type AddSource = Box<dyn FnOnce(ConfigService, Installed) -> ConfigService>;
+
+/// The app's sources' diagnostics, each as it was installed, in order.
+type Installed = Rc<RefCell<Vec<Diagnostic>>>;
+
+/// An app's source, which adds its diagnostics to `installed` once it's
+/// installed: what it found reading its files may have changed since it
+/// was made.
+struct Installing<S> {
+    source: S,
+    installed: Installed,
+}
+
+impl<S: ConfigSource> ConfigSource for Installing<S> {
+    fn paths(&self) -> Vec<PathBuf> {
+        self.source.paths()
+    }
+
+    fn trees(&self) -> Vec<PathBuf> {
+        self.source.trees()
+    }
+
+    fn user_files(&self) -> Vec<PathBuf> {
+        self.source.user_files()
+    }
+
+    fn install(&mut self, cx: &mut App) {
+        self.source.install(cx);
+        (self.installed.borrow_mut()).extend(self.source.diagnostics());
+    }
+
+    fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
+        self.source.reload(changed, cx);
+    }
+
+    fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.source.diagnostics()
+    }
+}
+
 /// Each catalog in turn, until one knows the command.
 pub(crate) struct Catalogs(pub(crate) Vec<Rc<dyn CommandCatalog>>);
 
@@ -147,6 +189,8 @@ pub struct Config {
     sections: Vec<Section>,
     user_theme: Option<PathBuf>,
     theme_extensions: &'static [&'static str],
+    /// The app's own sources, in the order given.
+    sources: Vec<AddSource>,
     batches: Option<Batches>,
     log_target: Option<&'static str>,
     default_keys: bool,
@@ -181,6 +225,7 @@ impl Config {
             sections: Vec::new(),
             user_theme: None,
             theme_extensions: &[],
+            sources: Vec::new(),
             batches: None,
             log_target: None,
             default_keys: false,
@@ -410,6 +455,19 @@ impl Config {
         self
     }
 
+    /// A config source of the app's own, such as a file in a format kiln
+    /// doesn't read: watched and reloaded with the user's files, installed
+    /// when the service starts, its diagnostics (as installed) logged with
+    /// theirs and in [`kiln_platform::config::diagnostics`]. Each call adds one, after
+    /// kiln's sources and in the order added. [`Config::user_files_in`]
+    /// leaves its files be.
+    pub fn source(mut self, source: impl ConfigSource) -> Self {
+        self.sources.push(Box::new(move |service, installed| {
+            service.source(Installing { source, installed })
+        }));
+        self
+    }
+
     /// Takes the changed files from `batches` instead of watching them:
     /// for tests, which send what the watcher would
     /// ([`kiln_platform::config::batch_channel`]).
@@ -581,11 +639,12 @@ impl Global for Watching {}
 /// 7. the user's extensions ([`Config::extensions`]), their directory
 ///    watched from now on, and [`Config::on_extensions`] called with them
 ///    once the service starts; their themes are installed, for
-///    [`crate::extensions::select_themes`] to choose.
+///    [`crate::extensions::select_themes`] to choose;
+/// 8. the app's own sources ([`Config::source`]), watched from now on.
 ///
-/// Returns the keymap's, menus', settings', theme's and extensions' diagnostics, which
-/// it has also logged: errors and warnings at those levels. Those the
-/// user's files have later are logged as they change, and
+/// Returns the keymap's, menus', settings', theme's, extensions' and the
+/// app's sources' diagnostics, which it has also logged: errors and
+/// warnings at those levels. Those the user's files have later are logged as they change, and
 /// [`kiln_platform::config::diagnostics`] has them all.
 ///
 /// # Panics
@@ -684,6 +743,10 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }
+    let installed = Installed::default();
+    for add in std::mem::take(&mut config.sources) {
+        service = add(service, installed.clone());
+    }
     // Last, so a choice made between batches can put its diagnostics in
     // place of the last ones at the end ([`Layers::select`]).
     service = service.source(SelectionSource(layers));
@@ -706,6 +769,10 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         },
     };
     cx.set_global(Watching(task));
+    // The app's sources', as installed.
+    let installed = installed.take();
+    log_diagnostics_as(target, &installed);
+    diagnostics.extend(installed);
     contributions::start(cx, config, os, shared_keymap, menu_diagnostics);
     diagnostics
 }

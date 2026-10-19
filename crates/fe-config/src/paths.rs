@@ -14,6 +14,9 @@ pub use kiln_core::paths::{SETTINGS_FILE, TRUST_FILE};
 /// The user's theme file's name, beside [`SETTINGS_FILE`].
 pub const THEME_FILE: &str = "theme.toml";
 
+/// The user's vimrc's name, beside [`SETTINGS_FILE`].
+pub const VIMRC_FILE: &str = "vimrc";
+
 /// fastedit, as kiln knows it.
 pub fn app_id() -> AppId {
     AppId::new("dev.fastedit.fastedit", "fastedit", "fastedit")
@@ -59,6 +62,12 @@ pub fn user_theme_path() -> Option<PathBuf> {
     Some(config_dir()?.join(THEME_FILE))
 }
 
+/// `<config_dir>/vimrc`, beside `settings.toml`: the user's vim remaps,
+/// in the subset of vimrc that `fe_vim::parse_vimrc` reads.
+pub fn user_vimrc_path() -> Option<PathBuf> {
+    Some(config_dir()?.join(VIMRC_FILE))
+}
+
 /// `<root>/.fastedit/settings.toml`.
 pub fn project_settings_path(root: &Path) -> PathBuf {
     app_paths().project_settings_file(root)
@@ -86,4 +95,20 @@ pub fn state_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf>
 /// `<state_dir>/trust.toml`: see [`crate::trust`].
 pub fn trust_path() -> Option<PathBuf> {
     app_paths().trust_file()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_vimrc_path_is_in_the_config_dir() {
+        let expected = config_dir().map(|dir| dir.join("vimrc"));
+        assert_eq!(user_vimrc_path(), expected);
+        assert_eq!(
+            user_vimrc_path().map(|path| path.with_file_name(SETTINGS_FILE)),
+            user_settings_path(),
+            "beside settings.toml"
+        );
+    }
 }

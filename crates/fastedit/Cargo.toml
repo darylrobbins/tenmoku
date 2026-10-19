@@ -12,6 +12,7 @@ fe-buffer.workspace = true
 fe-config.workspace = true
 fe-gpui.workspace = true
 fe-lsp.workspace = true
+fe-vim.workspace = true
 fe-workbench.workspace = true
 kiln.workspace = true
 kiln-platform.workspace = true

@@ -4,6 +4,7 @@
 mod config;
 mod perf;
 mod theme;
+mod vim_remaps;
 
 use std::{
     collections::HashMap,
@@ -15,6 +16,7 @@ use std::{
 
 use config::{config, log_keymap_report};
 use perf::Startup;
+use vim_remaps::VimRemaps;
 
 use fe_buffer::Buffer;
 use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore, settings::VimClipboard};
@@ -130,8 +132,6 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         let (now, before) = (global.settings(), global.previous());
         let jump_on_s = now.vim.jump_on_s;
-        let remaps = (now.vim.remap != before.vim.remap || now.vim.leader != before.vim.leader)
-            .then(|| now.vim.clone());
         let now_limit = now.vim.regex_time_limit;
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
         let (enabled, unnamed) = (
@@ -145,9 +145,6 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
-        if let Some(vim) = remaps {
-            warn_remap_issues(fe_gpui::set_vim_remaps(cx, &vim));
-        }
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
@@ -156,13 +153,6 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
     })
     .detach();
-}
-
-/// Logs each `vim.remap` entry that didn't load.
-fn warn_remap_issues(issues: Vec<String>) {
-    for issue in issues {
-        log::warn!(target: "fastedit", "{issue}");
-    }
 }
 
 /// Gives `window` the settings of its root: the config service's for the
@@ -401,14 +391,15 @@ fn main() {
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
         // Commands, keys, menus, in-window prompts where there are no
-        // native alerts, and the config files watched from here on.
-        kiln::init(cx, config(store));
+        // native alerts, and the config files watched from here on: the
+        // vimrc and `vim.remap` too, which give every editor its remaps.
+        let remaps = VimRemaps::new(fe_config::paths::user_vimrc_path(), &store);
+        kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.
         theme::init(cx);
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
-        warn_remap_issues(fe_gpui::set_vim_remaps(cx, &settings.vim));
         fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,

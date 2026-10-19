@@ -93,10 +93,9 @@ use std::{collections::VecDeque, rc::Rc, sync::Arc};
 
 use fe_buffer::TransactionId;
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
-use fe_config::{VimRemapMode, VimSettings};
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_vim::{
-    Registers, Remap, RemapMode, RemapSet, Step, VimCommands, VimKey, VimState, VimTarget,
+    Registers, Remap, RemapIssue, RemapSet, Step, VimCommands, VimKey, VimState, VimTarget,
 };
 use gpui::{
     App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Subscription, Task,
@@ -273,22 +272,13 @@ pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
     }
 }
 
-/// Gives every editor the remaps of `vim.remap` and `vim.leader`, and any
-/// opened or switched on later, replacing the set before: keys an editor
-/// holds for a longer map go on at once, unmapped. An entry that
-/// can't load is left out alone and comes back as `vim.remap[N]: …`.
-pub fn set_vim_remaps(cx: &mut App, settings: &VimSettings) -> Vec<String> {
-    let remaps: Vec<Remap> = settings
-        .remap
-        .iter()
-        .map(|remap| Remap {
-            modes: remap_modes(remap.mode.modes()),
-            from: remap.from.clone(),
-            to: remap.to.clone(),
-            recursive: remap.recursive,
-        })
-        .collect();
-    let (set, issues) = RemapSet::new(&remaps, &settings.leader);
+/// Gives every editor the set `remaps` build with `leader` (in vim
+/// notation), and any opened or switched on later, replacing the set
+/// before: keys an editor holds for a longer map go on at once, unmapped.
+/// A later record for the same keys in the same mode replaces an earlier
+/// one. A record that can't load is left out alone, with its issue.
+pub fn set_vim_remaps(cx: &mut App, remaps: &[Remap], leader: &str) -> Vec<RemapIssue> {
+    let (set, issues) = RemapSet::new(remaps, leader);
     let set = Arc::new(set);
     let vim = cx.default_global::<Vim>();
     vim.remaps = Arc::clone(&set);
@@ -305,25 +295,6 @@ pub fn set_vim_remaps(cx: &mut App, settings: &VimSettings) -> Vec<String> {
             .ok();
     }
     issues
-        .into_iter()
-        .map(|issue| format!("vim.remap[{}]: {}", issue.index, issue.message))
-        .collect()
-}
-
-/// `v` means `x`; a mode listed twice counts once.
-fn remap_modes(modes: &[VimRemapMode]) -> Vec<RemapMode> {
-    let mut out = Vec::new();
-    for mode in modes {
-        let mode = match mode {
-            VimRemapMode::Normal => RemapMode::Normal,
-            VimRemapMode::Visual | VimRemapMode::VisualSelect => RemapMode::Visual,
-            VimRemapMode::OperatorPending => RemapMode::OperatorPending,
-        };
-        if !out.contains(&mode) {
-            out.push(mode);
-        }
-    }
-    out
 }
 
 /// Applies a settings reload's `vim.enabled` and `vim.clipboard`, each as

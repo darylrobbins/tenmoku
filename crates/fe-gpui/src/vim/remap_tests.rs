@@ -4,10 +4,9 @@
 
 use fe_buffer::{Buffer, Point};
 use fe_command::Invocation;
-use fe_config::{VimRemap, VimRemapMode, VimRemapModes, VimSettings};
 use fe_editor::EditorModel;
 use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer};
-use fe_vim::HostCommand;
+use fe_vim::{HostCommand, Remap, RemapMode};
 use gpui::{
     Entity, EntityInputHandler as _, Focusable as _, Modifiers, Pixels, TestAppContext,
     VisualTestContext,
@@ -27,7 +26,7 @@ fn vim_editor<'a>(
     cx: &'a mut TestAppContext,
     text: &str,
     at: (u32, u32),
-    remaps: Vec<VimRemap>,
+    remaps: Vec<Remap>,
 ) -> (Entity<EditorView>, &'a mut VisualTestContext) {
     cx.update(init);
     let text = text.to_owned();
@@ -43,20 +42,15 @@ fn vim_editor<'a>(
         window.focus(&view.focus_handle(cx), cx);
     });
     cx.update(|_, cx| set_vim_enabled(cx, true));
-    let settings = VimSettings {
-        remap: remaps,
-        leader: ",".to_string(),
-        ..VimSettings::default()
-    };
-    let issues = cx.update(|_, cx| set_vim_remaps(cx, &settings));
-    assert_eq!(issues, Vec::<String>::new());
+    let issues = cx.update(|_, cx| set_vim_remaps(cx, &remaps, ","));
+    assert_eq!(issues, []);
     cx.run_until_parked();
     (view, cx)
 }
 
-fn noremap(mode: VimRemapMode, from: &str, to: &str) -> VimRemap {
-    VimRemap {
-        mode: VimRemapModes::One(mode),
+fn noremap(mode: RemapMode, from: &str, to: &str) -> Remap {
+    Remap {
+        modes: vec![mode],
         from: from.to_string(),
         to: to.to_string(),
         recursive: false,
@@ -126,8 +120,8 @@ const INDENTED: &str = "  one two\n  three four\n  five six";
 #[gpui::test]
 fn expansion_runs_on_its_key(cx: &mut TestAppContext) {
     let remaps = vec![
-        noremap(VimRemapMode::Normal, "H", "^"),
-        noremap(VimRemapMode::OperatorPending, "H", "^"),
+        noremap(RemapMode::Normal, "H", "^"),
+        noremap(RemapMode::OperatorPending, "H", "^"),
     ];
     let (view, cx) = vim_editor(cx, INDENTED, (1, 6), remaps);
     cx.simulate_keystrokes("shift-h");
@@ -155,8 +149,8 @@ fn expansion_runs_on_its_key(cx: &mut TestAppContext) {
 #[gpui::test]
 fn prefix_owns_next_key(cx: &mut TestAppContext) {
     let remaps = vec![
-        noremap(VimRemapMode::Normal, "gb", "x"),
-        noremap(VimRemapMode::Normal, "gbc", "dd"),
+        noremap(RemapMode::Normal, "gb", "x"),
+        noremap(RemapMode::Normal, "gbc", "dd"),
     ];
     let (view, cx) = vim_editor(cx, "abc\ndef\nghi", (2, 1), remaps);
     let path = std::path::Path::new(DEFAULT_KEYMAP_PATH);
@@ -254,7 +248,7 @@ fn prefix_owns_next_key(cx: &mut TestAppContext) {
 /// replay's is dropped.
 #[gpui::test]
 fn mapped_write_leaves_host_command(cx: &mut TestAppContext) {
-    let remaps = vec![noremap(VimRemapMode::Normal, "<leader>w", ":w<CR>")];
+    let remaps = vec![noremap(RemapMode::Normal, "<leader>w", ":w<CR>")];
     let (view, cx) = vim_editor(cx, "abc", (0, 0), remaps);
     let host_command =
         |cx: &mut VisualTestContext| view.update(cx, |view, _| view.take_vim_host_command());
@@ -288,7 +282,7 @@ fn mapped_write_leaves_host_command(cx: &mut TestAppContext) {
 /// line.
 #[gpui::test]
 fn open_line_keeps_text(cx: &mut TestAppContext) {
-    let remaps = vec![noremap(VimRemapMode::Normal, "<leader>s", ":%s/")];
+    let remaps = vec![noremap(RemapMode::Normal, "<leader>s", ":%s/")];
     let (view, cx) = vim_editor(cx, "abc", (0, 0), remaps);
     cx.simulate_keystrokes(", s");
     assert_eq!(mode(&view, cx), Some("cmdline"));
@@ -311,11 +305,11 @@ fn host_commands(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<H
 #[gpui::test]
 fn a_mapped_host_command_ends_the_map(cx: &mut TestAppContext) {
     let remaps = vec![
-        noremap(VimRemapMode::Normal, "<leader>w", ":w<CR>"),
-        noremap(VimRemapMode::Normal, "<leader>n", ":w<CR>:nohlsearch<CR>"),
-        noremap(VimRemapMode::Normal, "<leader>q", ":w<CR>:q<CR>"),
-        noremap(VimRemapMode::Normal, "<leader>d", ":w<CR>dd"),
-        noremap(VimRemapMode::Normal, "<leader>g", "do:w<CR>"),
+        noremap(RemapMode::Normal, "<leader>w", ":w<CR>"),
+        noremap(RemapMode::Normal, "<leader>n", ":w<CR>:nohlsearch<CR>"),
+        noremap(RemapMode::Normal, "<leader>q", ":w<CR>:q<CR>"),
+        noremap(RemapMode::Normal, "<leader>d", ":w<CR>dd"),
+        noremap(RemapMode::Normal, "<leader>g", "do:w<CR>"),
     ];
     let (view, cx) = vim_editor(cx, "abc\ndef", (0, 0), remaps);
     let write = HostCommand::Write {
@@ -369,16 +363,16 @@ fn a_mapped_host_command_ends_the_map(cx: &mut TestAppContext) {
 /// and one completes a held prefix; a `noremap`'s arrow moves.
 #[gpui::test]
 fn mapped_arrows_are_remapped(cx: &mut TestAppContext) {
-    let mut recursive = noremap(VimRemapMode::Normal, "H", "<Right>");
+    let mut recursive = noremap(RemapMode::Normal, "H", "<Right>");
     recursive.recursive = true;
-    let mut held = noremap(VimRemapMode::Normal, "Q", "g<Right>");
+    let mut held = noremap(RemapMode::Normal, "Q", "g<Right>");
     held.recursive = true;
     let remaps = vec![
         recursive,
         held,
-        noremap(VimRemapMode::Normal, "L", "<Right>"),
-        noremap(VimRemapMode::Normal, "<Right>", "x"),
-        noremap(VimRemapMode::Normal, "g<Right>", "~"),
+        noremap(RemapMode::Normal, "L", "<Right>"),
+        noremap(RemapMode::Normal, "<Right>", "x"),
+        noremap(RemapMode::Normal, "g<Right>", "~"),
     ];
     let (view, cx) = vim_editor(cx, "abcdef", (0, 0), remaps);
     cx.simulate_keystrokes("shift-l");
@@ -404,7 +398,7 @@ fn mapped_arrows_are_remapped(cx: &mut TestAppContext) {
 /// going.
 #[gpui::test]
 fn dispatched_replay_waits(cx: &mut TestAppContext) {
-    let remaps = vec![noremap(VimRemapMode::Normal, "<leader>b", "x")];
+    let remaps = vec![noremap(RemapMode::Normal, "<leader>b", "x")];
     let (view, cx) = vim_editor(cx, "x,yz", (0, 1), remaps);
     // `,` into register `a`.
     cx.simulate_keystrokes("\" a y l");
@@ -438,9 +432,9 @@ fn dispatched_replay_waits(cx: &mut TestAppContext) {
 #[gpui::test]
 fn one_editor_waits(app: &mut TestAppContext) {
     let remaps = vec![
-        noremap(VimRemapMode::Normal, "<leader>b", "x"),
-        noremap(VimRemapMode::Normal, ",,z", "x"),
-        noremap(VimRemapMode::Normal, ",w", "x"),
+        noremap(RemapMode::Normal, "<leader>b", "x"),
+        noremap(RemapMode::Normal, ",,z", "x"),
+        noremap(RemapMode::Normal, ",w", "x"),
     ];
     let (second, _) = vim_editor(app, "abc", (0, 0), remaps);
     let second_window = app.windows()[0];
@@ -499,8 +493,8 @@ fn one_editor_waits(app: &mut TestAppContext) {
 #[gpui::test]
 fn macro_in_a_map_keeps_the_maps_command(cx: &mut TestAppContext) {
     let remaps = vec![
-        noremap(VimRemapMode::Normal, "H", ":w<CR>@a"),
-        noremap(VimRemapMode::Normal, "L", "@b"),
+        noremap(RemapMode::Normal, "H", ":w<CR>@a"),
+        noremap(RemapMode::Normal, "L", "@b"),
     ];
     let (view, cx) = vim_editor(cx, "abc", (0, 0), remaps);
     let record = |register: &str, line: &str, cx: &mut VisualTestContext| {

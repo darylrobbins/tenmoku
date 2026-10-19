@@ -1,9 +1,8 @@
-//! `vim.remap` and `vim.leader` reaching the editors' vim state.
+//! Remaps, from the vimrc and `vim.remap`, reaching the editors' vim state.
 
 use fe_buffer::Buffer;
-use fe_config::{VimRemap, VimRemapMode, VimRemapModes, VimSettings};
 use fe_editor::EditorModel;
-use fe_vim::{Lookup, RemapMode, VimKey};
+use fe_vim::{Lookup, Remap, RemapMode, VimKey};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::*;
@@ -22,19 +21,12 @@ fn open(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContext)
     (view, cx)
 }
 
-fn remap(from: &str, to: &str) -> VimRemap {
-    VimRemap {
-        mode: VimRemapModes::One(VimRemapMode::Normal),
+fn remap(from: &str, to: &str) -> Remap {
+    Remap {
+        modes: vec![RemapMode::Normal],
         from: from.to_string(),
         to: to.to_string(),
         recursive: false,
-    }
-}
-
-fn settings(remaps: Vec<VimRemap>) -> VimSettings {
-    VimSettings {
-        remap: remaps,
-        ..VimSettings::default()
     }
 }
 
@@ -60,8 +52,8 @@ fn remaps_reach_every_editor(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(!maps_h(&first, cx));
 
-    let issues = cx.update(|_, cx| set_vim_remaps(cx, &settings(vec![remap("H", "^")])));
-    assert_eq!(issues, Vec::<String>::new());
+    let issues = cx.update(|_, cx| set_vim_remaps(cx, &[remap("H", "^")], "\\"));
+    assert_eq!(issues, []);
     assert!(maps_h(&first, cx));
 
     // An editor opened afterwards gets the set too.
@@ -70,7 +62,7 @@ fn remaps_reach_every_editor(cx: &mut TestAppContext) {
     assert!(maps_h(&second, cx));
 
     // A later call replaces it.
-    cx.update(|_, cx| set_vim_remaps(cx, &settings(vec![remap("L", "$")])));
+    cx.update(|_, cx| set_vim_remaps(cx, &[remap("L", "$")], "\\"));
     assert!(!maps_h(&first, cx));
     assert!(!maps_h(&second, cx));
 }
@@ -82,10 +74,9 @@ fn bad_entries_are_reported(cx: &mut TestAppContext) {
     cx.update(|_, cx| set_vim_enabled(cx, true));
     cx.run_until_parked();
 
-    let issues = cx.update(|_, cx| {
-        set_vim_remaps(cx, &settings(vec![remap("a", "<Bogus>"), remap("H", "^")]))
-    });
+    let issues =
+        cx.update(|_, cx| set_vim_remaps(cx, &[remap("a", "<Bogus>"), remap("H", "^")], "\\"));
     assert_eq!(issues.len(), 1, "{issues:?}");
-    assert!(issues[0].starts_with("vim.remap[0]: "), "{issues:?}");
+    assert_eq!(issues[0].index, 0, "{issues:?}");
     assert!(maps_h(&view, cx));
 }
