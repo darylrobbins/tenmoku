@@ -1,0 +1,427 @@
+# Insert-mode <C-t> and <C-d> cases for fe-vim's oracle: the row's indent
+# one shift width (4) wider or narrower, 0<C-d> and ^<C-d>, with . and a
+# count repeating them, in insert and replace mode.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in insert_indent_keys.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "ctrl_t_indents"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_t_twice"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-t><C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_t_mid_row"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = "ia<C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_t_row_end"
+buffer = "  foo"
+cursor = [0, 5]
+keys = "a<C-t>x<Esc>"
+
+[[case]]
+name = "ctrl_t_partial_indent"
+buffer = "  foo"
+cursor = [0, 2]
+keys = "i<C-t>z<Esc>"
+
+[[case]]
+name = "ctrl_t_empty_row"
+buffer = ""
+cursor = [0, 0]
+keys = "i<C-t>x<Esc>"
+
+[[case]]
+name = "ctrl_t_only"
+buffer = "foo"
+cursor = [0, 0]
+keys = "i<C-t><Esc>"
+
+[[case]]
+name = "ctrl_t_then_enter"
+buffer = "foo"
+cursor = [0, 3]
+keys = "a<C-t><CR>x<Esc>"
+
+[[case]]
+name = "ctrl_d_outdents"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "ia<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_d_to_previous_stop"
+buffer = "      foo"
+cursor = [0, 6]
+keys = "ia<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_d_one_space"
+buffer = "  foo"
+cursor = [0, 2]
+keys = "i<C-d><Esc>"
+
+[[case]]
+name = "ctrl_d_no_indent"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_d_tab_indent"
+buffer = "\tfoo"
+cursor = [0, 1]
+keys = "i<C-d>z<Esc>"
+
+[[case]]
+name = "ctrl_d_mid_row"
+buffer = "    foo bar"
+cursor = [0, 8]
+keys = "ia<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_t_ctrl_d"
+buffer = "foo"
+cursor = [0, 3]
+keys = "a<C-t><C-d>x<Esc>"
+
+[[case]]
+name = "ctrl_t_second_row"
+buffer = "x\n  y"
+cursor = [1, 2]
+keys = "i<C-t>z<Esc>"
+
+[[case]]
+name = "zero_ctrl_d"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i0<C-d>b<Esc>"
+
+[[case]]
+name = "zero_ctrl_d_deep"
+buffer = "            foo"
+cursor = [0, 12]
+keys = "i0<C-d>b<Esc>"
+
+[[case]]
+name = "zero_ctrl_d_alone"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i0<C-d><Esc>"
+
+[[case]]
+name = "zero_ctrl_d_after_text"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "ib0<C-d>c<Esc>"
+
+[[case]]
+name = "caret_ctrl_d"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i^<C-d>b<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_enter"
+buffer = "    foo"
+cursor = [0, 7]
+keys = "a^<C-d>b<CR>c<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_open_row"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i^<C-d>b<Esc>jo<Esc>"
+
+[[case]]
+name = "ctrl_t_dot_repeat"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-t>b<Esc>."
+
+[[case]]
+name = "ctrl_t_dot_other_row"
+buffer = "foo\nbar"
+cursor = [0, 0]
+keys = "ia<C-t>b<Esc>j."
+
+[[case]]
+name = "ctrl_t_dot_start_of_row"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-t>b<Esc>0."
+
+[[case]]
+name = "ctrl_t_dot_count"
+buffer = "foo"
+cursor = [0, 0]
+keys = "i<C-t>b<Esc>2."
+
+[[case]]
+name = "ctrl_t_ctrl_d_dot"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i<C-t>b<C-d>c<Esc>."
+
+[[case]]
+name = "zero_ctrl_d_dot"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i0<C-d>b<Esc>."
+
+[[case]]
+name = "ctrl_d_dot"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "ia<C-d>b<Esc>."
+
+[[case]]
+name = "ctrl_t_undo"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ia<C-t>b<Esc>u"
+
+[[case]]
+name = "ctrl_t_count_insert"
+buffer = "foo"
+cursor = [0, 0]
+keys = "3ia<C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_d_count_insert"
+buffer = "            foo"
+cursor = [0, 12]
+keys = "2ia<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_t_append_count"
+buffer = "foo"
+cursor = [0, 2]
+keys = "2a<C-t>x<Esc>"
+
+[[case]]
+name = "ctrl_t_open_row"
+buffer = "foo"
+cursor = [0, 0]
+keys = "o<C-t>x<Esc>"
+
+[[case]]
+name = "ctrl_d_open_row"
+buffer = "    foo"
+cursor = [0, 0]
+keys = "o<C-d>x<Esc>"
+
+[[case]]
+name = "ctrl_d_replace_mode"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "Ra<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_t_replace_mode"
+buffer = "foo"
+cursor = [0, 0]
+keys = "Ra<C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_t_replace_backspace"
+buffer = "foo"
+cursor = [0, 0]
+keys = "Rab<C-t>c<BS><BS><Esc>"
+
+[[case]]
+name = "ctrl_d_after_multibyte"
+buffer = "    éabc"
+cursor = [0, 6]
+keys = "i<C-d>x<Esc>"
+
+[[case]]
+name = "ctrl_d_existing_zero"
+buffer = "    0foo"
+cursor = [0, 4]
+keys = "a<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_d_existing_caret"
+buffer = "    ^foo"
+cursor = [0, 4]
+keys = "a<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_d_caret_inside_indent"
+buffer = "        foo"
+cursor = [0, 6]
+keys = "i<C-d>x<Esc>"
+
+[[case]]
+name = "literal_private_use_dot"
+buffer = "foo"
+cursor = [0, 0]
+keys = "ix<Esc>j."
+
+[[case]]
+name = "zero_ctrl_t_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i0<C-t><C-d><Esc>"
+
+[[case]]
+name = "caret_ctrl_t_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-t><C-d><Esc>"
+
+[[case]]
+name = "zero_ctrl_d_second_time"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i0<C-d>0<C-d>x<Esc>"
+
+[[case]]
+name = "ctrl_t_replace_dot"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = "Ra<C-t>b<Esc>w."
+
+[[case]]
+name = "ctrl_d_replace_dot"
+buffer = "    foo\n    bar"
+cursor = [0, 4]
+keys = "Ra<C-d>b<Esc>j."
+
+[[case]]
+name = "ctrl_t_replace_count"
+buffer = "foo"
+cursor = [0, 0]
+keys = "3Ra<C-t>b<Esc>"
+
+[[case]]
+name = "ctrl_d_replace_count"
+buffer = "            foo"
+cursor = [0, 12]
+keys = "2Ra<C-d>b<Esc>"
+
+[[case]]
+name = "ctrl_t_replace_mid_dot"
+buffer = "foobar"
+cursor = [0, 0]
+keys = "Rab<C-t>c<Esc>."
+
+[[case]]
+name = "ctrl_t_replace_dot_count"
+buffer = "foo"
+cursor = [0, 0]
+keys = "Ra<C-t>b<Esc>2."
+
+[[case]]
+name = "replace_zero_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R0<C-d>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R^<C-d>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R^<C-d><CR>x<Esc>"
+
+[[case]]
+name = "replace_zero_ctrl_d_after_text"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "Rab0<C-d>x<Esc>"
+
+[[case]]
+name = "replace_zero_ctrl_d_dot"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R0<C-d>x<Esc>."
+
+[[case]]
+name = "counted_o_ctrl_t"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "2o<C-t>x<Esc>"
+
+[[case]]
+name = "counted_o_ctrl_t_deep"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "3o<C-t>x<Esc>"
+
+[[case]]
+name = "counted_o_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2o<C-d>x<Esc>"
+
+[[case]]
+name = "counted_O_ctrl_t"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2O<C-t>x<Esc>"
+
+[[case]]
+name = "counted_O_ctrl_d"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2O<C-d>x<Esc>"
+
+[[case]]
+name = "counted_o_ctrl_d_ctrl_t"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2o<C-d>x<C-t>y<Esc>"
+
+[[case]]
+name = "o_ctrl_t_dot"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "o<C-t>x<Esc>."
+
+[[case]]
+name = "caret_ctrl_d_ctrl_t_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-d><C-t><CR>x<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_ctrl_t_ctrl_d_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-d><C-t><C-d><CR>x<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_ctrl_t_twice_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-d><C-t><C-t><CR>x<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_typed_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-d>y<CR>x<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_space_enter"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "i^<C-d> <CR>x<Esc>"

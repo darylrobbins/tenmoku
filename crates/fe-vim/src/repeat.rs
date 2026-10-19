@@ -170,10 +170,13 @@ fn replay(
     };
     if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
-            match target.state.mode {
-                Mode::Replace => replace::retype(target.state, target.model, text),
-                _ => insert::type_at_carets(target.model, &*target.host, text, origin(actor)),
-            }
+            insert::retype_keys(
+                target.model,
+                &*target.host,
+                &*target.state,
+                text,
+                origin(actor),
+            );
         }
         if let Some(session) = target.state.session.as_ref().filter(|_| last.typed_first) {
             session.typed_on_first_rows();

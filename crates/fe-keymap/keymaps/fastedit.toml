@@ -1150,6 +1150,33 @@ keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == replace"
 
+# `ctrl-t` and `ctrl-d` indent and outdent the row in insert and replace
+# mode: vim's keys, which the editor's key listener hands to fe-vim.
+
+[[bindings]]
+keys = "ctrl-t"
+command = "vim.key"
+context = "editor && vim.mode == insert"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-d"
+command = "vim.key"
+context = "editor && vim.mode == insert"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-t"
+command = "vim.key"
+context = "editor && vim.mode == replace"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-d"
+command = "vim.key"
+context = "editor && vim.mode == replace"
+platform = "!macos"
+
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
 
 [[bindings]]

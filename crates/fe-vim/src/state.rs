@@ -330,6 +330,7 @@ impl VimState {
                 to if to == from => session.forget_line_break(from),
                 to => session.line_break_typed(from, to),
             }
+            self.restore_indent(model);
         }
     }
 

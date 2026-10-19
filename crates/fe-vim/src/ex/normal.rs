@@ -242,8 +242,22 @@ impl Runner {
                     VimKey::Char(ch) => model.insert(ch.encode_utf8(&mut [0; 4])),
                     VimKey::Backspace if replace => state.replace_backspace(model),
                     VimKey::Backspace => model.backspace(),
-                    _ => state.line_break_in(model, host),
+                    _ => {
+                        state.line_break_in(model, host);
+                        state.restore_indent(model);
+                    }
                 });
+            }
+            // `<C-t>` and `<C-d>` shift the row's indent, in the same
+            // transaction.
+            (_, VimKey::Ctrl(letter @ ('t' | 'd'))) => {
+                let state = &mut *target.state;
+                target
+                    .model
+                    .run_as(origin(&self.actor), |model| match letter {
+                        't' => state.indent_in(model),
+                        _ => state.indent_out(model),
+                    });
             }
             (_, VimKey::Esc) if replace => {
                 return self.dispatch(target, "vim.replace_normal_mode", None);

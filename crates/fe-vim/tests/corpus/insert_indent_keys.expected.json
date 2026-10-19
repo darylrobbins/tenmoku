@@ -1,0 +1,1265 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "ctrl_t_indents",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t>b<Esc>",
+      "expect": {
+        "buffer": "    abfoo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_twice",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t><C-t>b<Esc>",
+      "expect": {
+        "buffer": "        abfoo",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_mid_row",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ia<C-t>b<Esc>",
+      "expect": {
+        "buffer": "    fooab bar",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_row_end",
+      "buffer": "  foo",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "a<C-t>x<Esc>",
+      "expect": {
+        "buffer": "    foox",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_partial_indent",
+      "buffer": "  foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "i<C-t>z<Esc>",
+      "expect": {
+        "buffer": "    zfoo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_empty_row",
+      "buffer": "",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-t>x<Esc>",
+      "expect": {
+        "buffer": "    x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_only",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-t><Esc>",
+      "expect": {
+        "buffer": "    foo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_then_enter",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "a<C-t><CR>x<Esc>",
+      "expect": {
+        "buffer": "    foo\n    x",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_outdents",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ia<C-d>b<Esc>",
+      "expect": {
+        "buffer": "    abfoo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_to_previous_stop",
+      "buffer": "      foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "ia<C-d>b<Esc>",
+      "expect": {
+        "buffer": "    abfoo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_one_space",
+      "buffer": "  foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "i<C-d><Esc>",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_no_indent",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-d>b<Esc>",
+      "expect": {
+        "buffer": "abfoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_tab_indent",
+      "buffer": "\tfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "i<C-d>z<Esc>",
+      "expect": {
+        "buffer": "zfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_mid_row",
+      "buffer": "    foo bar",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ia<C-d>b<Esc>",
+      "expect": {
+        "buffer": "foo abbar",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_ctrl_d",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "a<C-t><C-d>x<Esc>",
+      "expect": {
+        "buffer": "foox",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_second_row",
+      "buffer": "x\n  y",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "i<C-t>z<Esc>",
+      "expect": {
+        "buffer": "x\n    zy",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i0<C-d>b<Esc>",
+      "expect": {
+        "buffer": "bfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d_deep",
+      "buffer": "            foo",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "i0<C-d>b<Esc>",
+      "expect": {
+        "buffer": "bfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d_alone",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i0<C-d><Esc>",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d_after_text",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ib0<C-d>c<Esc>",
+      "expect": {
+        "buffer": "bcfoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i^<C-d>b<Esc>",
+      "expect": {
+        "buffer": "bfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_enter",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "a^<C-d>b<CR>c<Esc>",
+      "expect": {
+        "buffer": "foob\n    c",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_open_row",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i^<C-d>b<Esc>jo<Esc>",
+      "expect": {
+        "buffer": "bfoo\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_dot_repeat",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t>b<Esc>.",
+      "expect": {
+        "buffer": "        aabbfoo",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_dot_other_row",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t>b<Esc>j.",
+      "expect": {
+        "buffer": "    abfoo\n    baabr",
+        "cursor": [
+          1,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_dot_start_of_row",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t>b<Esc>0.",
+      "expect": {
+        "buffer": "    ab    abfoo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_dot_count",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-t>b<Esc>2.",
+      "expect": {
+        "buffer": "            bbbfoo",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_ctrl_d_dot",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i<C-t>b<C-d>c<Esc>.",
+      "expect": {
+        "buffer": "    bbccfoo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d_dot",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i0<C-d>b<Esc>.",
+      "expect": {
+        "buffer": "bbfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_dot",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ia<C-d>b<Esc>.",
+      "expect": {
+        "buffer": "aabbfoo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_undo",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-t>b<Esc>u",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_count_insert",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ia<C-t>b<Esc>",
+      "expect": {
+        "buffer": "            abababfoo",
+        "cursor": [
+          0,
+          17
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_count_insert",
+      "buffer": "            foo",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "2ia<C-d>b<Esc>",
+      "expect": {
+        "buffer": "    ababfoo",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_append_count",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "2a<C-t>x<Esc>",
+      "expect": {
+        "buffer": "        fooxx",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_open_row",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "o<C-t>x<Esc>",
+      "expect": {
+        "buffer": "foo\n    x",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_open_row",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "o<C-d>x<Esc>",
+      "expect": {
+        "buffer": "    foo\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_replace_mode",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Ra<C-d>b<Esc>",
+      "expect": {
+        "buffer": "abo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_mode",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ra<C-t>b<Esc>",
+      "expect": {
+        "buffer": "    abo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_backspace",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Rab<C-t>c<BS><BS><Esc>",
+      "expect": {
+        "buffer": "    aoo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_after_multibyte",
+      "buffer": "    éabc",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "i<C-d>x<Esc>",
+      "expect": {
+        "buffer": "éxabc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_existing_zero",
+      "buffer": "    0foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "a<C-d>b<Esc>",
+      "expect": {
+        "buffer": "0bfoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_existing_caret",
+      "buffer": "    ^foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "a<C-d>b<Esc>",
+      "expect": {
+        "buffer": "^bfoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_caret_inside_indent",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "i<C-d>x<Esc>",
+      "expect": {
+        "buffer": "  x  foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "literal_private_use_dot",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ix<Esc>j.",
+      "expect": {
+        "buffer": "xxfoo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_t_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i0<C-t><C-d><Esc>",
+      "expect": {
+        "buffer": "        0foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_t_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-t><C-d><Esc>",
+      "expect": {
+        "buffer": "        ^foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "zero_ctrl_d_second_time",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i0<C-d>0<C-d>x<Esc>",
+      "expect": {
+        "buffer": "xfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_dot",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ra<C-t>b<Esc>w.",
+      "expect": {
+        "buffer": "        abo abr",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_replace_dot",
+      "buffer": "    foo\n    bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Ra<C-d>b<Esc>j.",
+      "expect": {
+        "buffer": "abo\nab bar",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_count",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3Ra<C-t>b<Esc>",
+      "expect": {
+        "buffer": "            ababab",
+        "cursor": [
+          0,
+          17
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_d_replace_count",
+      "buffer": "            foo",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "2Ra<C-d>b<Esc>",
+      "expect": {
+        "buffer": "    abab",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_mid_dot",
+      "buffer": "foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Rab<C-t>c<Esc>.",
+      "expect": {
+        "buffer": "        ababcr",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_t_replace_dot_count",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ra<C-t>b<Esc>2.",
+      "expect": {
+        "buffer": "            aabab",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "replace_zero_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "R0<C-d>x<Esc>",
+      "expect": {
+        "buffer": "xoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "replace_caret_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "R^<C-d>x<Esc>",
+      "expect": {
+        "buffer": "xoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "replace_caret_ctrl_d_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "R^<C-d><CR>x<Esc>",
+      "expect": {
+        "buffer": "\n        xoo",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "replace_zero_ctrl_d_after_text",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "Rab0<C-d>x<Esc>",
+      "expect": {
+        "buffer": "abx",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "replace_zero_ctrl_d_dot",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "R0<C-d>x<Esc>.",
+      "expect": {
+        "buffer": "xoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_o_ctrl_t",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2o<C-t>x<Esc>",
+      "expect": {
+        "buffer": "    foo\n        x\n            x",
+        "cursor": [
+          2,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_o_ctrl_t_deep",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3o<C-t>x<Esc>",
+      "expect": {
+        "buffer": "        foo\n            x\n                x\n                    x",
+        "cursor": [
+          3,
+          20
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_o_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2o<C-d>x<Esc>",
+      "expect": {
+        "buffer": "        foo\n    x\nx",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_O_ctrl_t",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2O<C-t>x<Esc>",
+      "expect": {
+        "buffer": "            x\n                x\n        foo",
+        "cursor": [
+          1,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_O_ctrl_d",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2O<C-d>x<Esc>",
+      "expect": {
+        "buffer": "    x\nx\n        foo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "counted_o_ctrl_d_ctrl_t",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2o<C-d>x<C-t>y<Esc>",
+      "expect": {
+        "buffer": "        foo\n        xy\n        xy",
+        "cursor": [
+          2,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_ctrl_t_dot",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o<C-t>x<Esc>.",
+      "expect": {
+        "buffer": "        foo\n            x\n                x",
+        "cursor": [
+          2,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_ctrl_t_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-d><C-t><CR>x<Esc>",
+      "expect": {
+        "buffer": "    \n    xfoo",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_ctrl_t_ctrl_d_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-d><C-t><C-d><CR>x<Esc>",
+      "expect": {
+        "buffer": "\n        xfoo",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_ctrl_t_twice_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-d><C-t><C-t><CR>x<Esc>",
+      "expect": {
+        "buffer": "        \n        xfoo",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_typed_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-d>y<CR>x<Esc>",
+      "expect": {
+        "buffer": "y\n        xfoo",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "caret_ctrl_d_space_enter",
+      "buffer": "        foo",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "i^<C-d> <CR>x<Esc>",
+      "expect": {
+        "buffer": " \n xfoo",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

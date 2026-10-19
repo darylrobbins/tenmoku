@@ -24,7 +24,9 @@
 //! as text, and the editor's keys work as with vim off, but for `escape`
 //! and `ctrl-[`, bound to `vim.normal_mode`. Text typed or composed by an
 //! input method joins the insert session, and `Enter` goes in through
-//! [`VimState::line_break`]. Any other editor command, and a mouse click
+//! [`VimState::line_break`], and `ctrl-t` and `ctrl-d` shift the row's
+//! indent ([`VimState::indent_in`], [`VimState::indent_out`]), in replace mode
+//! too. Any other editor command, and a mouse click
 //! that moves the caret, splits the session
 //! ([`VimState::split_session`]), as Vim's cursor keys do.
 //!
@@ -628,7 +630,10 @@ pub(crate) fn line_break(
     invocation: &Invocation,
 ) -> Result<Dispatched<TransactionId>, DispatchError> {
     let origin = fe_editor::commands::origin(&invocation.actor);
-    let ((), transactions) = model.run_as(origin, |model| state.line_break_in(model, host));
+    let ((), transactions) = model.run_as(origin, |model| {
+        state.line_break_in(model, host);
+        state.restore_indent(model);
+    });
     Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
 }
 
@@ -690,7 +695,10 @@ pub(crate) fn type_as_keys(
                 false => {}
             }
             match key {
-                Some('\n') => state.line_break_in(model, host),
+                Some('\n') => {
+                    state.line_break_in(model, host);
+                    state.restore_indent(model);
+                }
                 Some(_) if state.is_virtual_replace() => state.replace_text(model, "\t"),
                 Some(_) => model.tab(),
                 None => {}
@@ -1047,7 +1055,14 @@ impl EditorView {
         self.sync_vim(cx);
         self.drop_remap_wait(cx);
         if self.accepts_text() {
-            return false;
+            // `ctrl-t` and `ctrl-d` are vim's in insert and replace mode.
+            return match vim_key(keystroke) {
+                Some(key @ VimKey::Ctrl('t' | 'd')) if self.typing_mode().is_some() => {
+                    self.record_vim_key(key);
+                    self.indent_typing(key, cx)
+                }
+                _ => false,
+            };
         }
         let Some(state) = &mut self.vim else {
             return false;
@@ -1210,6 +1225,33 @@ impl EditorView {
         }
         let dropped = cx.global_mut::<Vim>().remap_wait.take()?;
         Some(dropped.origin.clone())
+    }
+
+    /// `<C-t>` or `<C-d>` (`key`) in insert or replace mode: the carets'
+    /// rows' indent shifts ([`VimState::indent_in`], [`VimState::indent_out`]),
+    /// in the session. Returns whether it ran.
+    fn indent_typing(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+        if self.typing_mode().is_none() {
+            return false;
+        }
+        if self.read_only {
+            self.refuse_edit(cx);
+            return true;
+        }
+        let invocation = Invocation::of(KEY)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        let origin = fe_editor::commands::origin(&invocation.actor);
+        let Some(state) = &self.vim else {
+            return false;
+        };
+        let ((), transactions) = self.model.run_as(origin, |model| match key {
+            VimKey::Ctrl('t') => state.indent_in(model),
+            _ => state.indent_out(model),
+        });
+        let result: Result<_, DispatchError> =
+            Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
+        self.dispatched(result, &invocation, true, cx).is_ok()
     }
 
     /// Feeds the keys a `@` or a map left ([`VimState::take_replay`]),
@@ -1519,6 +1561,7 @@ impl EditorView {
                     // `<C-j>` (`<NL>`) is `<CR>` here.
                     VimKey::Enter | VimKey::Ctrl('j') => NEWLINE,
                     VimKey::Backspace => BACKSPACE,
+                    VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
                     VimKey::Esc => {
                         let normal = match mode {
                             fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,
@@ -1747,3 +1790,7 @@ mod replace_tests;
 
 #[cfg(test)]
 mod auto_indent_tests;
+
+#[cfg(test)]
+#[path = "vim_indent_keys_tests.rs"]
+mod vim_indent_keys_tests;

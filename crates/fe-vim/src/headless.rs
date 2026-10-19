@@ -173,6 +173,8 @@ impl HeadlessVim {
             // `<C-j>` (`<NL>`) is `<CR>` here.
             VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
             VimKey::Backspace => self.model.backspace(),
+            VimKey::Ctrl('t') => self.state.indent_in(&mut self.model),
+            VimKey::Ctrl('d') => self.state.indent_out(&mut self.model),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.normal_mode")
                     .expect("vim command IDs are valid")
@@ -196,8 +198,13 @@ impl HeadlessVim {
                 .state
                 .replace_text(&mut self.model, ch.encode_utf8(&mut [0; 4])),
             VimKey::Tab => self.state.replace_text(&mut self.model, "\t"),
-            VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
+            VimKey::Enter | VimKey::Ctrl('j') => {
+                self.state.line_break(&mut self.model);
+                self.state.restore_indent(&mut self.model);
+            }
             VimKey::Backspace => self.state.replace_backspace(&mut self.model),
+            VimKey::Ctrl('t') => self.state.indent_in(&mut self.model),
+            VimKey::Ctrl('d') => self.state.indent_out(&mut self.model),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.replace_normal_mode")
                     .expect("vim command IDs are valid")

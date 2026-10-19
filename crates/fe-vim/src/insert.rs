@@ -57,6 +57,10 @@ use crate::{
 mod block_rows;
 use block_rows::{Fate, Watch};
 
+mod keys;
+use keys::IndentKey;
+pub(crate) use keys::retype as retype_keys;
+
 #[cfg(test)]
 mod indent_tests;
 
@@ -411,6 +415,15 @@ struct Ledger {
     /// indentation `Esc` takes out, a block's other rows), until noted
     /// for the marks (see `marks::Note::Ending`).
     ending: Vec<Version>,
+    /// The indent keys typed ([`keys`]), each with how much of the
+    /// primary caret's typed text came before it.
+    keys: Vec<(usize, IndentKey)>,
+    /// Where the last batch followed put text, in the text it left: what
+    /// was just typed (`0<C-d>` reads the `0` there). Empty after another
+    /// origin's batch.
+    last: Vec<Range<usize>>,
+    /// The indent `^<C-d>` took off, for the row `<CR>` opens next.
+    restore: Option<Vec<Option<String>>>,
 }
 
 /// A line break typed in insert or replace mode, by the batches it made.
@@ -855,6 +868,7 @@ impl Ledger {
                 continue;
             };
             if let Some(copied) = self.copies.take_if(|copied| copied.from == from) {
+                self.last.clear();
                 self.indents.follow(&edits, &text, Whose::Copies);
                 copied.note(&mut self.indents, &text);
                 self.followed_breaks(from);
@@ -869,6 +883,10 @@ impl Ledger {
                 Whose::Typing
             };
             self.edited |= whose != Whose::Other;
+            self.last = match whose {
+                Whose::Other => Vec::new(),
+                _ => edits.iter().map(|edit| edit.new.clone()).collect(),
+            };
             self.indents.follow(&edits, &text, whose);
             self.followed_breaks(from);
         }
@@ -1346,6 +1364,9 @@ fn open(
         end: End::Open,
         edited: false,
         ending: Vec::new(),
+        keys: Vec::new(),
+        last: Vec::new(),
+        restore: None,
     }));
     let Opening {
         origin,
@@ -2124,6 +2145,7 @@ fn end(
         Ending::Moved(primary) => snapshot.resolve(&primary),
         _ => model.primary_selection().head(),
     };
+    let indent_keys = std::mem::take(&mut session.ledger().keys);
     let keys = replace.map(|replace| replace.keys(model, primary));
     // Typing begins past the indentation the session made there, which a
     // closer's outdent may have rewritten from under the region's start.
@@ -2178,8 +2200,16 @@ fn end(
             session.count = session.count.min(fit);
         }
         copied = match &keys {
+            Some((keys, _)) if !indent_keys.is_empty() => {
+                keys::repeat_replace(model, &session, keys, &indent_keys);
+                None
+            }
             Some((keys, _)) => {
                 crate::replace::repeat_typed(model, &session, session.count, keys);
+                None
+            }
+            None if !indent_keys.is_empty() => {
+                keys::repeat_marked(model, &session, &ended, &indent_keys, session.opens);
                 None
             }
             None => repeat_typed(model, &session, &ended, host),
@@ -2252,25 +2282,28 @@ fn end(
     let typed = match keys {
         Some((_, typed)) => {
             register = Some(typed.clone());
-            typed
+            keys::with_marks(typed, &indent_keys)
         }
-        None => kept.map_or_else(String::new, |(start, end)| {
-            let (start, end) = (snapshot.resolve(&start), snapshot.resolve(&end));
-            let end = end.max(start);
-            let text = model.text();
-            let mut typed = String::new();
-            let mut at = start;
-            for indent in &indents.0 {
-                let range = &indent.range;
-                if range.start >= at && range.end <= end && !range.is_empty() {
-                    typed.push_str(&text.slice_to_string(at..range.start));
-                    at = range.end;
+        None => keys::with_marks(
+            kept.map_or_else(String::new, |(start, end)| {
+                let (start, end) = (snapshot.resolve(&start), snapshot.resolve(&end));
+                let end = end.max(start);
+                let text = model.text();
+                let mut typed = String::new();
+                let mut at = start;
+                for indent in &indents.0 {
+                    let range = &indent.range;
+                    if range.start >= at && range.end <= end && !range.is_empty() {
+                        typed.push_str(&text.slice_to_string(at..range.start));
+                        at = range.end;
+                    }
                 }
-            }
-            typed.push_str(&text.slice_to_string(at..end));
-            register = Some(typed);
-            text.slice_to_string(start..end)
-        }),
+                typed.push_str(&text.slice_to_string(at..end));
+                register = Some(typed);
+                text.slice_to_string(start..end)
+            }),
+            &indent_keys,
+        ),
     };
     let ended = model.buffer_mut().end_transaction();
     // An empty transaction isn't kept, so neither are its carets; inside
