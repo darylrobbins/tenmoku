@@ -1,9 +1,9 @@
 //! `ia aa`: a function argument, as VSCodeVim's argument object gives it.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fe_vim::HeadlessVim;
-use fe_vim::search::DEFAULT_TIME_LIMIT;
+use fe_vim::search::{DEFAULT_TIME_LIMIT, set_time_limit, time_limit};
 
 fn run(text: &str, cursor: (u32, usize), keys: &str) -> HeadlessVim {
     let mut vim = HeadlessVim::new(text, cursor);
@@ -168,26 +168,82 @@ fn argument_object_unclosed_list_is_bounded() {
     assert_eq!(vim.text(), text);
 }
 
+/// CPU time this thread has used. Unlike wall clock it doesn't grow while the
+/// thread is descheduled, which is what heavy machine load does to a timing.
+fn thread_cpu_time() -> Duration {
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+    }
+    #[cfg(target_os = "macos")]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
+    #[cfg(not(target_os = "macos"))]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    let mut now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid, writable timespec for the call to fill in.
+    let status = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    assert_eq!(status, 0, "clock_gettime failed");
+    Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
+/// Asserts that `run(10 * n)` costs well under a hundred times `run(n)`, as
+/// quadratic work would; linear work costs about ten. `run` returns the CPU
+/// time its work took. The fastest of several alternating samples is
+/// compared, so load drops out.
+fn assert_scales_linearly(n: usize, mut run: impl FnMut(usize) -> Duration) {
+    // Every run goes to completion: past the search time limit an argument
+    // scan gives up, which would cut a quadratic run short and hide it.
+    struct Restore(Duration);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_time_limit(self.0);
+        }
+    }
+    let _restore = Restore(time_limit());
+    set_time_limit(Duration::from_secs(3600));
+    let (mut short, mut long) = (Duration::MAX, Duration::MAX);
+    for _ in 0..5 {
+        short = short.min(run(n));
+        long = long.min(run(10 * n));
+    }
+    assert!(
+        long < short * 50,
+        "10x the input took {long:?} vs {short:?}"
+    );
+}
+
 #[test]
 fn argument_object_long_rows_are_bounded() {
     // An unclosed list on one long row.
-    let text = format!("f(a, b{}", "x, ".repeat(100_000));
-    let mut vim = HeadlessVim::new(&text, (0, 2));
-    let started = Instant::now();
-    let _ = vim.feed("dia");
-    let took = started.elapsed();
-    assert!(took < DEFAULT_TIME_LIMIT, "{took:?}");
-    assert_eq!(vim.text(), text);
+    assert_scales_linearly(10_000, |n| {
+        let text = format!("f(a, b{}", "x, ".repeat(n));
+        let mut vim = HeadlessVim::new(&text, (0, 2));
+        let started = thread_cpu_time();
+        let _ = vim.feed("dia");
+        let took = thread_cpu_time() - started;
+        assert_eq!(vim.text(), text);
+        took
+    });
     // Growing a selection of many arguments on one row: matching it to the
     // arguments doesn't rebuild the row for each one.
-    let text = format!("f({}aa)", "aa, ".repeat(4_000));
-    let mut vim = HeadlessVim::new(&text, (0, 2));
-    let started = Instant::now();
-    let _ = vim.feed("v3600iaia");
-    let took = started.elapsed();
-    assert!(took < DEFAULT_TIME_LIMIT, "{took:?}");
-    assert_eq!(
-        (vim.visual_anchor(), vim.cursor()),
-        (Some((0, 2)), (0, 2 + 4 * 3600 + 1))
-    );
+    assert_scales_linearly(400, |n| {
+        let text = format!("f({}aa)", "aa, ".repeat(n));
+        let grown = n * 9 / 10;
+        let mut vim = HeadlessVim::new(&text, (0, 2));
+        let started = thread_cpu_time();
+        let _ = vim.feed(&format!("v{grown}iaia"));
+        let took = thread_cpu_time() - started;
+        assert_eq!(
+            (vim.visual_anchor(), vim.cursor()),
+            (Some((0, 2)), (0, 2 + 4 * grown + 1))
+        );
+        took
+    });
 }
