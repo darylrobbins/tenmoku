@@ -182,14 +182,12 @@ fn a_slow_seed_still_catches_up_by_a_long_deadline() {
     syntax.finish(syntax.parse_job().run());
     buffer.edit([(0..0, "\n")], Origin::User);
 
-    let started = Instant::now();
-    let caught_up = reparsed(
-        &syntax,
-        &buffer.snapshot(),
-        Instant::now() + Duration::from_secs(60),
-    );
-    let took = started.elapsed();
-    assert!(took > Duration::from_millis(20), "{took:?} is not slow");
-    assert!(caught_up.is_some(), "no copy after {took:?}");
-    assert!(!caught_up.is_some_and(|copy| copy.needs_parse()));
+    // What the call did, not how long it took: how slow a seed is depends on
+    // the machine, and a fast one made a lower bound on time fail.
+    let snapshot = buffer.snapshot();
+    let caught_up = reparsed(&syntax, &snapshot, Instant::now() + Duration::from_secs(60))
+        .expect("a long deadline gets the copy");
+    assert_eq!(caught_up.version(), snapshot.version());
+    assert!(caught_up.tree().is_some());
+    assert!(!caught_up.needs_parse());
 }
