@@ -25,10 +25,12 @@ const BOX_INSET: Pixels = px(4.);
 const CHEVRON_GAP: Pixels = px(2.);
 const ICON_GAP: Pixels = px(6.);
 const BADGE_GAP: Pixels = px(6.);
+const DETAIL_GAP: Pixels = px(6.);
 
 /// One row of a file tree: indented by depth, with indent guides for its
 /// ancestors, a chevron for a directory, an optional icon, its name, and
-/// an optional badge at its right end. The name is muted when ignored and
+/// an optional dimmed detail right after the name, and an optional badge at
+/// its right end. The name is muted when ignored and
 /// in the error colour when it couldn't be read, else in its label colour
 /// if it has one.
 #[derive(IntoElement)]
@@ -42,6 +44,8 @@ pub struct TreeRow {
     ignored: bool,
     error: bool,
     label_color: Option<Hsla>,
+    /// A dimmed text right after the label, and its colour.
+    detail: Option<(SharedString, Hsla)>,
     /// A short text after the label, and its colour.
     badge: Option<(SharedString, Hsla)>,
     selected: bool,
@@ -73,6 +77,7 @@ impl TreeRow {
             ignored: false,
             error: false,
             label_color: None,
+            detail: None,
             badge: None,
             selected: false,
             focused: false,
@@ -120,6 +125,21 @@ impl TreeRow {
     pub fn badge(mut self, text: impl Into<SharedString>, color: Hsla) -> Self {
         self.badge = Some((text.into(), color));
         self
+    }
+
+    /// A text drawn in `color` right after the label, as a symbol's
+    /// signature after its name. It ellipsizes before the badge and gives
+    /// way first: the label keeps its whole text while the row has room
+    /// for it. An empty text draws nothing.
+    pub fn detail(mut self, text: impl Into<SharedString>, color: Hsla) -> Self {
+        let text = text.into();
+        self.detail = (!text.is_empty()).then_some((text, color));
+        self
+    }
+
+    /// What [`Self::detail`] set, for a host's tests to see what it built.
+    pub fn detail_text(&self) -> Option<(&SharedString, Hsla)> {
+        self.detail.as_ref().map(|(text, color)| (text, *color))
     }
 
     /// What [`Self::label_color`] and [`Self::badge`] set, for a host's
@@ -238,6 +258,22 @@ impl RenderOnce for TreeRow {
                 .text_color(colors.icon)
                 .debug_selector(|| format!("tree-icon:{label}:{}", icon.name()))
         });
+        // With a detail, the label takes its text's width and shrinks
+        // only when that's wider than the row; the detail, from no width,
+        // grows into what's left and ellipsizes.
+        let has_detail = self.detail.is_some();
+        let detail = self.detail.map(|(text, color)| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .ml(DETAIL_GAP)
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(color)
+                .debug_selector(|| format!("tree-detail:{label}"))
+                .child(text)
+        });
         let badge = self.badge.zip(colors.badge).map(|((text, _), color)| {
             div()
                 .flex_none()
@@ -268,7 +304,7 @@ impl RenderOnce for TreeRow {
             .children(icon)
             .child(
                 div()
-                    .flex_1()
+                    .map(|label| if has_detail { label } else { label.flex_1() })
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
@@ -277,6 +313,7 @@ impl RenderOnce for TreeRow {
                     .debug_selector(|| format!("tree-label:{label}"))
                     .child(self.label.clone()),
             )
+            .children(detail)
             .children(badge)
             .when_some(self.on_click, |row, on_click| row.on_click(on_click))
     }

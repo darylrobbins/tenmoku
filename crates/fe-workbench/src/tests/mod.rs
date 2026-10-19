@@ -29,6 +29,7 @@ mod nav_partial;
 mod nav_pending;
 mod open_folder;
 mod open_settings;
+mod outline_detail;
 mod outline_kind_icons;
 mod outline_panel;
 mod outline_panel_followups;

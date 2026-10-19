@@ -21,7 +21,7 @@ use std::ops::Range;
 
 use fe_gpui::EditorView;
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineKind, Syntax};
-use fe_ui::{TreeRow, UiTheme};
+use fe_ui::{ActiveTheme as _, TreeRow, UiTheme};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, Focusable as _, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, Styled as _, Subscription, Task,
@@ -297,10 +297,16 @@ impl OutlinePanel {
         window.focus(&editor.focus_handle(cx), cx);
     }
 
-    fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<TreeRow> {
+    pub(crate) fn render_rows(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<TreeRow> {
         #[cfg(test)]
         self.counters.built.push(range.clone());
         let generation = self.generation;
+        // A symbol's signature or type, dimmed after its name.
+        let dim = cx.theme().colors.text.muted;
         let items = self.items();
         range
             .filter_map(|ix| {
@@ -309,6 +315,7 @@ impl OutlinePanel {
                     TreeRow::new(("outline-row", ix), item.name.clone(), &self.ui)
                         .depth(item.depth as usize)
                         .icon(symbol_icon(item.kind))
+                        .detail(item.detail.clone(), dim)
                         .on_click(cx.listener(move |panel, _, window, cx| {
                             panel.jump(generation, ix, window, cx)
                         })),

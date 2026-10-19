@@ -34,6 +34,12 @@ pub const MAX_OUTLINE_ITEMS: usize = 10_000;
 /// Names longer than this many chars are cut.
 const MAX_NAME_CHARS: usize = 200;
 
+/// Details longer than this many chars are cut.
+const MAX_DETAIL_CHARS: usize = 80;
+
+/// The most tokens a detail reads, comments and names skipped included.
+const MAX_DETAIL_TOKENS: usize = 256;
+
 /// What an [`OutlineItem`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -98,6 +104,11 @@ impl OutlineKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutlineItem {
     pub name: String,
+    /// What follows the name up to its body or value, as a function's
+    /// parameters and return type or a field's type, for showing dimmed
+    /// after it: on one line, without comments, cut at 80 chars. Empty for
+    /// a heading, a key of a data file, or when nothing follows.
+    pub detail: String,
     pub kind: OutlineKind,
     /// The bytes of the item's node or, for a heading, of its section: down
     /// to the next heading of the same or a higher level.
@@ -251,7 +262,7 @@ impl OutlineJob {
         // Predicates like `#match?` read node text straight from the rope.
         let source = |node: Node| chunks(text, node.byte_range());
         let mut matches = cursor.matches(&compiled.query, self.tree.root_node(), source);
-        let mut found: Vec<Found> = Vec::new();
+        let mut found: Vec<Found<'_>> = Vec::new();
         let mut by_node: HashMap<usize, usize> = HashMap::new();
         let mut truncated = false;
         // Once truncated, the sections still open: headings past the cap
@@ -332,6 +343,7 @@ impl OutlineJob {
                     *found = Found {
                         pattern,
                         kind,
+                        node,
                         range: node.byte_range(),
                         name_range,
                         section,
@@ -355,6 +367,7 @@ impl OutlineJob {
             found.push(Found {
                 pattern,
                 kind,
+                node,
                 range: node.byte_range(),
                 name_range,
                 section,
@@ -377,8 +390,14 @@ impl OutlineJob {
             }
             let parent = stack.last().copied();
             let name_range = found.name_range;
+            let detail = match found.kind {
+                OutlineKind::Heading(_) => String::new(),
+                _ if DATA_LANGUAGES.contains(&self.language.name()) => String::new(),
+                _ => detail(text, self.language.name(), found.node, name_range.clone()),
+            };
             items.push(OutlineItem {
                 name: name(text, name_range.clone()),
+                detail,
                 kind: found.kind,
                 range: found.range,
                 row: text.offset_to_point(name_range.start).row,
@@ -397,9 +416,10 @@ impl OutlineJob {
 }
 
 /// An item as the query found it, before nesting.
-struct Found {
+struct Found<'tree> {
     pattern: usize,
     kind: OutlineKind,
+    node: Node<'tree>,
     range: Range<usize>,
     name_range: Range<usize>,
     /// For a heading, what its section extends over.
@@ -437,7 +457,7 @@ impl Section {
 /// the container's end. Ranges found this way nest, as levels do. Returns
 /// the headings whose sections reach their container's end, for headings
 /// past the cap to end.
-fn extend_to_sections(found: &mut [Found]) -> OpenSections {
+fn extend_to_sections(found: &mut [Found<'_>]) -> OpenSections {
     let mut headings: Vec<(usize, Section)> = (found.iter().enumerate())
         .filter_map(|(ix, found)| Some((ix, found.section?)))
         .collect();
@@ -473,7 +493,7 @@ impl OpenSections {
     /// Ends the open sections that a heading at `start`, which isn't listed,
     /// ends. They stay open for others, since such headings may come in any
     /// order.
-    fn close(&self, found: &mut [Found], start: usize, section: Section) {
+    fn close(&self, found: &mut [Found<'_>], start: usize, section: Section) {
         for &(ix, level) in self.0.get(&section.container).into_iter().flatten() {
             let range = &mut found[ix].range;
             if section.level <= level && range.start < start {
@@ -1548,6 +1568,240 @@ fn name(text: &Text, range: Range<usize>) -> String {
     }
     name.truncate(name.trim_end().len());
     name
+}
+
+/// Languages whose items are keys and tables rather than declarations, so
+/// what follows a name is a value, not a signature.
+const DATA_LANGUAGES: &[&str] = &["json", "yaml", "toml"];
+
+/// Brace tokens whose parent is a node of one of these kinds open a type,
+/// as TypeScript's `(): { x: number }`, rather than a body.
+const TYPE_BRACES: &[&str] = &["object_type"];
+
+/// Angle-bracket tokens whose parent is a node of a kind containing one of
+/// these open generics, rather than compare.
+const ANGLE_LISTS: &[&str] = &["type_parameters", "type_arguments", "template_"];
+
+/// What follows the name of `item` up to its body or value: a function's
+/// parameters and return type, a field's or constant's type. It's read from
+/// the tree's tokens after `name`, so brackets, `=` and the like in strings
+/// and comments count for nothing, and comments are left out. It ends at
+/// the item's body, as a function's block (and the `:` before Python's), or
+/// at a `{`, `;` or `=`, or a line break, outside brackets. A bracket
+/// closing one opened before the name, as the `)` of C's `int (f)(int x)`,
+/// is left out. A Go field's tag is too. An item captured as its name alone
+/// reads on only in the [`NAME_DECLARATIONS`] of its language, skipping the
+/// names declared with it, as Go's `X, Y int`, and ending at a `,` before
+/// anything else. Whitespace collapses to one space, kept where the source
+/// has some between tokens, a comment counting as some; no space follows
+/// an opening parenthesis or bracket or comes before a closing one or a
+/// comma. It's cut at [`MAX_DETAIL_CHARS`],
+/// and reads at most [`MAX_DETAIL_TOKENS`].
+fn detail(text: &Text, language: &str, item: Node, name: Range<usize>) -> String {
+    // An item captured as its name alone, as a Go field, reads on in its
+    // declaration, if its language lists one; others, as an enum's last
+    // variant, have no detail.
+    let mut scan = item;
+    if scan.end_byte() <= name.end {
+        let kinds = (NAME_DECLARATIONS.iter())
+            .find(|(name, _)| *name == language)
+            .map_or(&[][..], |(_, kinds)| kinds);
+        while let Some(parent) = scan.parent().filter(|parent| {
+            // Not a long list of names, whose names would each read it
+            // all.
+            kinds.contains(&parent.kind()) && parent.child_count() as usize <= MAX_DETAIL_TOKENS
+        }) {
+            scan = parent;
+        }
+        if scan.end_byte() <= name.end {
+            return String::new();
+        }
+    }
+    // Not a tuple struct's or variant's fields, as Rust's (u32, u32).
+    let body = (scan.child_by_field_name("body"))
+        .filter(|body| body.child(0).is_none_or(|first| first.kind() != "("));
+    // A Go field's tag, as `json:"x"`, isn't its type.
+    let end = (body.or_else(|| scan.child_by_field_name("tag")))
+        .map_or(usize::MAX, |end| end.start_byte());
+    let name_alone = item.end_byte() <= name.end;
+    let mut detail = Detail::default();
+    let mut depth = 0usize;
+    // The end of the last token other than a comment: the gap after it, up
+    // to the next, holds the whitespace and comments between them.
+    let mut last_end = name.end;
+    // After a comma, which only more names, as Go's X, Y int, follow.
+    let mut comma = false;
+    let mut seen = 0;
+    each_token(scan, name.end, &mut |token| {
+        seen += 1;
+        if seen > MAX_DETAIL_TOKENS {
+            return false;
+        }
+        let range = token.byte_range();
+        if range.start >= end {
+            return false;
+        }
+        if is_comment(token) {
+            return true;
+        }
+        let gap = last_end..range.start.max(last_end);
+        last_end = range.end;
+        if std::mem::take(&mut comma) {
+            return item.kind() == token.kind();
+        }
+        let kind = if token.is_named() { "" } else { token.kind() };
+        let (opens, closes) = match kind {
+            "(" | "[" => (true, false),
+            ")" | "]" => (false, true),
+            "{" => (TYPE_BRACES.contains(&parent_kind(token)), false),
+            "}" => (false, TYPE_BRACES.contains(&parent_kind(token))),
+            "<" | ">" => {
+                let list = ANGLE_LISTS.iter().any(|l| parent_kind(token).contains(l));
+                (list && kind == "<", list && kind == ">")
+            }
+            _ => (false, false),
+        };
+        if depth == 0 {
+            let line_break = chunks(text, gap.clone()).any(|chunk| chunk.contains(&b'\n'));
+            let python_colon = kind == ":" && body.is_some_and(|body| next(token) == Some(body));
+            if line_break || matches!(kind, ";" | "=") || (kind == "{" && !opens) || python_colon {
+                return false;
+            }
+            if closes {
+                return true;
+            }
+            if kind == "," && name_alone {
+                // Only names declared alike, as Go's X, Y int, follow in
+                // the declaration, and are skipped.
+                comma = true;
+                return true;
+            }
+        }
+        if opens {
+            depth += 1;
+        } else if closes {
+            depth -= 1;
+        }
+        // No space inside parentheses and brackets, as in the source's
+        // multi-line lists, nor before a comma, as after a comment in
+        // `a /* x */, b`; braces keep theirs.
+        let tight = kind != "{" && kind != "}";
+        let space = !gap.is_empty() && !(closes && tight) && kind != ",";
+        let more = detail.push(text, range, space);
+        detail.after_opener = opens && tight;
+        more
+    });
+    detail.text.truncate(detail.text.trim_end().len());
+    detail.text
+}
+
+/// For items captured as their names alone, by language, the kinds of the
+/// ancestors their detail reads on in: the declaration whose names share
+/// what follows them, through a list of the names, as Go's `X, Y int`,
+/// Scala's `val x, y: Int` and C's `y[4][5]`.
+const NAME_DECLARATIONS: &[(&str, &[&str])] = &[
+    ("go", &["field_declaration"]),
+    (
+        "scala",
+        &[
+            "identifiers",
+            "val_definition",
+            "var_definition",
+            "val_declaration",
+            "var_declaration",
+        ],
+    ),
+    ("c", &["array_declarator"]),
+    ("cpp", &["array_declarator"]),
+];
+
+/// Calls `visit` on each token of `node` that starts at or after `from`, in
+/// order, until it returns false: leaves, and strings and other literals
+/// whole. It walks with a cursor, not by recursion, so a deeply nested
+/// expression, as a default of `1+1+…`, can't overflow the stack.
+fn each_token<'tree>(node: Node<'tree>, from: usize, visit: &mut impl FnMut(Node<'tree>) -> bool) {
+    let mut cursor = node.walk();
+    loop {
+        let current = cursor.node();
+        let kind = current.kind();
+        let whole = current.child_count() == 0
+            || is_comment(current)
+            || kind.contains("string")
+            || kind.ends_with("literal");
+        if whole {
+            let range = current.byte_range();
+            if range.start >= from && !range.is_empty() && !visit(current) {
+                return;
+            }
+        } else if cursor.goto_first_child_for_byte(from).is_some() {
+            continue;
+        }
+        // On to the next node after this one's subtree, climbing as far as
+        // `node`.
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return;
+            }
+        }
+    }
+}
+
+/// The sibling after `node`, past comments.
+fn next(node: Node) -> Option<Node> {
+    let mut next = node.next_sibling();
+    while let Some(sibling) = next.filter(|sibling| is_comment(*sibling)) {
+        next = sibling.next_sibling();
+    }
+    next
+}
+
+fn is_comment(node: Node) -> bool {
+    node.kind().contains("comment")
+}
+
+fn parent_kind<'tree>(node: Node<'tree>) -> &'tree str {
+    node.parent().map_or("", |parent| parent.kind())
+}
+
+/// A detail as it's built.
+#[derive(Default)]
+struct Detail {
+    text: String,
+    chars: usize,
+    /// Whether the last token pushed opens a bracket, which no space
+    /// follows.
+    after_opener: bool,
+}
+
+impl Detail {
+    /// Pushes the text of `range`, after a space if `space` and there's
+    /// text before it, collapsing its whitespace. False once full.
+    fn push(&mut self, text: &Text, range: Range<usize>, space: bool) -> bool {
+        let mut space = space && !self.after_opener;
+        self.after_opener = false;
+        for chunk in chunks(text, range) {
+            for c in String::from_utf8_lossy(chunk).chars() {
+                if c.is_whitespace() {
+                    space = true;
+                    continue;
+                }
+                if space && !self.text.is_empty() {
+                    if self.chars == MAX_DETAIL_CHARS {
+                        return false;
+                    }
+                    self.text.push(' ');
+                    self.chars += 1;
+                }
+                space = false;
+                if self.chars == MAX_DETAIL_CHARS {
+                    return false;
+                }
+                self.text.push(c);
+                self.chars += 1;
+            }
+        }
+        true
+    }
 }
 
 /// An ATX heading's content without its closing sequence, as in `## D ##`:
