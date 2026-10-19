@@ -72,3 +72,30 @@ Implementation guidance (the card author's reading, change if the code says othe
 - A pane's `Pane::tab_row` is also where the buttons' test hooks go: give both buttons `debug_selector`s (`markdown-toggle`, `markdown-side`) so tests can find their bounds, and use the existing `last_tooltip` capture.
 
 Do not change `markdown.show_preview`, `markdown.show_preview_to_side`, their bindings, or any existing test (`markdown_preview_tests`, `markdown_scroll_sync_tests`, `tests/pane_toolbar.rs`, `fe-keymap/tests/markdown_preview_bindings.rs`).
+
+## Implementation notes
+
+- `Tab` (pane.rs) holds `preview: Option<Entity<MarkdownPreview>>`. The
+  editor stays the tab's item, so title, path, dirty marker, save, close
+  prompts and saved layouts are the editor's; the preview isn't an item and
+  isn't serialized. `Pane::render` draws the preview in a div carrying the
+  `markdown_preview` key context; `PaneView::shown_item` (focus on pane
+  activation, `focus_target`, a split's copy) is the preview while it shows,
+  and `activated` refocuses it over kiln-shell's focus of the item.
+- `markdown.toggle_preview` has context `editor || markdown_preview`, so the
+  palette lists it in the editor and in the in-place preview. `invoked_in`
+  now parses its context as a `ContextPredicate` (every other caller passes
+  a bare identifier, which parses the same). The buttons dispatch their
+  commands invoked in `workbench` + `editor` (or `markdown_preview` for Show
+  Source), since `pane_toolbar::dispatch` only gives `workbench`, which the
+  editor commands' handlers refuse.
+- A reveal applied to a tab showing its preview (go to line, a link, a nav
+  place) shows the editor again, so the place is visible.
+- A link in the in-place preview opens in its pane (`open_preview_link`
+  looks at in-place previews too).
+- `kiln/THIRD_PARTY.md`'s file list was stale (41 of 56 listed): it now
+  lists all 59 SVGs, and the Feather-derived lists add `code`, `hash`,
+  `link`, `type` (in Lucide's Feather list) and `box`, `eye`, `list`,
+  `table` (colebemis a contributor at the pinned commit). The host
+  repository's `THIRD_PARTY.md` carries the same row but is outside this
+  card's scope; it still needs the same update.

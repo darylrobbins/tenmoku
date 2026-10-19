@@ -6,6 +6,13 @@
 //!   `markdown.show_preview_to_side` in the pane to the right, split off if
 //!   there's none, with focus left in the source. A preview of the same
 //!   source already there is shown instead of opening a second.
+//! - `markdown.toggle_preview`, and the tab bar's button for it, shows it
+//!   in the source's own tab, in the editor's place, and the editor again,
+//!   as VS Code's `markdown.showPreview` and `markdown.showSource` do in
+//!   one editor group. The tab stays the editor's ([`crate::pane::Tab`]):
+//!   its title, saves and closes, and the editor, alive and as it was, for
+//!   when the source shows again. A saved layout restores it as the
+//!   editor.
 //! - It follows only its own source, like VS Code's locked preview, and
 //!   keeps its last document once the source closes. It has no path, so
 //!   opening the file finds its editor, and isn't kept in saved layouts.
@@ -47,6 +54,13 @@ use crate::{
 /// How long edits must be quiet before the preview re-renders: VS Code's
 /// `markdown.preview` delay.
 pub(crate) const DELAY: Duration = Duration::from_millis(300);
+
+/// The key context of a preview shown in its source's tab, where
+/// [`TOGGLE_PREVIEW`] applies as it does in the editor.
+pub(crate) const MARKDOWN_PREVIEW_CONTEXT: &str = "markdown_preview";
+
+/// Shows a Markdown tab's preview in its editor's place, or its editor.
+pub(crate) const TOGGLE_PREVIEW: &str = "markdown.toggle_preview";
 
 /// A read-only preview of a Markdown editor's text, as a pane item.
 pub(crate) struct MarkdownPreview {
@@ -418,6 +432,33 @@ impl Workbench {
         window.focus(&source.focus_handle(cx), cx);
     }
 
+    /// Shows the active tab's Markdown preview in its editor's place, or,
+    /// if it shows, its editor again: focused either way. Any other tab is
+    /// left alone, with a note in the log.
+    pub(crate) fn toggle_markdown_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.pane().clone();
+        let Some(ix) = pane.read(cx).active() else {
+            log::info!("no tab to preview");
+            return;
+        };
+        if pane.read(cx).tabs()[ix].preview().is_some() {
+            pane.update(cx, |pane, cx| pane.show_in_place(ix, None, window, cx));
+            return;
+        }
+        let Some(source) = pane.read(cx).active_editor().cloned() else {
+            log::info!("no editor to preview");
+            return;
+        };
+        if !is_markdown(source.read(cx)) {
+            log::info!("the active editor isn't Markdown, so has no preview");
+            return;
+        }
+        let preview = self.new_preview(&source, window, cx);
+        pane.update(cx, |pane, cx| {
+            pane.show_in_place(ix, Some(preview), window, cx)
+        });
+    }
+
     fn new_preview(
         &self,
         source: &Entity<EditorView>,
@@ -449,8 +490,10 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let shows = |pane: &Entity<Pane>, cx: &App| {
-            (pane.read(cx).tabs().iter())
-                .any(|tab| tab.item().downcast_ref::<MarkdownPreview>() == Some(preview))
+            (pane.read(cx).tabs().iter()).any(|tab| {
+                tab.item().downcast_ref::<MarkdownPreview>() == Some(preview)
+                    || tab.preview() == Some(preview)
+            })
         };
         let pane = (self.panes(cx).into_iter())
             .find(|pane| shows(pane, cx))
@@ -469,7 +512,7 @@ impl Workbench {
 
 /// Whether `editor` shows Markdown: by its syntax, or, while its language
 /// loads, by its path.
-fn is_markdown(editor: &EditorView) -> bool {
+pub(crate) fn is_markdown(editor: &EditorView) -> bool {
     match editor.syntax() {
         Some(syntax) => syntax.language().name() == "markdown",
         None => {

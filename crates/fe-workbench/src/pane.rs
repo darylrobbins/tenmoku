@@ -15,12 +15,13 @@ use std::{
 };
 
 use fe_buffer::{Bias, ResolvedSelection};
-use fe_command::Source;
+use fe_command::{ContextFrame, Invocation, Source};
 use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
+    commands::RunCommand,
 };
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
@@ -42,6 +43,9 @@ use crate::{
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
     workbench::toast::{self, Toast},
+    workbench_commands::markdown_preview::{
+        MARKDOWN_PREVIEW_CONTEXT, MarkdownPreview, TOGGLE_PREVIEW, is_markdown,
+    },
 };
 
 /// A tab's ID, which stays with it as tabs open, close and move: its
@@ -57,6 +61,11 @@ pub struct Tab {
     /// `None` for a buffer that was never saved, such as the welcome text.
     pub path: Option<PathBuf>,
     item: Box<dyn ItemHandle>,
+    /// The editor's Markdown preview, while it's shown in the editor's
+    /// place: `markdown.toggle_preview`. The editor stays the tab's item,
+    /// so its title, saves, closes and saved layouts are the editor's, and
+    /// the preview isn't kept in a layout.
+    preview: Option<Entity<MarkdownPreview>>,
 }
 
 impl Tab {
@@ -65,7 +74,13 @@ impl Tab {
         Self {
             path: item.path(cx),
             item: item.boxed_clone(),
+            preview: None,
         }
+    }
+
+    /// The editor's Markdown preview, while it's shown in its place.
+    pub(crate) fn preview(&self) -> Option<&Entity<MarkdownPreview>> {
+        self.preview.as_ref()
     }
 
     pub(crate) fn id(&self) -> TabId {
@@ -142,11 +157,37 @@ pub struct Pane {
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
     actions: gpui::ScrollHandle,
+    /// The tab bar's buttons the last frame drew: ID and icon.
+    #[cfg(test)]
+    drawn_actions: Vec<(&'static str, Icon)>,
     /// The crumbs the last frame drew: label, kind and icon.
     #[cfg(test)]
     drawn_crumbs: Vec<(String, CrumbKind, Option<Icon>)>,
     #[cfg(test)]
     last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
+}
+
+/// What a Markdown tab shows: see [`Pane::markdown_shown`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkdownShown {
+    Source,
+    Preview,
+}
+
+/// Dispatches `command` as [`pane_toolbar::dispatch`] does, from the mouse,
+/// but invoked in `frame` within the workbench.
+fn dispatch_in(command: &str, frame: &str, window: &mut Window, cx: &mut App) {
+    let Ok(invocation) = Invocation::of(command) else {
+        return;
+    };
+    let context = [
+        ContextFrame::new(crate::KEY_CONTEXT),
+        ContextFrame::new(frame),
+    ]
+    .into_iter()
+    .collect();
+    let invocation = invocation.source(Source::Mouse).context(context);
+    window.dispatch_action(Box::new(RunCommand(invocation)), cx);
 }
 
 /// Why a file being read was opened: see [`Pane::open_preview`].
@@ -190,6 +231,8 @@ impl Pane {
             conversions: HashMap::new(),
             #[cfg(test)]
             actions: gpui::ScrollHandle::new(),
+            #[cfg(test)]
+            drawn_actions: Vec::new(),
             #[cfg(test)]
             drawn_crumbs: Vec::new(),
             #[cfg(test)]
@@ -272,6 +315,49 @@ impl Pane {
         self.state.active()
     }
 
+    /// The active tab, whatever shows in its place.
+    fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.state.active()?)
+    }
+
+    /// Whether the active tab is a Markdown editor's showing its text, or
+    /// its preview in the text's place; `None` for any other tab, or while
+    /// a file being opened or a read error shows.
+    fn markdown_shown(&self, cx: &App) -> Option<MarkdownShown> {
+        self.active_item()?;
+        let tab = self.active_tab()?;
+        if tab.preview.is_some() {
+            return Some(MarkdownShown::Preview);
+        }
+        is_markdown(tab.editor()?.read(cx)).then_some(MarkdownShown::Source)
+    }
+
+    /// Shows `preview` in the place of tab `ix`'s editor, focused if the
+    /// tab is active; with `None`, the editor again, focused if the tab is.
+    pub(crate) fn show_in_place(
+        &mut self,
+        ix: usize,
+        preview: Option<Entity<MarkdownPreview>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(ix) else {
+            return;
+        };
+        let Some(editor) = tab.editor().cloned() else {
+            return;
+        };
+        tab.preview = preview.clone();
+        if self.state.active() == Some(ix) {
+            let focus = match &preview {
+                Some(preview) => preview.focus_handle(cx),
+                None => editor.focus_handle(cx),
+            };
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
     /// The active tab's editor, unless a file being opened or a read error
     /// shows in its place.
     pub fn active_editor(&self) -> Option<&Entity<EditorView>> {
@@ -292,9 +378,9 @@ impl Pane {
     }
 
     /// What gets focus when focus leaves a hidden panel: the active editor
-    /// or viewer, or else the pane.
+    /// or viewer, or the preview shown in its place, or else the pane.
     pub(crate) fn focus_target(&self, cx: &App) -> FocusHandle {
-        match self.active_item() {
+        match self.shown_item() {
             Some(item) => item.item_focus_handle(cx),
             None => self.state.focus().clone(),
         }
@@ -807,10 +893,17 @@ impl Pane {
             tab.item().apply_state(&state, window, cx);
             return;
         }
-        let Some(editor) = tab.editor() else {
+        let Some(editor) = tab.editor().cloned() else {
             return;
         };
-        reveal.select(editor, cx);
+        // A place in the text shows the text.
+        if let Some(preview) = self.tabs[ix].preview.take() {
+            if preview.focus_handle(cx).contains_focused(window, cx) {
+                window.focus(&editor.focus_handle(cx), cx);
+            }
+            cx.notify(self.this.entity_id());
+        }
+        reveal.select(&editor, cx);
         self.revealed = Some(Revealed {
             serial: self.open_serial,
             editor: editor.entity_id(),
@@ -1260,10 +1353,15 @@ impl Pane {
         self.state.content_bounds()
     }
 
-    /// Where the tab bar's button `ix` (Split Right, Split Down, then "…")
-    /// was laid out in the last frame.
+    /// Where the tab bar's button `ix` (a Markdown tab's preview buttons,
+    /// Split Right, Split Down, then "…") was laid out in the last frame.
     pub(crate) fn action_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.actions.bounds_for_item(ix)
+    }
+
+    /// The tab bar's buttons the last frame drew, in order: ID and icon.
+    pub(crate) fn drawn_actions(&self) -> &[(&'static str, Icon)] {
+        &self.drawn_actions
     }
 
     /// The crumbs the last frame drew: label, kind and icon.
@@ -1317,12 +1415,22 @@ impl PaneView for Pane {
     }
 
     /// None while a file is being read in, or its read failed: the pane
-    /// shows that over its tab.
+    /// shows that over its tab. A Markdown preview shown in its tab's
+    /// place is shown, and a split copies it.
     fn shown_item(&self) -> Option<&dyn ItemHandle> {
-        self.active_item()
+        let item = self.active_item()?;
+        match self.active_tab().and_then(Tab::preview) {
+            Some(preview) => Some(preview),
+            None => Some(item),
+        }
     }
 
-    fn activated(&mut self, _: usize, _: &mut Window, cx: &mut App) {
+    /// Focus goes to a Markdown preview shown in the tab's place, not to
+    /// its hidden editor.
+    fn activated(&mut self, ix: usize, window: &mut Window, cx: &mut App) {
+        if let Some(preview) = self.tabs.get(ix).and_then(Tab::preview) {
+            window.focus(&preview.focus_handle(cx), cx);
+        }
         if !self.landing {
             self.navigations += 1;
         }
@@ -1360,7 +1468,13 @@ impl Render for Pane {
             self.message(format!("Loading {}…", file_name(Some(path))))
         } else if let Some((_, error)) = &self.error {
             self.message(error.clone())
-        } else if let Some(tab) = self.tabs.get(self.state.active().unwrap_or(usize::MAX)) {
+        } else if let Some(preview) = self.active_tab().and_then(Tab::preview) {
+            div()
+                .key_context(MARKDOWN_PREVIEW_CONTEXT)
+                .size_full()
+                .child(preview.clone())
+                .into_any_element()
+        } else if let Some(tab) = self.active_tab() {
             tab.item().to_any_view().into_any_element()
         } else {
             self.message("No open files".into())
@@ -1462,9 +1576,50 @@ impl Pane {
 
 /// The tab bar's buttons and the toolbar: see [`crate::pane_toolbar`].
 impl Pane {
-    /// The tab bar, then the split and "…" buttons, which stay put as the
-    /// tabs scroll, drawn as one bar.
+    /// The tab bar, then a Markdown tab's preview buttons, the split and
+    /// "…" buttons, which stay put as the tabs scroll, drawn as one bar.
     fn tab_row(&mut self, tab_bar: TabBar, cx: &mut Context<Self>) -> impl IntoElement {
+        let markdown = self.markdown_shown(cx);
+        // Invoked in the editor, or in the preview shown in its place,
+        // which their handlers check.
+        let markdown_button = |id, icon, title, command: &'static str, frame: &'static str| {
+            self.button(id, icon, title, Some(command))
+                .on_click(move |_, window, cx| dispatch_in(command, frame, window, cx))
+        };
+        let toggle = markdown.map(|shown| {
+            let (icon, title, frame) = match shown {
+                MarkdownShown::Source => (Icon::Eye, "Open Preview", fe_editor::commands::CONTEXT),
+                MarkdownShown::Preview => (Icon::Code, "Show Source", MARKDOWN_PREVIEW_CONTEXT),
+            };
+            markdown_button("markdown-toggle", icon, title, TOGGLE_PREVIEW, frame)
+        });
+        let side = (markdown == Some(MarkdownShown::Source)).then(|| {
+            markdown_button(
+                "markdown-side",
+                Icon::PanelRightOpen,
+                "Open Preview to the Side",
+                "markdown.show_preview_to_side",
+                fe_editor::commands::CONTEXT,
+            )
+        });
+        #[cfg(test)]
+        {
+            self.drawn_actions = match markdown {
+                Some(MarkdownShown::Source) => {
+                    vec![
+                        ("markdown-toggle", Icon::Eye),
+                        ("markdown-side", Icon::PanelRightOpen),
+                    ]
+                }
+                Some(MarkdownShown::Preview) => vec![("markdown-toggle", Icon::Code)],
+                None => Vec::new(),
+            };
+            self.drawn_actions.extend([
+                ("split-right", Icon::Columns2),
+                ("split-down", Icon::Rows2),
+                ("pane-menu", Icon::Ellipsis),
+            ]);
+        }
         let split = |id, icon, title, command: &'static str| {
             self.button(id, icon, title, Some(command))
                 .on_click(move |_, window, cx| {
@@ -1494,6 +1649,8 @@ impl Pane {
             .bg(self.ui.panel_background)
             .border_b_1()
             .border_color(self.ui.border)
+            .children(toggle)
+            .children(side)
             .child(split_right)
             .child(split_down)
             .child(more);

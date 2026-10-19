@@ -26,6 +26,10 @@ use crate::{
 #[path = "markdown_preview.rs"]
 pub(crate) mod markdown_preview;
 
+#[cfg(test)]
+#[path = "markdown_preview_buttons_tests.rs"]
+mod markdown_preview_buttons_tests;
+
 #[kiln::command(context = "workbench")]
 impl Workbench {
     /// Close Tab
@@ -726,6 +730,14 @@ impl Workbench {
         });
     }
 
+    /// Markdown: Toggle Preview
+    #[command(id = "markdown.toggle_preview", context = "editor || markdown_preview")]
+    fn toggle_markdown_preview_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor || markdown_preview", cx, |this, window, cx| {
+            this.toggle_markdown_preview(window, cx)
+        });
+    }
+
     /// Open Folder…
     #[command(id = "workbench.open_folder")]
     fn open_folder(&mut self, cx: &mut Cx<Self>) {
@@ -968,15 +980,16 @@ fn invocation_row(cx: &Cx<Workbench>) -> Option<u32> {
     u32::try_from(row).ok()
 }
 
-/// Whether the typed command running was invoked where `context` holds, as
-/// its `fe-command` registry checked, warning if not: kiln runs a typed
-/// command's handler wherever it's dispatched, so a menu pick or a
-/// `RunCommand` with the project panel or terminal focused would act on the
-/// active editor, or on a panel. A run with no invocation, as a raw action,
-/// whose key binding checked its context, applies. For the workbench's
-/// handlers and a panel's of the commands it does itself.
+/// Whether the typed command running was invoked where `context`, a
+/// [`ContextPredicate`], holds, as its `fe-command` registry checked,
+/// warning if not: kiln runs a typed command's handler wherever it's
+/// dispatched, so a menu pick or a `RunCommand` with the project panel or
+/// terminal focused would act on the active editor, or on a panel. A run
+/// with no invocation, as a raw action, whose key binding checked its
+/// context, applies. For the workbench's handlers and a panel's of the
+/// commands it does itself.
 pub(crate) fn invoked_in(context: &str, cx: &App) -> bool {
-    let context = ContextPredicate::identifier(context);
+    let context = ContextPredicate::parse(context).expect("a command's context parses");
     match kiln::current_invocation(cx) {
         Some(invocation) if !context.eval(&invocation.context) => {
             log::warn!(
