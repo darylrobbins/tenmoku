@@ -407,6 +407,11 @@ impl RemapState {
         !self.held.is_empty()
     }
 
+    /// Whether keys were resolved that the host hasn't taken yet.
+    pub(crate) fn resolved(&self) -> bool {
+        !self.queued.is_empty()
+    }
+
     /// The tag of the key the host feeds now, or `None` if it isn't one
     /// handed out, but typed.
     pub(crate) fn next_tag(&mut self) -> Option<Tag> {

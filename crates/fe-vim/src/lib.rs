@@ -46,6 +46,17 @@
 //! ends it. `.` replays the last change, and the text its session typed, as
 //! one transaction.
 //!
+//! `<C-o>` in insert or replace mode ([`VimState::one_command`], `:help
+//! i_CTRL-O`) ends the session as the cursor keys split it and leaves
+//! normal mode for one command: `vim.mode` is `normal`, with the flag
+//! `vim.insert_pending`, and keys go to [`step`] again. Once that command is
+//! done the session resumes at the carets it left, as [`dispatch`] (which
+//! hosts run vim's commands through) sees it end, or as `<Esc>` with nothing
+//! pending commits `vim.resume_insert`. One that enters a visual mode or the
+//! command line is done once that ends; one that enters insert mode goes on
+//! there. In between, `.` repeats the change before the session, as nvim's
+//! does.
+//!
 //! Replace mode (`R`, `:help Replace-mode`) is such a session too:
 //! `vim.replace_mode {"count"}` opens it at the caret as `i` does, and
 //! `vim.mode` is `replace`. Typed text doesn't go in as ordinary input
@@ -786,7 +797,7 @@ pub use args::{
     PutArgs, RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern,
     SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
-pub use commands::{VimCommands, VimTarget, registry};
+pub use commands::{VimCommands, VimTarget, dispatch, registry};
 pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
 };

@@ -425,3 +425,87 @@ name = "caret_ctrl_d_space_enter"
 buffer = "        foo"
 cursor = [0, 8]
 keys = "i^<C-d> <CR>x<Esc>"
+
+[[case]]
+name = "ctrl_t_backspace_dot"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "ia<C-t><BS> <Esc>0."
+
+[[case]]
+name = "ctrl_t_backspace_count"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "3ia<C-t><BS> <Esc>"
+
+[[case]]
+name = "ctrl_t_backspaces_dot"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "ia<C-t>b<BS><BS>c<Esc>0."
+
+[[case]]
+name = "ctrl_t_backspaces_count"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2ia<C-t>b<BS><BS>c<Esc>"
+
+[[case]]
+name = "ctrl_t_backspace_replace_dot"
+buffer = "        foo bar"
+cursor = [0, 8]
+keys = "Ra<C-t><BS>x<Esc>w."
+
+[[case]]
+name = "ctrl_t_backspace_replace_count"
+buffer = "        foo bar"
+cursor = [0, 8]
+keys = "3Ra<C-t><BS>x<Esc>"
+
+[[case]]
+name = "caret_ctrl_d_enter_escape"
+buffer = "        foo"
+cursor = [0, 0]
+keys = "A^<C-d><CR><Esc>"
+
+[[case]]
+name = "caret_ctrl_d_enter_escape_dot"
+buffer = "        foo\nbar"
+cursor = [0, 0]
+keys = "A^<C-d><CR><Esc>k."
+
+[[case]]
+name = "caret_ctrl_d_enter_count"
+buffer = "        foo"
+cursor = [0, 0]
+keys = "2A^<C-d><CR><Esc>"
+
+[[case]]
+name = "caret_ctrl_d_enter_count_typed"
+buffer = "        foo"
+cursor = [0, 0]
+keys = "2A^<C-d><CR>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d_enter_backspace"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R^<C-d><CR><BS>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d_enter_backspaces"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "R^<C-d><CR><BS><BS>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d_enter_count"
+buffer = "        foo"
+cursor = [0, 8]
+keys = "2R^<C-d><CR>x<Esc>"
+
+[[case]]
+name = "replace_caret_ctrl_d_enter_dot"
+buffer = "        foo\n        bar"
+cursor = [0, 8]
+keys = "R^<C-d><CR>x<Esc>j0w."

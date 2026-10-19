@@ -81,11 +81,6 @@ struct Recording {
 }
 
 impl Macros {
-    /// The register `@@` plays, `:` after `@:`.
-    pub(crate) fn last_played(&self) -> Option<char> {
-        self.last_played
-    }
-
     /// The lowercase register being recorded into.
     pub(crate) fn recording(&self) -> Option<char> {
         let recording = self.recording.as_ref()?;
@@ -190,6 +185,21 @@ impl Macros {
             self.stop();
         }
         keys
+    }
+
+    /// Whether a `@` asked for keys the host hasn't taken yet.
+    pub(crate) fn queued(&self) -> bool {
+        !self.queued.is_empty()
+    }
+
+    /// Puts `keys` after those queued, in the same replay.
+    pub(crate) fn queue_after(&mut self, keys: impl IntoIterator<Item = VimKey>) {
+        self.queued.extend(keys);
+    }
+
+    /// Whether a `:normal` is running keys ([`Macros::hold`]).
+    pub(crate) fn held(&self) -> bool {
+        self.held > 0
     }
 
     /// Sets the replay under way aside while a `:normal` runs keys that
@@ -309,6 +319,9 @@ pub(crate) fn play(target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs) ->
 
 /// `@:`: runs the last command line `count` times, straight through the ex
 /// runner so the `:` history is untouched, stopping at the first failure.
+/// The marks follow and settle around each run, as around a line submitted
+/// (see `marks::settle`), so each run's jump mark gives back the one before
+/// it, as nvim's does.
 fn repeat_line(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u32>) -> Handled {
     target.state.macros.last_played = Some(':');
     let Some(line) = target.state.macros.last_command_line.clone() else {
@@ -317,7 +330,10 @@ fn repeat_line(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u32>) ->
     let before = std::mem::take(&mut target.state.failed);
     let mut dispatched = Dispatched::new(Effect::Notify);
     for _ in 0..count.unwrap_or(1).max(1) {
-        let ran = crate::ex::run(target, actor, &line)?;
+        crate::commands::follow(target);
+        let ran = crate::ex::run(target, actor, &line);
+        crate::marks::settle(target);
+        let ran = ran?;
         if ran.effect == Effect::Changed || dispatched.effect != Effect::Changed {
             dispatched = ran;
         }

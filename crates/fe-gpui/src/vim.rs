@@ -26,7 +26,12 @@
 //! input method joins the insert session, and `Enter` goes in through
 //! [`VimState::line_break`], and `ctrl-t` and `ctrl-d` shift the row's
 //! indent ([`VimState::indent_in`], [`VimState::indent_out`]), in replace mode
-//! too. Any other editor command, and a mouse click
+//! too. `ctrl-o` there runs one normal-mode command ([`VimState::one_command`]):
+//! the mode is `normal` with the flag `vim.insert_pending` until it's done,
+//! the caret a block, and keys go to the reducer as in normal mode; once
+//! `fe-vim`'s registry has run the command ([`fe_vim::dispatch`]), or the
+//! reducer committed `vim.resume_insert` for an `escape` with nothing
+//! pending, the session resumes. Any other editor command, and a mouse click
 //! that moves the caret, splits the session
 //! ([`VimState::split_session`]), as Vim's cursor keys do.
 //!
@@ -1055,11 +1060,16 @@ impl EditorView {
         self.sync_vim(cx);
         self.drop_remap_wait(cx);
         if self.accepts_text() {
-            // `ctrl-t` and `ctrl-d` are vim's in insert and replace mode.
+            // `ctrl-t`, `ctrl-d` and `ctrl-o` are vim's in insert and
+            // replace mode.
             return match vim_key(keystroke) {
                 Some(key @ VimKey::Ctrl('t' | 'd')) if self.typing_mode().is_some() => {
                     self.record_vim_key(key);
                     self.indent_typing(key, cx)
+                }
+                Some(key @ VimKey::Ctrl('o')) if self.typing_mode().is_some() => {
+                    self.record_vim_key(key);
+                    self.one_command_typing(cx)
                 }
                 _ => false,
             };
@@ -1071,8 +1081,14 @@ impl EditorView {
             // A key vim has no name for cancels a pending command, or keys
             // held for a map, and otherwise goes on, to do nothing.
             None if state.pending().kind().is_none() && !state.remap_waiting() => false,
+            // After `ctrl-o`, cancelling it ends the command, and insert
+            // mode resumes.
             None => {
-                state.feed(VimKey::Esc);
+                if let Step::Commit(invocation) = state.feed(VimKey::Esc) {
+                    let stack = crate::keymap::context_stack(&window.context_stack());
+                    let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
+                    self.run_vim(&invocation, cx);
+                }
                 cx.notify();
                 true
             }
@@ -1249,6 +1265,27 @@ impl EditorView {
             VimKey::Ctrl('t') => state.indent_in(model),
             _ => state.indent_out(model),
         });
+        let result: Result<_, DispatchError> =
+            Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
+        self.dispatched(result, &invocation, true, cx).is_ok()
+    }
+
+    /// `<C-o>` in insert or replace mode: normal mode for one command
+    /// ([`VimState::one_command`]), the caret a block meanwhile, then back
+    /// to the mode it came from once `fe-vim`'s registry runs the command
+    /// ([`fe_vim::dispatch`]). Returns whether it ran.
+    fn one_command_typing(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.typing_mode().is_none() {
+            return false;
+        }
+        let invocation = Invocation::of(KEY)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        let origin = fe_editor::commands::origin(&invocation.actor);
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        let ((), transactions) = self.model.run_as(origin, |model| state.one_command(model));
         let result: Result<_, DispatchError> =
             Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
         self.dispatched(result, &invocation, true, cx).is_ok()
@@ -1562,6 +1599,7 @@ impl EditorView {
                     VimKey::Enter | VimKey::Ctrl('j') => NEWLINE,
                     VimKey::Backspace => BACKSPACE,
                     VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
+                    VimKey::Ctrl('o') => return self.one_command_typing(cx),
                     VimKey::Esc => {
                         let normal = match mode {
                             fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,
@@ -1743,7 +1781,7 @@ impl EditorView {
             state,
             registers: &mut registers,
         };
-        let result = registry.dispatch(&mut target, invocation);
+        let result = fe_vim::dispatch(registry, &mut target, invocation);
         cx.default_global::<Vim>().registers = registers;
         Some(result)
     }

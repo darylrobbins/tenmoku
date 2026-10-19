@@ -60,6 +60,7 @@ use block_rows::{Fate, Watch};
 mod keys;
 use keys::IndentKey;
 pub(crate) use keys::retype as retype_keys;
+pub(crate) use keys::{OneCommand, finish_one_command};
 
 #[cfg(test)]
 mod indent_tests;
@@ -415,15 +416,19 @@ struct Ledger {
     /// indentation `Esc` takes out, a block's other rows), until noted
     /// for the marks (see `marks::Note::Ending`).
     ending: Vec<Version>,
-    /// The indent keys typed ([`keys`]), each with how much of the
-    /// primary caret's typed text came before it.
-    keys: Vec<(usize, IndentKey)>,
+    /// The indent keys typed ([`keys`]), each with what the primary caret
+    /// had typed before it (in replace mode, the keys).
+    keys: Vec<(IndentKey, String)>,
     /// Where the last batch followed put text, in the text it left: what
     /// was just typed (`0<C-d>` reads the `0` there). Empty after another
     /// origin's batch.
     last: Vec<Range<usize>>,
     /// The indent `^<C-d>` took off, for the row `<CR>` opens next.
     restore: Option<Vec<Option<String>>>,
+    /// The batches that put that indent back, by the version each is from,
+    /// until followed: the line break's indentation, which `Esc` drops if
+    /// unused.
+    restored: Vec<Version>,
 }
 
 /// A line break typed in insert or replace mode, by the batches it made.
@@ -875,8 +880,12 @@ impl Ledger {
                 continue;
             }
             let line_break = self.breaks.iter().any(|line_break| line_break.holds(from));
+            let restored = self.restored.contains(&from);
+            self.restored.retain(|&at| at > from);
             let whose = if &event_origin != origin || kind != EditKind::Edit {
                 Whose::Other
+            } else if restored {
+                Whose::Indent
             } else if line_break {
                 Whose::LineBreak
             } else {
@@ -956,6 +965,9 @@ enum Whose {
     LineBreak,
     /// fe-vim's copies for a count, whose indentation [`Copied`] holds.
     Copies,
+    /// The indentation `^<C-d>` took off, put back on the row a line break
+    /// opened (see `keys`): the line break's, which `Esc` drops if unused.
+    Indent,
     /// Another origin's, an undo or a redo: never the session's.
     Other,
 }
@@ -978,6 +990,10 @@ impl Indents {
                 used: indent.used,
                 changed,
             }));
+        }
+        if whose == Whose::Indent {
+            let pieces = edits.iter().filter(|edit| !edit.new.is_empty());
+            return self.add(pieces.map(|edit| Indent::new(edit.new.clone())));
         }
         if !matches!(whose, Whose::Typing | Whose::LineBreak) {
             return;
@@ -1367,6 +1383,7 @@ fn open(
         keys: Vec::new(),
         last: Vec::new(),
         restore: None,
+        restored: Vec::new(),
     }));
     let Opening {
         origin,
@@ -2200,8 +2217,13 @@ fn end(
             session.count = session.count.min(fit);
         }
         copied = match &keys {
-            Some((keys, _)) if !indent_keys.is_empty() => {
-                keys::repeat_replace(model, &session, keys, &indent_keys);
+            Some((keys, primary_keys)) if !indent_keys.is_empty() => {
+                let history = keys::with_marks(
+                    primary_keys.clone(),
+                    &indent_keys,
+                    crate::replace::BACKSPACE,
+                );
+                keys::repeat_replace(model, &session, keys, &history);
                 None
             }
             Some((keys, _)) => {
@@ -2209,7 +2231,25 @@ fn end(
                 None
             }
             None if !indent_keys.is_empty() => {
-                keys::repeat_marked(model, &session, &ended, &indent_keys, session.opens);
+                // What the primary caret typed, but the indentation `Esc`
+                // takes out: the copies' own goes as theirs does.
+                let typed = ended.last().and_then(|region| {
+                    let head = region.head?;
+                    let unused = session.ledger().indents.unused(&text);
+                    let mut typed = String::new();
+                    let mut at = region.start;
+                    for range in &unused {
+                        if range.start >= at && range.end <= head {
+                            typed.push_str(&text.slice_to_string(at..range.start));
+                            at = range.end;
+                        }
+                    }
+                    typed.push_str(&text.slice_to_string(at..head));
+                    Some(typed)
+                });
+                let history =
+                    keys::with_marks(typed.unwrap_or_default(), &indent_keys, IndentKey::BACK);
+                keys::repeat_marked(model, &session, &ended, &history, session.opens);
                 None
             }
             None => repeat_typed(model, &session, &ended, host),
@@ -2282,7 +2322,7 @@ fn end(
     let typed = match keys {
         Some((_, typed)) => {
             register = Some(typed.clone());
-            keys::with_marks(typed, &indent_keys)
+            keys::with_marks(typed, &indent_keys, crate::replace::BACKSPACE)
         }
         None => keys::with_marks(
             kept.map_or_else(String::new, |(start, end)| {
@@ -2303,6 +2343,7 @@ fn end(
                 text.slice_to_string(start..end)
             }),
             &indent_keys,
+            IndentKey::BACK,
         ),
     };
     let ended = model.buffer_mut().end_transaction();

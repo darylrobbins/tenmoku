@@ -1412,6 +1412,7 @@ fn put_unless_failing(
         );
     }
     let row = |offset: usize| text.offset_to_point(offset).row;
+    let after_ctrl_o = state.one_command.is_some();
     // Each caret's insertion point, text, and where its caret goes: an
     // offset into the inserted text, or (`true`) the first non-blank of the
     // row starting there.
@@ -1491,10 +1492,13 @@ fn put_unless_failing(
                     .next_back()
                     .map_or(0, |(ix, _)| ix),
             };
-            let (land, after_break) = match args.cursor_after {
-                true => (repeated.len(), false),
-                false => (land, after_break),
-            };
+            // After `<C-o>`, as `gp` does, past the row's end too: insert
+            // mode resumes there, as nvim's does.
+            let (land, after_break) =
+                match args.cursor_after || (after_ctrl_o && !repeated.contains('\n')) {
+                    true => (repeated.len(), false),
+                    false => (land, after_break),
+                };
             puts.push((at, repeated, (land, after_break), 0));
         }
     }
@@ -1528,11 +1532,15 @@ fn put_unless_failing(
             let land = start + land;
             match first_non_blank {
                 true => on_row(&after, after.offset_to_point(land).row, None, 1, true),
+                false if after_ctrl_o => land,
                 false => Cursor::at(&after, land).offset(),
             }
         })
         .collect();
-    land(model, &snapshot, carets);
+    match after_ctrl_o {
+        true => crate::insert::place(model, &snapshot, &carets),
+        false => land(model, &snapshot, carets),
+    }
     state.goals = None;
     Ok(Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect()))
 }

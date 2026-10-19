@@ -536,3 +536,6 @@ fn vim_insert_types_pairs_as_typed(cx: &mut TestAppContext) {
     cx.simulate_input("(");
     assert_eq!(state(&view, cx), ("()".into(), (0, 1)));
 }
+
+#[path = "insert_ctrl_keys_tests.rs"]
+mod insert_ctrl_keys_tests;

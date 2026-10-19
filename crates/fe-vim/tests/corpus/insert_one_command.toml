@@ -1,0 +1,332 @@
+# Insert-mode <C-o> cases for fe-vim's oracle: one normal-mode command run
+# from insert (or replace) mode, then back to it, as nvim's does.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in insert_one_command.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record. Each case
+# ends back in normal mode: nvim's mode between <C-o> and the command
+# (`niI`) is fe-vim's normal.
+
+[[case]]
+name = "ctrl_o_motion"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>0X<Esc>"
+
+[[case]]
+name = "ctrl_o_word_motion"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "i<C-o>2wX<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>hX<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end_stays"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>mmX<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end_delete"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>xX<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end_delete_before"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>XY<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end_failed_motion"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o>lX<Esc>"
+
+[[case]]
+name = "ctrl_o_at_row_end_multibyte"
+buffer = "abé"
+cursor = [0, 0]
+keys = "A<C-o>hX<Esc>"
+
+[[case]]
+name = "ctrl_o_row_end_goal_down_short"
+buffer = "abc def\nxy"
+cursor = [0, 0]
+keys = "A<C-o>jX<Esc>"
+
+[[case]]
+name = "ctrl_o_row_end_goal_down_long"
+buffer = "abc def\nxyzuvwxyz"
+cursor = [0, 0]
+keys = "A<C-o>jX<Esc>"
+
+[[case]]
+name = "ctrl_o_dollar"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>$X<Esc>"
+
+[[case]]
+name = "ctrl_o_bar_column"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>7|X<Esc>"
+
+[[case]]
+name = "ctrl_o_delete"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "i<C-o>dwX<Esc>"
+
+[[case]]
+name = "ctrl_o_delete_char"
+buffer = "abc def"
+cursor = [0, 2]
+keys = "i<C-o>xY<Esc>"
+
+[[case]]
+name = "ctrl_o_count"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "i<C-o>2dwX<Esc>"
+
+[[case]]
+name = "ctrl_o_count_put"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "yiwi<C-o>3pX<Esc>"
+
+[[case]]
+name = "ctrl_o_register_put"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"ayiwA <C-o>\"aPX<Esc>"
+
+[[case]]
+name = "ctrl_o_put_at_row_end"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "yiwA<C-o>pX<Esc>"
+
+[[case]]
+name = "ctrl_o_visual_returns"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "i<C-o>vjdX<Esc>"
+
+[[case]]
+name = "ctrl_o_visual_escape_returns"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "i<C-o>vj<Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_visual_yank"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "ia<C-o>vy<Esc>"
+
+[[case]]
+name = "ctrl_o_command_line_returns"
+buffer = "abc a\ndef"
+cursor = [0, 0]
+keys = "i<C-o>:s/a/b/<CR>X<Esc>"
+
+[[case]]
+name = "ctrl_o_command_line_cancel_returns"
+buffer = "abc a\ndef"
+cursor = [0, 0]
+keys = "i<C-o>:<Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_search_returns"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>/e<CR>X<Esc>"
+
+[[case]]
+name = "ctrl_o_escape_returns"
+buffer = "abc def"
+cursor = [0, 2]
+keys = "i<C-o><Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_escape_at_row_end"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "A<C-o><Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_cancelled_operator_returns"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>d<Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_cancelled_count_returns"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>3<Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_open_row"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "i<C-o>oX<Esc>"
+
+[[case]]
+name = "ctrl_o_append"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>AX<Esc>"
+
+[[case]]
+name = "ctrl_o_change_row"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>ccxy<Esc>"
+
+[[case]]
+name = "ctrl_o_insert_undo"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "ia<C-o>ixy<Esc>u"
+
+[[case]]
+name = "ctrl_o_dot_after"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ia<C-o>xb<Esc>w."
+
+[[case]]
+name = "ctrl_o_dot_after_command_only"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ia<C-o>x<Esc>w."
+
+[[case]]
+name = "ctrl_o_dot_after_motion_only"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ia<C-o>l<Esc>w."
+
+[[case]]
+name = "ctrl_o_dot_inside"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "xa<C-o>.b<Esc>"
+
+[[case]]
+name = "ctrl_o_dot_inside_twice"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "ia<C-o>xb<C-o>.c<Esc>"
+
+[[case]]
+name = "ctrl_o_undo"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ia<C-o>xb<Esc>uu"
+
+[[case]]
+name = "ctrl_o_undo_all"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ia<C-o>xb<Esc>uuu"
+
+[[case]]
+name = "ctrl_o_undo_inside"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "xia<C-o>ub<Esc>u"
+
+[[case]]
+name = "ctrl_o_drops_count"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "3ia<C-o>xb<Esc>"
+
+[[case]]
+name = "ctrl_o_drops_unused_indent"
+buffer = "    abc"
+cursor = [0, 7]
+keys = "A<CR><C-o><Esc><Esc>"
+
+[[case]]
+name = "ctrl_o_unused_indent_goal"
+buffer = "    abc"
+cursor = [0, 7]
+keys = "A<CR><C-o>kX<Esc>"
+
+[[case]]
+name = "ctrl_o_open_row_indent"
+buffer = "    abc"
+cursor = [0, 0]
+keys = "o<C-o><Esc>X<Esc>"
+
+[[case]]
+name = "ctrl_o_replace_mode"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "Rxy<C-o>0Z<Esc>"
+
+[[case]]
+name = "ctrl_o_replace_backspace"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "Rxy<C-o>0Z<BS><BS><Esc>"
+
+[[case]]
+name = "ctrl_o_play_register"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "qaxxqA<C-o>@aX<Esc>"
+
+[[case]]
+name = "ctrl_o_ex_normal"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "i<C-o>:normal x<CR>X<Esc>"
+
+[[case]]
+name = "ctrl_o_block_insert"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "<C-v>jjIab<C-o>lcd<Esc>"
+
+[[case]]
+name = "ctrl_o_visual_put"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "yiwi<C-o>vpX<Esc>"
+
+[[case]]
+name = "ctrl_o_visual_put_at_row_end"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "yiwi<C-o>vePX<Esc>"
+
+[[case]]
+name = "ctrl_o_linewise_put"
+buffer = "abc def\nxyz"
+cursor = [0, 0]
+keys = "yyi<C-o>pX<Esc>"
+
+[[case]]
+name = "ctrl_o_block_put"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "<C-v>jly$i<C-o>pX<Esc>"
+
+[[case]]
+name = "ctrl_o_open_row_dot"
+buffer = "abc def"
+cursor = [0, 3]
+keys = "ia<C-o>ixy<Esc>w."

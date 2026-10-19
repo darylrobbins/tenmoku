@@ -8,23 +8,31 @@
 //! the same text. Each key goes in the session as a mark in the typed text:
 //! a private-use character in what `.` repeats ([`IndentKey::mark`]), so
 //! `.` and a count type the keys again, as nvim's do.
+//!
+//! `<C-o>` runs one normal-mode command and comes back
+//! ([`VimState::one_command`], `:help i_CTRL-O`).
 
 use fe_buffer::Origin;
 use fe_editor::{EditorModel, IndentStyle, commands::EditorHost};
 
 use super::{Ended, Indent, MAX_PUT, Session, place, type_at_carets};
 use crate::{
-    Mode, VimState,
-    operator::{apply, sync},
+    LastChange, Mode, VimKey, VimState, VimTarget,
+    operator::{apply, caret, sync},
+    replace::BACKSPACE,
 };
+
+#[cfg(test)]
+#[path = "keys_tests.rs"]
+mod tests;
 
 /// Where `shift` notes a key in the session, if it does.
 enum Note {
     No,
-    /// In insert mode: how much the primary caret has typed.
+    /// In insert mode: with what the primary caret has typed.
     Typed,
-    /// In replace mode: how long the keys it has typed are.
-    Keys(usize),
+    /// In replace mode: with the keys it has typed.
+    Keys(String),
 }
 
 /// An indent key.
@@ -54,6 +62,17 @@ impl IndentKey {
 
     /// Before a literal character that would read as a mark.
     const ESCAPE: char = '\u{e004}';
+
+    /// In insert mode, a `<BS>` that took back a character typed before an
+    /// indent key, so `.` and a count type it, the key and the `<BS>` in
+    /// that order, as nvim's do. Replace mode's keys have their own
+    /// (`replace::BACKSPACE`).
+    pub(crate) const BACK: char = '\u{e005}';
+
+    /// Whether `ch`, typed, would read as a mark.
+    fn reads_as_mark(ch: char) -> bool {
+        ('\u{e000}'..='\u{e005}').contains(&ch)
+    }
 
     fn of_mark(mark: char) -> Option<Self> {
         [Self::In, Self::Out, Self::Zero, Self::Caret]
@@ -106,12 +125,9 @@ impl VimState {
             return;
         };
         let note = match &self.replace {
-            Some(replace) if self.mode == Mode::Replace => Note::Keys(
-                replace
-                    .keys(model, model.primary_selection().head())
-                    .1
-                    .len(),
-            ),
+            Some(replace) if self.mode == Mode::Replace => {
+                Note::Keys(replace.keys(model, model.primary_selection().head()).1)
+            }
             _ => Note::Typed,
         };
         shift(model, session, key, auto, note);
@@ -119,47 +135,70 @@ impl VimState {
 
     /// `<CR>` typed in insert or replace mode: after `^<C-d>`, the row it
     /// opened has the indent the last one lost, if the row it broke has
-    /// none now.
+    /// none now. It's the line break's indentation, which `Esc` drops if
+    /// nothing is typed after it, and in replace mode `<BS>` takes out.
     pub fn restore_indent(&self, model: &mut EditorModel) {
         let Some(session) = &self.session else {
             return;
         };
-        let Some(indents) = session.ledger().restore.take() else {
-            return;
-        };
-        sync(model);
-        let text = model.text().clone();
-        let heads = heads(model);
-        if heads.len() != indents.len() {
+        if session.ledger().restore.is_none() {
             return;
         }
-        let mut edits = Vec::new();
-        let mut last_row = None;
-        for (&head, indent) in heads.iter().zip(&indents) {
-            let Some(indent) = indent else {
-                continue;
-            };
-            let row = text.offset_to_point(head).row;
-            if last_row.replace(row) == Some(row) || row == 0 {
-                continue;
-            }
-            // Only where the row broken has no indent left, as nvim has it.
-            if text.row_to_string(row - 1).starts_with([' ', '\t']) {
-                continue;
-            }
-            let (start, line) = (text.row_start(row), text.row_to_string(row));
-            let blanks = line.len() - line.trim_start_matches([' ', '\t']).len();
-            if line[..blanks] != **indent {
-                edits.push((start..start + blanks, indent.clone()));
-            }
+        let replace = self.replace.as_ref().filter(|_| self.mode == Mode::Replace);
+        // Found before the indent goes in after them.
+        let breaks = replace.map(|replace| replace.breaks_at(model));
+        let restored = restore_at(model, session);
+        if let (Some(replace), Some(breaks), Some(restored)) = (replace, breaks, restored) {
+            replace.indent_breaks(&breaks, &restored);
         }
-        if edits.is_empty() {
-            return;
-        }
-        let moved: Vec<usize> = heads.iter().map(|&head| through(&edits, head)).collect();
-        let (_, snapshot) = apply(model, edits, session.origin.clone());
-        place(model, &snapshot, &moved);
     }
+}
+
+/// [`VimState::restore_indent`] for `session`: the indent `^<C-d>` took off
+/// goes back on the row a line break just opened at each caret. Returns
+/// what went in at each caret (in order), if anything did.
+pub(crate) fn restore_at(
+    model: &mut EditorModel,
+    session: &Session,
+) -> Option<Vec<Option<String>>> {
+    let indents = session.ledger().restore.take()?;
+    sync(model);
+    let text = model.text().clone();
+    let heads = heads(model);
+    if heads.len() != indents.len() {
+        return None;
+    }
+    let mut edits = Vec::new();
+    let mut restored = vec![None; heads.len()];
+    let mut last_row = None;
+    for (ix, (&head, indent)) in heads.iter().zip(&indents).enumerate() {
+        let Some(indent) = indent else {
+            continue;
+        };
+        let row = text.offset_to_point(head).row;
+        if last_row.replace(row) == Some(row) || row == 0 {
+            continue;
+        }
+        // Only where the row broken has no indent left, as nvim has it.
+        if text.row_to_string(row - 1).starts_with([' ', '\t']) {
+            continue;
+        }
+        let (start, line) = (text.row_start(row), text.row_to_string(row));
+        let blanks = line.len() - line.trim_start_matches([' ', '\t']).len();
+        if line[..blanks] != **indent {
+            edits.push((start..start + blanks, indent.clone()));
+            restored[ix] = Some(indent.clone());
+        }
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    let moved: Vec<usize> = heads.iter().map(|&head| through(&edits, head)).collect();
+    // The line break's indentation, which `Esc` drops if unused.
+    session.ledger().restored.push(model.buffer().version());
+    let (_, snapshot) = apply(model, edits, session.origin.clone());
+    place(model, &snapshot, &moved);
+    Some(restored)
 }
 
 /// The `0` or `^` typed just before `head`, if the session's last edit put
@@ -195,8 +234,16 @@ fn heads(model: &EditorModel) -> Vec<usize> {
 /// Moves each caret's row's indent as `key` says; `auto`: for `<C-d>`, a
 /// caret right after a `0` or `^` typed here takes all its row's indent
 /// and that character instead. `note` the key in the
-/// session. One batch with the session's origin.
-fn shift(model: &mut EditorModel, session: &Session, key: IndentKey, auto: bool, note: Note) {
+/// session. One batch with the session's origin. Returns how many bytes of
+/// indentation it gave the rows it changed: what nvim writes for them,
+/// all of each row's new indent.
+fn shift(
+    model: &mut EditorModel,
+    session: &Session,
+    key: IndentKey,
+    auto: bool,
+    note: Note,
+) -> usize {
     sync(model);
     let text = model.text().clone();
     let tab = model.tab_size().max(1);
@@ -223,19 +270,22 @@ fn shift(model: &mut EditorModel, session: &Session, key: IndentKey, auto: bool,
         Note::Typed => {
             let mut ledger = session.ledger();
             ledger.follow(&session.origin);
-            let typed = session.regions.last().map_or(0, |region| {
-                let start = model.snapshot().resolve(&region.start);
-                primary.saturating_sub(ledger.indents.past(start))
+            let mut typed = session.regions.last().map_or_else(String::new, |region| {
+                let start = ledger.indents.past(model.snapshot().resolve(&region.start));
+                text.slice_to_string(start.min(primary)..primary)
             });
-            ledger
-                .keys
-                .push((typed.saturating_sub(drops(ix).into()), keys[ix]));
+            // Less the `0` or `^` it takes out.
+            if drops(ix) {
+                typed.pop();
+            }
+            ledger.keys.push((keys[ix], typed));
         }
-        Note::Keys(at) => session.ledger().keys.push((at, keys[ix])),
+        Note::Keys(keys_typed) => session.ledger().keys.push((keys[ix], keys_typed)),
     }
     // The edits, in order and disjoint, as (range, replacement).
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     let mut last_row = None;
+    let mut generated = 0;
     if keys.contains(&IndentKey::Caret) {
         session.ledger().restore = Some(
             heads
@@ -281,6 +331,7 @@ fn shift(model: &mut EditorModel, session: &Session, key: IndentKey, auto: bool,
         if new == blanks {
             continue;
         }
+        generated += new.len();
         edits.push(if new.ends_with(blanks) {
             (start..start, new[..new.len() - old].to_owned())
         } else if blanks.starts_with(&new) {
@@ -290,7 +341,7 @@ fn shift(model: &mut EditorModel, session: &Session, key: IndentKey, auto: bool,
         });
     }
     if edits.is_empty() {
-        return;
+        return 0;
     }
     edits.sort_by_key(|(range, _)| (range.start, range.end));
     let moved: Vec<usize> = heads
@@ -320,6 +371,7 @@ fn shift(model: &mut EditorModel, session: &Session, key: IndentKey, auto: bool,
         ledger.indents.add(pieces);
     }
     place(model, &snapshot, &moved);
+    generated
 }
 
 /// Where `offset` goes when `edits` (in order, disjoint) are made: moved by
@@ -344,28 +396,87 @@ fn through_shift(edits: &[(std::ops::Range<usize>, String)], offset: usize) -> i
     through(edits, offset) as isize - offset as isize
 }
 
-/// `typed` with the session's `keys` among it, each where it was typed; a
-/// literal character that reads as a mark is escaped.
-pub(crate) fn with_marks(typed: String, keys: &[(usize, IndentKey)]) -> String {
-    let literal = |ch: char| ('\u{e000}'..='\u{e004}').contains(&ch);
+/// What a session typed, in order: `typed`, the text (or in replace mode the
+/// keys) it ended with, with the indent `keys` among it, each with what had
+/// been typed when it was typed. Where typing between two keys took back
+/// some of what was typed before the first, the history has `back` for
+/// each character taken back, then what was typed instead, so typing the
+/// history again does what the keys did ([`IndentKey::BACK`] in insert
+/// mode, `<BS>` in replace mode's keys). A literal character that reads as
+/// a mark is escaped.
+pub(crate) fn with_marks(typed: String, keys: &[(IndentKey, String)], back: char) -> String {
     let mut out = String::with_capacity(typed.len() + keys.len() * 3);
     let push = |out: &mut String, text: &str| {
         for ch in text.chars() {
-            if literal(ch) {
+            if IndentKey::reads_as_mark(ch) {
                 out.push(IndentKey::ESCAPE);
             }
             out.push(ch);
         }
     };
-    let mut from = 0;
-    for &(at, key) in keys {
-        let at = boundary(&typed, at).max(from);
-        push(&mut out, &typed[from..at]);
-        out.push(key.mark());
-        from = at;
+    let mut from = "";
+    for (key, then) in keys
+        .iter()
+        .map(|(key, then)| (Some(*key), then.as_str()))
+        .chain([(None, typed.as_str())])
+    {
+        let same = from
+            .char_indices()
+            .zip(then.chars())
+            .find(|&((_, a), b)| a != b)
+            .map_or(from.len().min(then.len()), |((at, _), _)| at);
+        let same = boundary(then, same);
+        for _ in from[same.min(from.len())..].chars() {
+            out.push(back);
+        }
+        push(&mut out, &then[same..]);
+        if let Some(key) = key {
+            out.push(key.mark());
+        }
+        from = then;
     }
-    push(&mut out, &typed[from..]);
     out
+}
+
+/// A session's history ([`with_marks`]), read back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Piece {
+    /// Text typed: in replace mode, keys, `<BS>` among them.
+    Text(String),
+    /// In insert mode, this many characters before each caret taken back.
+    Back(usize),
+    Key(IndentKey),
+}
+
+/// The pieces of a session's history, `text` ([`with_marks`]).
+pub(crate) fn pieces(text: &str) -> Vec<Piece> {
+    let mut pieces = Vec::new();
+    let mut run = String::new();
+    let mut escaped = false;
+    for ch in text.chars() {
+        if ch == IndentKey::ESCAPE && !escaped {
+            escaped = true;
+            continue;
+        }
+        let mark = !escaped && IndentKey::reads_as_mark(ch);
+        escaped = false;
+        if !mark {
+            run.push(ch);
+            continue;
+        }
+        if !run.is_empty() {
+            pieces.push(Piece::Text(std::mem::take(&mut run)));
+        }
+        match (IndentKey::of_mark(ch), pieces.last_mut()) {
+            (Some(key), _) => pieces.push(Piece::Key(key)),
+            (None, Some(Piece::Back(n))) => *n += 1,
+            (None, _) => pieces.push(Piece::Back(1)),
+        }
+    }
+    if !run.is_empty() {
+        pieces.push(Piece::Text(run));
+    }
+    pieces
 }
 
 /// The nearest char boundary of `text` at or before `at`.
@@ -394,148 +505,276 @@ pub(crate) fn retype(
     if state.session.is_none() {
         return type_text(model, text);
     }
-    let mut run = String::new();
-    let mut escaped = false;
-    for ch in text.chars() {
-        let key = IndentKey::of_mark(ch).filter(|_| !escaped);
-        if ch == IndentKey::ESCAPE && !escaped {
-            escaped = true;
-            continue;
+    for piece in pieces(text) {
+        match piece {
+            Piece::Text(run) => type_text(model, &run),
+            Piece::Back(n) => back_at_carets(model, n, origin.clone()),
+            Piece::Key(key) => state.indent_key(model, key, false),
         }
-        escaped = false;
-        let Some(key) = key else {
-            run.push(ch);
-            continue;
-        };
-        if !run.is_empty() {
-            type_text(model, &std::mem::take(&mut run));
-        }
-        state.indent_key(model, key, false);
-    }
-    if !run.is_empty() {
-        type_text(model, &run);
     }
 }
 
-/// `Esc` with a count after typing that held indent keys (`keys`, where
-/// each was typed in the text): the text typed at each caret (`ended`) goes
-/// in `count - 1` more times, the keys between, as nvim types them again.
+/// Takes back the `n` characters before each caret, as `<BS>` takes back
+/// typed text, in a batch of its own: never past the start of the text, nor
+/// into what the caret before took back.
+fn back_at_carets(model: &mut EditorModel, n: usize, origin: Origin) {
+    sync(model);
+    let text = model.text().clone();
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut floor = 0;
+    for head in heads(model) {
+        let before = text.slice_to_string(floor.min(head)..head);
+        let len: usize = before.chars().rev().take(n).map(char::len_utf8).sum();
+        if len > 0 {
+            edits.push((head - len..head, String::new()));
+        }
+        floor = head;
+    }
+    if edits.is_empty() {
+        return;
+    }
+    let moved: Vec<usize> = heads(model)
+        .iter()
+        .map(|&head| through(&edits, head))
+        .collect();
+    let (_, snapshot) = apply(model, edits, origin);
+    place(model, &snapshot, &moved);
+}
+
+/// How many more copies of what a session typed fit in what's left of
+/// [`MAX_PUT`] after `spent` bytes, the last copy having grown the text by
+/// `last` and the one before by `before`: the next is taken to grow by as
+/// much more again, as indentation copied from the row before and indented
+/// once more does (`o<C-t>`).
+fn fits(spent: usize, last: usize, before: usize) -> bool {
+    let next = last.saturating_add(last.saturating_sub(before));
+    spent.saturating_add(next) <= MAX_PUT
+}
+
+/// `Esc` with a count after typing that held indent keys: what the
+/// primary caret typed, in order (`history`, see [`with_marks`]), goes in
+/// `count - 1` more times at each caret that typed (`ended`), the keys
+/// between, as nvim types them again. Every copy counts against
+/// [`MAX_PUT`], what it puts in (`o`'s rows and the indentation they copy
+/// too) and all the indentation its keys write: the copies stop before the
+/// next would go past it.
 pub(crate) fn repeat_marked(
     model: &mut EditorModel,
     session: &Session,
     ended: &[Ended],
-    keys: &[(usize, IndentKey)],
+    history: &str,
     opens: bool,
 ) {
     let more = session.count as usize - 1;
     sync(model);
-    let carets: Vec<(usize, &str)> = {
+    let ranks: Vec<usize> = {
         let heads = heads(model);
-        let mut carets: Vec<(usize, &str)> = ended
+        let mut ranks: Vec<usize> = ended
             .iter()
-            .filter_map(|region| {
-                Some((
-                    heads.binary_search(&region.head?).ok()?,
-                    region.typed.as_str(),
-                ))
-            })
+            .filter_map(|region| heads.binary_search(&region.head?).ok())
             .collect();
-        carets.sort_by_key(|&(rank, _)| rank);
-        carets
+        ranks.sort_unstable();
+        ranks.dedup();
+        ranks
     };
-    let longest = carets
-        .iter()
-        .map(|(_, typed)| typed.len())
-        .max()
-        .unwrap_or(0);
-    let more = more.min(MAX_PUT / (longest + keys.len() + 1) / carets.len().max(1));
-    for _ in 0..more {
+    if ranks.is_empty() {
+        return;
+    }
+    let pieces = pieces(history);
+    let more = more.min(MAX_PUT / (history.len() + 1) / ranks.len());
+    let (mut spent, mut last, mut before) = (0, 0, 0);
+    for copy in 0..more {
+        if copy > 0 && !fits(spent, last, before) {
+            break;
+        }
+        let (from, mut generated) = (model.text().len(), 0);
         if opens {
             open_row(model, session);
         }
-        let mut from = vec![0; carets.len()];
-        for key in keys
-            .iter()
-            .map(|&(at, key)| (at, Some(key)))
-            .chain([(usize::MAX, None)])
-        {
-            let heads = heads(model);
-            let mut edits = Vec::new();
-            for (ix, &(rank, typed)) in carets.iter().enumerate() {
-                let to = boundary(typed, key.0).max(from[ix]);
-                if to > from[ix] {
-                    edits.push((heads[rank]..heads[rank], typed[from[ix]..to].to_owned()));
+        for piece in &pieces {
+            match piece {
+                Piece::Text(typed) => {
+                    let heads = heads(model);
+                    let edits: Vec<_> = ranks
+                        .iter()
+                        .map(|&rank| (heads[rank]..heads[rank], typed.clone()))
+                        .collect();
+                    let moved: Vec<usize> = heads
+                        .iter()
+                        .map(|&head| {
+                            head + ranks.iter().filter(|&&rank| heads[rank] <= head).count()
+                                * typed.len()
+                        })
+                        .collect();
+                    let (_, snapshot) = apply(model, edits, session.origin.clone());
+                    place(model, &snapshot, &moved);
                 }
-                from[ix] = to;
-            }
-            if !edits.is_empty() {
-                let moved: Vec<usize> = heads
-                    .iter()
-                    .map(|&head| {
-                        head + edits
-                            .iter()
-                            .filter(|(range, _)| range.start <= head)
-                            .map(|(_, text)| text.len())
-                            .sum::<usize>()
-                    })
-                    .collect();
-                let (_, snapshot) = apply(model, edits, session.origin.clone());
-                place(model, &snapshot, &moved);
-            }
-            if let Some(key) = key.1 {
-                shift(model, session, key, false, Note::No);
+                Piece::Back(n) => back_at_carets(model, *n, session.origin.clone()),
+                Piece::Key(key) => generated += shift(model, session, *key, false, Note::No),
             }
         }
+        let grew = (model.text().len().saturating_sub(from)).saturating_add(generated);
+        (spent, before, last) = (spent.saturating_add(grew), last, grew);
     }
 }
 
-/// `Esc` in replace mode with a count after typing that held indent keys
-/// (`marks`, where each was typed in the primary caret's keys): the keys
-/// typed at each caret (`keys`, see [`crate::replace::Replace::keys`]) go in
-/// `count - 1` more times, overwriting, the indent keys between.
+/// `Esc` in replace mode with a count after typing that held indent keys:
+/// the keys the primary caret typed, in order (`history`, see
+/// [`with_marks`]), go in `count - 1` more times at each caret that typed
+/// (`keys`, see [`crate::replace::Replace::keys`]), overwriting, the indent
+/// keys between. Every copy counts against [`MAX_PUT`], what it puts in and
+/// all the indentation its keys write: the copies stop before the next
+/// would go past it.
 pub(crate) fn repeat_replace(
     model: &mut EditorModel,
     session: &Session,
     keys: &[(usize, String)],
-    marks: &[(usize, IndentKey)],
+    history: &str,
 ) {
     let more = session.count as usize - 1;
     sync(model);
-    let first = heads(model);
-    let carets: Vec<(usize, &str)> = keys
-        .iter()
-        .filter_map(|(head, typed)| Some((first.binary_search(head).ok()?, typed.as_str())))
-        .collect();
-    let longest = carets
-        .iter()
-        .map(|(_, typed)| typed.len())
-        .max()
-        .unwrap_or(0);
-    let more = more.min(MAX_PUT / (longest + marks.len() + 1) / carets.len().max(1));
-    for _ in 0..more {
-        let mut from = vec![0; carets.len()];
-        for (at, key) in marks
+    let ranks: Vec<usize> = {
+        let first = heads(model);
+        let mut ranks: Vec<usize> = keys
             .iter()
-            .map(|&(at, key)| (at, Some(key)))
-            .chain([(usize::MAX, None)])
-        {
-            sync(model);
-            let heads = heads(model);
-            let mut typed = Vec::new();
-            for (ix, &(rank, keys)) in carets.iter().enumerate() {
-                let to = boundary(keys, at).max(from[ix]);
-                if to > from[ix] {
-                    typed.push((heads[rank], keys[from[ix]..to].to_owned()));
+            .filter(|(_, typed)| !typed.is_empty())
+            .filter_map(|(head, _)| first.binary_search(head).ok())
+            .collect();
+        ranks.sort_unstable();
+        ranks.dedup();
+        ranks
+    };
+    if ranks.is_empty() {
+        return;
+    }
+    let pieces = pieces(history);
+    let more = more.min(MAX_PUT / (history.len() + 1) / ranks.len());
+    let (mut spent, mut last, mut before) = (0, 0, 0);
+    for copy in 0..more {
+        if copy > 0 && !fits(spent, last, before) {
+            break;
+        }
+        let (from, mut generated) = (model.text().len(), 0);
+        // At each caret, what this copy's characters overwrote, in order
+        // (nothing past the row's end).
+        let mut overwrote: Vec<Vec<String>> = vec![Vec::new(); ranks.len()];
+        for piece in &pieces {
+            match piece {
+                // Each line break on its own, so the indent `^<C-d>` took
+                // off goes back after it, as typing `<CR>` puts it back.
+                Piece::Text(typed) => {
+                    // `<BS>`s after an indent key put back what the
+                    // characters before it overwrote.
+                    let backs = typed.chars().take_while(|&ch| ch == BACKSPACE).count();
+                    let typed = &typed[backs..];
+                    put_back(model, session, &ranks, &mut overwrote, backs);
+                    let plain = !typed.contains(['\n', BACKSPACE]);
+                    let before = match plain {
+                        true => Some(overwritten(model, &ranks, typed.chars().count())),
+                        false => None,
+                    };
+                    for run in typed.split_inclusive('\n') {
+                        sync(model);
+                        let heads = heads(model);
+                        let typed: Vec<_> = ranks
+                            .iter()
+                            .map(|&rank| (heads[rank], run.to_owned()))
+                            .collect();
+                        if !crate::replace::overwrite_plain(model, session, &typed) {
+                            crate::replace::repeat_typed(model, session, 2, &typed);
+                        }
+                        if run.ends_with('\n') {
+                            restore_at(model, session);
+                        }
+                    }
+                    match before {
+                        Some(before) => {
+                            for (stack, taken) in overwrote.iter_mut().zip(before) {
+                                stack.extend(taken);
+                            }
+                        }
+                        None => overwrote.iter_mut().for_each(Vec::clear),
+                    }
                 }
-                from[ix] = to;
-            }
-            if !typed.is_empty() {
-                crate::replace::repeat_typed(model, session, 2, &typed);
-            }
-            if let Some(key) = key {
-                shift(model, session, key, false, Note::No);
+                // Replace mode's history takes characters back with its
+                // own `<BS>`, in the text.
+                Piece::Back(_) => {}
+                Piece::Key(key) => generated += shift(model, session, *key, false, Note::No),
             }
         }
+        let grew = (model.text().len().saturating_sub(from)).saturating_add(generated);
+        (spent, before, last) = (spent.saturating_add(grew), last, grew);
+    }
+}
+
+/// The `n` graphemes after the caret at each of `ranks` (sorted heads'
+/// ranks) that typing `n` characters there overwrites in replace mode: on
+/// its row, nothing past its end.
+fn overwritten(model: &mut EditorModel, ranks: &[usize], n: usize) -> Vec<Vec<String>> {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    sync(model);
+    let text = model.text().clone();
+    let heads = heads(model);
+    ranks
+        .iter()
+        .map(|&rank| {
+            let head = heads[rank];
+            let row = text.offset_to_point(head).row;
+            // Only what's after the caret: the row may be long with indent.
+            let rest = text.slice_to_string(head..crate::operator::row_end(&text, row));
+            let mut taken: Vec<String> = rest.graphemes(true).take(n).map(str::to_owned).collect();
+            taken.resize(n, String::new());
+            taken
+        })
+        .collect()
+}
+
+/// `backs` `<BS>`s at the carets at `ranks`, each putting back the last of
+/// what the copy's characters `overwrote` there, as replace mode's `<BS>`
+/// does; where there's none left, nothing.
+fn put_back(
+    model: &mut EditorModel,
+    session: &Session,
+    ranks: &[usize],
+    overwrote: &mut [Vec<String>],
+    backs: usize,
+) {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    for _ in 0..backs {
+        sync(model);
+        let text = model.text().clone();
+        let heads = heads(model);
+        let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+        for (&rank, stack) in ranks.iter().zip(overwrote.iter_mut()) {
+            let Some(was) = stack.pop() else {
+                continue;
+            };
+            let head = heads[rank];
+            let row_start = text.row_start(text.offset_to_point(head).row);
+            // The grapheme before the caret, from a little way back.
+            let mut from = head.saturating_sub(64).max(row_start);
+            while !text.is_char_boundary(from) {
+                from += 1;
+            }
+            let before = text.slice_to_string(from..head);
+            let Some(last) = before.graphemes(true).next_back() else {
+                continue;
+            };
+            edits.push((head - last.len()..head, was));
+        }
+        if edits.is_empty() {
+            return;
+        }
+        let moved: Vec<usize> = heads
+            .iter()
+            .map(|&head| {
+                let at = edits.iter().find(|(range, _)| range.end == head);
+                let start = at.map_or(head, |(range, _)| range.start);
+                through(&edits, start)
+            })
+            .collect();
+        let (_, snapshot) = apply(model, edits, session.origin.clone());
+        place(model, &snapshot, &moved);
     }
 }
 
@@ -575,4 +814,200 @@ fn open_row(model: &mut EditorModel, session: &Session) {
     }
     let (_, snapshot) = apply(model, edits, session.origin.clone());
     place(model, &snapshot, &moved);
+}
+
+/// What `<C-o>` left to come back to ([`VimState::one_command`]): the
+/// session it ended resumes once the command after it is done.
+#[derive(Clone, Debug)]
+pub(crate) struct OneCommand {
+    origin: Origin,
+    /// In replace mode it resumes as replace mode, virtual for `gR`.
+    replace: Option<bool>,
+    /// The rows a caret was at the end of: on that row again, a caret on
+    /// its row's last grapheme goes back past it (nvim's `ins_at_eol`).
+    eol_rows: Vec<u32>,
+    /// What `.` repeats once the session resumes, unless the command made
+    /// a change of its own (`changes`): the text typed before `<C-o>`.
+    /// Meanwhile `.` repeats the change before the session, as nvim's
+    /// `<C-o>.` does.
+    ended: Option<LastChange>,
+    changes: u64,
+}
+
+impl VimState {
+    /// `<C-o>` in insert or replace mode (`:help i_CTRL-O`): the session
+    /// ends as a split ends it ([`VimState::split_session`]), the mode is
+    /// normal for one command, and then the session resumes at the carets
+    /// it leaves, in the mode it came from. Meanwhile `vim.mode` is
+    /// `normal`, with the flag `vim.insert_pending`.
+    ///
+    /// The carets stay where they are, but one past its row's end steps
+    /// onto its last grapheme, keeping its column as the goal for `j` and
+    /// `k`, and once the command is done it goes back past it if it's on
+    /// that row's last grapheme, or if the goal is past it (after `$`), as
+    /// nvim's does. The indentation the session made that went unused goes,
+    /// and a session over a block ends as `Esc` ends it, typing on its other
+    /// rows. A count before the session is dropped, as nvim drops it.
+    ///
+    /// The command is the next complete one: a count and a register belong
+    /// to it, `<Esc>` with nothing pending ends it at once, one that enters
+    /// a visual mode or opens the command line is done once that ends, and
+    /// one that enters insert or replace mode (`o`, `cw`) goes on there. A
+    /// `@` plays its register, then enters insert mode again as `i` does
+    /// (`R` or `gR` from replace mode), as nvim puts the key after the
+    /// register's.
+    pub fn one_command(&mut self, model: &mut EditorModel) {
+        if !matches!(self.mode, Mode::Insert | Mode::Replace) {
+            return;
+        }
+        let Some(session) = &self.session else {
+            return;
+        };
+        let origin = session.origin.clone();
+        let block = session.block.is_some();
+        let replace = (self.mode == Mode::Replace)
+            .then(|| self.replace.as_ref().is_some_and(|r| r.is_virtual()));
+        sync(model);
+        let tab = model.tab_size().max(1);
+        // Each caret's column, which it keeps as its goal, and whether it's
+        // past its row's end.
+        let carets: Vec<(usize, bool, u32)> = {
+            let text = model.text();
+            model
+                .selections()
+                .iter()
+                .map(|selection| {
+                    let (line, ix, row) = place_of(text, selection.head());
+                    (line.start_column(ix, tab), ix == line.len(), row)
+                })
+                .collect()
+        };
+        let before = self.last_change.clone();
+        let ending = match block {
+            true => super::Ending::Esc,
+            false => super::Ending::Split,
+        };
+        super::end(model, self, ending, None);
+        let eol_rows = carets
+            .iter()
+            .filter(|&&(_, eol, _)| eol)
+            .map(|&(_, _, row)| row)
+            .collect();
+        if !block {
+            sync(model);
+            let text = model.text().clone();
+            let selections = model.selections();
+            let mut goals = Vec::with_capacity(selections.len());
+            let stepped: Vec<_> = selections
+                .iter()
+                .enumerate()
+                .map(|(ix, selection)| {
+                    // Clamped onto its row's last grapheme, if it's past it.
+                    let head = crate::motion::Cursor::at(&text, selection.head()).offset();
+                    goals.push((head, carets.get(ix).map(|&(column, _, _)| column)));
+                    caret(head)
+                })
+                .collect();
+            model.set_selections(stepped);
+            let heads = model.selections();
+            if heads.len() == goals.len() {
+                self.goals = Some((model.snapshot().version(), goals));
+            }
+        }
+        let ended = std::mem::replace(&mut self.last_change, before);
+        self.one_command = Some(OneCommand {
+            origin,
+            replace,
+            eol_rows,
+            ended,
+            changes: self.changes,
+        });
+    }
+
+    /// Whether `<C-o>` left normal mode for one command
+    /// ([`VimState::one_command`]): `vim.insert_pending`.
+    pub fn insert_pending(&self) -> bool {
+        self.one_command.is_some()
+    }
+
+    /// Whether the command after `<C-o>` is done, as of the mode and what's
+    /// pending: the session it left can resume.
+    pub(crate) fn one_command_done(&self) -> bool {
+        self.one_command.is_some()
+            && self.mode == Mode::Normal
+            && self.pending.kind().is_none()
+            && self.confirm.is_none()
+            && !self.remap.waiting()
+            && !self.remap.resolved()
+            && !self.macros.held()
+    }
+}
+
+/// The row `head` is on, the index of the grapheme it's at (the row's
+/// length past its end) and the row's number.
+fn place_of(text: &fe_text::Text, head: usize) -> (crate::motion::Line, usize, u32) {
+    let row = text.offset_to_point(head).row;
+    let line = crate::motion::Line::new(text, row);
+    let column = head.saturating_sub(line.start);
+    let ix = line.starts.partition_point(|&start| start < column);
+    (line, ix, row)
+}
+
+/// A command run (or a key read) after `<C-o>`: if it's done, the session
+/// `<C-o>` left resumes ([`VimState::one_command`]). A command that entered
+/// insert or replace mode goes on there; one that played a register enters
+/// it again after the register's keys.
+pub(crate) fn finish_one_command(target: &mut VimTarget<'_>) {
+    let state = &mut *target.state;
+    if matches!(state.mode, Mode::Insert | Mode::Replace) {
+        state.one_command = None;
+        return;
+    }
+    if !state.one_command_done() {
+        return;
+    }
+    let Some(one) = state.one_command.take() else {
+        return;
+    };
+    if state.changes == one.changes {
+        state.last_change = one.ended;
+    }
+    if state.macros.queued() {
+        // As nvim's `@` puts the key that enters insert mode again after
+        // the register's keys.
+        let keys = match one.replace {
+            None => vec![VimKey::Char('i')],
+            Some(false) => vec![VimKey::Char('R')],
+            Some(true) => vec![VimKey::Char('g'), VimKey::Char('R')],
+        };
+        state.macros.queue_after(keys);
+        return;
+    }
+    let model = &mut *target.model;
+    sync(model);
+    let text = model.text().clone();
+    let tab = model.tab_size().max(1);
+    let selections = model.selections();
+    let goals = crate::motion::valid_goals(state, model.snapshot().version(), &selections)
+        .map(|(_, goals)| goals.clone());
+    let heads: Vec<_> = selections
+        .iter()
+        .enumerate()
+        .map(|(ix, selection)| {
+            let head = selection.head();
+            let (line, at, row) = place_of(&text, head);
+            let goal = goals.as_ref().and_then(|goals| goals[ix].1);
+            let past = one.eol_rows.contains(&row)
+                || goal.is_some_and(|goal| goal > line.start_column(at, tab));
+            match past && at + 1 == line.len() {
+                true => caret(line.start + line.text.len()),
+                false => caret(head),
+            }
+        })
+        .collect();
+    model.set_selections(heads);
+    super::resume(model, state, one.origin, None);
+    if let Some(virtual_) = one.replace {
+        crate::replace::resumed(state, model, virtual_);
+    }
 }

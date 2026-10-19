@@ -1177,6 +1177,20 @@ command = "vim.key"
 context = "editor && vim.mode == replace"
 platform = "!macos"
 
+# `ctrl-o` runs one normal-mode command from insert or replace mode.
+
+[[bindings]]
+keys = "ctrl-o"
+command = "vim.key"
+context = "editor && vim.mode == insert"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-o"
+command = "vim.key"
+context = "editor && vim.mode == replace"
+platform = "!macos"
+
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
 
 [[bindings]]

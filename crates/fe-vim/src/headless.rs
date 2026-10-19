@@ -82,7 +82,9 @@ impl HeadlessVim {
     /// In insert mode [`crate::step`] isn't called: a character goes to
     /// [`EditorModel::insert`], `<CR>` to [`EditorModel::newline`] (through
     /// [`VimState::line_break`], as the host's `Enter` does), `<BS>` to
-    /// [`EditorModel::backspace`], and `<Esc>` dispatches `vim.normal_mode`;
+    /// [`EditorModel::backspace`], `<C-t>` and `<C-d>` to
+    /// [`VimState::indent_in`] and [`VimState::indent_out`], `<C-o>` to
+    /// [`VimState::one_command`], and `<Esc>` dispatches `vim.normal_mode`;
     /// any other key is forwarded. In replace mode the same, but a character
     /// goes to [`VimState::replace_text`], `<BS>` to
     /// [`VimState::replace_backspace`] and `<Esc>` dispatches
@@ -175,6 +177,7 @@ impl HeadlessVim {
             VimKey::Backspace => self.model.backspace(),
             VimKey::Ctrl('t') => self.state.indent_in(&mut self.model),
             VimKey::Ctrl('d') => self.state.indent_out(&mut self.model),
+            VimKey::Ctrl('o') => self.state.one_command(&mut self.model),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.normal_mode")
                     .expect("vim command IDs are valid")
@@ -205,6 +208,7 @@ impl HeadlessVim {
             VimKey::Backspace => self.state.replace_backspace(&mut self.model),
             VimKey::Ctrl('t') => self.state.indent_in(&mut self.model),
             VimKey::Ctrl('d') => self.state.indent_out(&mut self.model),
+            VimKey::Ctrl('o') => self.state.one_command(&mut self.model),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.replace_normal_mode")
                     .expect("vim command IDs are valid")
@@ -303,7 +307,7 @@ impl HeadlessVim {
             state: &mut self.state,
             registers: &mut self.registers,
         };
-        let dispatched = self.registry.dispatch(&mut target, invocation);
+        let dispatched = crate::dispatch(&self.registry, &mut target, invocation);
         // The line starts from its prefill, whichever way the last one
         // ended.
         if !was_open || !matches!(self.state.mode(), Mode::CmdLine(_)) {

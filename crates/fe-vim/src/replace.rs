@@ -26,7 +26,7 @@ use std::{
 
 use fe_buffer::{BufferEvent, Edit, EditKind, Origin, Subscription, TransactionId, Version};
 use fe_command::{Actor, CommandError, Dispatched};
-use fe_editor::{EditorModel, commands::origin};
+use fe_editor::{EditorModel, IndentStyle, commands::origin};
 use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -47,7 +47,7 @@ thread_local! {
 
 /// `<BS>` in the keys a session typed: after a line break, the indentation
 /// it copied taken out again.
-const BACKSPACE: char = '\u{8}';
+pub(crate) const BACKSPACE: char = '\u{8}';
 
 /// How many characters of the grapheme a copy is typed after
 /// ([`Typing::context`]) it keeps: enough to pair a regional indicator or
@@ -304,6 +304,42 @@ impl Replace {
             .map(|head| (head, keys_at(head)))
             .collect();
         (heads, keys_at(primary))
+    }
+}
+
+impl Replace {
+    /// For each caret, in order, the record whose last entry is a line break
+    /// just before it, once the edits made since the last call are followed.
+    pub(crate) fn breaks_at(&self, model: &EditorModel) -> Vec<Option<usize>> {
+        let text = model.text().clone();
+        let mut record = self.record();
+        record.follow(None);
+        sorted_heads(model)
+            .into_iter()
+            .map(|head| {
+                let ix = record.find(&text, head)?;
+                record.typed[ix].last()?.is_break().then_some(ix)
+            })
+            .collect()
+    }
+
+    /// The line breaks `breaks` found ([`Replace::breaks_at`]) have the
+    /// `indents` after them now, put back as `^<C-d>` took them off: they're
+    /// the line breaks' indentation, which `<BS>` takes out, and typing goes
+    /// on after them.
+    pub(crate) fn indent_breaks(&self, breaks: &[Option<usize>], indents: &[Option<String>]) {
+        let mut record = self.record();
+        record.follow(None);
+        for (ix, indent) in breaks.iter().zip(indents) {
+            let (Some(ix), Some(indent)) = (ix, indent) else {
+                continue;
+            };
+            let entry = record.typed.get_mut(*ix).and_then(|typed| typed.last_mut());
+            if let Some(entry) = entry.filter(|entry| entry.is_break()) {
+                entry.put = format!("\n{indent}");
+                entry.made.end = entry.made.start + entry.put.len();
+            }
+        }
     }
 }
 
@@ -610,6 +646,8 @@ pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
     }
     let typed = placed(starts, planned, records);
     replace.record().follow(Some(Pending { from, typed }));
+    // After `^<C-d>`, the indent it took off, on the row opened.
+    state.restore_indent(model);
 }
 
 /// A line break typed in a virtual session at `head`: the rest of its row
@@ -756,6 +794,11 @@ impl VimState {
         let text = model.text().clone();
         let heads = sorted_heads(model);
         let records = replace.at_carets(&text, &heads);
+        let tab = model.tab_size().max(1);
+        let step = match model.indent_style() {
+            Some(IndentStyle::Spaces(n)) => usize::from(n).max(1),
+            _ => tab,
+        };
         // Each act's record, and what it does to it.
         let mut undone: Vec<Option<(usize, Undo)>> = Vec::with_capacity(heads.len());
         let acts = {
@@ -839,10 +882,36 @@ impl VimState {
                                 keep: None,
                             },
                         ),
+                        // Of spaces and tabs, one shift width of it, as
+                        // nvim's 'smarttab' takes, spaces making up the rest
+                        // if a tab went.
+                        (true, _)
+                            if !replace.virtual_
+                                && entry.put[1..]
+                                    .bytes()
+                                    .all(|byte| matches!(byte, b' ' | b'\t')) =>
+                        {
+                            let indent = &entry.put[1..];
+                            let width = width_from(indent, 0, tab);
+                            let goal = (width - 1) / step * step;
+                            let mut keep = indent.len();
+                            while keep > 0 && width_from(&indent[..keep], 0, tab) > goal {
+                                keep -= 1;
+                            }
+                            let pad = " ".repeat(goal - width_from(&indent[..keep], 0, tab));
+                            let left = format!("{}{pad}", &indent[..keep]);
+                            let range = made.start + 1 + keep..made.end;
+                            undone.push(Some((ix, Undo::Trim(left))));
+                            return Act {
+                                range,
+                                land: pad.len(),
+                                text: pad,
+                            };
+                        }
                         (true, _) => (
                             made.start + 1..made.end,
                             entry.indent_was.clone(),
-                            Undo::Trim,
+                            Undo::Trim(String::new()),
                         ),
                     };
                     // The spaces a wide grapheme left go with the character.
@@ -879,8 +948,8 @@ impl VimState {
 /// What a `<BS>` does to the entries of the record it takes back from, in
 /// the text before its edit.
 enum Undo {
-    /// The line break that's the last loses its indentation.
-    Trim,
+    /// The line break that's the last keeps this of its indentation.
+    Trim(String),
     /// The entries from `first` on go. With `keep`, the line break before
     /// them keeps that many bytes and their keys.
     Take { first: usize, keep: Option<usize> },
@@ -889,9 +958,10 @@ enum Undo {
 impl Undo {
     fn apply(self, typed: &mut Vec<Entry>) {
         let (first, keep) = match self {
-            Undo::Trim => {
+            Undo::Trim(left) => {
                 if let Some(entry) = typed.last_mut() {
                     entry.put.truncate(1);
+                    entry.put.push_str(&left);
                     entry.indent_was.clear();
                     entry.trail = 0;
                     entry.then.push(BACKSPACE);
@@ -1184,6 +1254,51 @@ pub(crate) fn repeat_typed(
     if let (_, Some(version)) = act_on(model, session.origin.clone(), acts) {
         session.ending(version);
     }
+}
+
+/// [`repeat_typed`] for one copy of `keys` typed at each caret that are
+/// printable ASCII alone (no line break or [`BACKSPACE`]) in a session that
+/// isn't virtual, if they are: each overwrites the grapheme after the
+/// caret, going in past the row's end. It reads only what's after each
+/// caret, so a row that indent keys made long costs no more than a short
+/// one. Returns whether it typed them.
+pub(crate) fn overwrite_plain(
+    model: &mut EditorModel,
+    session: &Session,
+    keys: &[(usize, String)],
+) -> bool {
+    let plain = |keys: &str| keys.bytes().all(|byte| matches!(byte, b' '..=b'~'));
+    if matches!(session.change, Change::VirtualReplace(_))
+        || !keys.iter().all(|(_, keys)| plain(keys))
+    {
+        return false;
+    }
+    sync(model);
+    let text = model.text().clone();
+    let acts = sorted_heads(model)
+        .iter()
+        .map(|&head| {
+            let typed = keys
+                .iter()
+                .find(|&&(at, _)| at == head)
+                .map_or("", |(_, typed)| typed.as_str());
+            if typed.is_empty() {
+                return Act::stay(head);
+            }
+            session.typed_on_row(&text, head);
+            let rest = text.slice_to_string(head..row_end(&text, text.offset_to_point(head).row));
+            let over: usize = rest.graphemes(true).take(typed.len()).map(str::len).sum();
+            Act {
+                range: head..head + over,
+                land: typed.len(),
+                text: typed.to_owned(),
+            }
+        })
+        .collect();
+    if let (_, Some(version)) = act_on(model, session.origin.clone(), acts) {
+        session.ending(version);
+    }
+    true
 }
 
 /// `more` copies of `keys` (characters and line breaks) typed in a virtual

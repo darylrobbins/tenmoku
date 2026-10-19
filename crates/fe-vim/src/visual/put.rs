@@ -331,6 +331,11 @@ pub(crate) fn put(
     // The first and last characters put in (a line break ending it is at
     // the next row's start).
     let start = Cursor::at(&after, start).offset();
+    // After `<C-o>`, a put within a row leaves the caret just past it, where
+    // insert mode resumes, as nvim's does.
+    let past = (state.one_command.is_some() && !repeated.contains('\n') && !first_non_blank)
+        .then_some(end)
+        .filter(|_| value.block_width.is_none());
     let end = match after.slice_to_string(start..end).ends_with('\n') {
         true => end,
         false => Cursor::at(&after, end.saturating_sub(1).max(start)).offset(),
@@ -345,7 +350,10 @@ pub(crate) fn put(
         (false, None) if repeated.contains('\n') => start,
         (false, None) => end,
     };
-    operator::land(model, &snapshot, [land]);
+    match past {
+        Some(past) => crate::insert::place(model, &snapshot, &[past]),
+        None => operator::land(model, &snapshot, [land]),
+    }
     if let Some(marks) = state.last_visual.as_mut() {
         let (raw_start, raw_end) = match raw_marks {
             Some((first, tail, last)) => {

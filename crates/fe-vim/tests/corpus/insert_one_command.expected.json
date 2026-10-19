@@ -1,0 +1,1298 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "ctrl_o_motion",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>0X<Esc>",
+      "expect": {
+        "buffer": "Xabc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_word_motion",
+      "buffer": "abc def ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>2wX<Esc>",
+      "expect": {
+        "buffer": "abc def Xghi",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>hX<Esc>",
+      "expect": {
+        "buffer": "abc dXef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end_stays",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>mmX<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "m": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end_delete",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>xX<Esc>",
+      "expect": {
+        "buffer": "abc deX",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "-": {
+            "text": "f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end_delete_before",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>XY<Esc>",
+      "expect": {
+        "buffer": "abc dfY",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end_failed_motion",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>lX<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_at_row_end_multibyte",
+      "buffer": "abé",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>hX<Esc>",
+      "expect": {
+        "buffer": "aXbé",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_row_end_goal_down_short",
+      "buffer": "abc def\nxy",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>jX<Esc>",
+      "expect": {
+        "buffer": "abc def\nxyX",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_row_end_goal_down_long",
+      "buffer": "abc def\nxyzuvwxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o>jX<Esc>",
+      "expect": {
+        "buffer": "abc def\nxyzuvwxXyz",
+        "cursor": [
+          1,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_dollar",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>$X<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_bar_column",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>7|X<Esc>",
+      "expect": {
+        "buffer": "abc deXf",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_delete",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>dwX<Esc>",
+      "expect": {
+        "buffer": "Xdef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_delete_char",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "i<C-o>xY<Esc>",
+      "expect": {
+        "buffer": "abY def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_count",
+      "buffer": "abc def ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>2dwX<Esc>",
+      "expect": {
+        "buffer": "Xghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc def ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc def ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_count_put",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwi<C-o>3pX<Esc>",
+      "expect": {
+        "buffer": "aabcabcabcXbc def",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_register_put",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayiwA <C-o>\"aPX<Esc>",
+      "expect": {
+        "buffer": "abc defabc X",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "a": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_put_at_row_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yiwA<C-o>pX<Esc>",
+      "expect": {
+        "buffer": "abc defabcX",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_visual_returns",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>vjdX<Esc>",
+      "expect": {
+        "buffer": "Xef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_visual_escape_returns",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>vj<Esc>X<Esc>",
+      "expect": {
+        "buffer": "abc\nXdef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_visual_yank",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ia<C-o>vy<Esc>",
+      "expect": {
+        "buffer": "abca def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "0": {
+            "text": " ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            4
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_command_line_returns",
+      "buffer": "abc a\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>:s/a/b/<CR>X<Esc>",
+      "expect": {
+        "buffer": "Xbbc a\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_command_line_cancel_returns",
+      "buffer": "abc a\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-o>:<Esc>X<Esc>",
+      "expect": {
+        "buffer": "Xabc a\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_search_returns",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>/e<CR>X<Esc>",
+      "expect": {
+        "buffer": "abc dXef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "e",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_escape_returns",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "i<C-o><Esc>X<Esc>",
+      "expect": {
+        "buffer": "abXc def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_escape_at_row_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<C-o><Esc>X<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_cancelled_operator_returns",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>d<Esc>X<Esc>",
+      "expect": {
+        "buffer": "abcX def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_cancelled_count_returns",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>3<Esc>X<Esc>",
+      "expect": {
+        "buffer": "abcX def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_open_row",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "i<C-o>oX<Esc>",
+      "expect": {
+        "buffer": "abc\nX\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_append",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>AX<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_change_row",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>ccxy<Esc>",
+      "expect": {
+        "buffer": "xy",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc def\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc def\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_insert_undo",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ia<C-o>ixy<Esc>u",
+      "expect": {
+        "buffer": "abca def",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_dot_after",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-o>xb<Esc>w.",
+      "expect": {
+        "buffer": "abbc bdef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_dot_after_command_only",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-o>x<Esc>w.",
+      "expect": {
+        "buffer": "abc ef",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_dot_after_motion_only",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-o>l<Esc>w.",
+      "expect": {
+        "buffer": "aabc adef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_dot_inside",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xa<C-o>.b<Esc>",
+      "expect": {
+        "buffer": "bb def",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_dot_inside_twice",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ia<C-o>xb<C-o>.c<Esc>",
+      "expect": {
+        "buffer": "abcabcef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_undo",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-o>xb<Esc>uu",
+      "expect": {
+        "buffer": "aabc def",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_undo_all",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<C-o>xb<Esc>uuu",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_undo_inside",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xia<C-o>ub<Esc>u",
+      "expect": {
+        "buffer": "bc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_drops_count",
+      "buffer": "abc def ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ia<C-o>xb<Esc>",
+      "expect": {
+        "buffer": "abbc def ghi",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_drops_unused_indent",
+      "buffer": "    abc",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "A<CR><C-o><Esc><Esc>",
+      "expect": {
+        "buffer": "    abc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_unused_indent_goal",
+      "buffer": "    abc",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "A<CR><C-o>kX<Esc>",
+      "expect": {
+        "buffer": "    Xabc\n",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_open_row_indent",
+      "buffer": "    abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "o<C-o><Esc>X<Esc>",
+      "expect": {
+        "buffer": "    abc\nX",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_replace_mode",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "Rxy<C-o>0Z<Esc>",
+      "expect": {
+        "buffer": "Zbcxyef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_replace_backspace",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "Rxy<C-o>0Z<BS><BS><Esc>",
+      "expect": {
+        "buffer": "abcxyef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_play_register",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxxqA<C-o>@aX<Esc>",
+      "expect": {
+        "buffer": "c Xd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e",
+            "linewise": false
+          },
+          "-": {
+            "text": "e",
+            "linewise": false
+          },
+          "a": {
+            "text": "xx",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_ex_normal",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "i<C-o>:normal x<CR>X<Esc>",
+      "expect": {
+        "buffer": "abcXdef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_block_insert",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jjIab<C-o>lcd<Esc>",
+      "expect": {
+        "buffer": "acdbabc\nabdef\nabghi",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_visual_put",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "yiwi<C-o>vpX<Esc>",
+      "expect": {
+        "buffer": "abc defXef",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            4
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_visual_put_at_row_end",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "yiwi<C-o>vePX<Esc>",
+      "expect": {
+        "buffer": "abc defX",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            4
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_linewise_put",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyi<C-o>pX<Esc>",
+      "expect": {
+        "buffer": "abc def\nXabc def\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc def\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc def\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_block_put",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jly$i<C-o>pX<Esc>",
+      "expect": {
+        "buffer": "abcXab\ndefde",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nde",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_open_row_dot",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ia<C-o>ixy<Esc>w.",
+      "expect": {
+        "buffer": "abcaxy xydef",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

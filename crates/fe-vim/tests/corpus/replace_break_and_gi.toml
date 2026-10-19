@@ -138,3 +138,33 @@ name = "gi_before_undo"
 buffer = "foo bar"
 cursor = [0, 0]
 keys = "AX<Esc>ugiZ<Esc>"
+
+[[case]]
+name = "backspace_takes_a_shift_width_of_a_breaks_indent"
+buffer = "        foo bar"
+cursor = [0, 11]
+keys = "R<CR><BS>x<Esc>"
+
+[[case]]
+name = "backspaces_take_a_breaks_indent_a_shift_width_at_a_time"
+buffer = "        foo bar"
+cursor = [0, 11]
+keys = "R<CR><BS><BS>x<Esc>"
+
+[[case]]
+name = "backspaces_take_a_breaks_indent_then_the_break"
+buffer = "        foo bar"
+cursor = [0, 11]
+keys = "Rz<CR><BS><BS><BS>x<Esc>"
+
+[[case]]
+name = "backspace_over_a_tab_indent_leaves_spaces"
+buffer = "\t  foo bar"
+cursor = [0, 6]
+keys = ":set noexpandtab<CR>R<CR><BS>x<Esc>"
+
+[[case]]
+name = "backspace_over_a_breaks_indent_dot"
+buffer = "        foo bar\n        baz qux"
+cursor = [0, 11]
+keys = "R<CR><BS>x<Esc>j0fz."

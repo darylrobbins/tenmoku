@@ -3,7 +3,10 @@
 //! `EditorTarget` doesn't carry.
 
 use fe_buffer::TransactionId;
-use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Dispatched, Registry};
+use fe_command::{
+    Actor, CommandError, CommandTarget, ContextPredicate, DispatchError, Dispatched, Effect,
+    Invocation, Registry,
+};
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
@@ -45,6 +48,22 @@ pub(crate) fn run_operate(
     operated
 }
 
+/// Runs `invocation` through `registry`, as a host runs each of vim's
+/// commands: [`Registry::dispatch`], then, if the command was the one
+/// `<C-o>` left insert mode for and it's done, back to insert mode
+/// ([`VimState::one_command`]), whether it worked or not.
+pub fn dispatch(
+    registry: &Registry<VimCommands>,
+    target: &mut VimTarget<'_>,
+    invocation: &Invocation,
+) -> Result<Dispatched<TransactionId>, DispatchError> {
+    let dispatched = registry.dispatch(target, invocation);
+    if target.state.one_command.is_some() {
+        insert::finish_one_command(target);
+    }
+    dispatched
+}
+
 /// What vim's commands run against: an editor's model, its host, its vim
 /// state and the host's registers, borrowed for one dispatch.
 pub struct VimTarget<'a> {
@@ -64,7 +83,7 @@ impl CommandTarget for VimCommands {
 }
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
-/// `vim.normal_mode`, `vim.replace_mode`, `vim.virtual_replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
+/// `vim.normal_mode`, `vim.resume_insert`, `vim.replace_mode`, `vim.virtual_replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`,
 /// `vim.substitute_answer`, the
 /// macros' `vim.record`, `vim.record_stop` and `vim.play`, and for
@@ -173,6 +192,24 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(insert_mode)
         .mutates_buffer(true);
+    registry
+        .register(
+            "vim.resume_insert",
+            "Vim Resume Insert",
+            |target: &mut VimTarget<'_>, _: &Actor| {
+                insert::finish_one_command(target);
+                Ok(Dispatched::new(Effect::Changed))
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Ends the normal-mode command insert mode's ctrl-o runs, resuming the insert or replace session it left at the carets: what `<Esc>`, or a key that fails, commits once nothing is pending.",
+        )
+        .context(
+            ContextPredicate::parse("editor && vim.insert_pending")
+                .expect("vim's context predicate parses"),
+        )
+        .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.replace_mode",
@@ -420,11 +457,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.play",
             "Vim Play Macro",
             |target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs| {
-                let played = macros::play(target, actor, args);
-                if target.state.macros.last_played() == Some(':') {
-                    marks::settle(target);
-                }
-                played
+                macros::play(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")

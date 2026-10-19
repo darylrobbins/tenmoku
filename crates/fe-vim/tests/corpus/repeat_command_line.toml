@@ -153,3 +153,15 @@ name = "at_at_then_Q"
 buffer = "abcdefghij"
 cursor = [0, 0]
 keys = "qaxqqbrZq@aQ"
+
+[[case]]
+name = "at_colon_count_gives_back_jump_mark"
+buffer = "top\na"
+cursor = [0, 0]
+keys = "m'j:s/a/aa/<CR>2@:``"
+
+[[case]]
+name = "at_colon_normal_play_gives_back_jump_mark"
+buffer = "top\na"
+cursor = [0, 0]
+keys = "jqq:s/a/aa/<CR>qkm'j:normal @q<CR>@:``"

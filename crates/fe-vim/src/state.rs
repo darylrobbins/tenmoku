@@ -17,7 +17,7 @@ use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
     cmdline::{self, CommandLine},
     history::Carets,
-    insert::{Closing, Session},
+    insert::{Closing, OneCommand, Session},
     jump,
     macros::Macros,
     marks::Marks,
@@ -38,6 +38,8 @@ const VISUAL: &str = "vim.visual";
 const CMDLINE_KIND: &str = "vim.cmdline_kind";
 /// The register being recorded into, while `q` records.
 const RECORDING: &str = "vim.recording";
+/// The flag set while `<C-o>` left insert or replace mode for one command.
+const INSERT_PENDING: &str = "vim.insert_pending";
 
 /// The editing mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -82,6 +84,9 @@ pub struct VimState {
     pub(crate) session: Option<Session>,
     /// Set in replace mode: what typing overwrote, for `<BS>`.
     pub(crate) replace: Option<Replace>,
+    /// Set while `<C-o>` left a session for one normal-mode command: what
+    /// resumes once it's done ([`VimState::one_command`]).
+    pub(crate) one_command: Option<OneCommand>,
     /// A session this state left while a clone was ending it: the outcome
     /// is adopted once it's published (see `insert::adopt_closing`).
     pub(crate) closing: Option<Closing>,
@@ -386,7 +391,26 @@ impl VimState {
     /// and `fe:{command id}` waits, leaving the command for the host
     /// ([`VimState::take_remap_command`]). It answers no `:s` confirmation
     /// and picks no jump label: running, it ends them.
+    ///
+    /// After `<C-o>` ([`VimState::one_command`]), a key that ends the
+    /// command without committing one (`<Esc>` with nothing pending, or
+    /// after a count or an operator, a key that fails) commits
+    /// `vim.resume_insert`, which resumes the session.
     pub fn feed(&mut self, key: VimKey) -> Step {
+        let step = self.feed_key(key);
+        match step {
+            Step::Commit(_) => step,
+            _ if self.one_command_done() => {
+                let resume =
+                    Invocation::of("vim.resume_insert").expect("vim command IDs are valid");
+                Step::Commit(resume.source(Source::Keyboard))
+            }
+            _ => step,
+        }
+    }
+
+    /// [`VimState::feed`], but for the end of `<C-o>`'s command.
+    fn feed_key(&mut self, key: VimKey) -> Step {
         let taken = self.remap.next_tag();
         let tag = taken.clone().unwrap_or(TYPED);
         self.expanded = tag.origin == Some(Origin::Expansion);
@@ -668,6 +692,7 @@ impl VimState {
 
     /// Publishes the mode on `frame`, the editor's own: `vim.mode`, the flag
     /// `vim.visual` in a visual mode, `vim.cmdline_kind` in `cmdline` mode,
+    /// the flag `vim.insert_pending` while `<C-o>`'s command runs,
     /// plus the flag `vim.pending` and
     /// `vim.pending_kind` while anything is pending, a bare count or a
     /// completed `"a` included, and `remap` while keys are held for a
@@ -691,6 +716,12 @@ impl VimState {
             Mode::CmdLine(kind) => frame = frame.set(CMDLINE_KIND, kind.name()),
             _ => {
                 frame.values.remove(CMDLINE_KIND);
+            }
+        }
+        match self.one_command {
+            Some(_) => frame = frame.flag(INSERT_PENDING),
+            None => {
+                frame.flags.remove(INSERT_PENDING);
             }
         }
         match self.macros.recording() {
