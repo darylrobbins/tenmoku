@@ -1592,7 +1592,8 @@ const ANGLE_LISTS: &[&str] = &["type_parameters", "type_arguments", "template_"]
 /// is left out. A Go field's tag is too. An item captured as its name alone
 /// reads on only in the [`NAME_DECLARATIONS`] of its language, skipping the
 /// names declared with it, as Go's `X, Y int`, and ending at a `,` before
-/// anything else. Whitespace collapses to one space, kept where the source
+/// anything else, or in its [`OWN_DECLARATIONS`], ending at a `,`, as
+/// Swift's `var a: Int, b: String`. Whitespace collapses to one space, kept where the source
 /// has some between tokens, a comment counting as some; no space follows
 /// an opening parenthesis or bracket or comes before a closing one or a
 /// comma. It's cut at [`MAX_DETAIL_CHARS`],
@@ -1602,16 +1603,21 @@ fn detail(text: &Text, language: &str, item: Node, name: Range<usize>) -> String
     // declaration, if its language lists one; others, as an enum's last
     // variant, have no detail.
     let mut scan = item;
+    // Whether the declaration read in gives each name its own suffix, as
+    // Swift's `var a: Int, b: String`, so a comma ends the detail.
+    let mut own = false;
     if scan.end_byte() <= name.end {
-        let kinds = (NAME_DECLARATIONS.iter())
-            .find(|(name, _)| *name == language)
-            .map_or(&[][..], |(_, kinds)| kinds);
+        let shared = language_kinds(NAME_DECLARATIONS, language);
+        let owned = language_kinds(OWN_DECLARATIONS, language);
         while let Some(parent) = scan.parent().filter(|parent| {
             // Not a long list of names, whose names would each read it
             // all.
-            kinds.contains(&parent.kind()) && parent.child_count() as usize <= MAX_DETAIL_TOKENS
+            !own && (shared.contains(&parent.kind()) || owned.contains(&parent.kind()))
+                && parent.child_count() as usize <= MAX_DETAIL_TOKENS
         }) {
             scan = parent;
+            // Its siblings' declarations around it aren't this name's.
+            own = owned.contains(&parent.kind());
         }
         if scan.end_byte() <= name.end {
             return String::new();
@@ -1671,6 +1677,10 @@ fn detail(text: &Text, language: &str, item: Node, name: Range<usize>) -> String
                 return true;
             }
             if kind == "," && name_alone {
+                if own {
+                    // The next name's own declaration follows.
+                    return false;
+                }
                 // Only names declared alike, as Go's X, Y int, follow in
                 // the declaration, and are skipped.
                 comma = true;
@@ -1714,6 +1724,35 @@ const NAME_DECLARATIONS: &[(&str, &[&str])] = &[
     ("c", &["array_declarator"]),
     ("cpp", &["array_declarator"]),
 ];
+
+/// For items captured as their names alone, by language, the kinds of the
+/// declarations and patterns their detail reads on in, each name's own up
+/// to the comma before the next: Swift's `var x: Int` and `case a(Int)`,
+/// Scala's typed pattern, as `x: Int` in `val Some(x: Int) = opt`, and a
+/// C or C++ bit-field, as `unsigned x:3`. Nothing above one is read.
+const OWN_DECLARATIONS: &[(&str, &[&str])] = &[
+    (
+        "swift",
+        &[
+            "property_declaration",
+            "protocol_property_declaration",
+            "enum_entry",
+        ],
+    ),
+    ("scala", &["typed_pattern"]),
+    ("c", &["field_declaration"]),
+    ("cpp", &["field_declaration"]),
+];
+
+/// The kinds `table` lists for `language`.
+fn language_kinds(
+    table: &[(&str, &'static [&'static str])],
+    language: &str,
+) -> &'static [&'static str] {
+    (table.iter())
+        .find(|(name, _)| *name == language)
+        .map_or(&[][..], |(_, kinds)| kinds)
+}
 
 /// Calls `visit` on each token of `node` that starts at or after `from`, in
 /// order, until it returns false: leaves, and strings and other literals
