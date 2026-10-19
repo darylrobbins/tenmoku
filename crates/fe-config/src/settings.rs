@@ -35,6 +35,9 @@ pub struct Settings {
     /// The status bar.
     #[serde(default)]
     pub status_bar: StatusBarSettings,
+    /// The workbench: its panes and tabs.
+    #[serde(default)]
+    pub workbench: WorkbenchSettings,
     /// Language servers. A project file may only turn them off, but in a
     /// trusted folder its settings for them apply.
     pub lsp: LspSettings,
@@ -259,6 +262,22 @@ pub struct StatusBarSettings {
 impl Default for StatusBarSettings {
     fn default() -> Self {
         Self { visible: true }
+    }
+}
+
+/// Settings for the workbench.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WorkbenchSettings {
+    /// Whether a file single-clicked in the project tree opens in a preview
+    /// tab, in italics, that the next one replaces. Editing it,
+    /// double-clicking it or its tab, or pinning it keeps it open.
+    pub preview_tabs: bool,
+}
+
+impl Default for WorkbenchSettings {
+    fn default() -> Self {
+        Self { preview_tabs: true }
     }
 }
 

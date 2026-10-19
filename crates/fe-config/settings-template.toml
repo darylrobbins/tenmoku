@@ -67,6 +67,12 @@
 # Whether the status bar shows at the bottom of the window.
 # visible = true
 
+[workbench]
+# Open a file single-clicked in the project tree in a preview tab, in
+# italics, that the next one replaces. Editing it, double-clicking it or its
+# tab, or pinning it keeps it open.
+# preview_tabs = true
+
 [theme]
 # dark, light, or system to follow the system's appearance. Your own colours
 # go in theme.toml beside this file; its appearance says whether it replaces

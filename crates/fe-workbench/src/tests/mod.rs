@@ -80,7 +80,11 @@ pub(crate) fn open(
         let loaded = loaded.clone();
         move |window, cx| {
             let theme = EditorTheme::default_dark(cx);
-            let workbench = Workbench::new(launch, theme, EditorSettings::default(), window, cx);
+            let mut workbench =
+                Workbench::new(launch, theme, EditorSettings::default(), window, cx);
+            // A click on a file opens it to stay, as these tests were
+            // written for; `preview_tab_tests` turns previews on.
+            workbench.set_preview_tabs(false);
             let panel = workbench.panel().read(cx);
             loaded.set(panel.tree().map_or(0, |tree| tree.stats().loaded_entries));
             workbench

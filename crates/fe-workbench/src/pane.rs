@@ -100,6 +100,10 @@ pub struct Pane {
     /// Reads running, so a second click on a file being read doesn't read it
     /// again. Dropping one cancels it.
     reads: HashMap<PathBuf, Task<()>>,
+    /// Why each file being read, or waiting behind a Save As, was opened:
+    /// for a look, to land in the preview tab, or to stay. An open to stay
+    /// is for good: a later open for a look doesn't undo it.
+    intents: HashMap<PathBuf, Intent>,
     /// The file opened last and why it couldn't be read, shown in the
     /// active tab's place until another tab is shown.
     error: Option<(PathBuf, String)>,
@@ -145,6 +149,15 @@ pub struct Pane {
     last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
 }
 
+/// Why a file being read was opened: see [`Pane::open_preview`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Intent {
+    /// For a look, in the preview tab.
+    Preview,
+    /// To stay.
+    Keep,
+}
+
 impl Pane {
     pub fn new(
         theme: EditorTheme,
@@ -157,6 +170,7 @@ impl Pane {
             tabs: Vec::new(),
             opening: None,
             reads: HashMap::new(),
+            intents: HashMap::new(),
             error: None,
             reveal: None,
             open_serial: 0,
@@ -531,10 +545,21 @@ impl Pane {
         self.open_at(path, None, window, cx);
     }
 
+    /// [`Pane::open`] for a look: a new tab is the pane's preview, in
+    /// italics, in the place of the preview there is, which closes
+    /// ([`PaneView::add_preview`]). A tab open already just shows. Once
+    /// read, it opens only if it's still the file opened last, or the pane
+    /// shows nothing else: an open since, or a tab shown, supersedes it.
+    pub fn open_preview(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tab(path, None, true, window, cx);
+    }
+
     /// [`Pane::open`], then selects `reveal` in the file's editor, or puts a
     /// viewer's caret at its start: at once if it's open, else once it's
     /// read, if it's still the file opened last. A file of
-    /// [`loader::LARGE_FILE_BYTES`] or more opens in a [`FileViewer`].
+    /// [`loader::LARGE_FILE_BYTES`] or more opens in a [`FileViewer`]. A
+    /// preview tab of the file is kept, as an ordinary tab, as is a preview
+    /// read of it still running.
     pub(crate) fn open_at(
         &mut self,
         path: PathBuf,
@@ -542,16 +567,33 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_tab(path, reveal, false, window, cx);
+    }
+
+    fn open_tab(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.reveal = None;
         self.open_serial += 1;
+        // An open to stay still pending is for good.
+        let preview = preview && self.intents.get(&path) != Some(&Intent::Keep);
         if crate::open::any_reserved() {
             let identity = crate::open::file_identity(&path);
             if let Some((_, over)) = crate::open::reserved(&path, identity.as_deref()) {
+                self.note_intent(&path, preview);
                 return self.open_once_saved(path, reveal, over, window, cx);
             }
         }
         if let Some(ix) = self.position(&path) {
             self.activate(ix, window, cx);
+            if !preview {
+                self.pin_item(ix, cx);
+            }
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
             }
@@ -561,8 +603,15 @@ impl Pane {
             return;
         }
         if let Some(model) = self.peer_model(&path, cx) {
-            self.add(model, cx);
-            let ix = self.tabs.len() - 1;
+            let ix = if preview {
+                let editor = self.new_editor(model, cx);
+                let ix = self.add_preview(Box::new(editor), cx);
+                self.error = None;
+                ix
+            } else {
+                self.add(model, cx);
+                self.tabs.len() - 1
+            };
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
@@ -575,6 +624,7 @@ impl Pane {
         self.note_shown(cx);
         window.focus(self.state.focus(), cx);
         cx.notify();
+        self.note_intent(&path, preview);
         if self.reads.contains_key(&path) {
             return;
         }
@@ -595,9 +645,21 @@ impl Pane {
         self.reads.insert(path, task);
     }
 
+    /// Notes why `path` is being opened, unless it's to stay already.
+    fn note_intent(&mut self, path: &Path, preview: bool) {
+        if preview {
+            self.intents
+                .entry(path.to_owned())
+                .or_insert(Intent::Preview);
+        } else {
+            self.intents.insert(path.to_owned(), Intent::Keep);
+        }
+    }
+
     /// Shows `path` being opened until the Save As holding it is over
     /// (`over` closes), then opens it, if it's still the file opened last:
-    /// in the tab saved there, if the save went through.
+    /// in the tab saved there, if the save went through, and for a look or
+    /// to stay as it was last opened.
     fn open_once_saved(
         &mut self,
         path: PathBuf,
@@ -617,9 +679,11 @@ impl Pane {
                 over.recv().await.ok();
                 pane.update_in(cx, |pane, window, cx| {
                     pane.reads.remove(&path);
+                    let intent = pane.intents.remove(&path);
                     if pane.opening.as_ref() == Some(&path) {
                         pane.opening = None;
-                        pane.open_at(path, reveal, window, cx);
+                        let preview = intent == Some(Intent::Preview);
+                        pane.open_tab(path, reveal, preview, window, cx);
                     }
                 })
                 .ok();
@@ -631,6 +695,7 @@ impl Pane {
     /// Shows `path` as being read, by the host, which hands the result to
     /// [`Pane::file_read`].
     pub fn opening(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.intents.insert(path.clone(), Intent::Keep);
         self.opening = Some(path);
         self.note_shown(cx);
         cx.notify();
@@ -644,7 +709,9 @@ impl Pane {
     /// the file opened last, or if the pane shows nothing else (no tab,
     /// read or error); an error is shown in the tab's place, with the pane
     /// focused, only for the file opened last. So an older read never hides
-    /// a newer one or its error, and never shows without focus.
+    /// a newer one or its error, and never shows without focus. A read
+    /// opened for a look ([`Pane::open_preview`]) that's neither is
+    /// superseded, and dropped.
     pub fn file_read(
         &mut self,
         path: PathBuf,
@@ -665,6 +732,8 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         self.reads.remove(&path);
+        let intent = self.intents.remove(&path);
+        let preview = intent == Some(Intent::Preview);
         let last = self.opening.as_ref() == Some(&path);
         if last {
             self.opening = None;
@@ -672,6 +741,7 @@ impl Pane {
         let empty = self.active().is_none() && self.opening.is_none() && self.error.is_none();
         let reveal = self.reveal.take_if(|(at, _)| last && *at == path);
         match result {
+            Ok(_) if preview && !(last || empty) && self.position(&path).is_none() => {}
             Ok(opened) => {
                 let open = self.position(&path);
                 let ix = open.unwrap_or_else(|| {
@@ -684,10 +754,16 @@ impl Pane {
                         }
                         Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
                     };
+                    if preview {
+                        return self.add_preview(item, cx);
+                    }
                     let ix = self.state.push(item, cx);
                     self.sync_tabs(cx);
                     ix
                 });
+                if intent == Some(Intent::Keep) {
+                    self.pin_item(ix, cx);
+                }
                 if last || empty {
                     self.activate(ix, window, cx);
                     cx.emit(PaneEvent::Activated);
@@ -784,6 +860,14 @@ impl Pane {
     /// opens in a tab without being shown.
     pub fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut App) {
         self.activate_item(ix, window, cx);
+    }
+
+    /// Pins the active tab: a preview tab is kept, as an ordinary tab that
+    /// the next preview doesn't replace.
+    pub fn keep_active(&mut self, cx: &mut App) {
+        if let Some(ix) = self.active() {
+            self.pin_item(ix, cx);
+        }
     }
 
     /// Activates the next tab, or with `back` the previous one, wrapping. A
@@ -1630,6 +1714,10 @@ mod editorconfig_tests;
 #[cfg(test)]
 #[path = "editorconfig_save_tests.rs"]
 mod editorconfig_save_tests;
+
+#[cfg(test)]
+#[path = "preview_tab_tests.rs"]
+mod preview_tab_tests;
 
 #[cfg(test)]
 #[path = "large_file_tests.rs"]

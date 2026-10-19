@@ -11,6 +11,11 @@
 //! its own state in step: a placeholder shown while a file is read, say.
 //! [`ItemPane`] is kiln's own pane view.
 //!
+//! A pane can hold one preview item ([`PaneView::add_preview`]), a file
+//! opened for a look: its tab is in italics, and the next preview takes its
+//! place. It's kept, made an ordinary item, once it's dirty, its tab is
+//! double-clicked, or [`PaneView::pin_item`] pins it.
+//!
 //! A tab can be dragged ([`DraggedTab`]) into another pane's tab strip or
 //! onto its content, whose edges split it ([`DropZone`]); the pane it's
 //! dropped on emits [`TabDropped`], for the host to move it with
@@ -24,7 +29,7 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, DragMoveEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
     Pixels, Point, Render, ScrollHandle, SharedString, Styled as _, Subscription, WeakEntity,
     Window, canvas, div, point, px, size,
@@ -223,6 +228,9 @@ pub struct PaneState<V> {
     tab_bar_bounds: Rc<Cell<Bounds<Pixels>>>,
     hint_bounds: Rc<Cell<Bounds<Pixels>>>,
     hover: Option<DropTarget>,
+    /// The preview item, which the next preview replaces. The items'
+    /// observers clear it once it's dirty.
+    preview: Rc<Cell<Option<ItemId>>>,
     peers: Peers<V>,
     /// The view's.
     id: EntityId,
@@ -246,6 +254,7 @@ impl<V: PaneView> PaneState<V> {
             tab_bar_bounds: Rc::default(),
             hint_bounds: Rc::default(),
             hover: None,
+            preview: Rc::default(),
             peers: Peers::default(),
             id: cx.entity_id(),
             view: cx.weak_entity(),
@@ -285,14 +294,39 @@ impl<V: PaneView> PaneState<V> {
     /// stays the same one.
     pub fn insert(&mut self, ix: usize, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
         let ix = ix.min(self.items.len());
-        let pane = self.id;
-        let observed = item.observe(Box::new(move |cx| cx.notify(pane)), cx);
+        let (pane, preview, watched) = (self.id, self.preview.clone(), item.boxed_clone());
+        let observed = item.observe(
+            Box::new(move |cx| {
+                // An edit keeps a preview.
+                if preview.get() == Some(watched.id()) && watched.is_dirty(cx) {
+                    preview.set(None);
+                }
+                cx.notify(pane);
+            }),
+            cx,
+        );
         self.observed.insert(item.id(), observed);
         if ix <= self.active && ix < self.items.len() {
             self.active += 1;
         }
         self.items.insert(ix, item);
         ix
+    }
+
+    /// The preview item's index: the item the next preview replaces, drawn
+    /// in italics. `None` once it's dirty, though its observer hasn't heard
+    /// yet.
+    pub fn preview(&self, cx: &App) -> Option<usize> {
+        let id = self.preview.get()?;
+        let ix = self.position(id)?;
+        (!self.items[ix].is_dirty(cx)).then_some(ix)
+    }
+
+    /// Makes item `ix` the preview, or with `None` keeps the preview there
+    /// is, as an ordinary item.
+    pub fn set_preview(&mut self, ix: Option<usize>) {
+        let id = ix.and_then(|ix| self.items.get(ix)).map(|item| item.id());
+        self.preview.set(id);
     }
 
     /// Makes `ix` the active index, without focusing anything.
@@ -511,9 +545,11 @@ impl<V: PaneView> PaneState<V> {
         let titles: Vec<_> = self.items.iter().map(|item| item.tab_title(cx)).collect();
         let paths: Vec<_> = self.items.iter().map(|item| item.tab_path(cx)).collect();
         let descriptions = tab_descriptions(&titles, &paths);
+        let preview = self.preview(cx);
         (self.items.iter().zip(titles).zip(descriptions).enumerate())
             .map(|(ix, ((item, title), description))| {
                 kiln_ui::Tab::new(("tab", ix), title, &ui)
+                    .preview(Some(ix) == preview)
                     .icon(item.tab_icon(cx))
                     .description(description)
                     .label_color(item.tab_title_color(cx))
@@ -524,7 +560,8 @@ impl<V: PaneView> PaneState<V> {
     }
 
     /// The tab strip: a tab per item, its title and dirty dot from the
-    /// item, which a click activates, the × closes, and a drag carries.
+    /// item, which a click activates, a double-click pins, the × closes,
+    /// and a drag carries.
     pub fn tab_bar(&self, cx: &mut Context<V>) -> TabBar {
         let pane = cx.entity().downgrade();
         let ui = ui_theme(cx);
@@ -549,10 +586,15 @@ impl<V: PaneView> PaneState<V> {
                     cx.new(|_| TabGhost(label.clone()))
                 })
                 .on_drop(self.on_drop(cx))
-                .on_click(cx.listener(move |view: &mut V, _, window, cx| {
-                    view.activate_item(ix, window, cx);
-                    cx.notify();
-                }))
+                .on_click(
+                    cx.listener(move |view: &mut V, event: &ClickEvent, window, cx| {
+                        view.activate_item(ix, window, cx);
+                        if event.click_count() >= 2 {
+                            view.pin_item(ix, cx);
+                        }
+                        cx.notify();
+                    }),
+                )
                 .on_close(cx.listener(move |view: &mut V, _, window, cx| {
                     view.activate_item(ix, window, cx);
                     view.close_active_item(window, cx);
@@ -689,6 +731,9 @@ pub trait PaneView:
         }
         let item = state.items.remove(ix);
         state.observed.remove(&item.id());
+        if state.preview.get() == Some(item.id()) {
+            state.preview.set(None);
+        }
         if state.items.is_empty() {
             state.active = 0;
             state.emptied = true;
@@ -736,6 +781,42 @@ pub trait PaneView:
         state.active = first + active.min(count - 1);
         self.items_changed(cx);
         cx.notify(self.pane().id);
+    }
+
+    /// Adds `item` as the pane's preview, without showing it: in the
+    /// preview's place, the preview closing without being asked, or else
+    /// after the others. A preview that's dirty is kept, though its
+    /// observer hasn't heard yet. Returns its index.
+    fn add_preview(&mut self, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
+        let state = self.pane_mut();
+        let ix = match state.preview(cx) {
+            Some(ix) => {
+                let old = state.items.remove(ix);
+                state.observed.remove(&old.id());
+                // Every other item keeps its index, the active one too.
+                let active = state.active;
+                state.insert(ix, item, cx);
+                state.active = active;
+                ix
+            }
+            None => state.push(item, cx),
+        };
+        state.set_preview(Some(ix));
+        self.items_changed(cx);
+        cx.notify(self.pane().id);
+        ix
+    }
+
+    /// Pins item `ix`: if it's the preview, it's kept as an ordinary item,
+    /// which the next preview doesn't replace.
+    fn pin_item(&mut self, ix: usize, cx: &mut App) {
+        let state = self.pane_mut();
+        let pinned =
+            (state.items.get(ix)).is_some_and(|item| state.preview.get() == Some(item.id()));
+        if pinned {
+            state.preview.set(None);
+            cx.notify(self.pane().id);
+        }
     }
 
     /// Moves item `ix` to before the item now at `index`, or else to the

@@ -93,7 +93,8 @@ impl RenderOnce for TabBar {
 }
 
 /// One tab: its icon, its label and, muted, its description, then a dot
-/// if it has unsaved changes or else a close button. An inactive tab's
+/// if it has unsaved changes or else a close button. A preview tab's label
+/// and description are in italics. An inactive tab's
 /// close button shows only while the pointer is over the tab, as VS Code's
 /// does; its dirty dot always shows.
 #[derive(IntoElement)]
@@ -105,6 +106,7 @@ pub struct Tab {
     label_color: Option<Hsla>,
     dirty: bool,
     active: bool,
+    preview: bool,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
     drag: DragHooks,
@@ -122,6 +124,7 @@ impl Tab {
             label_color: None,
             dirty: false,
             active: false,
+            preview: false,
             on_click: None,
             on_close: None,
             drag: Vec::new(),
@@ -179,6 +182,18 @@ impl Tab {
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
+    }
+
+    /// Draws the label and description in italics: a preview tab, which
+    /// the next file opened for a look replaces, as VS Code's are.
+    pub fn preview(mut self, preview: bool) -> Self {
+        self.preview = preview;
+        self
+    }
+
+    /// Whether the tab is drawn as a preview, its label in italics.
+    pub fn is_preview(&self) -> bool {
+        self.preview
     }
 
     pub fn on_click(
@@ -324,6 +339,7 @@ impl RenderOnce for Tab {
                     .items_baseline()
                     .gap_1p5()
                     .whitespace_nowrap()
+                    .when(self.preview, |label| label.italic())
                     .child(div().text_color(title_color).child(self.label))
                     .when_some(self.description, |label, description| {
                         label.child(div().text_color(muted).child(description))

@@ -219,6 +219,9 @@ pub struct Workbench {
     /// editor shows (an open can wait behind a Save As): for vim's normal
     /// mode then ([`Workbench::open_from_tree`]).
     tree_opens: HashMap<EntityId, (PathBuf, Subscription)>,
+    /// `workbench.preview_tabs`: whether a file clicked once in the
+    /// project panel opens in a preview tab.
+    preview_tabs: bool,
     /// Hands the editors still saving to [`DetachedSaves`] as the
     /// workbench goes, with its window.
     _release: Subscription,
@@ -559,6 +562,8 @@ impl Workbench {
             drops: HashMap::new(),
             editors: HashMap::new(),
             tree_opens: HashMap::new(),
+            preview_tabs: (cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>())
+                .is_none_or(|global| global.settings().workbench.preview_tabs),
             _release: cx.on_release(|workbench, cx| {
                 let editors = workbench.editors.drain().map(|(_, (editor, _))| editor);
                 DetachedSaves::keep(editors, cx);
@@ -675,7 +680,12 @@ impl Workbench {
             panel,
             window,
             |workbench, _, event, window, cx| match event {
-                PanelEvent::OpenFile(path) => workbench.open_from_tree(path.clone(), window, cx),
+                PanelEvent::OpenFile(path) => {
+                    workbench.open_from_tree(path.clone(), false, window, cx)
+                }
+                PanelEvent::PreviewFile(path) => {
+                    workbench.open_from_tree(path.clone(), true, window, cx)
+                }
                 PanelEvent::FsChanged(changes) => {
                     workbench
                         .quick_open
@@ -1209,15 +1219,34 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Turns `workbench.preview_tabs` on or off, as a settings reload
+    /// does.
+    pub fn set_preview_tabs(&mut self, on: bool) {
+        self.preview_tabs = on;
+    }
+
     /// Opens `path` from the project panel in the active pane. With vim on,
     /// its editor is in normal mode once it shows, whatever mode an editor
     /// of it already open was left in (a new one starts there): at once, or
     /// once an open waiting (behind a Save As of that file, say) lands, in
     /// each pane. A later open from the panel in the same pane replaces the
-    /// one waiting there.
-    fn open_from_tree(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    /// one waiting there. With `preview`, if `workbench.preview_tabs` is on,
+    /// it opens in the pane's preview tab ([`Pane::open_preview`]).
+    fn open_from_tree(
+        &mut self,
+        path: PathBuf,
+        preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.active.clone();
-        pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx));
+        pane.update(cx, |pane, cx| {
+            if preview && self.preview_tabs {
+                pane.open_preview(path.clone(), window, cx);
+            } else {
+                pane.open(path.clone(), window, cx);
+            }
+        });
         self.tree_opens.remove(&pane.entity_id());
         if self.tree_opened(&pane, &path, window, cx) {
             return;
@@ -2490,6 +2519,7 @@ impl Workbench {
     /// open, and `status_bar.visible` to the status bar if the reload
     /// changed it, so reloading for any other key keeps a toggle.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
+        self.preview_tabs = event.settings.workbench.preview_tabs;
         let visible = event.settings.status_bar.visible;
         if visible != event.previous.status_bar.visible {
             self.set_status_bar_visible(visible, cx);

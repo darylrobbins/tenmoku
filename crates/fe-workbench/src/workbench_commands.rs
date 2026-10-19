@@ -46,6 +46,12 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| pane.cycle(true, window, cx));
     }
 
+    /// Keep Editor
+    #[command(id = "workbench.keep_editor")]
+    fn keep_editor(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, _, cx| pane.keep_active(cx));
+    }
+
     /// Split Right
     #[command(id = "pane.split_right")]
     fn split_right(&mut self, cx: &mut Cx<Self>) {

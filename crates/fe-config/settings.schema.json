@@ -565,6 +565,17 @@
         }
       },
       "type": "object"
+    },
+    "WorkbenchSettings": {
+      "description": "Settings for the workbench.",
+      "properties": {
+        "preview_tabs": {
+          "default": true,
+          "description": "Whether a file single-clicked in the project tree opens in a preview\ntab, in italics, that the next one replaces. Editing it,\ndouble-clicking it or its tab, or pinning it keeps it open.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -648,6 +659,13 @@
         "remap": []
       },
       "description": "Vim mode."
+    },
+    "workbench": {
+      "$ref": "#/$defs/WorkbenchSettings",
+      "default": {
+        "preview_tabs": true
+      },
+      "description": "The workbench: its panes and tabs."
     }
   },
   "title": "Settings",

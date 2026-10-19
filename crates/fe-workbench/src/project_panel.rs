@@ -65,8 +65,12 @@ pub const PANEL_WIDTH: gpui::Pixels = px(240.);
 /// What the panel asks of the workbench.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PanelEvent {
-    /// A file row was clicked, or Enter pressed on it.
+    /// A file row was double-clicked, or Enter pressed on it: it opens
+    /// to stay.
     OpenFile(PathBuf),
+    /// A file row was clicked once: it opens for a look, in a preview tab
+    /// that the next one replaces, if `workbench.preview_tabs` is on.
+    PreviewFile(PathBuf),
     /// A watcher batch came, for others that follow the disk too.
     FsChanged(Vec<FsChange>),
     /// The root opened: its tree shows.
@@ -590,6 +594,17 @@ impl ProjectPanel {
     /// What clicking a row does: it's selected, and a directory expands
     /// once listed (or collapses, or stops waiting to expand); a file opens.
     fn click(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        self.click_row(id, false, cx);
+    }
+
+    /// A mouse click on a row: [`ProjectPanel::click`], but a file's first
+    /// click opens it for a look, in a preview tab, and the second of a
+    /// double-click keeps it.
+    fn clicked(&mut self, id: NodeId, event: &gpui::ClickEvent, cx: &mut Context<Self>) {
+        self.click_row(id, event.click_count() == 1, cx);
+    }
+
+    fn click_row(&mut self, id: NodeId, preview: bool, cx: &mut Context<Self>) {
         self.cancel_reveal();
         let State::Open(tree) = &mut self.state else {
             return;
@@ -612,7 +627,11 @@ impl ProjectPanel {
             return;
         }
         if let Some(path) = self.shown_path(id) {
-            cx.emit(PanelEvent::OpenFile(path));
+            cx.emit(if preview {
+                PanelEvent::PreviewFile(path)
+            } else {
+                PanelEvent::OpenFile(path)
+            });
         }
         cx.notify();
     }
@@ -782,7 +801,7 @@ impl ProjectPanel {
                     .ignored(row.ignored)
                     .error(row.error.is_some())
                     .selected(selected)
-                    .on_click(cx.listener(move |panel, _, _, cx| panel.click(id, cx)));
+                    .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)));
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
