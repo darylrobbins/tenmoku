@@ -18,7 +18,7 @@ use fe_text::{Bias, Text};
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, cmdline, g_operators, history, insert,
+    Registers, Target, VimState, VimTarget, Write, cmdline, folds, g_operators, history, insert,
     line_motions, marks,
     motion::{self, Cursor},
     text_object, visual,
@@ -575,7 +575,8 @@ fn keeping_last_change<R>(
 
 /// `vim.operate`: over a motion or text object in normal mode, or over the
 /// selection in a visual mode (see `visual::operate`). Over a motion or
-/// object, an operator but `d y c > < =` is `g_operators::operate`'s.
+/// object, an operator but `d y c > < = zf` is `g_operators::operate`'s;
+/// visual `zf` is `folds::fold_selection`.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -594,7 +595,12 @@ pub(crate) fn operate(
                 | Motion::SearchPartialWordBackward
         )
     );
-    let mut dispatched = operate_over(target, actor, args)?;
+    let motion = match args.target {
+        Target::Motion(motion) => Some(motion),
+        _ => None,
+    };
+    let mut dispatched =
+        folds::with_candidates(target, motion, |target| operate_over(target, actor, args))?;
     // A search that changed nothing still set the last search and the
     // highlight.
     if searching && dispatched.effect == Effect::Nothing {
@@ -638,6 +644,9 @@ fn operate_over(
             }));
         }
     }
+    if args.target.is_selection() && args.operator == Operator::Fold {
+        return folds::fold_selection(target);
+    }
     if args.target.is_selection() {
         return keeping_last_change(target, |target| visual::operate(target, actor, args));
     }
@@ -649,6 +658,7 @@ fn operate_over(
             | Operator::Indent
             | Operator::Outdent
             | Operator::Reindent
+            | Operator::Fold
     ) {
         return keeping_last_change(target, |target| g_operators::operate(target, actor, args));
     }
@@ -899,7 +909,10 @@ fn operate_unless_failing(
             })
             .collect()
     };
-    if let Operator::Indent | Operator::Outdent | Operator::Reindent = args.operator {
+    // `zf` takes rows as `>` does, closing a fold over them instead.
+    if let Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Fold =
+        args.operator
+    {
         // Each caret's rows: an empty range (`>h` at column 0) still has
         // its own.
         let rows: Vec<Option<RangeInclusive<u32>>> = spans
@@ -927,9 +940,13 @@ fn operate_unless_failing(
         shifted.sort_unstable();
         shifted.dedup();
         let reindent = args.operator == Operator::Reindent;
-        let (transaction, snapshot) = match reindent {
-            true => crate::feature::reindent::rows(model, &**host, &shifted, origin(actor)),
-            false => {
+        let fold = args.operator == Operator::Fold;
+        let (transaction, snapshot) = match args.operator {
+            Operator::Reindent => {
+                crate::feature::reindent::rows(model, &**host, &shifted, origin(actor))
+            }
+            Operator::Fold => (None, model.snapshot().clone()),
+            _ => {
                 let indent = args.operator == Operator::Indent;
                 let (unit, tabs) = shift_unit(model);
                 let times = match selected {
@@ -968,13 +985,15 @@ fn operate_unless_failing(
             },
         );
         let column = began.map_or(0, |at| history::pair(&text, at).1);
-        marks::shifted(
-            state,
-            model,
-            transaction.map(|_| snapshot.version()),
-            (first, last),
-            column,
-        );
+        if !fold {
+            marks::shifted(
+                state,
+                model,
+                transaction.map(|_| snapshot.version()),
+                (first, last),
+                column,
+            );
+        }
         let after = snapshot.text().clone();
         // The caret goes to the first row at its goal column; `$` aims it at
         // the row's end. `=`'s goes to the first row's first non-blank.
@@ -1009,7 +1028,8 @@ fn operate_unless_failing(
             .collect();
         let landed = landed_at(model, &snapshot, carets);
         keep_goals(model, state, &landed, &kept);
-        let effect = match transaction.is_some() || model.selections() != before {
+        let folded = fold && folds::close_rows(model, rows.into_iter().flatten());
+        let effect = match transaction.is_some() || folded || model.selections() != before {
             true => Effect::Changed,
             false => Effect::Nothing,
         };

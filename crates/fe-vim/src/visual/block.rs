@@ -532,6 +532,7 @@ pub(super) fn operate_block(
         Operator::Yank | Operator::Join | Operator::JoinRaw => Vec::new(),
         Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
         Operator::Reindent => unreachable!("over the block's rows"),
+        Operator::Fold => unreachable!("folds' own"),
     };
     let corner = block.corner(&text, tab);
     let begins = vec![history::pair(&text, corner)];

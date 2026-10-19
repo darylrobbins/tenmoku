@@ -15,18 +15,25 @@ use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, jump, line_motions, marks, prose, search,
-    state::Goals, unmatched, visual,
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, folds, jump, line_motions, marks, prose,
+    search, state::Goals, unmatched, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
 /// [`cmdline::check_search`] and a mark motion finds its mark (if either
 /// doesn't, nothing moves and the error is the [`VimState::message`]). A
-/// jump that gets anywhere sets the jump mark to where it left from.
+/// jump that gets anywhere sets the jump mark to where it left from. `zj`
+/// and `zk` move between the candidates [`folds::with_candidates`] finds.
 pub(crate) fn move_command(
     target: &mut VimTarget<'_>,
     args: MoveArgs,
 ) -> Dispatched<TransactionId> {
+    folds::with_candidates(target, Some(args.motion), |target| {
+        move_carets(target, args)
+    })
+}
+
+fn move_carets(target: &mut VimTarget<'_>, args: MoveArgs) -> Dispatched<TransactionId> {
     let mut args = args;
     let keep = match cmdline::resolve(target, args.motion) {
         Ok((motion, keep)) => {
@@ -359,6 +366,7 @@ pub(crate) fn motion(
         | Motion::WindowBottom
         | Motion::DisplayDown
         | Motion::DisplayUp => return line_motions::motion(cursor, args, goal, tab),
+        Motion::FoldNext | Motion::FoldPrevious => return folds::motion(cursor, args, goal, tab),
     }
     // nvim fails an operator whose `b` can't move at all, or would step
     // back from an empty first row (from a non-empty one, it just stops at

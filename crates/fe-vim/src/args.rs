@@ -16,7 +16,7 @@ use crate::{line_motions, prose};
 /// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
 /// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
 /// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
-/// `reindent` (`=`) to `feature/reindent.rs`.
+/// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -49,6 +49,8 @@ pub enum Operator {
     /// `=`: each row takes the indentation the host suggests for the
     /// buffer's language (`feature/reindent.rs`).
     Reindent,
+    /// `zf`: closes a fold over the rows (`folds.rs`).
+    Fold,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -73,7 +75,8 @@ pub enum Operator {
 /// (`prose.rs`); `word_end_backward` `big_word_end_backward`
 /// `next_line_first_non_blank` `prev_line_first_non_blank` `column`
 /// `window_top` `window_middle` `window_bottom` `display_down` `display_up`
-/// are `ge gE + - | H M L gj gk` (`line_motions.rs`; `_` is `line`).
+/// are `ge gE + - | H M L gj gk` (`line_motions.rs`; `_` is `line`);
+/// `fold_next` and `fold_previous` are `zj` and `zk` (`folds.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -141,6 +144,8 @@ pub enum Motion {
     WindowBottom,
     DisplayDown,
     DisplayUp,
+    FoldNext,
+    FoldPrevious,
 }
 
 /// `'{name}`, or `` `{name} `` if `exact`, as a motion: to the first
@@ -321,7 +326,9 @@ impl Motion {
             | Self::SearchWordBackward
             | Self::SearchPartialWordForward
             | Self::SearchPartialWordBackward
-            | Self::Unmatched { .. } => RangeClass::Exclusive,
+            | Self::Unmatched { .. }
+            | Self::FoldNext
+            | Self::FoldPrevious => RangeClass::Exclusive,
             Self::WordEnd
             | Self::BigWordEnd
             | Self::LineEnd

@@ -570,7 +570,8 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
     let prefix = match ch {
         '"' if pending.operator.is_none() => Prefix::Register,
         'g' => Prefix::G,
-        'z' if pending.operator.is_none() && feature::has_z() => Prefix::Z,
+        // With an operator pending, folds' hook takes only `zj` and `zk`.
+        'z' if feature::has_z() => Prefix::Z,
         'Z' if pending.operator.is_none() && !pending.visual && feature::has_big_z() => {
             Prefix::BigZ
         }
