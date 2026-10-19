@@ -21,18 +21,35 @@
 //! same turn, before any watcher batch naming the old path is taken in.
 //! Once an operation is done the panel brings the tree up to date as it
 //! would for the watcher's batch (which may come too), then selects the
-//! new or renamed row; a new file opens in the active pane, focused.
+//! new or renamed row; a new file opens in the active pane, focused. What
+//! it made, renamed or trashed is announced ([`PanelEvent`]) even if the
+//! tree is being opened again meanwhile.
+//!
+//! Before a rename, language servers whose `willRename` filters match are
+//! asked for the edits it needs ([`Workbench::will_rename`]), as VS Code's
+//! explorer asks its rename participants. While they're asked the field
+//! says "Renaming…" and takes no other name; escape stops waiting and
+//! renames at once. The edits they give are made
+//! ([`Workbench::apply_file_edits`]), then the rename is checked again and
+//! made; edits that can't be made, or a server that fails, don't stop it.
+//! If the entry was moved or replaced meanwhile (by its device and inode),
+//! neither the edits nor the rename are made. With no server to ask, the
+//! rename is made at once, as before.
 
 use std::{
+    future::Future,
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
+    task::{Poll, Waker},
 };
 
 use fe_gpui::commands::RunCommand;
+use fe_lsp::FileEdits;
 use fe_project::{FsChange, NameError, NodeId, fs_ops};
 use fe_ui::{CHEVRON_WIDTH, ICON_SIZE, Icon, TREE_INDENT, TextField, TextFieldEvent, text_field};
 use gpui::{
@@ -84,9 +101,36 @@ pub(super) struct NameEdit {
     error: Option<String>,
     /// Whether the operation is running: Enter waits for it.
     running: bool,
+    /// The rename waiting for language servers' edits, which escape stops
+    /// waiting for.
+    waiting: Option<Waiting>,
     /// Which field this is, of [`ProjectPanel::edits`].
     serial: u64,
     _subscriptions: [Subscription; 2],
+}
+
+/// The text under the field while a rename waits for language servers.
+const RENAMING: &str = "Renaming…";
+
+/// A rename waiting for language servers' edits.
+struct Waiting {
+    naming: Naming,
+    /// The entry asked about ([`entry_identity`]).
+    entry: Option<(u64, u64)>,
+    /// Sent to stop waiting: the rename is made without the edits.
+    skip: async_channel::Sender<()>,
+}
+
+/// What the name field's operation names: `name` in `target`, the folder a
+/// new entry goes in or the renamed entry, under the tree's (canonical)
+/// `root`, for field `serial`.
+#[derive(Clone)]
+struct Naming {
+    serial: u64,
+    kind: EditKind,
+    root: PathBuf,
+    target: PathBuf,
+    name: String,
 }
 
 /// What an operation that names an entry did: the entry's path, under the
@@ -171,6 +215,7 @@ impl ProjectPanel {
             input,
             error: None,
             running: false,
+            waiting: None,
             serial,
             _subscriptions: [submitted, blur],
         });
@@ -241,11 +286,21 @@ impl ProjectPanel {
         window.dispatch_action(action, cx);
     }
 
-    /// Escape cancels the field.
+    /// Escape cancels the field, or, while a rename waits for language
+    /// servers, stops waiting and renames.
     fn on_field_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.key == "escape" && !keystroke.modifiers.modified() {
-            self.cancel_edit(window, cx);
+            match self.edit.as_mut().and_then(|edit| edit.waiting.take()) {
+                Some(waiting) => {
+                    // The task waiting sees this first, and drops the
+                    // requests.
+                    waiting.skip.try_send(()).ok();
+                    self.renaming_done(waiting.naming.serial);
+                    self.rename_answered(waiting.naming, waiting.entry, Vec::new(), window, cx);
+                }
+                None => self.cancel_edit(window, cx),
+            }
             cx.stop_propagation();
         }
     }
@@ -285,20 +340,25 @@ impl ProjectPanel {
         let Some(target) = tree.path(edit.node) else {
             return;
         };
-        let (kind, serial, root) = (edit.kind, edit.serial, tree.root_path().to_owned());
+        let (kind, root) = (edit.kind, tree.root_path().to_owned());
+        let naming = Naming {
+            serial: edit.serial,
+            kind,
+            root: root.clone(),
+            target: target.clone(),
+            name: name.clone(),
+        };
         if kind == EditKind::Rename {
             if target.file_name().is_some_and(|old| *old == *name) {
                 return self.cancel_edit(window, cx);
             }
-            return self.rename(serial, root, target, &name, window, cx);
+            return self.rename(naming, window, cx);
         }
         edit.running = true;
         edit.error = None;
         // All it makes: the folders the name names, and the entry.
         let running = Running::start(target.join(name.trim_end_matches('/')));
         let job = {
-            let name = name.clone();
-            let target = target.clone();
             let running = running.clone();
             cx.background_spawn(async move {
                 let _running = running;
@@ -314,7 +374,7 @@ impl ProjectPanel {
             let named = job.await;
             panel
                 .update_in(cx, |panel, window, cx| {
-                    panel.edit_done(serial, kind, target, &name, named, window, cx)
+                    panel.edit_done(naming, named, window, cx)
                 })
                 .ok();
             drop(running);
@@ -323,76 +383,199 @@ impl ProjectPanel {
         cx.notify();
     }
 
-    /// Renames `target`, under the tree's `root`, to `name`, on this thread,
-    /// unless something would still act on the old path once it's done
-    /// ([`Workbench::busy_under`]: a save, a Save As, a file being read, or
-    /// another of the panel's operations), in any window: then the field
-    /// says why and stays open. Done here, between saves, so none starts
-    /// before the editors take the new path.
-    fn rename(
+    /// Renames `naming`'s entry, unless something would still act on its
+    /// path once it's done ([`Self::refused`]). Language servers whose
+    /// `willRename` filters match are asked for their edits first: while
+    /// they're asked the field says so and takes no other name, and once
+    /// they answer the edits are made and the rename is made
+    /// ([`Self::rename_now`]). With none to ask, the rename is made here.
+    fn rename(&mut self, naming: Naming, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refused(&naming, window, cx) {
+            return;
+        }
+        let asked = self.renaming_paths(&naming).and_then(|(from, to)| {
+            let workbench = window.root::<Workbench>().flatten()?;
+            Some(workbench.read(cx).will_rename(&from, &to, cx))
+        });
+        let Some(mut asked) = asked else {
+            return self.rename_now(naming, window, cx);
+        };
+        // Ready at once when no server's filters match.
+        if let Some(edits) = ready_now(&mut asked) {
+            apply_edits(edits, window, cx);
+            return self.rename_now(naming, window, cx);
+        }
+        let Some(edit) = self
+            .edit
+            .as_mut()
+            .filter(|edit| edit.serial == naming.serial)
+        else {
+            return;
+        };
+        let (skip, skipped) = async_channel::bounded(1);
+        // What's renamed once they answer must be what they were asked
+        // about.
+        let entry = entry_identity(&naming.target);
+        edit.running = true;
+        edit.error = None;
+        edit.waiting = Some(Waiting {
+            naming: naming.clone(),
+            entry,
+            skip,
+        });
+        cx.spawn_in(window, async move |panel, cx| {
+            // A field closed meanwhile keeps waiting: the rename goes on.
+            let mut skipped = std::pin::pin!(async move {
+                if skipped.recv().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            });
+            // Skipped first: escape renamed already, and an answer that
+            // came with it isn't made.
+            let edits = std::future::poll_fn(|cx| {
+                if skipped.as_mut().poll(cx).is_ready() {
+                    return Poll::Ready(None);
+                }
+                Pin::new(&mut asked).poll(cx).map(Some)
+            });
+            let Some(edits) = edits.await else {
+                return;
+            };
+            panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.renaming_done(naming.serial);
+                    panel.rename_answered(naming, entry, edits, window, cx);
+                })
+                .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Makes `edits`, language servers' for `naming`'s rename, then the
+    /// rename, unless its entry is no longer `entry`, the one they were
+    /// asked about: then neither, and the field, if it's open, says why.
+    fn rename_answered(
         &mut self,
-        serial: u64,
-        root: PathBuf,
-        target: PathBuf,
-        name: &str,
+        naming: Naming,
+        entry: Option<(u64, u64)>,
+        edits: Vec<FileEdits>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let shown = target
-            .strip_prefix(&root)
-            .ok()
-            .and_then(|rel| Some(self.root.as_ref()?.join(rel)));
-        // The new path counts too: a copy or Save As may be about to write
-        // there.
-        let destination = (shown.as_ref()).and_then(|shown| Some(shown.parent()?.join(name)));
-        let busy = (shown.as_ref())
-            .and_then(|shown| Workbench::busy_under(shown, window, cx))
-            .or_else(|| {
-                let destination = destination.as_ref()?;
-                crate::open::any_reserved().then_some(())?;
-                Workbench::busy_under(destination, window, cx)
-            });
-        if let Some(busy) = busy {
-            let old = target.file_name().unwrap_or_default().to_string_lossy();
-            let error = match busy {
-                Busy::Saving => format!("“{old}” is being saved. Rename it once it’s saved."),
-                Busy::Opening => format!("“{old}” is being opened. Rename it once it’s open."),
-                Busy::Working => {
-                    format!("“{old}” is being worked on. Rename it once that’s done.")
-                }
-            };
-            if let Some(edit) = self.edit.as_mut() {
-                edit.error = Some(error);
+        if entry.is_none() || entry_identity(&naming.target) != entry {
+            let old = naming.target.file_name().unwrap_or_default();
+            let error = format!(
+                "“{}” was moved or replaced while it was being renamed. Nothing was renamed.",
+                old.to_string_lossy()
+            );
+            match (self.edit.as_mut()).filter(|edit| edit.serial == naming.serial) {
+                Some(edit) => edit.error = Some(error),
+                None => log::warn!("{error}"),
             }
             return cx.notify();
         }
+        apply_edits(edits, window, cx);
+        self.rename_now(naming, window, cx);
+    }
+
+    /// Field `serial`, if it's still open, has its rename's wait over.
+    fn renaming_done(&mut self, serial: u64) {
+        if let Some(edit) = self.edit.as_mut().filter(|edit| edit.serial == serial) {
+            edit.waiting = None;
+            edit.running = false;
+        }
+    }
+
+    /// The paths `naming`'s rename moves its entry from and to, as the panel
+    /// hands them out.
+    fn renaming_paths(&self, naming: &Naming) -> Option<(PathBuf, PathBuf)> {
+        let rel = naming.target.strip_prefix(&naming.root).ok()?;
+        let from = self.root.as_ref()?.join(rel);
+        let to = from.parent()?.join(&naming.name);
+        Some((from, to))
+    }
+
+    /// Whether `naming`'s rename must wait, because something would still
+    /// act on the old path once it's done ([`Workbench::busy_under`]: a
+    /// save, a Save As, a file being read, or another of the panel's
+    /// operations), in any window: then the field, if it's open, says why
+    /// and stays open.
+    fn refused(&mut self, naming: &Naming, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let paths = self.renaming_paths(naming);
+        // The new path counts too: a copy or Save As may be about to write
+        // there.
+        let busy = (paths.as_ref())
+            .and_then(|(from, _)| Workbench::busy_under(from, window, cx))
+            .or_else(|| {
+                let (_, to) = paths.as_ref()?;
+                crate::open::any_reserved().then_some(())?;
+                Workbench::busy_under(to, window, cx)
+            });
+        let Some(busy) = busy else {
+            return false;
+        };
+        let old = naming
+            .target
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let error = match busy {
+            Busy::Saving => format!("“{old}” is being saved. Rename it once it’s saved."),
+            Busy::Opening => format!("“{old}” is being opened. Rename it once it’s open."),
+            Busy::Working => {
+                format!("“{old}” is being worked on. Rename it once that’s done.")
+            }
+        };
+        match self
+            .edit
+            .as_mut()
+            .filter(|edit| edit.serial == naming.serial)
+        {
+            Some(edit) => edit.error = Some(error),
+            None => log::warn!("not renamed: {error}"),
+        }
+        cx.notify();
+        true
+    }
+
+    /// Renames `naming`'s entry on this thread, unless [`Self::refused`].
+    /// Done here, between saves, so none starts before the editors take the
+    /// new path.
+    fn rename_now(&mut self, naming: Naming, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refused(&naming, window, cx) {
+            return;
+        }
         // Planned while every spelling of the old path still resolves.
-        let moves = shown
-            .and_then(|from| Some((from.clone(), from.parent()?.join(name))))
+        let moves = (self.renaming_paths(&naming))
             .map(|(from, to)| (Workbench::plan_rename(&from, &to, window, cx), from, to));
-        let renamed = fs_ops::rename(&root, &target, name);
+        let renamed = fs_ops::rename(&naming.root, &naming.target, &naming.name);
         if let (Ok(_), Some((moves, from, to))) = (&renamed, moves) {
             cx.emit(PanelEvent::Renamed { from, to, moves });
         }
-        self.edit_done(serial, EditKind::Rename, target, name, renamed, window, cx);
+        self.edit_done(naming, renamed, window, cx);
     }
 
-    /// Takes in what the name field's operation did to `target` (the folder
-    /// a new entry went in, or the renamed entry): it shows a failure in
-    /// the field, if the field's still open; otherwise closes the field,
-    /// brings the tree up to date, and selects the entry, which opens if
-    /// it's a new file.
-    #[allow(clippy::too_many_arguments)]
+    /// Takes in what the name field's operation did to `naming`'s target
+    /// (the folder a new entry went in, or the renamed entry): it shows a
+    /// failure in the field, if the field's still open; otherwise closes the
+    /// field, brings the tree up to date, says what it made, and selects
+    /// the entry, which opens if it's a new file.
     fn edit_done(
         &mut self,
-        serial: u64,
-        kind: EditKind,
-        target: PathBuf,
-        name: &str,
+        naming: Naming,
         named: Named,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Naming {
+            serial,
+            kind,
+            root,
+            target,
+            name,
+        } = naming;
+        let name = name.as_str();
         let open = self.edit.as_mut().filter(|edit| edit.serial == serial);
         let path = match (named, open) {
             (Err(error), Some(edit)) => {
@@ -410,11 +593,9 @@ impl ProjectPanel {
                 path
             }
         };
-        let Some(tree) = self.tree() else {
-            return;
-        };
-        let root = tree.root_path().to_owned();
-        let shown = |path: &std::path::Path| {
+        // By the root the operation ran under: the tree may be being opened
+        // again.
+        let shown = |path: &Path| {
             let rel = path.strip_prefix(&root).ok()?;
             Some(self.root.as_ref()?.join(rel))
         };
@@ -445,10 +626,11 @@ impl ProjectPanel {
         }
         // A folder expanded before its rename is after it.
         let expanded = kind == EditKind::Rename
-            && tree
-                .find(&target)
-                .and_then(|id| tree.row(id))
-                .is_some_and(|row| row.expanded);
+            && self.tree().is_some_and(|tree| {
+                (tree.find(&target))
+                    .and_then(|id| tree.row(id))
+                    .is_some_and(|row| row.expanded)
+            });
         self.apply_fs_changes(&changes, cx);
         if kind != EditKind::Rename {
             let folder = kind == EditKind::NewFolder || name.ends_with('/');
@@ -470,6 +652,9 @@ impl ProjectPanel {
     /// symlink). Editors of it stay open with their buffers.
     pub(super) fn delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, root, name)) = self.selected_entry() else {
+            return;
+        };
+        let Some(shown) = self.shown(&path, &root) else {
             return;
         };
         // What was asked about: an entry renamed meanwhile, and another put
@@ -500,9 +685,8 @@ impl ProjectPanel {
             panel
                 .update_in(cx, |panel, window, cx| match trashed {
                     Ok(()) => {
-                        if let Some(shown) = panel.changed(&path, cx) {
-                            cx.emit(PanelEvent::Deleted(vec![(shown, folder)]));
-                        }
+                        panel.changed(&shown, cx);
+                        cx.emit(PanelEvent::Deleted(vec![(shown, folder)]));
                     }
                     Err(error) => {
                         let message = format!("“{name}” couldn’t be moved to the Trash.");
@@ -525,6 +709,7 @@ impl ProjectPanel {
         let running = Running::start(path.parent().unwrap_or(&path).to_owned());
         let job = cx.background_spawn({
             let running = running.clone();
+            let root = root.clone();
             async move {
                 let _running = running;
                 fs_ops::duplicate(&root, &path)
@@ -535,7 +720,8 @@ impl ProjectPanel {
             panel
                 .update_in(cx, |panel, window, cx| match copied {
                     Ok(copy) => {
-                        if let Some(copy) = panel.changed(&copy, cx) {
+                        if let Some(copy) = panel.shown(&copy, &root) {
+                            panel.changed(&copy, cx);
                             let folder = copy.symlink_metadata().is_ok_and(|meta| meta.is_dir());
                             cx.emit(PanelEvent::Created(vec![(copy.clone(), folder)]));
                             panel.reveal(copy, cx);
@@ -578,15 +764,17 @@ impl ProjectPanel {
         Some((path, tree.root_path().to_owned(), name))
     }
 
-    /// Brings the tree up to date with a change at `path`, under the tree's
-    /// root, as the watcher's batch would, and returns the path as the panel
-    /// hands it out.
-    fn changed(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> Option<PathBuf> {
-        let tree = self.tree()?;
-        let rel = path.strip_prefix(tree.root_path()).ok()?;
-        let shown = self.root.as_ref()?.join(rel);
-        self.apply_fs_changes(&[FsChange::Path(shown.clone())], cx);
-        Some(shown)
+    /// `path`, under the tree's (canonical) `root`, as the panel hands it
+    /// out.
+    fn shown(&self, path: &Path, root: &Path) -> Option<PathBuf> {
+        let rel = path.strip_prefix(root).ok()?;
+        Some(self.root.as_ref()?.join(rel))
+    }
+
+    /// Brings the tree, if it's open, up to date with a change at `shown`,
+    /// as the watcher's batch would.
+    fn changed(&mut self, shown: &Path, cx: &mut Context<Self>) {
+        self.apply_fs_changes(&[FsChange::Path(shown.to_owned())], cx);
     }
 
     /// Where a new entry's field sits in the list, and its depth: the first
@@ -628,7 +816,11 @@ impl ProjectPanel {
         };
         // The field draws its own border; an error's is red.
         let border = edit.error.is_some().then_some(self.theme.error_text);
-        let error = edit.error.clone().map(|error| {
+        let note = (edit.waiting.as_ref()).map(|_| (RENAMING.to_owned(), self.theme.text));
+        let error = (edit.error.clone())
+            .map(|error| (error, self.theme.error_text))
+            .or(note);
+        let error = error.map(|(error, color)| {
             deferred(
                 div()
                     .absolute()
@@ -638,9 +830,9 @@ impl ProjectPanel {
                     .px_2()
                     .py_1()
                     .border_1()
-                    .border_color(self.theme.error_text)
+                    .border_color(color)
                     .bg(self.theme.panel_background)
-                    .text_color(self.theme.error_text)
+                    .text_color(color)
                     .child(error),
             )
             .with_priority(1)
@@ -680,6 +872,21 @@ impl ProjectPanel {
             )
             .children(error)
             .into_any_element()
+    }
+}
+
+/// Makes `edits`, language servers' for a rename, in `window`'s workbench;
+/// edits that can't be made are logged, and the rename goes on.
+fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui::App) {
+    if edits.is_empty() {
+        return;
+    }
+    let Some(workbench) = window.root::<Workbench>().flatten() else {
+        return;
+    };
+    let applied = workbench.update(cx, |workbench, cx| workbench.apply_file_edits(edits, cx));
+    if let Err(error) = applied {
+        log::warn!("the rename's edits weren't made: {error}");
     }
 }
 
@@ -739,6 +946,15 @@ pub(crate) fn running() -> Vec<PathBuf> {
     running.iter().map(|(_, path)| path.clone()).collect()
 }
 
+/// `future`'s output, if it has it on its first poll.
+pub(crate) fn ready_now<F: Future + Unpin>(future: &mut F) -> Option<F::Output> {
+    let mut cx = std::task::Context::from_waker(Waker::noop());
+    match Pin::new(future).poll(&mut cx) {
+        Poll::Ready(output) => Some(output),
+        Poll::Pending => None,
+    }
+}
+
 /// The length of `name`'s stem, which a rename selects: up to its last
 /// `.`, unless that's its first character (`.gitignore`) or there's none.
 fn stem_len(name: &str) -> usize {
@@ -771,6 +987,12 @@ impl ProjectPanel {
     pub(crate) fn name_field(&self, cx: &gpui::App) -> Option<(String, Option<String>)> {
         let edit = self.edit.as_ref()?;
         Some((edit.input.read(cx).value().to_owned(), edit.error.clone()))
+    }
+
+    /// The note under the name field, while it's open and a rename waits
+    /// for language servers.
+    pub(crate) fn name_field_note(&self) -> Option<&'static str> {
+        self.edit.as_ref()?.waiting.as_ref().map(|_| RENAMING)
     }
 
     /// The name field's input, while it's open.
