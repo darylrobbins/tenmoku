@@ -60,6 +60,7 @@ pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
+pub use view::{GlyphKind, GutterGlyph};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s,
     set_vim_remaps, vim_enabled, vim_registers,

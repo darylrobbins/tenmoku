@@ -8,14 +8,11 @@ use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use fe_vim::VisualKind;
 use gpui::{
-    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, Hsla,
+    App, AppContext as _, Bounds, Context, CursorStyle, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
     Render, ScrollWheelEvent, Styled as _, Subscription, Task, Window, div, px,
 };
-
-#[cfg(test)]
-use gpui::Bounds;
 
 use crate::{
     commands::RunCommand,
@@ -115,6 +112,16 @@ pub struct EditorView {
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
+    /// The host's glyph in the gutter's mark slot, its row anchored at the
+    /// row's start so it follows edits.
+    gutter_glyph: Option<(fe_buffer::Anchor, GlyphKind)>,
+    /// What a click on the glyph calls.
+    glyph_click: Option<GlyphClick>,
+    /// Where the last frame painted the glyph, in window coordinates.
+    pub(crate) glyph_hit: Option<Bounds<Pixels>>,
+    /// The glyph the last frame painted: buffer row and bounds.
+    #[cfg(test)]
+    pub(crate) painted_glyph: Option<(u32, Bounds<Pixels>)>,
     /// The word under the pointer while the held modifiers' click is bound
     /// to a command, such as `cmd-click`: underlined, with a pointing hand.
     hover: Option<Hover>,
@@ -321,6 +328,11 @@ impl EditorView {
             press_settled: false,
             vim_unrecorded_logged: false,
             fold_column_hovered: false,
+            gutter_glyph: None,
+            glyph_click: None,
+            glyph_hit: None,
+            #[cfg(test)]
+            painted_glyph: None,
             hover: None,
             hover_blur: None,
             popover: Default::default(),
@@ -847,6 +859,10 @@ impl EditorView {
         // A proposal's button leaves the carets where they are, as a lens
         // row does.
         if self.press_proposal_button(event.position, cx) || self.press_lens(event, window, cx) {
+            self.drag = None;
+            return;
+        }
+        if self.click_glyph(event, window, cx) {
             self.drag = None;
             return;
         }
@@ -1640,6 +1656,71 @@ mod host;
 mod ime;
 mod proposal;
 mod proposal_commands;
+
+/// What a click on the gutter glyph calls.
+type GlyphClick = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
+
+/// A glyph the host has the gutter draw in its mark slot, in place of the
+/// row's diagnostic dot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GutterGlyph {
+    /// The buffer row it's on.
+    pub row: u32,
+    pub kind: GlyphKind,
+}
+
+/// Which glyph: VS Code's two lightbulbs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlyphKind {
+    /// Code actions are available.
+    Lightbulb,
+    /// A preferred quick fix is available.
+    LightbulbAutofix,
+}
+
+impl EditorView {
+    /// Shows `glyph` in the gutter's mark slot, or clears it. The row
+    /// follows edits. A left click on it calls `on_click`, and does nothing
+    /// else.
+    pub fn set_gutter_glyph(&mut self, glyph: Option<GutterGlyph>, on_click: Option<GlyphClick>) {
+        let text = self.model.text();
+        self.gutter_glyph = glyph.map(|glyph| {
+            let row = glyph.row.min(text.row_count().saturating_sub(1));
+            let at = self.model.snapshot().anchor_after(text.row_start(row));
+            (at, glyph.kind)
+        });
+        self.glyph_click = on_click;
+    }
+
+    /// The glyph, its row as edits have moved it.
+    pub fn gutter_glyph(&self) -> Option<GutterGlyph> {
+        let (at, kind) = self.gutter_glyph.as_ref()?;
+        let offset = self.model.snapshot().resolve(at);
+        let row = self.model.text().offset_to_point(offset).row;
+        Some(GutterGlyph { row, kind: *kind })
+    }
+
+    /// Calls the glyph's callback for a left click on it. Returns whether
+    /// the click hit it.
+    fn click_glyph(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let hit = self
+            .glyph_hit
+            .filter(|bounds| bounds.contains(&event.position));
+        if hit.is_none() || event.button != MouseButton::Left {
+            return false;
+        }
+        if let Some(on_click) = self.glyph_click.clone() {
+            // The host may update this view, which is busy until then.
+            window.defer(cx, move |window, cx| on_click(window, cx));
+        }
+        true
+    }
+}
 
 pub use ghost_text::GhostTextEvent;
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};

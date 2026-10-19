@@ -348,3 +348,6 @@ fn a_covered_column_stays_unhovered_through_key_presses(cx: &mut TestAppContext)
     cx.run_until_parked();
     assert_eq!(painted(&view, cx), [(0, false), (4, false)], "uncovered");
 }
+
+#[path = "gutter_glyph_tests.rs"]
+mod gutter_glyph;
