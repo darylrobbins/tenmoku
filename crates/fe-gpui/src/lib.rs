@@ -44,7 +44,7 @@ use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
-pub use hover::{HoverContent, HoverFuture, HoverProvider};
+pub use hover::{HoverContent, HoverFuture, HoverProvider, MarkdownRenderer};
 pub use inlay_hints::{InlayHint, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
 

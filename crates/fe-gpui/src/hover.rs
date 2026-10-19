@@ -41,12 +41,12 @@ use std::{cell::Cell, future::Future, ops::Range, pin::Pin, rc::Rc, sync::Arc, t
 use fe_buffer::{Bias, BufferId, Version};
 use fe_editor::{decorations::DecorationKind, diagnostics::DiagnosticEntry};
 use gpui::{
-    AnyElement, AvailableSpace, Bounds, Context, InteractiveElement as _, IntoElement,
+    AnyElement, App, AvailableSpace, Bounds, Context, Div, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, ScrollHandle, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, Task, Window, anchored, canvas, deferred, div, px,
 };
 
-use crate::EditorView;
+use crate::{EditorTheme, EditorView};
 
 /// How long the pointer rests on a range before its popover shows.
 pub(crate) const HOVER_DELAY: Duration = Duration::from_millis(300);
@@ -284,7 +284,33 @@ impl Current {
     }
 }
 
+/// Draws Markdown for the hover popover and the completion menu's
+/// documentation, which fe-gpui can't do itself: the host sets one that does
+/// ([`EditorView::set_markdown_renderer`]). Without one, they're drawn as
+/// text with fenced code in the editor's font.
+pub trait MarkdownRenderer {
+    /// An element showing `markdown`, at most `max_width` wide.
+    fn render(
+        &self,
+        markdown: &str,
+        theme: &EditorTheme,
+        max_width: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement;
+}
+
 impl EditorView {
+    /// Sets what draws hover and completion documentation Markdown, or
+    /// none: then it's drawn as text.
+    pub fn set_markdown_renderer(&mut self, renderer: Option<Rc<dyn MarkdownRenderer>>) {
+        self.markdown_renderer = renderer;
+    }
+
+    pub fn markdown_renderer(&self) -> Option<&Rc<dyn MarkdownRenderer>> {
+        self.markdown_renderer.as_ref()
+    }
+
     /// Sets where hover text comes from, or none: then the popover holds
     /// only diagnostics.
     /// A popover waiting on the last one's answer goes.
@@ -816,7 +842,11 @@ impl EditorView {
     /// The popover, if it's shown and still stands; a stale one is dropped.
     /// Its content scrolls past [`MAX_POPOVER_ROWS`] lines, or past what
     /// fits in `window`.
-    pub(crate) fn render_popover(&mut self, window: &Window) -> Option<AnyElement> {
+    pub(crate) fn render_popover(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
         self.popover.bounds.set(None);
         #[cfg(test)]
         {
@@ -854,17 +884,39 @@ impl EditorView {
                 .collect();
         }
         let theme = &self.theme;
-        let children = blocks.iter().map(|block| {
-            div()
-                .font_family(font(block))
-                .child(SharedString::from(block.text().to_owned()))
-        });
+        let markdown = (self.markdown_renderer.clone())
+            .zip(current.content.as_ref().map(|content| content.text.clone()));
+        let mut children: Vec<Div> = Vec::new();
+        let mut drawn_by_renderer = None;
+        if let Some((renderer, text)) = markdown {
+            // The diagnostics stay text; only the provider's is Markdown.
+            if !current.hovered.items.is_empty() {
+                children.push(
+                    div().font_family(UI_FONT).child(SharedString::from(
+                        (current.hovered.items.iter())
+                            .map(|(_, message)| message.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    )),
+                );
+            }
+            // Its padding and border, left and right.
+            let max_width = px(560.) - window.rem_size() * 0.5 * 2. - px(2.);
+            drawn_by_renderer = Some(renderer.render(&text, theme, max_width, window, cx));
+        } else {
+            children.extend(blocks.iter().map(|block| {
+                div()
+                    .font_family(font(block))
+                    .child(SharedString::from(block.text().to_owned()))
+            }));
+        }
         let body = div()
             .debug_selector(|| "hover-popover-body".into())
             .flex()
             .flex_col()
             .gap_1()
-            .children(children);
+            .children(children)
+            .children(drawn_by_renderer);
         let content = div()
             .id("hover-popover-content")
             .debug_selector(|| "hover-popover-content".into())
@@ -965,7 +1017,7 @@ pub(crate) fn popover_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
     let layer = canvas(
         move |_, window, cx| {
             let mut popover = view
-                .update(cx, |view, _| view.render_popover(window))
+                .update(cx, |view, cx| view.render_popover(window, cx))
                 .ok()??;
             popover.prepaint_as_root(
                 Point::default(),

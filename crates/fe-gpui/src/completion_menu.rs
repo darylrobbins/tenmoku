@@ -33,7 +33,7 @@ use fe_vim::KeywordCompletion;
 use gpui::{
     AnyElement, AvailableSpace, Context, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, anchored, canvas, deferred, div, px,
+    Task, Window, anchored, canvas, deferred, div, px,
 };
 
 use crate::{
@@ -531,7 +531,11 @@ impl EditorView {
 
     /// The menu, below the start of the word, if it shows and the frame
     /// being drawn has placed it.
-    pub(crate) fn render_completion(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         #[cfg(test)]
         {
             self.painted_completion = None;
@@ -615,16 +619,28 @@ impl EditorView {
                             .child(div().text_color(dim).font_family(UI_FONT).child(kind))
                     }),
             );
+        let renderer = self.markdown_renderer.clone();
         let docs = documentation.map(|text| {
-            let blocks = markdown_blocks(&text).into_iter().map(|block| {
-                let font: SharedString = match &block {
-                    Block::Text(_) => UI_FONT.into(),
-                    Block::Code(_) => theme.font_family.clone(),
-                };
-                div()
-                    .font_family(font)
-                    .child(SharedString::from(block.text().to_owned()))
-            });
+            let blocks: Vec<AnyElement> = match &renderer {
+                // Its padding, left and right.
+                Some(renderer) => {
+                    let max_width = px(420.) - window.rem_size() * 0.5 * 2. - px(1.);
+                    vec![renderer.render(&text, theme, max_width, window, cx)]
+                }
+                None => markdown_blocks(&text)
+                    .into_iter()
+                    .map(|block| {
+                        let font: SharedString = match &block {
+                            Block::Text(_) => UI_FONT.into(),
+                            Block::Code(_) => theme.font_family.clone(),
+                        };
+                        div()
+                            .font_family(font)
+                            .child(SharedString::from(block.text().to_owned()))
+                            .into_any_element()
+                    })
+                    .collect(),
+            };
             div()
                 .id("completion-documentation")
                 .max_w(px(420.))
@@ -697,7 +713,7 @@ pub(crate) fn menu_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
     let layer = canvas(
         move |_, window, cx| {
             let mut menu = view
-                .update(cx, |view, cx| view.render_completion(cx))
+                .update(cx, |view, cx| view.render_completion(window, cx))
                 .ok()??;
             menu.prepaint_as_root(
                 Point::default(),

@@ -536,3 +536,6 @@ fn narrow_late_reply_keeps_the_diagnostics(cx: &mut TestAppContext) {
 
 #[path = "hover_reach_tests.rs"]
 mod reach;
+
+#[path = "markdown_popover_tests.rs"]
+mod markdown_popover;

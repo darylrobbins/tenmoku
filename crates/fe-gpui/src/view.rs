@@ -126,6 +126,8 @@ pub struct EditorView {
     pub(crate) popover: crate::hover::HoverPopover,
     /// Where the popover's hover text comes from, if anywhere.
     pub(crate) hover_provider: Option<std::rc::Rc<dyn crate::HoverProvider>>,
+    /// What draws hover and completion documentation Markdown, if anything.
+    pub(crate) markdown_renderer: Option<std::rc::Rc<dyn crate::MarkdownRenderer>>,
     /// The completion menu, open or awaiting its first answer
     /// ([`crate::completion_menu`]).
     pub(crate) completion: Option<crate::completion_menu::Menu>,
@@ -323,6 +325,7 @@ impl EditorView {
             hover_blur: None,
             popover: Default::default(),
             hover_provider: None,
+            markdown_renderer: None,
             completion: None,
             completion_provider: None,
             save_hook: None,
