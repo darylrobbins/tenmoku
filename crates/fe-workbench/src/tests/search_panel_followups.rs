@@ -139,8 +139,8 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
     };
 
     assert!(input_focused(&search, cx));
-    click_tab(DockPanel::Project, cx);
-    assert_eq!(state(cx), (true, DockPanel::Project));
+    click_tab(DockPanel::Explorer, cx);
+    assert_eq!(state(cx), (true, DockPanel::Explorer));
     assert!(!input_focused(&search, cx));
     assert!(panel_focused(cx));
     cx.simulate_keystrokes("cmd-b");
@@ -149,32 +149,34 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert!(input_focused(&search, cx));
 
-    // With a file open, the outline's button focuses its editor.
+    // With a file open, the Explorer's button focuses the tree, and the
+    // outline's key its editor.
     run("needle", cx);
     let row = result_center(&search, 1, cx);
     cx.simulate_click(row, Modifiers::none());
     assert_eq!(tabs(&workbench, cx), ["a.txt"]);
-    for panel in [DockPanel::Project, DockPanel::Outline] {
+    for tree in [true, false] {
         cx.simulate_keystrokes("cmd-shift-f");
         assert!(input_focused(&search, cx));
-        click_tab(panel, cx);
-        assert_eq!(state(cx), (true, panel));
-        if panel == DockPanel::Project {
+        if tree {
+            click_tab(DockPanel::Explorer, cx);
             assert!(panel_focused(cx));
         } else {
+            cx.simulate_keystrokes("cmd-shift-o");
             assert!(editor(&workbench, cx).2, "the editor has focus");
         }
+        assert_eq!(state(cx), (true, DockPanel::Explorer));
         cx.simulate_keystrokes("cmd-b");
         assert!(!state(cx).0);
         cx.simulate_keystrokes("cmd-b");
-        assert_eq!(state(cx), (true, panel));
+        assert_eq!(state(cx), (true, DockPanel::Explorer));
     }
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert!(input_focused(&search, cx));
 
     // The search button focuses the input, as cmd-shift-f does.
-    click_tab(DockPanel::Project, cx);
+    click_tab(DockPanel::Explorer, cx);
     click_tab(DockPanel::Search, cx);
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert!(input_focused(&search, cx));

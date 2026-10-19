@@ -1,9 +1,13 @@
-//! The right dock: one panel at a time, the project tree, project search,
-//! the outline, the git changes, find references' results, the problems, a
+//! The right dock: one panel at a time, the Explorer, project search, the
+//! git changes, find references' results, the problems, a
 //! file's git history or the repository's log, under a title row naming it,
 //! and picked from the activity rail on the window's right edge, which
 //! stays when the dock hides. Switching keeps each panel's state. The
-//! References, Problems and History buttons join the rail once their panel
+//! Explorer is a [`ViewContainer`] of two views, the project tree
+//! (Folders) over the outline (collapsed until shown or expanded), whose
+//! collapse and weights the dock's saved state keeps; `dock.show_project`
+//! shows it, and `outline.show` shows it with the outline expanded. The
+//! //! References, Problems and History buttons join the rail once their panel
 //! has shown; the History panel is made the first time `git.file_history`
 //! runs ([`Dock::set_history`]). The Git Log panel is on the rail from the
 //! start, under Changes, and made with the dock.
@@ -15,8 +19,11 @@
 //! registry ([`search_panel::registry`]).
 
 use fe_ui::Icon;
-use gpui::{App, Context, Entity, EventEmitter, IntoElement, Render, SharedString, Window};
-use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
+use gpui::{
+    App, AppContext as _, Context, Entity, EventEmitter, IntoElement, Render, SharedString,
+    Subscription, Window,
+};
+use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
 
 use crate::{
     GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
@@ -37,9 +44,8 @@ pub struct DockPanel(PanelId);
 /// was an enum.
 #[allow(non_upper_case_globals)]
 impl DockPanel {
-    pub const Project: DockPanel = crate::project_panel::SIDEBAR.panel;
+    pub const Explorer: DockPanel = crate::project_panel::SIDEBAR.panel;
     pub const Search: DockPanel = search_panel::SIDEBAR.panel;
-    pub const Outline: DockPanel = crate::outline_panel::SIDEBAR.panel;
     pub const Changes: DockPanel = crate::git_panel::SIDEBAR.panel;
     pub const References: DockPanel = crate::references_panel::SIDEBAR.panel;
     pub const Problems: DockPanel = problems_panel::SIDEBAR.panel;
@@ -50,7 +56,7 @@ impl DockPanel {
 impl DockPanel {
     /// The panels the rail always has, in its order; References, Problems
     /// and History follow once they have shown.
-    pub const ALL: [DockPanel; 5] = always_on_rail();
+    pub const ALL: [DockPanel; 4] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
     pub(crate) const fn new(id: &'static str) -> Self {
@@ -114,7 +120,6 @@ pub(crate) struct SidebarPanel {
 const PANELS: &[&SidebarPanel] = &[
     &crate::project_panel::SIDEBAR,
     &search_panel::SIDEBAR,
-    &crate::outline_panel::SIDEBAR,
     &crate::git_panel::SIDEBAR,
     &crate::workbench::git_commands::git_log::SIDEBAR,
     &crate::references_panel::SIDEBAR,
@@ -191,9 +196,7 @@ macro_rules! dock_item {
     };
 }
 
-dock_item!(ProjectPanel, crate::project_panel::SIDEBAR);
 dock_item!(SearchPanel, search_panel::SIDEBAR);
-dock_item!(OutlinePanel, crate::outline_panel::SIDEBAR);
 dock_item!(GitPanel, crate::git_panel::SIDEBAR);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
 dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
@@ -216,11 +219,13 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's eight panels,
+/// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
 /// whose rail clicks run the op the panel's key would; the History and Git
 /// Log panels' show the list last listed.
 pub struct Dock {
     state: DockState,
+    /// The project tree and the outline, its views.
+    explorer: Entity<ViewContainer>,
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
@@ -233,10 +238,50 @@ pub struct Dock {
     git_log: Option<Entity<GitLogPanel>>,
     #[cfg(test)]
     ops: Vec<DockOp>,
+    /// The explorer's views' collapse and weights are the dock's state,
+    /// for the workbench to save.
+    _explorer_changed: Subscription,
+}
+
+/// The Explorer: `project`'s tree over `outline`, collapsed at first.
+fn explorer(
+    project: &Entity<ProjectPanel>,
+    outline: &Entity<OutlinePanel>,
+    cx: &mut Context<Dock>,
+) -> Entity<ViewContainer> {
+    let sidebar = crate::project_panel::SIDEBAR;
+    cx.new(|cx| {
+        let mut explorer = ViewContainer::new(sidebar.panel.id(), sidebar.name, sidebar.icon, cx)
+            .show_command(sidebar.show_command);
+        explorer.add_view(folders(project), cx);
+        explorer.add_view(
+            ViewSpec {
+                id: crate::outline_panel::VIEW,
+                title: "Outline".into(),
+                order: 20,
+                default_collapsed: true,
+                view: outline.clone().into(),
+            },
+            cx,
+        );
+        explorer
+    })
+}
+
+/// The Explorer's Folders view: `project`'s tree.
+fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
+    ViewSpec {
+        id: crate::project_panel::FOLDERS,
+        title: "Folders".into(),
+        order: 10,
+        default_collapsed: false,
+        view: project.clone().into(),
+    }
 }
 
 impl Dock {
-    /// Shows `project` first; `git_log` follows `changes` on the rail.
+    /// Shows the Explorer, of `project` and `outline`, first; `git_log`
+    /// follows `changes` on the rail.
     #[allow(clippy::too_many_arguments, private_interfaces)]
     pub fn new(
         project: Entity<ProjectPanel>,
@@ -246,14 +291,15 @@ impl Dock {
         git_log: Entity<GitLogPanel>,
         references: Entity<ReferencesPanel>,
         problems: Entity<ProblemsPanel>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut state = DockState::new(DockPosition::Right)
             .size(PANEL_WIDTH)
             .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
-        state.add_panel(project.clone(), cx);
+        let explorer = explorer(&project, &outline, cx);
+        let explorer_changed = cx.observe(&explorer, |_, _, cx| cx.notify());
+        state.add_panel(explorer.clone(), cx);
         state.add_panel(search.clone(), cx);
-        state.add_panel(outline.clone(), cx);
         state.add_panel(changes.clone(), cx);
         // Registered here, not after the References and Problems panels,
         // as the rail lists the panels in the order they were added.
@@ -262,6 +308,7 @@ impl Dock {
         state.add_panel(problems.clone(), cx);
         Self {
             state,
+            explorer,
             project,
             search,
             outline,
@@ -272,6 +319,7 @@ impl Dock {
             git_log: Some(git_log),
             #[cfg(test)]
             ops: Vec::new(),
+            _explorer_changed: explorer_changed,
         }
     }
 
@@ -279,10 +327,11 @@ impl Dock {
         &self.project
     }
 
-    /// Shows `project` in the old one's place, for a new root. The dock's
-    /// visibility and active panel stay.
+    /// Shows `project` in the old one's place in the Explorer, for a new
+    /// root. The dock's visibility and active panel, and the Folders
+    /// view's collapse, stay.
     pub(crate) fn set_project(&mut self, project: Entity<ProjectPanel>, cx: &mut Context<Self>) {
-        self.state.add_panel(project.clone(), cx);
+        (self.explorer).update(cx, |explorer, cx| explorer.add_view(folders(&project), cx));
         self.project = project;
         cx.notify();
     }
@@ -293,6 +342,17 @@ impl Dock {
 
     pub fn outline(&self) -> &Entity<OutlinePanel> {
         &self.outline
+    }
+
+    /// The Explorer, of the project tree and the outline.
+    pub fn explorer(&self) -> &Entity<ViewContainer> {
+        &self.explorer
+    }
+
+    /// Expands or collapses the Explorer's `view`.
+    fn set_collapsed(&self, view: kiln_shell::ViewId, collapsed: bool, cx: &mut App) {
+        let stack = self.explorer.read(cx).stack().clone();
+        stack.update(cx, |stack, cx| stack.set_collapsed(view, collapsed, cx));
     }
 
     pub fn changes(&self) -> &Entity<GitPanel> {
@@ -341,7 +401,7 @@ impl Dock {
         self.state
             .active()
             .and_then(DockPanel::of)
-            .unwrap_or(DockPanel::Project)
+            .unwrap_or(DockPanel::Explorer)
     }
 
     pub fn is_visible(&self) -> bool {
@@ -374,9 +434,18 @@ impl Dock {
         // they have been made.
         if let Some(sidebar) = PANELS.iter().find(|sidebar| sidebar.show_op == op) {
             self.show(sidebar.panel, window, cx);
+            // The tree the workbench focuses.
+            if op == DockOp::ShowProject {
+                self.set_collapsed(crate::project_panel::FOLDERS, false, cx);
+            }
             return true;
         }
         match op {
+            DockOp::ShowOutline => {
+                self.show(DockPanel::Explorer, window, cx);
+                self.set_collapsed(crate::outline_panel::VIEW, false, cx);
+                true
+            }
             // The workbench's to do.
             DockOp::Problems(_) => false,
             DockOp::RefreshChanges => {
@@ -411,9 +480,16 @@ impl Dock {
     }
 
     /// Puts back the state [`DockState::save`] saved: whether it shows, its
-    /// active panel and whether References has joined the rail.
+    /// active panel, whether References has joined the rail and the
+    /// Explorer's views' collapse and weights. One saved before the
+    /// Explorer, with no views, leaves them as built; its Outline panel
+    /// active shows the Explorer.
     pub(crate) fn restore(&mut self, saved: &fe_command::Value, cx: &mut Context<Self>) {
-        self.state.restore(saved, cx);
+        let mut saved = saved.clone();
+        if saved.get("active").and_then(fe_command::Value::as_str) == Some("outline") {
+            saved["active"] = DockPanel::Explorer.id().0.into();
+        }
+        self.state.restore(&saved, cx);
         cx.notify();
     }
 
@@ -511,12 +587,16 @@ impl Render for Dock {
 #[path = "sidebar_panels_tests.rs"]
 mod sidebar_panels_tests;
 
+#[cfg(test)]
+#[path = "explorer_views_tests.rs"]
+mod explorer_views_tests;
+
 /// What a dock command, or a rail click, asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DockOp {
     ShowSearch,
     ShowProject,
-    /// `outline.show`.
+    /// `outline.show`: shows the Explorer with its outline expanded.
     ShowOutline,
     /// The References button: shows the last results, finding none.
     ShowReferences,

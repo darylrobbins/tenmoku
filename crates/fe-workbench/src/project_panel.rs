@@ -1,5 +1,6 @@
-//! The project panel on the right dock: the lazy file tree, listed off the
-//! main thread and kept current by a file watcher.
+//! The project panel, the right dock's Explorer's Folders view: the lazy
+//! file tree, listed off the main thread and kept current by a file
+//! watcher.
 //!
 //! One row is selected, kept by node so it survives rows above it changing.
 //! Clicks and the keys of [`init`]'s registry (in the panel's
@@ -39,10 +40,12 @@ use crate::git_panel;
 use crate::workbench::toast::{self, Toast};
 use ops::EditKind;
 
-/// The project tree in the sidebar.
+/// The sidebar's Explorer, whose views are the project tree ([`FOLDERS`])
+/// over the outline ([`crate::outline_panel::VIEW`]). Its id is the
+/// project panel's of before, which layouts saved then name.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("project"),
-    name: "Project",
+    name: "Explorer",
     icon: fe_ui::Icon::Files,
     show_command: "dock.show_project",
     show_op: crate::dock::DockOp::ShowProject,
@@ -50,6 +53,9 @@ pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel 
     always_on_rail: true,
     focus_on_show: false,
 };
+
+/// The project tree's view in the Explorer.
+pub(crate) const FOLDERS: kiln_shell::ViewId = kiln_shell::ViewId("folders");
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "project_panel";

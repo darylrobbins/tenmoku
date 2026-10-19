@@ -1,4 +1,4 @@
-//! The outline on the right dock: the active editor's symbols, in pre-order
+//! The outline, a view of the right dock's Explorer: the active editor's symbols, in pre-order
 //! and indented by depth, which jump to their name when clicked.
 //!
 //! The workbench says which editor is active ([`OutlinePanel::set_editor`]);
@@ -29,17 +29,9 @@ use gpui::{
     uniform_list,
 };
 
-/// The outline in the sidebar.
-pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
-    panel: crate::DockPanel::new("outline"),
-    name: "Outline",
-    icon: fe_ui::Icon::ListTree,
-    show_command: "outline.show",
-    show_op: crate::dock::DockOp::ShowOutline,
-    order: 30,
-    always_on_rail: true,
-    focus_on_show: false,
-};
+/// The outline's view in the sidebar's Explorer, under the project tree;
+/// `outline.show` shows the Explorer with it expanded.
+pub(crate) const VIEW: kiln_shell::ViewId = kiln_shell::ViewId("outline");
 
 /// What the panel says in place of, or under, the outline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

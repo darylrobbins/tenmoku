@@ -24,11 +24,11 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 8] {
+); 7] {
     [
         (
-            DockPanel::Project,
-            "Project",
+            DockPanel::Explorer,
+            "Explorer",
             "project",
             Icon::Files,
             "dock.show_project",
@@ -41,14 +41,6 @@ fn base() -> [(
             Icon::Search,
             "search.show",
             DockOp::ShowSearch,
-        ),
-        (
-            DockPanel::Outline,
-            "Outline",
-            "outline",
-            Icon::ListTree,
-            "outline.show",
-            DockOp::ShowOutline,
         ),
         (
             DockPanel::Changes,
@@ -202,13 +194,12 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_five() {
+fn the_rail_always_has_the_base_four() {
     assert_eq!(
         DockPanel::ALL,
         [
-            DockPanel::Project,
+            DockPanel::Explorer,
             DockPanel::Search,
-            DockPanel::Outline,
             DockPanel::Changes,
             DockPanel::GitLog,
         ]
@@ -242,16 +233,15 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     let dir = repo();
     let (workbench, cx) = opened(cx, dir.path());
     let base = [
-        (DockPanel::Project, Icon::Files),
+        (DockPanel::Explorer, Icon::Files),
         (DockPanel::Search, Icon::Search),
-        (DockPanel::Outline, Icon::ListTree),
         (DockPanel::Changes, Icon::GitBranch),
         (DockPanel::GitLog, panel_icon(DockPanel::GitLog)),
     ];
     assert_eq!(rail(&workbench, cx), base);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::Project, "Project".to_owned())
+        (true, DockPanel::Explorer, "Explorer".to_owned())
     );
 
     dispatch("problems.show", cx);
@@ -293,8 +283,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
     // Project shows first: another before it, so its command has work.
     let order = [
         DockPanel::Search,
-        DockPanel::Project,
-        DockPanel::Outline,
+        DockPanel::Explorer,
         DockPanel::Changes,
         DockPanel::GitLog,
         DockPanel::References,
@@ -373,15 +362,14 @@ mod git_log_rail_tests {
         assert_eq!(
             panels(cx),
             [
-                DockPanel::Project,
+                DockPanel::Explorer,
                 DockPanel::Search,
-                DockPanel::Outline,
                 DockPanel::Changes,
                 DockPanel::GitLog,
             ]
         );
         let icons = distinct(cx);
-        assert_ne!(icons[4], Icon::GitBranch);
+        assert_ne!(icons[3], Icon::GitBranch);
 
         dispatch("git.log", cx);
         distinct(cx);

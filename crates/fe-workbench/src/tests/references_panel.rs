@@ -578,7 +578,7 @@ fn a_new_run_cancels_the_old(cx: &mut TestAppContext) {
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Project
+        DockPanel::Explorer
     );
     let button = dock.read_with(cx, |dock, _| {
         dock.rail_button_bounds(DockPanel::References)

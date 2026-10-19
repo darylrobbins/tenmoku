@@ -52,7 +52,7 @@ fn explore_and_problems(cx: &mut TestAppContext) {
     assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Project
+        DockPanel::Explorer
     );
     assert!(focused(&panel, cx));
     assert_eq!(selected(cx).as_deref(), Some("a.txt"));
@@ -90,7 +90,7 @@ fn explore_and_problems(cx: &mut TestAppContext) {
     assert!(dock.read_with(cx, |dock, _| dock.is_visible()));
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Project
+        DockPanel::Explorer
     );
     ex("lop", cx);
     draw(cx);

@@ -222,25 +222,24 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
     assert!(shown[1].dimmed, "the deleted row is dimmed");
     assert_eq!(message(&panel, cx), None);
 
-    // Its rail button follows Outline's.
+    // Its rail button follows Search's.
     let icons = dock.read_with(cx, |dock, _| dock.rail_icons());
     assert_eq!(
         icons,
         [
             Icon::Files,
             Icon::Search,
-            Icon::ListTree,
             Icon::GitBranch,
             crate::dock::panel_icon(DockPanel::GitLog),
             Icon::FileTerminal
         ]
     );
-    let (outline, changes) = dock.read_with(cx, |dock, _| {
+    let (search, changes) = dock.read_with(cx, |dock, _| {
         let bounds = |panel| dock.rail_button_bounds(panel).expect("drawn");
-        (bounds(DockPanel::Outline), bounds(DockPanel::Changes))
+        (bounds(DockPanel::Search), bounds(DockPanel::Changes))
     });
-    assert!(changes.top() >= outline.bottom(), "{outline:?} {changes:?}");
-    assert_eq!(DockPanel::ALL[3], DockPanel::Changes);
+    assert!(changes.top() >= search.bottom(), "{search:?} {changes:?}");
+    assert_eq!(DockPanel::ALL[2], DockPanel::Changes);
 }
 
 #[gpui::test]

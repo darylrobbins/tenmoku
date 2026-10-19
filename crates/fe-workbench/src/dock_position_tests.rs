@@ -250,9 +250,8 @@ fn the_move_commands_are_in_the_palette_with_no_default_key() {
 /// `width` across.
 fn assert_panels_fill(width: Pixels, workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     for panel in [
-        DockPanel::Project,
+        DockPanel::Explorer,
         DockPanel::Search,
-        DockPanel::Outline,
         DockPanel::Changes,
         DockPanel::References,
         DockPanel::Problems,

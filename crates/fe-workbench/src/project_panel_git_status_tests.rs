@@ -289,7 +289,7 @@ fn a_repository_shows_in_the_tree_without_the_changes_panel(cx: &mut TestAppCont
     assert_eq!(drawn(&panel, "b.rs", cx), PLAIN);
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     let active = dock.read_with(cx, |dock, _| dock.active());
-    assert_eq!(active, DockPanel::Project, "Changes never showed");
+    assert_eq!(active, DockPanel::Explorer, "Changes never showed");
     let changes = changes(&workbench, cx);
     let runs = changes.read_with(cx, |changes, _| changes.runs_started());
     assert_eq!(runs, 1, "the tree's opening read the status");

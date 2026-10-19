@@ -51,9 +51,8 @@ fn panels_follow_the_dock_width(cx: &mut TestAppContext) {
         });
         draw(cx);
         for panel in [
-            DockPanel::Project,
+            DockPanel::Explorer,
             DockPanel::Search,
-            DockPanel::Outline,
             DockPanel::Changes,
             DockPanel::References,
             DockPanel::Problems,

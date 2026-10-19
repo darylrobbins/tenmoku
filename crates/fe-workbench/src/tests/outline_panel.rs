@@ -117,7 +117,7 @@ fn shows_the_active_tabs_outline(cx: &mut TestAppContext) {
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     assert_eq!(
         dock.read_with(cx, |dock, _| (dock.is_visible(), dock.active())),
-        (true, DockPanel::Outline)
+        (true, DockPanel::Explorer)
     );
 
     open(&workbench, &paths[0], cx);
@@ -135,16 +135,17 @@ fn shows_the_active_tabs_outline(cx: &mut TestAppContext) {
     assert_eq!(shown, expected(&rust, cx));
     assert_eq!(message(&outline, cx), None);
 
-    // cmd-shift-o from the editor shows the outline, focus staying put.
-    cx.simulate_keystrokes("cmd-shift-e");
+    // cmd-shift-o from the editor shows the outline, in the Explorer, focus
+    // staying put.
+    cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Project
+        DockPanel::Search
     );
     cx.simulate_keystrokes("cmd-shift-o");
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Outline
+        DockPanel::Explorer
     );
     assert!(focused(&rust, cx));
 

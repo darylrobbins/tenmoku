@@ -104,7 +104,7 @@ fn the_rail_stays_when_the_dock_hides(cx: &mut TestAppContext) {
 fn clicks_switch_and_collapse(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     let dock = dock(&workbench, cx);
-    assert_eq!(state(&dock, cx), (true, DockPanel::Project));
+    assert_eq!(state(&dock, cx), (true, DockPanel::Explorer));
 
     click(&dock, DockPanel::Search, cx);
     assert_eq!(state(&dock, cx), (true, DockPanel::Search));
@@ -115,26 +115,19 @@ fn clicks_switch_and_collapse(cx: &mut TestAppContext) {
     assert!(!state(&dock, cx).0);
     assert!(editor_focused(&workbench, cx));
 
-    // Any button shows it again; the outline leaves focus in the editor.
-    click(&dock, DockPanel::Outline, cx);
-    assert_eq!(state(&dock, cx), (true, DockPanel::Outline));
-    assert!(editor_focused(&workbench, cx));
-
-    click(&dock, DockPanel::Project, cx);
-    assert_eq!(state(&dock, cx), (true, DockPanel::Project));
+    // Any button shows it again.
+    click(&dock, DockPanel::Explorer, cx);
+    assert_eq!(state(&dock, cx), (true, DockPanel::Explorer));
     use DockOp::*;
-    assert_eq!(
-        ops(&dock, cx),
-        [ShowSearch, Toggle, ShowOutline, ShowProject]
-    );
+    assert_eq!(ops(&dock, cx), [ShowSearch, Toggle, ShowProject]);
 
-    // The panels' keys run the same ops.
+    // The panels' keys run the same ops; the outline's shows the Explorer.
     cx.simulate_keystrokes("cmd-shift-f cmd-shift-o cmd-shift-e");
-    assert_eq!(ops(&dock, cx)[4..], [ShowSearch, ShowOutline, ShowProject]);
+    assert_eq!(ops(&dock, cx)[3..], [ShowSearch, ShowOutline, ShowProject]);
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
     assert!(cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)));
     cx.simulate_keystrokes("cmd-shift-f");
-    click(&dock, DockPanel::Project, cx);
+    click(&dock, DockPanel::Explorer, cx);
     assert!(
         cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)),
         "as cmd-shift-e does"
@@ -150,7 +143,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     };
     assert_eq!(
         highlighted(cx),
-        (Some(DockPanel::Project), "Project".into())
+        (Some(DockPanel::Explorer), "Explorer".into())
     );
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(highlighted(cx), (Some(DockPanel::Search), "Search".into()));
@@ -159,7 +152,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-shift-o");
     assert_eq!(
         highlighted(cx),
-        (Some(DockPanel::Outline), "Outline".into())
+        (Some(DockPanel::Explorer), "Explorer".into())
     );
 
     // The title row is TAB_HEIGHT high, and a click on it does nothing.
@@ -169,7 +162,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     let title = point(column.center().x, column.top() + TAB_HEIGHT / 2.);
     cx.simulate_click(title, Modifiers::none());
     draw(cx);
-    assert_eq!(state(&dock, cx), (true, DockPanel::Outline));
+    assert_eq!(state(&dock, cx), (true, DockPanel::Explorer));
     assert_eq!(ops(&dock, cx), before);
     assert!(editor_focused(&workbench, cx));
 
@@ -213,16 +206,12 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
         )
     };
     assert_eq!(
-        hover(DockPanel::Project, cx),
-        shown("Project ⇧⌘E", "Project Shift+Super+E")
+        hover(DockPanel::Explorer, cx),
+        shown("Explorer ⇧⌘E", "Explorer Shift+Super+E")
     );
     assert_eq!(
         hover(DockPanel::Search, cx),
         shown("Search ⇧⌘F", "Search Shift+Super+F")
-    );
-    assert_eq!(
-        hover(DockPanel::Outline, cx),
-        shown("Outline ⇧⌘O", "Outline Shift+Super+O")
     );
 
     let keymap = |user: &str| {
@@ -267,7 +256,6 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
     let icons = [
         Icon::Files,
         Icon::Search,
-        Icon::ListTree,
         Icon::GitBranch,
         crate::dock::panel_icon(DockPanel::GitLog),
         Icon::FileTerminal,

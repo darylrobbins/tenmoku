@@ -121,7 +121,7 @@ fn the_dock_switches_panels(cx: &mut TestAppContext) {
         panel.read_with(cx, |panel, _| panel.tree().unwrap().stats().listings)
     };
     let listed = listings(cx);
-    assert_eq!(state(cx), (true, DockPanel::Project));
+    assert_eq!(state(cx), (true, DockPanel::Explorer));
 
     cx.simulate_keystrokes("cmd-shift-f");
     let search = search(&workbench, cx);
@@ -132,7 +132,7 @@ fn the_dock_switches_panels(cx: &mut TestAppContext) {
     assert_eq!(results.len(), 2, "{results:?}");
 
     cx.simulate_keystrokes("cmd-shift-e");
-    assert_eq!(state(cx), (true, DockPanel::Project));
+    assert_eq!(state(cx), (true, DockPanel::Explorer));
     assert!(!input_focused(&search, cx), "focus left the hidden input");
     assert_eq!(rows(&panel, cx), tree);
     assert_eq!(listings(cx), listed, "switching lists nothing");
@@ -142,7 +142,7 @@ fn the_dock_switches_panels(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-b");
     assert!(!state(cx).0);
     cx.simulate_keystrokes("cmd-b");
-    assert_eq!(state(cx), (true, DockPanel::Project));
+    assert_eq!(state(cx), (true, DockPanel::Explorer));
 
     // The rail's Search button shows search again: its results stayed, as
     // did its query.
