@@ -1,5 +1,7 @@
 //! The §4.4 emoji cases through `to_lsp` and `from_lsp`.
 
+mod semantic_tokens;
+
 use fe_text::Text;
 use lsp_types::Position;
 

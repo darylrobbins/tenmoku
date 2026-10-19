@@ -80,8 +80,10 @@ use lsp_types::{
     InlayHintResolveClientCapabilities, InlayHintWorkspaceClientCapabilities, MarkupKind,
     NumberOrString, ParameterInformationSettings, PositionEncodingKind,
     PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
-    ServerCapabilities, SignatureHelpClientCapabilities, SignatureInformationSettings, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
+    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
+    SemanticTokensFullOptions, SemanticTokensWorkspaceClientCapabilities, ServerCapabilities,
+    SignatureHelpClientCapabilities, SignatureInformationSettings, TagSupport,
+    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, TokenFormat, Url,
     WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
     WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
@@ -102,6 +104,7 @@ use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
 use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
+use crate::semantic_tokens;
 use crate::workspace_edit::{Asked, Edits, HandedReply, decode};
 
 /// How long `initialize` may take before the start counts as failed.
@@ -2215,6 +2218,10 @@ fn client_capabilities() -> ClientCapabilities {
             inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
+            // Reported by the refresh-events card.
+            semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             workspace_folders: Some(true),
             configuration: Some(true),
             // Answered by the host, through `LspEvent::ApplyEdit`
@@ -2282,6 +2289,21 @@ fn client_capabilities() -> ClientCapabilities {
                         .map(String::from)
                         .to_vec(),
                 }),
+            }),
+            // Full and delta; ranges only help with huge files.
+            semantic_tokens: Some(SemanticTokensClientCapabilities {
+                dynamic_registration: dynamic,
+                requests: SemanticTokensClientCapabilitiesRequests {
+                    range: None,
+                    full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                },
+                token_types: semantic_tokens::TOKEN_TYPES.to_vec(),
+                token_modifiers: semantic_tokens::TOKEN_MODIFIERS.to_vec(),
+                formats: vec![TokenFormat::RELATIVE],
+                overlapping_token_support: Some(false),
+                multiline_token_support: Some(false),
+                server_cancel_support: None,
+                augments_syntax_tokens: Some(true),
             }),
             references: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,

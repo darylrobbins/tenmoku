@@ -68,9 +68,11 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         | "textDocument/implementation" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
         "textDocument/references" => timeouts.references,
-        "textDocument/hover" | "textDocument/documentHighlight" | "textDocument/inlayHint" => {
-            timeouts.hover
-        }
+        "textDocument/hover"
+        | "textDocument/documentHighlight"
+        | "textDocument/inlayHint"
+        | "textDocument/semanticTokens/full"
+        | "textDocument/semanticTokens/full/delta" => timeouts.hover,
         "textDocument/codeAction" => timeouts.code_action,
         "textDocument/signatureHelp" => timeouts.signature_help,
         "textDocument/completion" => timeouts.completion,

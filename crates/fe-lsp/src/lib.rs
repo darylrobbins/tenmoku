@@ -41,6 +41,10 @@
 //! - [`LspManager::inlay_hints`] asks for the [`InlayHint`]s in a byte range of
 //!   an open buffer, and [`LspManager::resolve_inlay_hint`] fills in a hint's
 //!   tooltip and edits.
+//! - [`LspManager::semantic_tokens`] asks for an open buffer's
+//!   [`SemanticTokens`], in full or as a delta of the last ones: byte
+//!   ranges of the buffer's version, with the names the server's legend
+//!   gives their types and modifiers.
 //! - [`LspManager::completion`] asks for [`Completions`] at an offset of
 //!   an open buffer, as edits in that buffer's version, and
 //!   [`LspManager::resolve`] fills in an item's documentation.
@@ -91,6 +95,7 @@ pub mod rename;
 mod requests;
 mod restart;
 mod router;
+mod semantic_tokens;
 mod server;
 pub mod signature_help;
 mod tsserver;
@@ -124,5 +129,6 @@ pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
 pub use registry::extension_spec;
 pub use requests::{ORPHANS_MAX, Reply};
+pub use semantic_tokens::{SemanticToken, SemanticTokens};
 pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};
 pub use workspace_edit::{ApplyClaim, ApplyReply, EditTarget, FileEdits, decode_closed};
