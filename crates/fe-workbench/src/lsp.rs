@@ -2103,8 +2103,7 @@ fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
         sort_text: item.sort_text.clone(),
         edit: edit(&item.edit),
         additional_edits: item.additional_edits.iter().map(edit).collect(),
-        // fe-lsp declines snippets.
-        snippet: false,
+        snippet: item.snippet,
         data: Some(Rc::new(item)),
     }
 }

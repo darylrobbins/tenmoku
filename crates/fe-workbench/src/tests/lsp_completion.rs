@@ -94,3 +94,71 @@ fn complete_from_the_server(cx: &mut TestAppContext) {
         r.is_some_and(|r| r.text == "fn main() {}\n")
     });
 }
+
+#[gpui::test]
+fn accepting_a_snippet_completion_selects_its_first_placeholder(cx: &mut TestAppContext) {
+    let reply: LSPAny = r#"{
+        "isIncomplete": false,
+        "items": [{
+            "label": "foo",
+            "kind": 3,
+            "insertTextFormat": 2,
+            "textEdit": {
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 2 } },
+                "newText": "foo(${1:a}, ${2:b})$0"
+            }
+        }]
+    }"#
+    .parse()
+    .unwrap();
+    let mut s = Lsp::new(cx);
+    s.fake
+        .set_reply(Completion::METHOD, Scripted::now(Reply::Result(reply)));
+    s.open("src/main.rs");
+    let main = s.uri("src/main.rs");
+    s.fake
+        .wait_for_document(&main, "didOpen", |r| r.is_some_and(|r| r.open));
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .expect("main.rs is shown");
+    s.cx.update(|window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    s.draw();
+
+    // `fo` typed at the start, then completed.
+    s.cx.update(|_, cx| {
+        editor.update(cx, |view, cx| {
+            view.model_mut().set_cursor(0);
+            cx.notify();
+        });
+    });
+    s.cx.simulate_input("fo");
+    s.draw();
+    let text = |s: &mut Lsp| editor.read_with(&s.cx, |view, _| view.model().text().to_string());
+    let selection =
+        |s: &mut Lsp| editor.read_with(&s.cx, |view, _| view.model().primary_selection().range);
+    assert_eq!(text(&mut s), "fofn main() {}\n");
+    s.fake.wait_for_document(&main, "the typing", |r| {
+        r.is_some_and(|r| r.text == "fofn main() {}\n")
+    });
+    s.cx.simulate_keystrokes("ctrl-space");
+    s.until("the menu", |s| {
+        editor.read_with(&s.cx, |view, _| view.completion_shown())
+    });
+    s.cx.simulate_keystrokes("enter");
+    s.draw();
+    assert_eq!(text(&mut s), "foo(a, b)fn main() {}\n");
+    assert_eq!(selection(&mut s), 4..5);
+
+    s.cx.simulate_keystrokes("tab");
+    s.draw();
+    assert_eq!(selection(&mut s), 7..8);
+    s.cx.simulate_keystrokes("tab");
+    s.draw();
+    assert_eq!(selection(&mut s), 9..9);
+
+    s.cx.simulate_keystrokes("cmd-z");
+    s.draw();
+    assert_eq!(text(&mut s), "fofn main() {}\n");
+}

@@ -4,7 +4,6 @@
 //! 2 s timeouts.
 
 mod resolve_edits;
-mod snippet_guard;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -113,7 +112,7 @@ fn items_convert_to_byte_edits() {
         assert_eq!(
             init["capabilities"]["textDocument"]["completion"]["completionItem"],
             json!({
-                "snippetSupport": false,
+                "snippetSupport": true,
                 "insertReplaceSupport": false,
                 "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
                 "labelDetailsSupport": true,
@@ -381,4 +380,54 @@ fn expect_timeout<T: PartialEq + std::fmt::Debug>(
                 if method == "$/cancelRequest" && params["id"] == json!(id))
         })
     });
+}
+
+#[test]
+fn snippet_items_are_marked() {
+    let (mut s, _) = started(PositionEncodingKind::UTF8);
+    let text = "let x = fo\n";
+    let mut buffer = Buffer::new(text);
+    s.open_synced(&mut buffer, "a.rs");
+    let end = text.len() - 1;
+    let range =
+        json!({ "start": { "line": 0, "character": 8 }, "end": { "line": 0, "character": 10 } });
+    s.fake.set_reply(
+        Completion::METHOD,
+        Scripted::now(Reply::Result(json!([
+            {
+                "label": "foo", "insertTextFormat": 2,
+                "textEdit": { "range": range, "newText": "foo(${1:a}, ${2:b})$0" },
+            },
+            {
+                "label": "bar", "insertTextFormat": 1,
+                "textEdit": { "range": range, "newText": "bar($1)" },
+            },
+            { "label": "baz", "insertText": "baz($1)" },
+        ]))),
+    );
+    let items = answer(s.manager.completion(
+        buffer.id(),
+        buffer.version(),
+        end,
+        CompletionTrigger::Invoked,
+    ))
+    .unwrap()
+    .unwrap()
+    .items;
+    let got: Vec<_> = (items.iter())
+        .map(|item| (item.snippet, item.edit.clone()))
+        .collect();
+    let word = end - 2..end;
+    let edit = |text: &str| CompletionEdit {
+        range: word.clone(),
+        text: text.to_string(),
+    };
+    assert_eq!(
+        got,
+        [
+            (true, edit("foo(${1:a}, ${2:b})$0")),
+            (false, edit("bar($1)")),
+            (false, edit("baz($1)")),
+        ]
+    );
 }
