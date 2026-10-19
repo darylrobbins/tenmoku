@@ -1,0 +1,89 @@
+# VS Code Dark Modern: the editor and token colours of VS Code's Dark Modern
+# theme, on fastedit's one-colour-per-highlight-name model. The rest of the
+# window's colours are Kiln Dark's.
+#
+# Adapted from microsoft/vscode `extensions/theme-defaults/themes/dark_modern.json`,
+# `dark_plus.json` and `dark_vs.json` at commit
+# ab8f31f0c0b1a4dd86d8dbee1248542f5806574d.
+#
+# Copyright (c) Microsoft Corporation. Licensed under the MIT License; the
+# notice is in this repository's NOTICE.
+#
+# Values VS Code leaves to its built-in defaults rather than the three files
+# (selection #264F78, cursor #AEAFAD, warning #CCA700, information #3794FF,
+# hint #EEEEEEB2) are those defaults. active_line, popover_border, the jump
+# label colours and the vim mode segments have no Dark Modern value; they are
+# chosen to sit in its palette.
+#
+# Scopes with no highlight name are left out: semantic-token rules
+# (`*.mutable` underline), font styles, markup.bold/italic/underline/
+# strikethrough, markup.inserted/deleted/changed, invalid, regexp scopes and
+# the CSS-only and language-specific scope variants. A highlight name that
+# several scopes colour differently takes the general scope's colour
+# (`keyword` is `keyword`'s #569CD6, not `keyword.control`'s #C586C0).
+#
+# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+name = "VS Code Dark Modern"
+appearance = "dark"
+
+[editor]
+background = "#1F1F1F"
+foreground = "#CCCCCC"
+gutter_foreground = "#6E7681"
+gutter_active_foreground = "#CCCCCC"
+active_line = "#FFFFFF0A"
+selection = "#264F78"
+cursor = "#AEAFAD"
+error = "#F85149"
+warning = "#CCA700"
+information = "#3794FF"
+hint = "#EEEEEEB2"
+popover_background = "#202020"
+popover_border = "#313131"
+jump_label = "#C586C0"
+jump_label_preview = "#4EC9B0"
+jump_label_foreground = "#1F1F1F"
+change_added = "#2EA043"
+change_modified = "#0078D4"
+change_deleted = "#F85149"
+indent_guide = "#404040"
+indent_guide_active = "#707070"
+vim_mode_normal = "#4DAAFC"
+vim_mode_insert = "#89D185"
+vim_mode_visual = "#C586C0"
+vim_mode_replace = "#F85149"
+vim_mode_command = "#DCDCAA"
+vim_mode_foreground = "#1F1F1F"
+
+# Every name fastedit Dark colours is listed, since a theme's table is laid
+# over Dark's.
+[syntax]
+"attribute" = "#9CDCFE"
+"comment" = "#6A9955"
+"constant" = "#4FC1FF"
+"constant.builtin" = "#569CD6"
+"constructor" = "#4EC9B0"
+"escape" = "#D7BA7D"
+"function" = "#DCDCAA"
+"function.macro" = "#DCDCAA"
+"keyword" = "#569CD6"
+"label" = "#C8C8C8"
+"markup.heading" = "#569CD6"
+"markup.link" = "#4DAAFC"
+"markup.link.url" = "#4DAAFC"
+"markup.raw" = "#CE9178"
+"module" = "#4EC9B0"
+"number" = "#B5CEA8"
+"operator" = "#D4D4D4"
+"property" = "#9CDCFE"
+"punctuation" = "#CCCCCC"
+"punctuation.special" = "#569CD6"
+"string" = "#CE9178"
+"string.special" = "#D16969"
+"string.special.key" = "#9CDCFE"
+"tag" = "#569CD6"
+"type" = "#4EC9B0"
+"variable" = "#9CDCFE"
+"variable.builtin" = "#569CD6"

@@ -29,7 +29,7 @@ fn repo_root() -> &'static Path {
         .expect("crates/fastedit is two levels below the repository root")
 }
 
-/// Adds every `.rs` and `.scm` file under `dir` to `files`; whatever can't be
+/// Adds every `.rs`, `.scm` and `.toml` file under `dir` to `files`; whatever can't be
 /// read is named in `errors`, so the checks never pass over it silently.
 fn collect(dir: &Path, root: &Path, files: &mut Files, errors: &mut Vec<String>) {
     let entries = match std::fs::read_dir(dir) {
@@ -55,7 +55,7 @@ fn collect(dir: &Path, root: &Path, files: &mut Files, errors: &mut Vec<String>)
             }
         } else if matches!(
             path.extension().and_then(|e| e.to_str()),
-            Some("rs" | "scm")
+            Some("rs" | "scm" | "toml")
         ) {
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
