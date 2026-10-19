@@ -632,6 +632,23 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
         .mutates_buffer(true);
+    registry
+        .register(
+            crate::ex::normal::RESUME,
+            "Vim Resume Normal",
+            |target: &mut VimTarget<'_>, _: &Actor| {
+                follow(target);
+                let ran = crate::ex::normal::resume(target);
+                marks::settle(target);
+                ran
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Resumes the `:normal` that stopped at a map's `<Cmd>fe:…<CR>` command, now run: its remaining keys, then its remaining range rows. Does nothing if none waits.",
+        )
+        .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
+        .mutates_buffer(true);
     feature::register(&mut registry);
     registry
 }

@@ -160,6 +160,12 @@ pub struct VimState {
     /// The last `:normal` to end stopped at a map's `<Cmd>fe:…<CR>`
     /// ([`crate::ex::normal`]): one it ran in stops too.
     pub(crate) normal_refused: bool,
+    /// The host resumes a `:normal` that stops at a map's `<Cmd>fe:…<CR>`
+    /// ([`VimState::set_normal_resumes`]).
+    pub(crate) normal_resumes: bool,
+    /// The `:normal` waiting for the host to run its fastedit command
+    /// ([`crate::ex::normal`]).
+    pub(crate) normal_suspended: Option<crate::ex::normal::Suspended>,
     /// The row `U` undoes the latest changes on.
     pub(crate) line_undo: crate::feature::line_undo::LineUndo,
     /// 'incsearch' is off ([`VimState::set_incsearch`]): on by default, as
@@ -625,6 +631,21 @@ impl VimState {
         self.remap_commands.pop_front()
     }
 
+    /// Whether the host runs the fastedit command a `:normal` reaches, and
+    /// then resumes the `:normal` (`vim.normal_resume`): it suspends there
+    /// with its remaining keys and range rows instead of stopping with
+    /// "fe: commands don't run inside :normal". Off by default.
+    pub fn set_normal_resumes(&mut self, resumes: bool) {
+        self.normal_resumes = resumes;
+    }
+
+    /// Whether a `:normal` waits for its fastedit command
+    /// ([`VimState::take_remap_command`]) to be run, to be resumed by
+    /// `vim.normal_resume`.
+    pub fn has_normal_suspended(&self) -> bool {
+        self.normal_suspended.is_some()
+    }
+
     /// Whether a map left a fastedit command the host hasn't taken
     /// ([`VimState::take_remap_command`]).
     pub fn has_remap_command(&self) -> bool {
@@ -699,6 +720,7 @@ impl VimState {
         self.macros.stop();
         self.remap.stop();
         self.remap_commands.clear();
+        self.normal_suspended = None;
     }
 
     /// Whether the last key read failed, as nvim's errors and beeps do,

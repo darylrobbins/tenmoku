@@ -87,7 +87,7 @@ use crate::{
 mod complete;
 mod global;
 mod lines;
-mod normal;
+pub(crate) mod normal;
 mod pick;
 pub use pick::{Pick, PickRow, PickThen};
 mod table;

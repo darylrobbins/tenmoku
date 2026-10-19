@@ -24,7 +24,11 @@
 //! among its keys: there it stops, the command not run and nothing after it
 //! (the rest of the line's keys, the lines after it) either, with
 //! [`FE_REFUSED`] as its error, as fastedit commands run only from the
-//! host's replay; a `:normal` it runs in stops the same way. Its keys aren't typed: a recording doesn't
+//! host's replay; a `:normal` it runs in stops the same way. A host that
+//! resumes ([`crate::VimState::set_normal_resumes`]) has the outermost
+//! `:normal` suspend there instead, its remaining keys and range rows kept
+//! ([`Suspended`]) for `vim.normal_resume` to go on with once the host has
+//! run the command (the undo step ends at the suspension). Its keys aren't typed: a recording doesn't
 //! get them and a replay under way goes on after them, but a recording or
 //! `@` they start stays. Typed text goes in as the `:normal`'s actor.
 //!
@@ -34,7 +38,9 @@
 use std::{collections::VecDeque, ops::RangeInclusive};
 
 use fe_buffer::TransactionId;
-use fe_command::{Actor, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
+use fe_command::{
+    Actor, CommandError, DispatchError, Dispatched, Effect, Invocation, Registry, Source,
+};
 use fe_editor::commands::origin;
 
 use super::{
@@ -42,9 +48,10 @@ use super::{
     global::{self, Depth, Group},
     to_row_start,
 };
+use crate::remap::RemapState;
 use crate::{
-    Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, Step, SubmitArgs,
-    VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
+    Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, RemapCommand, Step,
+    SubmitArgs, VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
 };
 
 /// What a `:normal` that reached a map's `<Cmd>fe:…<CR>` says.
@@ -81,6 +88,39 @@ pub(super) fn parse(
     })
 }
 
+/// What a `:normal` that was suspended at a map's `<Cmd>fe:…<CR>` waits
+/// with, for [`resume`]: the rest of its keys and of its range.
+#[derive(Clone, Debug)]
+pub(crate) struct Suspended {
+    actor: Actor,
+    remap: bool,
+    /// The keys of every row.
+    keys: Vec<VimKey>,
+    /// The rows still to come after the current one, `None` for a `:normal`
+    /// on the cursor's row.
+    rows: Option<RangeInclusive<u32>>,
+    /// The next row is the range's first.
+    first: bool,
+    /// The cursor's row has run (no range).
+    ran: bool,
+    /// The keys left of the current row.
+    queue: Option<VecDeque<VimKey>>,
+    /// The command line's text, in `cmdline` mode.
+    line: String,
+    /// The `:normal`'s own remap stream, with the tags of the keys it
+    /// handed out and the counters, while it waits.
+    stream: Option<RemapState>,
+    /// Fastedit commands left before it, which wait for it to end.
+    outer_commands: VecDeque<RemapCommand>,
+}
+
+/// `vim.normal_resume`'s id.
+pub(crate) const RESUME: &str = "vim.normal_resume";
+
+#[cfg(test)]
+#[path = "normal_resume_tests.rs"]
+mod ex_normal_resume;
+
 /// `:normal`: `keys` on the cursor's row, or on each of `rows` (by number,
 /// the last row past the end), as the module describes.
 pub(super) fn run(
@@ -90,49 +130,107 @@ pub(super) fn run(
     keys: &[VimKey],
     remap: bool,
 ) -> Result<Handled, ExError> {
+    let job = Suspended {
+        actor: actor.clone(),
+        remap,
+        keys: keys.to_vec(),
+        rows,
+        first: true,
+        ran: false,
+        queue: None,
+        line: String::new(),
+        stream: None,
+        outer_commands: VecDeque::new(),
+    };
+    drive(target, job)
+}
+
+/// `vim.normal_resume`: goes on with the `:normal` suspended at a fastedit
+/// command, now run, if one waits.
+pub(crate) fn resume(target: &mut VimTarget<'_>) -> Handled {
+    let Some(job) = target.state.normal_suspended.take() else {
+        return Ok(Dispatched::new(Effect::Changed));
+    };
+    match drive(target, job) {
+        Ok(handled) => handled,
+        Err(err) => Err(CommandError::new(err.to_string())),
+    }
+}
+
+/// Runs `job` until it ends, or suspends at a fastedit command the host
+/// runs, if it may ([`VimState::set_normal_resumes`]) and this is the
+/// outermost `:normal`.
+fn drive(target: &mut VimTarget<'_>, mut job: Suspended) -> Result<Handled, ExError> {
     let _depth = Depth::enter()?;
     let outer = target.state.remap_save();
+    if let Some(stream) = job.stream.take() {
+        target.state.remap_restore(stream);
+    }
     // Fastedit commands left before it, which the host hasn't taken, wait
     // for it after: only the `:normal`'s own stop it.
-    let outer_commands = std::mem::take(&mut target.state.remap_commands);
+    let mut outer_commands = std::mem::take(&mut job.outer_commands);
+    outer_commands.extend(std::mem::take(&mut target.state.remap_commands));
     target.state.normal_refused = false;
-    let unmapped = target.state.remap_off(!remap);
+    let unmapped = target.state.remap_off(!job.remap);
     // The keys aren't typed: what a recording or a replay under way counts
     // goes on once they've run.
     let held = target.state.macros.hold();
-    let group = Group::begin(target, actor);
+    let group = Group::begin(target, &job.actor);
     let mut runner = Runner {
-        actor: actor.clone(),
-        line: String::new(),
+        actor: job.actor.clone(),
+        line: std::mem::take(&mut job.line),
         refused: false,
+        suspendable: group.owner() && target.state.normal_resumes,
+        suspended: false,
     };
-    match rows {
-        None => runner.run(target, keys),
-        Some(rows) => {
-            let first = *rows.start();
-            for row in rows {
-                to_row_start(target, row, row == first);
-                runner.run(target, keys);
-                if runner.refused {
-                    break;
-                }
-            }
-            if matches!(target.state.mode(), Mode::Visual(_)) {
-                runner.key(target, VimKey::Esc).ok();
-            }
+    loop {
+        let mut queue = match job.queue.take() {
+            Some(queue) => queue,
+            None => match &mut job.rows {
+                Some(rows) => match rows.next() {
+                    Some(row) => {
+                        to_row_start(target, row, std::mem::take(&mut job.first));
+                        job.keys.iter().copied().collect()
+                    }
+                    None => break,
+                },
+                None if job.ran => break,
+                None => job.keys.iter().copied().collect(),
+            },
+        };
+        job.ran = true;
+        runner.run(target, &mut queue);
+        if runner.suspended {
+            job.queue = Some(queue);
+            break;
         }
+        if runner.refused {
+            break;
+        }
+    }
+    if job.rows.is_some() && !runner.suspended && matches!(target.state.mode(), Mode::Visual(_)) {
+        runner.key(target, VimKey::Esc).ok();
     }
     let transactions: Vec<TransactionId> = group.end(target).into_iter().collect();
     target.state.macros.stop();
     target.state.macros.release(held);
     target.state.remap_off(unmapped);
+    let stream = target.state.remap_save();
     target.state.remap_restore(outer);
-    target.state.remap_commands = outer_commands;
     target.state.failed = false;
-    // For a `:normal` this one ran in, which stops at the key that ran it.
-    target.state.normal_refused = runner.refused;
-    if runner.refused {
-        target.state.fail(FE_REFUSED);
+    if runner.suspended {
+        job.stream = Some(stream);
+        // Its command stays for the host, which resumes this after it.
+        job.line = runner.line;
+        job.outer_commands = outer_commands;
+        target.state.normal_suspended = Some(job);
+    } else {
+        target.state.remap_commands = outer_commands;
+        // For a `:normal` this one ran in, which stops at the key that ran it.
+        target.state.normal_refused = runner.refused;
+        if runner.refused {
+            target.state.fail(FE_REFUSED);
+        }
     }
     Ok(Ok(
         Dispatched::new(Effect::Changed).with_transactions(transactions)
@@ -147,18 +245,31 @@ struct Runner {
     /// A key left a fastedit command, or ran a `:normal` that stopped at one
     /// ([`FE_REFUSED`]): this one stops.
     refused: bool,
+    /// A fastedit command may suspend the run instead of stopping it.
+    suspendable: bool,
+    /// The run is suspended at a fastedit command, with the keys left in
+    /// its queue.
+    suspended: bool,
 }
 
 impl Runner {
-    /// `keys` once, then ends what they left unfinished.
-    fn run(&mut self, target: &mut VimTarget<'_>, keys: &[VimKey]) {
-        let mut queue: VecDeque<VimKey> = keys.iter().copied().collect();
-        while let Some(key) = queue.pop_front().or_else(|| held_keys(target, &mut queue)) {
+    /// `queue`'s keys, then ends what they left unfinished; or, at a
+    /// fastedit command the host runs, stops there with the rest queued.
+    fn run(&mut self, target: &mut VimTarget<'_>, queue: &mut VecDeque<VimKey>) {
+        while let Some(key) = queue.pop_front().or_else(|| held_keys(target, queue)) {
             let before = history::pairs(target.model);
             let fed = self.key(target, key);
             Group::note(target, before);
             // A command this one's keys left, or a `:normal` they ran
             // that stopped at one.
+            if self.suspendable && target.state.has_remap_command() && !target.state.normal_refused
+            {
+                for key in target.state.take_replay().into_iter().rev() {
+                    queue.push_front(key);
+                }
+                self.suspended = true;
+                return;
+            }
             if target.state.has_remap_command() || target.state.normal_refused {
                 // Dropped with the rest: not run, nor left for the host.
                 self.refused = true;

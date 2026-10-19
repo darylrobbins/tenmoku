@@ -706,6 +706,11 @@ impl Group {
         Self { owner }
     }
 
+    /// Whether this is the outermost `:g` or `:normal` running.
+    pub(super) fn owner(&self) -> bool {
+        self.owner
+    }
+
     /// After a command or key run in a group, which began with the carets
     /// at `before`. An undo or redo closes the transaction (nvim's undoes
     /// what the group did so far): what follows goes in a new one, opened

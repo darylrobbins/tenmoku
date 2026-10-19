@@ -93,7 +93,9 @@
 //!   (`vim.diff_get`) does too, as its host takes the command before the
 //!   replay could wait for it. A `:normal` stops at a `<Cmd>fe:…<CR>`
 //!   among its keys, which it doesn't run: "fe: commands don't run inside
-//!   :normal".
+//!   :normal". (fe-vim can suspend it there instead, and the replay resumes
+//!   it once the command has run, but the host doesn't turn that on yet:
+//!   [`VimState::set_normal_resumes`].)
 //! - **Every mouse press resolves a held prefix first.** The view resolves
 //!   the held keys as a timeout would ([`EditorView::resolve_held_prefix`]);
 //!   if that edited the text or left a map's `<Cmd>fe:…<CR>` replay waiting,
@@ -2185,6 +2187,23 @@ impl EditorView {
         } else if handed || state.has_host_command() {
             self.stop_map(rest, Some(HANDED_HOST_COMMAND));
         } else {
+            // A `:normal` suspended at the command goes on first, with the
+            // rest of its keys and rows: they come before the map's keys.
+            if state.has_normal_suspended() {
+                let resume = Invocation::of("vim.normal_resume")
+                    .expect("a valid command ID")
+                    .source(Source::Keyboard);
+                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+                if !self.run_vim_once(&resume.context(context), cx) {
+                    self.stop_map(rest, None);
+                    self.release_held_keys(cx);
+                    self.wait_for_remap_later(origin, cx);
+                    return cx.notify();
+                }
+            }
+            let Some(state) = &mut self.vim else {
+                return;
+            };
             for key in state.take_replay().into_iter().rev() {
                 queue.push_front(key);
             }
