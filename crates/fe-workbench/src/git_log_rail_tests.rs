@@ -133,3 +133,6 @@ fn a_long_file_name_ellipsizes_before_its_directory_goes(cx: &mut TestAppContext
     assert!(name.right() <= list.right(), "the name is cut to the row");
     assert!(name.size.width > gpui::px(40.), "the name keeps room");
 }
+
+#[path = "git_log_rail_painted_tests.rs"]
+mod painted;

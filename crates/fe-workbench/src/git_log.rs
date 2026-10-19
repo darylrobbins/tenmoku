@@ -1135,6 +1135,24 @@ fn file_cell(parts: FileParts, ui: UiTheme, ix: usize, probe: RowsProbe) -> impl
     cell
 }
 
+/// What the rail tests hand the painter, defined in
+/// `git_log_rail_painted_tests.rs` and linked by name: a test of the painted
+/// stroke must build against code that doesn't call them yet.
+#[cfg(test)]
+mod rail_hooks {
+    unsafe extern "Rust" {
+        /// Pixels every stroke's end is pulled in by.
+        #[link_name = "fe_rail_pull_in"]
+        pub(super) safe fn pull_in() -> f32;
+        /// Row `ix` starts painting again.
+        #[link_name = "fe_rail_begin"]
+        pub(super) safe fn begin(ix: usize);
+        /// A stroke painted in row `ix`: from x, y, to x, y.
+        #[link_name = "fe_rail_painted"]
+        pub(super) safe fn painted(ix: usize, fx: f32, fy: f32, tx: f32, ty: f32);
+    }
+}
+
 /// What the tests see of the rows drawn, by the row's index in the list.
 #[derive(Clone, Default)]
 struct RowsProbe(#[cfg(test)] Rc<RefCell<RowsSeen>>);
@@ -1164,13 +1182,41 @@ impl RowsProbe {
     /// Forgets the segments row `ix` painted last frame.
     fn begin(&self, _ix: usize) {
         #[cfg(test)]
-        self.0.borrow_mut().segments.remove(&_ix);
+        {
+            self.0.borrow_mut().segments.remove(&_ix);
+            rail_hooks::begin(_ix);
+        }
     }
 
-    /// Notes a segment painted in row `ix`.
-    fn segment(&self, _ix: usize, _from: Point<Pixels>, _to: Point<Pixels>, _color: Hsla) {
+    /// Strokes the segment `from`..`to` in row `ix` and notes it: the one
+    /// place a lane is painted, so what the tests see is what was drawn.
+    fn stroke(
+        &self,
+        window: &mut Window,
+        _ix: usize,
+        from: Point<Pixels>,
+        to: Point<Pixels>,
+        color: Hsla,
+    ) {
         #[cfg(test)]
-        (self.0.borrow_mut().segments.entry(_ix).or_default()).push((_from, _to, _color));
+        let to = point(to.x, to.y - px(rail_hooks::pull_in()));
+        let mut path = PathBuilder::stroke(LINE);
+        path.move_to(from);
+        path.line_to(to);
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+            #[cfg(test)]
+            {
+                let (x, y) = (f32::from(from.x), f32::from(from.y));
+                rail_hooks::painted(_ix, x, y, f32::from(to.x), f32::from(to.y));
+                self.0
+                    .borrow_mut()
+                    .segments
+                    .entry(_ix)
+                    .or_default()
+                    .push((from, to, color));
+            }
+        }
     }
 
     /// Notes row `ix`'s cells, text and style.
@@ -1218,14 +1264,8 @@ fn rail_cell(
             probe.begin(ix);
             for &(column, color) in &rail {
                 let x = bounds.left() + LANE_WIDTH * (column as f32 + 0.5);
-                let mut path = PathBuilder::stroke(LINE);
-                path.move_to(point(x, bounds.top()));
-                path.line_to(point(x, bounds.bottom()));
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, lane_color(color));
-                    let (top, bottom) = (point(x, bounds.top()), point(x, bounds.bottom()));
-                    probe.segment(ix, top, bottom, lane_color(color));
-                }
+                let (top, bottom) = (point(x, bounds.top()), point(x, bounds.bottom()));
+                probe.stroke(window, ix, top, bottom, lane_color(color));
             }
         },
     )
@@ -1283,13 +1323,7 @@ fn paint_graph(
             if merge && half == 1 && line.from == row.column {
                 from = toward(center, to, radius);
             }
-            let mut path = PathBuilder::stroke(LINE);
-            path.move_to(from);
-            path.line_to(to);
-            if let Ok(path) = path.build() {
-                window.paint_path(path, lane_color(line.color));
-                probe.segment(ix, from, to, lane_color(line.color));
-            }
+            probe.stroke(window, ix, from, to, lane_color(line.color));
         }
     }
     let color = lane_color(row.color);
