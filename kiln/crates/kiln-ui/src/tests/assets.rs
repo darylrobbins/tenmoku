@@ -8,7 +8,7 @@ use crate::{Assets, Icon};
 
 #[test]
 fn every_icon_is_bundled_and_parses() {
-    assert_eq!(Icon::ALL.len(), 56);
+    assert_eq!(Icon::ALL.len(), 59);
     let renderer = SvgRenderer::new(Arc::new(Assets));
     for icon in Icon::ALL {
         let bytes = Assets

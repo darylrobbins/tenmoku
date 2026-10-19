@@ -83,6 +83,10 @@ icons! {
     Columns2 => "columns-2",
     Rows2 => "rows-2",
     Ellipsis => "ellipsis",
+    // The tab bar's Markdown preview buttons; not mapped from names.
+    Eye => "eye",
+    Code => "code",
+    PanelRightOpen => "panel-right-open",
     // The window buttons drawn under client-side decorations; not mapped
     // from names.
     Minus => "minus",
