@@ -137,6 +137,21 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 unicode-segmentation = "1"
 
+# The platform keychain behind kiln-core's KeychainStore (src/secrets.rs):
+# keyring-core and its per-platform stores, all MIT OR Apache-2.0. On Linux
+# and the BSDs the store is zbus-secret-service-keyring-store, pure-Rust
+# D-Bus on async-io (already in the lock) with RustCrypto, never
+# dbus-secret-service-keyring-store or a `vendored` feature (libdbus is
+# AFL-2.1 OR GPL-2.0). security-framework and secret-service are named too, to
+# read the platform's error behind a keyring-core error (the versions the
+# stores use).
+keyring-core = "1"
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+windows-native-keyring-store = { version = "1", default-features = false }
+zbus-secret-service-keyring-store = { version = "1", features = ["rt-async-io-crypto-rust"] }
+security-framework = "3.7"
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"] }
+
 # Test and bench tooling.
 proptest = "1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

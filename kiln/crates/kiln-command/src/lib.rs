@@ -6,13 +6,18 @@
 //! component such as a text editor, registers its commands on it. Must never
 //! depend on GPUI.
 //!
+//! [`capability`] names what a plugin may do, in the plugin record's
+//! strings (`buffer.read`, `net:<host>`), and the [`Grants`] it holds.
+//!
 //! The design is recorded in `docs/command-model.md` in kiln.
 
+pub mod capability;
 mod id;
 mod invocation;
 mod predicate;
 mod registry;
 
+pub use capability::{Capability, CapabilityError, FsScope, Grants, NetHosts};
 pub use id::{CommandId, InvalidCommandId};
 pub use invocation::{Actor, Invocation, Source, Target};
 pub use predicate::{ContextFrame, ContextPredicate, ContextStack, PredicateError};

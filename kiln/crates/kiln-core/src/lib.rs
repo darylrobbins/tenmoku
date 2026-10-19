@@ -22,6 +22,9 @@
 //! [`TextEdit`] is the model behind a single-line text field: a selection
 //! on grapheme boundaries, word motions, IME composition and undo.
 //!
+//! [`secrets`] keeps secrets such as API keys in the platform keychain,
+//! by the app id and a name per key.
+//!
 //! [`theme`] reads theme files of semantic colour tokens, laid over a
 //! bundled dark or light base.
 
@@ -38,6 +41,7 @@ pub mod menu;
 pub mod paths;
 pub mod platform;
 mod report;
+pub mod secrets;
 pub mod settings;
 pub mod text_edit;
 pub mod theme;
@@ -66,6 +70,7 @@ pub use menu::{
 pub use paths::{AppId, AppPaths, PathStyle};
 pub use platform::Os;
 pub use report::KeymapIssue;
+pub use secrets::{KeychainStore, MemoryStore, Secret, SecretError, SecretStore};
 /// serde, for an app's settings type ([`SettingsType`]).
 pub use serde;
 pub use settings::{ProjectFilter, SettingsEvent, SettingsOptions, SettingsStore, SettingsType};
