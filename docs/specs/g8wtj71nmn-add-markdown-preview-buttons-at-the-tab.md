@@ -88,23 +88,24 @@ Do not change `markdown.show_preview`, `markdown.show_preview_to_side`, their bi
   shows, and `activated` refocuses it over kiln-shell's focus of the item.
   `activated` and the pane's active tab go by the item, not its index: the
   tabs are brought in step after kiln-shell activates an item.
-- Save works from the preview: the preview's div takes a key that runs
-  `editor.save` in the editor, as the keymap has it now (no binding names
-  `markdown_preview`, so the key reaches it unmatched), and an
-  `editor.save` dispatched to it, as the menu's, and hands either to its
-  editor's `EditorView::save_from_command` (made `pub`), which asks where
-  for an untitled buffer, as from the editor. No other editor command
-  applies there. The default keymap is unchanged (fe-gpui's tests count its
-  bindings). This touches `crates/fe-gpui/src/pane_item.rs` and
-  `crates/fe-workbench/src/workbench.rs`, outside the card's file list, for
-  review findings F1 and F3.
-- `markdown.toggle_preview` has context `editor || markdown_preview`, so the
-  palette lists it in the editor and in the in-place preview. `invoked_in`
-  now parses its context as a `ContextPredicate` (every other caller passes
-  a bare identifier, which parses the same). The buttons dispatch their
-  commands invoked in `workbench` + `editor` (or `markdown_preview` for Show
-  Source), since `pane_toolbar::dispatch` only gives `workbench`, which the
-  editor commands' handlers refuse.
+- Save works from the preview, by every route it has in the editor:
+  - keys: the preview's div matches the keys typed in it with its own
+    `Matcher` over the live keymap in the editor's context
+    (`workbench` + `editor`), chords included, and acts only on
+    `editor.save`; no binding names `markdown_preview`, so the keys reach
+    it unmatched by the app's matcher. A user's rebinding, such as
+    `ctrl-x ctrl-s`, works there too. The default keymap is unchanged
+    (fe-gpui's tests count its bindings).
+  - the palette: `markdown_preview::palette_commands` lists the editor's
+    Save meta again with context `markdown_preview` (fe-workbench's
+    `command_list`), and no other editor command.
+  - a dispatched `editor.save`, as the palette's and the menu's: the div's
+    `RunCommand` handler.
+  Each goes to the editor's `EditorView::save_from_command` (made `pub`),
+  which asks where for an untitled buffer, as from the editor. This
+  touches `crates/fe-gpui/src/pane_item.rs`, `crates/fe-workbench/src/lib.rs`
+  and `crates/fe-workbench/src/workbench.rs`, outside the card's file list,
+  for review findings F1 and F3.
 - A reveal applied to a tab showing its preview (go to line, a link, a nav
   place) shows the editor again, so the place is visible.
 - A link in the in-place preview opens in its pane (`open_preview_link`

@@ -638,6 +638,68 @@ fn save_works_from_the_preview_shown_in_place(cx: &mut TestAppContext) {
     assert!(!editor.read_with(cx, |editor, _| editor.model().is_dirty()));
     assert_eq!(in_place(&pane, cx), Some(preview.clone()));
     assert!(is_focused(&preview, cx));
+    let edit = |text: &str, cx: &mut VisualTestContext| {
+        editor.update(cx, |editor, cx| {
+            editor.model_mut().set_cursor(0);
+            editor.model_mut().insert(text);
+            cx.notify();
+        });
+        draw(cx);
+        assert!(editor.read_with(cx, |editor, _| editor.model().is_dirty()));
+    };
+    let on_disk = |cx: &mut VisualTestContext| {
+        draw(cx);
+        assert!(!editor.read_with(cx, |editor, _| editor.model().is_dirty()));
+        fs::read_to_string(dir.path().join("README.md")).unwrap()
+    };
+
+    // The palette lists Save there, and no other editor command.
+    let save = (fe_gpui::commands::command_list().into_iter())
+        .find(|meta| meta.id.as_str() == "editor.save")
+        .unwrap()
+        .title;
+    edit("y", cx);
+    let titles = palette_titles(&workbench, "", cx);
+    assert!(titles.contains(&save), "{titles:?}");
+    for title in ["Select All", "Undo", "Delete Line"] {
+        assert!(
+            !titles.iter().any(|found| found == title),
+            "{title}: {titles:?}"
+        );
+    }
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    let titles = palette_titles(&workbench, &save, cx);
+    let row = titles
+        .iter()
+        .position(|title| *title == save)
+        .expect("listed");
+    for _ in 0..row {
+        cx.simulate_keystrokes("down");
+    }
+    draw(cx);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(on_disk(cx), "yx# Readme\n");
+    assert!(is_focused(&preview, cx));
+
+    // So does a chord the user bound to Save in the editor.
+    let user = dir.path().join("keymap.toml");
+    let chord =
+        "[[bindings]]\nkeys = \"ctrl-x ctrl-s\"\ncommand = \"editor.save\"\ncontext = \"editor\"\n";
+    fs::write(&user, chord).unwrap();
+    let store = fe_keymap::KeymapStore::load(fe_keymap::DEFAULT_MACOS, Some(user), None);
+    assert_eq!(store.diagnostics(), []);
+    let keymap = store.keymap().clone();
+    cx.update(|_, cx| kiln_platform::keys::set_keymap(cx, keymap));
+    edit("z", cx);
+    cx.simulate_keystrokes("ctrl-x");
+    draw(cx);
+    assert!(
+        editor.read_with(cx, |editor, _| editor.model().is_dirty()),
+        "half a chord"
+    );
+    cx.simulate_keystrokes("ctrl-s");
+    assert_eq!(on_disk(cx), "zyx# Readme\n");
 
     // An untitled Markdown buffer asks where, as from its editor.
     run_in("workbench.new_file", &[], cx);

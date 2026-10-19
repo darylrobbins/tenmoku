@@ -150,6 +150,7 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(project_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
+    list.extend(workbench_commands::markdown_preview::palette_commands());
     list
 }
 

@@ -36,6 +36,7 @@ use std::{
 };
 
 use fe_buffer::Version;
+use fe_command::{CommandMeta, ContextPredicate};
 use fe_gpui::{ActivePalette, EditorTheme, EditorView, commands::EditorViewEvent};
 use fe_markdown::{Document, LinkTarget};
 use fe_markdown_view::{MarkdownStyle, MarkdownView, MarkdownViewEvent};
@@ -62,6 +63,20 @@ pub(crate) const MARKDOWN_PREVIEW_CONTEXT: &str = "markdown_preview";
 
 /// Shows a Markdown tab's preview in its editor's place, or its editor.
 pub(crate) const TOGGLE_PREVIEW: &str = "markdown.toggle_preview";
+
+/// The editor's Save, listed by the palette in a preview shown in its
+/// editor's place too, where the preview saves the editor's file: no other
+/// editor command applies there.
+pub(crate) fn palette_commands() -> Vec<CommandMeta> {
+    let in_place = ContextPredicate::identifier(MARKDOWN_PREVIEW_CONTEXT);
+    (fe_gpui::commands::command_list().into_iter())
+        .filter(|meta| meta.id.as_str() == "editor.save")
+        .map(|meta| CommandMeta {
+            context: Some(in_place.clone()),
+            ..meta
+        })
+        .collect()
+}
 
 /// The previews shown in their editors' places, by editor: kept as the
 /// editor's tab moves to another pane, and dropped with the editor.

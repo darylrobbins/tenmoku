@@ -6,6 +6,7 @@
 //! [`Pane::tabs`] keeps a [`Tab`] per item in step.
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     io,
     ops::Range,
@@ -23,6 +24,7 @@ use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
     commands::RunCommand,
 };
+use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
     UiTheme, file_icon,
@@ -154,6 +156,8 @@ pub struct Pane {
     /// request to edit its file prompts in.
     window: Option<AnyWindowHandle>,
     this: WeakEntity<Pane>,
+    /// The keys typed in a Markdown preview shown in a tab, toward a Save.
+    save_keys: Rc<RefCell<SaveKeys>>,
     /// Hears each viewer tab's [`FileViewerEvent::EditRequested`].
     viewer_events: HashMap<TabId, Subscription>,
     /// Reads of the files of viewer tabs being converted to editors.
@@ -174,17 +178,39 @@ pub struct Pane {
 /// Saves the file, in the editor and in its preview shown in its place.
 const SAVE: &str = "editor.save";
 
-/// Whether `keystroke` alone runs [`SAVE`] in the workbench's editor, as
-/// the keymap has it now: no binding names the preview shown in an
-/// editor's place, so its keys go unmatched to its key listener.
-fn saves_in_editor(keystroke: &gpui::Keystroke, cx: &App) -> bool {
-    let in_editor: ContextStack = [crate::KEY_CONTEXT, fe_editor::commands::CONTEXT]
-        .into_iter()
-        .map(ContextFrame::new)
-        .collect();
-    kiln_platform::keys::keystroke(keystroke)
-        .and_then(|keystroke| kiln_platform::keys::lookup(&keystroke, &in_editor, cx))
-        .is_some_and(|run| run.command.as_str() == SAVE)
+/// The keys typed in a Markdown preview shown in an editor's place,
+/// matched as the workbench's editor would match them, with the keymap
+/// they're matched against: for [`SaveKeys::saves`].
+#[derive(Default)]
+struct SaveKeys(Option<(Arc<Keymap>, Matcher)>);
+
+impl SaveKeys {
+    /// Whether `keystroke` ends a key or chord that runs [`SAVE`] in the
+    /// workbench's editor, as the keymap has it now. No binding names the
+    /// preview, so its keys go on unmatched to its key listener; any other
+    /// command they'd run in the editor doesn't apply.
+    fn saves(&mut self, keystroke: &gpui::Keystroke, cx: &App) -> bool {
+        let keymap = fe_gpui::current_keymap(cx);
+        if (self.0.as_ref()).is_none_or(|(matched, _)| !Arc::ptr_eq(matched, &keymap)) {
+            self.0 = Some((keymap.clone(), Matcher::new(keymap)));
+        }
+        let (_, matcher) = self.0.as_mut().expect("just made");
+        let Some(keystroke) = kiln_platform::keys::keystroke(keystroke) else {
+            matcher.flush();
+            return false;
+        };
+        let in_editor: ContextStack = [crate::KEY_CONTEXT, fe_editor::commands::CONTEXT]
+            .into_iter()
+            .map(ContextFrame::new)
+            .collect();
+        let mut outcome = matcher.push(keystroke, &in_editor);
+        // A keystroke that ends a chord matching nothing starts afresh, as
+        // the keymap's own matching has it.
+        if matches!(&outcome, KeyOutcome::Unmatched(keys) if keys.len() > 1) {
+            outcome = matcher.push(keystroke, &in_editor);
+        }
+        matches!(outcome, KeyOutcome::Dispatch(run) if run.command.as_str() == SAVE)
+    }
 }
 
 /// What a Markdown tab shows: see [`Pane::markdown_shown`].
@@ -247,6 +273,7 @@ impl Pane {
             find: None,
             window: None,
             this: cx.weak_entity(),
+            save_keys: Rc::default(),
             viewer_events: HashMap::new(),
             conversions: HashMap::new(),
             #[cfg(test)]
@@ -1509,12 +1536,12 @@ impl Render for Pane {
             // Saving saves the file, from the keys that save in the editor
             // and from the menu; the editor's other commands don't apply.
             let editor = tab.editor().cloned();
-            let saver = editor.clone();
+            let (saver, keys) = (editor.clone(), self.save_keys.clone());
             div()
                 .key_context(MARKDOWN_PREVIEW_CONTEXT)
                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                     if let Some(editor) = &saver
-                        && saves_in_editor(&event.keystroke, cx)
+                        && keys.borrow_mut().saves(&event.keystroke, cx)
                     {
                         editor.update(cx, |editor, cx| editor.save_from_command(window, cx));
                         cx.stop_propagation();
