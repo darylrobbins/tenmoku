@@ -100,7 +100,7 @@ pub(crate) fn setup(workspace: &mut Workspace, window: &mut Window, cx: &mut Con
     let dock = workspace.dock(Left).cloned();
     workspace.on_restore(move |saved, _, cx| {
         for (dock, saved) in dock.iter().zip(saved.get("dock")) {
-            dock.update(cx, |dock, _| dock.dock_mut().restore(saved));
+            dock.update(cx, |dock, cx| dock.dock_mut().restore(saved, cx));
         }
     });
     // Once the restore, if any, has started.

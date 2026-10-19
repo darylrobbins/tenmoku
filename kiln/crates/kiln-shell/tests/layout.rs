@@ -190,7 +190,7 @@ impl Host {
     fn entry(&self, cx: &App) -> Value {
         Value::from_iter([
             ("panes", layout::save_panes(&self.group, &self.active, cx)),
-            ("dock", self.dock.save()),
+            ("dock", self.dock.save(cx)),
         ])
     }
 }
@@ -284,7 +284,7 @@ fn two_split_views_of_a_document_round_trip(cx: &mut TestAppContext) {
             host.group.set_root(panes.root);
             host.active = panes.active;
             host.sync_peers(cx);
-            host.dock.restore(&entry["dock"]);
+            host.dock.restore(&entry["dock"], cx);
         });
         panes.filled
     });

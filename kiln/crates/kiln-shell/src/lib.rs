@@ -17,7 +17,9 @@
 //! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
 //! shows one modal view, such as a [`Picker`] ([`modal`]). A panel can
 //! stack several views under collapsible headers in a [`ViewStack`]
-//! ([`view_stack`]).
+//! ([`view_stack`]); a [`ViewContainer`] is such a panel, its views
+//! registered by id and their state kept in saved layouts
+//! ([`view_container`]).
 //!
 //! [`Shell`] is a window's shell around the host's centre view: the chrome,
 //! the docks, the status bar and the modal layer, under the app's root key
@@ -48,6 +50,7 @@ mod shell;
 pub mod status;
 mod title_bar;
 pub mod trust;
+pub mod view_container;
 pub mod view_stack;
 pub mod window_frame;
 pub mod workspace;
@@ -69,6 +72,7 @@ pub use root::Root;
 pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
+pub use view_container::{ViewContainer, ViewSpec};
 pub use view_stack::{StackedView, ViewId, ViewStack};
 pub use workspace::{Workspace, WorkspaceEvent};
 

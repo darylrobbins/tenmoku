@@ -416,7 +416,7 @@ impl Dock {
     /// Puts back the state [`DockState::save`] saved: whether it shows, its
     /// active panel and whether References has joined the rail.
     pub(crate) fn restore(&mut self, saved: &fe_command::Value, cx: &mut Context<Self>) {
-        self.state.restore(saved);
+        self.state.restore(saved, cx);
         cx.notify();
     }
 

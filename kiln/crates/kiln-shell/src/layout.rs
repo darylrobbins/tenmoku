@@ -28,7 +28,7 @@
 //!
 //! A host's [`WindowLayout`] saves the window's entry through one
 //! background [`Writer`]: when its shape (the entry without the items'
-//! states and the bounds) changes, and in full when the app quits. When the
+//! states and the bounds, [`shape`]) changes, and in full when the app quits. When the
 //! window closes while others stay open, its entry is deleted; closing the
 //! last window, or quitting, keeps it. Its claim is released after its
 //! last write.
@@ -192,21 +192,32 @@ fn save_member<V: PaneView>(
     }
 }
 
-/// `entry` without what changes without the layout changing: the items'
-/// states and the window's bounds.
+/// `entry` without what changes without the layout changing: the window's
+/// `bounds`, at the top, and each pane item's `state` (an item being an
+/// object with a `kind`). A panel's own state, under a saved dock's
+/// `panels` ([`DockState::save`](crate::DockState::save)), is shape
+/// whatever its keys.
 pub fn shape(entry: &Value) -> Value {
     fn strip(value: &mut Value) {
         match value {
             Value::Object(object) => {
-                object.remove("state");
-                object.remove("bounds");
-                object.values_mut().for_each(strip);
+                if object.contains_key("kind") {
+                    object.remove("state");
+                }
+                for (key, value) in object.iter_mut() {
+                    if key != "panels" {
+                        strip(value);
+                    }
+                }
             }
             Value::Array(values) => values.iter_mut().for_each(strip),
             _ => {}
         }
     }
     let mut shape = entry.clone();
+    if let Some(object) = shape.as_object_mut() {
+        object.remove("bounds");
+    }
     strip(&mut shape);
     shape
 }

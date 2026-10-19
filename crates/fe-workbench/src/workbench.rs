@@ -2690,8 +2690,8 @@ impl LayoutKeys {
         ]);
         let mut keys = vec![
             ("docks", docks),
-            ("dock", sidebar.save()),
-            ("terminal_dock", terminal_dock_sizes(&terminal.save())),
+            ("dock", sidebar.save(cx)),
+            ("terminal_dock", terminal_dock_sizes(&terminal.save(cx))),
             ("breadcrumbs", Value::from(self.breadcrumbs.get())),
         ];
         if let Some(bounds) = self.bounds.get() {

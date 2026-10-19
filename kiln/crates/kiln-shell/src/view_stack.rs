@@ -146,6 +146,32 @@ impl ViewStack {
         cx.notify();
     }
 
+    /// Adds `view` at `ix` among the views, top to bottom (below them all
+    /// past the last), or, if a view with its id is there, moves that one
+    /// to `ix` among the others and puts `view` in its place, as
+    /// [`ViewStack::add`] does.
+    pub fn insert(&mut self, ix: usize, view: StackedView, cx: &mut Context<Self>) {
+        let entry = match self.views.iter().position(|entry| entry.view.id == view.id) {
+            Some(at) => {
+                let mut entry = self.views.remove(at);
+                let (collapsed, weight) = (entry.view.collapsed, entry.view.weight);
+                entry.view = StackedView {
+                    collapsed,
+                    weight,
+                    ..view
+                };
+                entry
+            }
+            None => Entry {
+                view,
+                focus: cx.focus_handle().tab_stop(true),
+                drawn: ScrollHandle::new(),
+            },
+        };
+        self.views.insert(ix.min(self.views.len()), entry);
+        cx.notify();
+    }
+
     /// The views' ids, top to bottom.
     pub fn view_ids(&self) -> Vec<ViewId> {
         self.views.iter().map(|entry| entry.view.id).collect()

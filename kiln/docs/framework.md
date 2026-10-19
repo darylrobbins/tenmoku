@@ -103,6 +103,27 @@ an app's AI backend can load the same commands, config and keymaps.
   and `Dock`, and a `RootTrust` that any `TrustHost` view holds. The
   modal layer (`ModalLayer`, `ModalId`) shows any `ModalView`: a GPUI
   `ManagedView` that can be dismissed from outside, as `Picker` can.
+- **View containers.** A `ViewContainer` is a dock panel (a `DockItem`
+  with an id, title, icon and optional show command) that an app
+  registers views into by id: `add_view(ViewSpec { id, title, order,
+  default_collapsed, view }, cx)` puts each in the container's
+  `ViewStack` under a collapsible header, top to bottom by `order`, views
+  of equal order as they were added. A view added with an id that's
+  there replaces it, moving to the new order but keeping its collapse and
+  weight. Any panel can keep state of its own in a saved layout through
+  `DockItem::save_state` and `restore_state`, which default to saving
+  nothing and restoring nothing: `DockState::save` keeps each panel's
+  under `"panels"` by its id, leaving the key out when no panel has
+  state, and `DockState::restore` hands it back to the panels registered
+  by then. A container's state is its stack's, `{"views": {"<id>":
+  {"collapsed", "weight"}}}`, so a view's collapse persists through the
+  workspace's layout. A saved view or panel that isn't there is ignored,
+  and a layout saved before panels had state restores as it did. `Dock`
+  hears its panels however they were registered, and notifies when one's
+  saved state changes, so the workspace saves its layout as a view
+  collapses or expands. A layout's shape, which decides those saves,
+  leaves out only the window's bounds and pane items' states, never a
+  panel's.
 - **Closing asks first.** Every path that removes items (a tab, a tab
   dropped on a copy of its document, a pane, a window by command or by its
   close button, and quitting, window by window) asks them through

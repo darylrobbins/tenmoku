@@ -328,40 +328,42 @@ fn the_width_at_a_side_and_the_height_at_the_bottom_are_kept_apart(cx: &mut Test
     assert_eq!(sizes, (BUILT + px(100.), px(120.)));
 }
 
-#[test]
-fn both_sizes_are_saved_and_restored() {
-    let mut dock = DockState::new(DockPosition::Bottom).size(BUILT);
-    dock.set_size(px(300.));
-    dock.set_position(DockPosition::Right);
-    dock.set_size(px(260.));
-    let saved = dock.save();
-    let get = |key| saved.get(key).and_then(Value::as_f64);
-    assert_eq!(get("size"), Some(260.));
-    assert_eq!(get("side_size"), Some(260.));
-    assert_eq!(get("bottom_size"), Some(300.));
+#[gpui::test]
+fn both_sizes_are_saved_and_restored(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut dock = DockState::new(DockPosition::Bottom).size(BUILT);
+        dock.set_size(px(300.));
+        dock.set_position(DockPosition::Right);
+        dock.set_size(px(260.));
+        let saved = dock.save(cx);
+        let get = |key| saved.get(key).and_then(Value::as_f64);
+        assert_eq!(get("size"), Some(260.));
+        assert_eq!(get("side_size"), Some(260.));
+        assert_eq!(get("bottom_size"), Some(300.));
 
-    // Restored at either position, both come back.
-    for position in [DockPosition::Bottom, DockPosition::Left] {
-        let mut restored = DockState::new(position).size(BUILT);
-        restored.restore(&saved);
-        assert_eq!(restored.side_size(), px(260.), "{position:?}");
-        assert_eq!(restored.bottom_size(), px(300.), "{position:?}");
-    }
+        // Restored at either position, both come back.
+        for position in [DockPosition::Bottom, DockPosition::Left] {
+            let mut restored = DockState::new(position).size(BUILT);
+            restored.restore(&saved, cx);
+            assert_eq!(restored.side_size(), px(260.), "{position:?}");
+            assert_eq!(restored.bottom_size(), px(300.), "{position:?}");
+        }
 
-    // Each at least its own least.
-    let small = Value::from_iter([
-        ("side_size", Value::from(20.)),
-        ("bottom_size", Value::from(20.)),
-    ]);
-    let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
-    restored.restore(&small);
-    assert_eq!(restored.side_size(), MIN_DOCK_WIDTH);
-    assert_eq!(restored.bottom_size(), MIN_DOCK_HEIGHT);
+        // Each at least its own least.
+        let small = Value::from_iter([
+            ("side_size", Value::from(20.)),
+            ("bottom_size", Value::from(20.)),
+        ]);
+        let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
+        restored.restore(&small, cx);
+        assert_eq!(restored.side_size(), MIN_DOCK_WIDTH);
+        assert_eq!(restored.bottom_size(), MIN_DOCK_HEIGHT);
 
-    // Saved with only a size, it's the size at the dock's position.
-    let old = Value::from_iter([("size", Value::from(310.))]);
-    let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
-    restored.restore(&old);
-    assert_eq!(restored.bottom_size(), px(310.));
-    assert_eq!(restored.side_size(), BUILT);
+        // Saved with only a size, it's the size at the dock's position.
+        let old = Value::from_iter([("size", Value::from(310.))]);
+        let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
+        restored.restore(&old, cx);
+        assert_eq!(restored.bottom_size(), px(310.));
+        assert_eq!(restored.side_size(), BUILT);
+    });
 }

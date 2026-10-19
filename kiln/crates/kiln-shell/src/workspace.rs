@@ -667,7 +667,7 @@ impl<P: PaneView> Workspace<P> {
         };
         for (position, name) in DOCKS {
             if let Some(dock) = self.docks.get(&position) {
-                docks.insert(name.into(), dock.read(cx).dock().save());
+                docks.insert(name.into(), dock.read(cx).dock().save(cx));
             }
         }
         let panes = layout::save_panes(&self.group, &self.active, cx);
@@ -722,7 +722,7 @@ impl<P: PaneView> Workspace<P> {
                 continue;
             };
             dock.update(cx, |dock, cx| {
-                dock.dock_mut().restore(saved);
+                dock.dock_mut().restore(saved, cx);
                 cx.notify();
             });
         }

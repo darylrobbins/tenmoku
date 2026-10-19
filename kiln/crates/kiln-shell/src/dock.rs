@@ -46,10 +46,10 @@ use std::{
 
 use gpui::{
     AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, CursorStyle,
-    DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, Global, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
-    ScrollHandle, SharedString, Size, StatefulInteractiveElement as _, Styled as _, Window,
-    WindowId, canvas, div, prelude::FluentBuilder as _, px,
+    DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
+    Point, Render, ScrollHandle, SharedString, Size, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, WindowId, canvas, div, prelude::FluentBuilder as _, px,
 };
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
@@ -151,6 +151,19 @@ pub trait DockItem: Render + Focusable + 'static {
     fn focus_on_show(&self) -> bool {
         false
     }
+
+    /// Its own state, for a saved layout: [`DockState::save`] keeps it
+    /// under the panel's id. None, saving nothing, unless a panel has
+    /// state to keep, as a [`ViewContainer`](crate::ViewContainer) keeps
+    /// its views' collapse.
+    fn save_state(&self, _cx: &App) -> Option<Value> {
+        None
+    }
+
+    /// Puts back what [`DockItem::save_state`] saved, as
+    /// [`DockState::restore`] finds it under the panel's id. It does
+    /// nothing unless a panel saves state.
+    fn restore_state(&mut self, _saved: &Value, _cx: &mut Context<Self>) {}
 }
 
 /// A registered panel: its entity, without its type.
@@ -162,6 +175,10 @@ trait PanelHandle {
     fn always_on_rail(&self, cx: &App) -> bool;
     fn focus_on_show(&self, cx: &App) -> bool;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
+    fn save_state(&self, cx: &App) -> Option<Value>;
+    fn restore_state(&self, saved: &Value, cx: &mut App);
+    /// Calls `changed` as the panel notifies.
+    fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Subscription;
     fn to_any_view(&self) -> AnyView;
     fn to_any_entity(&self) -> AnyEntity;
     fn type_id(&self) -> TypeId;
@@ -200,6 +217,18 @@ impl<P: DockItem> PanelHandle for Panel<P> {
 
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.entity.focus_handle(cx)
+    }
+
+    fn save_state(&self, cx: &App) -> Option<Value> {
+        self.entity.read(cx).save_state(cx)
+    }
+
+    fn restore_state(&self, saved: &Value, cx: &mut App) {
+        (self.entity).update(cx, |panel, cx| panel.restore_state(saved, cx));
+    }
+
+    fn observe(&self, changed: Box<dyn Fn(&mut App)>, cx: &mut App) -> Subscription {
+        cx.observe(&self.entity, move |_, cx| changed(cx))
     }
 
     fn to_any_view(&self) -> AnyView {
@@ -670,26 +699,38 @@ impl DockState {
 
     /// The dock's state, for a saved layout: whether it shows, its active
     /// panel, the panels that have joined the rail and its size, `"size"`
-    /// at its position, `"side_size"` and `"bottom_size"` at each.
-    pub fn save(&self) -> Value {
+    /// at its position, `"side_size"` and `"bottom_size"` at each; and,
+    /// if any panel saves state of its own ([`DockItem::save_state`]),
+    /// `"panels"`, each one's by its id.
+    pub fn save(&self, cx: &App) -> Value {
         let size = |size: Pixels| Value::from(f64::from(f32::from(size)));
         let ids = |ids: Vec<PanelId>| Value::from_iter(ids.into_iter().map(|id| id.0));
-        Value::from_iter([
+        let mut saved = Value::from_iter([
             ("visible", Value::from(self.visible)),
             ("active", self.active.map_or(Value::Null, |id| id.0.into())),
             ("joined", ids(self.joined())),
             ("size", size(self.current_size())),
             ("side_size", size(self.side_size)),
             ("bottom_size", size(self.bottom_size)),
-        ])
+        ]);
+        let panels: serde_json::Map<_, _> = (self.panels.iter())
+            .filter_map(|panel| Some((panel.id().0.to_owned(), panel.save_state(cx)?)))
+            .collect();
+        // Without, it's as a dock saved before panels had state.
+        if !panels.is_empty() {
+            saved["panels"] = Value::Object(panels);
+        }
+        saved
     }
 
     /// Puts back what [`DockState::save`] saved, as far as its panels are
     /// registered: whether it shows, its active panel (without focusing
     /// it), the panels that had joined the rail and its sizes, each at
     /// least its least: `"side_size"` and `"bottom_size"`, else, saved
-    /// before a dock had both, `"size"` at its position.
-    pub fn restore(&mut self, saved: &Value) {
+    /// before a dock had both, `"size"` at its position. Each registered
+    /// panel saved under `"panels"` gets its state back
+    /// ([`DockItem::restore_state`]); the others are left as they are.
+    pub fn restore(&mut self, saved: &Value, cx: &mut App) {
         let size = |key| {
             saved
                 .get(key)
@@ -728,6 +769,12 @@ impl DockState {
         self.joined.extend(joined);
         if let Some(active) = self.active {
             self.joined.insert(active);
+        }
+        let panels = saved.get("panels").and_then(Value::as_object);
+        for panel in &self.panels {
+            if let Some(state) = panels.and_then(|panels| panels.get(panel.id().0)) {
+                panel.restore_state(state, cx);
+            }
         }
     }
 
@@ -1083,27 +1130,88 @@ pub enum DockEvent {
     HidFocus,
 }
 
+/// A registered panel the dock hears.
+struct Watched {
+    entity: EntityId,
+    /// Its state as last heard ([`DockItem::save_state`]).
+    saved: Option<Value>,
+    _changed: Subscription,
+}
+
 /// Kiln's dock view.
 pub struct Dock {
     state: DockState,
+    /// The panels it hears, by id.
+    watched: HashMap<PanelId, Watched>,
 }
 
 impl Dock {
     pub fn new(position: DockPosition) -> Self {
-        Self {
-            state: DockState::new(position),
-        }
+        Self::with_state(DockState::new(position))
     }
 
     /// Kiln's dock over `state`, as built.
     pub fn with_state(state: DockState) -> Self {
-        Self { state }
+        Self {
+            state,
+            watched: HashMap::new(),
+        }
     }
 
-    /// See [`DockState::add_panel`].
+    /// See [`DockState::add_panel`]. The dock notifies as a panel's own
+    /// state ([`DockItem::save_state`]) changes, so an observer that saves
+    /// the dock's state, as [`Workspace`](crate::Workspace)'s layout does,
+    /// saves the panel's. It hears the panels its state was built with, or
+    /// that were added through [`DockView::dock_mut`], from when it next
+    /// draws, and notifies then.
     pub fn add_panel<P: DockItem>(&mut self, panel: Entity<P>, cx: &mut Context<Self>) {
         self.state.add_panel(panel, cx);
+        self.watch_panels(cx);
         cx.notify();
+    }
+
+    /// Hears each registered panel it doesn't yet, as the entity it is
+    /// now, and no longer those that went. True if it heard one anew.
+    fn watch_panels(&mut self, cx: &mut Context<Self>) -> bool {
+        let panels = &self.state.panels;
+        (self.watched).retain(|id, _| panels.iter().any(|panel| panel.id() == *id));
+        let mut added = false;
+        for panel in panels {
+            let (id, entity) = (panel.id(), panel.to_any_entity().entity_id());
+            if self
+                .watched
+                .get(&id)
+                .is_some_and(|watched| watched.entity == entity)
+            {
+                continue;
+            }
+            let dock = cx.weak_entity();
+            let changed = Box::new(move |cx: &mut App| {
+                (dock.update(cx, |dock, cx| dock.panel_changed(id, cx))).ok();
+            });
+            let watched = Watched {
+                entity,
+                saved: panel.save_state(cx),
+                _changed: panel.observe(changed, cx),
+            };
+            self.watched.insert(id, watched);
+            added = true;
+        }
+        added
+    }
+
+    /// `panel` notified: the dock notifies if its state changed.
+    fn panel_changed(&mut self, panel: PanelId, cx: &mut Context<Self>) {
+        let (Some(handle), Some(watched)) =
+            (self.state.handle(panel), self.watched.get_mut(&panel))
+        else {
+            return;
+        };
+        let saved = handle.save_state(cx);
+        if saved != watched.saved {
+            watched.saved = saved;
+            cx.notify();
+        }
     }
 
     /// See [`DockState::show`].
@@ -1167,6 +1275,12 @@ impl DockView for Dock {
 
 impl Render for Dock {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Panels registered without the dock: what changed in them before
+        // it heard them is saved as it notifies.
+        if self.watch_panels(cx) {
+            let dock = cx.weak_entity();
+            cx.defer(move |cx| _ = dock.update(cx, |_, cx| cx.notify()));
+        }
         self.state.render(cx)
     }
 }

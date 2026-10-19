@@ -107,7 +107,7 @@ fn new_dock(position: DockPosition, saved: Option<&Value>, cx: &mut App) -> Enti
     cx.new(|cx| {
         let mut state = DockState::new(position).size(BUILT);
         if let Some(saved) = saved {
-            state.restore(saved);
+            state.restore(saved, cx);
         }
         let mut dock = Dock::with_state(state);
         let panel = cx.new(|cx| Panel(cx.focus_handle()));
@@ -481,22 +481,24 @@ fn a_dock_replaced_while_kept_leaves_nothing_behind(cx: &mut TestAppContext) {
     });
 }
 
-#[test]
-fn the_size_is_saved_and_restored_at_least_the_least() {
-    let mut dock = DockState::new(DockPosition::Right).size(BUILT);
-    dock.set_size(px(260.));
-    let saved = dock.save();
-    assert_eq!(saved.get("size").and_then(Value::as_f64), Some(260.));
+#[gpui::test]
+fn the_size_is_saved_and_restored_at_least_the_least(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut dock = DockState::new(DockPosition::Right).size(BUILT);
+        dock.set_size(px(260.));
+        let saved = dock.save(cx);
+        assert_eq!(saved.get("size").and_then(Value::as_f64), Some(260.));
 
-    let restored = |position, saved: &Value| {
-        let mut dock = DockState::new(position).size(BUILT);
-        dock.restore(saved);
-        dock.current_size()
-    };
-    assert_eq!(restored(DockPosition::Right, &saved), px(260.));
-    let small = Value::from_iter([("size", Value::from(20.))]);
-    assert_eq!(restored(DockPosition::Right, &small), MIN_DOCK_WIDTH);
-    assert_eq!(restored(DockPosition::Bottom, &small), MIN_DOCK_HEIGHT);
-    let none = Value::from_iter([("visible", Value::from(true))]);
-    assert_eq!(restored(DockPosition::Right, &none), BUILT);
+        let mut restored = |position, saved: &Value| {
+            let mut dock = DockState::new(position).size(BUILT);
+            dock.restore(saved, cx);
+            dock.current_size()
+        };
+        assert_eq!(restored(DockPosition::Right, &saved), px(260.));
+        let small = Value::from_iter([("size", Value::from(20.))]);
+        assert_eq!(restored(DockPosition::Right, &small), MIN_DOCK_WIDTH);
+        assert_eq!(restored(DockPosition::Bottom, &small), MIN_DOCK_HEIGHT);
+        let none = Value::from_iter([("visible", Value::from(true))]);
+        assert_eq!(restored(DockPosition::Right, &none), BUILT);
+    });
 }
