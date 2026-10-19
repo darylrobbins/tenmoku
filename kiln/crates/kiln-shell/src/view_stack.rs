@@ -396,12 +396,25 @@ impl ViewStack {
         }
         let height = (above_height + (to.y - at.y)).clamp(MIN_VIEW_BODY_HEIGHT, max);
         // The pair's total stays, so the other views' shares do. In f64,
-        // and held to splits where both weights still fit an f32.
+        // which a split of two f32 weights can't overflow.
         let total = f64::from(above_weight) + f64::from(below_weight);
-        let fit = f64::from(f32::MAX) / total;
-        let share = f64::from(height / pair_height).clamp(1. - fit, fit);
-        let new_above = (total * share) as f32;
-        let new_below = (total - f64::from(new_above)) as f32;
+        let share = f64::from(height / pair_height);
+        let (mut new_above, mut new_below) = (total * share, total * (1. - share));
+        let largest = new_above.max(new_below);
+        let max = f64::from(f32::MAX);
+        if largest > max {
+            // The split doesn't fit an f32 weight: scale every weight in
+            // the stack down alike, keeping their relative shares; only a
+            // weight scaled to nothing is held at the smallest positive one.
+            let scale = max / largest;
+            for entry in &mut self.views {
+                let scaled = f64::from(entry.view.weight) * scale;
+                entry.view.weight = (scaled as f32).max(f32::from_bits(1));
+            }
+            new_above *= scale;
+            new_below *= scale;
+        }
+        let (new_above, new_below) = (new_above.min(max) as f32, new_below.min(max) as f32);
         if !valid_weight(new_above) || !valid_weight(new_below) {
             return None;
         }
@@ -409,6 +422,9 @@ impl ViewStack {
         self.entry_mut(below)?.view.weight = new_below;
         if let Some(press) = &mut self.press {
             press.applied = (new_above, new_below);
+            // The rest of the drag measures from the scaled weights.
+            press.above.1 = new_above;
+            press.below.1 = new_below;
         }
         Some(())
     }
