@@ -106,6 +106,7 @@ use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
 use crate::semantic_tokens;
 use crate::workspace_edit::{Asked, Edits, HandedReply, decode};
+use lsp_types::WorkspaceFileOperationsClientCapabilities;
 
 /// How long `initialize` may take before the start counts as failed.
 pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -2253,6 +2254,16 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             workspace_folders: Some(true),
             configuration: Some(true),
+            // No willCreate or willDelete: their edits would need the same
+            // flow for operations fastedit can't hold.
+            file_operations: Some(WorkspaceFileOperationsClientCapabilities {
+                dynamic_registration: dynamic,
+                did_create: Some(true),
+                will_rename: Some(true),
+                did_rename: Some(true),
+                did_delete: Some(true),
+                ..Default::default()
+            }),
             // Answered by the host, through `LspEvent::ApplyEdit`
             // (workspace_edit.rs), which takes edits to files' text only.
             apply_edit: Some(true),

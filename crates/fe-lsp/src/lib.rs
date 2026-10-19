@@ -80,6 +80,7 @@ mod document;
 pub mod document_highlight;
 mod encoding;
 mod event;
+mod file_operations;
 pub mod formatting;
 #[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
 mod glob;

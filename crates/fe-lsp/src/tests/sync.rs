@@ -19,6 +19,8 @@ use crate::fake::{Echo, FakeServer, InitializeReply, Record, Replica, Saved, Scr
 use crate::server::BACKSTOP;
 use crate::{LspManager, ManualClock, ServerId, ServerSpec, ServerStatus};
 
+mod file_operations;
+
 const ROOT: &str = "/fake/root";
 
 /// A started server on the fake, with a manual clock, so the backstop tick
