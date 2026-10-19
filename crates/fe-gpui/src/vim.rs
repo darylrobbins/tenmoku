@@ -26,7 +26,9 @@
 //! input method joins the insert session, and `Enter` goes in through
 //! [`VimState::line_break`], and `ctrl-t` and `ctrl-d` shift the row's
 //! indent ([`VimState::indent_in`], [`VimState::indent_out`]), in replace mode
-//! too. `ctrl-o` there runs one normal-mode command ([`VimState::one_command`]):
+//! too, and `ctrl-w` and `ctrl-u` delete the word and the typed text before
+//! the caret ([`VimState::insert_key`], which any other ctrl key goes to,
+//! to be dropped). `ctrl-o` there runs one normal-mode command ([`VimState::one_command`]):
 //! the mode is `normal` with the flag `vim.insert_pending` until it's done,
 //! the caret a block, and keys go to the reducer as in normal mode; once
 //! `fe-vim`'s registry has run the command ([`fe_vim::dispatch`]), or the
@@ -46,7 +48,7 @@
 //! it: the reducer records the keys it reads, and the editor the ones it
 //! takes itself ([`VimState::record_key`]): in insert and replace mode the
 //! text typed or committed by an input method (never what it's composing),
-//! `<CR>`, `<BS>`, `<Esc>` and the arrows, and the command line's text and
+//! `<CR>`, `<BS>`, `<Esc>`, the arrows and the ctrl keys vim takes there, and the command line's text and
 //! the key that ended it, which the host's line reports
 //! ([`EditorView::record_command_line`]). An editor command with no vim key,
 //! such as `alt-backspace`, is left out, logged once a recording. `@` hands
@@ -1588,7 +1590,7 @@ impl EditorView {
         self.drop_remap_wait(cx);
         if self.accepts_text() {
             // `ctrl-t`, `ctrl-d` and `ctrl-o` are vim's in insert and
-            // replace mode.
+            // replace mode, and so are the other ctrl keys it takes.
             return match vim_key(keystroke) {
                 Some(key @ VimKey::Ctrl('t' | 'd')) if self.typing_mode().is_some() => {
                     self.record_vim_key(key);
@@ -1607,6 +1609,7 @@ impl EditorView {
                     self.record_vim_key(key);
                     self.complete_typing(key, cx)
                 }
+                Some(key @ VimKey::Ctrl(_)) => self.insert_key_typing(key, cx),
                 _ => false,
             };
         }
@@ -1861,6 +1864,45 @@ impl EditorView {
             return false;
         };
         let ((), transactions) = self.model.run_as(origin, |model| state.one_command(model));
+        let result: Result<_, DispatchError> =
+            Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
+        self.dispatched(result, &invocation, true, cx).is_ok()
+    }
+
+    /// A ctrl key in insert or replace mode, one the keymap left or bound to
+    /// `vim.key`: to [`VimState::insert_key`] (`<C-w>`, `<C-u>`), in the
+    /// session, and recorded. Returns whether vim took it; it drops any
+    /// other.
+    fn insert_key_typing(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+        let takes = |state: &VimState| state.takes_insert_key(key);
+        if self.typing_mode().is_none() || !self.vim.as_ref().is_some_and(takes) {
+            return false;
+        }
+        self.record_vim_key(key);
+        if self.read_only {
+            self.refuse_edit(cx);
+            return true;
+        }
+        let invocation = Invocation::of(KEY)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        let origin = fe_editor::commands::origin(&invocation.actor);
+        let page_rows = self.page_rows();
+        let syntax = synced_syntax(&self.syntax, &self.model);
+        let language = loaded_language(&self.syntax);
+        let Some(state) = &self.vim else {
+            return false;
+        };
+        let host = ViewHost {
+            cx,
+            page_rows,
+            syntax,
+            language,
+            vim: true,
+        };
+        let (_, transactions) = self
+            .model
+            .run_as(origin, |model| state.insert_key(model, &host, key));
         let result: Result<_, DispatchError> =
             Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
         self.dispatched(result, &invocation, true, cx).is_ok()
@@ -2307,6 +2349,7 @@ impl EditorView {
                     VimKey::Ctrl('e' | 'y') if self.keyword_completion().is_some() => {
                         return self.complete_typing(key, cx);
                     }
+                    VimKey::Ctrl(_) => return self.insert_key_typing(key, cx),
                     VimKey::Esc => {
                         let normal = match mode {
                             fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,

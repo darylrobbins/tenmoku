@@ -417,9 +417,10 @@ struct Ledger {
     /// indentation `Esc` takes out, a block's other rows), until noted
     /// for the marks (see `marks::Note::Ending`).
     ending: Vec<Version>,
-    /// The indent keys typed ([`keys`]), each with what the primary caret
-    /// had typed before it (in replace mode, the keys).
-    keys: Vec<(IndentKey, String)>,
+    /// The indent keys typed, and in insert mode `<C-w>` and `<C-u>`
+    /// ([`keys`]), each with what the primary caret had typed before it (in
+    /// replace mode, the keys) and after it.
+    keys: Vec<keys::Noted>,
     /// Where the last batch followed put text, in the text it left: what
     /// was just typed (`0<C-d>` reads the `0` there). Empty after another
     /// origin's batch.

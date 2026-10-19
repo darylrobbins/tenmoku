@@ -88,7 +88,8 @@ impl HeadlessVim {
     /// [`VimState::complete_next`] and [`VimState::complete_previous`],
     /// `<C-e>` and `<C-y>` while completing to [`VimState::complete_cancel`]
     /// and [`VimState::complete_accept`], and `<Esc>` dispatches `vim.normal_mode`;
-    /// any other key is forwarded. In replace mode the same, but a character
+    /// any other key goes to [`VimState::insert_key`] (`<C-w>`, `<C-u>`),
+    /// and is forwarded if it doesn't take it. In replace mode the same, but a character
     /// goes to [`VimState::replace_text`], `<BS>` to
     /// [`VimState::replace_backspace`] and `<Esc>` dispatches
     /// `vim.replace_normal_mode`. Nor in `cmdline` mode: a character goes
@@ -192,6 +193,7 @@ impl HeadlessVim {
                     .context(context);
                 self.dispatch(&invocation)?;
             }
+            _ if self.state.insert_key(&mut self.model, &self.host, key) => {}
             _ => return Err(FeedError::Forwarded(key)),
         }
         Ok(())
@@ -200,7 +202,7 @@ impl HeadlessVim {
     /// One key in replace mode, as [`HeadlessVim::type_key`] takes one in
     /// insert mode, but through [`VimState::replace_text`] and
     /// [`VimState::replace_backspace`], with `<Esc>` dispatching
-    /// `vim.replace_normal_mode`.
+    /// `vim.replace_normal_mode`; [`VimState::insert_key`] takes the same keys.
     fn replace_key(&mut self, key: VimKey) -> Result<(), FeedError> {
         let context = context(&self.state);
         match key {
@@ -223,6 +225,7 @@ impl HeadlessVim {
                     .context(context);
                 self.dispatch(&invocation)?;
             }
+            _ if self.state.insert_key(&mut self.model, &self.host, key) => {}
             _ => return Err(FeedError::Forwarded(key)),
         }
         Ok(())

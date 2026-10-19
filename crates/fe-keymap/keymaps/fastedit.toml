@@ -1150,45 +1150,68 @@ keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == replace"
 
-# `ctrl-t` and `ctrl-d` indent and outdent the row in insert and replace
-# mode: vim's keys, which the editor's key listener hands to fe-vim.
+# Off macOS, nvim's insert-mode ctrl keys are vim's in insert and replace
+# mode, after the workbench's bindings of them (ctrl-w closes the tab, ctrl-o
+# opens a file, ctrl-n a new one, ctrl-p quick open, ctrl-a select all), so
+# they win there. The editor's key listener hands them to fe-vim, which
+# takes those it has (`ctrl-w` and `ctrl-u` delete before the caret,
+# `ctrl-t` and `ctrl-d` shift the row's indent, `ctrl-o` runs one
+# normal-mode command) and drops the rest, never the workbench's, as in
+# nvim. On macOS no `ctrl-` binding applies in the editor: they reach it
+# unmatched.
+
+[[bindings]]
+keys = "ctrl-w"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-u"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-r"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
 
 [[bindings]]
 keys = "ctrl-t"
 command = "vim.key"
-context = "editor && vim.mode == insert"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
 platform = "!macos"
 
 [[bindings]]
 keys = "ctrl-d"
 command = "vim.key"
-context = "editor && vim.mode == insert"
-platform = "!macos"
-
-[[bindings]]
-keys = "ctrl-t"
-command = "vim.key"
-context = "editor && vim.mode == replace"
-platform = "!macos"
-
-[[bindings]]
-keys = "ctrl-d"
-command = "vim.key"
-context = "editor && vim.mode == replace"
-platform = "!macos"
-
-# `ctrl-o` runs one normal-mode command from insert or replace mode.
-
-[[bindings]]
-keys = "ctrl-o"
-command = "vim.key"
-context = "editor && vim.mode == insert"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
 platform = "!macos"
 
 [[bindings]]
 keys = "ctrl-o"
 command = "vim.key"
-context = "editor && vim.mode == replace"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-n"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-p"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-a"
+command = "vim.key"
+context = "editor && (vim.mode == insert || vim.mode == replace)"
 platform = "!macos"
 
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
