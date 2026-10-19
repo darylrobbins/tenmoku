@@ -407,6 +407,19 @@ context = "workbench"
 keys = "secondary-q"
 command = "app.quit"
 
+# The Markdown preview, as VS Code binds it. Only in the editor: the
+# terminal pastes on ctrl-shift-v. In vim it takes ctrl-shift-v, which
+# vim would read as <C-v>; plain ctrl-v still starts a visual block.
+[[bindings]]
+keys = "secondary-shift-v"
+command = "markdown.show_preview"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k v"
+command = "markdown.show_preview_to_side"
+context = "editor"
+
 [[bindings]]
 keys = "cmd-h"
 command = "app.hide"

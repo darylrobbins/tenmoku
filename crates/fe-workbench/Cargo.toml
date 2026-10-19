@@ -22,6 +22,9 @@ fe-vim.workspace = true
 fe-gpui.workspace = true
 fe-keymap.workspace = true
 fe-lsp.workspace = true
+# The Markdown preview's document and its view.
+fe-markdown.workspace = true
+fe-markdown-view.workspace = true
 fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true

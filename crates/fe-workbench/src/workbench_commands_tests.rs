@@ -158,3 +158,7 @@ fn the_catalog_knows_the_tab_commands_with_no_app() {
         assert_eq!(catalog.check(&id, &Value::Null), Ok(()), "{command}");
     }
 }
+
+#[cfg(test)]
+#[path = "markdown_preview_tests.rs"]
+mod markdown_preview_tests;

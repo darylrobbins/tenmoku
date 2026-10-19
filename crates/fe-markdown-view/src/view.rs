@@ -76,6 +76,29 @@ impl MarkdownView {
         cx.notify();
     }
 
+    /// The file the document is, which relative links and images resolve
+    /// against.
+    pub fn doc_path(&self) -> &Path {
+        &self.doc_path
+    }
+
+    /// The workspace folder rooted links and images resolve against.
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    /// Resolves links and images against `doc_path` and `root` instead,
+    /// as [`MarkdownView::new`] does, once the file moves or the workspace
+    /// folder changes.
+    pub fn set_paths(&mut self, doc_path: PathBuf, root: Option<PathBuf>, cx: &mut Context<Self>) {
+        if (&self.doc_path, &self.root) != (&doc_path, &root) {
+            self.doc_path = doc_path;
+            self.root = root;
+            self.images.clear();
+            cx.notify();
+        }
+    }
+
     pub fn style(&self) -> &MarkdownStyle {
         &self.style
     }

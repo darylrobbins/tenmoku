@@ -2065,6 +2065,8 @@ dependencies = [
  "fe-gpui",
  "fe-keymap",
  "fe-lsp",
+ "fe-markdown",
+ "fe-markdown-view",
  "fe-nav",
  "fe-project",
  "fe-syntax",

@@ -23,6 +23,9 @@ use crate::{
     workbench::recent_picker::RecentOp,
 };
 
+#[path = "markdown_preview.rs"]
+pub(crate) mod markdown_preview;
+
 #[kiln::command(context = "workbench")]
 impl Workbench {
     /// Close Tab
@@ -693,6 +696,22 @@ impl Workbench {
     #[command(id = "lsp.format_selection", context = "editor")]
     fn format_selection(&mut self, cx: &mut Cx<Self>) {
         self.in_editor(cx, |this, window, cx| this.format_active(true, window, cx));
+    }
+
+    /// Markdown: Open Preview
+    #[command(id = "markdown.show_preview", context = "editor")]
+    fn show_markdown_preview(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.open_markdown_preview(false, window, cx)
+        });
+    }
+
+    /// Markdown: Open Preview to the Side
+    #[command(id = "markdown.show_preview_to_side", context = "editor")]
+    fn show_markdown_preview_to_side(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.open_markdown_preview(true, window, cx)
+        });
     }
 
     /// Open Folder…
