@@ -8,13 +8,15 @@
 //! says which files changed, for [`SettingsStore::reload`]; [`write_setting`]
 //! changes one setting in a file, keeping its comments. [`EditorPalette`]
 //! reads the editor's colours from a kiln theme; kiln's config service
-//! selects and hot-reloads the theme itself.
+//! selects and hot-reloads the theme itself. [`themes`] lists the themes
+//! fastedit bundles, which `[theme] name` selects.
 
 pub mod editorconfig;
 pub mod paths;
 pub mod recent;
 pub mod settings;
 pub mod theme;
+pub mod themes;
 pub mod write;
 
 // The generic config machinery is kiln's (docs/decisions/app-framework.md);

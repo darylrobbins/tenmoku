@@ -21,6 +21,9 @@
 //! // The installed themes, and the two the pair starts from.
 //! let themes = kiln::extensions::themes(cx);
 //! kiln::extensions::select_themes(cx, Some("acme.solarized/solarized-dark"), None);
+//! // The app's own themes, selected as `builtin/<id>`.
+//! kiln::extensions::install_builtin_themes(cx, &[("notes-dusk", &dusk)]);
+//! kiln::extensions::select_themes(cx, Some("builtin/notes-dusk"), None);
 //! ```
 //!
 //! [`ExtensionSet`] is kiln-core's: what's loaded, its diagnostics, and the
@@ -92,32 +95,66 @@ pub fn loaded(cx: &App) -> Vec<Manifest> {
         .unwrap_or_default()
 }
 
-/// A theme an extension installed: [`themes`].
+/// A theme an extension or the app installed: [`themes`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThemeInfo {
-    /// `<extension id>/<file stem>`: `acme.solarized/solarized-dark`.
+    /// `<extension id>/<file stem>`: `acme.solarized/solarized-dark`; or
+    /// `builtin/<id>` for one of the app's ([`install_builtin_themes`]).
     pub id: String,
-    /// The file's `name`, else its stem.
+    /// The file's `name`, else its stem (or the ID it was installed by).
     pub title: String,
     pub appearance: Appearance,
 }
 
-/// The themes the extensions loaded now install, in ID order: none
-/// without [`crate::Config::extensions`].
+/// The themes installed now, in ID order: the extensions' (none without
+/// [`crate::Config::extensions`]) and the app's
+/// ([`install_builtin_themes`]).
 pub fn themes(cx: &App) -> Vec<ThemeInfo> {
     let Some(layers) = cx.try_global::<Layers>() else {
         return Vec::new();
     };
     let layers = layers.borrow();
-    layers
-        .installed
-        .iter()
+    let mut themes: Vec<ThemeInfo> = (layers.installed.iter())
+        .chain(&layers.builtin)
         .map(|(id, theme)| ThemeInfo {
             id: id.clone(),
             title: theme.title.clone(),
             appearance: theme.appearance,
         })
-        .collect()
+        .collect();
+    themes.sort_by(|a, b| a.id.cmp(&b.id));
+    themes
+}
+
+/// The namespace of the app's own themes' IDs: `builtin/<id>`. No
+/// extension's ID is one segment, so none can use it.
+pub const BUILTIN_THEMES: &str = "builtin";
+
+/// The ID [`themes`] lists, and [`select_themes`] takes, for the app's
+/// theme installed as `id`: `builtin/<id>`.
+pub fn builtin_theme_id(id: &str) -> String {
+    format!("{BUILTIN_THEMES}/{id}")
+}
+
+/// Installs the app's own `themes`, each by an ID of its own and its file,
+/// laid over the bundled base for its appearance like an extension's. Each
+/// is listed by [`themes`] as `builtin/<id>` ([`builtin_theme_id`]), for
+/// [`select_themes`] to choose, and stays across rescans of the extensions
+/// directory. One of an ID already installed replaces it.
+pub fn install_builtin_themes(cx: &mut App, themes: &[(&str, &ThemeFile)]) {
+    let layers = Layers::get(cx);
+    {
+        let mut layers = layers.borrow_mut();
+        for &(id, file) in themes {
+            let theme = Installed {
+                title: file.name.clone().unwrap_or_else(|| id.to_owned()),
+                appearance: file.appearance.unwrap_or_default(),
+                data: ThemeData::from_file(file),
+            };
+            layers.builtin.insert(builtin_theme_id(id), theme);
+        }
+    }
+    layers.apply(cx);
 }
 
 /// The installed theme each slot of the dark and light pair starts from,
@@ -128,7 +165,20 @@ pub fn themes(cx: &App) -> Vec<ThemeInfo> {
 /// bundled one until a rescan installs it. The choice holds until the next
 /// call: the app passes its settings' choice at start and on each change.
 pub fn select_themes(cx: &mut App, dark: Option<&str>, light: Option<&str>) {
-    Layers::get(cx).select(dark, light, cx);
+    select_themes_noting(cx, dark, light, Vec::new());
+}
+
+/// [`select_themes`], with what the app found wrong in the settings it
+/// made the choice from: `notes` go in
+/// [`kiln_platform::config::diagnostics`] before the choice's own, and
+/// stay there, through the config service's batches, until the next call.
+pub fn select_themes_noting(
+    cx: &mut App,
+    dark: Option<&str>,
+    light: Option<&str>,
+    notes: Vec<Diagnostic>,
+) {
+    Layers::get(cx).select(dark, light, notes, cx);
 }
 
 /// The extensions loaded, as a GPUI global.

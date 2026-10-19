@@ -1,18 +1,25 @@
 //! The editor's colours from kiln's active theme. kiln picks, loads and
 //! reloads the theme (the mode setting, the installed themes the
 //! `theme.dark` and `theme.light` settings choose, the user's theme file
-//! with fastedit's tables); this passes the choice on, and turns each
-//! active theme into the editor's palette ([`fe_gpui::set_editor_palette`]).
+//! with fastedit's tables); this installs fastedit's bundled themes
+//! ([`fe_config::themes`]) for `theme.name` to choose by title, passes the
+//! choice on, and turns each active theme into the editor's palette
+//! ([`fe_gpui::set_editor_palette`]).
 
 use std::sync::Arc;
 
-use fe_config::{EditorSettings, Settings, ThemeModeSetting, ThemeSettings, theme::EditorPalette};
+use fe_config::{
+    Diagnostic, EditorSettings, Settings, Severity, ThemeModeSetting, ThemeSettings,
+    theme::EditorPalette, themes,
+};
 use fe_gpui::EditorTheme;
 use gpui::App;
 use kiln::{
     GlobalSettings,
+    core::theme::{Appearance, ThemeFile},
     ui::{ActiveTheme as _, GlobalTheme, ThemeMode},
 };
+use toml::de::{DeTable, DeValue};
 
 /// kiln's theme mode for the `theme.mode` setting.
 pub(crate) fn mode(setting: ThemeModeSetting) -> ThemeMode {
@@ -23,13 +30,19 @@ pub(crate) fn mode(setting: ThemeModeSetting) -> ThemeMode {
     }
 }
 
-/// Chooses the installed themes the settings name
-/// ([`kiln::extensions::select_themes`]), now and whenever a reload
-/// changes them, and sets the editor's palette from kiln's active theme,
-/// now and on every change. On a change, editors restored from a saved
-/// layout from then on open in the new colours
+/// Installs the bundled themes, as `builtin/<id>`
+/// ([`kiln::extensions::install_builtin_themes`]), chooses the themes the
+/// settings name ([`kiln::extensions::select_themes`]), now and whenever a
+/// reload changes them, and sets the editor's palette from kiln's active
+/// theme, now and on every change. On a change, editors restored from a
+/// saved layout from then on open in the new colours
 /// ([`fe_gpui::set_restore_style`]). Call it after [`kiln::init`].
 pub(crate) fn init(cx: &mut App) {
+    let files: Vec<(&str, ThemeFile)> = (themes::bundled_themes().iter())
+        .map(|theme| (theme.id, theme.file()))
+        .collect();
+    let files: Vec<(&str, &ThemeFile)> = files.iter().map(|(id, file)| (*id, file)).collect();
+    kiln::extensions::install_builtin_themes(cx, &files);
     if let Some(global) = cx.try_global::<GlobalSettings<Settings>>() {
         let theme = global.settings().theme.clone();
         select(&theme, cx);
@@ -37,7 +50,7 @@ pub(crate) fn init(cx: &mut App) {
     cx.observe_global::<GlobalSettings<Settings>>(|cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
         let (now, before) = (&global.settings().theme, &global.previous().theme);
-        if (&now.dark, &now.light) != (&before.dark, &before.light) {
+        if (&now.name, &now.dark, &now.light) != (&before.name, &before.dark, &before.light) {
             let now = now.clone();
             select(&now, cx);
         }
@@ -56,9 +69,85 @@ pub(crate) fn init(cx: &mut App) {
     .detach();
 }
 
-/// Chooses the installed themes `theme.dark` and `theme.light` name.
+/// Chooses the installed themes `theme.dark` and `theme.light` name, and
+/// the bundled one `theme.name` does for the slot of its appearance,
+/// publishing what's wrong with `theme.name`.
 fn select(theme: &ThemeSettings, cx: &mut App) {
-    kiln::extensions::select_themes(cx, theme.dark.as_deref(), theme.light.as_deref());
+    let source = kiln::platform::config::accepted_sources::<Settings>(cx);
+    let (dark, light, notes) = choice(theme, source.first().map(String::as_str));
+    kiln::extensions::select_themes_noting(cx, dark.as_deref(), light.as_deref(), notes);
+}
+
+/// The installed themes the dark and light slots start from, by ID: each
+/// slot's `theme.dark` or `theme.light`, else the bundled theme
+/// `theme.name` names if it's of the slot's appearance. Then what's wrong
+/// with `theme.name`, at it in `source`, the user's settings file: a name
+/// no bundled theme has, or one that a slot's own setting overrides.
+fn choice(
+    theme: &ThemeSettings,
+    source: Option<&str>,
+) -> (Option<String>, Option<String>, Vec<Diagnostic>) {
+    let (mut dark, mut light) = (theme.dark.clone(), theme.light.clone());
+    let mut notes = Vec::new();
+    let Some(name) = theme.name.as_deref() else {
+        return (dark, light, notes);
+    };
+    let message = match themes::find(name) {
+        None => {
+            let titles: Vec<&str> = (themes::bundled_themes().iter())
+                .map(|theme| theme.title)
+                .collect();
+            format!(
+                "theme {name} isn't bundled: the bundled themes are {}",
+                titles.join(", ")
+            )
+        }
+        Some(found) => {
+            let (slot, appearance) = match found.appearance {
+                Appearance::Dark => (&mut dark, "dark"),
+                Appearance::Light => (&mut light, "light"),
+            };
+            if slot.is_none() {
+                *slot = Some(kiln::extensions::builtin_theme_id(found.id));
+                return (dark, light, notes);
+            }
+            format!(
+                "theme.name {} is ignored: theme.{appearance} chooses the {appearance} theme",
+                found.title
+            )
+        }
+    };
+    let (line, column) = source.map_or((1, 1), name_position);
+    notes.push(Diagnostic {
+        severity: Severity::Warning,
+        file: fe_config::user_settings_path().unwrap_or_default(),
+        key: Some("theme.name".to_owned()),
+        line,
+        column,
+        message,
+    });
+    (dark, light, notes)
+}
+
+/// The 1-based line and column of `theme.name` in `source`, else 1, 1.
+fn name_position(source: &str) -> (usize, usize) {
+    let offset = DeTable::parse(source).ok().and_then(|document| {
+        let (_, theme) = (document.get_ref().iter()).find(|(key, _)| key.get_ref() == "theme")?;
+        let DeValue::Table(theme) = theme.get_ref() else {
+            return None;
+        };
+        let (key, _) = theme.iter().find(|(key, _)| key.get_ref() == "name")?;
+        Some(key.span().start)
+    });
+    let Some(offset) = offset else {
+        return (1, 1);
+    };
+    let before = &source[..offset.min(source.len())];
+    let line_start = before.rfind('\n').map_or(0, |at| at + 1);
+    (
+        before.matches('\n').count() + 1,
+        before[line_start..].chars().count() + 1,
+    )
 }
 
 /// Sets the editor's palette from the active theme, logging what's wrong
@@ -76,6 +165,10 @@ fn apply(cx: &mut App) {
 pub(crate) fn editor_theme(settings: &EditorSettings, cx: &App) -> EditorTheme {
     EditorTheme::from_palette(&fe_gpui::editor_palette(cx), settings, cx)
 }
+
+#[cfg(test)]
+#[path = "theme_name_tests.rs"]
+mod theme_name_tests;
 
 #[cfg(test)]
 mod tests {

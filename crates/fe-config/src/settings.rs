@@ -188,6 +188,12 @@ pub struct ThemeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub light: Option<String>,
+    /// A bundled theme by its title or ID, as in "Dark Modern" or "Fastedit
+    /// Ember": the dark or the light theme, as its appearance is. theme.dark
+    /// or theme.light, if set, wins for that one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub name: Option<String>,
 }
 
 /// `theme.mode`.
