@@ -29,6 +29,7 @@ case "$PWD" in
 */.worktrees/.verify/*)
 	export CARGO_TARGET_DIR="$PWD/target"
 	export CARGO_INCREMENTAL=0
+	# Repeats the workspace [profile.dev] setting so a gate does not depend on the file.
 	export CARGO_PROFILE_DEV_DEBUG=line-tables-only
 	min=${FASTEDIT_MIN_FREE_GIB:-10}
 	df_line=$(df -Pk "$PWD" | tail -n 1)

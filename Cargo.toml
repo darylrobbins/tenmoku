@@ -194,7 +194,7 @@ dbg_macro = "deny"
 todo = "deny"
 
 [profile.dev]
-debug = "limited"
+debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
 # GPUI and text hot paths are painfully slow unoptimised; keep them fast in dev.

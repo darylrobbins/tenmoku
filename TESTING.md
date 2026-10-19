@@ -189,7 +189,9 @@ Each regatta lane builds in its own `target/`, and so does each gate snapshot
 (`.worktrees/.verify/<id>`), cold. `scripts/ci-env.sh` also defaults `CARGO_BUILD_JOBS` to 6
 (a caller's value wins) so concurrent lanes and gates don't oversubscribe the cores.
 `scripts/ci-env.sh` makes snapshots light: `CARGO_INCREMENTAL=0` and
-`CARGO_PROFILE_DEV_DEBUG=line-tables-only` (panics keep file:line), and it exits 75
+`CARGO_PROFILE_DEV_DEBUG=line-tables-only` (panics keep file:line; the workspace
+`[profile.dev]` sets the same, so lane and local builds are light too; for a debugger
+session run `CARGO_PROFILE_DEV_DEBUG=limited cargo build`), and it exits 75
 with a one-line message when the volume has under `FASTEDIT_MIN_FREE_GIB` (default 10)
 free. Lanes are never checked. A cold snapshot build (`cargo build --workspace
 --all-targets` plus `nextest run --profile ci --no-run`) took 144 s and left a 4.1 GiB
