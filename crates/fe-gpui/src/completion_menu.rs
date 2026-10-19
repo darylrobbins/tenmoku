@@ -374,18 +374,45 @@ impl EditorView {
             }
             ACCEPT => {
                 self.drop_stale_completion();
-                if let Some(menu) = self.completion.take()
-                    && menu.keyword.is_none()
-                    && let Err(error) = menu.session.accept(&mut self.model)
-                {
-                    log::debug!("completion not applied: {error}");
-                }
-                self.changed(cx);
+                self.accept_completion(cx);
             }
             DISMISS => self.close_completion(cx),
             _ => return false,
         }
         true
+    }
+
+    /// Closes the menu, applying its selected item.
+    fn accept_completion(&mut self, cx: &mut Context<Self>) {
+        if let Some(menu) = self.completion.take()
+            && menu.keyword.is_none()
+            && let Err(error) = menu.session.accept(&mut self.model)
+        {
+            log::debug!("completion not applied: {error}");
+        }
+        self.changed(cx);
+    }
+
+    /// Typing `text` while the menu shows: accepts the selected item, as
+    /// `completion.accept` does, if `text` is one of its commit
+    /// characters. `true` if it did.
+    pub(crate) fn commit_completion(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        self.drop_stale_completion();
+        if !self.completion_shown() {
+            return false;
+        }
+        let commits = (self.completion.as_ref()).is_some_and(|menu| {
+            (menu.session.selected()).is_some_and(|ix| {
+                menu.session.items()[ix]
+                    .commit_characters
+                    .iter()
+                    .any(|c| c == text)
+            })
+        });
+        if commits {
+            self.accept_completion(cx);
+        }
+        commits
     }
 
     /// Scrolls the rows so the selected one shows.

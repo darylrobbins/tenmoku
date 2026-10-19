@@ -2286,6 +2286,7 @@ fn client_capabilities() -> ClientCapabilities {
                 dynamic_registration: dynamic,
                 completion_item: Some(CompletionItemCapability {
                     snippet_support: Some(true),
+                    commit_characters_support: Some(true),
                     insert_replace_support: Some(false),
                     resolve_support: Some(CompletionItemCapabilityResolveSupport {
                         properties: vec![

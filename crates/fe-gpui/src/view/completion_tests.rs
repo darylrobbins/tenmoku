@@ -436,3 +436,6 @@ fn asking_again(cx: &mut TestAppContext) {
 
 #[path = "keyword_menu_tests.rs"]
 mod keyword_menu_tests;
+
+#[path = "completion_commit_tests.rs"]
+mod commit;

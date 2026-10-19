@@ -85,6 +85,10 @@ pub struct CompletionItem {
     pub snippet: bool,
     /// What else it does elsewhere, such as an import.
     pub additional_edits: Vec<CompletionEdit>,
+    /// Characters that, typed while the item is selected, accept it and
+    /// are then typed: its `commitCharacters`, else the server's
+    /// `allCommitCharacters`, else none.
+    pub commit_characters: Vec<String>,
     /// The server's item, to resolve, and the server, session and
     /// document it came from: only that session can resolve it.
     raw: Arc<lsp_types::CompletionItem>,
@@ -159,6 +163,10 @@ impl LspManager {
         trigger: CompletionTrigger,
     ) -> impl Future<Output = Result<Option<Completions>, LspError>> + Send + 'static + use<> {
         let server = self.server_of(buffer);
+        let all_commit_characters = (server.and_then(|server| self.capabilities(server)))
+            .and_then(|capabilities| capabilities.completion_provider)
+            .and_then(|provider| provider.all_commit_characters)
+            .unwrap_or_default();
         let (trigger_kind, trigger_character) = match trigger {
             CompletionTrigger::Invoked => (CompletionTriggerKind::INVOKED, None),
             CompletionTrigger::Character(c) => (CompletionTriggerKind::TRIGGER_CHARACTER, Some(c)),
@@ -179,9 +187,9 @@ impl LspManager {
             });
         // Boxed, as its type names the manager's borrow.
         reply.boxed().map(move |answer| match (answer, server) {
-            (Ok((reply, admitted)), Some(server)) => Ok(reply
-                .result
-                .map(|response| convert(response, &admitted, offset, server))),
+            (Ok((reply, admitted)), Some(server)) => Ok(reply.result.map(|response| {
+                convert(response, &admitted, offset, server, all_commit_characters)
+            })),
             (Ok(_), None) | (Err(LspError::Timeout), _) => Ok(None),
             (Err(err), _) => Err(err),
         })
@@ -260,6 +268,7 @@ fn convert(
     at: &Admitted,
     offset: usize,
     server: ServerId,
+    all_commit_characters: Vec<String>,
 ) -> Completions {
     let (items, is_incomplete) = match response {
         CompletionResponse::Array(items) => (items, false),
@@ -275,6 +284,8 @@ fn convert(
     let range = |range: lsp_types::Range| decoded.range(range);
     let items = (items.into_iter())
         .map(|item| {
+            let commit_characters =
+                (item.commit_characters.clone()).unwrap_or_else(|| all_commit_characters.clone());
             let snippet = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
             let edit = match &item.text_edit {
                 Some(CompletionTextEdit::Edit(edit)) => CompletionEdit {
@@ -308,6 +319,7 @@ fn convert(
                 edit,
                 snippet,
                 additional_edits,
+                commit_characters,
                 raw: Arc::new(item),
                 server,
                 from: (at.document.buffer, at.document.identity),

@@ -3,6 +3,7 @@
 //! the client advertises, resolve, the trigger characters, and the 3 s and
 //! 2 s timeouts.
 
+mod commit_characters;
 mod resolve_edits;
 
 use std::collections::HashMap;
@@ -113,6 +114,7 @@ fn items_convert_to_byte_edits() {
             init["capabilities"]["textDocument"]["completion"]["completionItem"],
             json!({
                 "snippetSupport": true,
+                "commitCharactersSupport": true,
                 "insertReplaceSupport": false,
                 "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
                 "labelDetailsSupport": true,

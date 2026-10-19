@@ -2104,6 +2104,7 @@ fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
         edit: edit(&item.edit),
         additional_edits: item.additional_edits.iter().map(edit).collect(),
         snippet: item.snippet,
+        commit_characters: item.commit_characters.clone(),
         data: Some(Rc::new(item)),
     }
 }

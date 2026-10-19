@@ -746,13 +746,17 @@ impl EditorView {
 
     /// Types `text` at every caret, as `editor.insert` from the keyboard.
     pub(crate) fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        // Replace mode overwrites: nothing to complete or commit.
+        let inserting = self.typing_mode() != Some(true);
+        if inserting && text.chars().count() == 1 {
+            self.commit_completion(text, cx);
+        }
         let invocation = Invocation::of("editor.insert")
             .expect("valid command ID")
             .args(Value::from_iter([("text", text)]))
             .source(Source::Keyboard);
         self.run_command(invocation, None, cx);
-        // Replace mode overwrites: nothing to complete.
-        if self.typing_mode() != Some(true) {
+        if inserting {
             self.completion_typed(text, cx);
         }
         self.signature_help_typed(text, cx);

@@ -63,6 +63,9 @@ pub struct CompletionItem {
     /// Whether `edit`'s text is a [`Snippet`], with tabstops and
     /// placeholders, rather than plain text.
     pub snippet: bool,
+    /// Characters that, typed while the item is selected, accept it and
+    /// are then typed after it, as in VS Code.
+    pub commit_characters: Vec<String>,
     /// The source's own, to resolve the item with.
     pub data: Option<Rc<dyn Any>>,
 }
