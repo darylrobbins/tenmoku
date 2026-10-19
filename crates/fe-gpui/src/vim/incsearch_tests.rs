@@ -4,19 +4,16 @@
 //! (past blocks, along a long row, into a fold), and a cancel puts the view,
 //! the folds and the highlight back.
 
-use std::time::{Duration, Instant};
-
 use fe_buffer::Buffer;
 use fe_command::Invocation;
 use fe_editor::EditorModel;
-use fe_vim::search::Pattern;
+use fe_vim::search::{Pattern, regex_calls, set_call_limit};
 use gpui::{Bounds, Entity, Focusable as _, Pixels, TestAppContext, VisualTestContext};
 
 use super::*;
 use crate::{
     EditorTheme, EditorView,
     commands::RunCommand,
-    element::TEST_LIMIT,
     init,
     view::{HostBlock, HostBlockKind},
 };
@@ -269,24 +266,43 @@ fn a_preview_reveals_a_match_below_a_tall_block(cx: &mut TestAppContext) {
     assert_eq!(shown(&view, cx).2, 0.);
 }
 
+/// Gives every search deadline a budget of regex calls for its scope.
+struct CallLimited;
+
+impl CallLimited {
+    fn of(calls: u64) -> Self {
+        set_call_limit(Some(calls));
+        Self
+    }
+}
+
+impl Drop for CallLimited {
+    fn drop(&mut self) {
+        set_call_limit(None);
+    }
+}
+
 #[gpui::test]
 fn a_previews_matches_paint_within_its_time_limit(cx: &mut TestAppContext) {
-    // Each `a` scans to the end of its long row for a `z`: the match the
-    // line lands on is found at once, the rest of the row's slowly.
-    let text: String = (0..40).map(|_| "a".repeat(200_000) + "\n").collect();
+    // Each `a` scans to the end of its row for a `z`: the match the line
+    // lands on is found in one regex call, the rest of the row's take one
+    // call each. The deadlines run out after a counted number of calls, not
+    // a measured time, so the test doesn't depend on the machine's speed.
+    let text: String = (0..40).map(|_| "a".repeat(5_000) + "\n").collect();
     let (view, cx) = editor_with(cx, text);
-    TEST_LIMIT.with(|limit| limit.set(Some(Duration::from_secs(60))));
     cx.simulate_keystrokes("/");
     draw(cx);
-    let started = Instant::now();
+    let limit = CallLimited::of(500);
+    let before = regex_calls();
     preview(&view, r"a.*z\|a", cx);
-    let took = started.elapsed();
-    TEST_LIMIT.with(|limit| limit.set(None));
+    let calls = regex_calls() - before;
+    drop(limit);
     assert_eq!(shown(&view, cx).0, Some(1..2));
     assert!(view.read_with(cx, |view, _| {
         view.layout.as_ref().unwrap().highlight_ran_out()
     }));
-    assert!(took < Duration::from_secs(5), "{took:?}");
+    // The highlight was cut short, well before the end of the first row.
+    assert!(calls < 5_000, "{calls}");
 }
 
 #[gpui::test]
