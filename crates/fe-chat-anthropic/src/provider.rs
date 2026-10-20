@@ -14,6 +14,7 @@ use std::time::Duration;
 use fe_chat::{ChatEvent, ChatProvider, ChatRequest, ChatStream, ErrorKind, ProviderError};
 use futures::StreamExt;
 use futures::future::BoxFuture;
+use kiln_command::Grants;
 
 use crate::error::error_from_response;
 use crate::events::EventDecoder;
@@ -90,6 +91,13 @@ impl AnthropicProvider {
             fallbacks: true,
             sleep: Arc::new(thread_sleep),
         }
+    }
+
+    /// A provider that sends to [`DEFAULT_BASE_URL`] over HTTPS, through an
+    /// [`fe_net::Client`] reaching what `grants` allow (the chat holds
+    /// `net:api.anthropic.com`).
+    pub fn with_client(grants: &Grants, key: ApiKey) -> AnthropicProvider {
+        AnthropicProvider::new(Arc::new(fe_net::Client::new(grants)), key, DEFAULT_BASE_URL)
     }
 
     /// Whether a declined request re-runs on Anthropic's recommended

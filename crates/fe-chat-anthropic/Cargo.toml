@@ -9,8 +9,10 @@ publish.workspace = true
 
 [dependencies]
 fe-chat.workspace = true
+fe-net.workspace = true
 futures.workspace = true
 http.workspace = true
+kiln-command.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,8 +5,8 @@
 //!   [`fe_chat::ChatRequest`] as a streamed `POST /v1/messages`, turns the
 //!   reply's server-sent events into [`fe_chat::ChatEvent`]s, and retries
 //!   what the record says may be retried.
-//! - [`Transport`] is the seam to HTTP. This crate has no network of its
-//!   own: `fe-net` supplies the HTTPS one, and tests replay recorded bytes.
+//! - [`Transport`] is the seam to HTTP. `fe_net::Client` is the HTTPS one
+//!   ([`AnthropicProvider::with_client`]); tests also replay recorded bytes.
 //! - [`SseParser`] reads server-sent events incrementally, from bytes split
 //!   anywhere.
 //!
@@ -14,6 +14,7 @@
 
 mod error;
 mod events;
+mod net;
 mod provider;
 mod sse;
 mod transport;
