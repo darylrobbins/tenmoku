@@ -81,8 +81,29 @@ pub(crate) type OnNotice = Box<dyn FnMut(&LicenseNotice, &mut App)>;
 pub(crate) type FilesOf = Box<dyn Fn(&Manifest) -> Vec<PathBuf>>;
 
 /// Each extension's listed files' canonical paths, sizes and times, by the
-/// extension's directory.
+/// extension's directory: the cheap check, made on the UI thread.
 type Fingerprints = BTreeMap<PathBuf, Vec<Option<(PathBuf, u64, Option<std::time::SystemTime>)>>>;
+
+/// The hash of each listed file's contents, by canonical path.
+type Hashes = BTreeMap<PathBuf, Option<u64>>;
+
+/// Hashes the contents of the files `fingerprints` has. Reads them all, so
+/// it's for a background thread; a file that can't be read has none.
+fn hash_files(fingerprints: &Fingerprints) -> Hashes {
+    use std::hash::Hasher;
+    let paths = fingerprints.values().flatten().flatten().map(|(p, ..)| p);
+    paths
+        .map(|path| {
+            let hash = fs::read(path).ok().map(|bytes| {
+                // `DefaultHasher::new()` has fixed keys: equal bytes hash equal.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                hasher.write(&bytes);
+                hasher.finish()
+            });
+            (path.clone(), hash)
+        })
+        .collect()
+}
 
 /// What [`crate::Config`] says of extensions, for [`crate::init`].
 #[derive(Default)]
@@ -212,6 +233,15 @@ pub(crate) struct ExtensionSource {
     /// The files of the extensions the app reads, as listed by
     /// `files_of`, as of the last time `on_extensions` was called.
     fingerprints: Fingerprints,
+    /// The hash of each of those files' contents, by canonical path, once
+    /// [`hash_files`] has read them; none until then.
+    hashes: Option<Hashes>,
+    /// Whether a reload found a change the extensions applied don't have
+    /// yet, its hashing still in flight.
+    dirty: bool,
+    /// Which fingerprint the hashing in flight is for: a result for an
+    /// older one is dropped.
+    generation: u64,
     files_of: Option<FilesOf>,
     on_notice: Vec<OnNotice>,
     /// The notices logged with no callback to give them to.
@@ -248,6 +278,9 @@ impl ExtensionSource {
             files,
             on_extensions: setup.on_extensions,
             fingerprints: Fingerprints::new(),
+            hashes: None,
+            dirty: false,
+            generation: 0,
             files_of: setup.files_of,
             on_notice: setup.on_notice,
             logged: HashSet::new(),
@@ -365,12 +398,9 @@ impl ExtensionSource {
     /// The size and modification time of each file the app lists for each
     /// loaded extension ([`crate::Config::extension_files`]): a file that's
     /// missing, isn't a regular file, or leads outside the extension's
-    /// directory has none. Reads no contents.
-    ///
-    /// Known limit: a rewrite that keeps a file's size and modification
-    /// time, as a timestamp-preserving copy of same-length content does,
-    /// isn't noticed; detecting it needs hashing the contents, off the main
-    /// thread.
+    /// directory has none. Reads no contents: a rewrite that keeps a file's
+    /// size and modification time is found by [`hash_files`], which
+    /// [`ExtensionSource::check_contents`] runs off the main thread.
     fn fingerprint(&self) -> Fingerprints {
         let Some(files) = &self.files_of else {
             return Fingerprints::new();
@@ -411,6 +441,8 @@ impl ExtensionSource {
     fn apply(&mut self, cx: &mut App) {
         cx.set_global(Loaded(self.set.extensions().to_vec()));
         self.fingerprints = self.fingerprint();
+        self.hashes = None;
+        self.dirty = false;
         for on_extensions in &mut self.on_extensions {
             on_extensions(&self.set, cx);
         }
@@ -437,48 +469,118 @@ impl ExtensionSource {
     }
 }
 
-impl ConfigSource for ExtensionSource {
+impl ExtensionSource {
+    /// Hashes the contents of the files in `stamps` on a background thread,
+    /// then applies the extensions, with `stamps` as their fingerprint, if
+    /// they were loaded or a reload found a change in the manifests or the
+    /// files' sizes and times (`dirty`), or the contents differ from the
+    /// last applied's. Applying after the hashing, not before, means the
+    /// hashes can't be of bytes the app never saw, and a rewrite after it
+    /// is a change the next reload sees. Hashes for a check since replaced
+    /// are dropped; `dirty` stays until the extensions are applied.
+    fn hash(this: &Rc<RefCell<Self>>, stamps: Fingerprints, cx: &mut App) {
+        let (task, generation) = {
+            let mut source = this.borrow_mut();
+            source.generation += 1;
+            let generation = source.generation;
+            let task = cx.background_executor().spawn({
+                let stamps = stamps.clone();
+                async move { hash_files(&stamps) }
+            });
+            (task, generation)
+        };
+        let this = this.clone();
+        cx.spawn(async move |cx| {
+            let hashes = task.await;
+            cx.update(|cx| {
+                let mut source = this.borrow_mut();
+                if source.generation != generation {
+                    return;
+                }
+                let differs = source.hashes.as_ref() != Some(&hashes);
+                if !(source.dirty || differs) {
+                    return;
+                }
+                log::info!(target: log_target(cx), "extensions reloaded");
+                source.apply(cx);
+                // What `apply` fingerprinted may be newer than what was
+                // hashed: keep the older, so a change between is seen.
+                source.fingerprints = stamps.clone();
+                source.hashes = Some(hashes);
+            });
+        })
+        .detach();
+    }
+}
+
+/// The source as the config service holds it, shared with the background
+/// hashing that comes back to it.
+pub(crate) struct Shared(pub(crate) Rc<RefCell<ExtensionSource>>);
+
+impl ConfigSource for Shared {
     fn paths(&self) -> Vec<PathBuf> {
         Vec::new()
     }
 
     fn trees(&self) -> Vec<PathBuf> {
-        vec![self.dir.clone()]
+        vec![self.0.borrow().dir.clone()]
     }
 
     fn install(&mut self, cx: &mut App) {
-        self.apply_themes(cx);
-        self.apply(cx);
+        let stamps = {
+            let mut source = self.0.borrow_mut();
+            source.apply_themes(cx);
+            if source.files_of.is_none() {
+                source.apply(cx);
+                return;
+            }
+            // The app is told once the files are hashed, so the hashes can't
+            // be of bytes it never saw: a rewrite after it is a change.
+            cx.set_global(Loaded(source.set.extensions().to_vec()));
+            source.dirty = true;
+            source.fingerprint()
+        };
+        ExtensionSource::hash(&self.0, stamps, cx);
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
-        if !changed.contains(&self.dir) {
+        let mut source = self.0.borrow_mut();
+        if !changed.contains(&source.dir) {
             return;
         }
-        let rescanned = self.set.rescan();
+        let rescanned = source.set.rescan();
         // A theme file may change with no manifest changing.
-        if self.read_themes() {
+        if source.read_themes() {
             log::info!(target: log_target(cx), "extension themes reloaded");
-            self.apply_themes(cx);
+            source.apply_themes(cx);
         }
         // So may a keymap or menu file.
-        if self.read_files() {
+        if source.read_files() {
             log::info!(target: log_target(cx), "extension keymaps and menus reloaded");
             crate::contributions::resolve_again(cx);
         }
         // A file the app reads from the manifest, as a grammar's module,
-        // may change with no manifest changing.
-        let touched = !rescanned && self.fingerprint() != self.fingerprints;
-        if rescanned || touched {
-            log::info!(target: log_target(cx), "extensions reloaded");
-            self.apply(cx);
+        // may change with no manifest changing. The contents are hashed off
+        // the main thread, and the extensions applied when that's done, if
+        // anything differs.
+        if source.files_of.is_none() {
+            if rescanned {
+                log::info!(target: log_target(cx), "extensions reloaded");
+                source.apply(cx);
+            }
+            return;
         }
+        let stamps = source.fingerprint();
+        source.dirty |= rescanned || stamps != source.fingerprints;
+        drop(source);
+        ExtensionSource::hash(&self.0, stamps, cx);
     }
 
     fn diagnostics(&self) -> Vec<Diagnostic> {
-        let mut diagnostics = self.set.diagnostics().to_vec();
-        diagnostics.extend(self.theme_diagnostics.iter().cloned());
-        let files = self.files.0.borrow();
+        let source = self.0.borrow();
+        let mut diagnostics = source.set.diagnostics().to_vec();
+        diagnostics.extend(source.theme_diagnostics.iter().cloned());
+        let files = source.files.0.borrow();
         diagnostics.extend(files.read.iter().cloned());
         diagnostics.extend(files.laid.iter().cloned());
         diagnostics

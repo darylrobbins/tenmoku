@@ -66,7 +66,7 @@ use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 use crate::{
     config::{Layers, SelectionSource, UserTheme},
     contributions::{self, Shipped},
-    extensions::{self, ExtensionSource},
+    extensions::{self, ExtensionSource, Shared},
     settings::{SettingsSection, section_store},
 };
 
@@ -753,6 +753,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         service = service.source(theme);
     }
     if let Some(source) = extension_source {
+        let source = Shared(Rc::new(RefCell::new(source)));
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }
