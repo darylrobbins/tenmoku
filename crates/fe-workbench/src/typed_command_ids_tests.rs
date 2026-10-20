@@ -112,6 +112,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("view.toggle_breadcrumbs", "Toggle Breadcrumbs", "workbench"),
     ("language.select", "Change Language Mode…", "workbench"),
+    ("theme.select", "Change Color Theme…", "workbench"),
     ("nav.goto_definition", "Go to Definition", "workbench"),
     ("nav.goto_declaration", "Go to Declaration", "workbench"),
     (

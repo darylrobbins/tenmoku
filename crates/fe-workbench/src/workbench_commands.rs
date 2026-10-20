@@ -616,6 +616,12 @@ impl Workbench {
         self.select_language(cx.window, cx.cx);
     }
 
+    /// Change Color Theme…
+    #[command(id = "theme.select")]
+    fn select_color_theme(&mut self, cx: &mut Cx<Self>) {
+        self.select_theme(cx.window, cx.cx);
+    }
+
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {
