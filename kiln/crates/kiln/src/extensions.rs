@@ -55,7 +55,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -77,6 +77,13 @@ pub(crate) type OnExtensions = Box<dyn FnMut(&ExtensionSet, &mut App)>;
 /// Called with each licence notice ([`ExtensionSet::license_notices`]).
 pub(crate) type OnNotice = Box<dyn FnMut(&LicenseNotice, &mut App)>;
 
+/// The files of an extension the app reads, relative to its directory.
+pub(crate) type FilesOf = Box<dyn Fn(&Manifest) -> Vec<PathBuf>>;
+
+/// Each extension's listed files' canonical paths, sizes and times, by the
+/// extension's directory.
+type Fingerprints = BTreeMap<PathBuf, Vec<Option<(PathBuf, u64, Option<std::time::SystemTime>)>>>;
+
 /// What [`crate::Config`] says of extensions, for [`crate::init`].
 #[derive(Default)]
 pub(crate) struct Setup {
@@ -85,6 +92,7 @@ pub(crate) struct Setup {
     pub(crate) allowed_licenses: Option<Vec<String>>,
     pub(crate) on_extensions: Vec<OnExtensions>,
     pub(crate) on_notice: Vec<OnNotice>,
+    pub(crate) files_of: Option<FilesOf>,
 }
 
 /// The extensions loaded now, in ID order: none without
@@ -201,6 +209,10 @@ pub(crate) struct ExtensionSource {
     /// The extensions' keymap and menu files, as last read.
     files: Files,
     on_extensions: Vec<OnExtensions>,
+    /// The files of the extensions the app reads, as listed by
+    /// `files_of`, as of the last time `on_extensions` was called.
+    fingerprints: Fingerprints,
+    files_of: Option<FilesOf>,
     on_notice: Vec<OnNotice>,
     /// The notices logged with no callback to give them to.
     logged: HashSet<LicenseNotice>,
@@ -235,6 +247,8 @@ impl ExtensionSource {
             layers,
             files,
             on_extensions: setup.on_extensions,
+            fingerprints: Fingerprints::new(),
+            files_of: setup.files_of,
             on_notice: setup.on_notice,
             logged: HashSet::new(),
         };
@@ -348,6 +362,36 @@ impl ExtensionSource {
         changed
     }
 
+    /// The size and modification time of each file the app lists for each
+    /// loaded extension ([`crate::Config::extension_files`]): a file that's
+    /// missing, isn't a regular file, or leads outside the extension's
+    /// directory has none. Reads no contents.
+    ///
+    /// Known limit: a rewrite that keeps a file's size and modification
+    /// time, as a timestamp-preserving copy of same-length content does,
+    /// isn't noticed; detecting it needs hashing the contents, off the main
+    /// thread.
+    fn fingerprint(&self) -> Fingerprints {
+        let Some(files) = &self.files_of else {
+            return Fingerprints::new();
+        };
+        let mut out = Fingerprints::new();
+        for manifest in self.set.extensions() {
+            let root = manifest.dir.canonicalize().ok();
+            let stamps = files(manifest)
+                .into_iter()
+                .map(|path| {
+                    let canonical = manifest.dir.join(path).canonicalize().ok()?;
+                    canonical.starts_with(root.as_ref()?).then_some(())?;
+                    let meta = fs::metadata(&canonical).ok().filter(|m| m.is_file())?;
+                    Some((canonical, meta.len(), meta.modified().ok()))
+                })
+                .collect();
+            out.insert(manifest.dir.clone(), stamps);
+        }
+        out
+    }
+
     /// Gives the themes to the pair's layers, which lay them in.
     fn apply_themes(&mut self, cx: &mut App) {
         {
@@ -366,6 +410,7 @@ impl ExtensionSource {
     /// launch with one shows them.
     fn apply(&mut self, cx: &mut App) {
         cx.set_global(Loaded(self.set.extensions().to_vec()));
+        self.fingerprints = self.fingerprint();
         for on_extensions in &mut self.on_extensions {
             on_extensions(&self.set, cx);
         }
@@ -421,7 +466,10 @@ impl ConfigSource for ExtensionSource {
             log::info!(target: log_target(cx), "extension keymaps and menus reloaded");
             crate::contributions::resolve_again(cx);
         }
-        if rescanned {
+        // A file the app reads from the manifest, as a grammar's module,
+        // may change with no manifest changing.
+        let touched = !rescanned && self.fingerprint() != self.fingerprints;
+        if rescanned || touched {
             log::info!(target: log_target(cx), "extensions reloaded");
             self.apply(cx);
         }
