@@ -411,6 +411,12 @@ impl HeadlessVim {
         self.state.set_jump_on_s(on);
     }
 
+    /// Gives `gr` to ReplaceWithRegister
+    /// ([`VimState::set_replace_with_register`]).
+    pub fn set_replace_with_register(&mut self, on: bool) {
+        self.state.set_replace_with_register(on);
+    }
+
     /// The labels a host would paint for a pending jump over the view's
     /// rows ([`VimState::jump_overlay`]), those the jump's session takes
     /// ([`crate::jump::view_rows`]).

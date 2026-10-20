@@ -155,6 +155,135 @@ pub(crate) fn put(
     let Some(ends) = ends(model, state) else {
         return effect(false);
     };
+    let (dispatched, deleted, extent) =
+        put_over(model, state, actor, (ends, None), (value, unset), args)?;
+    // `p` leaves what it replaced in the registers, as a delete would; a
+    // delete of nothing writes nothing.
+    if let Some(deleted) = deleted.filter(|deleted| deleted.linewise || !deleted.text.is_empty()) {
+        let small = !deleted.linewise && !deleted.text.contains('\n');
+        let write = Write::Delete {
+            small,
+            numbered: !small,
+        };
+        registers
+            .write(None, write, deleted, &mut **host)
+            .map_err(|error| CommandError::new(error.to_string()))?;
+    }
+    // `.` deletes as much text again, as nvim's does.
+    state.set_last_change(
+        Change::Operate(OperateArgs {
+            operator: Operator::Delete,
+            target: Target::Selection,
+            count: None,
+            register: args.before.then_some('_'),
+        })
+        .into(),
+    );
+    state.visual_extent = Some(extent);
+    Ok(dispatched)
+}
+
+/// What `gr` replaces ([`replace`]).
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum Over {
+    /// The visual selection; from `.`, over a block of these display
+    /// columns (its left one and how many, `None` to each row's end).
+    Selection(Option<(usize, Option<usize>)>),
+    /// A span of this kind from its anchor to its cursor, as `` g`[vg`] ``
+    /// (or `V`) would select it.
+    Span((VisualKind, usize, usize)),
+}
+
+/// `gr` (`feature/replace_register.rs`): what `over` covers replaced by
+/// register `register`'s text as visual `P` replaces a selection, writing
+/// no register. `correct` first adapts the text to the selection's kind
+/// and how many rows it has; what it refuses changes nothing. Over the
+/// selection, it keeps the extent for `.`.
+pub(crate) fn replace(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    over: Over,
+    register: Option<char>,
+    correct: impl FnOnce(Register, VisualKind, u32) -> Result<Register, CommandError>,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    let VimTarget {
+        model,
+        host,
+        state,
+        registers,
+    } = target;
+    registers.adopt_inserted(state);
+    let value = registers
+        .read(register, &mut **host)
+        .map_err(|error| CommandError::new(error.to_string()))?;
+    let unset = value.is_none() && register != Some('_');
+    model.sync_display();
+    let (ends, columns) = match over {
+        Over::Span((kind, anchor, cursor)) => {
+            let text = model.text();
+            let ends = Ends {
+                kind,
+                anchor: position(text, anchor),
+                cursor: position(text, cursor),
+                goal: None,
+            };
+            (ends, None)
+        }
+        Over::Selection(columns) => match ends(model, state) {
+            Some(ends) => (ends, columns.filter(|_| ends.kind == VisualKind::Block)),
+            None => return effect(false),
+        },
+    };
+    let (first, last) = ends.rows(model.text());
+    let value = match value {
+        Some(value) => correct(value, ends.kind, last - first + 1)?,
+        None => Register::default(),
+    };
+    state.failed |= unset;
+    let args = PutArgs {
+        before: true,
+        cursor_after: false,
+        indent: false,
+        count: None,
+        register,
+    };
+    // The marks see the span go as a delete takes it, as `vim.visual_put`
+    // has them; a put refused leaves them.
+    let marks = state.marks.clone();
+    match ends.kind {
+        VisualKind::Char => {
+            let range = ends.range(model.text(), VisualKind::Char);
+            state.marks.cutting(model.snapshot(), range);
+        }
+        VisualKind::Line => state.marks.deleting(model.snapshot(), first, last),
+        VisualKind::Block => {}
+    }
+    let put = put_over(model, state, actor, (ends, columns), (value, unset), args);
+    let (dispatched, _, extent) = match put {
+        Ok(put) => put,
+        Err(error) => {
+            state.marks = marks;
+            return Err(error);
+        }
+    };
+    if let Over::Selection(_) = over {
+        state.visual_extent = Some(extent);
+    }
+    Ok(dispatched)
+}
+
+/// What `p` or `P` (`args`) puts over `ends` (a block over these display
+/// columns, if given, as for [`Over::Selection`]): the register's `value`,
+/// or nothing if it's `unset`. Returns what it replaced for `p` to keep,
+/// and the extent `.` acts on again.
+fn put_over(
+    model: &mut EditorModel,
+    state: &mut VimState,
+    actor: &Actor,
+    (ends, columns): (Ends, Option<(usize, Option<usize>)>),
+    (value, unset): (Register, bool),
+    args: PutArgs,
+) -> Result<(Dispatched<TransactionId>, Option<Register>, Extent), CommandError> {
     // An unset register puts nothing, however many times: the count bounds
     // and repeats nothing, and the put leaves what the uncounted one does.
     let count = match unset {
@@ -169,7 +298,11 @@ pub(crate) fn put(
     let tab = model.tab_size().max(1);
     let (first, last) = ends.rows(&text);
     let cursor_row = text.offset_to_point(ends.cursor).row;
-    let block = Block::of(&text, &ends, tab);
+    let mut block = Block::of(&text, &ends, tab);
+    if let Some((left, width)) = columns {
+        block.left = left;
+        block.right = width.map(|width| left + width - 1);
+    }
     // All it may put in, rows, copies, padding and split tabs included, is
     // bounded before anything changes.
     let column = match ends.kind {
@@ -320,7 +453,13 @@ pub(crate) fn put(
             (vec![(at..at, put.clone())], at, at + put.len(), blank)
         }
     };
-    let extent = extent(&text, ends, ends.kind == VisualKind::Line, tab);
+    let extent = match columns {
+        Some(_) => Extent::Block {
+            rows: last - first + 1,
+            columns: block.right.map(|right| right - block.left + 1),
+        },
+        None => extent(&text, ends, ends.kind == VisualKind::Line, tab),
+    };
     leave(model, state, ends);
     let begins = vec![begin];
     let (transaction, snapshot) = operator::apply_steps(model, [removed, edits], origin(actor));
@@ -365,29 +504,8 @@ pub(crate) fn put(
         marks.start = Pos::at(&snapshot, raw_start);
         marks.end = Pos::at(&snapshot, raw_end);
     }
-    // `p` leaves what it replaced in the registers, as a delete would; a
-    // delete of nothing writes nothing.
-    if let Some(deleted) = deleted.filter(|deleted| deleted.linewise || !deleted.text.is_empty()) {
-        let small = !deleted.linewise && !deleted.text.contains('\n');
-        let write = Write::Delete {
-            small,
-            numbered: !small,
-        };
-        registers
-            .write(None, write, deleted, &mut **host)
-            .map_err(|error| CommandError::new(error.to_string()))?;
-    }
-    // `.` deletes as much text again, as nvim's does.
-    state.set_last_change(
-        Change::Operate(OperateArgs {
-            operator: Operator::Delete,
-            target: Target::Selection,
-            count: None,
-            register: args.before.then_some('_'),
-        })
-        .into(),
-    );
-    state.visual_extent = Some(extent);
     state.goals = None;
-    Ok(Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect()))
+    let dispatched =
+        Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect());
+    Ok((dispatched, deleted, extent))
 }

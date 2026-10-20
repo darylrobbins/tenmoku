@@ -18,8 +18,9 @@ use fe_text::{Bias, Text};
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, cmdline, folds, g_operators, history, insert,
-    line_motions, marks,
+    Registers, Target, VimState, VimTarget, Write, cmdline,
+    feature::replace_register,
+    folds, g_operators, history, insert, line_motions, marks,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -575,8 +576,9 @@ fn keeping_last_change<R>(
 
 /// `vim.operate`: over a motion or text object in normal mode, or over the
 /// selection in a visual mode (see `visual::operate`). Over a motion or
-/// object, an operator but `d y c > < = zf` is `g_operators::operate`'s;
-/// visual `zf` is `folds::fold_selection`.
+/// object, `gr` is `feature::replace_register::operate`'s and an operator
+/// but `d y c > < = zf` is `g_operators::operate`'s; visual `zf` is
+/// `folds::fold_selection`.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -634,8 +636,11 @@ fn operate_over(
         }
     }
     // `/ . :` are read-only: an operator that writes a register into one
-    // does nothing (leaving a visual mode), as in nvim; the others ignore it.
-    if let Some(name @ ('/' | '.' | ':')) = args.register {
+    // does nothing (leaving a visual mode), as in nvim; `gr` reads it, and
+    // the others ignore it.
+    if let Some(name @ ('/' | '.' | ':')) = args.register
+        && args.operator != Operator::ReplaceWithRegister
+    {
         if !matches!(
             args.operator,
             Operator::Delete | Operator::Yank | Operator::Change
@@ -658,6 +663,11 @@ fn operate_over(
     }
     if args.target.is_selection() {
         return keeping_last_change(target, |target| visual::operate(target, actor, args));
+    }
+    if args.operator == Operator::ReplaceWithRegister {
+        return keeping_last_change(target, |target| {
+            replace_register::operate(target, actor, args)
+        });
     }
     if !matches!(
         args.operator,
@@ -1359,6 +1369,18 @@ fn put_unless_failing(
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;
     state.set_last_change(Change::Put(args).into());
+    put_value(model, state, actor, args, value)
+}
+
+/// [`put`] of `value`, the register `args` names as read (or as `gr`
+/// corrects it), at every caret.
+pub(crate) fn put_value(
+    model: &mut EditorModel,
+    state: &mut VimState,
+    actor: &Actor,
+    args: PutArgs,
+    value: Option<Register>,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     let Some(value) = value.filter(|value| !value.text.is_empty() || value.block_width.is_some())
     else {
         // nvim's E353 (`_` holds nothing, without an error).

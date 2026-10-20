@@ -17,7 +17,8 @@ use crate::{line_motions, prose};
 /// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
 /// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
 /// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`;
-/// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`.
+/// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`;
+/// `replace_with_register` (`gr`) to `feature/replace_register.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -59,6 +60,9 @@ pub enum Operator {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         rows: bool,
     },
+    /// `gr`: what it covers is replaced by the register's text, as the
+    /// ReplaceWithRegister plugin does (`feature/replace_register.rs`).
+    ReplaceWithRegister,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
