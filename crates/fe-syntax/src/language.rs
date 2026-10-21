@@ -314,7 +314,7 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_rust::LANGUAGE.into(),
         highlights: || &[tree_sitter_rust::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/rust-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "python")]
