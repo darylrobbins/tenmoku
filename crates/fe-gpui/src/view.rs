@@ -1476,7 +1476,7 @@ fn last_of(range: &Range<usize>) -> usize {
 
 /// Measures chars in `theme`'s font, for soft wrap.
 fn glyph_widths(theme: &EditorTheme, cx: &App) -> Box<GlyphWidths> {
-    let font = gpui::font(theme.font_family.clone());
+    let font = theme.font();
     Box::new(GlyphWidths::new(
         cx.text_system().clone(),
         &font,
@@ -1606,6 +1606,8 @@ impl Render for EditorView {
             .key_context(key_context)
             .track_focus(&self.focus)
             .size_full()
+            // Hover, completion and signature help inherit it for their code.
+            .font_features(self.theme.font_features.clone())
             .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))

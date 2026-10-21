@@ -21,8 +21,10 @@ impl EditorTheme {
     /// Takes every colour from `palette`, leaving the metrics alone.
     pub fn set_colors(&mut self, palette: &EditorPalette) {
         let font_family = std::mem::take(&mut self.font_family);
+        let font_features = self.font_features.clone();
         let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
+        self.font_features = font_features;
         self.indent_guides = indent_guides;
         self.bracket_pair_colors = bracket_pair_colors;
     }
@@ -40,6 +42,7 @@ impl EditorTheme {
             .collect();
         Self {
             font_family,
+            font_features: gpui::FontFeatures::default(),
             font_size,
             line_height,
             background: hsla(editor.background),

@@ -150,6 +150,11 @@
             "null"
           ]
         },
+        "font_ligatures": {
+          "default": false,
+          "description": "Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in\nVS Code's `editor.fontLigatures`.",
+          "type": "boolean"
+        },
         "font_size": {
           "default": 13.0,
           "description": "The font size, in points.",
@@ -726,6 +731,7 @@
         "bracket_pair_colors": true,
         "code_actions_on_save": [],
         "code_lens": true,
+        "font_ligatures": false,
         "font_size": 13.0,
         "format_on_save": false,
         "indent_guides": true,

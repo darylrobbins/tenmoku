@@ -635,7 +635,7 @@ impl Element for EditorElement {
     ) -> Option<FrameLayout> {
         let started = Instant::now();
         let theme = &self.view.read(cx).theme;
-        let font = gpui::font(theme.font_family.clone());
+        let font = theme.font();
         let font_size = theme.font_size;
         let line_height = (font_size * theme.line_height).round();
         let line_height_f32: f32 = line_height.into();
@@ -2638,7 +2638,7 @@ fn paint_jump(
     }
     let font = Font {
         weight: FontWeight::BOLD,
-        ..gpui::font(theme.font_family.clone())
+        ..theme.font()
     };
     for (rect, label, state) in labels {
         let fill_color = match state {

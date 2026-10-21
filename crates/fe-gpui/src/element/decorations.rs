@@ -142,7 +142,7 @@ impl Decorations {
         }
         let text = view.model.text();
         let theme = &view.theme;
-        let font = gpui::font(theme.font_family.clone());
+        let font = theme.font();
         let text_bounds = frame.text_bounds();
         let lane = frame.change_lane;
         let scale = window.scale_factor();

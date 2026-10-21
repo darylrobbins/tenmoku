@@ -8,6 +8,9 @@
 # Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
 # font_family = "JetBrains Mono"
 
+# Draw the font's ligatures, such as `=>` as ⇒ and `->` as →.
+# font_ligatures = false
+
 # The font size, in points (6 to 72).
 # font_size = 13.0
 

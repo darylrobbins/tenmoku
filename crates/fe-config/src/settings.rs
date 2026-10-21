@@ -404,6 +404,9 @@ pub struct EditorSettings {
     /// `bracket_1`, `bracket_2` and `bracket_3`, then round again. Brackets
     /// in strings and comments, and ones without a pair, keep their colour.
     pub bracket_pair_colors: bool,
+    /// Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in
+    /// VS Code's `editor.fontLigatures`.
+    pub font_ligatures: bool,
 }
 
 /// `editor.auto_save`.
@@ -445,6 +448,7 @@ impl Default for EditorSettings {
             indent_guides: true,
             inline_blame: false,
             bracket_pair_colors: true,
+            font_ligatures: false,
         }
     }
 }

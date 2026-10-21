@@ -145,6 +145,7 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .bg(style.code_background)
                 .p(px(16.))
                 .font_family(style.code_font_family.clone())
+                .font_features(style.code_font_features.clone())
                 .text_size(style.code_font_size)
                 .line_height(relative(style.code_line_height))
                 .whitespace_nowrap()

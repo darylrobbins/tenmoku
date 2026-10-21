@@ -23,6 +23,7 @@ pub struct MarkdownStyle {
     /// Behind every other table body row.
     pub row_tint: Hsla,
     pub code_font_family: SharedString,
+    pub code_font_features: gpui::FontFeatures,
     pub code_font_size: Pixels,
     /// Code's line height as a multiple of `code_font_size`.
     pub code_line_height: f32,
@@ -56,6 +57,7 @@ impl MarkdownStyle {
             code_background: ui.panel_background,
             row_tint: ui.row_hover,
             code_font_family: editor.font_family.clone(),
+            code_font_features: editor.font_features.clone(),
             code_font_size: editor.font_size,
             code_line_height: editor.line_height,
             syntax: editor.syntax.clone(),
@@ -103,7 +105,9 @@ impl MarkdownStyle {
 
     /// The code font, in its regular weight.
     pub fn code_font(&self) -> Font {
-        font(self.code_font_family.clone())
+        let mut code = font(self.code_font_family.clone());
+        code.features = self.code_font_features.clone();
+        code
     }
 
     /// The runs a code block draws `code` with, covering all of it: each

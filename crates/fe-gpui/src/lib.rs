@@ -98,6 +98,8 @@ pub fn current_keymap(cx: &App) -> std::sync::Arc<fe_keymap::Keymap> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorTheme {
     pub font_family: SharedString,
+    /// Whether the font's ligatures are shaped (`calt` on) or not.
+    pub font_features: gpui::FontFeatures,
     pub font_size: Pixels,
     /// Line height as a multiple of the font size.
     pub line_height: f32,
@@ -174,10 +176,22 @@ impl EditorTheme {
     /// whether indent guides are drawn and bracket pairs coloured.
     pub fn set_metrics(&mut self, settings: &EditorSettings, cx: &App) {
         self.font_family = font_family(settings, cx);
+        self.font_features = if settings.font_ligatures {
+            gpui::FontFeatures::default()
+        } else {
+            gpui::FontFeatures::disable_ligatures()
+        };
         self.font_size = px(settings.font_size as f32);
         self.line_height = settings.line_height as f32;
         self.indent_guides = settings.indent_guides;
         self.bracket_pair_colors = settings.bracket_pair_colors;
+    }
+
+    /// The editor's font: `font_family` with `font_features`.
+    pub fn font(&self) -> gpui::Font {
+        let mut font = gpui::font(self.font_family.clone());
+        font.features = self.font_features.clone();
+        font
     }
 
     /// The colour of a bracket pair `depth` pairs deep.
@@ -213,6 +227,8 @@ fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
 mod command_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+mod font_ligatures_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
