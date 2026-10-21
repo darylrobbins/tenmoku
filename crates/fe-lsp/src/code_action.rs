@@ -9,6 +9,12 @@
 //! - **Order.** Quick fixes first, preferred ones first, then as the
 //!   server sent them. A bare `Command` is an action with that title and
 //!   no kind. Disabled actions are kept, with their reason, and never run.
+//! - **Kinds.** [`CodeActionQuery`] asks for actions of given kinds
+//!   (`context.only`) and says whether the ask is automatic (the lightbulb,
+//!   `triggerKind` 2). Servers may ignore `only`, so only actions of a kind
+//!   asked for are kept: the kind itself or a dot-separated child of it
+//!   (`source` keeps `source.organizeImports`, not `sourcery`). A bare
+//!   `Command` or an action with no kind is kept only when `only` is `None`.
 //! - **Edits.** Decoded when the action arrives, against the document
 //!   version the request was made on; [`resolve_code_action`] decodes the
 //!   resolved edit against the documents the server has then.
@@ -62,6 +68,26 @@ impl CodeAction {
                     .is_some_and(|rest| rest.starts_with('.'))
         })
     }
+
+    /// Whether the kind is `kind` or a dot-separated child of it
+    /// (`source.organizeImports` is a `source`, `sourcery` isn't).
+    pub fn kind_is(&self, kind: &str) -> bool {
+        self.kind.as_deref().is_some_and(|own| {
+            own == kind
+                || own
+                    .strip_prefix(kind)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+    }
+}
+
+/// What a request for code actions asks for beyond a range.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CodeActionQuery {
+    /// The kinds wanted (`context.only`); `None` for all.
+    pub only: Option<Vec<String>>,
+    /// Asked for without the user having invoked it (`triggerKind` 2).
+    pub automatic: bool,
 }
 
 /// What an action keeps of the server's reply: opaque to the host.
@@ -92,8 +118,39 @@ impl LspManager {
         range: Range<usize>,
         diagnostics: Vec<Diagnostic>,
     ) -> impl Future<Output = Result<Vec<CodeAction>, LspError>> + Send + 'static + use<> {
+        self.code_actions_for(
+            buffer,
+            version,
+            range,
+            diagnostics,
+            CodeActionQuery::default(),
+        )
+    }
+
+    /// As [`code_actions`](Self::code_actions), asking as `query` says and
+    /// keeping only the actions of the kinds it names.
+    pub fn code_actions_for(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        range: Range<usize>,
+        diagnostics: Vec<Diagnostic>,
+        query: CodeActionQuery,
+    ) -> impl Future<Output = Result<Vec<CodeAction>, LspError>> + Send + 'static + use<> {
         let server = self.server_of(buffer);
         let given = diagnostics.clone();
+        let only = query.only.clone();
+        let trigger = if query.automatic {
+            CodeActionTriggerKind::AUTOMATIC
+        } else {
+            CodeActionTriggerKind::INVOKED
+        };
+        let wanted = query.only.clone().map(|kinds| {
+            kinds
+                .into_iter()
+                .map(CodeActionKind::from)
+                .collect::<Vec<_>>()
+        });
         let reply = self.document_request::<CodeActionRequest>(buffer, version, move |at| {
             let text = &at.document.sent.text;
             let end = text.clip_offset(range.end, Bias::Right);
@@ -108,8 +165,8 @@ impl LspManager {
                 ),
                 context: CodeActionContext {
                     diagnostics: diagnostics.iter().map(|d| encode(d, at)).collect(),
-                    only: None,
-                    trigger_kind: Some(CodeActionTriggerKind::INVOKED),
+                    only: wanted.clone(),
+                    trigger_kind: Some(trigger),
                 },
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
@@ -121,6 +178,10 @@ impl LspManager {
                 let sent: Vec<_> = given.iter().map(|d| encode(d, &admitted)).collect();
                 let mut actions: Vec<_> = (reply.result.into_iter().flatten())
                     .map(|action| convert(action, &admitted, server, &sent))
+                    .filter(|action| match &only {
+                        None => true,
+                        Some(kinds) => kinds.iter().any(|kind| action.kind_is(kind)),
+                    })
                     .collect();
                 // Stable: the server's order within each rank.
                 let rank =

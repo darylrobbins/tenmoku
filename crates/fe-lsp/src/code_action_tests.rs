@@ -388,3 +388,6 @@ fn bare_commands_are_not_resolved_and_stale_actions_not_sent() {
     ));
     assert_eq!(s.sent(EXECUTE).len(), 1);
 }
+
+#[path = "code_action_kinds_tests.rs"]
+mod kinds;
