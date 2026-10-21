@@ -425,7 +425,10 @@ pub(crate) fn run(
     let compiled = Replacement::compile(&replacement)?;
     // The prompt shows the replacement `~` expanded, as nvim's does.
     let replacement_shown = replacement.clone();
-    let parsed = Pattern::parse_with(&pattern, flags.ignore_case.unwrap_or(false));
+    let ignore_case = flags
+        .ignore_case
+        .unwrap_or_else(|| target.registers.ignores_case(&pattern, false));
+    let parsed = Pattern::parse_with(&pattern, ignore_case);
     // As nvim's: the next `~` is this replacement only if the pattern is
     // valid, matching or not.
     target.registers.substitute = LastSubstitute {
@@ -459,7 +462,8 @@ pub(crate) fn run(
         {
             target.registers.note_pattern(&pattern);
         }
-        target.state.highlight = Pattern::parse(&pattern).ok();
+        target.state.highlight =
+            Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, false)).ok();
     }
     let parsed = parsed.map_err(|error| ExError::Pattern(error.to_string()))?;
     if confirm {

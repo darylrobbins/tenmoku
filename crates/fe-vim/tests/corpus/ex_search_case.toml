@@ -1,0 +1,165 @@
+# 'ignorecase' and 'smartcase' for the ex commands that take a pattern: `:s`
+# (its `i` and `I` flags win; an empty pattern is the last search, `:&`, `&`
+# and `g&` repeat), `:g`, `:v`, `:sort /pat/` and `/pat/` addresses. Each
+# case's `set` is run as `:set` before its keys, from both off.
+# Hand-written; what nvim does is recorded in ex_search_case.expected.json
+# by the ignored `record_corpus_with_neovim` test.
+
+[[case]]
+name = "s_ic"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/g<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "s_default_exact"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/g<CR>"
+
+[[case]]
+name = "s_scs_lowercase"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "s_scs_uppercase"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/Foo/x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "s_flag_upper_i_wins"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/gI<CR>"
+set = "ic"
+
+[[case]]
+name = "s_flag_i_wins"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/gi<CR>"
+
+[[case]]
+name = "s_empty_pattern"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = "/foo<CR>:s//x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "s_empty_pattern_upper"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = "/Foo<CR>:s//x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "amp_repeat"
+buffer = "Foo foo FOO\nFoo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/<CR>j:&&<CR>"
+set = "ic scs"
+
+[[case]]
+name = "amp_repeat_flags"
+buffer = "Foo foo FOO\nFoo foo FOO"
+cursor = [0, 0]
+keys = ":s/foo/x/g<CR>j&"
+set = "ic"
+
+[[case]]
+name = "g_amp"
+buffer = "Foo foo FOO\nFoo foo FOO"
+cursor = [0, 0]
+keys = ":s/Foo/x/<CR>ug&"
+set = "ic scs"
+
+[[case]]
+name = "g_ic"
+buffer = "Foo\nfoo\nbar\nFOO"
+cursor = [0, 0]
+keys = ":g/foo/s/$/!/<CR>"
+set = "ic"
+
+[[case]]
+name = "g_scs_upper"
+buffer = "Foo\nfoo\nbar\nFOO"
+cursor = [0, 0]
+keys = ":g/Foo/s/$/!/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "v_scs"
+buffer = "Foo\nfoo\nbar\nFOO"
+cursor = [0, 0]
+keys = ":v/foo/s/$/!/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "v_default"
+buffer = "Foo\nfoo\nbar\nFOO"
+cursor = [0, 0]
+keys = ":v/foo/s/$/!/<CR>"
+
+[[case]]
+name = "sort_pattern_ic"
+buffer = "b Xa\nc xB\na XC"
+cursor = [0, 0]
+keys = ":sort /x/<CR>"
+set = "ic"
+
+[[case]]
+name = "sort_pattern_scs"
+buffer = "b Xa\nc xB\na XC"
+cursor = [0, 0]
+keys = ":sort /X/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "sort_pattern_scs_lower"
+buffer = "b Xa\nc xB\na XC"
+cursor = [0, 0]
+keys = ":sort /x/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "address_pattern_ic"
+buffer = "a\nFOO\nb\nfoo\nc"
+cursor = [0, 0]
+keys = ":/foo/d<CR>"
+set = "ic"
+
+[[case]]
+name = "address_pattern_scs"
+buffer = "a\nFOO\nb\nfoo\nc"
+cursor = [0, 0]
+keys = ":/foo/d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "address_pattern_scs_upper"
+buffer = "a\nfoo\nb\nFOO\nc"
+cursor = [0, 0]
+keys = ":/FOO/d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "address_back_ic"
+buffer = "a\nFOO\nb\nfoo\nc"
+cursor = [0, 0]
+keys = ":$?foo?d<CR>"
+set = "ic"
+
+[[case]]
+name = "s_hl_next"
+buffer = "x\nFoo\nfoo"
+cursor = [0, 0]
+keys = ":s/foo/y/e<CR>n"
+set = "ic"
+

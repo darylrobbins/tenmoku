@@ -1557,7 +1557,8 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     let keep = !matches!(search, LineSearch::LastSearch { .. });
     // The address's own pattern drops the last search's offset (`//` too).
     let drops_offset = matches!(search, LineSearch::Pattern { .. });
-    let parsed = match Pattern::parse(&pattern) {
+    let parsed = match Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, false))
+    {
         Ok(parsed) => parsed,
         Err(error) => {
             if keep && matches!(error, PatternError::Invalid(_)) {

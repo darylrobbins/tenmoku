@@ -310,7 +310,7 @@ fn searched(target: &mut VimTarget<'_>, search: &LineSearch) -> Result<(String, 
     };
     let forward = registers.last_search().is_none_or(|(_, forward)| forward);
     let keep = !matches!(search, LineSearch::LastSearch { .. });
-    match Pattern::parse(&pattern) {
+    match Pattern::parse_with(&pattern, registers.ignores_case(&pattern, false)) {
         Ok(parsed) => {
             if keep {
                 registers.set_search(&pattern, forward);

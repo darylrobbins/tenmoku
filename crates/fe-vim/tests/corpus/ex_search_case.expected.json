@@ -1,0 +1,571 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "s_ic",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/g<CR>",
+      "set": "ignorecase",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_default_exact",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/g<CR>",
+      "expect": {
+        "buffer": "Foo x FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_scs_lowercase",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_scs_uppercase",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/Foo/x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_flag_upper_i_wins",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/gI<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "Foo x FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_flag_i_wins",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/gi<CR>",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_empty_pattern",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>:s//x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_empty_pattern_upper",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/Foo<CR>:s//x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "amp_repeat",
+      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/<CR>j:&&<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO\nx foo FOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "amp_repeat_flags",
+      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/x/g<CR>j&",
+      "set": "ic",
+      "expect": {
+        "buffer": "x x x\nx x x",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_amp",
+      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/Foo/x/<CR>ug&",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO\nx foo FOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_ic",
+      "buffer": "Foo\nfoo\nbar\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/foo/s/$/!/<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "Foo!\nfoo!\nbar\nFOO!",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "g_scs_upper",
+      "buffer": "Foo\nfoo\nbar\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/Foo/s/$/!/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo!\nfoo\nbar\nFOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "v_scs",
+      "buffer": "Foo\nfoo\nbar\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":v/foo/s/$/!/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo\nfoo\nbar!\nFOO",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "v_default",
+      "buffer": "Foo\nfoo\nbar\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":v/foo/s/$/!/<CR>",
+      "expect": {
+        "buffer": "Foo!\nfoo\nbar!\nFOO!",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "sort_pattern_ic",
+      "buffer": "b Xa\nc xB\na XC",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort /x/<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "c xB\na XC\nb Xa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sort_pattern_scs",
+      "buffer": "b Xa\nc xB\na XC",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort /X/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "c xB\na XC\nb Xa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sort_pattern_scs_lower",
+      "buffer": "b Xa\nc xB\na XC",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort /x/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "c xB\na XC\nb Xa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "address_pattern_ic",
+      "buffer": "a\nFOO\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/foo/d<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "a\nb\nfoo\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "FOO\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "FOO\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "address_pattern_scs",
+      "buffer": "a\nFOO\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/foo/d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "a\nb\nfoo\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "FOO\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "FOO\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "address_pattern_scs_upper",
+      "buffer": "a\nfoo\nb\nFOO\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/FOO/d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "a\nfoo\nb\nc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "FOO\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "FOO",
+            "linewise": false
+          },
+          "1": {
+            "text": "FOO\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "address_back_ic",
+      "buffer": "a\nFOO\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":$?foo?d<CR>",
+      "set": "ic",
+      "expect": {
+        "buffer": "a\nFOO\nb\nc",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "s_hl_next",
+      "buffer": "x\nFoo\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/foo/y/e<CR>n",
+      "set": "ic",
+      "expect": {
+        "buffer": "x\nFoo\nfoo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

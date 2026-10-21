@@ -655,7 +655,11 @@ pub(super) fn sort(
     };
     let pattern = match pattern {
         Some(pattern) => {
-            Some(Pattern::parse(&pattern).map_err(|error| ExError::Pattern(error.to_string()))?)
+            let ignore_case = target.registers.ignores_case(&pattern, false);
+            Some(
+                Pattern::parse_with(&pattern, ignore_case)
+                    .map_err(|error| ExError::Pattern(error.to_string()))?,
+            )
         }
         None => None,
     };
