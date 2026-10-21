@@ -1398,6 +1398,10 @@ pub(crate) struct Marks {
     /// While a `:g` runs its commands, their jumps add nothing (`:help
     /// jumplist`).
     keeping: bool,
+    /// The first and last rows the first `cx` marked
+    /// (`feature/exchange.rs`), each at its start: they follow edits as `a`
+    /// to `z` do, each gone once its row is deleted.
+    pub(crate) exchange: Option<[Option<Place>; 2]>,
 }
 
 impl Marks {
@@ -1469,11 +1473,13 @@ impl Marks {
             Entry::At(place) => Some(place),
             Entry::Past => None,
         });
+        let exchange = self.exchange.iter_mut().flatten().flatten();
         let places = self
             .named
             .values_mut()
             .chain(self.jump.iter_mut())
             .chain(self.previous.iter_mut())
+            .chain(exchange)
             .chain(entries);
         for place in places {
             place.advance(&batches);
@@ -1858,6 +1864,9 @@ impl Marks {
             .collect();
         self.jump = self.jump.as_ref().and_then(&f);
         self.previous = self.previous.as_ref().and_then(&f);
+        for place in self.exchange.iter_mut().flatten() {
+            *place = place.as_ref().and_then(&f);
+        }
         for entry in self.list.iter_mut().chain(self.files.values_mut()) {
             if let Entry::At(place) = entry
                 && let Some(moved) = f(place)

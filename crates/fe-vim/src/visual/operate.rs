@@ -409,6 +409,7 @@ fn operate_as_wide(
         Operator::Surround { .. } => unreachable!("refused by operator::operate"),
         Operator::ReplaceWithRegister => unreachable!("replace_register's own"),
         Operator::Comment => unreachable!("comment's own"),
+        Operator::Exchange => unreachable!("refused by operator::operate"),
         Operator::ToggleCase
         | Operator::Lowercase
         | Operator::Uppercase

@@ -204,6 +204,8 @@ pub struct VimState {
     pub(crate) incsearch_off: bool,
     /// `gr` is ReplaceWithRegister's ([`VimState::set_replace_with_register`]).
     pub(crate) replace_with_register: bool,
+    /// The region the first `cx` marked, waiting for the second.
+    pub(crate) exchange: Option<crate::feature::exchange::Marked>,
 }
 
 impl VimState {

@@ -68,6 +68,10 @@ pub enum Operator {
     /// the host's comment tokens, as nvim's built-in commenting does
     /// (`feature/comment.rs`).
     Comment,
+    /// `cx`: marks what it covers the first time and swaps it with the
+    /// marked text the second, as vim-exchange does
+    /// (`feature/exchange.rs`). It takes no selection.
+    Exchange,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
