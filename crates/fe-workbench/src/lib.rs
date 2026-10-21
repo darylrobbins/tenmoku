@@ -13,6 +13,7 @@
 //! focused editor doesn't know and propagates.
 
 mod auto_save;
+mod chat_panel;
 mod config_problems;
 mod disk_sync;
 mod dock;
@@ -78,6 +79,7 @@ pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, title
 pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch, window_layouts};
 
+use chat_panel::ChatPanel;
 use workbench::git_commands::{git_history::HistoryPanel, git_log::GitLogPanel};
 
 /// The key context the workbench's root element sets.
@@ -116,6 +118,9 @@ pub fn init(cx: &mut App) {
     project_panel::init(cx);
     status_bar::init(cx);
     trust::init(cx);
+    // The AI chat's view's commands, and `chat.open` from anywhere.
+    fe_chat_view::init(cx);
+    chat_panel::init(cx);
 }
 
 /// The workbench's, the editor's and the app's commands, to check keymap

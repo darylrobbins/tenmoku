@@ -10,6 +10,12 @@ publish.workspace = true
 [dependencies]
 async-channel.workspace = true
 fe-buffer.workspace = true
+# The AI chat panel: its conversation, view, and Claude through fe-net's
+# HTTPS client.
+fe-chat.workspace = true
+fe-chat-anthropic.workspace = true
+fe-chat-view.workspace = true
+fe-net.workspace = true
 fe-command.workspace = true
 fe-config.workspace = true
 fe-editor.workspace = true

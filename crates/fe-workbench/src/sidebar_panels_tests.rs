@@ -24,7 +24,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 7] {
+); 8] {
     [
         (
             DockPanel::Explorer,
@@ -81,6 +81,14 @@ fn base() -> [(
             Icon::FileDiff,
             "git.file_history",
             DockOp::ShowHistory,
+        ),
+        (
+            DockPanel::Chat,
+            "Chat",
+            "chat",
+            Icon::MessageSquare,
+            "chat.open",
+            DockOp::ShowChat,
         ),
     ]
 }
@@ -224,6 +232,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::GitLog,
             DockPanel::Problems,
             DockPanel::History,
+            DockPanel::Chat,
         ]
     );
 }
@@ -274,6 +283,18 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
         shown(&workbench, cx),
         (true, DockPanel::History, "History: a.rs".to_owned())
     );
+
+    dispatch("chat.open", cx);
+    let with_chat = [
+        with_history.as_slice(),
+        &[(DockPanel::Chat, Icon::MessageSquare)],
+    ]
+    .concat();
+    assert_eq!(rail(&workbench, cx), with_chat);
+    assert_eq!(
+        shown(&workbench, cx),
+        (true, DockPanel::Chat, "Chat".to_owned())
+    );
 }
 
 #[gpui::test]
@@ -289,6 +310,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         DockPanel::References,
         DockPanel::Problems,
         DockPanel::History,
+        DockPanel::Chat,
     ];
     for panel in order {
         dispatch(panel.show_command(), cx);
@@ -374,6 +396,8 @@ mod git_log_rail_tests {
         dispatch("git.log", cx);
         distinct(cx);
         dispatch("git.file_history", cx);
+        distinct(cx);
+        dispatch("chat.open", cx);
         distinct(cx);
     }
 

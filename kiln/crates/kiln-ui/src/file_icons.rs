@@ -116,6 +116,8 @@ icons! {
     CircleDot => "circle-dot",
     Diamond => "diamond",
     Variable => "variable",
+    // The AI chat panel's; not mapped from names.
+    MessageSquare => "message-square",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

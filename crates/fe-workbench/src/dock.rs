@@ -1,16 +1,17 @@
 //! The right dock: one panel at a time, the Explorer, project search, the
-//! git changes, find references' results, the problems, a
-//! file's git history or the repository's log, under a title row naming it,
-//! and picked from the activity rail on the window's right edge, which
+//! git changes, find references' results, the problems, a file's git
+//! history, the repository's log or the AI chat, under a title row naming
+//! it, and picked from the activity rail on the window's right edge, which
 //! stays when the dock hides. Switching keeps each panel's state. The
 //! Explorer is a [`ViewContainer`] of two views, the project tree
 //! (Folders) over the outline (collapsed until shown or expanded), whose
 //! collapse and weights the dock's saved state keeps; `dock.show_project`
 //! shows it, and `outline.show` shows it with the outline expanded. The
-//! //! References, Problems and History buttons join the rail once their panel
-//! has shown; the History panel is made the first time `git.file_history`
-//! runs ([`Dock::set_history`]). The Git Log panel is on the rail from the
-//! start, under Changes, and made with the dock.
+//! References, Problems, History and Chat buttons join the rail once their
+//! panel has shown; the History panel is made the first time
+//! `git.file_history` runs ([`Dock::set_history`]), and the Chat panel the
+//! first time `chat.open` does ([`Dock::set_chat`]). The Git Log panel is on
+//! the rail from the start, under Changes, and made with the dock.
 //!
 //! Its commands (`dock.show_project`, `dock.toggle`, the panels' show
 //! commands, `search.show_replace`, `search.replace_all` and `git.refresh`)
@@ -26,7 +27,8 @@ use gpui::{
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
 
 use crate::{
-    GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
+    ChatPanel, GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel,
+    ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -51,11 +53,12 @@ impl DockPanel {
     pub const Problems: DockPanel = problems_panel::SIDEBAR.panel;
     pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
     pub const GitLog: DockPanel = crate::workbench::git_commands::git_log::SIDEBAR.panel;
+    pub const Chat: DockPanel = crate::chat_panel::SIDEBAR.panel;
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References, Problems
-    /// and History follow once they have shown.
+    /// The panels the rail always has, in its order; References, Problems,
+    /// History and Chat follow once they have shown.
     pub const ALL: [DockPanel; 4] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
@@ -125,6 +128,7 @@ const PANELS: &[&SidebarPanel] = &[
     &crate::references_panel::SIDEBAR,
     &problems_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
+    &crate::chat_panel::SIDEBAR,
 ];
 
 const _: () = {
@@ -212,6 +216,7 @@ dock_item!(
     crate::workbench::git_commands::git_log::SIDEBAR,
     GitLogPanel::title
 );
+dock_item!(ChatPanel, crate::chat_panel::SIDEBAR);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,7 +224,7 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
+/// The right dock: kiln-shell's [`DockState`] over fastedit's eight panels,
 /// whose rail clicks run the op the panel's key would; the History and Git
 /// Log panels' show the list last listed.
 pub struct Dock {
@@ -236,6 +241,8 @@ pub struct Dock {
     history: Option<Entity<HistoryPanel>>,
     /// Made the first time it's asked for.
     git_log: Option<Entity<GitLogPanel>>,
+    /// Made the first time it's asked for.
+    chat: Option<Entity<ChatPanel>>,
     #[cfg(test)]
     ops: Vec<DockOp>,
     /// The explorer's views' collapse and weights are the dock's state,
@@ -317,6 +324,7 @@ impl Dock {
             problems,
             history: None,
             git_log: Some(git_log),
+            chat: None,
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
@@ -391,6 +399,18 @@ impl Dock {
         self.git_log.as_ref()
     }
 
+    pub(crate) fn chat(&self) -> Option<&Entity<ChatPanel>> {
+        self.chat.as_ref()
+    }
+
+    /// Registers `chat`, the Chat panel made on first use, in the place of
+    /// any before it, as [`Dock::set_history`] does.
+    pub(crate) fn set_chat(&mut self, chat: Entity<ChatPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(chat.clone(), cx);
+        self.chat = Some(chat);
+        cx.notify();
+    }
+
     /// The dock's state, in kiln-shell.
     pub fn state(&self) -> &DockState {
         &self.state
@@ -430,8 +450,8 @@ impl Dock {
     pub(crate) fn run(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
         #[cfg(test)]
         self.ops.push(op);
-        // A panel's show op shows it: History and Git Log nothing until
-        // they have been made.
+        // A panel's show op shows it: History, Git Log and Chat nothing
+        // until they have been made.
         if let Some(sidebar) = PANELS.iter().find(|sidebar| sidebar.show_op == op) {
             self.show(sidebar.panel, window, cx);
             // The tree the workbench focuses.
@@ -606,6 +626,8 @@ pub(crate) enum DockOp {
     ShowHistory,
     /// The Git Log button: shows the log last listed.
     ShowGitLog,
+    /// The Chat button, and `chat.open` once it has made the panel.
+    ShowChat,
     /// `git.refresh`: reads the git status again, shown or not.
     RefreshChanges,
     Toggle,
