@@ -257,7 +257,6 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
         Icon::Files,
         Icon::Search,
         Icon::GitBranch,
-        crate::dock::panel_icon(DockPanel::GitLog),
         Icon::MessageSquare,
         Icon::FileTerminal,
     ];

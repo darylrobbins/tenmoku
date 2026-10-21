@@ -1,17 +1,19 @@
-//! The right dock: one panel at a time, the Explorer, project search, the
-//! git changes, find references' results, the problems, a file's git
-//! history, the repository's log or the AI chat, under a title row naming
-//! it, and picked from the activity rail on the window's right edge, which
-//! stays when the dock hides. Switching keeps each panel's state. The
-//! Explorer is a [`ViewContainer`] of two views, the project tree
-//! (Folders) over the outline (collapsed until shown or expanded), whose
-//! collapse and weights the dock's saved state keeps; `dock.show_project`
-//! shows it, and `outline.show` shows it with the outline expanded. The
-//! References, Problems, History and Chat buttons join the rail once their
-//! panel has shown; the History panel is made the first time
-//! `git.file_history` runs ([`Dock::set_history`]), and the Chat panel the
-//! first time `chat.open` does ([`Dock::set_chat`]). The Git Log panel is on
-//! the rail from the start, under Changes, and made with the dock.
+//! The right dock: one panel at a time, the Explorer, project search,
+//! Source Control, find references' results, the problems, a file's git
+//! history or the AI chat, under a title row naming it, and picked from the
+//! activity rail on the window's right edge, which stays when the dock
+//! hides. Switching keeps each panel's state. The Explorer is a
+//! [`ViewContainer`] of two views, the project tree (Folders) over the
+//! outline (collapsed until shown or expanded), whose collapse and weights
+//! the dock's saved state keeps; `dock.show_project` shows it, and
+//! `outline.show` shows it with the outline expanded. Source Control is
+//! another, of the git changes (Changes) over the repository's log
+//! (Graph), both expanded ([`source_control`]): `git.show_changes` shows it
+//! with Changes expanded, `git.log` with Graph. The References, Problems,
+//! History and Chat buttons join the rail once their panel has shown; the
+//! History panel is made the first time `git.file_history` runs
+//! ([`Dock::set_history`]), and the Chat panel the first time `chat.open`
+//! does ([`Dock::set_chat`]).
 //!
 //! Its commands (`dock.show_project`, `dock.toggle`, the panels' show
 //! commands, `search.show_replace`, `search.replace_all` and `git.refresh`)
@@ -21,8 +23,8 @@
 
 use fe_ui::Icon;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, IntoElement, Render, SharedString,
-    Subscription, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, IntoElement, Render,
+    SharedString, Subscription, Window,
 };
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
 
@@ -37,6 +39,9 @@ pub(crate) mod problems_panel;
 
 pub(crate) use problems_panel::{ProblemsOp, ProblemsPanel};
 
+#[path = "source_control.rs"]
+pub(crate) mod source_control;
+
 /// A panel the dock shows: fastedit's name for the [`PanelId`]s it
 /// registers, one per [`SidebarPanel`] in [`PANELS`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,18 +53,17 @@ pub struct DockPanel(PanelId);
 impl DockPanel {
     pub const Explorer: DockPanel = crate::project_panel::SIDEBAR.panel;
     pub const Search: DockPanel = search_panel::SIDEBAR.panel;
-    pub const Changes: DockPanel = crate::git_panel::SIDEBAR.panel;
+    pub const SourceControl: DockPanel = source_control::SIDEBAR.panel;
     pub const References: DockPanel = crate::references_panel::SIDEBAR.panel;
     pub const Problems: DockPanel = problems_panel::SIDEBAR.panel;
     pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
-    pub const GitLog: DockPanel = crate::workbench::git_commands::git_log::SIDEBAR.panel;
     pub const Chat: DockPanel = crate::chat_panel::SIDEBAR.panel;
 }
 
 impl DockPanel {
     /// The panels the rail always has, in its order; References, Problems
     /// and History follow once they have shown.
-    pub const ALL: [DockPanel; 5] = always_on_rail();
+    pub const ALL: [DockPanel; 4] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
     pub(crate) const fn new(id: &'static str) -> Self {
@@ -123,8 +127,7 @@ pub(crate) struct SidebarPanel {
 const PANELS: &[&SidebarPanel] = &[
     &crate::project_panel::SIDEBAR,
     &search_panel::SIDEBAR,
-    &crate::git_panel::SIDEBAR,
-    &crate::workbench::git_commands::git_log::SIDEBAR,
+    &source_control::SIDEBAR,
     &crate::chat_panel::SIDEBAR,
     &crate::references_panel::SIDEBAR,
     &problems_panel::SIDEBAR,
@@ -201,7 +204,6 @@ macro_rules! dock_item {
 }
 
 dock_item!(SearchPanel, search_panel::SIDEBAR);
-dock_item!(GitPanel, crate::git_panel::SIDEBAR);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
 dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
 // Titled with the file it lists.
@@ -209,12 +211,6 @@ dock_item!(
     HistoryPanel,
     crate::workbench::git_commands::git_history::SIDEBAR,
     HistoryPanel::title
-);
-// Titled with the branch it lists.
-dock_item!(
-    GitLogPanel,
-    crate::workbench::git_commands::git_log::SIDEBAR,
-    GitLogPanel::title
 );
 dock_item!(ChatPanel, crate::chat_panel::SIDEBAR);
 
@@ -224,9 +220,9 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's eight panels,
-/// whose rail clicks run the op the panel's key would; the History and Git
-/// Log panels' show the list last listed.
+/// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
+/// whose rail clicks run the op the panel's key would; the History panel's
+/// shows the list last listed.
 pub struct Dock {
     state: DockState,
     /// The project tree and the outline, its views.
@@ -234,12 +230,16 @@ pub struct Dock {
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
+    /// The git changes and the repository's log, its views.
+    source_control: Entity<ViewContainer>,
     changes: Entity<GitPanel>,
+    /// What Graph's header says: what the log lists.
+    graph_title: SharedString,
     references: Entity<ReferencesPanel>,
     problems: Entity<ProblemsPanel>,
     /// Made the first time it's asked for.
     history: Option<Entity<HistoryPanel>>,
-    /// Made the first time it's asked for.
+    /// Made with the dock.
     git_log: Option<Entity<GitLogPanel>>,
     /// Made the first time it's asked for.
     chat: Option<Entity<ChatPanel>>,
@@ -248,6 +248,10 @@ pub struct Dock {
     /// The explorer's views' collapse and weights are the dock's state,
     /// for the workbench to save.
     _explorer_changed: Subscription,
+    /// Source Control's are too.
+    _source_control_changed: Subscription,
+    /// Retitles Graph when the log lists something else.
+    _graph_changed: Subscription,
 }
 
 /// The Explorer: `project`'s tree over `outline`, collapsed at first.
@@ -287,8 +291,9 @@ fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
 }
 
 impl Dock {
-    /// Shows the Explorer, of `project` and `outline`, first; `git_log` and
-    /// `chat` follow `changes` on the rail.
+    /// Shows the Explorer, of `project` and `outline`, first; Source
+    /// Control, of `changes` over `git_log`, follows search on the rail,
+    /// and `chat` it.
     #[allow(clippy::too_many_arguments, private_interfaces)]
     pub fn new(
         project: Entity<ProjectPanel>,
@@ -308,10 +313,19 @@ impl Dock {
         let explorer_changed = cx.observe(&explorer, |_, _, cx| cx.notify());
         state.add_panel(explorer.clone(), cx);
         state.add_panel(search.clone(), cx);
-        state.add_panel(changes.clone(), cx);
+        let source_control = source_control::container(&changes, &git_log, cx);
+        let source_control_changed = cx.observe(&source_control, |_, _, cx| cx.notify());
+        state.add_panel(source_control.clone(), cx);
+        let graph_changed = cx.observe(&git_log, |dock: &mut Self, git_log, cx| {
+            let title = git_log.read(cx).title(cx);
+            if title != dock.graph_title {
+                dock.graph_title = title;
+                let graph = source_control::graph(&git_log, cx);
+                (dock.source_control).update(cx, |container, cx| container.add_view(graph, cx));
+            }
+        });
         // Registered here, not after the References and Problems panels,
         // as the rail lists the panels in the order they were added.
-        state.add_panel(git_log.clone(), cx);
         state.add_panel(chat.clone(), cx);
         state.add_panel(references.clone(), cx);
         state.add_panel(problems.clone(), cx);
@@ -321,6 +335,8 @@ impl Dock {
             project,
             search,
             outline,
+            source_control,
+            graph_title: git_log.read(cx).title(cx),
             changes,
             references,
             problems,
@@ -330,6 +346,8 @@ impl Dock {
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
+            _source_control_changed: source_control_changed,
+            _graph_changed: graph_changed,
         }
     }
 
@@ -359,9 +377,19 @@ impl Dock {
         &self.explorer
     }
 
-    /// Expands or collapses the Explorer's `view`.
-    fn set_collapsed(&self, view: kiln_shell::ViewId, collapsed: bool, cx: &mut App) {
-        let stack = self.explorer.read(cx).stack().clone();
+    /// Source Control, of the git changes and the repository's log.
+    pub fn source_control(&self) -> &Entity<ViewContainer> {
+        &self.source_control
+    }
+
+    /// Expands or collapses `container`'s `view`.
+    fn set_collapsed(
+        container: &Entity<ViewContainer>,
+        view: kiln_shell::ViewId,
+        collapsed: bool,
+        cx: &mut App,
+    ) {
+        let stack = container.read(cx).stack().clone();
         stack.update(cx, |stack, cx| stack.set_collapsed(view, collapsed, cx));
     }
 
@@ -369,10 +397,11 @@ impl Dock {
         &self.changes
     }
 
-    /// Shows `changes` in the old one's place, for a new root, as
-    /// [`Dock::set_project`] does.
+    /// Shows `changes` in the old one's place in Source Control, for a new
+    /// root, as [`Dock::set_project`] does.
     pub(crate) fn set_changes(&mut self, changes: Entity<GitPanel>, cx: &mut Context<Self>) {
-        self.state.add_panel(changes.clone(), cx);
+        let view = source_control::changes_view(&changes);
+        (self.source_control).update(cx, |container, cx| container.add_view(view, cx));
         self.changes = changes;
         cx.notify();
     }
@@ -440,24 +469,40 @@ impl Dock {
     }
 
     /// Does a dock op, for a key or a rail click: showing search focuses its
-    /// input. Focus on a panel the op hides stays: the workbench moves it.
+    /// input, and showing Source Control the view it shows. Focus on a
+    /// panel the op hides stays: the workbench moves it.
     pub(crate) fn run(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
         #[cfg(test)]
         self.ops.push(op);
-        // A panel's show op shows it: History, Git Log and Chat nothing
-        // until they have been made.
+        // A panel's show op shows it: History and Chat nothing until they
+        // have been made.
         if let Some(sidebar) = PANELS.iter().find(|sidebar| sidebar.show_op == op) {
             self.show(sidebar.panel, window, cx);
-            // The tree the workbench focuses.
-            if op == DockOp::ShowProject {
-                self.set_collapsed(crate::project_panel::FOLDERS, false, cx);
+            match op {
+                // The tree the workbench focuses.
+                DockOp::ShowProject => {
+                    Self::set_collapsed(&self.explorer, crate::project_panel::FOLDERS, false, cx);
+                }
+                DockOp::ShowChanges => {
+                    Self::set_collapsed(&self.source_control, source_control::CHANGES, false, cx);
+                    window.focus(&self.changes.focus_handle(cx), cx);
+                }
+                _ => {}
             }
             return true;
         }
         match op {
             DockOp::ShowOutline => {
                 self.show(DockPanel::Explorer, window, cx);
-                self.set_collapsed(crate::outline_panel::VIEW, false, cx);
+                Self::set_collapsed(&self.explorer, crate::outline_panel::VIEW, false, cx);
+                true
+            }
+            DockOp::ShowGitLog => {
+                self.show(DockPanel::SourceControl, window, cx);
+                Self::set_collapsed(&self.source_control, source_control::GRAPH, false, cx);
+                if let Some(git_log) = &self.git_log {
+                    window.focus(&git_log.focus_handle(cx), cx);
+                }
                 true
             }
             // The workbench's to do.
@@ -495,15 +540,28 @@ impl Dock {
 
     /// Puts back the state [`DockState::save`] saved: whether it shows, its
     /// active panel, whether References has joined the rail and the
-    /// Explorer's views' collapse and weights. One saved before the
-    /// Explorer, with no views, leaves them as built; its Outline panel
-    /// active shows the Explorer.
+    /// Explorer's and Source Control's views' collapse and weights. One
+    /// saved before them, with no views, leaves them as built; its Outline
+    /// panel active shows the Explorer, its Changes panel Source Control
+    /// and its Git Log panel Source Control with Graph expanded.
     pub(crate) fn restore(&mut self, saved: &fe_command::Value, cx: &mut Context<Self>) {
         let mut saved = saved.clone();
-        if saved.get("active").and_then(fe_command::Value::as_str) == Some("outline") {
-            saved["active"] = DockPanel::Explorer.id().0.into();
+        let active = saved.get("active").and_then(fe_command::Value::as_str);
+        let graph = active == Some(crate::workbench::git_commands::git_log::OLD_PANEL);
+        let container = match active {
+            Some("outline") => Some(DockPanel::Explorer),
+            Some("changes" | crate::workbench::git_commands::git_log::OLD_PANEL) => {
+                Some(DockPanel::SourceControl)
+            }
+            _ => None,
+        };
+        if let Some(container) = container {
+            saved["active"] = container.id().0.into();
         }
         self.state.restore(&saved, cx);
+        if graph {
+            Self::set_collapsed(&self.source_control, source_control::GRAPH, false, cx);
+        }
         cx.notify();
     }
 
@@ -537,6 +595,12 @@ impl Dock {
     pub(crate) fn title(&self) -> SharedString {
         self.active().name().into()
     }
+
+    /// What Source Control's Graph header says.
+    pub(crate) fn graph_title(&self) -> &SharedString {
+        &self.graph_title
+    }
+
     /// Where the rail's button for `panel` was laid out in the last frame.
     pub(crate) fn rail_button_bounds(
         &self,
@@ -605,6 +669,10 @@ mod sidebar_panels_tests;
 #[path = "explorer_views_tests.rs"]
 mod explorer_views_tests;
 
+#[cfg(test)]
+#[path = "source_control_views_tests.rs"]
+mod source_control_views_tests;
+
 /// What a dock command, or a rail click, asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DockOp {
@@ -614,11 +682,13 @@ pub(crate) enum DockOp {
     ShowOutline,
     /// The References button: shows the last results, finding none.
     ShowReferences,
-    /// `git.show_changes`.
+    /// `git.show_changes`: shows Source Control with Changes expanded and
+    /// focused.
     ShowChanges,
     /// The History button: shows the history last listed.
     ShowHistory,
-    /// The Git Log button: shows the log last listed.
+    /// `git.log` and `git.log_all`, once they have asked for the list:
+    /// show Source Control with Graph expanded and focused.
     ShowGitLog,
     /// The Chat button, and `chat.open` once it has made the panel.
     ShowChat,

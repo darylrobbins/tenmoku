@@ -54,22 +54,21 @@ fn chat_is_on_the_rail_from_the_start(cx: &mut TestAppContext) {
     let base = [
         DockPanel::Explorer,
         DockPanel::Search,
-        DockPanel::Changes,
-        DockPanel::GitLog,
+        DockPanel::SourceControl,
         DockPanel::Chat,
     ];
     assert_eq!(rail(&workbench, cx), base);
     let icons = workbench.read_with(cx, |workbench, cx| workbench.dock().read(cx).rail_icons());
     assert_eq!(icons.len(), base.len() + 1, "the Terminal action follows");
-    assert_eq!(icons[4], Icon::MessageSquare);
-    assert_eq!(icons[5], Icon::FileTerminal);
+    assert_eq!(icons[3], Icon::MessageSquare);
+    assert_eq!(icons[4], Icon::FileTerminal);
 
     dispatch("git.file_history", cx);
     dispatch("nav.find_references", cx);
     let after = rail(&workbench, cx);
     assert!(after.contains(&DockPanel::History), "{after:?}");
     assert!(after.contains(&DockPanel::References), "{after:?}");
-    assert_eq!(after.iter().position(|p| *p == DockPanel::Chat), Some(4));
+    assert_eq!(after.iter().position(|p| *p == DockPanel::Chat), Some(3));
 }
 
 /// A workbench on a git repository with a committed `a.rs`, showing it.

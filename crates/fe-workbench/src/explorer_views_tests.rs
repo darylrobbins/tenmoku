@@ -124,8 +124,7 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
         [
             DockPanel::Explorer.id(),
             DockPanel::Search.id(),
-            DockPanel::Changes.id(),
-            DockPanel::GitLog.id(),
+            DockPanel::SourceControl.id(),
             DockPanel::Chat.id(),
         ]
     );

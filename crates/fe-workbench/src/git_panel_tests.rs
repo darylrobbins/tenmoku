@@ -198,7 +198,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             dock.active(),
             dock.title()
         )),
-        (true, DockPanel::Changes, "Changes".into())
+        (true, DockPanel::SourceControl, "Source Control".into())
     );
     assert!(cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)));
     assert_eq!(
@@ -230,17 +230,16 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
             Icon::Files,
             Icon::Search,
             Icon::GitBranch,
-            crate::dock::panel_icon(DockPanel::GitLog),
             Icon::MessageSquare,
             Icon::FileTerminal
         ]
     );
     let (search, changes) = dock.read_with(cx, |dock, _| {
         let bounds = |panel| dock.rail_button_bounds(panel).expect("drawn");
-        (bounds(DockPanel::Search), bounds(DockPanel::Changes))
+        (bounds(DockPanel::Search), bounds(DockPanel::SourceControl))
     });
     assert!(changes.top() >= search.bottom(), "{search:?} {changes:?}");
-    assert_eq!(DockPanel::ALL[2], DockPanel::Changes);
+    assert_eq!(DockPanel::ALL[2], DockPanel::SourceControl);
 }
 
 #[gpui::test]
@@ -456,7 +455,7 @@ fn opening_another_folder_reads_its_repository(cx: &mut TestAppContext) {
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
-        DockPanel::Changes
+        DockPanel::SourceControl
     );
     assert_eq!(rows(&new, cx), [("M", "x.rs".to_owned())]);
 

@@ -68,10 +68,10 @@ fn rail(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<DockPa
         (state.panel_ids().into_iter())
             .filter(|id| state.on_rail(*id, cx))
             .map(|id| {
-                let panels = [DockPanel::Explorer, DockPanel::Search, DockPanel::Changes];
+                let panels = [DockPanel::Explorer, DockPanel::Search];
                 (panels.into_iter())
                     .chain([
-                        DockPanel::GitLog,
+                        DockPanel::SourceControl,
                         DockPanel::Chat,
                         DockPanel::References,
                         DockPanel::Problems,
@@ -149,8 +149,7 @@ fn chat_open_shows_the_panel(cx: &mut TestAppContext) {
     let base = [
         DockPanel::Explorer,
         DockPanel::Search,
-        DockPanel::Changes,
-        DockPanel::GitLog,
+        DockPanel::SourceControl,
         DockPanel::Chat,
     ];
     assert_eq!(rail(&workbench, cx), base);
