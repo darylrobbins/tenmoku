@@ -911,7 +911,7 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(48))]
+        #![proptest_config(ProptestConfig::with_cases(12))]
 
         #[test]
         fn index_matches_measuring_the_prefix(

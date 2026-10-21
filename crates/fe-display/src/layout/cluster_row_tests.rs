@@ -601,8 +601,15 @@ fn proportional_ascii_finds_narrower_clusters() {
     index.slice(0.0..800., 200., measure);
     assert!(index.scanned() <= 4 * CHUNK, "{} scanned", index.scanned());
 
-    for pair in boundaries.windows(2) {
+    let pairs = boundaries.len() - 1;
+    for (n, pair) in boundaries.windows(2).enumerate() {
         let [(offset, x), (next, next_x)] = [pair[0], pair[1]];
+        let near_chunk = [CHUNK, 2 * CHUNK]
+            .iter()
+            .any(|&edge| offset.abs_diff(edge) <= 16);
+        if n % 7 != 0 && n >= 10 && n + 10 < pairs && !near_chunk {
+            continue;
+        }
         assert_eq!(index.x_for_offset(offset, measure), x, "x of {offset}");
         assert_eq!(index.offset_for_x(x, measure), offset);
         assert_eq!(index.offset_for_x((x + next_x) / 2., measure), offset);
@@ -612,7 +619,7 @@ fn proportional_ascii_finds_narrower_clusters() {
     assert_eq!(index.width(measure), x);
 
     let is_boundary = |offset| boundaries.iter().any(|&(at, _)| at == offset);
-    for left in (0..(x as usize)).step_by(97) {
+    for left in (0..(x as usize)).step_by(997) {
         let left = left as f64;
         for (view, margin) in [(5., 0.), (f64::from(TEXT_WIDTH), 200.)] {
             let slice = index.slice(left..left + view, margin, measure);

@@ -309,6 +309,8 @@ fn inlay_row(frame: &Frame<Line>, inlay: Option<&Inlay<()>>) -> Option<u32> {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
     /// Every row but the inlay's lays out as it does without the inlay: the
     /// same buffer range, the same text shown and the same x for each
     /// offset. The inlay widens its row, which can let the frame scroll

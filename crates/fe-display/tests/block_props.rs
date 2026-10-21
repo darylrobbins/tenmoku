@@ -328,6 +328,8 @@ fn block_offset(editor: &Editor, above: u32) -> usize {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
     /// Each display row in the frame is the display map's row, placed below
     /// the rows of every block anchored at or above it; the rows and blocks
     /// in the frame are those in view, and the blocks are where their

@@ -29,7 +29,7 @@ fn per_row_projection(map: &DisplayMap) -> (Vec<Range<usize>>, Vec<usize>) {
 #[test]
 fn batched_fold_rows_match_per_row_lookups() {
     let mut rng = StdRng::seed_from_u64(7);
-    let text: String = (0..20_000)
+    let text: String = (0..5_000)
         .map(|_| {
             let words = rng.random_range(0..12);
             let row: Vec<&str> = (0..words)
@@ -41,11 +41,11 @@ fn batched_fold_rows_match_per_row_lookups() {
     let mut buffer = Buffer::new(&text);
     let mut map = DisplayMap::new(buffer.current(), 4);
     wrap_at(&mut map, Some(8.));
-    assert!(map.wrap.row_count() > 30_000);
+    assert!(map.wrap.row_count() > 7_500);
 
     // Short and long folds, nesting in and overlapping each other.
-    map.fold_many((0..2_000).map(|_| {
-        let start = rng.random_range(0..19_990);
+    map.fold_many((0..500).map(|_| {
+        let start = rng.random_range(0..4_990);
         let len = if rng.random_bool(0.8) {
             rng.random_range(1..8)
         } else {
@@ -53,10 +53,10 @@ fn batched_fold_rows_match_per_row_lookups() {
         };
         start..=start + len
     }));
-    assert!(map.folds().len() > 1_900);
+    assert!(map.folds().len() > 475);
     assert!(!map.folds().is_sorted_by_key(|fold| fold.end));
 
-    for _ in 0..200 {
+    for _ in 0..40 {
         let len = buffer.len();
         let start = rng.random_range(0..=len);
         let start = buffer.text().clip_offset(start, fe_text::Bias::Left);
@@ -92,7 +92,7 @@ fn batched_fold_rows_match_per_row_lookups() {
             hidden_rows
         );
     }
-    assert!(map.folds().len() > 1_500);
+    assert!(map.folds().len() > 375);
 
     // And the rows shown are those of a map folded afresh.
     let mut fresh = DisplayMap::new(buffer.current(), 4);

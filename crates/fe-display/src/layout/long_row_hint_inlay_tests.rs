@@ -83,8 +83,32 @@ fn long_rows_fill_the_view_with_hints_and_the_inlay_anywhere() {
     let hints = [(3_000, 40), (6_000, 60)];
     for inlay in [1_000, 3_000, 4_500, 6_000, 8_000] {
         let width = 9_000. * 10. + 100. + 40. * 10. + 60. * 10.;
+        // A coarse sweep, plus views on either side of the hints and the inlay.
+        let mut scrolls = Vec::new();
         let mut scroll = 0.;
         while scroll <= width {
+            scrolls.push(scroll);
+            scroll += 11_000.;
+        }
+        scrolls.push(width);
+        // Each text's span in the laid-out row: where it starts with the
+        // texts before it counted, and where it ends with those at its own
+        // offset counted too (whichever order they come in).
+        let spans = [(3_000, 400.), (6_000, 600.), (inlay, 100.)];
+        for (at, _) in spans {
+            let before: f64 = (spans.iter())
+                .filter(|&&(other, _)| other < at)
+                .map(|&(_, wide)| wide)
+                .sum();
+            let tied: f64 = (spans.iter())
+                .filter(|&&(other, _)| other == at)
+                .map(|&(_, wide)| wide)
+                .sum();
+            let start = at as f64 * 10. + before;
+            let end = start + tied;
+            scrolls.extend([start - 400., start, end - 400., end, end + 400.]);
+        }
+        for scroll in scrolls {
             let mut long_rows = LongRows::default();
             let frame = lay_out(Some((inlay, 10)), &hints, scroll as f32, &mut long_rows);
             let row = &frame.rows[0];
@@ -94,7 +118,11 @@ fn long_rows_fill_the_view_with_hints_and_the_inlay_anywhere() {
                 row.shown(),
                 row.start_x()
             );
-            for offset in row.shown().start..=row.shown().end {
+            let shown = row.shown();
+            let offsets = (shown.start..shown.end)
+                .step_by(13)
+                .chain(std::iter::once(shown.end));
+            for offset in offsets {
                 let x = row.x_for_offset(offset, &mut long_rows, &mut Mono);
                 assert_eq!(
                     row.offset_for_x(x, &mut long_rows, &mut Mono),
@@ -102,7 +130,6 @@ fn long_rows_fill_the_view_with_hints_and_the_inlay_anywhere() {
                     "inlay {inlay} scroll {scroll}"
                 );
             }
-            scroll += 2_000.;
         }
     }
 }

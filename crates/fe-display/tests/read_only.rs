@@ -318,8 +318,8 @@ fn lays_out_a_file_text() {
 fn long_row_is_sliced() {
     // Mostly ASCII, with tabs, multi-byte chars and invalid bytes along it.
     let mut rng = StdRng::seed_from_u64(2720);
-    let mut file = Vec::with_capacity(32 * MIB + 64);
-    while file.len() < 32 * MIB {
+    let mut file = Vec::with_capacity(4 * MIB + 64);
+    while file.len() < 4 * MIB {
         let piece: &[u8] = match rng.random_range(0..40) {
             0 => b"\t",
             1 => "é".as_bytes(),

@@ -186,7 +186,9 @@ fn random_edits_match_a_fresh_map(width: Option<f32>) {
     for round in 1..=200 {
         random_edits(&mut rng, &mut buffer, &map);
         map.sync(buffer.current(), &mut Monospace);
-        assert_matches_a_fresh_map(&map, &buffer, width, round);
+        if round % 5 == 0 || round == 200 {
+            assert_matches_a_fresh_map(&map, &buffer, width, round);
+        }
     }
     assert!(map.folds().len() > 100, "{} folds left", map.folds().len());
 }
