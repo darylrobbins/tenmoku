@@ -1,6 +1,6 @@
 # VS Code Dark Modern: the editor and token colours of VS Code's Dark Modern
-# theme, on fastedit's one-colour-per-highlight-name model. The rest of the
-# window's colours are Kiln Dark's.
+# theme, on fastedit's one-colour-per-highlight-name model. The window's
+# chrome is set through kiln's semantic token groups, not per component.
 #
 # Adapted from microsoft/vscode `extensions/theme-defaults/themes/dark_modern.json`,
 # `dark_plus.json` and `dark_vs.json` at commit
@@ -8,6 +8,13 @@
 #
 # Copyright (c) Microsoft Corporation. Licensed under the MIT License; the
 # notice is in this repository's NOTICE.
+#
+# The title bar, activity bar, side bar, status bar, panel and inactive tabs
+# share #181818 in Dark Modern, so they all take surface.panel; every
+# `.border` is #2B2B2B. Where dark_modern.json sets no value for a list or
+# scrollbar key, dark_plus.json's or dark_vs.json's default is used
+# (scrollbar thumb, indent guide, status colours); state.hover,
+# state.pressed and the chevron/icon colours are chosen to sit in its palette.
 #
 # Values VS Code leaves to its built-in defaults rather than the three files
 # (selection #264F78, cursor #AEAFAD, editorError.foreground #F14C4C,
@@ -27,8 +34,60 @@
 # To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
 
+kiln_theme = 1
 name = "VS Code Dark Modern"
 appearance = "dark"
+
+[surface]
+background = "#1F1F1F"
+panel = "#181818"
+raised = "#202020"
+overlay = "#00000080"
+
+[text]
+primary = "#CCCCCC"
+muted = "#9D9D9D"
+disabled = "#6E7681"
+accent = "#4DAAFC"
+on_accent = "#FFFFFF"
+
+[border]
+default = "#2B2B2B"
+subtle = "#2B2B2B"
+focused = "#0078D4"
+
+[accent]
+base = "#0078D4"
+hover = "#026EC1"
+subtle = "#0078D426"
+
+[state]
+hover = "#FFFFFF14"
+pressed = "#FFFFFF22"
+selected = "#FFFFFF22"
+selected_inactive = "#37373D"
+focus_ring = "#0078D4B3"
+
+[status]
+error = "#F85149"
+warning = "#CCA700"
+info = "#3794FF"
+success = "#2EA043"
+
+[list]
+indent_guide = "#404040"
+chevron = "#CCCCCC"
+icon = "#CCCCCC"
+folder_icon = "#CCCCCC"
+
+[tab]
+active = "#1F1F1F"
+inactive = "#181818"
+active_text = "#FFFFFF"
+
+[scrollbar]
+thumb = "#79797966"
+thumb_hover = "#646464B3"
 
 [editor]
 background = "#1F1F1F"
