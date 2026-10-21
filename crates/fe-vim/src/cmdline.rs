@@ -179,6 +179,8 @@ pub(crate) fn open(target: &mut VimTarget<'_>, args: CommandLineArgs) -> Handled
     }
     let state = &mut *target.state;
     state.message = None;
+    // A line `!` opened is its own (`feature/filter.rs`): any other drops it.
+    state.filter.opened = None;
     // The line's `args` carry the prefix now; nothing of it stays pending.
     state.pending = Pending::new();
     state.cmdline = Some(CommandLine {
@@ -204,6 +206,7 @@ fn close(state: &mut VimState) -> Result<CommandLine, CommandError> {
 /// selection as it was, dropping what it carried.
 pub(crate) fn cancel(target: &mut VimTarget<'_>, args: CancelArgs) -> Handled {
     let line = close(target.state)?;
+    target.state.filter.opened = None;
     if let Some(text) = args.text {
         target.registers.add_history(line.args.kind, &text);
     }

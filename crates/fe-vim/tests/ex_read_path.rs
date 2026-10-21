@@ -23,9 +23,11 @@ fn read_parses_to_a_host_command() {
     assert_eq!(run("3r f.txt").0, read(Some("f.txt"), 3));
     assert_eq!(run("0r f.txt").0, read(Some("f.txt"), 0));
     assert_eq!(run("r").0, read(None, 2));
-    let (command, message) = run("r !ls");
-    assert_eq!(command, None);
-    assert!(message.is_some());
+    // The shell's output is the host's too (`tests/filter.rs`).
+    assert!(matches!(
+        run("r !ls").0,
+        Some(HostCommand::ReadCommand { below: 2, .. })
+    ));
     assert_eq!(run("rege").0, None);
     assert!(run("rege").1.unwrap().starts_with("E492"));
 }

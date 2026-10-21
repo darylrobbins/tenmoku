@@ -54,6 +54,10 @@
 //!   before (the commands it runs don't set it).
 //! - `:norm[al][!] {keys}`: `keys` run as typed keys on the cursor's row, or
 //!   on each line of the range, from its start (`normal.rs`).
+//! - `:{range}!{cmd}` and `:[line]r[ead] !{cmd}`: the range's rows filtered
+//!   through a shell command, or its output put below the line, which the
+//!   host runs ([`HostCommand::Filter`], [`HostCommand::ReadCommand`]), only
+//!   for the user's own keys (`filter.rs`).
 //!
 //! `:j`, `:>` and `:<` take the print flags `l`, `p` and `#` after their
 //! count, and ignore them. Each command but `:y` (and a `:m` to where its
@@ -77,7 +81,9 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{
     KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, SearchOffset, Target,
-    VimKey, VimTarget, history, insert, marks,
+    VimKey, VimTarget,
+    feature::filter,
+    history, insert, marks,
     motion::{self, Cursor},
     operator,
     search::{self, Deadline, Pattern, PatternError},
@@ -91,6 +97,8 @@ pub(crate) mod normal;
 mod pick;
 pub use pick::{Pick, PickRow, PickThen};
 mod table;
+pub(crate) use table::filter::refusal as shell_refusal;
+pub use table::filter::{REFUSED as SHELL_REFUSED, ShellCommand, ShellPart};
 
 /// A parsed ex line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -317,6 +325,33 @@ pub enum HostCommand {
     /// A list the host shows to pick a row from (`:marks`); choosing one
     /// runs its `then` in the editor the line was typed in.
     Pick(Pick),
+    /// `:{range}!{cmd}`: `rows` (from 0) run through `command`, whose
+    /// output takes their place ([`crate::VimState::apply_filter`]); asked
+    /// for by `actor`, which fe-vim lets only [`Actor::User`] be, for the
+    /// host to check again. Parsed, its rows and actor are filled in as it
+    /// runs.
+    Filter {
+        rows: Range<u32>,
+        command: ShellCommand,
+        actor: Actor,
+    },
+    /// `:[line]r[ead] !{cmd}` (and `:r!{cmd}`): `command`'s output put below
+    /// line `below` as [`HostCommand::Read`] puts a file's
+    /// ([`crate::VimState::apply_read_command`]), for `actor`, as
+    /// [`HostCommand::Filter`].
+    ReadCommand {
+        below: u32,
+        command: ShellCommand,
+        actor: Actor,
+    },
+}
+
+impl HostCommand {
+    /// Whether it runs a shell command ([`HostCommand::Filter`],
+    /// [`HostCommand::ReadCommand`]).
+    pub fn runs_shell(&self) -> bool {
+        matches!(self, Self::Filter { .. } | Self::ReadCommand { .. })
+    }
 }
 
 impl crate::VimState {
@@ -405,6 +440,16 @@ pub enum ExError {
     /// A pattern fe-vim can't search, or Vim rejects.
     #[error("{0}")]
     Pattern(String),
+    /// A shell command asked for by anyone but the user, or run by `:g` or
+    /// `:normal` (`ex/filter.rs`).
+    #[error("Shell commands run only from your own keys")]
+    ShellRefused,
+    /// `:{range}!` repeating the last shell command, with none.
+    #[error("E34: No previous command")]
+    NoPreviousCommand,
+    /// `:!{cmd}` with no range, whose output has nowhere to go here.
+    #[error(":!{{cmd}} without a range isn't run here: use the terminal panel")]
+    NoRangeShell,
 }
 
 /// `:d[elete]` and the abbreviations `:help :d` lists (the `l` and `p`
@@ -458,13 +503,16 @@ fn command_end(piece: &str) -> Option<usize> {
         .find(|ch: char| !ch.is_ascii_alphabetic())
         .unwrap_or(rest.len());
     let (name, after) = rest.split_at(name_len);
-    let takes_the_rest = !name.is_empty()
-        && (host(name).is_some()
-            || name == "Replace"
-            || is_diff(name)
-            || global::kind(name).is_some()
-            || normal::is_normal(name)
-            || rest.starts_with(|ch: char| ch.is_ascii_uppercase()));
+    // A filter's command is the shell's, `|` and all.
+    let filter = name.is_empty() && after.starts_with('!');
+    let takes_the_rest = filter
+        || !name.is_empty()
+            && (host(name).is_some()
+                || name == "Replace"
+                || is_diff(name)
+                || global::kind(name).is_some()
+                || normal::is_normal(name)
+                || rest.starts_with(|ch: char| ch.is_ascii_uppercase()));
     if takes_the_rest {
         return None;
     }
@@ -617,6 +665,11 @@ fn command(
     }
     if name.is_empty() && after.starts_with(['>', '<']) {
         return lines::shift(after, check);
+    }
+    if name.is_empty()
+        && let Some(command) = after.strip_prefix('!')
+    {
+        return table::filter::parse(range, command, check);
     }
     if name.is_empty() {
         let ignored = |address: &Address| {
@@ -878,15 +931,17 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
         None => (false, after),
     };
     let args = args.trim_start_matches([' ', '\t']);
+    let shell = args;
     let args = trim_unescaped_end(args);
     let command = build(force, &unescape(args));
-    // `:r` alone takes a range; the shell's output (`:r !cmd`, `:r! cmd`) is
-    // refused, there being no shell to run it in.
+    // `:r` alone takes a range, as does the shell's output (`:r !cmd`,
+    // `:r! cmd`).
     if let HostCommand::Read { .. } = command {
-        if force || args.starts_with('!') {
-            return Err(ExError::Unsupported(":r !cmd".into()));
-        }
-        return Ok(ExCommand::Host(command));
+        return match (force, shell.strip_prefix('!')) {
+            (true, _) => table::filter::parse_read(shell),
+            (false, Some(shell)) => table::filter::parse_read(shell),
+            (false, None) => Ok(ExCommand::Host(command)),
+        };
     }
     if !range.is_empty() {
         return Err(ExError::NoRange);
@@ -1118,8 +1173,12 @@ type Handled = Result<Dispatched<TransactionId>, CommandError>;
 /// [`Effect::Notify`].
 pub(crate) fn run(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Handled {
     target.state.host_command = None;
+    let row = filter::caret_row(target);
+    filter::submitting(target.state, line, row);
     let before = target.model.selections();
-    let mut dispatched = match execute(target, actor, line) {
+    let executed = execute(target, actor, line);
+    filter::ran(target.state);
+    let mut dispatched = match executed {
         Ok(handled) => handled?,
         Err(error) => target.state.fail(error.to_string()),
     };
@@ -1267,17 +1326,27 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 // row 0, which `rows` would clamp to line 1.
                 HostCommand::User { range, .. } if lines == Some((0, 0)) => *range = Some(0..0),
                 HostCommand::User { range, .. } if lines.is_some() => *range = Some(rows(target)?),
-                HostCommand::Read { below, .. } => {
-                    // A line before the first, or a backwards range, fails
-                    // even where the last line is 0, the top.
-                    if lines.is_some_and(|(first, end)| first < 0 || end < 0) {
-                        return Err(ExError::InvalidRange);
-                    }
-                    let (_, end) = counted_lines(target, lines, None, last)?;
-                    *below = match lines {
-                        Some((_, 0)) => 0,
-                        _ => end as u32,
-                    };
+                HostCommand::Read { below, .. } => *below = read_below(target, lines, last)?,
+                HostCommand::ReadCommand {
+                    below,
+                    command,
+                    actor: by,
+                } => {
+                    shell_refusal(target.state, actor)?;
+                    *below = read_below(target, lines, last)?;
+                    table::filter::fill(target.state, command)?;
+                    *by = actor.clone();
+                }
+                HostCommand::Filter {
+                    rows: at,
+                    command,
+                    actor: by,
+                } => {
+                    shell_refusal(target.state, actor)?;
+                    *at = rows(target)?;
+                    table::filter::fill(target.state, command)?;
+                    *by = actor.clone();
+                    filter::submitted(target.state, command);
                 }
                 HostCommand::DiffGet { rows: at } | HostCommand::DiffPut { rows: at } => {
                     *at = rows(target)?;
@@ -1385,6 +1454,24 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
             global::noted(from, buffer.version(), global::Change::Sorted { rows, by });
             return sorted;
         }
+    })
+}
+
+/// The line `:r` puts its rows below, from `lines`, the range's: its last
+/// (the cursor's with none), or `0` for the top. A line before the first,
+/// or a backwards range, fails even where the last line is 0.
+fn read_below(
+    target: &VimTarget<'_>,
+    lines: Option<(i64, i64)>,
+    last: i64,
+) -> Result<u32, ExError> {
+    if lines.is_some_and(|(first, end)| first < 0 || end < 0) {
+        return Err(ExError::InvalidRange);
+    }
+    let (_, end) = counted_lines(target, lines, None, last)?;
+    Ok(match lines {
+        Some((_, 0)) => 0,
+        _ => end as u32,
     })
 }
 

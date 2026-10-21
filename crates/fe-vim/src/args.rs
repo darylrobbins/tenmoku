@@ -19,7 +19,8 @@ use crate::{line_motions, prose};
 /// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`;
 /// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`;
 /// `replace_with_register` (`gr`) to `feature/replace_register.rs`;
-/// `comment` (`gc`) to `feature/comment.rs`.
+/// `comment` (`gc`) to `feature/comment.rs`; `filter` (`!`) to
+/// `feature/filter.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -72,6 +73,9 @@ pub enum Operator {
     /// marked text the second, as vim-exchange does
     /// (`feature/exchange.rs`). It takes no selection.
     Exchange,
+    /// `!`: opens the command line on the rows it covers, for a filter
+    /// through a shell command (`feature/filter.rs`).
+    Filter,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are

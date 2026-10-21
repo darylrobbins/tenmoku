@@ -19,6 +19,10 @@
 //! `ex.rs` tries the table after the commands it and `lines.rs` take by
 //! name and before it gives up with E492, so a name they take keeps its
 //! meaning.
+//!
+//! `filter.rs` (`:{range}!{cmd}`, and `:r !{cmd}`'s command) is declared
+//! here too, but has no entry: the `!` after a range is no name, so
+//! `ex.rs` hands the line to it before looking names up.
 
 use fe_command::Actor;
 
@@ -30,6 +34,8 @@ use crate::VimTarget;
 mod clearjumps;
 #[path = "delmarks.rs"]
 mod delmarks;
+#[path = "filter.rs"]
+pub(super) mod filter;
 #[path = "jumps.rs"]
 mod jumps;
 #[path = "marks.rs"]

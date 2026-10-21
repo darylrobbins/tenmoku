@@ -14,6 +14,9 @@
 //! rewrite rows in place) say what they did. The rest follow the rows put
 //! in or taken out above them, and text put in at a row's start (`P`, `O`)
 //! goes above it.
+//!
+//! A shell command it runs (`:g/x/.!sort`, `:g/x/r !date`) is refused,
+//! whoever runs the `:g` (`ex/filter.rs`).
 
 use std::{cell::RefCell, ops::RangeInclusive};
 
@@ -137,6 +140,12 @@ pub(super) fn nested(command: &str) -> bool {
         .find(|ch: char| !ch.is_ascii_alphabetic())
         .unwrap_or(rest.len());
     kind(&rest[..name_len]).is_some()
+}
+
+/// Whether a `:g` or a `:normal` is running, which runs no shell command
+/// (`ex/filter.rs`), whoever asked for it.
+pub(super) fn running() -> bool {
+    RUNNING.with_borrow(|running| running.notes.is_some() || running.normals > 0)
 }
 
 /// Notes for a `:g` running that a command did `change`, taking the buffer

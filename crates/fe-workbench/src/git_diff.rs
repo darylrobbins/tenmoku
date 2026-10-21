@@ -84,7 +84,7 @@ use super::{
     Palette, Workbench,
     git_commands::{self, GitCommand, GitOp, Owner},
     git_stage,
-    vim_host::{self, E37, RELOAD, message},
+    vim_host::{self, E37, NO_SHELL, RELOAD, message},
 };
 use crate::{Pane, Picker, QuickOpen, git, loader, quick_open::Pick};
 
@@ -371,6 +371,9 @@ pub(super) fn host_command(
         } => workbench.edit_from_diff(&diff, &editor, &path, window, cx),
         HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
         HostCommand::Read { path, below } => workbench.vim_read(&editor, path, below, cx),
+        HostCommand::Filter { .. } | HostCommand::ReadCommand { .. } => {
+            message(&editor, NO_SHELL, cx)
+        }
         HostCommand::Explore
         | HostCommand::OldFiles
         | HostCommand::OpenProblems

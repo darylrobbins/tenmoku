@@ -206,6 +206,12 @@ pub struct VimState {
     pub(crate) replace_with_register: bool,
     /// The region the first `cx` marked, waiting for the second.
     pub(crate) exchange: Option<crate::feature::exchange::Marked>,
+    /// `!`'s line opened and the last shell command (`feature/filter.rs`).
+    pub(crate) filter: crate::feature::filter::Filters,
+    /// The key last read came from a macro's replay, itself or through
+    /// the maps it ran, or the fastedit command the host took last is one
+    /// such a key ran: what it runs, the shell refuses (`ex/filter.rs`).
+    pub(crate) from_macro: bool,
 }
 
 impl VimState {
@@ -309,6 +315,12 @@ impl VimState {
     /// submitted, for the host to run: returned once, then `None`.
     pub fn take_host_command(&mut self) -> Option<HostCommand> {
         self.host_command.take()
+    }
+
+    /// The host command [`VimState::take_host_command`] would return, left
+    /// where it is.
+    pub fn host_command(&self) -> Option<&HostCommand> {
+        self.host_command.as_ref()
     }
 
     /// Whether an ex line left a file or window command
@@ -488,7 +500,7 @@ impl VimState {
     fn feed_key(&mut self, key: VimKey) -> Step {
         let taken = self.remap.next_tag();
         let tag = taken.clone().unwrap_or(TYPED);
-        self.expanded = tag.origin == Some(Origin::Expansion);
+        self.expanded = tag.origin.is_some_and(Origin::expansion);
         let cmd = tag.cmd.is_some();
         if !cmd && let Some(step) = self.confirm_key(key, tag.origin) {
             return step;
@@ -498,6 +510,7 @@ impl VimState {
         let origin = tag.origin.unwrap_or_else(|| Origin::Typed {
             replayed: self.macros.count(),
         });
+        self.from_macro = origin.replayed();
         if taken.is_some() && self.remap.over_cap() {
             self.pending = Pending::new();
             self.fail(format!(
@@ -633,7 +646,8 @@ impl VimState {
             .unwrap_or_else(|| Origin::Typed {
                 replayed: self.macros.count(),
             });
-        self.expanded = origin == Origin::Expansion;
+        self.expanded = origin.expansion();
+        self.from_macro = origin.replayed();
         self.remap.read(origin);
         if origin.recorded() {
             self.macros.record(key);
@@ -680,8 +694,23 @@ impl VimState {
     /// as a keymap binding, from the keyboard in the editor's context,
     /// before it feeds the map's next key. Those a `:normal` ran wait until
     /// the command that ran it is over.
+    ///
+    /// One a macro's replay ran (through its maps or not) has the source
+    /// [`Source::Replay`], and runs as the replay's: a shell command it
+    /// asks for is refused, as the replay's own keys' are.
     pub fn take_remap_command(&mut self) -> Option<RemapCommand> {
-        self.remap_commands.pop_front()
+        let command = self.remap_commands.pop_front()?;
+        self.from_macro = command.0.source == Source::Replay;
+        Some(command)
+    }
+
+    /// The host runs `command`, which [`VimState::take_remap_command`]
+    /// gave it, now: one a macro's replay left runs as the replay's,
+    /// whatever was read since it was taken.
+    pub fn running_remap_command(&mut self, command: &RemapCommand) {
+        if command.0.source == Source::Replay {
+            self.from_macro = true;
+        }
     }
 
     /// Whether the host runs the fastedit command a `:normal` reaches, and
@@ -763,7 +792,13 @@ impl VimState {
     /// [`VimState::stop_replay`] then too.
     pub fn take_replay(&mut self) -> Vec<VimKey> {
         let replay = self.macros.take();
-        self.remap.take(replay)
+        let keys = self.remap.take(replay);
+        // The replay is over, the maps it ran included: what's read next
+        // is the user's.
+        if keys.is_empty() && self.remap.idle() {
+            self.from_macro = false;
+        }
+        keys
     }
 
     /// The host dropped the rest of a replay or a map's keys: it's over,

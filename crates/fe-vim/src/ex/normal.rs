@@ -20,7 +20,9 @@
 //! end resolves, as a timeout would. The whole is one undo step, `.` and
 //! the registers as the keys leave them (an undo or redo among the keys
 //! undoes what the line did so far, and what follows is the step);
-//! `:normal` itself never fails, but for a map's `<Cmd>fe:{command id}<CR>`
+//! a shell command among its keys (`!!sort<CR>`, `:.!sort<CR>`, `.`
+//! repeating a filter) is refused, whoever runs the `:normal`
+//! (`ex/filter.rs`); `:normal` itself never fails, but for a map's `<Cmd>fe:{command id}<CR>`
 //! among its keys: there it stops, the command not run and nothing after it
 //! (the rest of the line's keys, the lines after it) either, with
 //! [`FE_REFUSED`] as its error, as fastedit commands run only from the

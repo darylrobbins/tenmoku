@@ -2368,6 +2368,23 @@ pub(crate) fn shifted(
     changes.change = Some(Spot::placed(Place::on(snapshot, first, 0)));
 }
 
+/// A filter or `:r !` (`ex/filter.rs`) just applied to `model`'s text:
+/// `'[` and `'.` at the start of row `first`, `']` at the start of row
+/// `last` (each the last row, past the end), as nvim's set them whatever
+/// text its batches changed, once those are read.
+pub(crate) fn filtered(state: &mut VimState, model: &mut EditorModel, first: u32, last: u32) {
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let rows = snapshot.text().row_count();
+    let start = |row: u32| Spot::placed(Place::on(snapshot, row.min(rows - 1), 0));
+    let changes = &mut state.marks.changes;
+    changes.newer(Newer::CHANGE);
+    changes.start = Some(start(first));
+    changes.end = Some(start(last));
+    changes.change = Some(start(first));
+}
+
 /// A case operator covered `start` to `end` (row and byte column) of
 /// `model`'s text: its batch, which made `version`, sets `'[` and `']` there
 /// (and `'.` as the batch says); with no batch, having changed nothing, it

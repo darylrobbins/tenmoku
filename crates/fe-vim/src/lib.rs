@@ -379,6 +379,14 @@
 //!   commands), changing no text, cursor or register. They take no range,
 //!   and no argument but `:e`'s, `:w`'s and `:sav`'s path (`:sav` needs one,
 //!   E471); `:wq {path}` and `:x {path}` aren't supported.
+//! - Nor are shell commands: `:{range}!{cmd}` and `:[line]r[ead] !{cmd}`
+//!   leave a [`HostCommand::Filter`] or [`HostCommand::ReadCommand`], whose
+//!   output the host hands back to [`VimState::apply_filter`] or
+//!   [`VimState::apply_read_command`], and `!{motion}`, `{count}!!` and
+//!   visual `!` open the filter's line on their rows. Only the user's own
+//!   keys run one: any other actor, and a `:g` or `:normal`, gets
+//!   [`SHELL_REFUSED`]. `:!{cmd}` with no range is refused
+//!   (`ex/filter.rs`, `feature/filter.rs`).
 //!
 //! What can't run changes nothing (but where a `;` moved the cursor) and
 //! leaves nvim's error in [`VimState::message`]: E492 for any other command
@@ -813,7 +821,9 @@ pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, dispatch, registry};
 pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
+    SHELL_REFUSED, ShellCommand, ShellPart,
 };
+pub use feature::filter::FilterArgs;
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::{KeywordCompletion, Splits};
 pub use key::{KeyError, VimKey, parse_keys};

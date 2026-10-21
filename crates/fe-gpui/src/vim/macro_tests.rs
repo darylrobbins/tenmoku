@@ -273,3 +273,87 @@ fn replace_commit_replays_alike(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("@ a");
     assert_eq!(text(&view, cx), typed);
 }
+
+/// A macro replaying `.` after a filter asks the host to run nothing: the
+/// user's keys asked for the filter, not the replay's.
+#[gpui::test]
+fn replayed_repeat_runs_no_shell_command(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (view, cx) = vim_editor(cx, "b\na\nd\nc\nf\ne", (0, 0));
+    let host_command =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.take_vim_host_command());
+    let filter = |rows: std::ops::Range<u32>| fe_vim::HostCommand::Filter {
+        rows,
+        command: fe_vim::ShellCommand {
+            parts: vec![fe_vim::ShellPart::Text("sort".into())],
+        },
+        actor: fe_command::Actor::User,
+    };
+    cx.simulate_keystrokes("! j");
+    assert_eq!(mode(&view, cx), Some("cmdline"));
+    submit_line(&view, ".,.+1!sort", cx);
+    assert_eq!(host_command(cx), Some(filter(0..2)));
+    // Typed while recording, `.` asks again.
+    cx.simulate_keystrokes("j j q a . q");
+    assert_eq!(host_command(cx), Some(filter(2..4)));
+    // Replayed, it doesn't.
+    cx.simulate_keystrokes("j j @ a");
+    assert_eq!(mode(&view, cx), Some("normal"));
+    assert_eq!(host_command(cx), None);
+}
+
+/// After a user's filter, a macro reaches no shell command through the
+/// maps it runs: a map to `.`, a mapped filter or `:r !` line, or a map's
+/// `<Cmd>fe:vim.repeat<CR>`, which the editor runs later. Typed by the user,
+/// the same maps still reach it.
+#[gpui::test]
+fn filters_do_not_run_from_remapped_macro_keys(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (view, cx) = vim_editor(cx, "b\na\nd\nc\nf\ne\nh\ng\nj\ni", (0, 0));
+    let map = |from: &str, to: &str| fe_vim::Remap {
+        modes: vec![fe_vim::RemapMode::Normal],
+        from: from.into(),
+        to: to.into(),
+        recursive: false,
+    };
+    let remaps = [
+        map("<leader>r", "."),
+        map("<leader>f", ":.!sort<CR>"),
+        map("<leader>g", ":r !date<CR>"),
+        map("<leader>c", "<Cmd>fe:vim.repeat<CR>"),
+    ];
+    // Keys come to an editor focused in the active window.
+    cx.update(|window, _| window.activate_window());
+    let issues = cx.update(|_, cx| set_vim_remaps(cx, &remaps, ","));
+    assert_eq!(issues, []);
+    cx.run_until_parked();
+    let host_command =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.take_vim_host_command());
+    let message = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, _| {
+            view.vim_state()
+                .and_then(|state| state.message().map(String::from))
+        })
+    };
+    let shell = |command: Option<fe_vim::HostCommand>| command.is_some_and(|c| c.runs_shell());
+    let refused = Some(fe_vim::SHELL_REFUSED.to_string());
+
+    cx.simulate_keystrokes("! j");
+    submit_line(&view, ".,.+1!sort", cx);
+    assert!(shell(host_command(cx)));
+    for (register, map) in [('a', "r"), ('b', "f"), ('c', "g"), ('d', "c")] {
+        // Typed while recording, the user's map reaches the host.
+        cx.simulate_keystrokes(&format!("q {register} , {map} q"));
+        cx.run_until_parked();
+        assert!(shell(host_command(cx)), "typed ,{map}");
+        // Replayed, it doesn't.
+        cx.simulate_keystrokes(&format!("j @ {register}"));
+        cx.run_until_parked();
+        assert_eq!(host_command(cx), None, "@{register} (,{map})");
+        assert_eq!(message(cx), refused, "@{register} (,{map})");
+        // And typed again after, it does.
+        cx.simulate_keystrokes(&format!(", {map}"));
+        cx.run_until_parked();
+        assert!(shell(host_command(cx)), "typed ,{map} again");
+    }
+}

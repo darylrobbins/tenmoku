@@ -7,7 +7,10 @@ use serde::Serialize;
 
 use crate::{
     CountArgs, InsertArgs, JoinArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit,
-    feature::surround::{self, SurroundAddArgs, SurroundArgs},
+    feature::{
+        filter::{self, FilterArgs},
+        surround::{self, SurroundAddArgs, SurroundArgs},
+    },
     increment::{self, IncrementArgs},
     insert, operator, replace, visual,
 };
@@ -15,7 +18,8 @@ use crate::{
 /// A change `.` can repeat: a committed `vim.operate` (not a yank),
 /// `vim.put`, `vim.insert`, `vim.replace_mode`, `vim.virtual_replace_mode`, `vim.join`,
 /// `vim.replace_char`, `vim.toggle_case`, `vim.increment` or
-/// `vim.surround` or `vim.surround_add`, by its args.
+/// `vim.surround` or `vim.surround_add`, or a filter (`vim.filter`: `!`'s
+/// line, its command run), by its args.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     Operate(OperateArgs),
@@ -29,6 +33,7 @@ pub enum Change {
     Increment(IncrementArgs),
     Surround(SurroundArgs),
     SurroundAdd(SurroundAddArgs),
+    Filter(FilterArgs),
 }
 
 impl Change {
@@ -51,6 +56,7 @@ impl Change {
             Self::Increment(args) => of("vim.increment", args),
             Self::Surround(args) => of("vim.surround", args),
             Self::SurroundAdd(args) => of("vim.surround_add", args),
+            Self::Filter(args) => of("vim.filter", args),
         }
     }
 
@@ -68,6 +74,7 @@ impl Change {
             Self::Increment(args) => args.count = count,
             Self::Surround(args) => args.count = count,
             Self::SurroundAdd(args) => args.count = count,
+            Self::Filter(args) => args.count = count,
         }
         self
     }
@@ -175,6 +182,9 @@ fn replay(
         Change::Increment(args) => increment::increment(target, actor, args)?,
         Change::Surround(ref args) => surround::surround(target, actor, args.clone())?,
         Change::SurroundAdd(ref args) => surround::surround_add(target, actor, args.clone())?,
+        // The host runs it: a host command, or for another actor (or in
+        // `:g` and `:normal`) the refusal.
+        Change::Filter(ref args) => filter::run(target, actor, args)?,
     };
     if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {

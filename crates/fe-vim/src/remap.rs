@@ -319,14 +319,28 @@ const MAX_DEPTH: u32 = 100;
 pub(crate) enum Origin {
     /// Typed, or `replayed` by a `@`: the macros have counted it.
     Typed { replayed: bool },
-    /// A map's right side: not recorded, and not a replay's.
-    Expansion,
+    /// A map's right side: not recorded, and not a replay's to the macros;
+    /// `replayed` if a key of the map's left side was (a `@`'s, or a map's
+    /// a `@` ran), for what runs only from the user's own keys.
+    Expansion { replayed: bool },
 }
 
 impl Origin {
     /// Whether a recording gets it: typed, not a replay's or a map's.
     pub(crate) fn recorded(self) -> bool {
         self == Origin::Typed { replayed: false }
+    }
+
+    /// Whether it came from a macro's replay, through maps or not.
+    pub(crate) fn replayed(self) -> bool {
+        match self {
+            Origin::Typed { replayed } | Origin::Expansion { replayed } => replayed,
+        }
+    }
+
+    /// Whether it's a map's right side.
+    pub(crate) fn expansion(self) -> bool {
+        matches!(self, Origin::Expansion { .. })
     }
 }
 
@@ -407,6 +421,12 @@ impl RemapState {
         !self.held.is_empty()
     }
 
+    /// Whether no key is held, resolved or handed out: what the host reads
+    /// next is typed.
+    pub(crate) fn idle(&self) -> bool {
+        self.held.is_empty() && self.queued.is_empty() && self.taken.is_empty()
+    }
+
     /// Whether keys were resolved that the host hasn't taken yet.
     pub(crate) fn resolved(&self) -> bool {
         !self.queued.is_empty()
@@ -430,7 +450,7 @@ impl RemapState {
 
     /// A key that wasn't a map's was read: maps may run again.
     pub(crate) fn read(&mut self, origin: Origin) {
-        if origin != Origin::Expansion {
+        if !origin.expansion() {
             self.depth = 0;
         }
     }
@@ -525,8 +545,13 @@ fn map_mode(state: &VimState, key: VimKey) -> Option<RemapMode> {
     if key == VimKey::Char('0') && state.pending.kind() == Some(PendingKind::Count) {
         return None;
     }
-    // `gcc`'s second `c`: nvim maps `gcc` whole, in normal mode.
-    if key == VimKey::Char('c') && state.pending.operator() == Some(crate::Operator::Comment) {
+    // `gcc`'s second `c`: nvim maps `gcc` whole, in normal mode. After a
+    // count typed after `gc` (`gc2c`), the `c` is the operator's target,
+    // matched against the operator-pending maps as any other.
+    if key == VimKey::Char('c')
+        && state.pending.operator() == Some(crate::Operator::Comment)
+        && state.pending.kind() == Some(PendingKind::Operator)
+    {
         return None;
     }
     match state.mode {
@@ -676,6 +701,10 @@ fn run(state: &mut VimState, mode: RemapMode, from: &[(VimKey, Origin)]) -> Step
         unreachable!("only a complete map runs")
     };
     let (to, recursive) = (&entry.to, entry.recursive);
+    // A macro's keys, through as many maps as it runs.
+    let origin = Origin::Expansion {
+        replayed: from.iter().any(|&(_, origin)| origin.replayed()),
+    };
     // A `<Cmd>` among the left side's keys means the right side doesn't
     // start with them.
     let cmd_first = entry
@@ -688,16 +717,13 @@ fn run(state: &mut VimState, mode: RemapMode, from: &[(VimKey, Origin)]) -> Step
         while let Some((_, cmd)) = cmds.next_if(|&&(before, _)| before == i) {
             let tag = Tag {
                 cmd: Some(Arc::clone(cmd)),
-                ..Tag::new(Origin::Expansion, false)
+                ..Tag::new(origin, false)
             };
             state.remap.queued.push((CMD_KEY, tag));
         }
         if let Some(&key) = to.get(i) {
             let remap = recursive && !(exempt && i == 0);
-            state
-                .remap
-                .queued
-                .push((key, Tag::new(Origin::Expansion, remap)));
+            state.remap.queued.push((key, Tag::new(origin, remap)));
         }
     }
     Step::Wait(state.pending.clone())
@@ -721,7 +747,13 @@ pub(crate) fn run_cmd(state: &mut VimState, cmd: &Cmd) -> Step {
             Step::Commit(invocation)
         }
         Cmd::Fe(id) => {
-            let invocation = Invocation::new(id.clone()).source(Source::Keyboard);
+            // One a macro's key ran is the replay's: the host runs it later
+            // (`VimState::take_remap_command`), knowing.
+            let source = match state.from_macro {
+                true => Source::Replay,
+                false => Source::Keyboard,
+            };
+            let invocation = Invocation::new(id.clone()).source(source);
             state.remap_commands.push_back(RemapCommand(invocation));
             Step::Wait(Pending::new())
         }

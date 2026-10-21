@@ -819,6 +819,12 @@ fn run_remap_command(
         (false, Some(origin)) => origin.stack.clone(),
         (false, None) => fe_editor::commands::context(),
     };
+    // A macro's command runs as the replay's (no shell command from it).
+    view.update(cx, |view, _| {
+        if let Some(state) = &mut view.vim {
+            state.running_remap_command(&command);
+        }
+    });
     let checked = view.update(cx, |view, cx| view.check_remap_command(command, stack, cx));
     let Some(invocation) = checked else {
         return false;
@@ -2627,6 +2633,13 @@ impl EditorView {
                 if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
                     *handed = Some(HANDED_HOST_COMMAND);
                     return false;
+                }
+                // A macro replay's `.` after a filter runs no shell command,
+                // as its command line's filter doesn't.
+                let shell = self.vim.as_ref().and_then(VimState::host_command);
+                if !mapped && shell.is_some_and(fe_vim::HostCommand::runs_shell) {
+                    let command = self.take_vim_host_command();
+                    log::warn!("a macro replay doesn't run {command:?}");
                 }
                 ok && self.vim.as_ref().is_some_and(|s| !s.failed())
             }

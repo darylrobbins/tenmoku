@@ -37,6 +37,7 @@
 pub(crate) mod argument;
 pub(crate) mod comment;
 pub(crate) mod exchange;
+pub(crate) mod filter;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
 pub(crate) mod surround;
@@ -188,6 +189,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &replace_register::FEATURE,
     &comment::FEATURE,
     &exchange::FEATURE,
+    &filter::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

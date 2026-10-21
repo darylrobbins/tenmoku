@@ -150,9 +150,10 @@ pub(super) fn host_command(
                 None => message(&editor, NOT_IN_THE_BOX, cx),
             }
         }
-        HostCommand::DiffSplit { .. } | HostCommand::Read { .. } => {
-            message(&editor, NOT_IN_THE_BOX, cx)
-        }
+        HostCommand::DiffSplit { .. }
+        | HostCommand::Read { .. }
+        | HostCommand::Filter { .. }
+        | HostCommand::ReadCommand { .. } => message(&editor, NOT_IN_THE_BOX, cx),
         HostCommand::Explore
         | HostCommand::OldFiles
         | HostCommand::OpenProblems

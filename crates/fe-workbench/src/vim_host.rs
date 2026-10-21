@@ -47,6 +47,9 @@ mod vim_pick;
 const E32: &str = "E32: No file name";
 pub(crate) const E13: &str = "E13: File exists (add ! to override)";
 pub(super) const E37: &str = "E37: No write since last change (add ! to override)";
+/// What a filter or `:r !{cmd}` says until the workbench runs shell
+/// commands.
+pub(super) const NO_SHELL: &str = "Not supported yet: shell commands";
 const E99: &str = "E99: Current buffer is not in diff mode";
 pub(super) const RELOAD: &str = "Not supported yet: reloading a file from disk";
 const NO_SEARCH: &str = "No search to replace";
@@ -137,6 +140,9 @@ impl Workbench {
             } => self.vim_edit(&editor, &path, window, cx),
             HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
             HostCommand::Read { path, below } => self.vim_read(&editor, path, below, cx),
+            HostCommand::Filter { .. } | HostCommand::ReadCommand { .. } => {
+                message(&editor, NO_SHELL, cx)
+            }
             HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
             HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),
             HostCommand::User {
