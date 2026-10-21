@@ -34,6 +34,7 @@ use gpui::{
     UnderlineStyle, Window, actions, div, fill, point, px, relative, size,
 };
 use kiln_core::{Motion, TextEdit};
+use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::ActiveTheme as _;
 
@@ -90,10 +91,15 @@ pub enum TextFieldEvent {
 /// The caret's width.
 const CARET_WIDTH: Pixels = px(1.5);
 
+/// What a masked field draws in place of each grapheme.
+const MASK: &str = "•";
+
 /// A single-line text field. See the [module docs](self).
 pub struct TextField {
     edit: TextEdit,
     placeholder: SharedString,
+    /// Whether each grapheme shows as [`MASK`], and copy and cut do nothing.
+    masked: bool,
     /// The text's size.
     font_size: Pixels,
     focus: FocusHandle,
@@ -131,6 +137,7 @@ impl TextField {
         Self {
             edit: TextEdit::new(),
             placeholder: SharedString::default(),
+            masked: false,
             font_size: px(13.),
             focus,
             scroll_x: px(0.),
@@ -145,6 +152,56 @@ impl TextField {
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
         self
+    }
+
+    /// Draws each grapheme as a bullet, for a secret: copy and cut leave
+    /// the clipboard alone. Select, paste, input methods and undo work as
+    /// ever, and [`value`](Self::value) is the real text.
+    pub fn masked(mut self, masked: bool) -> Self {
+        self.masked = masked;
+        self
+    }
+
+    /// Sets [`masked`](Self::masked).
+    pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
+        if self.masked != masked {
+            self.masked = masked;
+            cx.notify();
+        }
+    }
+
+    pub fn is_masked(&self) -> bool {
+        self.masked
+    }
+
+    /// The text as drawn: the real text, or a bullet a grapheme.
+    fn shown_text(&self) -> SharedString {
+        if self.masked {
+            let count = self.edit.text().graphemes(true).count();
+            SharedString::from(MASK.repeat(count))
+        } else {
+            SharedString::from(self.edit.text().to_string())
+        }
+    }
+
+    /// Where byte `offset` of the text is in [`shown_text`](Self::shown_text).
+    fn shown_offset(&self, offset: usize) -> usize {
+        if !self.masked {
+            return offset;
+        }
+        let end = offset.min(self.edit.text().len());
+        self.edit.text()[..end].graphemes(true).count() * MASK.len()
+    }
+
+    /// The byte of the text at `shown`, an offset in the drawn text.
+    fn real_offset(&self, shown: usize) -> usize {
+        if !self.masked {
+            return shown;
+        }
+        let text = self.edit.text();
+        (text.grapheme_indices(true))
+            .nth(shown / MASK.len())
+            .map_or(text.len(), |(ix, _)| ix)
     }
 
     /// The initial text, with the caret at its end.
@@ -282,12 +339,15 @@ impl TextField {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let selected = self.edit.selected_text();
-        if !selected.is_empty() {
+        if !self.masked && !selected.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(selected.to_string()));
         }
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
+        if self.masked {
+            return;
+        }
         if let Some(text) = self.edit.cut() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.edited(true, cx);
@@ -368,7 +428,7 @@ impl TextField {
         if self.edit.is_empty() {
             return 0;
         }
-        line.closest_index_for_x(position.x - bounds.left() + self.scroll_x)
+        self.real_offset(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 
     /// Scrolls so the caret, at `caret_x` along a line `line_width` wide,
@@ -390,6 +450,11 @@ impl TextField {
         self.scroll_x
     }
 
+    /// The text drawn by the last frame, none while the field is empty.
+    pub fn drawn_text(&self) -> Option<SharedString> {
+        self.last_line.as_ref().map(|line| line.text.clone())
+    }
+
     /// The line's bounds in the window, by the last frame.
     pub fn last_bounds(&self) -> Option<Bounds<Pixels>> {
         self.last_bounds
@@ -402,7 +467,7 @@ impl TextField {
         let x = self
             .last_line
             .as_ref()
-            .map_or(px(0.), |line| line.x_for_index(offset));
+            .map_or(px(0.), |line| line.x_for_index(self.shown_offset(offset)));
         Some(point(bounds.left() - self.scroll_x + x, bounds.center().y))
     }
 }
@@ -510,8 +575,14 @@ impl EntityInputHandler for TextField {
         let range = self.edit.range_from_utf16(&range);
         let left = bounds.left() - self.scroll_x;
         Some(Bounds::from_corners(
-            point(left + line.x_for_index(range.start), bounds.top()),
-            point(left + line.x_for_index(range.end), bounds.bottom()),
+            point(
+                left + line.x_for_index(self.shown_offset(range.start)),
+                bounds.top(),
+            ),
+            point(
+                left + line.x_for_index(self.shown_offset(range.end)),
+                bounds.bottom(),
+            ),
         ))
     }
 
@@ -523,7 +594,7 @@ impl EntityInputHandler for TextField {
     ) -> Option<usize> {
         let bounds = self.last_bounds?;
         let line = self.last_line.as_ref()?;
-        let offset = line.index_for_x(point.x - bounds.left() + self.scroll_x)?;
+        let offset = self.real_offset(line.index_for_x(point.x - bounds.left() + self.scroll_x)?);
         Some(self.edit.offset_to_utf16(offset))
     }
 }
@@ -664,7 +735,7 @@ impl Element for TextLine {
         let (text, color) = if edit.is_empty() {
             (field.placeholder.clone(), self.placeholder_color)
         } else {
-            (SharedString::from(edit.text().to_string()), style.color)
+            (field.shown_text(), style.color)
         };
         let run = TextRun {
             len: text.len(),
@@ -676,26 +747,29 @@ impl Element for TextLine {
         };
         // The composition is underlined.
         let runs = match edit.marked_range() {
-            Some(marked) if !edit.is_empty() => [
-                (0..marked.start, None),
-                (
-                    marked.clone(),
-                    Some(UnderlineStyle {
-                        color: Some(color),
-                        thickness: px(1.),
-                        wavy: false,
-                    }),
-                ),
-                (marked.end..text.len(), None),
-            ]
-            .into_iter()
-            .filter(|(range, _)| !range.is_empty())
-            .map(|(range, underline)| TextRun {
-                len: range.len(),
-                underline,
-                ..run.clone()
-            })
-            .collect(),
+            Some(marked) if !edit.is_empty() => {
+                let marked = field.shown_offset(marked.start)..field.shown_offset(marked.end);
+                [
+                    (0..marked.start, None),
+                    (
+                        marked.clone(),
+                        Some(UnderlineStyle {
+                            color: Some(color),
+                            thickness: px(1.),
+                            wavy: false,
+                        }),
+                    ),
+                    (marked.end..text.len(), None),
+                ]
+                .into_iter()
+                .filter(|(range, _)| !range.is_empty())
+                .map(|(range, underline)| TextRun {
+                    len: range.len(),
+                    underline,
+                    ..run.clone()
+                })
+                .collect()
+            }
             _ => vec![run],
         };
         let font_size = style.font_size.to_pixels(window.rem_size());
@@ -704,10 +778,11 @@ impl Element for TextLine {
             .shape_line(text, font_size, &runs, None);
 
         let selection = edit.selected_range();
+        let selection = field.shown_offset(selection.start)..field.shown_offset(selection.end);
         let caret_x = if edit.is_empty() {
             px(0.)
         } else {
-            line.x_for_index(edit.caret())
+            line.x_for_index(field.shown_offset(edit.caret()))
         };
         let line_width = if edit.is_empty() {
             px(0.)
@@ -784,3 +859,7 @@ impl Element for TextLine {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "tests/text_field_masked.rs"]
+mod masked_tests;

@@ -408,3 +408,6 @@ fn the_notice_shows_until_dismissed(cx: &mut TestAppContext) {
     assert!(!panel.read_with(cx, |panel, _| panel.notice()));
     assert!(cx.debug_bounds("chat-notice").is_none());
 }
+
+#[path = "chat_key_tests.rs"]
+mod set_key;

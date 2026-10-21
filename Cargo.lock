@@ -5076,6 +5076,7 @@ dependencies = [
  "kiln-command",
  "kiln-core",
  "kiln-platform",
+ "unicode-segmentation",
 ]
 
 [[package]]

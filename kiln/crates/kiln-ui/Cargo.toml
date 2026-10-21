@@ -17,6 +17,7 @@ kiln-command.workspace = true
 kiln-core.workspace = true
 # Button::command dispatches its action as a kiln command.
 kiln-platform.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }

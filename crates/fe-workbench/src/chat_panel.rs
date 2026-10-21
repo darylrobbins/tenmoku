@@ -13,9 +13,11 @@
 //!   then says so; else the keychain's [`KEY_ACCOUNT`] entry under the app
 //!   id, read on the background executor (the platform may ask the user),
 //!   the view in its no-key state until it's read. [`ChatPanel::reload_key`]
-//!   reads it again. The view's Set API Key runs `chat.set_api_key` once a
-//!   command of that ID exists, and is logged until then; its Open Settings
-//!   runs `workbench.open_settings`.
+//!   reads it again. The view's Set API Key runs `chat.set_api_key`
+//!   ("Chat: Set API Key…"), which shows a masked form in place of the chat
+//!   (Enter or Save stores the trimmed text in the keychain, Escape or
+//!   Cancel closes it); `chat.clear_api_key` deletes the entry. Its Open
+//!   Settings runs `workbench.open_settings`.
 //! - **New chats** take their model, effort, thinking, token limit and
 //!   fallbacks from `[chat]` in the settings; a change to them leaves an
 //!   open chat as it is.
@@ -34,18 +36,22 @@ use fe_command::Invocation;
 use fe_config::ChatEffort;
 use gpui::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task, Window,
-    div,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString, Styled as _, Subscription,
+    Task, Window, div,
 };
 use kiln::{
     Cx,
     command::{Capability, Grants},
     core::secrets::{KeychainStore, SecretError, SecretStore},
     platform::command_actions::{dispatch_invocation, dispatch_window, typed_command},
-    ui::{Button, h_flex, ui_theme, v_flex},
+    ui::{Button, TextField, TextFieldEvent, h_flex, ui_theme, v_flex},
 };
 
-use crate::{Workbench, dock::DockOp};
+use crate::{
+    Workbench,
+    dock::DockOp,
+    workbench::toast::{self, Toast},
+};
 
 /// The AI chat in the sidebar: on the rail once it has shown; focused when
 /// shown, as the composer takes the keys.
@@ -245,7 +251,17 @@ pub(crate) struct ChatPanel {
     reading: Option<Task<()>>,
     /// Whether the first-run notice shows, in a chat started now.
     notice: bool,
+    /// The key form, while it shows in place of the chat.
+    key_form: Option<KeyForm>,
     _view_events: Subscription,
+}
+
+/// The form that takes a key.
+struct KeyForm {
+    field: Entity<TextField>,
+    /// The key being stored: a second save waits for it.
+    saving: Option<Task<()>>,
+    _field_events: Subscription,
 }
 
 #[kiln::command(context = "chat")]
@@ -257,6 +273,23 @@ impl ChatPanel {
     // listener as it does from anywhere else.
     #[command(id = "chat.open", context = "workbench")]
     fn open_chat(&mut self, cx: &mut Cx<Self>) {
+        cx.propagate();
+    }
+
+    /// Chat: Set API Key…
+    ///
+    /// Asks for the chat's Anthropic API key, to keep in the system keychain.
+    // As `chat.open`, the workbench's to do.
+    #[command(id = "chat.set_api_key", context = "workbench")]
+    fn set_api_key(&mut self, cx: &mut Cx<Self>) {
+        cx.propagate();
+    }
+
+    /// Chat: Clear API Key
+    ///
+    /// Deletes the chat's Anthropic API key from the system keychain.
+    #[command(id = "chat.clear_api_key", context = "workbench")]
+    fn clear_api_key(&mut self, cx: &mut Cx<Self>) {
         cx.propagate();
     }
 
@@ -283,6 +316,7 @@ impl ChatPanel {
             key: None,
             reading: None,
             notice,
+            key_form: None,
             _view_events: view_events,
         };
         panel.reload_key(cx);
@@ -314,6 +348,154 @@ impl ChatPanel {
         });
         let events = cx.subscribe_in(&view, window, Self::view_event);
         (view, options, events)
+    }
+
+    /// Shows the key form in place of the chat, focused and empty.
+    fn show_key_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.key_form.is_none() {
+            let field = cx.new(|cx| {
+                TextField::new(window, cx)
+                    .placeholder("Anthropic API key")
+                    .masked(true)
+            });
+            let events = cx.subscribe_in(&field, window, |this, _, event, window, cx| {
+                if *event == TextFieldEvent::Submitted {
+                    this.save_key(window, cx);
+                }
+            });
+            self.key_form = Some(KeyForm {
+                field,
+                saving: None,
+                _field_events: events,
+            });
+        }
+        if let Some(form) = &self.key_form {
+            let focus = form.field.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Closes the key form, forgetting what was typed, and focuses the
+    /// composer.
+    fn close_key_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.key_form.take().is_some() {
+            let focus = self.view.focus_handle(cx);
+            window.focus(&focus, cx);
+            cx.notify();
+        }
+    }
+
+    /// Stores the form's text, trimmed, in the keychain, then closes the
+    /// form and reads the key again; an error is a toast, the form and its
+    /// text kept.
+    fn save_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(form) = self.key_form.as_mut().filter(|form| form.saving.is_none()) else {
+            return;
+        };
+        let key = form.field.read(cx).value().trim().to_owned();
+        if key.is_empty() {
+            return;
+        }
+        let (store, service) = (KeySource::of(cx).store, key_service());
+        let write = cx.background_spawn(async move { store.set(&service, KEY_ACCOUNT, &key) });
+        form.saving = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(()) => {
+                    this.close_key_form(window, cx);
+                    this.reload_key(cx);
+                }
+                Err(error) => {
+                    if let Some(form) = this.key_form.as_mut() {
+                        form.saving = None;
+                    }
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Couldn't save the API key: {error}")),
+                    );
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// Deletes the keychain's key, then reads the key again.
+    fn clear_key(&mut self, cx: &mut Context<Self>) {
+        let (store, service) = (KeySource::of(cx).store, key_service());
+        let delete = cx.background_spawn(async move { store.delete(&service, KEY_ACCOUNT) });
+        cx.spawn(async move |this, cx| {
+            let result = delete.await;
+            this.update(cx, |this, cx| {
+                if let Err(error) = result {
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Couldn't clear the API key: {error}")),
+                    );
+                }
+                this.reload_key(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Escape closes the key form.
+    fn on_form_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.key == "escape" && !keystroke.modifiers.modified() {
+            self.close_key_form(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    /// The key form: the field, Save and Cancel, and where the key goes.
+    fn render_key_form(
+        &self,
+        form: &KeyForm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let _ = window;
+        let ui = ui_theme(cx);
+        let env_wins = (KeySource::of(cx).env).is_some_and(|key| !key.trim().is_empty());
+        let note = |text: String| div().text_color(ui.muted_text).child(text);
+        let save = cx.listener(|this, _, window, cx| this.save_key(window, cx));
+        let cancel = cx.listener(|this, _, window, cx| this.close_key_form(window, cx));
+        v_flex()
+            .id("chat-key-form")
+            .debug_selector(|| "chat-key-form".into())
+            .size_full()
+            .gap_2()
+            .p_2()
+            .on_key_down(cx.listener(Self::on_form_key))
+            .child(div().child("Anthropic API key"))
+            .child(form.field.clone())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("chat-key-save", "Save")
+                            .small()
+                            .debug_selector(|| "chat-key-save".into())
+                            .on_click(save),
+                    )
+                    .child(
+                        Button::new("chat-key-cancel", "Cancel")
+                            .small()
+                            .debug_selector(|| "chat-key-cancel".into())
+                            .on_click(cancel),
+                    ),
+            )
+            .child(note(
+                "The key is kept in the system keychain and only sent to api.anthropic.com."
+                    .to_owned(),
+            ))
+            .children(env_wins.then(|| {
+                note(format!(
+                    "{KEY_VARIABLE} is set, and is used instead of the stored key."
+                ))
+            }))
     }
 
     /// Replaces the chat with a new one, from the settings now.
@@ -471,7 +653,7 @@ impl ChatPanel {
 }
 
 impl Render for ChatPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = ui_theme(cx);
         let new_chat = cx.listener(|this, _, window, cx| {
             kiln::with_cx(window, cx, |cx| this.new_chat(cx));
@@ -499,15 +681,24 @@ impl Render for ChatPanel {
         let root = v_flex()
             .size_full()
             .child(header)
-            .child(div().flex_1().min_h_0().child(self.view.clone()));
+            .child(match &self.key_form {
+                Some(form) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_key_form(form, window, cx)),
+                None => div().flex_1().min_h_0().child(self.view.clone()),
+            });
         <Self as kiln::ViewCommands>::attach(root, cx)
     }
 }
 
 impl Focusable for ChatPanel {
-    /// The composer's.
+    /// The key form's field while it shows, else the composer's.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.view.focus_handle(cx)
+        match &self.key_form {
+            Some(form) => form.field.focus_handle(cx),
+            None => self.view.focus_handle(cx),
+        }
     }
 }
 
@@ -521,26 +712,54 @@ impl Workbench {
         }
         self.run_dock_op(DockOp::ShowChat, window, cx);
     }
+
+    /// Shows the Chat panel with its key form.
+    fn set_chat_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_chat(window, cx);
+        if let Some(panel) = self.dock().read(cx).chat().cloned() {
+            panel.update(cx, |panel, cx| panel.show_key_form(window, cx));
+        }
+    }
+
+    /// Clears the chat's key, with the Chat panel made if it hasn't been.
+    fn clear_chat_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_chat(window, cx);
+        if let Some(panel) = self.dock().read(cx).chat().cloned() {
+            panel.update(cx, |panel, cx| panel.clear_key(cx));
+        }
+    }
 }
 
-/// Runs `chat.open` in the window it was invoked in, wherever focus is:
-/// the workbench's root doesn't attach the panel's commands. After the
-/// dispatch, which has the window out.
+/// Runs `chat.open`, `chat.set_api_key` and `chat.clear_api_key` in the
+/// window they were invoked in, wherever focus is: the workbench's root
+/// doesn't attach the panel's commands. After the dispatch, which has the
+/// window out.
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenChat, cx| {
-        let Some(handle) = dispatch_window(cx).or_else(|| cx.active_window()) else {
-            return;
-        };
-        cx.defer(move |cx| {
-            handle
-                .update(cx, |_, window, cx| {
-                    let Some(Some(workbench)) = window.root::<Workbench>() else {
-                        return;
-                    };
-                    workbench.update(cx, |workbench, cx| workbench.open_chat(window, cx));
-                })
-                .ok();
-        });
+        on_workbench(cx, Workbench::open_chat);
+    });
+    cx.on_action(|_: &SetApiKey, cx| {
+        on_workbench(cx, Workbench::set_chat_key);
+    });
+    cx.on_action(|_: &ClearApiKey, cx| {
+        on_workbench(cx, Workbench::clear_chat_key);
+    });
+}
+
+/// Runs `run` on the workbench of the window a command was invoked in.
+fn on_workbench(cx: &mut App, run: fn(&mut Workbench, &mut Window, &mut Context<Workbench>)) {
+    let Some(handle) = dispatch_window(cx).or_else(|| cx.active_window()) else {
+        return;
+    };
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, cx| {
+                let Some(Some(workbench)) = window.root::<Workbench>() else {
+                    return;
+                };
+                workbench.update(cx, |workbench, cx| run(workbench, window, cx));
+            })
+            .ok();
     });
 }
 
