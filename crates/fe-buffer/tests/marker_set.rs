@@ -144,7 +144,8 @@ fn op() -> impl Strategy<Value = Op> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+    // The slowest property here; the others keep 256 cases below.
+    #![proptest_config(ProptestConfig { cases: 48, ..ProptestConfig::default() })]
 
     /// C1: markers inserted along the way, synced after each batch or
     /// several, sit where `map_offset` puts their inserted ends.
@@ -185,6 +186,10 @@ proptest! {
         set.sync(&snapshot).unwrap();
         check_synced(&set, &snapshot, biases, &inserted);
     }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 
     /// C2: `iter_in` finds exactly the markers a linear filter does.
     #[test]

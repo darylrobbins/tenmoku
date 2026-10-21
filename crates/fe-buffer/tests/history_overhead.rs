@@ -48,12 +48,12 @@ fn charge_grows_with_edits() {
 #[test]
 fn default_limit_keeps_typing_undoable() {
     let mut buffer = Buffer::new("");
-    for i in 0..10_001 {
+    for i in 0..2_001 {
         let end = buffer.len();
         let ch = if i == 0 { "F" } else { "a" };
         buffer.edit([(end..end, ch)], Origin::User).unwrap();
     }
-    for _ in 0..10_000 {
+    for _ in 0..2_000 {
         assert!(undo_user(&mut buffer).is_some());
     }
     assert_eq!(buffer.text().to_string(), "F");

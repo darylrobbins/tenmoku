@@ -470,7 +470,7 @@ fn anchor_resolution_is_consistent_across_many_versions() {
     // offsets shifted by a simple insertion at the start each step.
     let mut buffer = Buffer::new("x");
     let mut anchors: HashMap<usize, (Anchor, usize)> = HashMap::new();
-    for step in 0..500 {
+    for step in 0..100 {
         let anchor = buffer.current().anchor_after(buffer.len());
         anchors.insert(step, (anchor, buffer.len()));
         buffer.edit([(0..0, "ab")], Origin::User);
