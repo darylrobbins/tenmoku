@@ -105,9 +105,9 @@
 # dark = "acme.solarized/solarized-dark"
 # The installed theme the light theme is, by ID. Unset is the built-in one.
 # light = "acme.solarized/solarized-light"
-# A bundled theme by name: Dark Modern, Fastedit Dark, Fastedit Light or
-# Fastedit Ember. It's the dark or the light theme, as its appearance is;
-# dark or light, if set, wins for that one.
+# A bundled theme by name: Dark Modern, Dark 2026, Light 2026, Fastedit Dark,
+# Fastedit Light or Fastedit Ember. It's the dark or the light theme, as its
+# appearance is; dark or light, if set, wins for that one.
 # name = "Dark Modern"
 
 [terminal]

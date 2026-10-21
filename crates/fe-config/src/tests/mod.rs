@@ -2,6 +2,7 @@ mod bracket_pair_colors_default;
 mod layers;
 mod lsp;
 mod settings;
+mod template_theme_names;
 mod watch;
 
 use std::{fs, path::PathBuf};
