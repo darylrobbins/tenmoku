@@ -235,9 +235,11 @@ impl<T: CommandTarget> CommandCatalog for Registry<T> {
             Err(DispatchError::UnknownCommand(_)) => Err(CatalogError::UnknownCommand),
             Err(DispatchError::BadArgs { message, .. }) => Err(CatalogError::BadArgs(message)),
             // `validate_args` checks nothing else.
-            Err(error @ (DispatchError::NotInContext { .. } | DispatchError::Failed { .. })) => {
-                Err(CatalogError::BadArgs(error.to_string()))
-            }
+            Err(
+                error @ (DispatchError::NotInContext { .. }
+                | DispatchError::Failed { .. }
+                | DispatchError::PluginDenied(_)),
+            ) => Err(CatalogError::BadArgs(error.to_string())),
         }
     }
 }

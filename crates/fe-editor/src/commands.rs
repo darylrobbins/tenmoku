@@ -559,6 +559,7 @@ pub fn registry() -> Registry<Editor> {
     crate::rows::register(&mut registry);
     crate::comment::register(&mut registry);
     crate::smart_select::register(&mut registry);
+    crate::plugin_access::allow_plugins(&mut registry);
     registry
 }
 

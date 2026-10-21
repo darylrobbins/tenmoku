@@ -34,6 +34,7 @@ mod indent_style;
 mod multi_cursor;
 pub mod occurrences;
 mod pairs;
+mod plugin_access;
 mod row_change_decorations;
 pub mod row_changes;
 mod rows;

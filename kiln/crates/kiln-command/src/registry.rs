@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-use std::collections::HashMap;
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::{Actor, CommandId, ContextPredicate, InvalidCommandId, Invocation};
+use crate::{
+    Actor, CommandId, ContextPredicate, InvalidCommandId, Invocation, PluginAccess, PluginDenied,
+    PluginPolicy, authorize::authorize,
+};
 
 /// A kind of thing commands run against. Implemented by a marker type, so
 /// the target handlers receive can borrow: the editor's is a model plus the
@@ -101,7 +104,15 @@ pub enum DispatchError {
         command: CommandId,
         error: CommandError,
     },
+    /// A plugin's invocation its grants don't cover.
+    #[error(transparent)]
+    PluginDenied(#[from] PluginDenied),
 }
+
+/// [`Registry::allow_plugins`] named a command that isn't registered.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown command {0}")]
+pub struct UnknownCommand(pub String);
 
 enum Failure {
     BadArgs(String),
@@ -122,6 +133,8 @@ struct Entry<T: CommandTarget> {
     meta: CommandMeta,
     check_args: fn(&Value) -> Result<(), String>,
     handler: Handler<T>,
+    /// What a plugin needs to run it; `None` refuses every plugin.
+    plugin_access: Option<PluginAccess>,
 }
 
 /// The commands for one kind of target, by ID.
@@ -129,6 +142,10 @@ pub struct Registry<T: CommandTarget> {
     entries: Vec<Entry<T>>,
     index: HashMap<CommandId, usize>,
     observers: Vec<Observer>,
+    plugin_policy: Option<Arc<dyn PluginPolicy>>,
+    /// The plugin whose dispatch is running, so a dispatch nested in it
+    /// runs as that plugin, within its grants, whatever actor it names.
+    acting_plugin: RefCell<Option<String>>,
 }
 
 impl<T: CommandTarget> Default for Registry<T> {
@@ -137,6 +154,8 @@ impl<T: CommandTarget> Default for Registry<T> {
             entries: Vec::new(),
             index: HashMap::new(),
             observers: Vec::new(),
+            plugin_policy: None,
+            acting_plugin: RefCell::new(None),
         }
     }
 }
@@ -226,9 +245,34 @@ impl<T: CommandTarget> Registry<T> {
             },
             check_args,
             handler,
+            plugin_access: None,
         });
         let meta = &mut self.entries.last_mut().expect("just pushed").meta;
         Ok(CommandBuilder { meta })
+    }
+
+    /// Opens the registered command `id` to plugins that hold `commands`
+    /// and every capability in `access`. Commands not opened refuse every
+    /// plugin.
+    pub fn allow_plugins(&mut self, id: &str, access: PluginAccess) -> Result<(), UnknownCommand> {
+        let ix = CommandId::parse(id)
+            .ok()
+            .and_then(|id| self.index.get(&id).copied())
+            .ok_or_else(|| UnknownCommand(id.to_string()))?;
+        self.entries[ix].plugin_access = Some(access);
+        Ok(())
+    }
+
+    /// What a plugin needs to run `id`, if it's open to plugins.
+    pub fn plugin_access(&self, id: &CommandId) -> Option<&PluginAccess> {
+        self.entry(id)
+            .and_then(|entry| entry.plugin_access.as_ref())
+    }
+
+    /// Sets what plugin invocations are checked against. Without one, every
+    /// plugin is refused.
+    pub fn set_plugin_policy(&mut self, policy: Arc<dyn PluginPolicy>) {
+        self.plugin_policy = Some(policy);
     }
 
     /// Every command's metadata, in registration order.
@@ -244,10 +288,12 @@ impl<T: CommandTarget> Registry<T> {
         self.index.get(id).map(|&ix| &self.entries[ix])
     }
 
-    /// Checks that the command exists, applies in the invocation's context
-    /// and accepts its args, without running anything.
+    /// Checks that the command exists, that a plugin invoking it may run
+    /// it, that it applies in the invocation's context and that it accepts
+    /// its args, without running anything.
     pub fn validate(&self, invocation: &Invocation) -> Result<&CommandMeta, DispatchError> {
-        let entry = self.applicable(invocation)?;
+        let invocation = self.as_acting_plugin(invocation);
+        let entry = self.applicable(&invocation)?;
         (entry.check_args)(&invocation.args).map_err(|message| DispatchError::BadArgs {
             command: invocation.command.clone(),
             message,
@@ -272,11 +318,33 @@ impl<T: CommandTarget> Registry<T> {
         Ok(&entry.meta)
     }
 
+    /// The invocation as it runs: inside a plugin's dispatch, as that
+    /// plugin.
+    fn as_acting_plugin<'i>(&self, invocation: &'i Invocation) -> Cow<'i, Invocation> {
+        match &*self.acting_plugin.borrow() {
+            Some(plugin) if !matches!(&invocation.actor, Actor::Host(name) if name == plugin) => {
+                Cow::Owned(invocation.clone().actor(Actor::Host(plugin.clone())))
+            }
+            _ => Cow::Borrowed(invocation),
+        }
+    }
+
+    /// The command's entry, if it exists, a plugin invoking it may run it,
+    /// and it applies in the invocation's context.
     fn applicable(&self, invocation: &Invocation) -> Result<&Entry<T>, DispatchError> {
         let command = &invocation.command;
         let entry = self
             .entry(command)
             .ok_or_else(|| DispatchError::UnknownCommand(command.clone()))?;
+        if let Actor::Host(plugin) = &invocation.actor {
+            authorize(
+                self.plugin_policy.as_deref(),
+                plugin,
+                command,
+                entry.plugin_access.as_ref(),
+                &invocation.args,
+            )?;
+        }
         if let Some(predicate) = &entry.meta.context
             && !predicate.eval(&invocation.context)
         {
@@ -291,12 +359,23 @@ impl<T: CommandTarget> Registry<T> {
     /// Runs the invocation's command on `target`, if it applies in the
     /// invocation's context and its args are good, then tells the
     /// observers.
+    ///
+    /// An invocation by a plugin (`Actor::Host`) runs only if the plugin's
+    /// grants cover the command's [`PluginAccess`]; see
+    /// [`Registry::allow_plugins`]. A dispatch nested in a plugin's, such as
+    /// a command running another through this registry, runs as that
+    /// plugin and is checked the same way.
     pub fn dispatch(
         &self,
         target: &mut T::Target<'_>,
         invocation: &Invocation,
     ) -> Result<Dispatched<T::Tx>, DispatchError> {
+        let invocation = &*self.as_acting_plugin(invocation);
         let entry = self.applicable(invocation)?;
+        let _acting = match &invocation.actor {
+            Actor::Host(plugin) => Some(Acting::new(&self.acting_plugin, plugin)),
+            _ => None,
+        };
         let command = || invocation.command.clone();
         let dispatched =
             (entry.handler)(target, &invocation.actor, &invocation.args).map_err(|failure| {
@@ -321,6 +400,26 @@ impl<T: CommandTarget> Registry<T> {
     /// the seam for recording, logging and replication.
     pub fn observe(&mut self, observer: impl Fn(&Invocation) + 'static) {
         self.observers.push(Box::new(observer));
+    }
+}
+
+/// Marks a plugin's dispatch as running until dropped, even by a panic,
+/// then puts back what was running before.
+struct Acting<'r> {
+    slot: &'r RefCell<Option<String>>,
+    outer: Option<String>,
+}
+
+impl<'r> Acting<'r> {
+    fn new(slot: &'r RefCell<Option<String>>, plugin: &str) -> Self {
+        let outer = slot.replace(Some(plugin.to_string()));
+        Self { slot, outer }
+    }
+}
+
+impl Drop for Acting<'_> {
+    fn drop(&mut self) {
+        *self.slot.borrow_mut() = self.outer.take();
     }
 }
 
