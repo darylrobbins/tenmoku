@@ -63,7 +63,7 @@ pub use view::ProposalEvent;
 pub use view::{GlyphKind, GutterGlyph};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s,
-    set_vim_remaps, vim_enabled, vim_registers,
+    set_vim_remaps, set_vim_replace_with_register, vim_enabled, vim_registers,
 };
 
 /// Key context active while an editor is focused: the `fe-command`

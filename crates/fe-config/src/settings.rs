@@ -226,6 +226,11 @@ pub struct VimSettings {
     /// flash map them, instead of changing a char or a line (`cl` and `cc`
     /// still do). `gs` and `gS` start it either way.
     pub jump_on_s: bool,
+    /// true: `gr{motion}`, `grr` and visual `gr` replace text with a
+    /// register's contents, as the ReplaceWithRegister plugin does, instead
+    /// of running nvim 0.12's language-server `gr` keys (`grr` references,
+    /// `grn` rename, `gra` code action, `gri`, `grt`).
+    pub replace_with_register: bool,
     /// How long, in milliseconds, a vim search or :s may run on one command
     /// before it stops with Interrupted and changes nothing (nvim's
     /// 'redrawtime' is the same default).
@@ -246,6 +251,7 @@ impl Default for VimSettings {
             enabled: false,
             clipboard: VimClipboard::default(),
             jump_on_s: false,
+            replace_with_register: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,
             leader: "\\".to_string(),

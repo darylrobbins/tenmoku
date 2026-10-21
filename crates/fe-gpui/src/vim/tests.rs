@@ -448,6 +448,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "problems_panel && vim"
                             | "find_bar && replace_input && text_input"
                             | "editor && vim.mode == normal && !vim.pending"
+                            | "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
+                            | "editor && vim.visual && !vim.replace_with_register"
                             | "editor && vim.visual"
                             | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
                             | "vim_line"

@@ -86,3 +86,6 @@ fn applies_to_editors(cx: &mut TestAppContext) {
     cx.update(|_, cx| set_vim_jump_on_s(cx, false));
     assert_changes(&second, cx, "four five");
 }
+
+#[path = "replace_register_setting_tests.rs"]
+mod replace_register_setting_tests;

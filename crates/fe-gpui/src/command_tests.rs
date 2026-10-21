@@ -85,6 +85,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "problems_panel && vim"
                         | "find_bar && replace_input && text_input"
                         | "editor && vim.mode == normal && !vim.pending"
+                        | "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
+                        | "editor && vim.visual && !vim.replace_with_register"
                         | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
                         | "editor && vim.mode == normal"
                         | "editor && vim.mode == insert"

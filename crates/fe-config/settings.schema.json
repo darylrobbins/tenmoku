@@ -691,6 +691,11 @@
             "$ref": "#/$defs/VimRemap"
           },
           "type": "array"
+        },
+        "replace_with_register": {
+          "default": false,
+          "description": "true: `gr{motion}`, `grr` and visual `gr` replace text with a\nregister's contents, as the ReplaceWithRegister plugin does, instead\nof running nvim 0.12's language-server `gr` keys (`grr` references,\n`grn` rename, `gra` code action, `gri`, `grt`).",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -804,7 +809,8 @@
         "jump_on_s": false,
         "leader": "\\",
         "regex_time_limit": 2000,
-        "remap": []
+        "remap": [],
+        "replace_with_register": false
       },
       "description": "Vim mode."
     },

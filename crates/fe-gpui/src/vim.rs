@@ -343,6 +343,8 @@ struct Vim {
     registers: Registers,
     /// `vim.jump_on_s`: whether `s` and `S` start the jump.
     jump_on_s: bool,
+    /// `vim.replace_with_register`: whether `gr` is ReplaceWithRegister's.
+    replace_with_register: bool,
     /// `vim.remap` and `vim.leader`, built.
     remaps: Arc<RemapSet>,
     /// The editor holding keys for a longer map: one at a time, as only the
@@ -476,6 +478,24 @@ pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
             .update(cx, |view, _| {
                 if let Some(state) = &mut view.vim {
                     state.set_jump_on_s(on);
+                }
+            })
+            .ok();
+    }
+}
+
+/// Gives `gr{motion}`, `grr` and visual `gr` to ReplaceWithRegister in every
+/// editor, and in any opened or switched on later
+/// (`vim.replace_with_register`).
+pub fn set_vim_replace_with_register(cx: &mut App, on: bool) {
+    let vim = cx.default_global::<Vim>();
+    vim.replace_with_register = on;
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, _| {
+                if let Some(state) = &mut view.vim {
+                    state.set_replace_with_register(on);
                 }
             })
             .ok();
@@ -1091,6 +1111,7 @@ impl EditorView {
             let mut state = VimState::new();
             if let Some(vim) = cx.try_global::<Vim>() {
                 state.set_jump_on_s(vim.jump_on_s);
+                state.set_replace_with_register(vim.replace_with_register);
                 state.set_remaps(Arc::clone(&vim.remaps));
             }
             state

@@ -1733,27 +1733,27 @@ context = "editor && vim.mode == normal && !vim.pending"
 [[bindings]]
 keys = "g r r"
 command = "nav.find_references"
-context = "editor && vim.mode == normal && !vim.pending"
+context = "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
 
 [[bindings]]
 keys = "g r n"
 command = "lsp.rename"
-context = "editor && vim.mode == normal && !vim.pending"
+context = "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
 
 [[bindings]]
 keys = "g r a"
 command = "lsp.code_actions"
-context = "editor && vim.mode == normal && !vim.pending"
+context = "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
 
 [[bindings]]
 keys = "g r i"
 command = "nav.goto_implementation"
-context = "editor && vim.mode == normal && !vim.pending"
+context = "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
 
 [[bindings]]
 keys = "g r t"
 command = "nav.goto_type_definition"
-context = "editor && vim.mode == normal && !vim.pending"
+context = "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
 
 [[bindings]]
 keys = "g shift-o"
@@ -1768,7 +1768,7 @@ context = "editor && vim.mode == normal && !vim.pending"
 [[bindings]]
 keys = "g r a"
 command = "lsp.code_actions"
-context = "editor && vim.visual"
+context = "editor && vim.visual && !vim.replace_with_register"
 
 # Carets in vim's normal mode, which acts at each of them, and whose
 # `escape` with nothing pending goes back to one: VSCodeVim's `gb` adds one

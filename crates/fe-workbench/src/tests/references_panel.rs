@@ -830,7 +830,8 @@ fn the_default_keymap_binds_the_references_commands() {
             ("shift-f12".to_owned(), "workbench && !terminal".to_owned()),
             (
                 "g r r".to_owned(),
-                "editor && vim.mode == normal && !vim.pending".to_owned()
+                "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
+                    .to_owned()
             ),
         ]
     );
