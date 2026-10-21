@@ -34,7 +34,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
-        "markdown_inline" => tokens(None, None),
+        "markdown_inline" | "rustdoc_inline" => tokens(None, None),
         _ => return None,
     })
 }
@@ -45,7 +45,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
 /// (plain text) gets `()`, `[]`, `{}`, `""`.
 pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
     match language {
-        "markdown_inline" => &[],
+        "markdown_inline" | "rustdoc_inline" => &[],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
         | "json" => &[

@@ -561,6 +561,18 @@ const DEFS: &[Def] = &[
         injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
         hidden: true,
     },
+    // Inline Markdown in Rust doc comments: only link text is highlighted.
+    #[cfg(all(feature = "markdown", feature = "rust"))]
+    Def {
+        name: "rustdoc_inline",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
+        highlights: || &[include_str!("../queries/rustdoc-inline-highlights.scm")],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
+    },
     #[cfg(feature = "java")]
     Def {
         name: "java",
