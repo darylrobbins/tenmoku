@@ -18,7 +18,9 @@ fn alpha(color: Color) -> f32 {
 
 #[test]
 fn bundled_themes_set_faint_guides() {
-    assert_eq!(EditorColors::KEYS.len(), 30);
+    for key in ["indent_guide", "indent_guide_active"] {
+        assert!(EditorColors::KEYS.contains(&key), "{key} is a colour key");
+    }
     for (name, source) in [
         ("dark", include_str!("../themes/fastedit-dark.toml")),
         ("light", include_str!("../themes/fastedit-light.toml")),

@@ -42,7 +42,7 @@ pub(crate) enum Page {
 }
 
 impl Page {
-    pub(crate) const ALL: [Page; 7] = [
+    pub(crate) const ALL: &[Page] = &[
         Page::Controls,
         Page::Text,
         Page::Lists,

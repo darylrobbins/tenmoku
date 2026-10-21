@@ -15,6 +15,7 @@ mod ex;
 mod ex_host;
 mod ex_user_commands;
 mod ex_user_zero_range;
+mod feature_list;
 mod feature_stubs;
 mod find_query;
 mod folds;

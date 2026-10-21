@@ -126,10 +126,11 @@ fn render(cx: &mut OffscreenApp, args: &[String]) -> Result<()> {
     let usage = "usage: gallery-screenshots render <out.png> <page> [--size WxH]";
     let (out, name, size) = render_args(args, SCENE_SIZE, usage)?;
     let page = Page::ALL
-        .into_iter()
+        .iter()
+        .copied()
         .find(|page| page_name(*page) == name)
         .ok_or_else(|| {
-            let names: Vec<_> = Page::ALL.into_iter().map(page_name).collect();
+            let names: Vec<_> = Page::ALL.iter().copied().map(page_name).collect();
             format!("no page {name:?}; the pages are {}", names.join(", "))
         })?;
     let mode = match std::env::var("KILN_GALLERY_THEME").as_deref() {

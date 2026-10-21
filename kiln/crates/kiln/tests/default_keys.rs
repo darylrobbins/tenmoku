@@ -19,6 +19,9 @@ use kiln::{
     platform::{keys, menus},
 };
 
+#[path = "support/platform_keymaps.rs"]
+mod platform_keymaps;
+
 mod notes {
     kiln::commands!(
         notes,
@@ -397,11 +400,8 @@ fn the_bundled_keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppC
     let config = Config::new("com.example.Notes", "Notes")
         .default_keys(true)
         .default_menus(true);
+    platform_keymaps::assert_keymaps_agree(&config, &*catalog, platform_keymaps::KILN);
     for os in [Os::MacOs, Os::Linux, Os::Windows] {
-        let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
-        assert_eq!(diagnostics, [], "keymap on {os:?}");
-        let bindings = if os == Os::MacOs { 8 } else { 9 };
-        assert_eq!(keymap.bindings().len(), bindings, "on {os:?}");
         let (bar, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
         assert_eq!(diagnostics, [], "menus on {os:?}");
         assert_eq!(bar.menus.len(), 3, "on {os:?}");

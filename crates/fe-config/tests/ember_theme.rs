@@ -35,8 +35,9 @@ fn parses_cleanly() {
 
     let captures =
         |file: &ThemeFile| -> Vec<String> { file.extensions["syntax"].keys().cloned().collect() };
+    // `editor_palette` checks all three bundled themes' captures against
+    // fe-syntax's highlights.
     assert_eq!(captures(&ember), captures(&parse(DARK)));
-    assert_eq!(captures(&ember).len(), 25);
 }
 
 #[test]

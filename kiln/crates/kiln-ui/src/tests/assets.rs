@@ -8,7 +8,8 @@ use crate::{Assets, Icon};
 
 #[test]
 fn every_icon_is_bundled_and_parses() {
-    assert_eq!(Icon::ALL.len(), 59);
+    let names: BTreeSet<&str> = Icon::ALL.iter().map(|icon| icon.name()).collect();
+    assert_eq!(names.len(), Icon::ALL.len(), "no two icons share a name");
     let renderer = SvgRenderer::new(Arc::new(Assets));
     for icon in Icon::ALL {
         let bytes = Assets

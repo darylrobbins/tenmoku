@@ -162,7 +162,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 21] = [
+pub(crate) const FEATURES: &[&Feature] = &[
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,

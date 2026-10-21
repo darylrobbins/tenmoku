@@ -14,6 +14,8 @@
 mod app;
 #[path = "../examples/host/conversation.rs"]
 mod conversation;
+#[path = "support/platform_keymaps.rs"]
+mod platform_keymaps;
 #[path = "../examples/host/threads.rs"]
 mod threads;
 
@@ -121,13 +123,8 @@ fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
         let config = config();
         assert_clean_config(&config, cx);
         let catalog = kiln::catalog(cx);
+        platform_keymaps::assert_keymaps_agree(&config, &*catalog, platform_keymaps::KILN);
         for os in [Os::MacOs, Os::Linux, Os::Windows] {
-            let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
-            assert_eq!(diagnostics, [], "keymap on {os:?}");
-            // The chat's six over kiln's nine, F10 among them, which opens
-            // the menus drawn in the window: macOS hasn't them.
-            let bindings = if os == Os::MacOs { 14 } else { 15 };
-            assert_eq!(keymap.bindings().len(), bindings, "keymap on {os:?}");
             let (menus, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "menus on {os:?}");
             assert_eq!(menus.menus.len(), 4, "menus on {os:?}");

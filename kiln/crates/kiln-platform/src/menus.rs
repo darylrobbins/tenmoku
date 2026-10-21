@@ -167,7 +167,7 @@ pub fn refresh(cx: &mut App) {
 /// The keys gpui-pre-macos 0.3.7's `key_to_native` converts for a key
 /// equivalent. Any other key reaches AppKit as its name, so only a single
 /// character is shown as itself.
-const NATIVE_KEYS: [&str; 48] = [
+const NATIVE_KEYS: &[&str] = &[
     "space",
     "backspace",
     "escape",

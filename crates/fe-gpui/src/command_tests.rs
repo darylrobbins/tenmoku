@@ -56,10 +56,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // its rows. GPUI's own keymap stays empty.
     let keymap = default_keymap();
     let bindings = keymap.bindings();
-    // 75 for the editor and the app, 149 for fe-workbench (32 of them vim's
-    // `<C-w>` keys, 40 the day-one features'), 24 for vim, 5 for vim's
-    // normal-mode carets, 5 for the completion menu, 2 for the ghost text.
-    assert_eq!(bindings.len(), 280);
+    crate::keymap_tests::assert_no_duplicates(bindings);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
@@ -99,6 +96,13 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                 )
             )
     };
+    // The editor's own and the workbench's are both there.
+    assert!(
+        bindings
+            .iter()
+            .any(|binding| binding.depth(&editor) == Some(1))
+    );
+    assert!(bindings.iter().any(workbench));
     let others: Vec<_> = bindings
         .iter()
         .filter(|binding| binding.depth(&editor) != Some(1) && !workbench(binding))

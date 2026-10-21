@@ -4,7 +4,23 @@
 use std::path::Path;
 
 use fe_config::{Color, EditorColors, EditorPalette, theme::EXTENSIONS};
+use fe_syntax::Highlight;
 use kiln_core::theme::{ThemeData, ThemeFile};
+
+/// The highlights the bundled themes don't colour: a dotted parent's colour
+/// covers each, or the foreground does (`embedded`, `variable`).
+const UNCOLOURED: &[&str] = &[
+    "comment.documentation",
+    "constant.builtin",
+    "embedded",
+    "function.builtin",
+    "function.method",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "type.builtin",
+    "variable",
+    "variable.parameter",
+];
 
 fn color(text: &str) -> Color {
     text.parse().unwrap()
@@ -40,6 +56,7 @@ fn bundled_palettes() {
     let sources = [
         include_str!("../themes/fastedit-dark.toml"),
         include_str!("../themes/fastedit-light.toml"),
+        include_str!("../themes/fastedit-ember.toml"),
     ];
     let mut captures = Vec::new();
     for source in sources {
@@ -50,10 +67,10 @@ fn bundled_palettes() {
             .keys()
             .map(String::as_str)
             .collect();
+        // Each colour key, once: a table's keys are unique.
         let mut keys = EditorColors::KEYS.to_vec();
         keys.sort();
         assert_eq!(editor, keys);
-        assert_eq!(EditorColors::KEYS.len(), 30);
         captures.push(
             file.extensions["syntax"]
                 .keys()
@@ -61,8 +78,17 @@ fn bundled_palettes() {
                 .collect::<Vec<_>>(),
         );
     }
-    assert_eq!(captures[0].len(), 25);
-    assert_eq!(captures[0], captures[1]);
+    // Each colours every highlight but those it leaves to a dotted parent's
+    // colour, or to the foreground.
+    let mut expected: Vec<_> = Highlight::all()
+        .map(Highlight::name)
+        .filter(|name| !UNCOLOURED.contains(name))
+        .collect();
+    expected.sort();
+    for mut captures in captures {
+        captures.sort();
+        assert_eq!(captures, expected);
+    }
     let names = |palette: &EditorPalette| -> Vec<String> {
         palette
             .syntax

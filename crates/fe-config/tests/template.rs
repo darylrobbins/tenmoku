@@ -12,78 +12,37 @@ fn template_is_all_defaults() {
     assert_eq!(store.diagnostics(), []);
 
     let defaults = toml::Table::try_from(Settings::default()).unwrap();
-    let editor = defaults["editor"].as_table().unwrap();
-    let mut keys: Vec<_> = editor.keys().cloned().collect();
-    // `font_family` is unset by default, so it isn't serialized.
-    keys.push("font_family".to_owned());
-    keys.sort();
-    assert_eq!(
-        keys,
-        [
-            "auto_close_pairs",
-            "auto_save",
-            "auto_save_delay",
-            "bracket_pair_colors",
-            "code_actions_on_save",
-            "code_lens",
-            "font_family",
-            "font_size",
-            "format_on_save",
-            "indent_guides",
-            "inlay_hints",
-            "inline_blame",
-            "lightbulb",
-            "line_height",
-            "semantic_highlighting",
-            "soft_wrap",
-            "tab_size"
-        ]
-    );
-    for key in keys {
-        let value = match key.as_str() {
-            "font_family" => "\"JetBrains Mono\"".to_owned(),
-            _ => editor[&key].to_string(),
-        };
-        let line = format!("# {key} = ");
-        let found = USER_SETTINGS_TEMPLATE
-            .lines()
-            .find(|l| l.starts_with(&line))
-            .unwrap_or_else(|| panic!("{key} is commented out in the template"));
-        if key != "font_family" {
-            assert_eq!(found[line.len()..], value, "{key}'s default");
-        }
-    }
+    // These are unset by default, so they aren't serialized.
+    commented_out_with_defaults(&defaults, "editor", &["font_family"]);
+    commented_out_with_defaults(&defaults, "terminal", &["font_family", "font_size"]);
+}
 
-    let terminal = defaults["terminal"].as_table().unwrap();
-    let mut keys: Vec<_> = terminal.keys().cloned().collect();
-    // `font_family` and `font_size` are unset by default, so aren't serialized.
-    keys.push("font_family".to_owned());
-    keys.push("font_size".to_owned());
+/// The `[name]` section of the template comments out each of its settings
+/// once, with its default, and nothing else: the keys `defaults` has and
+/// `unset`.
+fn commented_out_with_defaults(defaults: &toml::Table, name: &str, unset: &[&str]) {
+    let table = defaults[name].as_table().unwrap();
+    let mut keys: Vec<&str> = table
+        .keys()
+        .map(String::as_str)
+        .chain(unset.iter().copied())
+        .collect();
     keys.sort();
-    assert_eq!(
-        keys,
-        [
-            "font_fallbacks",
-            "font_family",
-            "font_size",
-            "scrollback",
-            "shell",
-            "shell_args"
-        ]
-    );
-    let section = USER_SETTINGS_TEMPLATE.split("[terminal]").nth(1).unwrap();
-    for key in keys {
-        let line = format!("# {key} = ");
-        let found = section
-            .lines()
-            .find(|l| l.starts_with(&line))
-            .unwrap_or_else(|| panic!("terminal.{key} is commented out in the template"));
-        if let Some(value) = terminal.get(&key) {
-            assert_eq!(
-                found[line.len()..],
-                value.to_string(),
-                "terminal.{key}'s default"
-            );
+
+    let header = format!("[{name}]\n");
+    let (_, section) = USER_SETTINGS_TEMPLATE.split_once(&header).unwrap();
+    let section = section.split("\n[").next().unwrap();
+    let commented: Vec<(&str, &str)> = section
+        .lines()
+        .filter_map(|line| line.strip_prefix("# ")?.split_once(" = "))
+        .collect();
+    let mut found: Vec<&str> = commented.iter().map(|&(key, _)| key).collect();
+    found.sort();
+    assert_eq!(found, keys, "[{name}]'s commented-out keys");
+
+    for (key, value) in commented {
+        if let Some(default) = table.get(key) {
+            assert_eq!(value, default.to_string(), "{name}.{key}'s default");
         }
     }
 }

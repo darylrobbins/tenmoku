@@ -10,6 +10,8 @@ mod app;
 mod commands;
 #[path = "../examples/gallery/pages/mod.rs"]
 mod pages;
+#[path = "support/platform_keymaps.rs"]
+mod platform_keymaps;
 #[path = "../examples/gallery/settings.rs"]
 mod settings;
 #[path = "../examples/gallery/setup.rs"]
@@ -70,12 +72,16 @@ fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let catalog = catalog(cx);
         let config = setup::config();
+        platform_keymaps::assert_keymaps_agree(
+            &config,
+            &*catalog,
+            &[(
+                "alt-backspace",
+                "ctrl-backspace",
+                "gallery.input_delete_word",
+            )],
+        );
         for os in [Os::MacOs, Os::Linux, Os::Windows] {
-            let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
-            assert_eq!(diagnostics, [], "keymap on {os:?}");
-            // F10 opens the menus drawn in the window, which macOS hasn't.
-            let bindings = if os == Os::MacOs { 7 } else { 8 };
-            assert_eq!(keymap.bindings().len(), bindings, "keymap on {os:?}");
             let (menus, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "menus on {os:?}");
             assert_eq!(menus.menus.len(), 3, "menus on {os:?}");
