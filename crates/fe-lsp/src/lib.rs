@@ -82,7 +82,6 @@ mod encoding;
 mod event;
 mod file_operations;
 pub mod formatting;
-#[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
 mod glob;
 mod hover;
 mod identity;
@@ -90,7 +89,6 @@ mod inlay_hint;
 mod launcher;
 mod manager;
 mod navigation;
-#[allow(dead_code)] // Nothing calls it until the watched-files and file-operation cards.
 mod notify;
 mod pull;
 mod readiness;
@@ -104,6 +102,7 @@ mod semantic_tokens;
 mod server;
 pub mod signature_help;
 mod tsserver;
+mod watched_files;
 pub mod workspace_edit;
 
 #[cfg(any(test, feature = "test-support"))]

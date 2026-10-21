@@ -123,8 +123,15 @@ fn initialize_advertises_m4_capabilities() {
             "{expected} missing from {paths:?}"
         );
     }
+    // Watched files are registered dynamically (watched_files.rs).
     for (path, value) in &dynamic {
-        assert_eq!(value, &Value::Bool(false), "{path}");
+        assert_eq!(
+            value,
+            &Value::Bool(
+                path == "capabilities.workspace.didChangeWatchedFiles.dynamicRegistration"
+            ),
+            "{path}"
+        );
     }
 
     // `initialized` follows the reply.

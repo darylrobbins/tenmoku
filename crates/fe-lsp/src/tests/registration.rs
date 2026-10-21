@@ -1,7 +1,9 @@
 //! Dynamic registration (§3.6): only `workspace/didChangeConfiguration`
-//! is accepted, and the notification never depends on it.
+//! and `workspace/didChangeWatchedFiles` are accepted, and the
+//! configuration notification never depends on its registration.
 
 mod globs;
+mod watched_files;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,6 +20,7 @@ use crate::{LspManager, ManualClock, ServerId, ServerStatus};
 
 const CONFIGURATION: &str = "workspace/didChangeConfiguration";
 const WATCHED: &str = "workspace/didChangeWatchedFiles";
+const ON_TYPE_FORMATTING: &str = "textDocument/onTypeFormatting";
 
 fn register(fake: &FakeServer, registrations: &[(&str, &str)]) -> Result<Value, FakeError> {
     fake.request::<RegisterCapability>(RegistrationParams {
@@ -114,15 +117,15 @@ fn dynamic_registration_policy() {
     assert!(manager.registrations(server).is_empty());
     settings.change(&fake, &mut manager);
 
-    // didChangeWatchedFiles, alone or with a supported one, is refused as
+    // An unsupported method, alone or with a supported one, is refused as
     // a whole, naming it, and nothing is recorded.
     for registrations in [
-        vec![("w", WATCHED)],
-        vec![("c", CONFIGURATION), ("w", WATCHED)],
+        vec![("w", ON_TYPE_FORMATTING)],
+        vec![("c", CONFIGURATION), ("w", ON_TYPE_FORMATTING)],
     ] {
         let refused = register(&fake, &registrations).unwrap_err();
         assert_eq!(refused.code, Some(-32803), "{refused:?}");
-        assert!(refused.message.contains(WATCHED), "{refused:?}");
+        assert!(refused.message.contains(ON_TYPE_FORMATTING), "{refused:?}");
         assert!(!refused.message.contains(CONFIGURATION), "{refused:?}");
         assert!(manager.registrations(server).is_empty());
     }

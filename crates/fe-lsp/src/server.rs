@@ -74,18 +74,19 @@ use lsp_types::{
     CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
     CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
     CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
-    DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, FailureHandlingKind,
-    GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, InitializeParams,
-    InitializeResult, InitializedParams, InlayHintClientCapabilities,
-    InlayHintResolveClientCapabilities, InlayHintWorkspaceClientCapabilities, MarkupKind,
-    NumberOrString, ParameterInformationSettings, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
-    SemanticTokensClientCapabilities, SemanticTokensClientCapabilitiesRequests,
-    SemanticTokensFullOptions, SemanticTokensWorkspaceClientCapabilities, ServerCapabilities,
-    SignatureHelpClientCapabilities, SignatureInformationSettings, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, TokenFormat, Url,
-    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-    WorkspaceFolder, WorkspaceSymbolClientCapabilities,
+    DidChangeConfigurationParams, DidChangeWatchedFilesClientCapabilities,
+    DynamicRegistrationClientCapabilities, FailureHandlingKind, GeneralClientCapabilities,
+    GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
+    InlayHintClientCapabilities, InlayHintResolveClientCapabilities,
+    InlayHintWorkspaceClientCapabilities, MarkupKind, NumberOrString, ParameterInformationSettings,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
+    RenameClientCapabilities, SemanticTokensClientCapabilities,
+    SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions,
+    SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
+    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
+    TextDocumentSyncClientCapabilities, TokenFormat, Url, WindowClientCapabilities,
+    WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
+    WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
@@ -105,6 +106,7 @@ use crate::requests::{Issue, Orphans, Out, Settled};
 use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
 use crate::semantic_tokens;
+use crate::watched_files;
 use crate::workspace_edit::{Asked, Edits, HandedReply, decode};
 use lsp_types::WorkspaceFileOperationsClientCapabilities;
 
@@ -177,9 +179,8 @@ pub(crate) enum Command {
     /// from now on, and `workspace/didChangeConfiguration` carries them.
     Configure(serde_json::Value),
     /// A notification on no document in particular, sent in order with the
-    /// requests and document sync queued before it (notify.rs).
-    // Nothing calls them until the watched-files and file-operation cards.
-    #[allow(dead_code)]
+    /// requests and document sync queued before it (notify.rs), with the
+    /// params the session's registrations leave it (watched_files.rs).
     Notify {
         method: &'static str,
         params: serde_json::Value,
@@ -1144,7 +1145,13 @@ impl Actor {
                 self.sent += 1;
             }
             Command::Notify { method, params } => {
-                if crate::notify::send(&self.socket, method, params) {
+                let sent = {
+                    let session = lock(&self.session);
+                    watched_files::for_session(method, params, &session.registrations)
+                };
+                if let Some((method, params)) = sent
+                    && crate::notify::send(&self.socket, method, params)
+                {
                     let _ = self.socket.emit(Taken);
                     self.sent += 1;
                 }
@@ -2248,6 +2255,12 @@ fn client_capabilities() -> ClientCapabilities {
         workspace: Some(WorkspaceClientCapabilities {
             did_change_configuration: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
+            }),
+            // Matched against the changes the host reports
+            // (watched_files.rs).
+            did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
+                dynamic_registration: Some(true),
+                relative_pattern_support: Some(true),
             }),
             symbol: Some(WorkspaceSymbolClientCapabilities {
                 dynamic_registration: dynamic,
