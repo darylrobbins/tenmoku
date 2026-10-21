@@ -60,8 +60,8 @@ use block_rows::{Fate, Watch};
 mod keys;
 use keys::IndentKey;
 pub use keys::KeywordCompletion;
-pub(crate) use keys::retype as retype_keys;
 pub(crate) use keys::{Completion, OneCommand, began_line, finish_one_command};
+pub(crate) use keys::{read_registers, registers_in, retype as retype_keys};
 
 #[cfg(test)]
 mod indent_tests;
@@ -680,7 +680,7 @@ impl VimState {
         let replacing = self.mode == Mode::Replace;
         let virtual_ = self.replace.as_ref().is_some_and(|r| r.is_virtual());
         if splits == Splits::Edits {
-            end(model, self, Ending::Split, None);
+            end(model, self, Ending::Split, None, &Default::default());
             let result = command(model);
             resume(model, self, origin, block);
             if replacing {
@@ -695,7 +695,13 @@ impl VimState {
             .anchor_before(model.primary_selection().head());
         let result = command(model);
         if splits == Splits::Other || model.selections() != before {
-            end(model, self, Ending::Moved(primary), None);
+            end(
+                model,
+                self,
+                Ending::Moved(primary),
+                None,
+                &Default::default(),
+            );
             resume(model, self, origin, block);
             if replacing {
                 crate::replace::resumed(self, model, virtual_);
@@ -2056,7 +2062,15 @@ pub(crate) fn normal_mode(
         host,
         registers,
     } = target;
-    let ended = end(model, state, Ending::Esc, Some(&**host));
+    registers.adopt_inserted(state);
+    // The registers `<C-r><C-o>` and `<C-r><C-p>` inserted, which the
+    // count's copies read again.
+    let names = state
+        .session
+        .as_ref()
+        .map_or_else(Vec::new, keys::registers_noted);
+    let reads = read_registers(names, registers, &mut **host);
+    let ended = end(model, state, Ending::Esc, Some(&**host), &reads);
     registers.adopt_inserted(state);
     Ok(Dispatched::new(Effect::Changed).with_transactions(ended.into_iter().collect()))
 }
@@ -2084,9 +2098,12 @@ fn end(
     state: &mut VimState,
     how: Ending,
     host: Option<&dyn EditorHost>,
+    reads: &keys::Reads,
 ) -> Option<TransactionId> {
     let esc = matches!(how, Ending::Esc);
     state.mode = Mode::Normal;
+    // A `<C-r>` left waiting belongs to this session, not the next.
+    state.register_key = None;
     state.goals = None;
     // As any key but its own ends a keyword completion, so does this.
     state.completion = None;
@@ -2253,7 +2270,7 @@ fn end(
                 });
                 let history =
                     keys::with_marks(typed.unwrap_or_default(), &indent_keys, IndentKey::BACK);
-                keys::repeat_marked(model, &session, &ended, &history, session.opens);
+                keys::repeat_marked(model, &session, &ended, &history, session.opens, reads);
                 None
             }
             None => repeat_typed(model, &session, &ended, host),

@@ -892,6 +892,114 @@
           }
         }
       }
+    },
+    {
+      "name": "dot_repeats_ctrl_r_ctrl_o_reads_register_again",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayiwA <C-r><C-o>a<Esc>j\"ayiwj.",
+      "expect": {
+        "buffer": "abc abc\ndef\nghi def",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "a": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_repeats_ctrl_r_ctrl_p_reads_register_again",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayiwA <C-r><C-p>a<Esc>j\"ayiwj.",
+      "expect": {
+        "buffer": "abc abc\ndef\nghi def",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "a": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "linewise_ctrl_r_ctrl_o_dot_repeat",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjA<C-r><C-o>\"X<Esc>j.",
+      "expect": {
+        "buffer": "abc\nabc\nXdef\nabc\nXghi",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_ctrl_r_insertion",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy3A<C-r><C-o>\"X<Esc>",
+      "expect": {
+        "buffer": "abc\nabc\nabc\nXXXabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
     }
   ]
 }

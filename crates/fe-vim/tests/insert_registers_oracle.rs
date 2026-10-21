@@ -7,6 +7,7 @@
 #[allow(dead_code)]
 mod support;
 
+use fe_command::Invocation;
 use fe_vim::HeadlessVim;
 use support::{check, load};
 
@@ -35,6 +36,10 @@ fn insert_registers_match_neovim() {
         "ctrl_a_last_insert",
         "ctrl_a_nothing_inserted",
         "ctrl_r_dot_repeat",
+        "dot_repeats_ctrl_r_ctrl_o_reads_register_again",
+        "dot_repeats_ctrl_r_ctrl_p_reads_register_again",
+        "linewise_ctrl_r_ctrl_o_dot_repeat",
+        "counted_ctrl_r_insertion",
     ] {
         assert!(
             recorded.iter().any(|case| case.name == name),
@@ -75,4 +80,23 @@ fn insert_register_refusals_type_nothing() {
         vim.feed("x<Esc>").unwrap();
         assert_eq!(vim.text(), "abcx", "{keys}");
     }
+}
+
+#[test]
+fn stale_register_prefix_does_not_outlive_its_session() {
+    let mut vim = HeadlessVim::new("abc", (0, 0));
+    vim.feed("yiwA<C-r>").unwrap();
+    assert!(vim.state().insert_register_waiting());
+    // The app's `<Esc>` binding ends the session without the prefix
+    // reading it.
+    let invocation = Invocation::of("vim.normal_mode")
+        .unwrap()
+        .context(fe_vim::context(vim.state()));
+    vim.dispatch(&invocation).unwrap();
+    assert_eq!(vim.mode(), "normal");
+    assert!(!vim.state().insert_register_waiting());
+    vim.feed("Ax").unwrap();
+    assert!(!vim.state().insert_register_waiting());
+    assert_eq!(vim.text(), "abcx");
+    assert_eq!(vim.mode(), "insert");
 }

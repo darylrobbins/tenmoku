@@ -20,7 +20,7 @@
 //! `:help i_CTRL-U`). They go in the session as marks too, so `.` and a
 //! count type them again, as nvim's do.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use fe_buffer::Origin;
 use fe_editor::{EditorModel, IndentStyle, commands::EditorHost};
@@ -82,7 +82,13 @@ pub(crate) enum DeleteKey {
 pub(crate) enum Key {
     Indent(IndentKey),
     Delete(DeleteKey),
+    /// `<C-r><C-r>`, `<C-r><C-o>` or `<C-r><C-p>` and the register it
+    /// named, which `.` and a count read again, as nvim's do.
+    Register(LiteralInsert, char),
 }
+
+/// The registers a replay inserts, read once before it ([`read_registers`]).
+pub(crate) type Reads = HashMap<char, Register>;
 
 impl Key {
     /// What stands for the key in the text a session typed.
@@ -91,15 +97,27 @@ impl Key {
             Self::Indent(key) => key.mark(),
             Self::Delete(DeleteKey::Word) => '\u{e006}',
             Self::Delete(DeleteKey::Line) => '\u{e007}',
+            Self::Register(LiteralInsert::Plain, _) => '\u{e008}',
+            Self::Register(LiteralInsert::Above, _) => '\u{e009}',
+            Self::Register(LiteralInsert::FixIndent, _) => '\u{e00a}',
         }
     }
 
+    /// The key a mark stands for; a register's name follows it in the
+    /// history, which [`pieces`] reads.
     fn of_mark(mark: char) -> Option<Self> {
         let delete = [DeleteKey::Word, DeleteKey::Line].map(Self::Delete);
+        let register = [
+            LiteralInsert::Plain,
+            LiteralInsert::Above,
+            LiteralInsert::FixIndent,
+        ]
+        .map(|how| Self::Register(how, '\0'));
         IndentKey::ALL
             .map(Self::Indent)
             .into_iter()
             .chain(delete)
+            .chain(register)
             .find(|key| key.mark() == mark)
     }
 }
@@ -150,7 +168,7 @@ impl IndentKey {
     /// Whether `ch`, typed, would read as a mark: a key's
     /// ([`Key::mark`]), [`IndentKey::BACK`] or [`IndentKey::ESCAPE`].
     fn reads_as_mark(ch: char) -> bool {
-        ('\u{e000}'..='\u{e007}').contains(&ch)
+        ('\u{e000}'..='\u{e00a}').contains(&ch)
     }
 }
 
@@ -506,6 +524,9 @@ pub(crate) fn with_marks(typed: String, keys: &[Noted], back: char) -> String {
         push(&mut out, &then[same..]);
         if let Some(key) = key {
             out.push(key.mark());
+            if let Key::Register(_, name) = key {
+                out.push(name);
+            }
         }
         from = after;
     }
@@ -527,7 +548,13 @@ pub(crate) fn pieces(text: &str) -> Vec<Piece> {
     let mut pieces = Vec::new();
     let mut run = String::new();
     let mut escaped = false;
+    // A register key's name comes next.
+    let mut naming = None;
     for ch in text.chars() {
+        if let Some(how) = naming.take() {
+            pieces.push(Piece::Key(Key::Register(how, ch)));
+            continue;
+        }
         if ch == IndentKey::ESCAPE && !escaped {
             escaped = true;
             continue;
@@ -542,6 +569,7 @@ pub(crate) fn pieces(text: &str) -> Vec<Piece> {
             pieces.push(Piece::Text(std::mem::take(&mut run)));
         }
         match (Key::of_mark(ch), pieces.last_mut()) {
+            (Some(Key::Register(how, _)), _) => naming = Some(how),
             (Some(key), _) => pieces.push(Piece::Key(key)),
             (None, Some(Piece::Back(n))) => *n += 1,
             (None, _) => pieces.push(Piece::Back(1)),
@@ -570,6 +598,7 @@ pub(crate) fn retype(
     state: &VimState,
     text: &str,
     origin: Origin,
+    reads: &Reads,
 ) {
     let replacing = state.mode == Mode::Replace;
     let type_text = |model: &mut EditorModel, text: &str| match replacing {
@@ -587,6 +616,11 @@ pub(crate) fn retype(
             }
             Piece::Key(Key::Indent(key)) => state.indent_key(model, key, false),
             Piece::Key(Key::Delete(key)) => state.delete_key(model, key),
+            Piece::Key(Key::Register(how, name)) => {
+                if let Some(value) = reads.get(&name) {
+                    insert_literal(model, value, how);
+                }
+            }
         }
     }
 }
@@ -868,7 +902,33 @@ impl VimState {
         let Ok(Some(value)) = registers.read(Some(name), host) else {
             return;
         };
+        // `.` and a count read these two again, whole lines above the
+        // caret's row among them.
+        let recorded = how.filter(|&how| how != LiteralInsert::Plain);
+        let before = recorded.and_then(|_| Some(primary_typed(model, self.session.as_ref()?)));
+        let whole = whole_lines(&value) && !value.text.is_empty();
+        let failed = self.failed;
         self.insert_value(model, host, value, how);
+        let (Some(how), Some(before), false) = (recorded, before, self.failed && !failed) else {
+            return;
+        };
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if whole && matches!(how, LiteralInsert::Above | LiteralInsert::FixIndent) {
+            // The carets are above where typing began: it begins again
+            // there, as nvim's redo has it.
+            let snapshot = model.snapshot();
+            session.regions = (model.selections().iter())
+                .map(|selection| super::Region {
+                    start: snapshot.anchor_before(selection.head()),
+                    end: snapshot.anchor_after(selection.head()),
+                })
+                .collect();
+        }
+        let after = primary_typed(model, session);
+        let key = Key::Register(how, name);
+        session.ledger().keys.push(Noted { key, before, after });
     }
 
     /// `<C-a>` in insert mode (`:help i_CTRL-A`): the text the last insert
@@ -906,24 +966,15 @@ impl VimState {
         value: Register,
         how: Option<LiteralInsert>,
     ) {
-        let mut text = value.text.replace("\r\n", "\n").replace('\r', "\n");
-        if value.linewise && !text.ends_with('\n') {
-            text.push('\n');
-        }
-        let carets = model.selections().len();
-        if text.is_empty() {
-            return;
-        }
-        if text.len().saturating_mul(carets) > MAX_PUT {
-            self.failed = true;
-            self.message = Some(format!(
-                "inserting {} bytes at {carets} carets would pass {MAX_PUT} bytes",
-                text.len()
-            ));
-            return;
-        }
-        model.sync_display();
-        let whole_lines = value.linewise && value.block_width.is_none();
+        let text = match prepared(model, &value) {
+            Ok(text) if text.is_empty() => return,
+            Ok(text) => text,
+            Err(message) => {
+                self.failed = true;
+                self.message = Some(message);
+                return;
+            }
+        };
         match how {
             None => {
                 for (ix, part) in text.split('\n').enumerate() {
@@ -935,52 +986,132 @@ impl VimState {
                     }
                 }
             }
-            Some(LiteralInsert::Plain) => model.insert(&text),
-            Some(LiteralInsert::Above) if !whole_lines => model.insert(&text),
-            Some(LiteralInsert::FixIndent) if !whole_lines => {
-                let snapshot = model.text().clone();
-                let row = snapshot
-                    .offset_to_point(model.primary_selection().head())
-                    .row;
-                let (tab, unit) = (model.tab_size().max(1), model.indent_unit());
-                let target = indent_width(&snapshot.row_to_string(row), tab);
-                // The rows after the first take the row's indent, keeping
-                // their indents relative to the second's.
-                let fixed = match text.split_once('\n') {
-                    Some((first, rest)) => {
-                        format!("{first}\n{}", reindent_lines(rest, target, tab, &unit))
-                    }
-                    None => text.clone(),
-                };
-                model.insert(&fixed);
-            }
-            Some(how) => {
-                let snapshot = model.text().clone();
-                let mut starts: Vec<usize> = model
-                    .selections()
-                    .iter()
-                    .map(|selection| {
-                        snapshot.row_start(snapshot.offset_to_point(selection.head()).row)
-                    })
-                    .collect();
-                starts.sort_unstable();
-                starts.dedup();
-                if how == LiteralInsert::FixIndent {
-                    let row = snapshot
-                        .offset_to_point(model.primary_selection().head())
-                        .row;
-                    let tab = model.tab_size().max(1);
-                    let target = indent_width(&snapshot.row_to_string(row), tab);
-                    text = reindent_lines(&text, target, tab, &model.indent_unit());
-                }
-                // The carets end after the lines, at the start of the rows
-                // they were on.
-                model.set_selections(starts.into_iter().map(caret).collect::<Vec<_>>());
-                model.insert(&text);
-            }
+            Some(how) => put_literal(model, text, whole_lines(&value), how),
         }
         self.goals = None;
     }
+}
+
+/// `value`'s text as insert mode takes it, line breaks as `\n` and a
+/// linewise one ending in one, or why it can't go in at every caret.
+fn prepared(model: &mut EditorModel, value: &Register) -> Result<String, String> {
+    let mut text = value.text.replace("\r\n", "\n").replace('\r', "\n");
+    if value.linewise && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let carets = model.selections().len();
+    if text.is_empty() {
+        return Ok(text);
+    }
+    if text.len().saturating_mul(carets) > MAX_PUT {
+        return Err(format!(
+            "inserting {} bytes at {carets} carets would pass {MAX_PUT} bytes",
+            text.len()
+        ));
+    }
+    model.sync_display();
+    Ok(text)
+}
+
+/// Whether `value` goes in as whole lines, which `<C-r><C-o>` and
+/// `<C-r><C-p>` put above the caret's row.
+fn whole_lines(value: &Register) -> bool {
+    value.linewise && value.block_width.is_none()
+}
+
+/// `text` ([`prepared`]) inserted literally at every caret, as
+/// [`VimState::insert_register_key`] says `how` does.
+fn put_literal(model: &mut EditorModel, mut text: String, whole_lines: bool, how: LiteralInsert) {
+    match how {
+        LiteralInsert::Plain => model.insert(&text),
+        LiteralInsert::Above if !whole_lines => model.insert(&text),
+        LiteralInsert::FixIndent if !whole_lines => {
+            let snapshot = model.text().clone();
+            let row = snapshot
+                .offset_to_point(model.primary_selection().head())
+                .row;
+            let (tab, unit) = (model.tab_size().max(1), model.indent_unit());
+            let target = indent_width(&snapshot.row_to_string(row), tab);
+            // The rows after the first take the row's indent, keeping
+            // their indents relative to the second's.
+            let fixed = match text.split_once('\n') {
+                Some((first, rest)) => {
+                    format!("{first}\n{}", reindent_lines(rest, target, tab, &unit))
+                }
+                None => text.clone(),
+            };
+            model.insert(&fixed);
+        }
+        how => {
+            let snapshot = model.text().clone();
+            let mut starts: Vec<usize> = model
+                .selections()
+                .iter()
+                .map(|selection| snapshot.row_start(snapshot.offset_to_point(selection.head()).row))
+                .collect();
+            starts.sort_unstable();
+            starts.dedup();
+            if how == LiteralInsert::FixIndent {
+                let row = snapshot
+                    .offset_to_point(model.primary_selection().head())
+                    .row;
+                let tab = model.tab_size().max(1);
+                let target = indent_width(&snapshot.row_to_string(row), tab);
+                text = reindent_lines(&text, target, tab, &model.indent_unit());
+            }
+            // The carets end after the lines, at the start of the rows
+            // they were on.
+            model.set_selections(starts.into_iter().map(caret).collect::<Vec<_>>());
+            model.insert(&text);
+        }
+    }
+}
+
+/// `value` inserted literally as `how` says, as `.` and a count do again
+/// what `<C-r><C-o>` and `<C-r><C-p>` did.
+fn insert_literal(model: &mut EditorModel, value: &Register, how: LiteralInsert) {
+    if let Ok(text) = prepared(model, value)
+        && !text.is_empty()
+    {
+        put_literal(model, text, whole_lines(value), how);
+    }
+}
+
+/// The registers the keys in `history` ([`with_marks`]) insert.
+pub(crate) fn registers_in(history: &str) -> Vec<char> {
+    pieces(history)
+        .into_iter()
+        .filter_map(|piece| match piece {
+            Piece::Key(Key::Register(_, name)) => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The registers the keys noted in `session` insert.
+pub(crate) fn registers_noted(session: &Session) -> Vec<char> {
+    (session.ledger().keys.iter())
+        .filter_map(|noted| match noted.key {
+            Key::Register(_, name) => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The registers `names`, read for a replay to insert ([`retype`],
+/// [`repeat_marked`]).
+pub(crate) fn read_registers(
+    names: Vec<char>,
+    registers: &Registers,
+    host: &mut dyn EditorHost,
+) -> Reads {
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let value = registers.read(Some(name), host).ok().flatten()?;
+            Some((name, value))
+        })
+        .collect()
 }
 
 /// The start of the grapheme before `head`, which isn't at its row's start.
@@ -1115,6 +1246,7 @@ pub(crate) fn repeat_marked(
     ended: &[Ended],
     history: &str,
     opens: bool,
+    reads: &Reads,
 ) {
     let more = session.count as usize - 1;
     sync(model);
@@ -1173,6 +1305,11 @@ pub(crate) fn repeat_marked(
                 Piece::Key(Key::Delete(key)) => {
                     let moved = delete_at(model, session, *key);
                     follow_ranks(model, &mut ranks, &moved);
+                }
+                Piece::Key(Key::Register(how, name)) => {
+                    if let Some(value) = reads.get(name) {
+                        insert_literal(model, value, *how);
+                    }
                 }
             }
             if ranks.is_empty() {
@@ -1271,7 +1408,8 @@ pub(crate) fn repeat_replace(
                 // own `<BS>`, in the text, as it does for `<C-w>` and
                 // `<C-u>` where they took something; a mark is one that
                 // went back past it.
-                Piece::Back(_) => {}
+                // Replace mode notes no register keys.
+                Piece::Back(_) | Piece::Key(Key::Register(..)) => {}
                 Piece::Key(Key::Delete(key)) => {
                     back_in_copy(model, session, &mut ranks, &mut overwrote, *key);
                 }
@@ -1550,7 +1688,7 @@ impl VimState {
             true => super::Ending::Esc,
             false => super::Ending::Split,
         };
-        super::end(model, self, ending, None);
+        super::end(model, self, ending, None, &Reads::default());
         let eol_rows = carets
             .iter()
             .filter(|&&(_, eol, _)| eol)

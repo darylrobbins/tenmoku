@@ -212,3 +212,27 @@ name = "ctrl_r_slash_unset_stops_macro"
 buffer = "abc\ndef"
 cursor = [0, 0]
 keys = "qqA<C-r>/X<Esc>jq@q<Esc>"
+
+[[case]]
+name = "dot_repeats_ctrl_r_ctrl_o_reads_register_again"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r><C-o>a<Esc>j\"ayiwj."
+
+[[case]]
+name = "dot_repeats_ctrl_r_ctrl_p_reads_register_again"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r><C-p>a<Esc>j\"ayiwj."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_o_dot_repeat"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-o>\"X<Esc>j."
+
+[[case]]
+name = "counted_ctrl_r_insertion"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yy3A<C-r><C-o>\"X<Esc>"

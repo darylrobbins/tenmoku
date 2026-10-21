@@ -178,12 +178,18 @@ fn replay(
     };
     if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
+            let reads = insert::read_registers(
+                insert::registers_in(text),
+                target.registers,
+                &mut *target.host,
+            );
             insert::retype_keys(
                 target.model,
                 &*target.host,
                 &*target.state,
                 text,
                 origin(actor),
+                &reads,
             );
         }
         if let Some(session) = target.state.session.as_ref().filter(|_| last.typed_first) {
