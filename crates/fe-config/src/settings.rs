@@ -444,7 +444,7 @@ impl Default for EditorSettings {
             auto_save_delay: 1000,
             indent_guides: true,
             inline_blame: false,
-            bracket_pair_colors: false,
+            bracket_pair_colors: true,
         }
     }
 }

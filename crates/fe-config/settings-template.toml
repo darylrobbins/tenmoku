@@ -62,7 +62,7 @@
 
 # Colour bracket pairs by how deeply they nest, in the theme's three bracket
 # colours.
-# bracket_pair_colors = false
+# bracket_pair_colors = true
 
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.

@@ -71,8 +71,8 @@ fn depths_take_the_three_colours_in_turn(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn off_until_the_setting_turns_it_on(cx: &mut TestAppContext) {
-    assert!(!EditorSettings::default().bracket_pair_colors);
+fn on_until_the_setting_turns_it_off(cx: &mut TestAppContext) {
+    assert!(EditorSettings::default().bracket_pair_colors);
     let text = "fn f() {\n    g(h([1]));\n}\n";
     let (view, cx) = editor(text, false, cx);
     let colors = brackets(&view, cx);

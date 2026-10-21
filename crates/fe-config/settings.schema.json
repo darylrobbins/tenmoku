@@ -125,7 +125,7 @@
           "type": "integer"
         },
         "bracket_pair_colors": {
-          "default": false,
+          "default": true,
           "description": "Colour bracket pairs by how deeply they nest, in the theme's\n`bracket_1`, `bracket_2` and `bracket_3`, then round again. Brackets\nin strings and comments, and ones without a pair, keep their colour.",
           "type": "boolean"
         },
@@ -713,7 +713,7 @@
         "auto_close_pairs": true,
         "auto_save": "off",
         "auto_save_delay": 1000,
-        "bracket_pair_colors": false,
+        "bracket_pair_colors": true,
         "code_actions_on_save": [],
         "code_lens": true,
         "font_size": 13.0,

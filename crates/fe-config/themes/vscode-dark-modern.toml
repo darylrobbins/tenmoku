@@ -56,6 +56,11 @@ vim_mode_visual = "#C586C0"
 vim_mode_replace = "#F85149"
 vim_mode_command = "#DCDCAA"
 vim_mode_foreground = "#1F1F1F"
+# Bracket pairs by nesting depth, with editor.bracket_pair_colors: the
+# outermost pair, the one inside it and the next, then round again.
+bracket_1 = "#FFD700"
+bracket_2 = "#DA70D6"
+bracket_3 = "#179FFF"
 
 # Every name fastedit Dark colours is listed, since a theme's table is laid
 # over Dark's.
