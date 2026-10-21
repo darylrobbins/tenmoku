@@ -805,12 +805,14 @@ impl Drop for Group {
 }
 
 /// Counts a `:normal` running until dropped, refusing one more than nvim's
-/// 'maxmapdepth' (1000) would allow: E192. Fewer here, as each level's keys
+/// 'maxmapdepth' (1000) would allow: E192. Far fewer here, as each level's keys
 /// run on this thread's stack.
 pub(super) struct Depth;
 
-/// How many `:normal`s may run inside each other.
-const NORMAL_DEPTH: u32 = 100;
+/// How many `:normal`s may run inside each other. A level uses about 17-20 KiB
+/// of a debug build's stack on Linux (25 levels fit 512 KiB, 30 don't), and
+/// more on macOS: 5 leaves over 4x headroom in a 512 KiB thread.
+const NORMAL_DEPTH: u32 = 5;
 
 impl Depth {
     pub(super) fn enter() -> Result<Self, ExError> {
