@@ -398,6 +398,12 @@ fn main() {
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.
         let remaps = VimRemaps::new(fe_config::paths::user_vimrc_path(), &store);
+        // Extensions' language servers start only once the user consents,
+        // which is recorded beside the other state files; set before the
+        // extensions load, so their servers are checked against it.
+        if let Some(dir) = fe_config::paths::state_dir() {
+            fe_workbench::set_extension_consent_file(cx, dir.join(fe_workbench::CONSENT_FILE));
+        }
         kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.
         theme::init(cx);

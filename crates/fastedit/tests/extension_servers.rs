@@ -60,6 +60,12 @@ fn extension_lsp_servers_reach_the_workbench(cx: &mut TestAppContext) {
     let config = config::with_extensions(config, extensions.clone());
     let at_init = cx.update(|cx| kiln::init(cx, config));
     cx.run_until_parked();
+    // They start only once the user consents (extension_consent.rs).
+    for pending in cx.update(|cx| fe_workbench::pending_extension_consents(cx)) {
+        cx.update(|cx| fe_workbench::grant_extension_server(cx, &pending))
+            .unwrap();
+    }
+    cx.run_until_parked();
 
     let specs = cx.update(|cx| fe_workbench::extension_servers(cx));
     let specs: Vec<_> = specs

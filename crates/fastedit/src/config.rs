@@ -1,7 +1,7 @@
 //! What [`kiln::init`] sets up for fastedit: [`shipped`] is everything the
 //! app owns, [`config`] adds the user's files.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -79,21 +79,29 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// `theme.dark` and `theme.light` ([`theme::init`]). Their language
 /// servers, `[contributes.lsp.<name>]` tables of the keys
 /// `[lsp.servers.<name>]` takes, go to every workbench
-/// ([`fe_workbench::set_extension_servers`]), under the user's `[lsp]`
-/// settings. Their tree-sitter grammars, `[[contributes.grammars]]`
+/// ([`fe_workbench::set_extension_servers`]) once the user consents to
+/// each, under the user's `[lsp]` settings; a change to a file one's
+/// arguments name loads them again, so the change is asked about. Their
+/// tree-sitter grammars, `[[contributes.grammars]]`
 /// ([`ExtensionGrammar`]), are registered with fe-syntax on a background
 /// thread, for files opened after.
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
     let api = ApiVersion { major: 1, minor: 0 };
     let lsp = schemars::schema_for!(BTreeMap<String, LspServerSettings>).to_value();
     let grammars = schemars::schema_for!(Vec<ExtensionGrammar>).to_value();
+    let mut last_good = LastGoodServers::new();
     config
         .extensions(dir, &fe_config::paths::app_id().short, api)
         .extension_kind("lsp", lsp)
         .extension_kind("grammars", grammars)
-        .extension_files(grammar_files)
-        .on_extensions(|set, cx| {
-            fe_workbench::set_extension_servers(cx, extension_servers(set.extensions()));
+        .extension_files(|manifest| {
+            let mut files = grammar_files(manifest);
+            files.extend(server_files(manifest));
+            files
+        })
+        .on_extensions(move |set, cx| {
+            let servers = extension_servers(set.extensions(), &mut last_good);
+            fe_workbench::set_extension_servers(cx, servers);
             let grammars = extension_grammars(set.extensions());
             // Newer than any batch still registering, which then stops.
             let batch = GRAMMAR_BATCH.fetch_add(1, Ordering::SeqCst) + 1;
@@ -246,33 +254,110 @@ fn register_grammars(batch: u64, grammars: Vec<(String, fe_syntax::GrammarSpec)>
     }
 }
 
+/// Each extension's language servers' settings, by extension ID then
+/// server name, as last read well.
+type LastGoodServers = HashMap<String, BTreeMap<String, LspServerSettings>>;
+
 /// The language servers `extensions` contribute, in their order: each
-/// enabled table with a `command`, as written ([`fe_lsp::extension_spec`]).
-fn extension_servers(extensions: &[kiln::core::Manifest]) -> Vec<fe_lsp::ServerSpec> {
-    let mut specs = Vec::new();
+/// enabled table with a `command`, as written ([`fe_lsp::extension_spec`]),
+/// with its extension. A table that doesn't read as settings keeps its
+/// settings from `last_good`, if it had any, so a bad edit doesn't stop a
+/// server that worked; `last_good` becomes what was read.
+fn extension_servers(
+    extensions: &[kiln::core::Manifest],
+    last_good: &mut LastGoodServers,
+) -> Vec<fe_workbench::ExtensionServer> {
+    let mut servers = Vec::new();
+    let mut read = LastGoodServers::new();
     for manifest in extensions {
         let Some(lsp) = manifest.app.get("lsp") else {
             continue;
         };
-        // The schema has checked it.
-        let servers: BTreeMap<String, LspServerSettings> = match lsp.clone().try_into() {
-            Ok(servers) => servers,
-            Err(error) => {
-                log::warn!("extension {}'s language servers: {error}", manifest.id);
-                continue;
-            }
-        };
-        for (name, settings) in servers.iter().filter(|(_, settings)| settings.enabled) {
+        let settings = server_settings(manifest, lsp, last_good.get(&manifest.id));
+        for (name, settings) in settings.iter().filter(|(_, settings)| settings.enabled) {
             match fe_lsp::extension_spec(name, settings) {
-                Some(spec) => specs.push(spec),
+                Some(spec) => servers.push(fe_workbench::ExtensionServer {
+                    extension_id: manifest.id.clone(),
+                    extension_name: manifest.name.clone(),
+                    extension_dir: manifest.dir.clone(),
+                    spec,
+                }),
                 None => log::warn!(
                     "extension {}'s language server {name} has no command, so it never starts",
                     manifest.id
                 ),
             }
         }
+        read.insert(manifest.id.clone(), settings);
     }
-    specs
+    *last_good = read;
+    servers
+}
+
+/// `manifest`'s language servers' settings from its `lsp` table, each
+/// server's read on its own: one that doesn't read is logged, and keeps
+/// its settings in `previous` if it has some there.
+fn server_settings(
+    manifest: &kiln::core::Manifest,
+    lsp: &toml::Value,
+    previous: Option<&BTreeMap<String, LspServerSettings>>,
+) -> BTreeMap<String, LspServerSettings> {
+    let kept = |name: &str| previous.and_then(|previous| previous.get(name)).cloned();
+    // The schema has checked it's a table.
+    let Some(table) = lsp.as_table() else {
+        log::warn!(
+            "extension {}'s language servers aren't a table",
+            manifest.id
+        );
+        return previous.cloned().unwrap_or_default();
+    };
+    table
+        .iter()
+        .filter_map(
+            |(name, value)| match value.clone().try_into::<LspServerSettings>() {
+                Ok(settings) => Some((name.clone(), settings)),
+                Err(error) => {
+                    let kept = kept(name);
+                    log::warn!(
+                        "extension {}'s language server {name}: {error}{}",
+                        manifest.id,
+                        if kept.is_some() {
+                            "; it keeps its last good settings"
+                        } else {
+                            ""
+                        }
+                    );
+                    kept.map(|settings| (name.clone(), settings))
+                }
+            },
+        )
+        .collect()
+}
+
+/// The files `manifest`'s language servers may run: each argument, and
+/// each `--flag=value`'s value, and each command, that names a path. kiln
+/// keeps those that are files inside the extension's directory, so that a
+/// change to a script loads the servers again, and its consent is asked
+/// for again.
+fn server_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
+    let Some(table) = manifest.app.get("lsp").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for value in table.values() {
+        let Ok(settings) = value.clone().try_into::<LspServerSettings>() else {
+            continue;
+        };
+        files.extend(settings.command.iter().map(PathBuf::from));
+        for arg in settings.args.iter().flatten() {
+            if let Some((_, value)) = arg.strip_prefix('-').and_then(|flag| flag.split_once('=')) {
+                files.push(PathBuf::from(value));
+            }
+            files.push(PathBuf::from(arg));
+        }
+    }
+    files.retain(|file| !file.as_os_str().is_empty());
+    files
 }
 
 /// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.

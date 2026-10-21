@@ -28,6 +28,7 @@ mod language_picker;
 pub mod loader;
 mod lsp;
 mod lsp_code_actions;
+mod lsp_consent;
 mod lsp_format;
 mod lsp_rename;
 mod nav;
@@ -63,7 +64,12 @@ use gpui::App;
 pub use dock::{Dock, DockPanel};
 pub use git_panel::{GitPanel, GitPanelEvent};
 pub use kiln_shell::MenuBarView;
-pub use lsp::{extension_servers, set_extension_servers, set_lsp_settings, set_server_launcher};
+pub use lsp::{extension_servers, set_lsp_settings, set_server_launcher};
+pub use lsp_consent::{
+    CONSENT_FILE, ExtensionConsent, ExtensionServer, Invocation, PendingConsent,
+    decline_extension_server, grant_extension_server, pending_extension_consents,
+    set_extension_consent_file, set_extension_servers,
+};
 pub use open::set_window_opener;
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};
@@ -213,6 +219,8 @@ impl CommandCatalog for Catalog {
 
 #[cfg(test)]
 mod command_catalog_tests;
+#[cfg(test)]
+mod lsp_consent_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]

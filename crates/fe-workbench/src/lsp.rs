@@ -4,7 +4,9 @@
 //! - **Starting.** The manager is made with the host's launcher
 //!   ([`set_server_launcher`], else [`LocalLauncher`]) and the effective
 //!   `[lsp]` settings ([`set_lsp_settings`], then each reload), and the
-//!   servers extensions contribute ([`set_extension_servers`]). With no
+//!   servers extensions contribute that the user consented to
+//!   ([`crate::lsp_consent`]), its launcher wrapped in a [`ConsentGate`]
+//!   that checks each launch of one against its grant. With no
 //!   root there's none, and nothing starts. Servers start lazily, on the
 //!   first open file of their language (§3.2), and only once the root is
 //!   trusted ([`Workbench::root_trusted`]). A new root gets a new manager;
@@ -123,6 +125,7 @@ use fe_lsp::{
 };
 use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
+use crate::lsp_consent::ConsentGate;
 use crate::open::settings_path;
 use crate::workbench::toast::{self, Toast};
 use crate::{RootChanged, TrustChanged, Workbench};
@@ -147,7 +150,7 @@ struct Settings(LspSettings);
 
 impl Global for Settings {}
 
-/// The servers extensions contribute, as the host last gave them.
+/// The servers extensions contribute that the user consented to.
 #[derive(Default)]
 struct ExtensionServers(Vec<ServerSpec>);
 
@@ -260,12 +263,14 @@ pub fn set_lsp_settings(cx: &mut App, settings: LspSettings) {
     cx.set_global(Settings(settings));
 }
 
-/// The language servers extensions contribute, in extension order:
-/// every workbench's manager starts with them, and those running now get
-/// them at once, restarting only the servers whose spec changed
-/// ([`LspManager::set_extension_specs`]). The `[lsp]` settings apply
-/// over them. Not to be called while a workbench is being updated.
-pub fn set_extension_servers(cx: &mut App, specs: Vec<ServerSpec>) {
+/// The language servers extensions contribute that the user consented to
+/// ([`crate::lsp_consent`]), in extension order: every workbench's manager
+/// starts with them, and those running now get them at once, restarting
+/// only the servers whose spec changed ([`LspManager::set_extension_specs`])
+/// or which run an invocation no longer granted ([`ConsentGate::stale`]).
+/// The `[lsp]` settings apply over them. Not to be called while a workbench
+/// is being updated.
+pub(crate) fn hand_extension_servers(cx: &mut App, specs: Vec<ServerSpec>) {
     cx.set_global(ExtensionServers(specs.clone()));
     let workbenches = match cx.try_global::<Shutdowns>() {
         Some(shutdowns) => shutdowns.workbenches.clone(),
@@ -274,16 +279,26 @@ pub fn set_extension_servers(cx: &mut App, specs: Vec<ServerSpec>) {
     for workbench in workbenches {
         workbench
             .update(cx, |workbench, _| {
-                if let Some(manager) = &workbench.lsp.manager {
-                    lock(manager).set_extension_specs(specs.clone());
+                let lsp = &workbench.lsp;
+                if let Some(manager) = &lsp.manager {
+                    let mut manager = lock(manager);
+                    manager.set_extension_specs(specs.clone());
+                    // Those running what the user no longer grants, after
+                    // they granted a change, run it as granted now.
+                    for (name, root) in lsp.gate.iter().flat_map(|gate| gate.stale()) {
+                        if let Err(error) = manager.restart(&name, &root) {
+                            log::warn!("can't restart {name}: {error}");
+                        }
+                    }
                 }
             })
             .ok();
     }
 }
 
-/// The language servers extensions contribute, as
-/// [`set_extension_servers`] last gave them: none until it's called.
+/// The language servers extensions contribute that the user consented to,
+/// as the managers have them: none until [`crate::set_extension_servers`]
+/// has worked out which.
 pub fn extension_servers(cx: &App) -> Vec<ServerSpec> {
     cx.try_global::<ExtensionServers>()
         .map(|servers| servers.0.clone())
@@ -437,6 +452,9 @@ pub(crate) struct Lsp {
     /// `None` with no root, and once the window has closed. Shared with
     /// its [`LspNavigation`], on navigation's background threads.
     manager: Option<Arc<Mutex<LspManager>>>,
+    /// The manager's launcher, which lets an extension's server run only
+    /// what the user granted it.
+    gate: Option<Arc<ConsentGate>>,
     watch: Option<Watch>,
     /// The root the manager serves.
     pub(crate) root: Option<PathBuf>,
@@ -649,6 +667,7 @@ impl Lsp {
         let (sender, events) = async_channel::unbounded();
         Self {
             manager: None,
+            gate: None,
             rename: std::rc::Weak::new(),
             watch: None,
             root: None,
@@ -929,7 +948,10 @@ impl Workbench {
         {
             lsp.local = host.is_none();
         }
-        let launcher = host.unwrap_or_else(|| Arc::new(LocalLauncher));
+        let host = host.unwrap_or_else(|| Arc::new(LocalLauncher));
+        let gate = Arc::new(ConsentGate::new(cx, host));
+        lsp.gate = Some(gate.clone());
+        let launcher: Arc<dyn ServerLauncher> = gate;
         let (sender, generation) = (lsp.sender.clone(), lsp.generation);
         let (stop, stopped) = mpsc::channel();
         let cleanup = Cleanup { stop };
