@@ -31,16 +31,18 @@ fn finds_by_title_or_id() {
 #[test]
 fn every_entry_parses() {
     let themes = bundled_themes();
-    let titles: Vec<_> = themes.iter().map(|theme| theme.title).collect();
-    assert_eq!(
-        titles,
-        [
-            "Dark Modern",
-            "Fastedit Dark",
-            "Fastedit Light",
-            "Fastedit Ember"
-        ]
-    );
+    let mut titles: Vec<_> = themes.iter().map(|theme| theme.title).collect();
+    let mut ids: Vec<_> = themes.iter().map(|theme| theme.id).collect();
+    for name in titles.iter().chain(&ids) {
+        let found = find(name).unwrap_or_else(|| panic!("{name:?} is found"));
+        assert!(found.title == *name || found.id == *name, "{name:?}");
+    }
+    titles.sort_unstable();
+    titles.dedup();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(titles.len(), themes.len(), "titles are unique");
+    assert_eq!(ids.len(), themes.len(), "IDs are unique");
     for theme in themes {
         let path = format!("{}.toml", theme.id);
         let (file, diagnostics) = ThemeFile::parse(Path::new(&path), theme.source, EXTENSIONS);

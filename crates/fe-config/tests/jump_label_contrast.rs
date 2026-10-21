@@ -7,9 +7,14 @@ use fe_config::{Color, EditorPalette, theme::EXTENSIONS};
 use kiln_core::theme::{ThemeData, ThemeFile};
 
 const EMBER: &str = include_str!("../themes/fastedit-ember.toml");
+const DARK_2026: &str = include_str!("../themes/vscode-2026-dark.toml");
 
 fn ember() -> EditorPalette {
-    let (file, diagnostics) = ThemeFile::parse(Path::new("theme.toml"), EMBER, EXTENSIONS);
+    palette(EMBER)
+}
+
+fn palette(source: &str) -> EditorPalette {
+    let (file, diagnostics) = ThemeFile::parse(Path::new("theme.toml"), source, EXTENSIONS);
     assert_eq!(diagnostics, []);
     let (palette, warnings) = EditorPalette::for_theme(&ThemeData::from_file(&file.unwrap()));
     assert_eq!(warnings, Vec::<String>::new());
@@ -63,6 +68,7 @@ fn labels_readable_in_bundled_themes() {
         ("fastedit Dark", EditorPalette::fastedit_dark().clone()),
         ("fastedit Light", EditorPalette::fastedit_light().clone()),
         ("fastedit Ember", ember()),
+        ("VS Code Dark 2026", palette(DARK_2026)),
     ];
     for (name, palette) in palettes {
         let editor = &palette.editor;

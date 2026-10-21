@@ -1,0 +1,149 @@
+# VS Code Dark 2026: the colours of VS Code's Dark 2026 theme, VS Code
+# 1.142's default dark theme, on fastedit's one-colour-per-highlight-name
+# model. The window's chrome is set through kiln's semantic token groups, not
+# per component.
+#
+# Adapted from microsoft/vscode `extensions/theme-defaults/themes/2026-dark.json`
+# and the files it includes, `dark_modern.json`, `dark_plus.json` and
+# `dark_vs.json`, at commit d956e8a6ac5d904486557eea07e1d6bd62a4d36f (tag
+# 1.142.0).
+#
+# Copyright (c) Microsoft Corporation. Licensed under the MIT License; the
+# notice is in this repository's NOTICE.
+#
+# Values VS Code leaves to its built-in defaults (hint #EEEEEEB2, warning
+# #CCA700, the bracket colours) are those defaults; change_modified is
+# dark_modern.json's, as 2026-dark.json sets none. The sidebar, activity bar,
+# status bar, title bar and inactive tabs share one colour in Dark 2026, so
+# they all take surface.panel. The jump label colours and the vim mode
+# segments have no Dark 2026 value; they are chosen from its palette.
+#
+# Scopes with no highlight name are left out: semantic-token rules
+# (`*.mutable` underline), font styles, markup.bold/italic/underline/
+# strikethrough, markup.inserted/deleted/changed, invalid, regexp scopes and
+# the CSS-only and language-specific scope variants. A highlight name that
+# several scopes colour differently takes the general scope's colour.
+# `keyword.control` (if, match, for, return, await) stays #C586C0 in VS Code,
+# as 2026-dark.json does not override that more specific Dark+ rule; fastedit
+# has one `keyword` name, so control flow shows #FF7B72 here.
+#
+# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "VS Code Dark 2026"
+appearance = "dark"
+
+[surface]
+background = "#121314"
+panel = "#191A1B"
+raised = "#202122"
+overlay = "#00000080"
+
+[text]
+primary = "#BFBFBF"
+muted = "#8C8C8C"
+disabled = "#555555"
+accent = "#48A0C7"
+on_accent = "#FFFFFF"
+
+[border]
+default = "#2A2B2C"
+subtle = "#2A2B2C"
+focused = "#3994BC"
+
+[accent]
+base = "#297AA0"
+hover = "#2B7DA3"
+subtle = "#3994BC26"
+
+[state]
+hover = "#FFFFFF14"
+pressed = "#FFFFFF22"
+selected = "#FFFFFF22"
+selected_inactive = "#2C2D2E"
+focus_ring = "#3994BCB3"
+
+[status]
+error = "#F48771"
+warning = "#E5BA7D"
+info = "#3A94BC"
+success = "#73C991"
+
+[list]
+indent_guide = "#8384854D"
+chevron = "#8C8C8C"
+icon = "#8C8C8C"
+folder_icon = "#8C8C8C"
+
+[tab]
+active = "#121314"
+inactive = "#191A1B"
+active_text = "#BFBFBF"
+
+[scrollbar]
+thumb = "#A8A9AA85"
+thumb_hover = "#A8A9AA90"
+
+[editor]
+background = "#121314"
+foreground = "#BBBEBF"
+gutter_foreground = "#858889"
+gutter_active_foreground = "#BBBEBF"
+active_line = "#242526"
+selection = "#276782DD"
+cursor = "#BBBEBF"
+error = "#F48771"
+warning = "#CCA700"
+information = "#3A94BC"
+hint = "#EEEEEEB2"
+popover_background = "#202122"
+popover_border = "#2A2B2C"
+jump_label = "#D2A8FF"
+jump_label_preview = "#7EE787"
+jump_label_foreground = "#121314"
+change_added = "#72C892"
+change_modified = "#0078D4"
+change_deleted = "#F28772"
+indent_guide = "#8384854D"
+indent_guide_active = "#838485"
+vim_mode_normal = "#3994BC"
+vim_mode_insert = "#7EE787"
+vim_mode_visual = "#D2A8FF"
+vim_mode_replace = "#FF7B72"
+vim_mode_command = "#FFA657"
+vim_mode_foreground = "#121314"
+bracket_1 = "#FFD700"
+bracket_2 = "#DA70D6"
+bracket_3 = "#179FFF"
+
+# Every name fastedit Dark colours is listed, since a theme's table is laid
+# over Dark's.
+[syntax]
+"attribute" = "#9CDCFE"
+"comment" = "#8B949E"
+"constant" = "#4FC1FF"
+"constant.builtin" = "#569CD6"
+"constructor" = "#4EC9B0"
+"escape" = "#D7BA7D"
+"function" = "#D2A8FF"
+"function.macro" = "#D2A8FF"
+"keyword" = "#FF7B72"
+"label" = "#C8C8C8"
+"markup.heading" = "#79C0FF"
+"markup.link" = "#A5D6FF"
+"markup.link.url" = "#A5D6FF"
+"markup.raw" = "#79C0FF"
+"module" = "#4EC9B0"
+"number" = "#B5CEA8"
+"operator" = "#D4D4D4"
+"property" = "#9CDCFE"
+"punctuation" = "#CCCCCC"
+"punctuation.special" = "#FF7B72"
+"string" = "#A5D6FF"
+"string.special" = "#A5D6FF"
+"string.special.key" = "#9CDCFE"
+"tag" = "#7EE787"
+"type" = "#4EC9B0"
+"variable" = "#C9D1D9"
+"variable.builtin" = "#79C0FF"
