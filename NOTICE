@@ -20,6 +20,10 @@ VS Code (colour values, adapted in crates/fe-config/themes/vscode-2026-dark.toml
 Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 
+VS Code (colour values, adapted in crates/fe-config/themes/vscode-2026-light.toml)
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 nvim-treesitter (highlight queries, adapted in crates/fe-syntax/queries: toml.scm, kotlin.scm)
 Copyright The nvim-treesitter contributors. Its LICENSE names no holder.
 Licensed under the Apache License, Version 2.0.

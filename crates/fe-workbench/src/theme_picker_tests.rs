@@ -260,6 +260,7 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
         [
             row("Dark Modern", Appearance::Dark, false),
             row("Dark 2026", Appearance::Dark, false),
+            row("Light 2026", Appearance::Light, false),
             row("Fastedit Dark", Appearance::Dark, false),
             row("Fastedit Light", Appearance::Light, false),
             row("Fastedit Ember", Appearance::Dark, true),

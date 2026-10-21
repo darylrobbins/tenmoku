@@ -17,6 +17,7 @@ repository. Change both files together.
 | `crates/fe-markdown-view/src/table.rs` | gpui-kit `crates/base/src/text/node.rs` (`render_table`, `render_table_rows`) | `2154ba84afd2e771f117fd17e55c060dd5e03fd4` | Apache-2.0 |
 | `crates/fe-config/themes/vscode-dark-modern.toml` | [VS Code](https://github.com/microsoft/vscode) `extensions/theme-defaults/themes/dark_modern.json`, `dark_plus.json`, `dark_vs.json` | `ab8f31f0c0b1a4dd86d8dbee1248542f5806574d` | MIT |
 | `crates/fe-config/themes/vscode-2026-dark.toml` | [VS Code](https://github.com/microsoft/vscode) `extensions/theme-defaults/themes/2026-dark.json`, `dark_modern.json`, `dark_plus.json`, `dark_vs.json` | `d956e8a6ac5d904486557eea07e1d6bd62a4d36f` | MIT |
+| `crates/fe-config/themes/vscode-2026-light.toml` | [VS Code](https://github.com/microsoft/vscode) `extensions/theme-defaults/themes/2026-light.json`, `light_modern.json`, `light_plus.json`, `light_vs.json` | `d956e8a6ac5d904486557eea07e1d6bd62a4d36f` | MIT |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 | `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
 | `crates/fe-syntax/src/indent.rs` | nvim-treesitter `lua/nvim-treesitter/indent.lua` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |

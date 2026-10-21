@@ -50,6 +50,7 @@ macro_rules! bundled {
 const BUNDLED: &[BundledTheme] = &[
     bundled!("Dark Modern", "vscode-dark-modern", Dark),
     bundled!("Dark 2026", "vscode-2026-dark", Dark),
+    bundled!("Light 2026", "vscode-2026-light", Light),
     bundled!("Fastedit Dark", "fastedit-dark", Dark),
     bundled!("Fastedit Light", "fastedit-light", Light),
     bundled!("Fastedit Ember", "fastedit-ember", Dark),
