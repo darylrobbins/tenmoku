@@ -217,6 +217,9 @@ impl Workbench {
         self.lsp
             .inlay_hints_on
             .set(event.settings.editor.inlay_hints);
+        self.lsp
+            .semantic_highlighting_on
+            .set(event.settings.editor.semantic_highlighting);
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
         self.reload_auto_save(&event.settings.editor, cx);

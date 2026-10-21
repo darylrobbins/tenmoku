@@ -263,3 +263,6 @@ fn stale_events_are_rejected(cx: &mut TestAppContext) {
     );
     assert_eq!(s.fake.document(&lib), None, "lib.rs was opened");
 }
+
+#[path = "lsp_semantic_tokens.rs"]
+mod semantic_tokens;

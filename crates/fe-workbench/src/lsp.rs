@@ -529,6 +529,10 @@ pub(crate) struct Lsp {
     pub(crate) inlay_hints_on: std::cell::Cell<bool>,
     /// Every editor's inlay hints.
     inlay_hints: inlay_hints::Slots,
+    /// Whether `editor.semantic_highlighting` is on (set from the settings each reload).
+    pub(crate) semantic_highlighting_on: std::cell::Cell<bool>,
+    /// Every shown buffer's semantic tokens.
+    semantic_tokens: semantic_tokens::Slots,
     save_hook: Option<Rc<dyn fe_gpui::SaveHook>>,
     /// A rename's guard while one is running ([`Workbench::rename_symbol`]).
     pub(crate) rename: std::rc::Weak<()>,
@@ -687,6 +691,8 @@ impl Lsp {
             format_on_save: Rc::default(),
             inlay_hints_on: std::cell::Cell::new(true),
             inlay_hints: Default::default(),
+            semantic_highlighting_on: std::cell::Cell::new(true),
+            semantic_tokens: Default::default(),
             save_hook: None,
             resolving: HashSet::new(),
             retry: HashMap::new(),
@@ -1209,6 +1215,7 @@ impl Workbench {
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
         self.sync_inlay_hints(cx);
+        self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
@@ -1746,6 +1753,10 @@ impl Workbench {
                 server,
                 what: fe_lsp::Refresh::InlayHints,
             } => self.refresh_inlay_hints(server, cx),
+            LspEvent::Refresh {
+                server,
+                what: fe_lsp::Refresh::SemanticTokens,
+            } => self.refresh_semantic_tokens(server, cx),
             _ => {}
         }
     }
@@ -2298,6 +2309,9 @@ mod highlights;
 
 #[path = "lsp_inlay_hints.rs"]
 mod inlay_hints;
+
+#[path = "lsp_semantic_tokens.rs"]
+mod semantic_tokens;
 
 #[path = "lsp_file_operations.rs"]
 mod file_operations;
