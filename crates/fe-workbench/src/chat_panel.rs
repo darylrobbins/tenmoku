@@ -24,6 +24,11 @@
 //!   open chat as it is.
 //! - **The first-run notice** (record § 10) shows until Got It, which
 //!   writes `<state_dir>/chats/notice-seen`.
+//! - **Context** (record § 13; `chat_context.rs`): the selection, the
+//!   active file, its diagnostics and the open editors, gathered again as
+//!   the active editor or its selection changes while the panel shows, and
+//!   when it gains focus; and the @files the user picks. The view budgets
+//!   them to `chat.context_budget`.
 
 use std::{
     path::{Path, PathBuf},
@@ -36,9 +41,9 @@ use fe_chat_view::{ChatOptions, ChatView, ChatViewEvent};
 use fe_command::Invocation;
 use fe_config::ChatEffort;
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString, Styled as _, Subscription,
-    Task, Window, div,
+    App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Task, WeakEntity, Window, div,
 };
 use kiln::{
     Cx,
@@ -49,10 +54,13 @@ use kiln::{
 };
 
 use crate::{
-    Workbench,
+    DockPanel, RootChanged, TrustChanged, Workbench,
     dock::DockOp,
     workbench::toast::{self, Toast},
 };
+
+#[path = "chat_context.rs"]
+mod chat_context;
 
 /// The AI chat in the sidebar: always on the rail, under Git Log; focused
 /// when shown, as the composer takes the keys.
@@ -134,23 +142,38 @@ impl KeySource {
 /// to the Secret Service on Linux, which is the background executor's to
 /// do.
 fn keychain() -> Arc<dyn SecretStore> {
-    static KEYCHAIN: OnceLock<Arc<Keychain>> = OnceLock::new();
-    KEYCHAIN.get_or_init(Arc::default).clone()
+    static KEYCHAIN: OnceLock<Arc<Keychain<KeychainStore>>> = OnceLock::new();
+    KEYCHAIN
+        .get_or_init(|| Arc::new(Keychain::new(KeychainStore::new)))
+        .clone()
 }
 
-#[derive(Default)]
-struct Keychain(OnceLock<Result<KeychainStore, SecretError>>);
+/// A store opened by `open` on its first use. One that fails to open is
+/// opened again on the next use, as the Secret Service may be back.
+struct Keychain<S> {
+    store: OnceLock<S>,
+    open: fn() -> Result<S, SecretError>,
+}
 
-impl Keychain {
-    fn store(&self) -> Result<&KeychainStore, SecretError> {
-        self.0
-            .get_or_init(KeychainStore::new)
-            .as_ref()
-            .map_err(Clone::clone)
+impl<S> Keychain<S> {
+    fn new(open: fn() -> Result<S, SecretError>) -> Self {
+        Self {
+            store: OnceLock::new(),
+            open,
+        }
+    }
+
+    fn store(&self) -> Result<&S, SecretError> {
+        if let Some(store) = self.store.get() {
+            return Ok(store);
+        }
+        let store = (self.open)()?;
+        // Another thread may have opened it meanwhile: either will do.
+        Ok(self.store.get_or_init(|| store))
     }
 }
 
-impl SecretStore for Keychain {
+impl<S: SecretStore> SecretStore for Keychain<S> {
     fn get(
         &self,
         service: &str,
@@ -242,6 +265,9 @@ impl Global for TestProviders {}
 
 /// The AI chat in the sidebar: see the module docs.
 pub(crate) struct ChatPanel {
+    /// The workbench whose context it attaches: its window's, from its
+    /// first draw.
+    workbench: Option<WeakEntity<Workbench>>,
     view: Entity<ChatView>,
     /// The current chat's options.
     options: ChatOptions,
@@ -252,6 +278,18 @@ pub(crate) struct ChatPanel {
     reading: Option<Task<()>>,
     /// Whether the first-run notice shows, in a chat started now.
     notice: bool,
+    /// The active editor followed, to gather again as it changes.
+    watched: Option<(EntityId, Subscription)>,
+    /// Whether a gathering is to run once the current update's out.
+    gathering: bool,
+    /// The active file as it was when its real path last passed
+    /// [`chat_context::vet_text`]: what the automatic context may come from.
+    vetted: Option<ActiveFile>,
+    /// The vetting under way: dropping it drops its answer.
+    vetting: Option<Task<()>>,
+    /// Counts the root's changes and its trust's: a vetting made under an
+    /// earlier count doesn't stand.
+    generation: u64,
     /// Whether the key has been read, or a read asked for.
     key_read: bool,
     /// How many key forms have been shown.
@@ -264,7 +302,10 @@ pub(crate) struct ChatPanel {
     writing: Option<Task<()>>,
     /// The key form, while it shows in place of the chat.
     key_form: Option<KeyForm>,
-    _view_events: Subscription,
+    /// The view's events, and its gaining focus.
+    _view: [Subscription; 2],
+    /// The workbench's changes, and its root's and its trust's.
+    _workbench: Vec<Subscription>,
 }
 
 /// A change to the keychain's key.
@@ -325,34 +366,46 @@ impl ChatPanel {
 }
 
 impl ChatPanel {
-    /// A panel with a new chat; the key is read when it first draws.
+    /// A panel with a new chat; the key is read, and the context of its
+    /// window's workbench followed, when it first draws.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let notice = notice_file(cx).is_none_or(|file| !file.exists());
-        let (view, options, view_events) = Self::chat_view(notice, window, cx);
+        let (view, options, view_subscriptions) = Self::chat_view(notice, window, cx);
         Self {
+            workbench: None,
             view,
             options,
             grants: chat_grants(),
             key: None,
             reading: None,
             notice,
+            watched: None,
+            gathering: false,
+            vetted: None,
+            vetting: None,
+            generation: 0,
             key_read: false,
             forms_made: 0,
             writes: Default::default(),
             writing: None,
             key_form: None,
-            _view_events: view_events,
+            _view: view_subscriptions,
+            _workbench: Vec::new(),
         }
     }
 
     /// A view of a new chat, from the settings now, with no provider until
-    /// the key is applied.
+    /// the key is applied, and the subscriptions to its events and its
+    /// gaining focus.
     fn chat_view(
         notice: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Entity<ChatView>, ChatOptions, Subscription) {
+    ) -> (Entity<ChatView>, ChatOptions, [Subscription; 2]) {
         let (settings, options) = new_chat_settings(cx);
+        let budget = kiln::platform::config::settings::<fe_config::Settings>(cx)
+            .chat
+            .context_budget;
         let view = cx.new(|cx| {
             // `ChatView::new` takes a provider; this one never runs, as
             // the key's provider, or none, replaces it at once.
@@ -366,10 +419,17 @@ impl ChatPanel {
             );
             view.set_provider(None, cx);
             view.set_notice(notice, cx);
+            view.set_context_budget(budget, cx);
             view
         });
         let events = cx.subscribe_in(&view, window, Self::view_event);
-        (view, options, events)
+        let focus = view.focus_handle(cx);
+        let focused = cx.on_focus_in(&focus, window, |this, _, cx| {
+            // What was a file may be a link now.
+            this.vetted = None;
+            this.gather(cx);
+        });
+        (view, options, [events, focused])
     }
 
     /// Shows the key form in place of the chat, focused and empty.
@@ -542,10 +602,135 @@ impl ChatPanel {
 
     /// Replaces the chat with a new one, from the settings now.
     fn start_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (view, options, events) = Self::chat_view(self.notice, window, cx);
-        (self.view, self.options, self._view_events) = (view, options, events);
+        let (view, options, subscriptions) = Self::chat_view(self.notice, window, cx);
+        (self.view, self.options, self._view) = (view, options, subscriptions);
         self.apply_key(cx);
+        self.gather_soon(cx);
         cx.notify();
+    }
+
+    /// Gathers the context once the current update's out, as the workbench
+    /// or the active editor changed: at most once an update.
+    fn gather_soon(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.gathering, true) {
+            return;
+        }
+        let panel = cx.weak_entity();
+        cx.defer(move |cx| {
+            (panel.update(cx, |panel, cx| {
+                panel.gathering = false;
+                panel.gather(cx);
+            }))
+            .ok();
+        });
+    }
+
+    /// Follows the active editor, and while the panel shows gives the view
+    /// the context gathered now. Nothing comes from the active file until
+    /// its real path is vetted for its text as it is: until then the view
+    /// keeps what it had from the same file, or has none from a file newly
+    /// active.
+    fn gather(&mut self, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench() else {
+            return;
+        };
+        let editor = workbench.read(cx).active_editor(cx).cloned();
+        let id = editor.as_ref().map(Entity::entity_id);
+        if self.watched.as_ref().map(|(watched, _)| *watched) != id {
+            self.watched = editor.map(|editor| {
+                let changed = cx.observe(&editor, |this, _, cx| this.gather_soon(cx));
+                (editor.entity_id(), changed)
+            });
+        }
+        let dock = workbench.read(cx).dock().read(cx);
+        if !dock.is_visible() || dock.active() != DockPanel::Chat {
+            return;
+        }
+        let active = ActiveFile::of(workbench.read(cx), self.generation, cx);
+        let Some(active) = active else {
+            // No file to vet.
+            (self.vetted, self.vetting) = (None, None);
+            return self.set_context(None, cx);
+        };
+        if self.vetted.as_ref() == Some(&active) {
+            // Vetted as it is: a selection moved.
+            self.vetting = None;
+            return self.set_context(Some(&active.path), cx);
+        }
+        // Nothing from it until it's vetted as it is now.
+        self.vetted = None;
+        self.set_context(None, cx);
+        let (root, path) = (active.root.clone(), active.path.clone());
+        // Its path, resolved, past the deny list, and its text from the
+        // file there.
+        let stamp = active.disk;
+        let vet = cx.background_spawn(async move {
+            root.is_some_and(|root| {
+                chat_context::vet_text(&root, &path, stamp.as_ref(), || {}).is_ok()
+            })
+        });
+        self.vetting = Some(cx.spawn(async move |panel, cx| {
+            let passed = vet.await;
+            (panel.update(cx, |panel, cx| {
+                let Some(workbench) = panel.workbench() else {
+                    return;
+                };
+                // Changed meanwhile: vetted again.
+                let now = ActiveFile::of(workbench.read(cx), panel.generation, cx);
+                if now.as_ref() != Some(&active) {
+                    return panel.gather_soon(cx);
+                }
+                panel.vetted = passed.then_some(active);
+                let vetted = panel.vetted.as_ref().map(|vetted| vetted.path.clone());
+                panel.set_context(vetted.as_deref(), cx);
+            }))
+            .ok();
+        }));
+    }
+
+    /// Follows `workbench`'s context: gathers again as it changes, and as
+    /// its root or trust does.
+    fn follow(&mut self, workbench: &Entity<Workbench>, cx: &mut Context<Self>) {
+        self.workbench = Some(workbench.downgrade());
+        self._workbench = vec![
+            cx.observe(workbench, |this, _, cx| this.gather_soon(cx)),
+            cx.subscribe(workbench, |this, _, _: &RootChanged, cx| {
+                // What the user attached from the old root goes, being read
+                // or not.
+                this.view.update(cx, |view, cx| view.clear_attachments(cx));
+                this.root_changed(cx)
+            }),
+            cx.subscribe(workbench, |this, _, _: &TrustChanged, cx| {
+                this.root_changed(cx)
+            }),
+        ];
+        self.gather_soon(cx);
+    }
+
+    /// The workbench followed, if it's still there.
+    fn workbench(&self) -> Option<Entity<Workbench>> {
+        self.workbench.as_ref().and_then(WeakEntity::upgrade)
+    }
+
+    /// The root, or its trust, changed: nothing vetted before stands, and
+    /// what the view has is cut to what the root's trust allows at once,
+    /// whether the panel shows or not, before the active file is vetted
+    /// again.
+    fn root_changed(&mut self, cx: &mut Context<Self>) {
+        self.generation += 1;
+        (self.vetted, self.vetting) = (None, None);
+        self.set_context(None, cx);
+        self.gather(cx);
+    }
+
+    /// Gives the view the context gathered now, from the active file only
+    /// if it's at `vetted`.
+    fn set_context(&mut self, vetted: Option<&Path>, cx: &mut Context<Self>) {
+        let Some(workbench) = self.workbench() else {
+            return;
+        };
+        let items = chat_context::gather(workbench.read(cx), &self.grants, vetted, cx);
+        self.view.update(cx, |view, cx| view.set_context(items, cx));
     }
 
     /// Reads the key again: the environment's at once, else the keychain's
@@ -637,6 +822,12 @@ impl ChatPanel {
             }
             ChatViewEvent::NoticeDismissed => self.dismiss_notice(cx),
             ChatViewEvent::TurnFinished => {}
+            ChatViewEvent::AttachFileRequested => {
+                let panel = cx.weak_entity();
+                window.defer(cx, move |window, cx| {
+                    (panel.update(cx, |panel, cx| panel.pick_file(window, cx))).ok();
+                });
+            }
         }
     }
 
@@ -653,6 +844,38 @@ impl ChatPanel {
             }
         })
         .detach();
+    }
+}
+
+/// The active editor's file as it is: under which root and root
+/// generation, in which editor, at which path, at which version of its
+/// text, read or saved when.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ActiveFile {
+    root: Option<PathBuf>,
+    generation: u64,
+    editor: EntityId,
+    path: PathBuf,
+    buffer: fe_buffer::BufferId,
+    version: fe_buffer::Version,
+    disk: Option<fe_buffer::DiskStamp>,
+}
+
+impl ActiveFile {
+    /// The active editor's, if it has a file.
+    fn of(workbench: &Workbench, generation: u64, cx: &App) -> Option<ActiveFile> {
+        let editor = workbench.active_editor(cx)?;
+        let model = editor.read(cx).model();
+        let buffer = model.buffer();
+        Some(ActiveFile {
+            root: workbench.root().map(Path::to_owned),
+            generation,
+            editor: editor.entity_id(),
+            path: model.path()?.to_owned(),
+            buffer: buffer.id(),
+            version: buffer.version(),
+            disk: buffer.disk_stamp(),
+        })
     }
 }
 
@@ -686,6 +909,15 @@ impl ChatPanel {
         &self.grants
     }
 
+    pub(crate) fn set_grants(&mut self, grants: Grants, cx: &mut Context<Self>) {
+        self.grants = grants;
+        if !self.grants.allows(&Capability::BufferRead) {
+            self.view.update(cx, |view, cx| view.clear_attachments(cx));
+        }
+        self.set_context(None, cx);
+        self.gather(cx);
+    }
+
     pub(crate) fn notice(&self) -> bool {
         self.notice
     }
@@ -701,6 +933,11 @@ impl Render for ChatPanel {
         if !self.key_read {
             self.key_read = true;
             cx.defer_in(window, |this, _, cx| this.reload_key(cx));
+        }
+        if self.workbench.is_none()
+            && let Some(Some(workbench)) = window.root::<Workbench>()
+        {
+            self.follow(&workbench, cx);
         }
         let ui = ui_theme(cx);
         let new_chat = cx.listener(|this, _, window, cx| {

@@ -11,16 +11,20 @@
 //! - [`build_request`] lays a request out for the prompt cache: a constant
 //!   [`SYSTEM_PROMPT`] with a breakpoint, the history, then the new turn
 //!   from [`render_user_content`].
+//! - [`budget`] fits a turn's [`ContextItem`]s into the context budget,
+//!   in the record's order, cutting or dropping what doesn't fit.
 //! - [`ScriptedProvider`] plays scripted replies and records the requests,
 //!   for tests.
 //!
 //! No network here, and this crate must never depend on GPUI.
 
+mod context;
 mod conversation;
 mod fake;
 mod provider;
 mod request;
 
+pub use context::{Budgeted, ContextItem, ContextKind, Fit, MIN_ROWS, budget};
 pub use conversation::{
     Attachment, AttachmentKind, ChatId, Conversation, ParseChatIdError, ReplyBlock, Rows, Turn,
     TurnState,
@@ -30,6 +34,4 @@ pub use provider::{
     ApiMessage, BlockKind, CacheControl, ChatEvent, ChatProvider, ChatRequest, ChatStream, Effort,
     ErrorKind, ProviderError, Role, StopReason, SystemBlock, ToolCall, ToolChoice, ToolSpec, Usage,
 };
-pub use request::{
-    ChatSettings, ContextItem, ContextKind, SYSTEM_PROMPT, build_request, render_user_content,
-};
+pub use request::{ChatSettings, SYSTEM_PROMPT, build_request, render_user_content};

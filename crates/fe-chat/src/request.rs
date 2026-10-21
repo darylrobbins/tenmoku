@@ -11,7 +11,8 @@
 
 use serde_json::{Map, Value};
 
-use crate::conversation::{Conversation, Rows};
+use crate::context::{ContextItem, ContextKind};
+use crate::conversation::Conversation;
 use crate::provider::{ApiMessage, CacheControl, ChatRequest, Effort, Role, SystemBlock};
 
 /// The chat's instructions. Versioned in code and never built at runtime:
@@ -107,31 +108,6 @@ pub fn build_request(
     }
 }
 
-/// Something attached to a turn, gathered by the host.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContextItem {
-    pub kind: ContextKind,
-    /// The chip's label.
-    pub label: String,
-    pub text: String,
-}
-
-/// What a [`ContextItem`] is, and how its tag names it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ContextKind {
-    /// A file, or some of its rows.
-    File {
-        path: String,
-        rows: Option<Rows>,
-    },
-    Selection {
-        path: String,
-        rows: Rows,
-    },
-    Diagnostics,
-    OpenEditors,
-}
-
 /// The new turn's content blocks: one tagged `text` block per item, in
 /// order, then the question.
 pub fn render_user_content(question: &str, items: &[ContextItem]) -> Vec<Value> {
@@ -152,7 +128,7 @@ fn text_block(text: String) -> Value {
 
 fn tagged(item: &ContextItem) -> String {
     let (tag, attributes) = match &item.kind {
-        ContextKind::File { path, rows } => {
+        ContextKind::File { path, rows } | ContextKind::ActiveFile { path, rows } => {
             let mut attributes = vec![("path", path.clone())];
             attributes.extend(rows.map(|rows| ("rows", rows.to_string())));
             ("file", attributes)

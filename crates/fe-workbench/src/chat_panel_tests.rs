@@ -4,11 +4,22 @@
 //! temporary state directory. The provider is a [`ScriptedProvider`]
 //! from the panel's test factory: no network.
 
-use std::{cell::RefCell, fs, path::Path, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    fs,
+    path::Path,
+    pin::Pin,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context as TaskContext, Poll},
+};
 
-use fe_chat::{ChatProvider, Effort, ScriptedProvider};
+use fe_chat::{ChatEvent, ChatProvider, ChatRequest, ChatStream, Effort, ScriptedProvider};
 use fe_chat_anthropic::ApiKey;
-use fe_chat_view::ChatOptions;
+use fe_chat_view::{ChatOptions, SendMessage};
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::SettingsStore;
 use fe_gpui::commands::RunCommand;
@@ -16,11 +27,11 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln::{
     Config,
     command::Capability,
-    core::secrets::{MemoryStore, SecretStore as _},
+    core::secrets::{MemoryStore, SecretError, SecretStore as _},
     platform::config::{BatchSender, batch_channel},
 };
 
-use super::{CHAT_CAPABILITIES, ChatPanel, ChatStateDir, KeyOrigin, KeySource};
+use super::{CHAT_CAPABILITIES, ChatPanel, ChatStateDir, KeyOrigin, KeySource, Keychain};
 use crate::{DockPanel, Launch, Workbench, tests::open};
 
 /// A workbench on an empty folder, focused as the app focuses it.
@@ -409,6 +420,116 @@ fn the_notice_shows_until_dismissed(cx: &mut TestAppContext) {
     assert!(!panel.read_with(cx, |panel, _| panel.notice()));
     assert!(cx.debug_bounds("chat-notice").is_none());
 }
+
+/// A provider whose replies never come, noting each request made and
+/// each reply's stream dropped.
+#[derive(Default)]
+struct Endless {
+    made: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+}
+
+impl ChatProvider for Endless {
+    fn name(&self) -> &str {
+        "endless"
+    }
+
+    fn stream(&self, _: ChatRequest) -> ChatStream {
+        self.made.fetch_add(1, Ordering::SeqCst);
+        Box::pin(Pending(self.dropped.clone()))
+    }
+}
+
+struct Pending(Arc<AtomicUsize>);
+
+impl futures::Stream for Pending {
+    type Item = ChatEvent;
+
+    fn poll_next(self: Pin<&mut Self>, _: &mut TaskContext<'_>) -> Poll<Option<ChatEvent>> {
+        Poll::Pending
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[gpui::test]
+fn replies_stream_on_the_background_executor(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    let provider = Arc::new(Endless::default());
+    let shared = provider.clone();
+    cx.update(|_, cx| {
+        ChatPanel::set_provider_factory(
+            cx,
+            Rc::new(move |_, _| shared.clone() as Arc<dyn ChatProvider>),
+        );
+    });
+    set_source(Some("key"), &Arc::new(MemoryStore::new()), cx);
+    dispatch("chat.open", cx);
+    let panel = chat(&workbench, cx).expect("made");
+    let view = panel.read_with(cx, |panel, _| panel.view().clone());
+    let streaming = |cx: &mut VisualTestContext| {
+        panel.read_with(cx, |panel, cx| panel.view().read(cx).is_streaming())
+    };
+    let send = move |cx: &mut VisualTestContext| {
+        view.update(cx, |view, cx| view.set_composer_text("Hello?", cx));
+        cx.update(|window, cx| window.dispatch_action(Box::new(SendMessage), cx));
+    };
+
+    // Sending makes the request on the executor, not in `chat.send`.
+    send(cx);
+    assert_eq!(provider.made.load(Ordering::SeqCst), 0);
+    assert!(streaming(cx));
+    draw(cx);
+    assert_eq!(provider.made.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.dropped.load(Ordering::SeqCst), 0);
+
+    // Stopping drops the stream polled there.
+    dispatch_in("chat.stop", &[crate::KEY_CONTEXT, "chat"], cx);
+    assert!(!streaming(cx));
+    assert_eq!(provider.dropped.load(Ordering::SeqCst), 1);
+
+    // As does a new chat in place of one streaming.
+    send(cx);
+    draw(cx);
+    assert_eq!(provider.made.load(Ordering::SeqCst), 2);
+    drop(send);
+    dispatch_in("chat.new", &[crate::KEY_CONTEXT, "chat"], cx);
+    assert_eq!(provider.dropped.load(Ordering::SeqCst), 2);
+}
+
+/// How many times [`flaky_open`] was called.
+static OPENS: AtomicUsize = AtomicUsize::new(0);
+
+/// A store that's unavailable the first time it's opened, as the Secret
+/// Service may be.
+fn flaky_open() -> Result<MemoryStore, SecretError> {
+    match OPENS.fetch_add(1, Ordering::SeqCst) {
+        0 => Err(SecretError::Unavailable("not yet".to_owned())),
+        _ => Ok(MemoryStore::new()),
+    }
+}
+
+#[test]
+fn the_keychain_opens_again_after_failing() {
+    let keychain = Keychain::new(flaky_open);
+    assert_eq!(
+        keychain.get("service", "account").unwrap_err(),
+        SecretError::Unavailable("not yet".to_owned())
+    );
+    keychain.set("service", "account", "key").unwrap();
+    let secret = keychain.get("service", "account").unwrap().unwrap();
+    assert_eq!(secret.into_string(), "key");
+    // Opened once it worked, and kept.
+    assert_eq!(OPENS.load(Ordering::SeqCst), 2);
+}
+
+#[path = "chat_context_tests.rs"]
+mod context;
 
 #[path = "chat_rail_tests.rs"]
 mod rail;

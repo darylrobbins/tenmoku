@@ -1,14 +1,15 @@
 //! [`ChatView`]: the transcript above, the attachments and the composer
 //! below, and the stream that fills the last turn.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::mem::{Discriminant, discriminant};
 use std::sync::Arc;
 
-use fe_buffer::{Buffer, Origin};
+use fe_buffer::{Buffer, BufferEvent, EditKind, Origin, Subscription as BufferSubscription};
 use fe_chat::{
-    Attachment, AttachmentKind, BlockKind, ChatEvent, ChatProvider, ChatSettings, ContextItem,
-    ContextKind, Conversation, ErrorKind, ProviderError, Turn, TurnState, build_request,
-    render_user_content,
+    Attachment, AttachmentKind, BlockKind, Budgeted, ChatEvent, ChatProvider, ChatSettings,
+    ContextItem, ContextKind, Conversation, ErrorKind, Fit, ProviderError, Turn, TurnState, budget,
+    build_request, render_user_content,
 };
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, editor_palette};
@@ -33,6 +34,10 @@ const COMPOSER_ROWS: u32 = 10;
 
 /// How near the bottom, in pixels, the transcript counts as at the tail.
 const TAIL_SLACK: f32 = 4.;
+
+/// The context budget until the host sets one: `chat.context_budget`'s
+/// default.
+const CONTEXT_BUDGET: u32 = 32_000;
 
 /// What the view sends with each request that the conversation doesn't
 /// fix itself.
@@ -66,6 +71,9 @@ pub enum ChatViewEvent {
     NoticeDismissed,
     /// A turn ended, however it did: done, stopped, refused or failed.
     TurnFinished,
+    /// The user asked to attach a file: typed `@` at the start of a word,
+    /// which the view takes back out, or pressed Attach.
+    AttachFileRequested,
 }
 
 /// The record's § 14 line under a turn, and what its button does.
@@ -130,7 +138,27 @@ pub struct ChatView {
     conversation: Conversation,
     options: ChatOptions,
     composer: Entity<EditorView>,
-    attachments: Vec<ContextItem>,
+    /// The composer buffer's edits, to tell an `@` typed.
+    composer_edits: BufferSubscription,
+    /// What the user attached, in the order attached, and those still
+    /// being read.
+    attachments: Vec<Slot>,
+    /// The next [`ChatView::reserve`]'s id.
+    next_slot: u64,
+    /// What the host gathers by itself: see [`ChatView::set_context`].
+    context: Vec<ContextItem>,
+    /// The kinds of the host's items the user took off, until the next
+    /// send.
+    dismissed: HashSet<Discriminant<ContextKind>>,
+    /// The user's items the user took off, until the next send: the host's
+    /// they stand for stay off with them, gathered then or later.
+    removed: Vec<ContextItem>,
+    /// For each turn sent from this view, by index, which of its items
+    /// the user attached, rather than the host gathered: Edit brings back
+    /// only those.
+    attached: HashMap<usize, Vec<bool>>,
+    /// The tokens a turn's context may take.
+    context_budget: u32,
     notice: bool,
     /// The reply streaming in: dropping it drops the stream, which cancels
     /// the request.
@@ -144,22 +172,57 @@ pub struct ChatView {
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
 
+/// One of the user's attachments: ready, or still being read.
+#[derive(Clone, Debug)]
+enum Slot {
+    Ready(ContextItem),
+    Reading {
+        id: u64,
+        kind: ContextKind,
+        label: String,
+    },
+}
+
+impl Slot {
+    fn ready(&self) -> Option<&ContextItem> {
+        match self {
+            Slot::Ready(item) => Some(item),
+            Slot::Reading { .. } => None,
+        }
+    }
+}
+
 #[kiln::command(context = "chat")]
 impl ChatView {
     /// Send Message
     ///
-    /// Sends the composer's text with the attachments, and empties both.
-    /// Does nothing with no text, no provider, or while a reply streams.
+    /// Sends the composer's text with the chips' items as the context
+    /// budget leaves them, and empties the composer and the attachments.
+    /// The host's items the user took off come back. Does nothing with no
+    /// text, no provider, while a reply streams or while an attachment is
+    /// being read.
     #[command(id = "chat.send")]
     pub fn send_message(&mut self, cx: &mut Cx<Self>) {
         let text = self.composer_text(cx);
-        if text.trim().is_empty() || self.is_streaming() || self.provider.is_none() {
+        if text.trim().is_empty()
+            || self.is_streaming()
+            || self.provider.is_none()
+            || self.reading()
+        {
             return;
         }
-        let items = std::mem::take(&mut self.attachments);
+        let hosts = self.chip_items().len() - self.attachments().len();
+        let (items, mine): (Vec<ContextItem>, Vec<bool>) = (self.chips().into_iter())
+            .filter(Budgeted::sent)
+            .map(|chip| (chip.item, chip.index >= hosts))
+            .unzip();
+        self.attachments.clear();
+        self.dismissed.clear();
+        self.removed.clear();
         let user_content = render_user_content(&text, &items);
         let attachments = items.iter().map(attachment_of).collect();
         self.set_composer_text("", cx);
+        self.attached.insert(self.conversation.turns.len(), mine);
         self.start_turn(user_content, attachments, cx);
     }
 
@@ -194,6 +257,10 @@ impl ChatView {
             return;
         };
         let (user_content, attachments) = (turn.user_content.clone(), turn.attachments.clone());
+        let last = self.conversation.turns.len() - 1;
+        if let Some(mine) = self.attached.get(&last).cloned() {
+            self.attached.insert(last + 1, mine);
+        }
         self.start_turn(user_content, attachments, cx);
     }
 }
@@ -216,14 +283,27 @@ impl ChatView {
             view.set_vim_off(true, cx);
             view
         });
+        let composer_edits = composer.update(cx, |composer, _| {
+            composer.model_mut().buffer_mut().subscribe()
+        });
         // It grows as it's typed into.
-        let composer_changed = cx.observe(&composer, |_, _, cx| cx.notify());
+        let composer_changed = cx.observe(&composer, |this, _, cx| {
+            this.composer_edited(cx);
+            cx.notify();
+        });
         ChatView {
             provider: Some(provider),
             conversation,
             options,
             composer,
+            composer_edits,
             attachments: Vec::new(),
+            next_slot: 0,
+            context: Vec::new(),
+            dismissed: HashSet::new(),
+            removed: Vec::new(),
+            attached: HashMap::new(),
+            context_budget: CONTEXT_BUDGET,
             notice: false,
             stream: None,
             scroll: ScrollHandle::new(),
@@ -252,24 +332,154 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Adds `item` to what the next message sends, as a chip.
+    /// Adds `item` to what the next message sends, as a chip, until it's
+    /// sent or taken off.
     pub fn attach(&mut self, item: ContextItem, cx: &mut Context<Self>) {
-        self.attachments.push(item);
+        self.attachments.push(Slot::Ready(item));
         cx.notify();
     }
 
-    /// What the next message sends with it.
-    pub fn attachments(&self) -> &[ContextItem] {
-        &self.attachments
+    /// Keeps the place of an attachment the host is still reading, its
+    /// chip saying so under `label`, and gives back the id to
+    /// [`ChatView::fill`] it by. Nothing is sent until it's filled.
+    pub fn reserve(&mut self, kind: ContextKind, label: String, cx: &mut Context<Self>) -> u64 {
+        let id = self.next_slot;
+        self.next_slot += 1;
+        self.attachments.push(Slot::Reading { id, kind, label });
+        cx.notify();
+        id
     }
 
-    /// Takes the attachment at `index` off, as its chip's remove button
-    /// does.
-    pub fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.attachments.len() {
-            self.attachments.remove(index);
+    /// Puts `item` in reservation `id`'s place, or with `None` takes the
+    /// reservation off. Does nothing if it's gone: taken off meanwhile.
+    pub fn fill(&mut self, id: u64, item: Option<ContextItem>, cx: &mut Context<Self>) {
+        let at = (self.attachments.iter())
+            .position(|slot| matches!(slot, Slot::Reading { id: reading, .. } if *reading == id));
+        let Some(at) = at else {
+            return;
+        };
+        match item {
+            Some(item) => self.attachments[at] = Slot::Ready(item),
+            None => {
+                self.attachments.remove(at);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Whether an attachment is still being read.
+    pub fn reading(&self) -> bool {
+        (self.attachments.iter()).any(|slot| matches!(slot, Slot::Reading { .. }))
+    }
+
+    /// What the user attached to the next message, read.
+    pub fn attachments(&self) -> Vec<ContextItem> {
+        (self.attachments.iter())
+            .filter_map(Slot::ready)
+            .cloned()
+            .collect()
+    }
+
+    /// Sets what the host gathered by itself for the next message, in place
+    /// of what it gathered before. Each shows as a chip unless the user
+    /// took one of its kind off since the last send.
+    pub fn set_context(&mut self, items: Vec<ContextItem>, cx: &mut Context<Self>) {
+        if self.context != items {
+            self.context = items;
             cx.notify();
         }
+    }
+
+    /// What the host gathered, whether its chips show or not.
+    pub fn context(&self) -> &[ContextItem] {
+        &self.context
+    }
+
+    /// Sets the tokens a turn's context may take (`chat.context_budget`).
+    pub fn set_context_budget(&mut self, limit: u32, cx: &mut Context<Self>) {
+        self.context_budget = limit;
+        cx.notify();
+    }
+
+    /// The chips, in the order sent: the host's items the user hasn't
+    /// taken off, then the user's, as the context budget leaves them.
+    /// Each one's `index` is into that list, the host's first.
+    pub fn chips(&self) -> Vec<Budgeted> {
+        budget(&self.chip_items(), self.context_budget)
+    }
+
+    /// What chip `index` says: its label, its estimate, and whether it's
+    /// cut or left out.
+    pub fn chip_text(&self, index: usize) -> Option<String> {
+        self.chips().get(index).map(chip_text)
+    }
+
+    /// The host's items the user hasn't taken off nor attached themselves,
+    /// then the user's read ones.
+    fn chip_items(&self) -> Vec<ContextItem> {
+        let attached = self.attachments();
+        let mut items: Vec<ContextItem> = (self.context.iter())
+            .filter(|item| !self.dismissed.contains(&discriminant(&item.kind)))
+            .filter(|item| !attached.iter().any(|mine| covers(mine, item)))
+            .filter(|item| !self.removed.iter().any(|mine| covers(mine, item)))
+            .cloned()
+            .collect();
+        items.extend(attached);
+        items
+    }
+
+    /// Takes chip `index` off, as its remove button does: one of the
+    /// user's goes, and with it until the next send the host's it stands
+    /// for, gathered now or later; one of the host's goes with its kind
+    /// until the next send.
+    pub fn remove_chip(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(chip) = self.chips().into_iter().nth(index) else {
+            return;
+        };
+        let items = self.chip_items();
+        let hosts = items.len() - self.attachments().len();
+        if chip.index < hosts {
+            self.dismissed.insert(discriminant(&items[chip.index].kind));
+        } else {
+            let mine = chip.index - hosts;
+            let at = (self.attachments.iter().enumerate())
+                .filter(|(_, slot)| slot.ready().is_some())
+                .nth(mine)
+                .map(|(at, _)| at);
+            if let Some(at) = at {
+                self.attachments.remove(at);
+            }
+            self.removed.push(items[chip.index].clone());
+        }
+        cx.notify();
+    }
+
+    /// Takes off the attachment still being read under chip
+    /// `chat-chip-reading-{index}`: as for one read, the host's it stands
+    /// for stay off with it until the next send.
+    fn remove_reading(&mut self, index: usize, cx: &mut Context<Self>) {
+        let at = (self.attachments.iter().enumerate())
+            .filter(|(_, slot)| slot.ready().is_none())
+            .nth(index)
+            .map(|(at, _)| at);
+        let Some(at) = at else {
+            return;
+        };
+        if let Slot::Reading { kind, label, .. } = self.attachments.remove(at) {
+            let text = String::new();
+            self.removed.push(ContextItem { kind, label, text });
+        }
+        cx.notify();
+    }
+
+    /// Takes off everything the user attached, read or being read, as
+    /// when what they were read under no longer stands; and what earlier
+    /// turns were sent with, which Edit and Remove Attachments then don't
+    /// bring back.
+    pub fn clear_attachments(&mut self, cx: &mut Context<Self>) {
+        self.attachments.clear();
+        self.attached.clear();
+        cx.notify();
     }
 
     /// Shows or hides the first-run notice.
@@ -297,6 +507,45 @@ impl ChatView {
             drop(buffer);
             cx.notify();
         });
+        // Not typed.
+        self.composer_edits.drain();
+    }
+
+    /// After the composer changed: an `@` typed at the start of a word,
+    /// over a selection or not, asks the host for a file to attach, and is
+    /// taken back out within the edit that typed it, so undo neither brings
+    /// it back nor asks again. Undo and redo aren't typing.
+    fn composer_edited(&mut self, cx: &mut Context<Self>) {
+        let Some(BufferEvent::Edited {
+            transaction,
+            kind: EditKind::Edit,
+            edits,
+            text,
+            ..
+        }) = self.composer_edits.drain().pop()
+        else {
+            return;
+        };
+        let [edit] = &edits[..] else {
+            return;
+        };
+        let at = edit.new.start;
+        if edit.new.len() != 1 || !text.range_eq(edit.new.clone(), "@") || !word_start(&text, at) {
+            return;
+        }
+        let removed = self.composer.update(cx, |composer, cx| {
+            let mut buffer = composer.model_mut().buffer_mut();
+            // Only if it's still there: the last edit was this one.
+            let removed = buffer.text().range_eq(at..at + 1, "@")
+                && buffer.edit_in(transaction, [(at..at + 1, "")]).is_ok();
+            drop(buffer);
+            cx.notify();
+            removed
+        });
+        self.composer_edits.drain();
+        if removed {
+            cx.emit(ChatViewEvent::AttachFileRequested);
+        }
     }
 
     /// Whether a reply is streaming in.
@@ -428,10 +677,23 @@ impl ChatView {
         };
         let request = build_request(&self.conversation, user_content.clone(), &settings);
         self.conversation.begin_turn(user_content, attachments);
-        let mut stream = provider.stream(request);
+        // The request is made and its stream polled on the background
+        // executor, as connecting and checking certificates can block, and
+        // the events come back over a channel. Dropping the task below
+        // drops this one, and with it the stream, which cancels.
+        let (sender, mut events) = futures::channel::mpsc::unbounded();
+        let pump = cx.background_spawn(async move {
+            let mut stream = provider.stream(request);
+            while let Some(event) = stream.next().await {
+                if sender.unbounded_send(event).is_err() {
+                    break;
+                }
+            }
+        });
         self.tail = Tail::Jump;
         self.stream = Some(cx.spawn(async move |this, cx| {
-            while let Some(event) = stream.next().await {
+            let pump = pump;
+            while let Some(event) = events.next().await {
                 let streaming = this.update(cx, |this, cx| {
                     this.conversation.apply(event);
                     cx.notify();
@@ -444,7 +706,7 @@ impl ChatView {
                     Err(_) => return,
                 }
             }
-            drop(stream);
+            drop(pump);
             this.update(cx, |this, cx| {
                 // A stream that ends without saying how was cut off.
                 let error = ProviderError::new(ErrorKind::Stream, "the reply ended early");
@@ -473,10 +735,15 @@ impl ChatView {
                 };
                 let question = question_of(turn);
                 let items = items_of(turn);
+                // Only what the user attached comes back: what the host
+                // gathered is gathered again, if it still may be. Unknown
+                // for a turn this view didn't send, so none.
+                let mine = self.attached.get(&index).cloned().unwrap_or_default();
                 self.set_composer_text(&question, cx.cx);
-                for item in items {
-                    if !self.attachments.contains(&item) {
-                        self.attachments.push(item);
+                for (item, mine) in items.into_iter().zip(mine) {
+                    let gathered = self.context.iter().any(|host| covers(&item, host));
+                    if mine && !gathered && !self.attachments().contains(&item) {
+                        self.attachments.push(Slot::Ready(item));
                     }
                 }
                 cx.notify();
@@ -646,13 +913,20 @@ impl ChatView {
             Button::new("chat-send", "Send")
                 .small()
                 .primary()
-                .disabled(no_key || empty)
+                .disabled(no_key || empty || self.reading())
                 .debug_selector(|| "chat-send".into())
                 .on_click(send)
         };
+        let attach = cx.listener(|_, _, _, cx| cx.emit(ChatViewEvent::AttachFileRequested));
+        let attach = Button::new("chat-attach", "@")
+            .small()
+            .disabled(no_key)
+            .debug_selector(|| "chat-attach".into())
+            .on_click(attach);
         h_flex()
             .gap_2()
             .items_end()
+            .child(attach)
             .child(
                 div()
                     .key_context(COMPOSER_CONTEXT)
@@ -673,12 +947,45 @@ impl ChatView {
     }
 
     fn render_attachments(&self, ui: &UiTheme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.attachments.is_empty() {
+        let chips = self.chips();
+        let reading: Vec<String> = (self.attachments.iter())
+            .filter_map(|slot| match slot {
+                Slot::Reading { label, .. } => Some(label.clone()),
+                Slot::Ready(_) => None,
+            })
+            .collect();
+        if chips.is_empty() && reading.is_empty() {
             return None;
         }
-        let chips = self.attachments.iter().enumerate().map(|(index, item)| {
-            let estimate = estimate(&item.text);
-            let remove = cx.listener(move |this, _, _, cx| this.remove_attachment(index, cx));
+        let reading = reading.into_iter().enumerate().map(|(index, label)| {
+            let remove = cx.listener(move |this, _, _, cx| this.remove_reading(index, cx));
+            h_flex()
+                .debug_selector(move || format!("chat-chip-reading-{index}"))
+                .gap_1()
+                .items_center()
+                .px_2()
+                .rounded_md()
+                .border_1()
+                .border_color(ui.border)
+                .text_color(ui.muted_text)
+                .child(format!("{label} · reading…"))
+                .child(
+                    div()
+                        .id(("chat-chip-reading-remove", index))
+                        .debug_selector(move || format!("chat-chip-reading-remove-{index}"))
+                        .cursor_pointer()
+                        .text_color(ui.muted_text)
+                        .child("×")
+                        .on_click(remove),
+                )
+                .into_any_element()
+        });
+        let chips = chips.iter().enumerate().map(|(index, chip)| {
+            let remove = cx.listener(move |this, _, _, cx| this.remove_chip(index, cx));
+            let color = match chip.fit {
+                Fit::Whole => ui.text,
+                Fit::Truncated { .. } | Fit::Dropped => ui.muted_text,
+            };
             h_flex()
                 .debug_selector(move || format!("chat-chip-{index}"))
                 .gap_1()
@@ -687,8 +994,8 @@ impl ChatView {
                 .rounded_md()
                 .border_1()
                 .border_color(ui.border)
-                .text_color(ui.text)
-                .child(format!("{} · {}", item.label, tokens(estimate)))
+                .text_color(color)
+                .child(chip_text(chip))
                 .child(
                     div()
                         .id(("chat-chip-remove", index))
@@ -706,6 +1013,7 @@ impl ChatView {
                 .flex_wrap()
                 .gap_1()
                 .children(chips)
+                .children(reading)
                 .into_any_element(),
         )
     }
@@ -933,7 +1241,9 @@ fn item_of(attachment: &Attachment, tagged: &str) -> Option<ContextItem> {
 /// An attachment's metadata, for the transcript's chips.
 fn attachment_of(item: &ContextItem) -> Attachment {
     let (kind, path, rows) = match &item.kind {
-        ContextKind::File { path, rows } => (AttachmentKind::File, Some(path.clone()), *rows),
+        ContextKind::File { path, rows } | ContextKind::ActiveFile { path, rows } => {
+            (AttachmentKind::File, Some(path.clone()), *rows)
+        }
         ContextKind::Selection { path, rows } => {
             (AttachmentKind::Selection, Some(path.clone()), Some(*rows))
         }
@@ -945,20 +1255,59 @@ fn attachment_of(item: &ContextItem) -> Attachment {
         label: item.label.clone(),
         path,
         rows,
-        estimate: estimate(&item.text),
+        estimate: item.estimate(),
     }
 }
 
-/// The record's § 13 estimate: a token for every 3 bytes, rounded up.
-fn estimate(text: &str) -> u32 {
-    u32::try_from(text.len().div_ceil(3)).unwrap_or(u32::MAX)
+/// Whether `at` in `text` starts a word: at the start, or after
+/// whitespace.
+fn word_start(text: &fe_buffer::Text, at: usize) -> bool {
+    let point = text.offset_to_point(at);
+    let row = text.row_to_string(point.row);
+    (row.get(..point.column as usize))
+        .and_then(|before| before.chars().next_back())
+        .is_none_or(char::is_whitespace)
 }
 
+/// Whether `mine`, an item the user attached, stands for the host's
+/// `host`: the same item, the active file's file, the same rows selected,
+/// or another copy of the diagnostics or the open editors, which a turn's
+/// Edit brings back. (A turn's items come back with a newline their tags
+/// added, so a selection is known by its path and rows.)
+fn covers(mine: &ContextItem, host: &ContextItem) -> bool {
+    match (&mine.kind, &host.kind) {
+        (ContextKind::File { path, .. }, ContextKind::ActiveFile { path: active, .. }) => {
+            path == active
+        }
+        (ContextKind::Selection { .. }, ContextKind::Selection { .. }) => mine.kind == host.kind,
+        (ContextKind::Diagnostics, ContextKind::Diagnostics)
+        | (ContextKind::OpenEditors, ContextKind::OpenEditors) => true,
+        _ => mine == host,
+    }
+}
+
+/// What a chip says: its label, the whole item's estimate, and whether
+/// the budget cut it or left it out.
+fn chip_text(chip: &Budgeted) -> String {
+    let mut text = format!("{} · {}", chip.item.label, tokens(chip.estimate));
+    match chip.fit {
+        Fit::Whole => {}
+        Fit::Truncated { .. } => text.push_str(" · truncated"),
+        Fit::Dropped => text.push_str(" · won't fit"),
+    }
+    text
+}
+
+/// An estimate as a chip shows it: `~850`, `~1.2k`, `~32k`.
 fn tokens(estimate: u32) -> String {
     if estimate < 1000 {
-        format!("{estimate} tokens")
-    } else {
-        format!("{}k tokens", estimate.div_ceil(1000))
+        return format!("~{estimate}");
+    }
+    let tenths = (estimate + 50) / 100;
+    match tenths {
+        ..100 if !tenths.is_multiple_of(10) => format!("~{}.{}k", tenths / 10, tenths % 10),
+        ..100 => format!("~{}k", tenths / 10),
+        _ => format!("~{}k", (estimate + 500) / 1000),
     }
 }
 
