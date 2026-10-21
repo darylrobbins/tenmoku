@@ -3,8 +3,9 @@
 //! between display rows ([`BlockMap`]); one inlay per frame, and any number
 //! of inlay hints, go inside a row ([`ExpandedRow::insert_inlay`],
 //! [`ExpandedRow::insert_hints`]). [`layout`] lays
-//! out a frame of an editor from that, and [`sticky`] the rows sticky scroll
-//! pins at its top. Must never depend on GPUI.
+//! out a frame of an editor from that, [`minimap`] the minimap beside it, and
+//! [`sticky`] the rows sticky scroll pins at its top. Must never depend on
+//! GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
 
@@ -13,6 +14,7 @@ mod display_map;
 mod fold_map;
 pub mod layout;
 mod long_row;
+pub mod minimap;
 pub mod sticky;
 mod wrap_map;
 

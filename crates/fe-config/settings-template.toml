@@ -67,6 +67,26 @@
 # colours.
 # bracket_pair_colors = true
 
+[editor.minimap]
+# Show the minimap: the whole file drawn small beside the text.
+# enabled = true
+# Which side of the text the minimap is on: "right" or "left".
+# side = "right"
+# Draw each character's shape; false draws blocks of colour.
+# render_characters = true
+# The most columns of a row the minimap draws (at least 1).
+# max_column = 120
+# How big the minimap draws, 1 to 3: each column scale pixels wide and each
+# row 2 × scale pixels tall (3 × scale drawing blocks).
+# scale = 1
+# When the slider over the visible rows shows: "mouseover" or "always".
+# show_slider = "mouseover"
+# How tall the minimap's rows are: "proportional" keeps their size and
+# scrolls the minimap with the editor, "fill" stretches or shrinks them so the
+# file fills the minimap's height, and "fit" shrinks them only if it doesn't
+# fit.
+# size = "proportional"
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

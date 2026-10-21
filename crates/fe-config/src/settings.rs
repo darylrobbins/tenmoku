@@ -410,9 +410,88 @@ pub struct EditorSettings {
     /// `bracket_1`, `bracket_2` and `bracket_3`, then round again. Brackets
     /// in strings and comments, and ones without a pair, keep their colour.
     pub bracket_pair_colors: bool,
+    /// The minimap: the whole file drawn small beside the text, VS Code's
+    /// `editor.minimap.*`.
+    pub minimap: MinimapSettings,
     /// Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in
     /// VS Code's `editor.fontLigatures`.
     pub font_ligatures: bool,
+}
+
+/// `[editor.minimap]`: VS Code's `editor.minimap.*` settings, with its
+/// defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MinimapSettings {
+    /// Show the minimap.
+    pub enabled: bool,
+    /// Which side of the text the minimap is on.
+    pub side: MinimapSide,
+    /// Draw each character's shape; off, draw blocks of colour.
+    pub render_characters: bool,
+    /// The most columns of a row the minimap draws.
+    #[schemars(range(min = 1))]
+    pub max_column: u32,
+    /// How big the minimap draws: each column scale pixels wide and each
+    /// row 2 × scale pixels tall (3 × scale drawing blocks).
+    #[schemars(range(min = 1, max = 3))]
+    pub scale: u32,
+    /// When the slider over the visible rows shows.
+    pub show_slider: MinimapShowSlider,
+    /// How tall the minimap's rows are.
+    pub size: MinimapSize,
+}
+
+impl Default for MinimapSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            side: MinimapSide::default(),
+            render_characters: true,
+            max_column: 120,
+            scale: 1,
+            show_slider: MinimapShowSlider::default(),
+            size: MinimapSize::default(),
+        }
+    }
+}
+
+/// `editor.minimap.side`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapSide {
+    /// Right of the text.
+    #[default]
+    Right,
+    /// Left of the text.
+    Left,
+}
+
+/// `editor.minimap.show_slider`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapShowSlider {
+    /// While the pointer is over the minimap.
+    #[default]
+    Mouseover,
+    /// All the time.
+    Always,
+}
+
+/// `editor.minimap.size`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapSize {
+    /// Rows keep their size, and the minimap scrolls with the editor when
+    /// they don't all fit.
+    #[default]
+    Proportional,
+    /// Rows stretch or shrink so the file fills the minimap's height, no
+    /// taller than the editor's rows; it never scrolls.
+    Fill,
+    /// As `proportional` when the file fits the minimap's height, else
+    /// shrunk as `fill`.
+    Fit,
 }
 
 /// `editor.auto_save`.
@@ -454,6 +533,7 @@ impl Default for EditorSettings {
             indent_guides: true,
             inline_blame: false,
             bracket_pair_colors: true,
+            minimap: MinimapSettings::default(),
             font_ligatures: false,
         }
     }

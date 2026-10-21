@@ -75,6 +75,17 @@ impl EditorTheme {
             indent_guides: true,
             brackets: [editor.bracket_1, editor.bracket_2, editor.bracket_3].map(hsla),
             bracket_pair_colors: false,
+            minimap_background: hsla(editor.minimap_background),
+            minimap_slider: hsla(editor.minimap_slider),
+            minimap_slider_hover: hsla(editor.minimap_slider_hover),
+            minimap_slider_active: hsla(editor.minimap_slider_active),
+            minimap_selection: hsla(editor.minimap_selection),
+            minimap_find_match: hsla(editor.minimap_find_match),
+            minimap_error: hsla(editor.minimap_error),
+            minimap_warning: hsla(editor.minimap_warning),
+            minimap_gutter_added: hsla(editor.minimap_gutter_added),
+            minimap_gutter_modified: hsla(editor.minimap_gutter_modified),
+            minimap_gutter_deleted: hsla(editor.minimap_gutter_deleted),
             syntax: fe_syntax::resolve_theme(&syntax),
         }
     }

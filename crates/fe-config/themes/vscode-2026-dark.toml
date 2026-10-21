@@ -116,6 +116,23 @@ vim_mode_foreground = "#121314"
 bracket_1 = "#FFD700"
 bracket_2 = "#DA70D6"
 bracket_3 = "#179FFF"
+# The minimap. The slider is 2026-dark.json's minimapSlider.*, and the
+# selection mark its editor.selectionBackground (minimap.selectionHighlight's
+# default). The rest are VS Code's defaults: minimap.background is the
+# editor's, minimap.errorHighlight #FF1212B3, minimap.warningHighlight
+# editorWarning.foreground and minimapGutter.* editorGutter.*. The find match
+# mark is the overview ruler's opaque #D18616, so a one-row match shows.
+minimap_background = "#121314"
+minimap_slider = "#A8A9AA85"
+minimap_slider_hover = "#A8A9AA90"
+minimap_slider_active = "#A8A9AA9C"
+minimap_selection = "#276782DD"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#CCA700"
+minimap_gutter_added = "#72C892"
+minimap_gutter_modified = "#0078D4"
+minimap_gutter_deleted = "#F28772"
 
 # Every name fastedit Dark colours is listed, since a theme's table is laid
 # over Dark's.

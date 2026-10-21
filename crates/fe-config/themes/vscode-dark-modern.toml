@@ -10,10 +10,12 @@
 # notice is in this repository's NOTICE.
 #
 # Values VS Code leaves to its built-in defaults rather than the three files
-# (selection #264F78, cursor #AEAFAD, warning #CCA700, information #3794FF,
-# hint #EEEEEEB2) are those defaults. active_line, popover_border, the jump
-# label colours and the vim mode segments have no Dark Modern value; they are
-# chosen to sit in its palette.
+# (selection #264F78, cursor #AEAFAD, editorError.foreground #F14C4C,
+# editorWarning.foreground #CCA700, editorInfo.foreground #59A4F9, hint
+# #EEEEEEB2) are those defaults; dark_modern.json's #F85149 is the general
+# errorForeground, not the editor's diagnostics. active_line, popover_border,
+# the jump label colours and the vim mode segments have no Dark Modern value;
+# they are chosen to sit in its palette.
 #
 # Scopes with no highlight name are left out: semantic-token rules
 # (`*.mutable` underline), font styles, markup.bold/italic/underline/
@@ -36,9 +38,9 @@ gutter_active_foreground = "#CCCCCC"
 active_line = "#FFFFFF0A"
 selection = "#264F78"
 cursor = "#AEAFAD"
-error = "#F85149"
+error = "#F14C4C"
 warning = "#CCA700"
-information = "#3794FF"
+information = "#59A4F9"
 hint = "#EEEEEEB2"
 popover_background = "#202020"
 popover_border = "#313131"
@@ -61,6 +63,24 @@ vim_mode_foreground = "#1F1F1F"
 bracket_1 = "#FFD700"
 bracket_2 = "#DA70D6"
 bracket_3 = "#179FFF"
+# The minimap. dark_modern.json and its includes set no minimap or scrollbar
+# slider colour, so these are VS Code's dark defaults: minimap.background is
+# the editor's, minimapSlider.* scrollbarSlider.* at half alpha,
+# minimap.selectionHighlight editor.selectionBackground, minimap.errorHighlight
+# #FF1212B3, minimap.warningHighlight editorWarning.foreground and
+# minimapGutter.* editorGutter.*. The find match mark is the overview ruler's
+# opaque #D18616, so a one-row match shows.
+minimap_background = "#1F1F1F"
+minimap_slider = "#79797933"
+minimap_slider_hover = "#64646459"
+minimap_slider_active = "#BFBFBF33"
+minimap_selection = "#264F78"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#CCA700"
+minimap_gutter_added = "#2EA043"
+minimap_gutter_modified = "#0078D4"
+minimap_gutter_deleted = "#F85149"
 
 # Every name fastedit Dark colours is listed, since a theme's table is laid
 # over Dark's.

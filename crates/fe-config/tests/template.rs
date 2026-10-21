@@ -14,17 +14,22 @@ fn template_is_all_defaults() {
     let defaults = toml::Table::try_from(Settings::default()).unwrap();
     // These are unset by default, so they aren't serialized.
     commented_out_with_defaults(&defaults, "editor", &["font_family"]);
+    commented_out_with_defaults(&defaults, "editor.minimap", &[]);
     commented_out_with_defaults(&defaults, "terminal", &["font_family", "font_size"]);
 }
 
 /// The `[name]` section of the template comments out each of its settings
 /// once, with its default, and nothing else: the keys `defaults` has and
-/// `unset`.
+/// `unset`. A dotted `name` is a nested table, such as `editor.minimap`,
+/// whose section is its own; a table's nested tables aren't its settings.
 fn commented_out_with_defaults(defaults: &toml::Table, name: &str, unset: &[&str]) {
-    let table = defaults[name].as_table().unwrap();
+    let table = name
+        .split('.')
+        .fold(defaults, |table, key| table[key].as_table().unwrap());
     let mut keys: Vec<&str> = table
-        .keys()
-        .map(String::as_str)
+        .iter()
+        .filter(|(_, value)| !value.is_table())
+        .map(|(key, _)| key.as_str())
         .chain(unset.iter().copied())
         .collect();
     keys.sort();

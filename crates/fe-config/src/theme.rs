@@ -124,6 +124,28 @@ colors! {
         /// The brackets of a pair inside a `bracket_2` pair. A pair inside
         /// this one takes `bracket_1` again.
         bracket_3,
+        /// Behind the minimap.
+        minimap_background,
+        /// The minimap's slider over the visible rows.
+        minimap_slider,
+        /// The minimap's slider under the pointer.
+        minimap_slider_hover,
+        /// The minimap's slider while it's dragged.
+        minimap_slider_active,
+        /// The selection's mark in the minimap.
+        minimap_selection,
+        /// A find match's mark in the minimap.
+        minimap_find_match,
+        /// An error diagnostic's mark in the minimap.
+        minimap_error,
+        /// A warning diagnostic's mark in the minimap.
+        minimap_warning,
+        /// The minimap's mark by rows added since the git base.
+        minimap_gutter_added,
+        /// The minimap's mark by rows modified since the git base.
+        minimap_gutter_modified,
+        /// The minimap's mark where rows were deleted since the git base.
+        minimap_gutter_deleted,
     }
 }
 

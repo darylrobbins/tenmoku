@@ -196,6 +196,19 @@
           "minimum": 1.0,
           "type": "number"
         },
+        "minimap": {
+          "$ref": "#/$defs/MinimapSettings",
+          "default": {
+            "enabled": true,
+            "max_column": 120,
+            "render_characters": true,
+            "scale": 1,
+            "show_slider": "mouseover",
+            "side": "right",
+            "size": "proportional"
+          },
+          "description": "The minimap: the whole file drawn small beside the text, VS Code's\n`editor.minimap.*`."
+        },
         "semantic_highlighting": {
           "default": true,
           "description": "Colour code with language servers' semantic tokens over the syntax\ncolours.",
@@ -426,6 +439,102 @@
         }
       },
       "type": "object"
+    },
+    "MinimapSettings": {
+      "description": "`[editor.minimap]`: VS Code's `editor.minimap.*` settings, with its\ndefaults.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Show the minimap.",
+          "type": "boolean"
+        },
+        "max_column": {
+          "default": 120,
+          "description": "The most columns of a row the minimap draws.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "render_characters": {
+          "default": true,
+          "description": "Draw each character's shape; off, draw blocks of colour.",
+          "type": "boolean"
+        },
+        "scale": {
+          "default": 1,
+          "description": "How big the minimap draws: each column scale pixels wide and each\nrow 2 × scale pixels tall (3 × scale drawing blocks).",
+          "format": "uint32",
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "show_slider": {
+          "$ref": "#/$defs/MinimapShowSlider",
+          "default": "mouseover",
+          "description": "When the slider over the visible rows shows."
+        },
+        "side": {
+          "$ref": "#/$defs/MinimapSide",
+          "default": "right",
+          "description": "Which side of the text the minimap is on."
+        },
+        "size": {
+          "$ref": "#/$defs/MinimapSize",
+          "default": "proportional",
+          "description": "How tall the minimap's rows are."
+        }
+      },
+      "type": "object"
+    },
+    "MinimapShowSlider": {
+      "description": "`editor.minimap.show_slider`.",
+      "oneOf": [
+        {
+          "const": "mouseover",
+          "description": "While the pointer is over the minimap.",
+          "type": "string"
+        },
+        {
+          "const": "always",
+          "description": "All the time.",
+          "type": "string"
+        }
+      ]
+    },
+    "MinimapSide": {
+      "description": "`editor.minimap.side`.",
+      "oneOf": [
+        {
+          "const": "right",
+          "description": "Right of the text.",
+          "type": "string"
+        },
+        {
+          "const": "left",
+          "description": "Left of the text.",
+          "type": "string"
+        }
+      ]
+    },
+    "MinimapSize": {
+      "description": "`editor.minimap.size`.",
+      "oneOf": [
+        {
+          "const": "proportional",
+          "description": "Rows keep their size, and the minimap scrolls with the editor when\nthey don't all fit.",
+          "type": "string"
+        },
+        {
+          "const": "fill",
+          "description": "Rows stretch or shrink so the file fills the minimap's height, no\ntaller than the editor's rows; it never scrolls.",
+          "type": "string"
+        },
+        {
+          "const": "fit",
+          "description": "As `proportional` when the file fits the minimap's height, else\nshrunk as `fill`.",
+          "type": "string"
+        }
+      ]
     },
     "StatusBarSettings": {
       "description": "Settings for the status bar.",
@@ -744,6 +853,15 @@
         "inline_blame": false,
         "lightbulb": true,
         "line_height": 1.6,
+        "minimap": {
+          "enabled": true,
+          "max_column": 120,
+          "render_characters": true,
+          "scale": 1,
+          "show_slider": "mouseover",
+          "side": "right",
+          "size": "proportional"
+        },
         "semantic_highlighting": true,
         "soft_wrap": false,
         "tab_size": 4

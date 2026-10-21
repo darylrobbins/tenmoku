@@ -155,6 +155,23 @@ pub struct EditorTheme {
     /// Whether bracket pairs take `brackets`, from
     /// `editor.bracket_pair_colors`.
     pub bracket_pair_colors: bool,
+    /// Behind the minimap.
+    pub minimap_background: Hsla,
+    /// The minimap's slider over the visible rows: at rest, under the
+    /// pointer and while it's dragged.
+    pub minimap_slider: Hsla,
+    pub minimap_slider_hover: Hsla,
+    pub minimap_slider_active: Hsla,
+    /// The minimap's marks for the selection, find matches, and error and
+    /// warning diagnostics.
+    pub minimap_selection: Hsla,
+    pub minimap_find_match: Hsla,
+    pub minimap_error: Hsla,
+    pub minimap_warning: Hsla,
+    /// The minimap's git change marks.
+    pub minimap_gutter_added: Hsla,
+    pub minimap_gutter_modified: Hsla,
+    pub minimap_gutter_deleted: Hsla,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,

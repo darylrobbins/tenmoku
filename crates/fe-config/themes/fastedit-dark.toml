@@ -43,6 +43,22 @@ vim_mode_foreground = "#16181d"
 bracket_1 = "#ffd700"
 bracket_2 = "#da70d6"
 bracket_3 = "#179fff"
+# The minimap: its background, the slider over the visible rows (at rest,
+# hovered and dragged), and the marks for the selection, find matches,
+# error and warning diagnostics and git changes. VS Code's default dark
+# minimap colours: the slider is scrollbarSlider.* at half alpha; the find
+# match mark is the overview ruler's opaque #D18616, so a one-row match shows.
+minimap_background = "#16181d"
+minimap_slider = "#79797933"
+minimap_slider_hover = "#64646459"
+minimap_slider_active = "#BFBFBF33"
+minimap_selection = "#264F78"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#e5c07b"
+minimap_gutter_added = "#4f8a5b"
+minimap_gutter_modified = "#4e7fae"
+minimap_gutter_deleted = "#b05a64"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".
