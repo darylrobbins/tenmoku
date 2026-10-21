@@ -83,7 +83,8 @@ fn scenes() -> Vec<Scene> {
             name: "markdown_fence",
             path: "scene.md",
             text: MARKDOWN.to_owned(),
-            cold: &["markdown", "markdown_inline", "python"],
+            // markdown_inline is warm by now: highlighted_rust's doc comments inject it (T1015).
+            cold: &["markdown", "python"],
             annotations: &[],
         },
         Scene {
