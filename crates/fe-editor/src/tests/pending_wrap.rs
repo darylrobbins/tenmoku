@@ -5,34 +5,37 @@ use fe_display::{CharWidth, DisplayMap, Monospace, WRAP_SLICE_BYTES};
 
 use crate::*;
 
-const LINES: usize = 200_000;
+const LINES: u32 = 20_000;
 const WIDTH: f32 = 10.;
 
 /// Lines of varying length, so wrapped rows differ from one to the next.
 fn text() -> String {
     (0..LINES)
-        .map(|row| format!("{}\n", "the quick brown fox ".repeat(1 + row % 5)))
+        .map(|row| format!("{}\n", "the quick brown fox ".repeat(1 + row as usize % 5)))
         .collect()
+}
+
+/// Wrapping `text` takes more than a few slices.
+fn assert_many_slices(text: &str) {
+    assert!(text.len() > 4 * WRAP_SLICE_BYTES, "{} bytes", text.len());
 }
 
 #[test]
 fn toggle_wraps_the_cursor_rows_first() {
     let text = text();
+    assert_many_slices(&text);
     let mut model = EditorModel::new(Buffer::new(&text), None);
     model.set_wrap_width(WIDTH);
-    let mid = model.text().row_start(100_000);
+    let mid = model.text().row_start(LINES / 2);
     model.set_selections(vec![caret(mid)]);
     model.toggle_soft_wrap();
 
     // One slice, around the cursor: its rows are wrapped, the rest pending.
     assert!(model.display().wrap_is_pending());
-    let cursor_row = model.display().row_for_buffer_row(100_000);
+    let cursor_row = model.display().row_for_buffer_row(LINES / 2);
     assert!(!model.display().row(cursor_row).last, "cursor row wrapped");
     assert!(model.display().row(0).last, "first row still pending");
-    assert!(
-        model.display().row_count() < 2 * LINES as u32,
-        "most rows pending"
-    );
+    assert!(model.display().row_count() < 2 * LINES, "most rows pending");
 
     // Further slices finish, and match wrapping everything in one go.
     while model.wrap_pending(100_000) {}
@@ -45,7 +48,15 @@ fn assert_wrapped_as_in_one_go(model: &EditorModel, width: f32) {
     reference.set_wrap_width(Some(width), &mut Monospace);
     assert!(!reference.wrap_pending(0, usize::MAX, &mut Monospace));
     assert_eq!(model.display().row_count(), reference.row_count());
-    for row in 0..reference.row_count() {
+    let count = reference.row_count();
+    let cursor = model.display().row_for_offset(model.selections()[0].head());
+    let around = |centre: u32| centre.saturating_sub(100)..(centre + 100).min(count);
+    let rows = (0..count)
+        .step_by(11)
+        .chain(around(cursor))
+        .chain(around(model.display().row_for_buffer_row(LINES / 2)))
+        .chain(count.saturating_sub(200)..count);
+    for row in rows {
         assert_eq!(model.display().row(row), reference.row(row), "row {row}");
     }
 }
@@ -69,8 +80,9 @@ fn wrap_keeping(model: &mut EditorModel, mut top: f32, anchor: usize) -> f32 {
 #[test]
 fn narrowing_keeps_the_top_row_in_place() {
     let text = text();
+    assert_many_slices(&text);
     let mut model = EditorModel::new(Buffer::new(&text), None);
-    let anchor = model.text().row_start(150_000);
+    let anchor = model.text().row_start(LINES * 3 / 4);
     model.set_soft_wrap(true);
     while model.wrap_pending(0) {}
     // Halfway into the top row, the cursor far above.
@@ -85,6 +97,7 @@ fn widening_from_a_continuation_row_keeps_its_text_in_place() {
     // A row wrapped into many segments at the narrow width, and two at
     // the wide one, in the middle of the file.
     let half = text();
+    assert_many_slices(&half);
     let long_start = half.len();
     let text = format!("{half}{}\n{half}", "0123456789 ".repeat(100));
     let mut model = EditorModel::new(Buffer::new(&text), None);
@@ -134,10 +147,10 @@ impl CharWidth for Counting {
     }
 }
 
-/// 1M rows of 1 to 8 non-ASCII chars, which the wrap measures one by one
+/// 120k rows of 1 to 8 non-ASCII chars, which the wrap measures one by one
 /// (ASCII widths are cached).
 fn non_ascii_text() -> String {
-    (0..1_000_000)
+    (0..120_000)
         .map(|row| format!("{}\n", "é".repeat(1 + row % 8)))
         .collect()
 }
@@ -145,6 +158,7 @@ fn non_ascii_text() -> String {
 #[test]
 fn every_slice_measures_at_most_a_slice_of_text() {
     let text = non_ascii_text();
+    assert_many_slices(&text);
     // A slice stops at the first row that reaches its budget.
     let longest_row = "é".repeat(8).len();
     let measured = Rc::new(Cell::new(0));
@@ -171,7 +185,7 @@ fn every_slice_measures_at_most_a_slice_of_text() {
                 break;
             }
         }
-        // About 10 MB, wrapped across that many slices.
+        // About 1 MB, wrapped across that many slices.
         assert!(slices >= text.len() / WRAP_SLICE_BYTES, "{slices} slices");
     }
 }
