@@ -1,0 +1,29 @@
+[package]
+name = "fe-chat-view"
+description = "The AI chat's GPUI view: transcript, composer and attachments, over any fe-chat provider."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Not fe-workbench: the host product embeds the view as fastedit's
+# workbench does (the AI chat record's § 1).
+[dependencies]
+fe-buffer.workspace = true
+fe-chat.workspace = true
+fe-editor.workspace = true
+fe-gpui.workspace = true
+futures.workspace = true
+gpui.workspace = true
+kiln.workspace = true
+kiln-ui.workspace = true
+log.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

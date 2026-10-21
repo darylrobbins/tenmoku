@@ -97,6 +97,9 @@ pub struct EditorView {
     pub(crate) search_preview: Option<crate::vim::SearchPreview>,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
+    /// Vim stays off here whatever the switch says
+    /// ([`EditorView::set_vim_off`]).
+    pub(crate) vim_off: bool,
     /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
     /// typing paths they go through don't record them again.
     pub(crate) vim_replaying: bool,
@@ -323,6 +326,7 @@ impl EditorView {
             yank_flash: None,
             search_preview: None,
             vim_generation: 0,
+            vim_off: false,
             vim_replaying: false,
             command_failed: false,
             press_settled: false,

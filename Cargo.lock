@@ -2111,6 +2111,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-chat-view"
+version = "0.1.0"
+dependencies = [
+ "fe-buffer",
+ "fe-chat",
+ "fe-editor",
+ "fe-gpui",
+ "futures",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "kiln",
+ "kiln-ui",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "fe-config"
 version = "0.1.0"
 dependencies = [

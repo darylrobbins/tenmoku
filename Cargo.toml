@@ -46,6 +46,7 @@ fe-markdown = { path = "crates/fe-markdown" }
 fe-markdown-view = { path = "crates/fe-markdown-view" }
 fe-chat = { path = "crates/fe-chat" }
 fe-chat-anthropic = { path = "crates/fe-chat-anthropic" }
+fe-chat-view = { path = "crates/fe-chat-view" }
 fe-net = { path = "crates/fe-net" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).

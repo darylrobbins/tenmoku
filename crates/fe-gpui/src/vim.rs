@@ -1075,6 +1075,7 @@ impl EditorView {
             return false;
         }
         self.vim_generation = generation;
+        let enabled = enabled && !self.vim_off;
         let was_on = self.vim.is_some();
         // A new state's yank serials start again, and its line is closed.
         self.yank_seen = 0;
@@ -1089,6 +1090,25 @@ impl EditorView {
             state
         });
         was_on || enabled
+    }
+
+    /// Keeps vim off in this editor whatever the switch says, as an input
+    /// such as a chat's composer wants, or has it follow the switch again.
+    pub fn set_vim_off(&mut self, off: bool, cx: &mut Context<Self>) {
+        if self.vim_off == off {
+            return;
+        }
+        self.vim_off = off;
+        // Synced again, as a turn of the switch would.
+        self.vim_generation = self.vim_generation.wrapping_sub(1);
+        if self.sync_vim(cx) {
+            cx.notify();
+        }
+    }
+
+    /// Whether vim is kept off here ([`EditorView::set_vim_off`]).
+    pub fn is_vim_off(&self) -> bool {
+        self.vim_off
     }
 
     /// The vim mode, `vim.mode`'s value (`normal`, `operator_pending`, …),
