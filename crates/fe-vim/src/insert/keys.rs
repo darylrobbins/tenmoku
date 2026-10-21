@@ -595,31 +595,36 @@ fn boundary(text: &str, at: usize) -> usize {
 pub(crate) fn retype(
     model: &mut EditorModel,
     host: &dyn EditorHost,
-    state: &VimState,
+    state: &mut VimState,
     text: &str,
     origin: Origin,
     reads: &Reads,
 ) {
     let replacing = state.mode == Mode::Replace;
-    let type_text = |model: &mut EditorModel, text: &str| match replacing {
+    let type_text = |state: &VimState, model: &mut EditorModel, text: &str| match replacing {
         true => crate::replace::retype(state, model, text),
         false => type_at_carets(model, host, text, origin.clone()),
     };
     if state.session.is_none() {
-        return type_text(model, text);
+        return type_text(state, model, text);
     }
     for piece in pieces(text) {
         match piece {
-            Piece::Text(run) => type_text(model, &run),
+            Piece::Text(run) => type_text(state, model, &run),
             Piece::Back(n) => {
                 back_at_carets(model, n, origin.clone());
             }
             Piece::Key(Key::Indent(key)) => state.indent_key(model, key, false),
             Piece::Key(Key::Delete(key)) => state.delete_key(model, key),
+            // Noted as typing it does, for the dots and counts after.
             Piece::Key(Key::Register(how, name)) => {
-                if let Some(value) = reads.get(&name) {
-                    insert_literal(model, value, how);
-                }
+                let (Some(value), Some(session)) = (reads.get(&name), state.session.as_mut())
+                else {
+                    continue;
+                };
+                let before = primary_typed(model, session);
+                insert_literal(model, value, how);
+                note_register(model, session, how, name, before, whole_lines(value));
             }
         }
     }
@@ -836,12 +841,10 @@ impl VimState {
         self.register_key = self.session_id().map(|id| (RegisterKey::Start, id));
     }
 
-    /// Which open insert session this is, while in insert mode.
+    /// Which open insert session this is, while in insert or replace mode.
     fn session_id(&self) -> Option<usize> {
-        let session = self
-            .session
-            .as_ref()
-            .filter(|_| self.mode == Mode::Insert)?;
+        let session = (self.session.as_ref())
+            .filter(|_| matches!(self.mode, Mode::Insert | Mode::Replace))?;
         Some(Arc::as_ptr(&session.ledger) as *const () as usize)
     }
 
@@ -861,8 +864,14 @@ impl VimState {
     /// first the caret's row's indent. An empty register inserts nothing.
     /// `<Esc>`, `=` (an expression, which fe-vim has none of) and a key
     /// that names no register insert nothing and leave insert mode as it
-    /// was. Known limit: only the primary caret's row takes a
-    /// `<C-r><C-p>`'s indent.
+    /// was. In replace mode the text overwrites as typed text does (and
+    /// `<BS>` puts back what it overwrote), while whole lines of
+    /// `<C-r><C-o>` and `<C-r><C-p>` go above the row as in insert mode.
+    /// Known limits: only the primary caret's row takes a `<C-r><C-p>`'s
+    /// indent; in replace mode `.` after `<C-r><C-o>` or `<C-r><C-p>`
+    /// types the text again rather than reading the register, and a
+    /// charwise register with a line break breaks the row where nvim
+    /// leaves the characters after it in place.
     pub fn insert_register_key(
         &mut self,
         model: &mut EditorModel,
@@ -890,7 +899,7 @@ impl VimState {
         let VimKey::Char(name) = key else {
             return;
         };
-        if !readable(name) || self.mode != Mode::Insert || self.session.is_none() {
+        if !readable(name) || self.session.is_none() {
             return;
         }
         registers.adopt_inserted(self);
@@ -903,8 +912,11 @@ impl VimState {
             return;
         };
         // `.` and a count read these two again, whole lines above the
-        // caret's row among them.
-        let recorded = how.filter(|&how| how != LiteralInsert::Plain);
+        // caret's row among them. Replace mode's keys hold what it typed,
+        // which is what they replay.
+        let recorded = how
+            .filter(|&how| how != LiteralInsert::Plain)
+            .filter(|_| self.mode == Mode::Insert);
         let before = recorded.and_then(|_| Some(primary_typed(model, self.session.as_ref()?)));
         let whole = whole_lines(&value) && !value.text.is_empty();
         let failed = self.failed;
@@ -915,20 +927,7 @@ impl VimState {
         let Some(session) = self.session.as_mut() else {
             return;
         };
-        if whole && matches!(how, LiteralInsert::Above | LiteralInsert::FixIndent) {
-            // The carets are above where typing began: it begins again
-            // there, as nvim's redo has it.
-            let snapshot = model.snapshot();
-            session.regions = (model.selections().iter())
-                .map(|selection| super::Region {
-                    start: snapshot.anchor_before(selection.head()),
-                    end: snapshot.anchor_after(selection.head()),
-                })
-                .collect();
-        }
-        let after = primary_typed(model, session);
-        let key = Key::Register(how, name);
-        session.ledger().keys.push(Noted { key, before, after });
+        note_register(model, session, how, name, before, whole);
     }
 
     /// `<C-a>` in insert mode (`:help i_CTRL-A`): the text the last insert
@@ -975,7 +974,13 @@ impl VimState {
                 return;
             }
         };
+        // In replace mode the text overwrites as typed text does, a line
+        // break among it breaking the row; whole lines above the row (and
+        // `<C-r><C-o>`, `<C-r><C-p>` with them) go in as in insert mode.
+        let above = matches!(how, Some(LiteralInsert::Above | LiteralInsert::FixIndent));
+        let replacing = self.mode == Mode::Replace && !(above && whole_lines(&value));
         match how {
+            _ if replacing => self.replace_text(model, &text),
             None => {
                 for (ix, part) in text.split('\n').enumerate() {
                     if ix > 0 {
@@ -990,6 +995,33 @@ impl VimState {
         }
         self.goals = None;
     }
+}
+
+/// Notes in `session` that `<C-r>` with `how` and `name` inserted text
+/// (`whole` lines of it, or not) at the carets, `before` being what the
+/// primary caret had typed: `.` and a count read the register again, and
+/// typing begins again where whole lines went in above the carets, as
+/// nvim's redo has it.
+fn note_register(
+    model: &mut EditorModel,
+    session: &mut Session,
+    how: LiteralInsert,
+    name: char,
+    before: String,
+    whole: bool,
+) {
+    if whole && matches!(how, LiteralInsert::Above | LiteralInsert::FixIndent) {
+        let snapshot = model.snapshot();
+        session.regions = (model.selections().iter())
+            .map(|selection| super::Region {
+                start: snapshot.anchor_before(selection.head()),
+                end: snapshot.anchor_after(selection.head()),
+            })
+            .collect();
+    }
+    let after = primary_typed(model, session);
+    let key = Key::Register(how, name);
+    session.ledger().keys.push(Noted { key, before, after });
 }
 
 /// `value`'s text as insert mode takes it, line breaks as `\n` and a

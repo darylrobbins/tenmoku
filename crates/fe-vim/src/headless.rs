@@ -225,7 +225,18 @@ impl HeadlessVim {
     /// `vim.replace_normal_mode`; [`VimState::insert_key`] takes the same keys.
     fn replace_key(&mut self, key: VimKey) -> Result<(), FeedError> {
         let context = context(&self.state);
+        // The key after `<C-r>` names the register to insert.
+        if self.state.insert_register_waiting() {
+            self.state.insert_register_key(
+                &mut self.model,
+                &mut self.host,
+                &mut self.registers,
+                key,
+            );
+            return Ok(());
+        }
         match key {
+            VimKey::Ctrl('r') => self.state.insert_register_start(),
             VimKey::Char(ch) => self
                 .state
                 .replace_text(&mut self.model, ch.encode_utf8(&mut [0; 4])),

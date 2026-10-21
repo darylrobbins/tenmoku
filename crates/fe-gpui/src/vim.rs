@@ -1636,7 +1636,11 @@ impl EditorView {
             // `ctrl-t`, `ctrl-d` and `ctrl-o` are vim's in insert and
             // replace mode, and so are the other ctrl keys it takes.
             return match vim_key(keystroke) {
-                Some(key @ VimKey::Ctrl('r' | 'a')) if self.typing_mode() == Some(false) => {
+                Some(key @ VimKey::Ctrl('r')) if self.typing_mode().is_some() => {
+                    self.record_vim_key(key);
+                    self.register_typing(Some(key), cx)
+                }
+                Some(key @ VimKey::Ctrl('a')) if self.typing_mode() == Some(false) => {
                     self.record_vim_key(key);
                     self.register_typing(Some(key), cx)
                 }
@@ -2475,7 +2479,8 @@ impl EditorView {
             fe_vim::Mode::Insert | fe_vim::Mode::Replace => {
                 state.record_key(key);
                 if state.insert_register_waiting()
-                    || (mode == fe_vim::Mode::Insert && matches!(key, VimKey::Ctrl('r' | 'a')))
+                    || key == VimKey::Ctrl('r')
+                    || (mode == fe_vim::Mode::Insert && key == VimKey::Ctrl('a'))
                 {
                     return self.register_typing(Some(key), cx);
                 }

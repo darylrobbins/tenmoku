@@ -236,3 +236,123 @@ name = "counted_ctrl_r_insertion"
 buffer = "abc\ndef"
 cursor = [0, 0]
 keys = "yy3A<C-r><C-o>\"X<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_overwrites"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "yiwwRxy<C-r>0Z<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_past_end_of_line"
+buffer = "abc\nxyz\nlast"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r>0Z<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_backspace_restores"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "yiwwR12<C-r>0<BS><BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_linewise"
+buffer = "abc\nxyz\nlast"
+cursor = [0, 0]
+keys = "yyjRQ<C-r>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_literal"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r><C-r>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_counted"
+buffer = "abc\nxyz uvw 123456"
+cursor = [0, 0]
+keys = "yiwj3RQ<C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_dot_repeat"
+buffer = "abc\nxyz uvw 123456"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r>0<Esc>w."
+
+[[case]]
+name = "replace_ctrl_r_counted_dot_repeat"
+buffer = "abc\nxyz uvw 123456"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r>0<Esc>3."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_linewise_above"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_linewise_above"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_virtual"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjgRQ<C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_undo"
+buffer = "abc\nxyz uvw 123456"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r>0<Esc>u"
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_o_consecutive_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-o>\"X<Esc>j.j."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_o_register_changes_between_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-o>\"X<Esc>jyyj.Gyyk."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_o_counted_dot"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-o>\"X<Esc>j3."
+
+[[case]]
+name = "charwise_ctrl_r_ctrl_o_consecutive_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r><C-o>a<Esc>j\"ayiwj.j."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_p_consecutive_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-p>\"X<Esc>j.j."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_p_register_changes_between_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-p>\"X<Esc>jyyj.Gyyk."
+
+[[case]]
+name = "linewise_ctrl_r_ctrl_p_counted_dot"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-p>\"X<Esc>j3."
+
+[[case]]
+name = "charwise_ctrl_r_ctrl_p_consecutive_dots"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r><C-p>a<Esc>j\"ayiwj.j."

@@ -273,20 +273,30 @@ fn ctrl_r_inserts_a_register(cx: &mut TestAppContext) {
     }
 }
 
-/// Replace mode is a known limit: `<C-r>` there leaves nothing pending, and
-/// the next key types as it did before insert mode took the key.
+/// `<C-r>{reg}` in replace mode overwrites as typed text does, and `<BS>`
+/// puts back what it overwrote.
 #[gpui::test]
-fn ctrl_r_in_replace_mode_leaves_nothing_pending(cx: &mut TestAppContext) {
+fn ctrl_r_in_replace_mode_overwrites(cx: &mut TestAppContext) {
     for (os, source) in PLATFORMS {
-        let (view, cx) = editor(cx, source, "foo bar");
-        cx.simulate_keystrokes("shift-r ctrl-r x");
-        assert!(
-            !view.read_with(cx, |view, _| view.register_waiting()),
-            "{os}"
-        );
-        assert_eq!(text_of(&view, cx), "xoo bar", "{os}");
-        cx.simulate_keystrokes("ctrl-w y escape");
-        assert_eq!(mode(&view, cx), Some("normal"), "{os}");
+        for (keys, after) in [
+            ("y i w w shift-r x ctrl-r \" y escape", "foo xfooy"),
+            ("y i w shift-r ctrl-r a ctrl-r ctrl-r \" escape", "foo bar"),
+            (
+                "y i w w shift-r ctrl-r \" backspace backspace backspace escape",
+                "foo bar",
+            ),
+            ("y i w w shift-r ctrl-r \" escape", "foo foo"),
+            ("y i w w shift-r ctrl-r escape x escape", "foo xar"),
+        ] {
+            let (view, cx) = editor(cx, source, "foo bar");
+            cx.simulate_keystrokes(keys);
+            assert_eq!(text_of(&view, cx), after, "{os}: {keys}");
+            assert!(
+                !view.read_with(cx, |view, _| view.register_waiting()),
+                "{os}: {keys}"
+            );
+            assert_eq!(mode(&view, cx), Some("normal"), "{os}: {keys}");
+        }
     }
 }
 

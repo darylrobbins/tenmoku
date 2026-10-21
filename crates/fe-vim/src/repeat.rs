@@ -186,7 +186,7 @@ fn replay(
             insert::retype_keys(
                 target.model,
                 &*target.host,
-                &*target.state,
+                &mut *target.state,
                 text,
                 origin(actor),
                 &reads,
