@@ -287,16 +287,22 @@ fn todays_entry_restores_and_saves_the_same(cx: &mut TestAppContext) {
     assert_eq!(breadcrumbs, (false, vec![false, false]));
 
     // Saved again, once its files were in, the same, but for the
-    // Explorer's views, saved before it as built.
+    // Explorer's and Source Control's views, saved before them as built.
     assert_eq!(
         cx.update(|window, _| window.window_bounds()),
         layout::restore_bounds(&entry["bounds"]).unwrap()
     );
     let mut entry = entry;
-    entry["dock"]["panels"] = json!({"project": {"views": {
-        "folders": {"collapsed": false, "weight": 1.0},
-        "outline": {"collapsed": true, "weight": 1.0},
-    }}});
+    entry["dock"]["panels"] = json!({
+        "project": {"views": {
+            "folders": {"collapsed": false, "weight": 1.0},
+            "outline": {"collapsed": true, "weight": 1.0},
+        }},
+        "scm": {"views": {
+            "changes": {"collapsed": false, "weight": 1.0},
+            "graph": {"collapsed": false, "weight": 1.0},
+        }},
+    });
     assert_eq!(saved(&project.store), std::slice::from_ref(&entry));
     let again = workbench.read_with(cx, |workbench, cx| workbench.layout_entry(cx));
     assert_eq!(again, entry);

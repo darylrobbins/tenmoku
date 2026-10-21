@@ -1,5 +1,6 @@
-//! The Changes panel on the right dock: the project's files that differ
-//! from git's HEAD in VS Code's groups, "Staged Changes" (how the index
+//! The Changes panel, the Changes view of the right dock's Source Control
+//! (`dock::source_control`), focused when shown: the project's files that
+//! differ from git's HEAD in VS Code's groups, "Staged Changes" (how the index
 //! differs from HEAD, shown only when there are any) and "Changes" (how the
 //! working tree differs from the index, untracked files too, as `U`), each
 //! header with its count. A file staged and changed again is in both. Each
@@ -94,19 +95,6 @@ use crate::{
     Workbench,
     git::GitState,
     picker::{self, PaletteOp},
-};
-
-/// The git changes in the sidebar: focused when shown, as its rows take Enter
-/// and the arrows.
-pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
-    panel: crate::DockPanel::new("changes"),
-    name: "Changes",
-    icon: fe_ui::Icon::GitBranch,
-    show_command: "git.show_changes",
-    show_op: crate::dock::DockOp::ShowChanges,
-    order: 40,
-    always_on_rail: true,
-    focus_on_show: true,
 };
 
 /// The key context the panel's element sets.

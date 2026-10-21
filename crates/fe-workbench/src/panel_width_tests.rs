@@ -53,7 +53,7 @@ fn panels_follow_the_dock_width(cx: &mut TestAppContext) {
         for panel in [
             DockPanel::Explorer,
             DockPanel::Search,
-            DockPanel::Changes,
+            DockPanel::SourceControl,
             DockPanel::References,
             DockPanel::Problems,
         ] {

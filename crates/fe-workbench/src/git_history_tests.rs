@@ -307,7 +307,7 @@ fn lists(cx: &mut TestAppContext) {
     focus_on(&editor_focus, cx);
     ex("Gclog", cx);
     assert_eq!(message(&editor, cx), None);
-    let log = (true, DockPanel::GitLog, "Git Log: main".to_owned());
+    let log = (true, DockPanel::SourceControl, "Source Control".to_owned());
     assert_eq!(dock(&workbench, cx), log);
     for (line, answer) in [
         ("3Gclog", "Not supported yet: :3Gclog"),

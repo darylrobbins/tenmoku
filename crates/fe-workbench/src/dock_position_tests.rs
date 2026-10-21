@@ -252,7 +252,7 @@ fn assert_panels_fill(width: Pixels, workbench: &Entity<Workbench>, cx: &mut Vis
     for panel in [
         DockPanel::Explorer,
         DockPanel::Search,
-        DockPanel::Changes,
+        DockPanel::SourceControl,
         DockPanel::References,
         DockPanel::Problems,
     ] {
