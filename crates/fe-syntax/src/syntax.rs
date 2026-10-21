@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     ops::{ControlFlow, Range},
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -16,6 +17,7 @@ use crate::{
     brackets::Paired,
     highlight::{Capture, Painted, flatten, highlighted},
     injection::{self, Layers},
+    outline::ScopeIndex,
     runtime::ThreadParser,
 };
 
@@ -139,6 +141,11 @@ pub struct Syntax {
     /// [`crate::bracket_depths`] pairs each once a parse, not once a frame.
     /// Emptied when the tree is edited or replaced.
     wide_brackets: RefCell<HashMap<usize, Paired>>,
+    /// [`crate::outline_scopes`]' index of every scope of `tree`, for
+    /// Markdown, whose sections depend on the whole tree, so it's found
+    /// once a parse, not once a frame. Emptied when the tree is edited or
+    /// replaced.
+    section_scopes: RefCell<Option<Arc<ScopeIndex>>>,
     /// Set when parsing or highlighting panicked.
     failed: Cell<bool>,
     /// How long the last incremental reparse took, if there's been one since
@@ -158,6 +165,7 @@ impl Syntax {
             window_parsed: None,
             cache: RefCell::default(),
             wide_brackets: RefCell::default(),
+            section_scopes: RefCell::default(),
             failed: Cell::new(false),
             last_reparse: None,
         }
@@ -189,6 +197,7 @@ impl Syntax {
         if snapshot.id() != self.snapshot.id() || snapshot.version() != version {
             cache.forget_ranges();
             self.wide_brackets.get_mut().clear();
+            *self.section_scopes.get_mut() = None;
         }
         let mapped = snapshot.id() == self.snapshot.id()
             && snapshot.version() >= version
@@ -359,6 +368,7 @@ impl Syntax {
         }
         self.tree = Some(tree);
         self.wide_brackets.get_mut().clear();
+        *self.section_scopes.get_mut() = None;
         self.parsed = Some(version);
         self.window = None;
         self.window_parsed = None;
@@ -380,6 +390,16 @@ impl Syntax {
             .borrow_mut()
             .entry(id)
             .or_insert_with(|| pair().into())
+            .clone()
+    }
+
+    /// The scope index of `tree`, from `index` the first time a parse asks.
+    pub(crate) fn section_scopes(
+        &self,
+        index: impl FnOnce() -> Arc<ScopeIndex>,
+    ) -> Arc<ScopeIndex> {
+        (self.section_scopes.borrow_mut())
+            .get_or_insert_with(index)
             .clone()
     }
 

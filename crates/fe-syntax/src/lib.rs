@@ -16,6 +16,8 @@
 //!   bodies, lists and comments span, for folding.
 //! - [`outline`] lists a parsed file's symbols, nested, from our own
 //!   per-language outline queries; [`outline_job`] runs it on another thread.
+//!   [`outline_scopes`] lists just the items enclosing some rows, for sticky
+//!   scroll.
 //!   [`symbols`] adds fields, enum variants and variables, for a tags index.
 //! - [`fence_language`] is the language a Markdown fence's info string names.
 //! - [`suggest_indent`] suggests a row's indentation and [`closer_outdents`]
@@ -55,7 +57,7 @@ pub use language::{
 };
 pub use outline::{
     MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineItem, OutlineJob, OutlineKind, outline,
-    outline_job, outline_supported, symbols, symbols_job, symbols_supported,
+    outline_job, outline_scopes, outline_supported, symbols, symbols_job, symbols_supported,
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
 pub use runtime::{

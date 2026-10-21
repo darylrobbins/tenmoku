@@ -15,8 +15,8 @@
 use std::{
     cell::{OnceCell, RefCell},
     collections::HashMap,
-    ops::Range,
-    sync::OnceLock,
+    ops::{Range, RangeInclusive},
+    sync::{Arc, OnceLock},
 };
 
 use fe_buffer::{Text, Version};
@@ -191,6 +191,115 @@ pub fn outline(syntax: &Syntax) -> Result<Outline, NoOutline> {
     Ok(outline_job(syntax)?.run())
 }
 
+/// The [`outline`] items overlapping `rows` that span at least two rows, as
+/// `header..=last` row ranges, the shape of [`fold_ranges`](crate::fold_ranges),
+/// for sticky scroll. `header` is the item's [`OutlineItem::row`], the row
+/// of its name, so a decorated function's header is its `def`, and `last`
+/// is the row its range ends on, or the row before when it ends at column
+/// 0. They're sorted by header, one per header row: the outermost.
+///
+/// The query runs only over `rows`' bytes, so items spanning the whole
+/// file cost their depth, not their size, and matches of items outside the
+/// rows, such as an enclosing impl's other methods, are dropped before
+/// their predicates run. There's no cap, as the outline's. Markdown is the
+/// exception: a section's range depends on the headings before and after
+/// it, so its scopes are all found once a parse and looked up after that.
+pub fn outline_scopes(
+    syntax: &Syntax,
+    rows: Range<u32>,
+) -> Result<Vec<RangeInclusive<u32>>, NoOutline> {
+    let job = outline_job(syntax)?;
+    let text = &job.text;
+    if rows.start >= rows.end || rows.start >= text.row_count() {
+        return Ok(Vec::new());
+    }
+    let compiled = job.query.outline(job.language);
+    if (compiled.captures.iter())
+        .any(|capture| matches!(capture, Capture::Item(OutlineKind::Heading(_))))
+    {
+        let index = syntax.section_scopes(|| {
+            let all = Find::Overlapping(0..text.len());
+            let (found, _) = find(job.language, compiled, &job.tree, text, all);
+            Arc::new(ScopeIndex::new(scopes_of(text, &found, 0..u32::MAX)))
+        });
+        return Ok(index.overlapping(rows));
+    }
+    let end = match rows.end < text.row_count() {
+        true => text.row_start(rows.end),
+        false => text.len(),
+    };
+    let bytes = Find::Overlapping(text.row_start(rows.start)..end);
+    let (found, _) = find(job.language, compiled, &job.tree, text, bytes);
+    Ok(scopes_of(text, &found, rows))
+}
+
+/// The items of `found` spanning two rows or more that overlap `rows`, as
+/// `header..=last`, sorted by header, the outermost of each header.
+fn scopes_of(text: &Text, found: &[Found<'_>], rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
+    let mut scopes: Vec<RangeInclusive<u32>> = (found.iter())
+        .filter_map(|found| {
+            let header = text.offset_to_point(found.name_range.start).row;
+            let end = text.offset_to_point(found.range.end);
+            let last = match end.column {
+                0 => end.row.saturating_sub(1),
+                _ => end.row,
+            };
+            (header < last && header < rows.end && rows.start <= last).then_some(header..=last)
+        })
+        .collect();
+    // By header, outermost first, then the outermost of each header.
+    scopes.sort_by_key(|scope| (*scope.start(), std::cmp::Reverse(*scope.end())));
+    scopes.dedup_by_key(|scope| *scope.start());
+    scopes
+}
+
+/// Every scope of a tree, for [`outline_scopes`] on a language whose
+/// sections depend on the headings before and after them, found once a
+/// parse.
+pub(crate) struct ScopeIndex {
+    /// As [`scopes_of`] sorts them. They nest.
+    scopes: Vec<RangeInclusive<u32>>,
+    /// The index of the scope each is directly in.
+    parents: Vec<Option<usize>>,
+}
+
+impl ScopeIndex {
+    fn new(scopes: Vec<RangeInclusive<u32>>) -> Self {
+        let mut parents = Vec::with_capacity(scopes.len());
+        let mut stack: Vec<usize> = Vec::new();
+        for scope in &scopes {
+            while stack
+                .last()
+                .is_some_and(|&top| scopes[top].end() < scope.end())
+            {
+                stack.pop();
+            }
+            parents.push(stack.last().copied());
+            stack.push(parents.len() - 1);
+        }
+        Self { scopes, parents }
+    }
+
+    /// The scopes overlapping `rows`, as [`scopes_of`] gives them: those
+    /// enclosing its first row, found up the parents of the last scope
+    /// starting above it, then those starting in it.
+    fn overlapping(&self, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
+        let first = (self.scopes).partition_point(|scope| *scope.start() < rows.start);
+        let end = (self.scopes).partition_point(|scope| *scope.start() < rows.end);
+        let mut scopes = Vec::new();
+        let mut ix = first.checked_sub(1);
+        while let Some(i) = ix {
+            if *self.scopes[i].end() >= rows.start {
+                scopes.push(self.scopes[i].clone());
+            }
+            ix = self.parents[i];
+        }
+        scopes.reverse();
+        scopes.extend_from_slice(&self.scopes[first..end.max(first)]);
+        scopes
+    }
+}
+
 /// Whether the language with this name has an outline query.
 pub fn outline_supported(language_name: &str) -> bool {
     query_for(language_name).is_some()
@@ -251,131 +360,7 @@ impl OutlineJob {
             self.query.outline(self.language)
         };
         let text = &self.text;
-        let context = Context {
-            text,
-            root: self.tree.root_node(),
-            cpp_scopes: OnceCell::new(),
-            ruby_scopes: RefCell::default(),
-            lua_targets: RefCell::default(),
-        };
-        let mut cursor = QueryCursor::new();
-        // Predicates like `#match?` read node text straight from the rope.
-        let source = |node: Node| chunks(text, node.byte_range());
-        let mut matches = cursor.matches(&compiled.query, self.tree.root_node(), source);
-        let mut found: Vec<Found<'_>> = Vec::new();
-        let mut by_node: HashMap<usize, usize> = HashMap::new();
-        let mut truncated = false;
-        // Once truncated, the sections still open: headings past the cap
-        // aren't listed, but they end those sections.
-        let mut open: Option<OpenSections> = None;
-        while let Some(found_match) = matches.next() {
-            let captures = found_match.captures();
-            let predicates = &compiled.predicates[found_match.pattern_index];
-            if !(predicates.iter()).all(|predicate| predicate.holds(captures, &context)) {
-                continue;
-            }
-            let mut item: Option<(OutlineKind, Node)> = None;
-            let mut name: Option<Range<usize>> = None;
-            let mut names_function = false;
-            for capture in captures {
-                match compiled.captures[capture.index as usize] {
-                    Capture::Item(kind) => item = Some((kind, capture.node)),
-                    Capture::Other => {}
-                    Capture::Name => {
-                        let declared = declared_name(capture.node);
-                        names_function |= declares_function(declared);
-                        let range = name_range(declared, self.language.name());
-                        name = Some(match name {
-                            Some(name) => merge(name, range),
-                            None => range,
-                        });
-                    }
-                }
-            }
-            let Some((kind, node)) = item else {
-                continue;
-            };
-            // A C prototype, int f(void);, declares a function, not a
-            // variable, and isn't a definition.
-            if kind == OutlineKind::Variable && names_function {
-                continue;
-            }
-            let section = match kind {
-                OutlineKind::Heading(level) => Some(Section::of(node, level)),
-                _ => None,
-            };
-            if let Some(open) = &open {
-                if let Some(section) = section {
-                    open.close(&mut found, node.start_byte(), section);
-                }
-                continue;
-            }
-            let name_range = match kind {
-                // Headings come from tree-sitter-md, whose node kinds these
-                // are.
-                OutlineKind::Heading(_) => match name {
-                    Some(name) if node.kind() == "atx_heading" => {
-                        without_closing_sequence(text, name)
-                    }
-                    Some(name) => name,
-                    // An empty ATX heading.
-                    None => {
-                        let marker = node.child(0).map_or(node.start_byte(), |m| m.end_byte());
-                        marker..marker
-                    }
-                },
-                _ => match name {
-                    Some(name) => name,
-                    None => continue,
-                },
-            };
-            let pattern = found_match.pattern_index;
-            if let Some(&ix) = by_node.get(&node.id()) {
-                let found = &mut found[ix];
-                if pattern == found.pattern {
-                    // The same pattern again, as when a repeated @name
-                    // matches fewer of the names: the name runs from the
-                    // first to the last.
-                    found.name_range = merge(found.name_range.clone(), name_range);
-                } else if pattern < found.pattern {
-                    // The first pattern in the query wins, as Method over
-                    // Function for a fn in an impl.
-                    *found = Found {
-                        pattern,
-                        kind,
-                        node,
-                        range: node.byte_range(),
-                        name_range,
-                        section,
-                    };
-                }
-                continue;
-            }
-            if found.len() == MAX_OUTLINE_ITEMS {
-                truncated = true;
-                let sections = extend_to_sections(&mut found);
-                if sections.is_empty() {
-                    break;
-                }
-                if let Some(section) = section {
-                    sections.close(&mut found, node.start_byte(), section);
-                }
-                open = Some(sections);
-                continue;
-            }
-            by_node.insert(node.id(), found.len());
-            found.push(Found {
-                pattern,
-                kind,
-                node,
-                range: node.byte_range(),
-                name_range,
-                section,
-            });
-        }
-        if !truncated {
-            extend_to_sections(&mut found);
-        }
+        let (mut found, truncated) = find(self.language, compiled, &self.tree, text, Find::All);
         // By start, longer first, so a parent comes before its children.
         found.sort_by_key(|found| (found.range.start, std::cmp::Reverse(found.range.end)));
         let mut items: Vec<OutlineItem> = Vec::with_capacity(found.len());
@@ -413,6 +398,171 @@ impl OutlineJob {
             version: self.version,
         }
     }
+}
+
+/// Which items [`find`] finds.
+enum Find {
+    /// Every one, up to [`MAX_OUTLINE_ITEMS`].
+    All,
+    /// Only those whose node overlaps these bytes, however many, for
+    /// scopes: their kinds may be wrong. The query runs over just these
+    /// bytes, and other matches are dropped before their predicates run.
+    Overlapping(Range<usize>),
+}
+
+/// Runs `compiled` over `tree` and returns the items `what` asks for, in no
+/// order and not nested, each heading with its section's range, and
+/// whether items past [`MAX_OUTLINE_ITEMS`] were left out.
+fn find<'tree>(
+    language: &Language,
+    compiled: &Compiled,
+    tree: &'tree Tree,
+    text: &Text,
+    what: Find,
+) -> (Vec<Found<'tree>>, bool) {
+    let context = Context {
+        text,
+        root: tree.root_node(),
+        kinds: matches!(what, Find::All),
+        cpp_scopes: OnceCell::new(),
+        ruby_scopes: RefCell::default(),
+        lua_targets: RefCell::default(),
+    };
+    let mut cursor = QueryCursor::new();
+    let overlapping = match what {
+        Find::All => None,
+        Find::Overlapping(bytes) => {
+            cursor.set_byte_range(bytes.clone());
+            Some(bytes)
+        }
+    };
+    // Predicates like `#match?` read node text straight from the rope.
+    let source = |node: Node| chunks(text, node.byte_range());
+    let mut matches = cursor.matches(&compiled.query, tree.root_node(), source);
+    let mut found: Vec<Found<'_>> = Vec::new();
+    let mut by_node: HashMap<usize, usize> = HashMap::new();
+    let mut truncated = false;
+    // Once truncated, the sections still open: headings past the cap
+    // aren't listed, but they end those sections.
+    let mut open: Option<OpenSections> = None;
+    while let Some(found_match) = matches.next() {
+        let captures = found_match.captures();
+        // A pattern rooted at an enclosing node, such as an impl's methods,
+        // matches its other children too.
+        if let Some(bytes) = &overlapping
+            && !(captures.iter()).any(|capture| {
+                matches!(compiled.captures[capture.index as usize], Capture::Item(_))
+                    && capture.node.start_byte() < bytes.end
+                    && bytes.start < capture.node.end_byte()
+            })
+        {
+            continue;
+        }
+        let predicates = &compiled.predicates[found_match.pattern_index];
+        if !(predicates.iter()).all(|predicate| predicate.holds(captures, &context)) {
+            continue;
+        }
+        let mut item: Option<(OutlineKind, Node)> = None;
+        let mut name: Option<Range<usize>> = None;
+        let mut names_function = false;
+        for capture in captures {
+            match compiled.captures[capture.index as usize] {
+                Capture::Item(kind) => item = Some((kind, capture.node)),
+                Capture::Other => {}
+                Capture::Name => {
+                    let declared = declared_name(capture.node);
+                    names_function |= declares_function(declared);
+                    let range = name_range(declared, language.name());
+                    name = Some(match name {
+                        Some(name) => merge(name, range),
+                        None => range,
+                    });
+                }
+            }
+        }
+        let Some((kind, node)) = item else {
+            continue;
+        };
+        // A C prototype, int f(void);, declares a function, not a
+        // variable, and isn't a definition.
+        if kind == OutlineKind::Variable && names_function {
+            continue;
+        }
+        let section = match kind {
+            OutlineKind::Heading(level) => Some(Section::of(node, level)),
+            _ => None,
+        };
+        if let Some(open) = &open {
+            if let Some(section) = section {
+                open.close(&mut found, node.start_byte(), section);
+            }
+            continue;
+        }
+        let name_range = match kind {
+            // Headings come from tree-sitter-md, whose node kinds these
+            // are.
+            OutlineKind::Heading(_) => match name {
+                Some(name) if node.kind() == "atx_heading" => without_closing_sequence(text, name),
+                Some(name) => name,
+                // An empty ATX heading.
+                None => {
+                    let marker = node.child(0).map_or(node.start_byte(), |m| m.end_byte());
+                    marker..marker
+                }
+            },
+            _ => match name {
+                Some(name) => name,
+                None => continue,
+            },
+        };
+        let pattern = found_match.pattern_index;
+        if let Some(&ix) = by_node.get(&node.id()) {
+            let found = &mut found[ix];
+            if pattern == found.pattern {
+                // The same pattern again, as when a repeated @name
+                // matches fewer of the names: the name runs from the
+                // first to the last.
+                found.name_range = merge(found.name_range.clone(), name_range);
+            } else if pattern < found.pattern {
+                // The first pattern in the query wins, as Method over
+                // Function for a fn in an impl.
+                *found = Found {
+                    pattern,
+                    kind,
+                    node,
+                    range: node.byte_range(),
+                    name_range,
+                    section,
+                };
+            }
+            continue;
+        }
+        if found.len() == MAX_OUTLINE_ITEMS && overlapping.is_none() {
+            truncated = true;
+            let sections = extend_to_sections(&mut found);
+            if sections.is_empty() {
+                break;
+            }
+            if let Some(section) = section {
+                sections.close(&mut found, node.start_byte(), section);
+            }
+            open = Some(sections);
+            continue;
+        }
+        by_node.insert(node.id(), found.len());
+        found.push(Found {
+            pattern,
+            kind,
+            node,
+            range: node.byte_range(),
+            name_range,
+            section,
+        });
+    }
+    if !truncated {
+        extend_to_sections(&mut found);
+    }
+    (found, truncated)
 }
 
 /// An item as the query found it, before nesting.
@@ -689,6 +839,10 @@ enum Test {
 struct Context<'a> {
     text: &'a Text,
     root: Node<'a>,
+    /// Whether items' kinds matter. Scopes' don't, so they skip
+    /// [`Test::Member`], which only chooses between a method and a function
+    /// and looks up the whole file's namespaces.
+    kinds: bool,
     cpp_scopes: OnceCell<CppScopes>,
     /// The scope of each Ruby assignment [`Test::AssignedIn`] has looked
     /// at, by node id, so a long chain is climbed once.
@@ -826,7 +980,7 @@ impl Predicate {
                 assigned(node, true).is_some_and(|(statement, _)| statement_in(statement, scope))
             }
             Test::Function(function) => declares_function(declared_name(node)) == *function,
-            Test::Member(member) => cpp_member(node, context) == *member,
+            Test::Member(member) => !context.kinds || cpp_member(node, context) == *member,
             Test::Sole(sole) => {
                 list.is_some_and(|list| lua_target(node, list, &context.lua_targets).sole == *sole)
             }
@@ -1278,6 +1432,8 @@ fn cpp_scope_names(node: Node, text: &Text) -> Vec<String> {
 /// See [`CppScopes`]. Function bodies are left out: what's declared in one
 /// can't be named from outside it.
 fn cpp_scopes(root: Node, text: &Text) -> CppScopes {
+    #[cfg(test)]
+    scope_tests::CPP_INDEXES.with(|built| built.set(built.get() + 1));
     let mut scopes = CppScopes::default();
     // Nodes to look at, each with the index in `paths` of the path of the
     // namespace or type it's in.
@@ -2096,3 +2252,7 @@ static QUERIES: [OutlineQuery; 25] = [
 fn query_for(language_name: &str) -> Option<&'static OutlineQuery> {
     QUERIES.iter().find(|query| query.language == language_name)
 }
+
+#[cfg(test)]
+#[path = "outline_scope_tests.rs"]
+mod scope_tests;

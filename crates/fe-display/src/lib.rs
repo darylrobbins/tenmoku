@@ -3,7 +3,8 @@
 //! between display rows ([`BlockMap`]); one inlay per frame, and any number
 //! of inlay hints, go inside a row ([`ExpandedRow::insert_inlay`],
 //! [`ExpandedRow::insert_hints`]). [`layout`] lays
-//! out a frame of an editor from that. Must never depend on GPUI.
+//! out a frame of an editor from that, and [`sticky`] the rows sticky scroll
+//! pins at its top. Must never depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
 
@@ -12,6 +13,7 @@ mod display_map;
 mod fold_map;
 pub mod layout;
 mod long_row;
+pub mod sticky;
 mod wrap_map;
 
 pub use block_map::{Block, BlockMap, ScreenRow};
@@ -19,6 +21,7 @@ pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
 pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice, SourceKey};
+pub use sticky::{StickyRow, sticky_rows};
 
 /// Measures chars for soft wrapping, in the unit of the wrap width (the UI
 /// uses pixels).
