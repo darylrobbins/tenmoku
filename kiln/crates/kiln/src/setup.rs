@@ -66,7 +66,7 @@ use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 use crate::{
     config::{Layers, SelectionSource, UserTheme},
     contributions::{self, Shipped},
-    extensions::{self, ExtensionSource},
+    extensions::{self, ExtensionSource, Shared},
     settings::{SettingsSection, section_store},
 };
 
@@ -445,6 +445,19 @@ impl Config {
         self
     }
 
+    /// Lists the files of an extension `f` reads for the app, such as the
+    /// ones its manifest's tables name, relative to its directory. When one
+    /// changes on disk, or comes or goes, with its manifest the same,
+    /// [`Config::on_extensions`] is called again. Without it, only a change
+    /// to a manifest or its diagnostics is.
+    pub fn extension_files(
+        mut self,
+        f: impl Fn(&kiln_core::Manifest) -> Vec<std::path::PathBuf> + 'static,
+    ) -> Self {
+        self.extensions.files_of = Some(Box::new(f));
+        self
+    }
+
     /// Calls `f` with each licence notice: an extension the user
     /// installed whose licence is copyleft or unknown, the first time it
     /// loads at its version (see [`ExtensionSet::license_notices`]), to
@@ -740,6 +753,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         service = service.source(theme);
     }
     if let Some(source) = extension_source {
+        let source = Shared(Rc::new(RefCell::new(source)));
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }

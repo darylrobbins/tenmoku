@@ -1,8 +1,9 @@
-//! Insert mode's `ctrl-o` in a headless window: one normal-mode command,
-//! with the block cursor and the normal-mode key context while it runs,
-//! then insert mode again, on both platform keymaps.
+//! Insert mode's ctrl keys in a headless window, on both platform keymaps:
+//! `ctrl-o` runs one normal-mode command, with the block cursor and the
+//! normal-mode key context while it runs, then insert mode again; `ctrl-w`
+//! and `ctrl-u` delete before the caret, in replace mode too.
 
-use std::path::Path;
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use fe_command::ContextFrame;
 use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_LINUX, KeymapLayer};
@@ -123,6 +124,114 @@ fn a_macro_replays_ctrl_o(cx: &mut TestAppContext) {
         assert_eq!(text_of(&view, cx), "xabc\nabc", "{os}");
         cx.simulate_keystrokes("@ a");
         assert_eq!(text_of(&view, cx), "xabc\nxabc", "{os}");
+    }
+}
+
+/// `ctrl-w` and `ctrl-u` edit as `tests/corpus/insert_keys.toml`'s cases
+/// in nvim, on both platform keymaps: off macOS the keymap hands them to
+/// vim, on macOS they reach the editor unmatched.
+#[gpui::test]
+fn ctrl_w_and_ctrl_u_reach_vim_in_insert_mode(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        // (buffer, keys, buffer after, cursor after): the corpus's cases.
+        for (text, keys, after, cursor) in [
+            // ctrl_w_word
+            (
+                "foo bar",
+                "A space b a z space q u x ctrl-w x escape",
+                "foo bar baz x",
+                (0, 12),
+            ),
+            // ctrl_w_stops_once_at_insert_start
+            (
+                "foo bar",
+                "A space b a z ctrl-w ctrl-w ctrl-w escape",
+                "foo ",
+                (0, 3),
+            ),
+            // ctrl_w_joins_rows
+            ("  foo\nbar", "j i ctrl-w escape", "  foobar", (0, 4)),
+            // ctrl_u_typed_text
+            (
+                "foo bar",
+                "l l l a space x y ctrl-u escape",
+                "foo bar",
+                (0, 3),
+            ),
+            // ctrl_u_nothing_typed
+            ("foo bar", "l l l a ctrl-u escape", "bar", (0, 0)),
+            // ctrl_u_twice
+            (
+                "foo bar",
+                "A space b a z ctrl-u ctrl-u x escape",
+                "x",
+                (0, 0),
+            ),
+            // ctrl_w_replace_mode
+            (
+                "foo bar baz",
+                "w shift-r x y space z ctrl-w ctrl-w q escape",
+                "foo qar baz",
+                (0, 4),
+            ),
+            // ctrl_u_replace_mode
+            (
+                "foo bar",
+                "w shift-r x y z ctrl-u q escape",
+                "foo qar",
+                (0, 4),
+            ),
+            // ctrl_w_replace_before_start
+            ("foo bar", "w shift-r ctrl-w x escape", "xoo bar", (0, 0)),
+            // ctrl_w_dot_repeat
+            (
+                "foo bar\nbaz qux",
+                "A ctrl-w x escape j .",
+                "foo x\nbaz x",
+                (1, 4),
+            ),
+        ] {
+            let (view, cx) = editor(cx, source, text);
+            cx.simulate_keystrokes(keys);
+            assert_eq!(state(&view, cx), (after.into(), cursor), "{os}: {keys}");
+            assert_eq!(mode(&view, cx), Some("normal"), "{os}: {keys}");
+        }
+
+        // ctrl_w_in_macro: the recording holds `<C-w>`, and replays it.
+        let (view, cx) = editor(cx, source, "foo bar\nbaz qux");
+        cx.simulate_keystrokes("q a A space q u u x ctrl-w x escape q");
+        assert_eq!(text_of(&view, cx), "foo bar x\nbaz qux", "{os}");
+        let recorded = cx.update(|_, cx| {
+            let registers = &cx.global::<Vim>().registers;
+            registers.get('a').map(|register| register.text.clone())
+        });
+        assert_eq!(recorded.as_deref(), Some("A quux\u{17}x\u{1b}"), "{os}");
+        cx.simulate_keystrokes("j @ a");
+        assert_eq!(text_of(&view, cx), "foo bar x\nbaz qux x", "{os}");
+        // ctrl_u_in_macro, and replace mode's keys in one.
+        cx.simulate_keystrokes("q b 0 a ctrl-u y escape w shift-r z z ctrl-w w escape q");
+        assert_eq!(text_of(&view, cx), "foo bar x\nyaz wux x", "{os}");
+        cx.simulate_keystrokes("k @ b");
+        assert_eq!(text_of(&view, cx), "yoo war x\nyaz wux x", "{os}");
+
+        // In normal mode `ctrl-w h` is still the window key: the keymap
+        // dispatches `pane.focus_left`, which no pane takes here.
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        cx.update(|_, cx| {
+            cx.on_action(move |action: &crate::commands::RunCommand, _| {
+                sink.borrow_mut().push(action.0.command.as_str().to_owned());
+            });
+        });
+        cx.simulate_keystrokes("ctrl-w h");
+        assert!(
+            seen.borrow()
+                .iter()
+                .any(|command| command == "pane.focus_left"),
+            "{os}: {:?}",
+            seen.borrow()
+        );
+        assert_eq!(text_of(&view, cx), "yoo war x\nyaz wux x", "{os}");
     }
 }
 

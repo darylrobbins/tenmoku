@@ -24,6 +24,9 @@
 -- last key. Keys are fed with no delay, so a prefix with more keys after
 -- it never times out, and a case must not end on a prefix that could
 -- still grow.
+-- A case may hold `set`, `:set` arguments (`ignorecase smartcase`) run
+-- with vim.cmd just before the keys; 'ignorecase' and 'smartcase' are put
+-- back off before each case.
 
 local input, output = arg[1], arg[2]
 
@@ -120,6 +123,8 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   vim.o.expandtab = true
   vim.o.clipboard = ""
   vim.o.wrap = true
+  vim.o.ignorecase = false
+  vim.o.smartcase = false
   -- A fresh buffer, no registers and no last character search.
   local old = vim.api.nvim_get_current_buf()
   vim.cmd("enew!")
@@ -162,6 +167,9 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   local saved_maps, saved_leader = global_maps(), vim.g.mapleader
   for _, line in ipairs(case.mapping or {}) do
     vim.cmd(line)
+  end
+  if case.set then
+    vim.cmd("set " .. case.set)
   end
   vim.api.nvim_feedkeys(keys, "xt", false)
 

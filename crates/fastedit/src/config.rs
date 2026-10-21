@@ -91,6 +91,7 @@ pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
         .extensions(dir, &fe_config::paths::app_id().short, api)
         .extension_kind("lsp", lsp)
         .extension_kind("grammars", grammars)
+        .extension_files(grammar_files)
         .on_extensions(|set, cx| {
             fe_workbench::set_extension_servers(cx, extension_servers(set.extensions()));
             let grammars = extension_grammars(set.extensions());
@@ -183,6 +184,23 @@ fn extension_grammars(
         }
     }
     specs
+}
+
+/// The files `manifest`'s grammars name, so that a change to one alone
+/// registers them again.
+fn grammar_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
+    let Some(grammars) = manifest.app.get("grammars") else {
+        return Vec::new();
+    };
+    let Ok(grammars) = grammars.clone().try_into::<Vec<ExtensionGrammar>>() else {
+        return Vec::new();
+    };
+    grammars
+        .into_iter()
+        .flat_map(|grammar| [Some(grammar.wasm), grammar.highlights, grammar.injections])
+        .flatten()
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// `entry` in extension `dir`'s manifest as the file it names, which must be

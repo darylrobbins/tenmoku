@@ -108,21 +108,21 @@ fn vim_keeps_its_ctrl_keys_on_linux() {
                 "{keys} in {vim:?}"
             );
         }
-        assert_ne!(
-            run(&linux, keys, Some(("insert", false))).as_deref(),
-            Some("vim.key")
+        // In insert mode only nvim's insert keys are vim's (`ctrl-a` of
+        // these, which inserts the last inserted text there).
+        let insert = run(&linux, keys, Some(("insert", false)));
+        assert_eq!(
+            insert.as_deref() == Some("vim.key"),
+            keys == "ctrl-a",
+            "{keys}"
         );
     }
     assert_eq!(
         run(&linux, "ctrl-y", Some(("insert", false))).as_deref(),
         Some("editor.redo")
     );
-    // `ctrl-a` and `ctrl-x` are vim's increments in normal and visual mode,
-    // and select all and cut in insert mode.
-    assert_eq!(
-        run(&linux, "ctrl-a", Some(("insert", false))).as_deref(),
-        Some("editor.select_all")
-    );
+    // `ctrl-a` and `ctrl-x` are vim's increments in normal and visual mode;
+    // in insert mode `ctrl-x` is cut.
     assert_eq!(
         run(&linux, "ctrl-x", Some(("insert", false))).as_deref(),
         Some("editor.cut")

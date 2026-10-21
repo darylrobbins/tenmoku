@@ -6,15 +6,18 @@
 //!
 //! [`SettingsStore`] holds the effective [`Settings`]; [`ConfigWatcher`]
 //! says which files changed, for [`SettingsStore::reload`]; [`write_setting`]
+//! (and [`write_setting_str`], [`write_settings`])
 //! changes one setting in a file, keeping its comments. [`EditorPalette`]
 //! reads the editor's colours from a kiln theme; kiln's config service
-//! selects and hot-reloads the theme itself.
+//! selects and hot-reloads the theme itself. [`themes`] lists the themes
+//! fastedit bundles, which `[theme] name` selects.
 
 pub mod editorconfig;
 pub mod paths;
 pub mod recent;
 pub mod settings;
 pub mod theme;
+pub mod themes;
 pub mod write;
 
 // The generic config machinery is kiln's (docs/decisions/app-framework.md);
@@ -35,7 +38,7 @@ pub use settings::{
 };
 pub use theme::{Color, EditorColors, EditorPalette};
 pub use watch::ConfigWatcher;
-pub use write::write_setting;
+pub use write::{SettingValue, write_setting, write_setting_str, write_settings};
 
 /// The `settings.toml` a new user starts from: every key commented out at its
 /// default, so it changes nothing until edited.

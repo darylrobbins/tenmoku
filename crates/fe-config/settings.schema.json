@@ -519,6 +519,14 @@
           "$ref": "#/$defs/ThemeModeSetting",
           "default": "dark",
           "description": "dark, light, or system to follow the system's appearance. Your own\ncolours go in theme.toml beside this file; its appearance says whether\nit replaces the dark or the light theme."
+        },
+        "name": {
+          "description": "A bundled theme by its title or ID, as in \"Dark Modern\" or \"Fastedit\nEmber\": the dark or the light theme, as its appearance is. theme.dark\nor theme.light, if set, wins for that one.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"

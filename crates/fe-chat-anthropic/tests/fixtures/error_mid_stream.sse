@@ -1,0 +1,17 @@
+: The API overloaded mid-stream: after some text, an `error` event
+: (overloaded_error) ends the stream with no message_stop. Shapes from the
+: claude-api skill's curl/examples.md § Streaming (SSE) and
+: shared/error-codes.md (the error object's type and message).
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01Overloaded","type":"message","role":"assistant","model":"claude-opus-5-5","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":64,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partly"}}
+
+event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+

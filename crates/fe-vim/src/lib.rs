@@ -480,7 +480,12 @@
 //!   \O \h \H`, all ASCII, which `\c` doesn't make caseless, as in Vim;
 //!   and `\e \t \r \b`.
 //! - `\c` and `\C` anywhere (`\c` wins); without either, case matches
-//!   exactly ('ignorecase' off). `\c` folds case as nvim does: two characters
+//!   exactly, unless 'ignorecase' is on ([`Registers::set_search_case`]):
+//!   `/ ? n N` then ignore it unless 'smartcase' is on too and the pattern
+//!   has an uppercase letter ([`search::has_uppercase`]), and `* #` (and
+//!   `n N` or `/<CR>` after them) ignore it whatever 'smartcase' says, as in
+//!   nvim; the `/` register and [`VimState::highlight`] follow the search.
+//!   `:s`, `:g` and ex addresses still match case exactly. `\c` folds case as nvim does: two characters
 //!   match when each one's uppercase is a single character and those have
 //!   the same lowercase, so `k` takes `K` and the Kelvin sign, `s` takes
 //!   long s and `σ` takes `ς`, while `ß` and `ẞ` (and dotless `ı`) match

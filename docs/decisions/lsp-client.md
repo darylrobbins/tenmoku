@@ -127,9 +127,8 @@ outside `deny.toml`'s allowlist.
     - A `DiagnosticsCleared` is emitted after retirement, so it is never
       checked against the active identity. It empties the set only if the
       set carries that identity, and records the identity as cleared.
-  - Unversioned diagnostics are dropped unless a named, verified
-    server-specific guarantee fixes the text they were computed on,
-    including across a reopen. No server has one yet.
+  - Unversioned diagnostics are shown against the text last sent unless
+    the server is pulled, when they are dropped (§4.1 item 4).
   - Saves are barriers that become `didSave`.
 - **Large files.** Never sync a file over 50 MB, or one opened as the
   read-only view for very large files.
@@ -452,7 +451,7 @@ pub struct ServerSpec {
     pub settings: serde_json::Value,  // answers workspace/configuration
     pub readiness: ReadinessMode,     // ServerStatus | Progress; §3.4
     pub ready_ignores_progress: Vec<String>, // token prefixes; §3.4
-    pub unversioned_diagnostics: UnversionedDiagnostics, // Drop; §4.1
+    pub unversioned_diagnostics: UnversionedDiagnostics, // LatestUnlessPulled; §4.1
     pub pull_diagnostics: PullDiagnostics, // Advertised | TsserverRequest; §4.1
 }
 
@@ -1109,28 +1108,28 @@ incarnation of the URI:
    version), or it is newer than anything sent (impossible; logged). Drop it.
    The server republishes after the next change.
 4. **Unversioned** (LSP 3.17 makes `version` optional, and the notification
-   carries no incarnation id either). **Dropped**, whatever the incarnation
-   has sent so far.
-   - Even "before the first `didChange`" doesn't fix the text. After a
-     close and reopen, a publication the server computed on the earlier
-     incarnation's text can arrive after the new `didOpen` and before its
-     first `didChange`. Nothing in it says which incarnation it belongs to,
-     and the order of the two directions doesn't either.
-   - The only exception is a **named, verified server-specific guarantee**
-     that fixes which text an unversioned publication was computed on,
-     including one computed before a close and delivered after the reopen.
-     It is recorded in the server's spec as
-     `unversioned_diagnostics: UnversionedDiagnostics`, which is `Drop` by
-     default; any other value names the guarantee and cites where it was
-     verified (the server's source and a card 7 or card 10 test). "The
-     server publishes in order" or "it publishes soon after an edit" is not
-     such a guarantee. No server has one today: whether any of the three
-     omits the version is unchecked (§10).
+   carries no incarnation id either). Decided by the spec's
+   `unversioned_diagnostics: UnversionedDiagnostics`:
+   - `LatestUnlessPulled` (the default): while the session doesn't pull
+     diagnostics, as `Latest`; while it does, as `Drop`.
+   - `Latest`: treated as a publication for the newest version in the
+     incarnation's ring, the text the server was last sent, then decoded,
+     checked against the newest decoded (equal is accepted) and reported
+     exactly as a versioned one. This is what VS Code does.
+   - `Drop`: dropped.
+
+   A pulling server's unversioned pushes stay dropped: typescript-language-server's
+   are merged from tsserver's three kinds, each of whatever text it was
+   computed on, and its diagnostics come from the pulls instead.
+
+   **Accepted trade-off:** across a close and reopen, a publication the
+   server computed on the earlier incarnation's text can arrive after the new
+   `didOpen`. Nothing in it says which incarnation it belongs to, so it shows
+   on the new text until the server's next publication replaces it, as in VS
+   Code. Earlier this was the reason to drop every unversioned publication.
 
    The diagnostics already shown stay, anchored and moving with the edits,
-   until a versioned publication replaces them. A server that never versions
-   its publications therefore shows no diagnostics, a visible but safe
-   failure, and card 7 then decides on a server-specific remedy.
+   until a decoded publication replaces them.
 
    **typescript-language-server's remedy: pull through tsserver** (T73,
    2026-10-12; evidence in `docs/decisions/rq81bj4nvm-tsserver-diagnostics.md`).
@@ -1252,11 +1251,14 @@ Fake-server tests (card 2/7):
 - a publication for a version two edits old lands on the right text
 - an edit between publication and delivery
 - out-of-order versioned publications
-- an unversioned publication from a server whose spec is `Drop` is dropped,
-  before and after the first edit
-- a delayed unversioned publication across reopen: the fake server computes
-  it on the old incarnation's text and sends it after the new `didOpen` and
-  before any `didChange`: dropped
+- an unversioned publication from a server that isn't pulled lands on the
+  text last sent: at the opened version before any edit, at the current
+  version after two edits; an older versioned one after it is still dropped
+- an unversioned publication from a server advertising `diagnosticProvider`
+  is dropped
+- under a `Drop` spec, an unversioned publication is dropped before and after
+  the first edit and across a reopen (computed on the old incarnation's text,
+  sent after the new `didOpen` and before any `didChange`)
 - close/reopen with a delayed publication carrying the old incarnation's
   version number: dropped, and versions don't collide
 - a restart with an old session's event still queued for the UI: rejected
@@ -1740,7 +1742,7 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 
 | Feature | LSP methods and client capabilities | `fe-lsp` | `fe-editor` / `fe-display` | `fe-gpui` / `fe-workbench` |
 |---|---|---|---|---|
-| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }`. Pull `textDocument/diagnostic` for open documents (T39, below); `diagnostic { dynamicRegistration: false, relatedDocumentSupport: false }`, `workspace.diagnostics { refreshSupport: true }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, session, incarnation, version, server, items }`, with ranges in that buffer version, and `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` at close and session end. Unversioned publications are dropped unless the spec names a verified guarantee (§4.1) | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, a `Diagnostics` is applied only if its `(session, incarnation)` is the active one (`LspManager::active_identity`) and not already cleared; its ranges are then rebased from the event's version with `map_offset` and anchored. A `DiagnosticsCleared` (whose identity is already retired) empties the server's set only if the set carries that identity, and records the identity as cleared. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
+| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }`. Pull `textDocument/diagnostic` for open documents (T39, below); `diagnostic { dynamicRegistration: false, relatedDocumentSupport: false }`, `workspace.diagnostics { refreshSupport: true }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, session, incarnation, version, server, items }`, with ranges in that buffer version, and `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` at close and session end. Unversioned publications are decoded on the text last sent unless the server is pulled, when they are dropped (§4.1) | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, a `Diagnostics` is applied only if its `(session, incarnation)` is the active one (`LspManager::active_identity`) and not already cleared; its ranges are then rebased from the event's version with `map_offset` and anchored. A `DiagnosticsCleared` (whose identity is already retired) empties the server's set only if the set carries that identity, and records the identity as cleared. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
 | Definition | `textDocument/definition`; `definition.linkSupport = true` | `LspNavigation::definitions` (§5) | — | T107's F12 and picker, unchanged |
 | References | `textDocument/references` | `LspNavigation::references` (§5) | — | T112's panel, unchanged |
 | Workspace symbols | `workspace/symbol` (`symbol.symbolKind` the full set) | `LspNavigation::workspace_symbols` | — | T107's cmd-T, unchanged |

@@ -8,7 +8,7 @@
 //! installed theme chosen for it ([`crate::extensions::select_themes`]),
 //! then the user's `theme.toml`, if its appearance is the slot's.
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Rc};
 
 use gpui::{App, Global};
 use kiln_core::{
@@ -18,8 +18,8 @@ use kiln_core::{
 use kiln_platform::config::{ConfigDiagnostics, ConfigSource, log_diagnostics_as, log_target};
 use kiln_ui::{GlobalTheme, Theme, ThemeMode, set_themes};
 
-/// A theme an extension installed, laid over the bundled base for its
-/// appearance.
+/// A theme an extension or the app installed, laid over the bundled base
+/// for its appearance.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Installed {
     pub(crate) title: String,
@@ -32,14 +32,21 @@ pub(crate) struct Installed {
 #[derive(Default)]
 pub(crate) struct ThemeLayers {
     /// The extensions' themes, by ID (`<extension id>/<file stem>`).
-    pub(crate) installed: std::collections::BTreeMap<String, Installed>,
+    pub(crate) installed: BTreeMap<String, Installed>,
+    /// The app's own themes, by ID (`builtin/<id>`): kept across rescans
+    /// ([`crate::extensions::install_builtin_themes`]).
+    pub(crate) builtin: BTreeMap<String, Installed>,
     /// Where they're installed, which a selection's warnings name.
     pub(crate) root: Option<PathBuf>,
     /// The installed theme's ID each slot starts from, dark then light.
     selected: [Option<String>; 2],
     /// The user's theme file, as last read without errors.
     user: Option<ThemeFile>,
-    /// What's wrong with the selection: [`SelectionSource`]'s.
+    /// What the app found wrong with its choice, as it chose
+    /// ([`crate::extensions::select_themes_noting`]).
+    notes: Vec<Diagnostic>,
+    /// What's wrong with the selection, the app's notes first:
+    /// [`SelectionSource`]'s.
     diagnostics: Vec<Diagnostic>,
     /// The theme each slot held before the layers' went in, to put back
     /// once they have none for it.
@@ -68,11 +75,21 @@ impl Layers {
     }
 
     /// Chooses the installed theme each slot starts from, then applies the
-    /// layers, publishing what's wrong with the choice in
-    /// [`ConfigDiagnostics`].
-    pub(crate) fn select(&self, dark: Option<&str>, light: Option<&str>, cx: &mut App) {
+    /// layers, publishing what's wrong with the choice, after the app's
+    /// `notes` on it, in [`ConfigDiagnostics`].
+    pub(crate) fn select(
+        &self,
+        dark: Option<&str>,
+        light: Option<&str>,
+        notes: Vec<Diagnostic>,
+        cx: &mut App,
+    ) {
         let previous = self.borrow().diagnostics.clone();
-        self.borrow_mut().selected = [dark.map(str::to_owned), light.map(str::to_owned)];
+        {
+            let mut layers = self.borrow_mut();
+            layers.selected = [dark.map(str::to_owned), light.map(str::to_owned)];
+            layers.notes = notes;
+        }
         self.apply(cx);
         let diagnostics = self.borrow().diagnostics.clone();
         if diagnostics != previous {
@@ -105,7 +122,8 @@ impl Layers {
             .clone()
             .unwrap_or_else(|| (Theme::dark(), Theme::light()));
         let mut layers = self.borrow_mut();
-        let previous = std::mem::take(&mut layers.diagnostics);
+        let notes = layers.notes.clone();
+        let previous = std::mem::replace(&mut layers.diagnostics, notes);
         // Whether a slot is, or was, the layers': else the pair, or a
         // theme set alone, stays as it is.
         let mut touched = false;
@@ -140,7 +158,8 @@ impl ThemeLayers {
     /// noting what's wrong with its selection.
     fn theme_for(&mut self, ix: usize, appearance: Appearance) -> Option<Theme> {
         let selected = self.selected[ix].as_deref().and_then(|id| {
-            let message = match self.installed.get(id) {
+            let found = self.installed.get(id).or_else(|| self.builtin.get(id));
+            let message = match found {
                 Some(theme) if theme.appearance == appearance => return Some(&theme.data),
                 Some(theme) => format!(
                     "theme {id} is {}, so it can't be the {} theme",

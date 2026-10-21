@@ -8,7 +8,7 @@
 use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, TypescriptServer};
 use serde_json::Value;
 
-use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec};
+use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDiagnostics};
 
 /// The built-in servers, in the order a language's server is chosen.
 pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
@@ -29,6 +29,7 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
         // Its pushes carry no version, so they're dropped (§4.1); its
         // diagnostics are pulled through tsserver instead.
         ServerSpec {
+            unversioned_diagnostics: UnversionedDiagnostics::Drop,
             pull_diagnostics: PullDiagnostics::TsserverRequest,
             ..spec(
                 "typescript-language-server",

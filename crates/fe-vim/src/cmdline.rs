@@ -117,6 +117,8 @@ impl VimState {
             forward,
             offset,
             again: false,
+            word: false,
+            ignore_case: false,
         };
         let count = args.count.unwrap_or(1).max(1) as usize;
         let limit = match PREVIEW_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -240,9 +242,11 @@ fn search(
             );
         }
     };
-    let pattern = match (pattern.is_empty(), target.registers.last_search()) {
-        (false, _) => pattern,
-        (true, Some((last, _))) => last.to_string(),
+    // `/<CR>` repeating `*` or `#` is still theirs, which 'smartcase'
+    // doesn't apply to.
+    let (pattern, word) = match (pattern.is_empty(), target.registers.last_search()) {
+        (false, _) => (pattern, false),
+        (true, Some((last, _))) => (last.to_string(), target.registers.last_search_word()),
         (true, None) => return failed(target.state, "E35: No previous regular expression"),
     };
     let motion = Motion::Search(Search {
@@ -250,6 +254,8 @@ fn search(
         forward,
         offset,
         again: false,
+        word,
+        ignore_case: false,
     });
     let mut dispatched = match args.operator {
         Some(operator) => {
@@ -287,7 +293,7 @@ fn search(
 /// pattern's, `Interrupted` if the search passed [`search::set_time_limit`]'s
 /// limit (the cursor stays; the pattern is still the last search), or E486 if
 /// nothing matches from the primary caret (the vim
-/// cursor in a visual mode).
+/// cursor in a visual mode). It matches case as [`resolve`] worked out.
 pub(crate) fn check_search(
     target: &mut VimTarget<'_>,
     search: Search,
@@ -299,11 +305,12 @@ pub(crate) fn check_search(
         _ => search.forward,
     };
     let pattern = search.pattern.as_str();
-    let parsed = match Pattern::parse(pattern) {
+    let parsed = match Pattern::parse_with(pattern, search.ignore_case) {
         Ok(parsed) => parsed,
         Err(error) => return Err(error.to_string()),
     };
     target.registers.set_search(pattern, forward);
+    target.registers.set_search_word(search.word);
     target.registers.set_search_offset(search.offset);
     target.state.highlight = Some(parsed.clone());
     let from = caret(target);
@@ -349,10 +356,33 @@ fn caret(target: &mut VimTarget<'_>) -> usize {
 /// the non-blank text there) as the last search, with no offset. `Err` holds the message of one that
 /// can't run (E35, E348). Any other motion comes back as it was. The flag
 /// is whether the search keeps the last search's direction (`n` and `N`).
+/// Every search comes back with its case worked out from 'ignorecase' and
+/// 'smartcase' as they are now ([`Registers::ignores_case`]): 'smartcase'
+/// doesn't apply to `*` and `#`, nor to `n` and `N` after them.
+///
+/// [`Registers::ignores_case`]: crate::Registers::ignores_case
 pub(crate) fn resolve(
     target: &mut VimTarget<'_>,
     motion: Motion,
 ) -> Result<(Motion, bool), String> {
+    let (motion, keep) = resolve_search(target, motion)?;
+    let case = |mut search: Search, word: bool| {
+        search.word |= word;
+        search.ignore_case = target
+            .registers
+            .ignores_case(search.pattern.as_str(), search.word);
+        search
+    };
+    let motion = match motion {
+        Motion::Search(search) => Motion::Search(case(search, false)),
+        Motion::SearchWord(search) => Motion::SearchWord(case(search, true)),
+        other => other,
+    };
+    Ok((motion, keep))
+}
+
+/// [`resolve`], but for the case.
+fn resolve_search(target: &mut VimTarget<'_>, motion: Motion) -> Result<(Motion, bool), String> {
     let forward = match motion {
         Motion::SearchNext | Motion::SearchPrevious => {
             let Some((last, was_forward)) = target.registers.last_search() else {
@@ -364,6 +394,8 @@ pub(crate) fn resolve(
                 forward,
                 offset: target.registers.last_search_offset(),
                 again: true,
+                word: target.registers.last_search_word(),
+                ignore_case: false,
             };
             return Ok((Motion::Search(search), true));
         }
@@ -388,6 +420,8 @@ pub(crate) fn resolve(
         forward,
         offset: SearchOffset::None,
         again: false,
+        word: true,
+        ignore_case: false,
     };
     Ok((Motion::SearchWord(search), false))
 }

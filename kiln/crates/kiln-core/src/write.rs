@@ -13,13 +13,51 @@ use std::{
 
 use toml_edit::{Document, Item, Table, TableLike, Value};
 
+/// A value [`write_settings`] sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingValue<'a> {
+    Bool(bool),
+    /// Written as a basic string, escaped: `"Dark \"Modern\""`.
+    Str(&'a str),
+}
+
+impl SettingValue<'_> {
+    /// The value as TOML.
+    fn toml(self) -> String {
+        match self {
+            SettingValue::Bool(value) => value.to_string(),
+            SettingValue::Str(text) => basic_string(text),
+        }
+    }
+}
+
 /// Sets the boolean at `key`, a path of table names then the key's name
-/// (`["vim", "enabled"]`), in the settings file at `path`.
+/// (`["vim", "enabled"]`), in the settings file at `path`. See
+/// [`write_settings`].
+pub fn write_setting(path: &Path, key: &[&str], value: bool, template: &str) -> io::Result<()> {
+    write_settings(path, &[(key, Some(SettingValue::Bool(value)))], template)
+}
+
+/// Sets the string at `key` (`["theme", "name"]`) in the settings file at
+/// `path`, written as a basic string with its quotes and backslashes
+/// escaped. See [`write_settings`].
+pub fn write_setting_str(path: &Path, key: &[&str], value: &str, template: &str) -> io::Result<()> {
+    write_settings(path, &[(key, Some(SettingValue::Str(value)))], template)
+}
+
+/// Makes each of `changes` in turn, in one write, to the settings file at
+/// `path`: sets the value at its key, a path of table names then the key's
+/// name (`["vim", "enabled"]`), or, for `None`, removes the key if it's
+/// there.
 ///
 /// An existing key keeps its place and its comments: only its value's text
 /// is replaced. A missing key is added at the end of its table (or
-/// replaces its commented-out default), and a missing table at the end of
-/// the file. Every byte outside the change is
+/// replaces its commented-out default, one of the same type), and a missing
+/// table at the end of the file. A key removed takes its line, the comment
+/// after it included, where nothing else on the line is a setting; one
+/// sharing its line (inside braces, say) is removed by `toml_edit`, which
+/// may take the comments before it too.
+/// Every byte outside the change is
 /// kept, line endings, a byte order mark and a missing final newline
 /// included, and what's added uses the file's line endings. A missing file,
 /// and its directory, is created from `template` (the app's commented-out
@@ -31,39 +69,50 @@ use toml_edit::{Document, Item, Table, TableLike, Value};
 /// only mention of the key is its commented-out default gets the key in
 /// that comment's place. A file that doesn't parse as TOML, or where a name
 /// on the path isn't a table (`vim = 3`), is an error and is left
-/// untouched.
+/// untouched. Changes that leave the file as it was (a missing or empty
+/// one as the template) write nothing.
 ///
 /// The new text goes to a temporary file in the same directory, renamed
 /// over the old, or linked in place of a missing one, so a crash never
 /// leaves the file cut short. A symlink is written through to its target
 /// and stays a link. A file changed since it was read (saved, created,
 /// removed, given other permissions, or linked elsewhere) isn't written
-/// over: the setting is made again to what's there now, up to 8 times
+/// over: the changes are made again to what's there now, up to 8 times
 /// before giving up. That's checked just before the rename, so only a
 /// change in the instant between would be undone.
 ///
 /// The file is read as it is: another program writing it in place, rather
 /// than through a temporary file, could be read half written.
-pub fn write_setting(path: &Path, key: &[&str], value: bool, template: &str) -> io::Result<()> {
-    assert!(!key.is_empty(), "a setting has a name");
+pub fn write_settings(
+    path: &Path,
+    changes: &[(&[&str], Option<SettingValue<'_>>)],
+    template: &str,
+) -> io::Result<()> {
+    for (key, _) in changes {
+        assert!(!key.is_empty(), "a setting has a name");
+    }
     // Another round each time the file changes under us.
     for _ in 0..8 {
         let target = resolve(path)?;
         let read = match fs::read_to_string(&target) {
             Ok(text) => Some(text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                if let Some(dir) = target.parent() {
-                    fs::create_dir_all(dir)?;
-                }
-                None
-            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
-        let edited =
-            edit(read.as_deref().unwrap_or(""), key, value, template).map_err(|error| {
-                let error = format!("{}: {error}", target.display());
-                io::Error::new(io::ErrorKind::InvalidData, error)
-            })?;
+        let edited = edit(read.as_deref().unwrap_or(""), changes, template).map_err(|error| {
+            let error = format!("{}: {error}", target.display());
+            io::Error::new(io::ErrorKind::InvalidData, error)
+        })?;
+        // Nothing changed, a missing file's template included: nothing to
+        // write.
+        if edit(read.as_deref().unwrap_or(""), &[], template).as_ref() == Ok(&edited) {
+            return Ok(());
+        }
+        if read.is_none()
+            && let Some(dir) = target.parent()
+        {
+            fs::create_dir_all(dir)?;
+        }
         let still = || resolve(path).is_ok_and(|now| now == target);
         if put(&target, edited.as_bytes(), read.as_deref(), still)? {
             return Ok(());
@@ -75,27 +124,115 @@ pub fn write_setting(path: &Path, key: &[&str], value: bool, template: &str) -> 
     )))
 }
 
-/// `source`, or `template` if it's empty, with `key` set to `value`.
-fn edit(source: &str, key: &[&str], value: bool, template: &str) -> Result<String, String> {
+/// `source`, or `template` if it's empty, with `changes` made.
+fn edit(
+    source: &str,
+    changes: &[(&[&str], Option<SettingValue<'_>>)],
+    template: &str,
+) -> Result<String, String> {
     // toml_edit drops a byte order mark: set aside, and put back.
     let (mark, source) = match source.strip_prefix('\u{feff}') {
         Some(source) => ("\u{feff}", source),
         None => ("", source),
     };
-    let source = if source.is_empty() { template } else { source };
+    let mut text = if source.is_empty() { template } else { source }.to_owned();
+    for &(key, value) in changes {
+        text = match value {
+            Some(value) => set(&text, key, &value.toml())?,
+            None => remove(&text, key)?,
+        };
+    }
+    Ok(format!("{mark}{text}"))
+}
+
+/// `source` with `key` set to `value`, TOML text.
+fn set(source: &str, key: &[&str], value: &str) -> Result<String, String> {
     let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
     if let Some(span) = existing(parsed.as_table(), key)? {
         let (before, after) = (&source[..span.start], &source[span.end..]);
-        return Ok(format!("{mark}{before}{value}{after}"));
+        return Ok(format!("{before}{value}{after}"));
     }
     let (range, text) = insertion(source, parsed.as_table(), key, value)?;
     let (before, after) = (&source[..range.start], &source[range.end..]);
-    Ok(format!("{mark}{before}{text}{after}"))
+    Ok(format!("{before}{text}{after}"))
+}
+
+/// `source` without `key`, or as it is if it has none: without the line
+/// it's on, if that's all it takes, else as `toml_edit` removes it.
+fn remove(source: &str, key: &[&str]) -> Result<String, String> {
+    let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let Some((found, value)) = lookup(parsed.as_table(), key)? else {
+        return Ok(source.to_owned());
+    };
+    let mut document: toml_edit::DocumentMut = source
+        .parse()
+        .map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let (name, tables) = key.split_last().expect("a setting has a name");
+    let mut table: &mut dyn TableLike = document.as_table_mut();
+    for part in tables {
+        table = table
+            .get_mut(part)
+            .and_then(Item::as_table_like_mut)
+            .ok_or_else(|| format!("{} isn't a table", tables.join(".")))?;
+    }
+    table.remove(name);
+    let removed = document.to_string();
+    if let (Some(key_span), Some(value_span)) = (found.span(), value.span())
+        && let Some(line) = line_of(source, key_span.start, value_span.end)
+    {
+        let cut = format!("{}{}", &source[..line.start], &source[line.end..]);
+        // Braces, or another key on the line, would be cut too.
+        let same = |text: &str| text.parse::<toml::Table>().ok();
+        if same(&cut).is_some_and(|cut| Some(cut) == same(&removed)) {
+            return Ok(cut);
+        }
+    }
+    Ok(removed)
+}
+
+/// The lines a `key = value` from `start` to `end` is on, newline
+/// included, if nothing but space or a comment follows it.
+fn line_of(source: &str, start: usize, end: usize) -> Option<Range<usize>> {
+    let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
+    let line_end = source[end..]
+        .find('\n')
+        .map_or(source.len(), |at| end + at + 1);
+    let after = source[end..line_end].trim();
+    (after.is_empty() || after.starts_with('#')).then_some(line_start..line_end)
+}
+
+/// `text` as a TOML basic string: quoted, with quotes, backslashes and
+/// control characters escaped.
+fn basic_string(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\t' => quoted.push_str("\\t"),
+            '\r' => quoted.push_str("\\r"),
+            c if c.is_control() => quoted.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Where the value at `key` is in the text `root` was parsed from; `None`
 /// if the key, or a table on its path, is missing.
 fn existing(root: &Table, key: &[&str]) -> Result<Option<Range<usize>>, String> {
+    Ok(lookup(root, key)?.and_then(|(_, value)| value.span()))
+}
+
+/// The key and value at `key` in `root`; `None` if the key, or a table on
+/// its path, is missing.
+fn lookup<'a>(
+    root: &'a Table,
+    key: &[&str],
+) -> Result<Option<(&'a toml_edit::Key, &'a Value)>, String> {
     let (name, tables) = key.split_last().expect("a setting has a name");
     let mut table: &dyn TableLike = root;
     for (depth, part) in tables.iter().enumerate() {
@@ -106,9 +243,9 @@ fn existing(root: &Table, key: &[&str]) -> Result<Option<Range<usize>>, String> 
             .as_table_like()
             .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
     }
-    match table.get(name) {
-        Some(Item::Value(value)) => Ok(value.span()),
-        Some(Item::None) | None => Ok(None),
+    match table.get_key_value(name) {
+        Some((found, Item::Value(value))) => Ok(Some((found, value))),
+        Some((_, Item::None)) | None => Ok(None),
         Some(_) => Err(format!("{} is a table", key.join("."))),
     }
 }
@@ -164,7 +301,7 @@ fn insertion(
     source: &str,
     root: &Table,
     key: &[&str],
-    value: bool,
+    value: &str,
 ) -> Result<(Range<usize>, String), String> {
     let (name, tables) = key.split_last().expect("a setting has a name");
     let eol = if source.contains("\r\n") {
@@ -320,16 +457,17 @@ fn last_end(table: &dyn TableLike) -> Option<usize> {
 }
 
 /// The place for `name` set to `value` in `table`, a `[header]` with no keys
-/// of its own, if a comment in it is the setting's default (`# name =
-/// false`): that comment's text, made the setting.
+/// of its own, if a comment in it is the setting's default, a value of the
+/// same type (`# name = false`): that comment's text, made the setting.
 fn commented(
     source: &str,
     root: &Table,
     table: &Table,
     name: &str,
-    value: bool,
+    value: &str,
 ) -> Option<(Range<usize>, String)> {
     let header = table.span()?;
+    let kind = value.parse::<Value>().ok()?.type_name();
     let name = quoted(name);
     let name = name.as_str();
     let start = header.end + source[header.end..].find('\n')? + 1;
@@ -355,18 +493,27 @@ fn commented(
             continue;
         };
         let rest = rest.trim_start();
-        let Some(word) = ["true", "false"].into_iter().find(|w| rest.starts_with(w)) else {
+        let Some(len) = default_len(rest, kind) else {
             continue;
         };
-        let after = rest[word.len()..].trim();
-        if !after.is_empty() && !after.starts_with('#') {
-            continue;
-        }
         let hash = line_start + line.len() - line.trim_start().len();
-        let word_end = line_start + line.len() - rest.len() + word.len();
-        return Some((hash..word_end, format!("{name} = {value}")));
+        let value_end = line_start + line.len() - rest.len() + len;
+        return Some((hash..value_end, format!("{name} = {value}")));
     }
     None
+}
+
+/// How long the value of `kind` (a [`Value::type_name`]) that `rest`, the
+/// rest of a commented-out `name = value`, starts with is, if nothing but
+/// space or a comment follows it on the line.
+fn default_len(rest: &str, kind: &str) -> Option<usize> {
+    const KEY: &str = "x = ";
+    let line = format!("{KEY}{rest}");
+    let parsed = Document::parse(line.as_str()).ok()?;
+    match parsed.as_table().get("x")? {
+        Item::Value(value) if value.type_name() == kind => Some(value.span()?.end - KEY.len()),
+        _ => None,
+    }
 }
 
 /// Where each `[header]` in `table` starts.

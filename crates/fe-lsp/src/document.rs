@@ -666,6 +666,11 @@ impl Document {
         self.synced.is_some()
     }
 
+    /// The LSP version the server was last sent, if the document is synced.
+    pub(crate) fn newest_version(&self) -> Option<i32> {
+        Some(self.synced.as_ref()?.newest().lsp_version)
+    }
+
     /// Decodes a publication of `diagnostics` for LSP version `version`
     /// against the ring (diagnostics.rs): `None` if it's dropped. Otherwise
     /// the event holds the pulled list too (pull.rs).

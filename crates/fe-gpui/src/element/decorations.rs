@@ -4,13 +4,13 @@
 //! after a line. Each [`Tint`] resolves through the theme
 //! ([`tint_color`]).
 
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, ops::Range};
 
 use fe_display::{
     CharWidth as _,
     layout::{Rect, RowLayout},
 };
-use fe_editor::decorations::{DecorationKind, GutterMark, Tint};
+use fe_editor::decorations::{Decoration, DecorationKind, GutterMark, Tint};
 use gpui::{
     App, Bounds, DecorationRun, Hsla, PathBuilder, Pixels, Point, TextRun, UnderlineStyle, Window,
     fill, point, px,
@@ -38,6 +38,25 @@ const BAR_WIDTH: f32 = 3.;
 const BAR_INSET: f32 = 1.;
 /// An underline's thickness, in pixels.
 const UNDERLINE: f32 = 1.;
+
+/// The providers' decorations already asked for in a frame, by the range
+/// asked for, so the highlight spans and the painted decorations share a query.
+#[derive(Default)]
+pub(crate) struct Queried(RefCell<Vec<(Range<usize>, Vec<Decoration>)>>);
+
+impl Queried {
+    /// The decorations in `range`, asked of the providers the first time.
+    pub(crate) fn get(&self, view: &EditorView, range: Range<usize>) -> Vec<Decoration> {
+        let found = (self.0.borrow().iter())
+            .find(|(asked, _)| *asked == range)
+            .map(|(_, decorations)| decorations.clone());
+        found.unwrap_or_else(|| {
+            let decorations = view.model.decorations(range.clone());
+            self.0.borrow_mut().push((range, decorations.clone()));
+            decorations
+        })
+    }
+}
 
 /// What each [`DecorationKind`] resolves its tint to.
 fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
@@ -99,6 +118,7 @@ impl Decorations {
     pub(super) fn layout(
         layout: &mut FrameLayout,
         view: &EditorView,
+        queried: &Queried,
         em: f32,
         window: &Window,
     ) -> Self {
@@ -116,7 +136,7 @@ impl Decorations {
         let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
             return out;
         };
-        let decorations = view.model.decorations(first.start..last.end);
+        let decorations = queried.get(view, first.start..last.end);
         if decorations.is_empty() {
             return out;
         }
@@ -283,6 +303,8 @@ impl Decorations {
                     place(whole_row(row.row, *x, width), color, Some(line));
                     *x += width + em;
                 }
+                // Recolours text through the highlight spans; paints nothing.
+                DecorationKind::Foreground(_) => {}
             }
         }
         out.placed = (placed.into_iter())

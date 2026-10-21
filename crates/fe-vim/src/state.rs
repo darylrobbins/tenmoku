@@ -10,6 +10,7 @@ use fe_editor::{
 };
 
 use crate::ex::HostCommand;
+use crate::feature::replace_register;
 use crate::macros::REPLAY_CAP;
 use crate::remap::{Origin, RemapCommand, RemapSet, RemapState, Staged, TYPED};
 use crate::search::Pattern;
@@ -40,6 +41,9 @@ const CMDLINE_KIND: &str = "vim.cmdline_kind";
 const RECORDING: &str = "vim.recording";
 /// The flag set while `<C-o>` left insert or replace mode for one command.
 const INSERT_PENDING: &str = "vim.insert_pending";
+/// The flag set while `gr` is ReplaceWithRegister's
+/// ([`VimState::set_replace_with_register`]).
+const REPLACE_WITH_REGISTER: &str = "vim.replace_with_register";
 
 /// The editing mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -171,6 +175,8 @@ pub struct VimState {
     /// 'incsearch' is off ([`VimState::set_incsearch`]): on by default, as
     /// in nvim.
     pub(crate) incsearch_off: bool,
+    /// `gr` is ReplaceWithRegister's ([`VimState::set_replace_with_register`]).
+    pub(crate) replace_with_register: bool,
 }
 
 impl VimState {
@@ -208,6 +214,17 @@ impl VimState {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Gives `gr` to ReplaceWithRegister
+    /// (`feature/replace_register.rs`): `gr{motion}`, `grr` and visual `gr`
+    /// replace text with a register's, and the context frame carries the
+    /// flag `vim.replace_with_register` for the keymap's `gr` rows. Off by
+    /// default, when `gr` and the key after it cancel, as the keys
+    /// [`VimState::set_jump_on_s`] gives are only theirs when it's on;
+    /// `vim.operate` with `replace_with_register` replaces either way.
+    pub fn set_replace_with_register(&mut self, on: bool) {
+        self.replace_with_register = on;
     }
 
     /// Leaves the error `message` for the host, failing the key: what
@@ -550,6 +567,13 @@ impl VimState {
             Ok(step) => step,
             Err(pending) => step(pending, key),
         };
+        // `gr` is the host's while ReplaceWithRegister is off.
+        let result = match result {
+            result if !self.replace_with_register && replace_register::takes(&result) => {
+                Step::Cancel
+            }
+            result => result,
+        };
         jump::fed(self, before, &result);
         match &result {
             Step::Wait(pending) => self.pending = pending.clone(),
@@ -740,7 +764,8 @@ impl VimState {
 
     /// Publishes the mode on `frame`, the editor's own: `vim.mode`, the flag
     /// `vim.visual` in a visual mode, `vim.cmdline_kind` in `cmdline` mode,
-    /// the flag `vim.insert_pending` while `<C-o>`'s command runs,
+    /// the flag `vim.insert_pending` while `<C-o>`'s command runs, the flag
+    /// `vim.replace_with_register` while `gr` is ReplaceWithRegister's,
     /// plus the flag `vim.pending` and
     /// `vim.pending_kind` while anything is pending, a bare count or a
     /// completed `"a` included, and `remap` while keys are held for a
@@ -764,6 +789,12 @@ impl VimState {
             Mode::CmdLine(kind) => frame = frame.set(CMDLINE_KIND, kind.name()),
             _ => {
                 frame.values.remove(CMDLINE_KIND);
+            }
+        }
+        match self.replace_with_register {
+            true => frame = frame.flag(REPLACE_WITH_REGISTER),
+            false => {
+                frame.flags.remove(REPLACE_WITH_REGISTER);
             }
         }
         match self.one_command {

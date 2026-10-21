@@ -108,7 +108,7 @@ impl LastChange {
 /// `vim.repeat`: the last change, with `count` in place of its own if one
 /// is given, and the text its session typed, as one transaction with the
 /// repeating actor's origin. A put or an operator from register `1`–`8`
-/// takes the next one, and `.` remembers that.
+/// (but `gr`) takes the next one, and `.` remembers that.
 pub(crate) fn repeat(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -123,6 +123,7 @@ pub(crate) fn repeat(
         Some(_) => last.change.clone().counted(args.count),
         None => last.change.clone(),
     };
+    // `gr` takes the same one, as repeat.vim repeats ReplaceWithRegister.
     if let Change::Put(PutArgs {
         register: Some(name @ '1'..='8'),
         ..
@@ -131,6 +132,13 @@ pub(crate) fn repeat(
         register: Some(name @ '1'..='8'),
         ..
     }) = &mut change
+        && !matches!(
+            last.change,
+            Change::Operate(OperateArgs {
+                operator: crate::Operator::ReplaceWithRegister,
+                ..
+            })
+        )
     {
         *name = char::from(*name as u8 + 1);
     }

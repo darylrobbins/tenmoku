@@ -10,10 +10,13 @@
 //! version ([`LspEvent::Diagnostics`](crate::LspEvent::Diagnostics)). It
 //! drops everything else:
 //!
-//! - an unversioned publication: nothing says which text it was computed
-//!   on, not even "before the first `didChange`" (a reopen's `didOpen` and
-//!   a publication on the earlier incarnation's text cross on the wire), so
-//!   [`UnversionedDiagnostics::Drop`](crate::UnversionedDiagnostics::Drop);
+//! - an unversioned publication, unless the spec's
+//!   [`UnversionedDiagnostics`](crate::UnversionedDiagnostics) takes it as
+//!   one for the newest version in the ring (the text the server was last
+//!   sent), as VS Code does: by default, when the server isn't pulled. A
+//!   reopen's `didOpen` and a publication on the earlier incarnation's text
+//!   can cross on the wire, so one computed on the old text may show on the
+//!   new until the server's next publication replaces it (accepted);
 //! - one older than the newest decoded (out of order);
 //! - one whose version isn't in the ring: older than the ring, of an
 //!   earlier incarnation (whose versions are all lower, §4.1), or never sent;

@@ -32,6 +32,9 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "cbindgen" },
     # Windows DirectWrite bindings via zed-font-kit; unmodified. Ships only on Windows.
     { allow = ["MPL-2.0"], crate = "dwrote" },
+    # Mozilla's root certificates as data, which rustls-platform-verifier (via
+    # fe-net) depends on for wasm32 only: not linked into any build we ship.
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
     # dirs-sys helper via zed-font-kit; unmodified.
     { allow = ["MPL-2.0"], crate = "option-ext" },
 ]

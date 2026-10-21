@@ -47,6 +47,7 @@ use crate::{
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     project_panel::{self, PanelEvent},
     terminal_panel::{TERMINAL, TerminalPanel, TerminalPanelEvent},
+    theme_picker::ThemePicker,
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
@@ -134,10 +135,12 @@ pub(crate) enum Palette {
     Recent,
     /// `git.switch_branch`'s list, or the new branch's name.
     Branch,
+    /// `theme.select`'s themes.
+    Theme,
 }
 
 impl Palette {
-    const ALL: [Palette; 11] = [
+    const ALL: [Palette; 12] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -149,6 +152,7 @@ impl Palette {
         Palette::CodeActions,
         Palette::Recent,
         Palette::Branch,
+        Palette::Theme,
     ];
 
     /// Its id in the modal layer.
@@ -165,6 +169,7 @@ impl Palette {
             Palette::CodeActions => "code_actions",
             Palette::Recent => "recent",
             Palette::Branch => "git_branch",
+            Palette::Theme => "theme",
         })
     }
 
@@ -237,6 +242,8 @@ pub struct Workbench {
     go_to_line: Entity<Picker<GoToLine>>,
     /// The recent folders and files, shown by `workbench.open_recent`.
     recent_picker: Entity<Picker<RecentPicker>>,
+    /// The color themes, shown by `theme.select`.
+    theme_picker: Entity<Picker<ThemePicker>>,
     /// The workspace's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
@@ -471,6 +478,8 @@ impl Workbench {
             let delegate = RecentPicker::new(recent, ui);
             Picker::new(delegate, "Open recent folder or file…", ui, cx)
         });
+        let theme_picker =
+            cx.new(|cx| Picker::new(ThemePicker::new(ui), "Select a color theme…", ui, cx));
         // A file's folder is only the root it opens in, not one opened.
         if let Some(root) = launch_root.clone().filter(|_| as_folder) {
             recent_picker::record(root, true, cx);
@@ -575,6 +584,7 @@ impl Workbench {
             _config_problems: Self::follow_config_problems(window, cx),
             go_to_line,
             recent_picker,
+            theme_picker,
             shell,
             modals,
             palette: None,
@@ -2108,6 +2118,36 @@ impl Workbench {
             picker.show(window, cx);
         });
         self.show_palette(Palette::Language, picker, window, cx);
+    }
+
+    /// The theme picker, shown by `theme.select`.
+    #[cfg(test)]
+    pub(crate) fn theme_picker(&self) -> &Entity<Picker<ThemePicker>> {
+        &self.theme_picker
+    }
+
+    /// Whether the theme picker shows.
+    #[cfg(test)]
+    pub(crate) fn theme_picker_open(&self) -> bool {
+        self.palette == Some(Palette::Theme)
+    }
+
+    /// Shows the theme picker, focused, in place of any other palette, or
+    /// afresh if it shows.
+    pub(crate) fn select_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Dismissing it would hide it again once its dismissal lands.
+        if self.palette != Some(Palette::Theme) {
+            self.dismiss_palette(window, cx);
+        }
+        let picker = self.theme_picker.clone();
+        let input = picker.focus_handle(cx);
+        let previous = window.focused(cx).filter(|focused| *focused != input);
+        let settings = open::settings_path(cx);
+        picker.update(cx, |picker, cx| {
+            picker.delegate.opened(previous, settings, cx);
+            picker.show(window, cx);
+        });
+        self.show_palette(Palette::Theme, picker, window, cx);
     }
 
     /// The go-to-line picker, shown by `go_to_line.toggle`.

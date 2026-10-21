@@ -1,0 +1,346 @@
+# Insert-mode <C-w> and <C-u> cases for fe-vim's oracle: the word, and the
+# text typed on the row (or with none, all before the caret), deleted before
+# the caret, each stopping once at where the insert began and joining rows
+# at a row's start, with . and a count replaying them, in insert and replace
+# mode, and in a macro.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation; a key that fails is
+# a case's last key. What nvim does with each is recorded in
+# insert_keys.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+[[case]]
+name = "ctrl_w_word"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "A baz qux<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_punctuation"
+buffer = "foo.bar"
+cursor = [0, 6]
+keys = "A(x, y)<C-w><C-w><C-w>!<Esc>"
+
+[[case]]
+name = "ctrl_w_punctuation_before_start"
+buffer = "x = foo.bar"
+cursor = [0, 10]
+keys = "A<C-w><C-w>!<Esc>"
+
+[[case]]
+name = "ctrl_w_stops_once_at_insert_start"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "A baz<C-w><C-w><C-w><Esc>"
+
+[[case]]
+name = "ctrl_w_probe"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "A baz<C-w><C-w><Esc>"
+
+[[case]]
+name = "ctrl_w_joins_rows"
+buffer = "  foo\nbar"
+cursor = [1, 0]
+keys = "i<C-w><Esc>"
+
+[[case]]
+name = "ctrl_w_after_line_break"
+buffer = "foo"
+cursor = [0, 2]
+keys = "a bar<CR>baz<C-w><C-w><C-w>!<Esc>"
+
+[[case]]
+name = "ctrl_w_in_indent"
+buffer = "    foo"
+cursor = [0, 4]
+keys = "i<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_trailing_spaces"
+buffer = "foo   "
+cursor = [0, 5]
+keys = "A<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_at_buffer_start"
+buffer = "foo"
+cursor = [0, 0]
+keys = "i<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_multibyte"
+buffer = "foo"
+cursor = [0, 2]
+keys = "a héllo wörld<C-w>!<Esc>"
+
+[[case]]
+name = "ctrl_w_cjk_class"
+buffer = "foo"
+cursor = [0, 2]
+keys = "a 日本語abc<C-w><C-w>!<Esc>"
+
+[[case]]
+name = "ctrl_u_typed_text"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = "a xy<C-u><Esc>"
+
+[[case]]
+name = "ctrl_u_nothing_typed"
+buffer = "foo bar"
+cursor = [0, 3]
+keys = "a<C-u><Esc>"
+
+[[case]]
+name = "ctrl_u_twice"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "A baz<C-u><C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_u_keeps_indent"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "A bar<C-u><C-u><C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_u_to_indent"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "A bar<C-u><C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_u_autoindent_row"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "A<CR>bar<C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_u_joins_rows"
+buffer = "foo\nbar"
+cursor = [1, 0]
+keys = "i<C-u><Esc>"
+
+[[case]]
+name = "ctrl_u_after_line_break"
+buffer = "foo"
+cursor = [0, 2]
+keys = "a bar<CR>baz<C-u><C-u><C-u>!<Esc>"
+
+[[case]]
+name = "ctrl_w_dot_repeat"
+buffer = "foo bar\nbaz qux"
+cursor = [0, 6]
+keys = "A<C-w>x<Esc>j."
+
+[[case]]
+name = "ctrl_u_dot_repeat"
+buffer = "foo bar\nbaz qux"
+cursor = [0, 3]
+keys = "a<C-u>x<Esc>j."
+
+[[case]]
+name = "ctrl_w_typed_dot_repeat"
+buffer = "foo\nbar"
+cursor = [0, 2]
+keys = "a xy z<C-w>w<Esc>j."
+
+[[case]]
+name = "ctrl_w_count_insert"
+buffer = "foo"
+cursor = [0, 0]
+keys = "3ia b<C-w>c<Esc>"
+
+[[case]]
+name = "ctrl_u_count_insert"
+buffer = "foo"
+cursor = [0, 1]
+keys = "3ia b<C-u>c<Esc>"
+
+[[case]]
+name = "ctrl_u_count_nothing_typed"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "2A<C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_w_count_dot"
+buffer = "foo\nbar"
+cursor = [0, 0]
+keys = "2Ia b<C-w>c<Esc>j."
+
+[[case]]
+name = "ctrl_w_after_ctrl_t"
+buffer = "foo\nbar"
+cursor = [0, 0]
+keys = "Ix<C-t>yz<C-w>w<Esc>j."
+
+[[case]]
+name = "ctrl_w_replace_mode"
+buffer = "foo bar baz"
+cursor = [0, 4]
+keys = "Rxy z<C-w><C-w>q<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_before_start"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "R<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_past_end"
+buffer = "foo"
+cursor = [0, 2]
+keys = "Rxy zw<C-w>q<Esc>"
+
+[[case]]
+name = "ctrl_u_replace_mode"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "Rxyz<C-u>q<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_dot"
+buffer = "foo bar\nfoo bar"
+cursor = [0, 4]
+keys = "Rxy z<C-w>q<Esc>j0."
+
+[[case]]
+name = "ctrl_w_replace_count"
+buffer = "foo bar baz qux"
+cursor = [0, 0]
+keys = "2Rab c<C-w>d<Esc>"
+
+[[case]]
+name = "ctrl_w_in_macro"
+buffer = "foo bar\nbaz qux"
+cursor = [0, 6]
+keys = "qaA quux<C-w>x<Esc>qj@a"
+
+[[case]]
+name = "ctrl_u_in_macro"
+buffer = "foo bar\nbaz qux"
+cursor = [0, 3]
+keys = "qaa<C-u>y<Esc>qj$@a"
+
+[[case]]
+name = "ctrl_u_typed_dot"
+buffer = "foo\nbar"
+cursor = [0, 2]
+keys = "a xy<C-u>z<Esc>j."
+
+[[case]]
+name = "ctrl_w_after_backspace"
+buffer = "foo"
+cursor = [0, 2]
+keys = "a bar<BS><C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_w_line_break_dot"
+buffer = "foo\nbar"
+cursor = [0, 2]
+keys = "a x<CR>y<C-w><C-w>z<Esc>j."
+
+[[case]]
+name = "ctrl_w_line_break_count"
+buffer = "foo"
+cursor = [0, 2]
+keys = "2a x<CR>y<C-w><C-w>z<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_before_start_dot"
+buffer = "foo bar\nabcdef gh"
+cursor = [0, 4]
+keys = "R<C-w>x<Esc>j0w."
+
+[[case]]
+name = "ctrl_u_replace_before_start"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "Rx<C-u><C-u>y<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_row_start"
+buffer = "foo\nbar"
+cursor = [1, 0]
+keys = "R<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_u_replace_row_start"
+buffer = "foo\nbar"
+cursor = [1, 0]
+keys = "R<C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_typed_break"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "Rx<CR>y<C-w><C-w>z<Esc>"
+
+[[case]]
+name = "ctrl_u_replace_typed_break"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "Rx<CR>y<C-u><C-u>z<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_typed_break_thrice"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "Rx<CR>y<C-w><C-w><C-w>z<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_autoindent"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "R<CR><C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_u_replace_autoindent"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "R<CR><C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_count_before_start"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "2R<C-w>x<Esc>"
+
+[[case]]
+name = "ctrl_u_replace_count_before_start"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "2R<C-u>x<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_count_dot"
+buffer = "foo bar\nfoo bar"
+cursor = [0, 4]
+keys = "R<C-w>x<Esc>j$2."
+
+[[case]]
+name = "ctrl_u_replace_count_dot"
+buffer = "foo bar\nfoo bar"
+cursor = [0, 4]
+keys = "R<C-u>x<Esc>j$2."
+
+[[case]]
+name = "ctrl_w_replace_moved_then_typed"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "R<C-w>xy<C-w>z<Esc>"
+
+[[case]]
+name = "ctrl_w_replace_count_only_key"
+buffer = "foo bar baz"
+cursor = [0, 8]
+keys = "2R<C-w><Esc>"
+
+[[case]]
+name = "ctrl_u_replace_count_only_key"
+buffer = "foo\nbar"
+cursor = [1, 1]
+keys = "3R<C-u><Esc>"

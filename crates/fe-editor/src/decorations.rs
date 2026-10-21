@@ -63,6 +63,11 @@ pub enum DecorationKind {
     /// Text shown after the end of the range's last buffer row. It never
     /// moves or wraps the buffer's text.
     AfterLine(Arc<str>),
+    /// The range's text drawn in the colour the editor's theme gives this
+    /// highlight name (`"function.method"`, `"variable.parameter"`), over
+    /// whatever colour the syntax gives it. A name the theme doesn't know
+    /// leaves the syntax colour. It paints no background or underline.
+    Foreground(Arc<str>),
 }
 
 /// A decoration over a byte range of the snapshot it was resolved in.

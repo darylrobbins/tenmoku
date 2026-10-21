@@ -326,7 +326,7 @@ pub(crate) fn motion(
                 }
                 _ => cursor.offset(),
             };
-            let landed = search::parsed(search.pattern)
+            let landed = search::parsed(search.pattern, search.ignore_case)
                 .is_ok_and(|pattern| cmdline::offset::land(cursor, &pattern, from, search, n));
             if !landed {
                 return Err(goal);

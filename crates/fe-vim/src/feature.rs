@@ -36,6 +36,7 @@
 
 pub(crate) mod argument;
 pub(crate) mod objects;
+pub(crate) mod replace_register;
 pub(crate) mod surround;
 
 use fe_command::Registry;
@@ -161,7 +162,7 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 20] = [
+pub(crate) const FEATURES: [&Feature; 21] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -182,6 +183,7 @@ pub(crate) const FEATURES: [&Feature; 20] = [
     &objects::FEATURE,
     &argument::FEATURE,
     &surround::FEATURE,
+    &replace_register::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

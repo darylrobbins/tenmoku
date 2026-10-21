@@ -48,6 +48,11 @@ pub(crate) struct Case {
     /// `vim.cmd`, here read by [`parse_vimrc`] into a [`RemapSet`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) mapping: Vec<String>,
+    /// nvim `:set` arguments run before the keys (`"ignorecase
+    /// smartcase"`): in nvim with `vim.cmd`, here through
+    /// [`HeadlessVim`]'s setters for the options [`check`] knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) set: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +90,8 @@ pub(crate) struct Recorded {
     pub(crate) soft_wrap: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) mapping: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) set: Option<String>,
     pub(crate) expect: Expect,
 }
 
@@ -100,6 +107,7 @@ impl Recorded {
             folds,
             soft_wrap,
             mapping,
+            set,
         } = case;
         Self {
             name,
@@ -111,6 +119,7 @@ impl Recorded {
             folds,
             soft_wrap,
             mapping,
+            set,
             expect: expect.into(),
         }
     }
@@ -126,6 +135,7 @@ impl Recorded {
             folds: self.folds.clone(),
             soft_wrap: self.soft_wrap,
             mapping: self.mapping.clone(),
+            set: self.set.clone(),
         }
     }
 }
@@ -491,14 +501,38 @@ fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
         .collect()
 }
 
+/// Runs a case's `set`, nvim `:set` arguments, on `vim`: `ignorecase`
+/// (`ic`) and `smartcase` (`scs`), and their `no` forms. Any other
+/// argument is an error.
+fn set_options(vim: &mut HeadlessVim, set: &str) -> Result<(), String> {
+    let (mut ignore_case, mut smart_case) = vim.registers().search_case();
+    for argument in set.split_whitespace() {
+        let (name, on) = match argument.strip_prefix("no") {
+            Some(name) => (name, false),
+            None => (argument, true),
+        };
+        match name {
+            "ignorecase" | "ic" => ignore_case = on,
+            "smartcase" | "scs" => smart_case = on,
+            _ => return Err(format!("unknown option {argument:?}")),
+        }
+    }
+    vim.set_search_case(ignore_case, smart_case);
+    Ok(())
+}
+
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
 /// the cursor, the mode, the registers, the visual anchor and the marks
 /// ([`MARKS`]) with nvim's, and with `window_rows` (the view that many rows
 /// high) the view's top row. A case's `mapping` is read by [`parse_vimrc`]
-/// first, and any issue fails the case.
+/// first, and any issue fails the case; so does a `set` naming an option
+/// [`set_options`] doesn't know.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
+    if let Some(set) = &case.set {
+        set_options(&mut vim, set).map_err(|error| format!("{}: set: {error}", case.name))?;
+    }
     for &(first, last) in &case.folds {
         vim.model_mut().fold_rows(first..=last);
     }

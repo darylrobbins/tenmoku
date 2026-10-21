@@ -44,6 +44,7 @@ mod references_panel;
 mod search_panel;
 mod status_bar;
 mod terminal_panel;
+mod theme_picker;
 mod title_bar;
 mod toolbar_picker;
 mod trust;

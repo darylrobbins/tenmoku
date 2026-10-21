@@ -21,6 +21,9 @@
 //! // The installed themes, and the two the pair starts from.
 //! let themes = kiln::extensions::themes(cx);
 //! kiln::extensions::select_themes(cx, Some("acme.solarized/solarized-dark"), None);
+//! // The app's own themes, selected as `builtin/<id>`.
+//! kiln::extensions::install_builtin_themes(cx, &[("notes-dusk", &dusk)]);
+//! kiln::extensions::select_themes(cx, Some("builtin/notes-dusk"), None);
 //! ```
 //!
 //! [`ExtensionSet`] is kiln-core's: what's loaded, its diagnostics, and the
@@ -52,7 +55,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -74,6 +77,34 @@ pub(crate) type OnExtensions = Box<dyn FnMut(&ExtensionSet, &mut App)>;
 /// Called with each licence notice ([`ExtensionSet::license_notices`]).
 pub(crate) type OnNotice = Box<dyn FnMut(&LicenseNotice, &mut App)>;
 
+/// The files of an extension the app reads, relative to its directory.
+pub(crate) type FilesOf = Box<dyn Fn(&Manifest) -> Vec<PathBuf>>;
+
+/// Each extension's listed files' canonical paths, sizes and times, by the
+/// extension's directory: the cheap check, made on the UI thread.
+type Fingerprints = BTreeMap<PathBuf, Vec<Option<(PathBuf, u64, Option<std::time::SystemTime>)>>>;
+
+/// The hash of each listed file's contents, by canonical path.
+type Hashes = BTreeMap<PathBuf, Option<u64>>;
+
+/// Hashes the contents of the files `fingerprints` has. Reads them all, so
+/// it's for a background thread; a file that can't be read has none.
+fn hash_files(fingerprints: &Fingerprints) -> Hashes {
+    use std::hash::Hasher;
+    let paths = fingerprints.values().flatten().flatten().map(|(p, ..)| p);
+    paths
+        .map(|path| {
+            let hash = fs::read(path).ok().map(|bytes| {
+                // `DefaultHasher::new()` has fixed keys: equal bytes hash equal.
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                hasher.write(&bytes);
+                hasher.finish()
+            });
+            (path.clone(), hash)
+        })
+        .collect()
+}
+
 /// What [`crate::Config`] says of extensions, for [`crate::init`].
 #[derive(Default)]
 pub(crate) struct Setup {
@@ -82,6 +113,7 @@ pub(crate) struct Setup {
     pub(crate) allowed_licenses: Option<Vec<String>>,
     pub(crate) on_extensions: Vec<OnExtensions>,
     pub(crate) on_notice: Vec<OnNotice>,
+    pub(crate) files_of: Option<FilesOf>,
 }
 
 /// The extensions loaded now, in ID order: none without
@@ -92,32 +124,66 @@ pub fn loaded(cx: &App) -> Vec<Manifest> {
         .unwrap_or_default()
 }
 
-/// A theme an extension installed: [`themes`].
+/// A theme an extension or the app installed: [`themes`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThemeInfo {
-    /// `<extension id>/<file stem>`: `acme.solarized/solarized-dark`.
+    /// `<extension id>/<file stem>`: `acme.solarized/solarized-dark`; or
+    /// `builtin/<id>` for one of the app's ([`install_builtin_themes`]).
     pub id: String,
-    /// The file's `name`, else its stem.
+    /// The file's `name`, else its stem (or the ID it was installed by).
     pub title: String,
     pub appearance: Appearance,
 }
 
-/// The themes the extensions loaded now install, in ID order: none
-/// without [`crate::Config::extensions`].
+/// The themes installed now, in ID order: the extensions' (none without
+/// [`crate::Config::extensions`]) and the app's
+/// ([`install_builtin_themes`]).
 pub fn themes(cx: &App) -> Vec<ThemeInfo> {
     let Some(layers) = cx.try_global::<Layers>() else {
         return Vec::new();
     };
     let layers = layers.borrow();
-    layers
-        .installed
-        .iter()
+    let mut themes: Vec<ThemeInfo> = (layers.installed.iter())
+        .chain(&layers.builtin)
         .map(|(id, theme)| ThemeInfo {
             id: id.clone(),
             title: theme.title.clone(),
             appearance: theme.appearance,
         })
-        .collect()
+        .collect();
+    themes.sort_by(|a, b| a.id.cmp(&b.id));
+    themes
+}
+
+/// The namespace of the app's own themes' IDs: `builtin/<id>`. No
+/// extension's ID is one segment, so none can use it.
+pub const BUILTIN_THEMES: &str = "builtin";
+
+/// The ID [`themes`] lists, and [`select_themes`] takes, for the app's
+/// theme installed as `id`: `builtin/<id>`.
+pub fn builtin_theme_id(id: &str) -> String {
+    format!("{BUILTIN_THEMES}/{id}")
+}
+
+/// Installs the app's own `themes`, each by an ID of its own and its file,
+/// laid over the bundled base for its appearance like an extension's. Each
+/// is listed by [`themes`] as `builtin/<id>` ([`builtin_theme_id`]), for
+/// [`select_themes`] to choose, and stays across rescans of the extensions
+/// directory. One of an ID already installed replaces it.
+pub fn install_builtin_themes(cx: &mut App, themes: &[(&str, &ThemeFile)]) {
+    let layers = Layers::get(cx);
+    {
+        let mut layers = layers.borrow_mut();
+        for &(id, file) in themes {
+            let theme = Installed {
+                title: file.name.clone().unwrap_or_else(|| id.to_owned()),
+                appearance: file.appearance.unwrap_or_default(),
+                data: ThemeData::from_file(file),
+            };
+            layers.builtin.insert(builtin_theme_id(id), theme);
+        }
+    }
+    layers.apply(cx);
 }
 
 /// The installed theme each slot of the dark and light pair starts from,
@@ -128,7 +194,20 @@ pub fn themes(cx: &App) -> Vec<ThemeInfo> {
 /// bundled one until a rescan installs it. The choice holds until the next
 /// call: the app passes its settings' choice at start and on each change.
 pub fn select_themes(cx: &mut App, dark: Option<&str>, light: Option<&str>) {
-    Layers::get(cx).select(dark, light, cx);
+    select_themes_noting(cx, dark, light, Vec::new());
+}
+
+/// [`select_themes`], with what the app found wrong in the settings it
+/// made the choice from: `notes` go in
+/// [`kiln_platform::config::diagnostics`] before the choice's own, and
+/// stay there, through the config service's batches, until the next call.
+pub fn select_themes_noting(
+    cx: &mut App,
+    dark: Option<&str>,
+    light: Option<&str>,
+    notes: Vec<Diagnostic>,
+) {
+    Layers::get(cx).select(dark, light, notes, cx);
 }
 
 /// The extensions loaded, as a GPUI global.
@@ -151,6 +230,19 @@ pub(crate) struct ExtensionSource {
     /// The extensions' keymap and menu files, as last read.
     files: Files,
     on_extensions: Vec<OnExtensions>,
+    /// The files of the extensions the app reads, as listed by
+    /// `files_of`, as of the last time `on_extensions` was called.
+    fingerprints: Fingerprints,
+    /// The hash of each of those files' contents, by canonical path, once
+    /// [`hash_files`] has read them; none until then.
+    hashes: Option<Hashes>,
+    /// Whether a reload found a change the extensions applied don't have
+    /// yet, its hashing still in flight.
+    dirty: bool,
+    /// Which fingerprint the hashing in flight is for: a result for an
+    /// older one is dropped.
+    generation: u64,
+    files_of: Option<FilesOf>,
     on_notice: Vec<OnNotice>,
     /// The notices logged with no callback to give them to.
     logged: HashSet<LicenseNotice>,
@@ -185,6 +277,11 @@ impl ExtensionSource {
             layers,
             files,
             on_extensions: setup.on_extensions,
+            fingerprints: Fingerprints::new(),
+            hashes: None,
+            dirty: false,
+            generation: 0,
+            files_of: setup.files_of,
             on_notice: setup.on_notice,
             logged: HashSet::new(),
         };
@@ -298,6 +395,33 @@ impl ExtensionSource {
         changed
     }
 
+    /// The size and modification time of each file the app lists for each
+    /// loaded extension ([`crate::Config::extension_files`]): a file that's
+    /// missing, isn't a regular file, or leads outside the extension's
+    /// directory has none. Reads no contents: a rewrite that keeps a file's
+    /// size and modification time is found by [`hash_files`], which
+    /// [`ExtensionSource::check_contents`] runs off the main thread.
+    fn fingerprint(&self) -> Fingerprints {
+        let Some(files) = &self.files_of else {
+            return Fingerprints::new();
+        };
+        let mut out = Fingerprints::new();
+        for manifest in self.set.extensions() {
+            let root = manifest.dir.canonicalize().ok();
+            let stamps = files(manifest)
+                .into_iter()
+                .map(|path| {
+                    let canonical = manifest.dir.join(path).canonicalize().ok()?;
+                    canonical.starts_with(root.as_ref()?).then_some(())?;
+                    let meta = fs::metadata(&canonical).ok().filter(|m| m.is_file())?;
+                    Some((canonical, meta.len(), meta.modified().ok()))
+                })
+                .collect();
+            out.insert(manifest.dir.clone(), stamps);
+        }
+        out
+    }
+
     /// Gives the themes to the pair's layers, which lay them in.
     fn apply_themes(&mut self, cx: &mut App) {
         {
@@ -316,6 +440,9 @@ impl ExtensionSource {
     /// launch with one shows them.
     fn apply(&mut self, cx: &mut App) {
         cx.set_global(Loaded(self.set.extensions().to_vec()));
+        self.fingerprints = self.fingerprint();
+        self.hashes = None;
+        self.dirty = false;
         for on_extensions in &mut self.on_extensions {
             on_extensions(&self.set, cx);
         }
@@ -342,45 +469,118 @@ impl ExtensionSource {
     }
 }
 
-impl ConfigSource for ExtensionSource {
+impl ExtensionSource {
+    /// Hashes the contents of the files in `stamps` on a background thread,
+    /// then applies the extensions, with `stamps` as their fingerprint, if
+    /// they were loaded or a reload found a change in the manifests or the
+    /// files' sizes and times (`dirty`), or the contents differ from the
+    /// last applied's. Applying after the hashing, not before, means the
+    /// hashes can't be of bytes the app never saw, and a rewrite after it
+    /// is a change the next reload sees. Hashes for a check since replaced
+    /// are dropped; `dirty` stays until the extensions are applied.
+    fn hash(this: &Rc<RefCell<Self>>, stamps: Fingerprints, cx: &mut App) {
+        let (task, generation) = {
+            let mut source = this.borrow_mut();
+            source.generation += 1;
+            let generation = source.generation;
+            let task = cx.background_executor().spawn({
+                let stamps = stamps.clone();
+                async move { hash_files(&stamps) }
+            });
+            (task, generation)
+        };
+        let this = this.clone();
+        cx.spawn(async move |cx| {
+            let hashes = task.await;
+            cx.update(|cx| {
+                let mut source = this.borrow_mut();
+                if source.generation != generation {
+                    return;
+                }
+                let differs = source.hashes.as_ref() != Some(&hashes);
+                if !(source.dirty || differs) {
+                    return;
+                }
+                log::info!(target: log_target(cx), "extensions reloaded");
+                source.apply(cx);
+                // What `apply` fingerprinted may be newer than what was
+                // hashed: keep the older, so a change between is seen.
+                source.fingerprints = stamps.clone();
+                source.hashes = Some(hashes);
+            });
+        })
+        .detach();
+    }
+}
+
+/// The source as the config service holds it, shared with the background
+/// hashing that comes back to it.
+pub(crate) struct Shared(pub(crate) Rc<RefCell<ExtensionSource>>);
+
+impl ConfigSource for Shared {
     fn paths(&self) -> Vec<PathBuf> {
         Vec::new()
     }
 
     fn trees(&self) -> Vec<PathBuf> {
-        vec![self.dir.clone()]
+        vec![self.0.borrow().dir.clone()]
     }
 
     fn install(&mut self, cx: &mut App) {
-        self.apply_themes(cx);
-        self.apply(cx);
+        let stamps = {
+            let mut source = self.0.borrow_mut();
+            source.apply_themes(cx);
+            if source.files_of.is_none() {
+                source.apply(cx);
+                return;
+            }
+            // The app is told once the files are hashed, so the hashes can't
+            // be of bytes it never saw: a rewrite after it is a change.
+            cx.set_global(Loaded(source.set.extensions().to_vec()));
+            source.dirty = true;
+            source.fingerprint()
+        };
+        ExtensionSource::hash(&self.0, stamps, cx);
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
-        if !changed.contains(&self.dir) {
+        let mut source = self.0.borrow_mut();
+        if !changed.contains(&source.dir) {
             return;
         }
-        let rescanned = self.set.rescan();
+        let rescanned = source.set.rescan();
         // A theme file may change with no manifest changing.
-        if self.read_themes() {
+        if source.read_themes() {
             log::info!(target: log_target(cx), "extension themes reloaded");
-            self.apply_themes(cx);
+            source.apply_themes(cx);
         }
         // So may a keymap or menu file.
-        if self.read_files() {
+        if source.read_files() {
             log::info!(target: log_target(cx), "extension keymaps and menus reloaded");
             crate::contributions::resolve_again(cx);
         }
-        if rescanned {
-            log::info!(target: log_target(cx), "extensions reloaded");
-            self.apply(cx);
+        // A file the app reads from the manifest, as a grammar's module,
+        // may change with no manifest changing. The contents are hashed off
+        // the main thread, and the extensions applied when that's done, if
+        // anything differs.
+        if source.files_of.is_none() {
+            if rescanned {
+                log::info!(target: log_target(cx), "extensions reloaded");
+                source.apply(cx);
+            }
+            return;
         }
+        let stamps = source.fingerprint();
+        source.dirty |= rescanned || stamps != source.fingerprints;
+        drop(source);
+        ExtensionSource::hash(&self.0, stamps, cx);
     }
 
     fn diagnostics(&self) -> Vec<Diagnostic> {
-        let mut diagnostics = self.set.diagnostics().to_vec();
-        diagnostics.extend(self.theme_diagnostics.iter().cloned());
-        let files = self.files.0.borrow();
+        let source = self.0.borrow();
+        let mut diagnostics = source.set.diagnostics().to_vec();
+        diagnostics.extend(source.theme_diagnostics.iter().cloned());
+        let files = source.files.0.borrow();
         diagnostics.extend(files.read.iter().cloned());
         diagnostics.extend(files.laid.iter().cloned());
         diagnostics

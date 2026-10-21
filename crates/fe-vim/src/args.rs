@@ -17,7 +17,8 @@ use crate::{line_motions, prose};
 /// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
 /// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
 /// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`;
-/// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`.
+/// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`;
+/// `replace_with_register` (`gr`) to `feature/replace_register.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -59,6 +60,9 @@ pub enum Operator {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         rows: bool,
     },
+    /// `gr`: what it covers is replaced by the register's text, as the
+    /// ReplaceWithRegister plugin does (`feature/replace_register.rs`).
+    ReplaceWithRegister,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -230,6 +234,18 @@ pub struct Search {
     #[serde(skip)]
     #[schemars(skip)]
     pub again: bool,
+    /// Whether the pattern is `*`'s or `#`'s (or `n`, `N` or `/<CR>`
+    /// repeating one), which 'smartcase' doesn't apply to. Set as `again`
+    /// is, and by the `/<CR>` that repeats one; never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub word: bool,
+    /// Whether it ignores case, by 'ignorecase' and 'smartcase' as they are
+    /// when it runs (`\c` and `\C` still override it): `vim.move` and
+    /// `vim.operate` work it out as they run; it's never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub ignore_case: bool,
 }
 
 /// Where a search lands from its match (`:help search-offset`): `lines` is

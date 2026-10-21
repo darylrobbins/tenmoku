@@ -65,3 +65,61 @@ fn a_small_count_makes_every_copy() {
     );
     assert_eq!(fed("foo bar", "3R<C-t>x<Esc>").0, "            xxx bar");
 }
+
+/// `keys` fed to `text` with a caret at each of `carets` (byte offsets):
+/// the text they leave and the carets' heads.
+fn fed_at(text: &str, carets: &[usize], keys: &str) -> (String, Vec<usize>) {
+    let mut vim = HeadlessVim::new(text, (0, 0));
+    let carets: Vec<_> = carets
+        .iter()
+        .map(|&at| crate::operator::caret(at))
+        .collect();
+    vim.model_mut().set_selections(carets);
+    vim.feed(keys).unwrap();
+    let heads = vim
+        .model_mut()
+        .selections()
+        .iter()
+        .map(|s| s.head())
+        .collect();
+    (vim.text(), heads)
+}
+
+#[test]
+fn counted_copies_follow_carets_that_deletion_brings_together() {
+    // Each copy's `<C-w>`s take the word before both carets, then the
+    // carets meet: the copies go on at the one caret left.
+    let (text, heads) = fed_at("a b c d", &[0, 6], "3a<C-w><C-w>x<Esc>");
+    assert_eq!(text, "x");
+    assert_eq!(heads, [0]);
+}
+
+#[test]
+fn replace_mode_ctrl_w_goes_back_at_each_caret_on_its_own() {
+    // Words of one and four characters before the carets: each goes back
+    // over its own.
+    let (text, _) = fed_at("abc a x\nlong y", &[5, 12], "R<C-w>Q<Esc>");
+    assert_eq!(text, "abc Q x\nQong y");
+    // A character typed past the row's end goes, one typed over another
+    // puts that back, and then each caret only moves, as far as its word
+    // (the blank before it first).
+    let (text, heads) = fed_at("abc a\nlong y", &[4, 10], "Rxy<C-w>");
+    assert_eq!((text.as_str(), heads), ("abc a\nlong y", vec![4, 10]));
+    let (text, _) = fed_at("abc a\nlong y", &[4, 10], "Rxy<C-w><C-w>Q<Esc>");
+    assert_eq!(text, "Qbc a\nQong y");
+    // With nothing typed, one caret goes back over its word while the
+    // other, at its row's start, goes to the end of the row above.
+    let (text, heads) = fed_at("ab cd\nef gh", &[3, 6], "R<C-w>");
+    assert_eq!((text.as_str(), heads), ("ab cd\nef gh", vec![0, 5]));
+    // Each puts back what it typed over first, then moves.
+    let (text, heads) = fed_at("ab cd\nef gh", &[3, 6], "Rx<C-w><C-w>");
+    assert_eq!((text.as_str(), heads), ("ab cd\nef gh", vec![0, 5]));
+}
+
+#[test]
+fn replace_copies_follow_carets_that_going_back_brings_together() {
+    // The first copy's `<C-w>`s bring both carets to the text's start:
+    // the copies go on at the one caret left.
+    let (text, heads) = fed_at("a b c d", &[0, 6], "3R<C-w><C-w>x<Esc>");
+    assert_eq!((text.as_str(), heads), ("x x c d", vec![0]));
+}

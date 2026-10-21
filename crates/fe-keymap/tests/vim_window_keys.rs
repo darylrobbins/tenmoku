@@ -106,18 +106,23 @@ fn linux() {
     check(DEFAULT, Os::Linux);
 }
 
-/// Off macOS `ctrl-w` closes the tab, except as vim normal mode's prefix.
+/// Off macOS `ctrl-w` closes the tab, except as vim normal mode's prefix
+/// and in vim's insert and replace mode, where it's vim's.
 #[test]
 fn ctrl_w_still_closes_the_tab_with_vim_off() {
     let keymap = keymap(DEFAULT, Os::Linux);
-    for stack in [stack(None), stack(Some("insert"))] {
+    for (stack, command) in [
+        (stack(None), "workbench.close_tab"),
+        (stack(Some("insert")), "vim.key"),
+        (stack(Some("replace")), "vim.key"),
+    ] {
         let mut matcher = Matcher::new(keymap.clone());
         let KeyOutcome::Dispatch(invocation) =
             matcher.push(Keystroke::parse("ctrl-w").unwrap(), &stack)
         else {
             panic!("ctrl-w waits");
         };
-        assert_eq!(invocation.command.as_str(), "workbench.close_tab");
+        assert_eq!(invocation.command.as_str(), command);
     }
     let mut matcher = Matcher::new(keymap);
     assert_eq!(

@@ -7,7 +7,7 @@ use fe_buffer::Buffer;
 use fe_text::Text;
 use lsp_types::{DiagnosticSeverity, NumberOrString, PositionEncodingKind, Url};
 
-use super::{marker, over, publish, script};
+use super::{over, publish, script};
 use crate::tests::Started;
 use crate::{
     DiagnosticTag, FileDiagnostic, LspEvent, PositionEncoding, Severity, decode_file_diagnostics,
@@ -100,7 +100,4 @@ fn open_documents_are_unchanged() {
         _ => None,
     });
     assert!(!saw_file, "an open document gets Diagnostics");
-    // An unversioned one is still dropped, not reported raw.
-    publish(&s, &uri, None, vec![over(text, "one", true, "stray")]);
-    marker(&s, &uri, 0, text, "the unversioned one");
 }

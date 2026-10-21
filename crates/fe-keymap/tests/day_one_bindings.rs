@@ -417,7 +417,8 @@ fn vim_safe() {
         }
 
         // ctrl-r: Open Recent with vim off or outside the editor, vim's in
-        // an editor with vim on, in every mode.
+        // an editor with vim on, in every mode: unmatched, but off macOS in
+        // insert and replace mode `vim.key`, as nvim's other insert keys.
         for keymap in [&generated, &table] {
             for stack in [plain_editor(), tree(true), problems(true), stack(vec![])] {
                 assert_eq!(
@@ -427,9 +428,10 @@ fn vim_safe() {
                 );
             }
             for mode in VIM_MODES.into_iter().chain(["replace"]) {
+                let typing = matches!(mode, "insert" | "replace") && os != Os::MacOs;
                 assert_eq!(
                     run(keymap, "ctrl-r", &vim_editor(mode)),
-                    None,
+                    typing.then(|| "vim.key".to_owned()),
                     "{os:?} {mode}"
                 );
             }

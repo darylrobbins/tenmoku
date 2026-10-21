@@ -540,6 +540,7 @@ pub(super) fn operate_block(
         Operator::Reindent => unreachable!("over the block's rows"),
         Operator::Fold => unreachable!("folds' own"),
         Operator::Surround { .. } => unreachable!("refused by operator::operate"),
+        Operator::ReplaceWithRegister => unreachable!("replace_register's own"),
     };
     let corner = block.corner(&text, tab);
     let begins = vec![history::pair(&text, corner)];

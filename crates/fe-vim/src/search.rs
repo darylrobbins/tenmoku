@@ -781,20 +781,61 @@ impl<'a> RowList<'a> {
     }
 }
 
-/// `pattern` translated, the last one kept on each thread: a search motion
-/// asks once for each caret.
-pub(crate) fn parsed(pattern: SearchPattern) -> Result<Pattern, PatternError> {
+/// `pattern` translated, ignoring case if `ignore_case` unless it says
+/// otherwise ([`Pattern::parse_with`]), the last one kept on each thread: a
+/// search motion asks once for each caret.
+pub(crate) fn parsed(pattern: SearchPattern, ignore_case: bool) -> Result<Pattern, PatternError> {
+    type Kept = ((SearchPattern, bool), Result<Pattern, PatternError>);
     thread_local! {
-        static LAST: RefCell<Option<(SearchPattern, Result<Pattern, PatternError>)>> =
-            const { RefCell::new(None) };
+        static LAST: RefCell<Option<Kept>> = const { RefCell::new(None) };
     }
+    let key = (pattern, ignore_case);
     LAST.with_borrow_mut(|last| match last {
-        Some((kept, parsed)) if *kept == pattern => parsed.clone(),
+        Some((kept, parsed)) if *kept == key => parsed.clone(),
         _ => last
-            .insert((pattern, Pattern::parse(pattern.as_str())))
+            .insert((key, Pattern::parse_with(pattern.as_str(), ignore_case)))
             .1
             .clone(),
     })
+}
+
+/// Whether `pattern` has an uppercase letter, which turns 'ignorecase' off
+/// under 'smartcase': nvim's `pat_has_uppercase()`. A letter after a
+/// backslash (`\S`, `\_S`, `\%V`) doesn't count, unless the pattern is
+/// very magic (`\v`) where it ends, which then skips `%X` and `_X`
+/// instead. As in nvim, only `\v` and `\V` change how it reads the
+/// pattern, and the last one written decides for all of it.
+pub fn has_uppercase(pattern: &str) -> bool {
+    let mut very_magic = false;
+    let mut chars = pattern.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('v') => very_magic = true,
+                Some('V') => very_magic = false,
+                _ => {}
+            }
+        }
+    }
+    let upper = |ch: char| !ch.to_lowercase().eq(std::iter::once(ch));
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let skips = match ch {
+            '\\' if !very_magic => true,
+            '%' | '_' if very_magic => true,
+            _ if upper(ch) => return true,
+            _ => false,
+        };
+        if !skips {
+            continue;
+        }
+        // `\_X` and `\%X` skip their `X` too.
+        let escaped = chars.next();
+        if ch == '\\' && matches!(escaped, Some('_' | '%')) && chars.peek().is_some() {
+            chars.next();
+        }
+    }
+    false
 }
 
 /// Splits a search's line, what's typed after `/` or `?` (the
@@ -2886,6 +2927,35 @@ mod tests {
             Pattern::parse(&many),
             Err(PatternError::TooLarge(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod uppercase_tests {
+    use super::has_uppercase;
+
+    /// nvim's `pat_has_uppercase()`: an escaped letter doesn't count, nor
+    /// `\_X` or `\%X`, but in a very magic pattern it does, while `_X` and
+    /// `%X` don't.
+    #[test]
+    fn has_uppercase_reads_patterns_as_nvim_does() {
+        for (pattern, upper) in [
+            ("hello", false),
+            ("Hello", true),
+            ("émile", false),
+            ("Émile", true),
+            (r"\Sello", false),
+            (r"\_Sello", false),
+            (r"\%Vello", false),
+            (r"\cHello", true),
+            (r"\v\Sello", true),
+            (r"\v%Vello_Xx", false),
+            (r"\v\Sello\V", false),
+            ("[A-Z]", true),
+            ("\\", false),
+        ] {
+            assert_eq!(has_uppercase(pattern), upper, "{pattern}");
+        }
     }
 }
 

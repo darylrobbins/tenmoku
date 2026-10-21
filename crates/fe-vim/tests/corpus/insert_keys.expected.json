@@ -1,0 +1,1023 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "ctrl_w_word",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A baz qux<C-w>x<Esc>",
+      "expect": {
+        "buffer": "foo bar baz x",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_punctuation",
+      "buffer": "foo.bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A(x, y)<C-w><C-w><C-w>!<Esc>",
+      "expect": {
+        "buffer": "foo.bar(x!",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_punctuation_before_start",
+      "buffer": "x = foo.bar",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "A<C-w><C-w>!<Esc>",
+      "expect": {
+        "buffer": "x = foo!",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_stops_once_at_insert_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A baz<C-w><C-w><C-w><Esc>",
+      "expect": {
+        "buffer": "foo ",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_probe",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A baz<C-w><C-w><Esc>",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_joins_rows",
+      "buffer": "  foo\nbar",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-w><Esc>",
+      "expect": {
+        "buffer": "  foobar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_after_line_break",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a bar<CR>baz<C-w><C-w><C-w>!<Esc>",
+      "expect": {
+        "buffer": "foo !",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_in_indent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i<C-w>x<Esc>",
+      "expect": {
+        "buffer": "xfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_trailing_spaces",
+      "buffer": "foo   ",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "A<C-w>x<Esc>",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_at_buffer_start",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "i<C-w>x<Esc>",
+      "expect": {
+        "buffer": "xfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_multibyte",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a héllo wörld<C-w>!<Esc>",
+      "expect": {
+        "buffer": "foo héllo !",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_cjk_class",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a 日本語abc<C-w><C-w>!<Esc>",
+      "expect": {
+        "buffer": "foo !",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_typed_text",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "a xy<C-u><Esc>",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_nothing_typed",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "a<C-u><Esc>",
+      "expect": {
+        "buffer": "bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_twice",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A baz<C-u><C-u>x<Esc>",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_keeps_indent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A bar<C-u><C-u><C-u>x<Esc>",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_to_indent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A bar<C-u><C-u>x<Esc>",
+      "expect": {
+        "buffer": "    x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_autoindent_row",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A<CR>bar<C-u>x<Esc>",
+      "expect": {
+        "buffer": "    foo\n    x",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_joins_rows",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<C-u><Esc>",
+      "expect": {
+        "buffer": "foobar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_after_line_break",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a bar<CR>baz<C-u><C-u><C-u>!<Esc>",
+      "expect": {
+        "buffer": "foo!",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_dot_repeat",
+      "buffer": "foo bar\nbaz qux",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "A<C-w>x<Esc>j.",
+      "expect": {
+        "buffer": "foo x\nbaz x",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_dot_repeat",
+      "buffer": "foo bar\nbaz qux",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "a<C-u>x<Esc>j.",
+      "expect": {
+        "buffer": "xbar\nxaz qux",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_typed_dot_repeat",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a xy z<C-w>w<Esc>j.",
+      "expect": {
+        "buffer": "foo xy w\nbar xy w",
+        "cursor": [
+          1,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_count_insert",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ia b<C-w>c<Esc>",
+      "expect": {
+        "buffer": "a ca ca cfoo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_count_insert",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "3ia b<C-u>c<Esc>",
+      "expect": {
+        "buffer": "fcoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_count_nothing_typed",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2A<C-u>x<Esc>",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_count_dot",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2Ia b<C-w>c<Esc>j.",
+      "expect": {
+        "buffer": "a ca cfoo\na ca cbar",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_after_ctrl_t",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ix<C-t>yz<C-w>w<Esc>j.",
+      "expect": {
+        "buffer": "    wfoo\n    wbar",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_mode",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rxy z<C-w><C-w>q<Esc>",
+      "expect": {
+        "buffer": "foo qar baz",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_before_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "R<C-w>x<Esc>",
+      "expect": {
+        "buffer": "xoo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_past_end",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Rxy zw<C-w>q<Esc>",
+      "expect": {
+        "buffer": "foxy q",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_mode",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rxyz<C-u>q<Esc>",
+      "expect": {
+        "buffer": "foo qar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_dot",
+      "buffer": "foo bar\nfoo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rxy z<C-w>q<Esc>j0.",
+      "expect": {
+        "buffer": "foo xy q\nxy qbar",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_count",
+      "buffer": "foo bar baz qux",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2Rab c<C-w>d<Esc>",
+      "expect": {
+        "buffer": "ab dab dbaz qux",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_in_macro",
+      "buffer": "foo bar\nbaz qux",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "qaA quux<C-w>x<Esc>qj@a",
+      "expect": {
+        "buffer": "foo bar x\nbaz qux x",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "a": {
+            "text": "A quux\u0017x\u001b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_u_in_macro",
+      "buffer": "foo bar\nbaz qux",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "qaa<C-u>y<Esc>qj$@a",
+      "expect": {
+        "buffer": "ybar\ny",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "a": {
+            "text": "a\u0015y\u001b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_u_typed_dot",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a xy<C-u>z<Esc>j.",
+      "expect": {
+        "buffer": "fooz\nbarz",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_after_backspace",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a bar<BS><C-w>x<Esc>",
+      "expect": {
+        "buffer": "foo x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_line_break_dot",
+      "buffer": "foo\nbar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "a x<CR>y<C-w><C-w>z<Esc>j.",
+      "expect": {
+        "buffer": "foo xz\nbar xz",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_line_break_count",
+      "buffer": "foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "2a x<CR>y<C-w><C-w>z<Esc>",
+      "expect": {
+        "buffer": "foo xz xz",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_before_start_dot",
+      "buffer": "foo bar\nabcdef gh",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "R<C-w>x<Esc>j0w.",
+      "expect": {
+        "buffer": "xoo bar\nxbcdef gh",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_before_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "Rx<C-u><C-u>y<Esc>",
+      "expect": {
+        "buffer": "yoo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_row_start",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "R<C-w>x<Esc>",
+      "expect": {
+        "buffer": "foox\nbar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_row_start",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "R<C-u>x<Esc>",
+      "expect": {
+        "buffer": "foox\nbar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_typed_break",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rx<CR>y<C-w><C-w>z<Esc>",
+      "expect": {
+        "buffer": "foo xz\nar",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_typed_break",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rx<CR>y<C-u><C-u>z<Esc>",
+      "expect": {
+        "buffer": "foo xz\nar",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_typed_break_thrice",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Rx<CR>y<C-w><C-w><C-w>z<Esc>",
+      "expect": {
+        "buffer": "foo z\nar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_autoindent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "R<CR><C-w>x<Esc>",
+      "expect": {
+        "buffer": "    fo\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_autoindent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "R<CR><C-u>x<Esc>",
+      "expect": {
+        "buffer": "    fo\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_count_before_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2R<C-w>x<Esc>",
+      "expect": {
+        "buffer": "xoo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_count_before_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2R<C-u>x<Esc>",
+      "expect": {
+        "buffer": "xoo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_count_dot",
+      "buffer": "foo bar\nfoo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "R<C-w>x<Esc>j$2.",
+      "expect": {
+        "buffer": "xoo bar\nfoo xar",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_count_dot",
+      "buffer": "foo bar\nfoo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "R<C-u>x<Esc>j$2.",
+      "expect": {
+        "buffer": "xoo bar\nxoo bar",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_moved_then_typed",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "R<C-w>xy<C-w>z<Esc>",
+      "expect": {
+        "buffer": "foo zar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_w_replace_count_only_key",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2R<C-w><Esc>",
+      "expect": {
+        "buffer": "foo bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_u_replace_count_only_key",
+      "buffer": "foo\nbar",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "3R<C-u><Esc>",
+      "expect": {
+        "buffer": "foo\nbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -45,6 +45,8 @@ fe-git = { path = "crates/fe-git" }
 fe-markdown = { path = "crates/fe-markdown" }
 fe-markdown-view = { path = "crates/fe-markdown-view" }
 fe-chat = { path = "crates/fe-chat" }
+fe-chat-anthropic = { path = "crates/fe-chat-anthropic" }
+fe-net = { path = "crates/fe-net" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -116,6 +118,24 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 usvg = { version = "0.46", default-features = false }
 libc = "0.2"
 log = "0.4"
+# HTTP types for the chat's transport (fe-chat-anthropic): status codes and
+# header maps (MIT OR Apache-2.0; already in the lock through gpui).
+http = "1"
+# fe-net, the HTTPS client (docs/decisions/5at38c8v89-ai-chat.md § 6): hyper's
+# HTTP/1.1 client (MIT) over async-io through smol-hyper (MIT OR Apache-2.0,
+# only its futures-io adapter), and rustls (Apache-2.0 OR ISC OR MIT) with
+# ring, through futures-rustls (MIT/Apache-2.0), certificates checked by the
+# OS through rustls-platform-verifier (MIT OR Apache-2.0). Default features
+# off throughout: rustls' and futures-rustls' defaults bring aws-lc-rs. hyper
+# depends on tokio for `sync` only, which is not a runtime. async-net (MIT OR
+# Apache-2.0) resolves and connects (already in the lock through gpui).
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+http-body-util = "0.1"
+smol-hyper = { version = "0.1", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+futures-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-platform-verifier = "0.6"
+async-net = "2"
 # EditorConfig lookup and glob matching (Apache-2.0, no dependencies).
 ec4rs = "1.2"
 # SCIP indexes (fe-nav): the generated protobuf types (Apache-2.0) and the

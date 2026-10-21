@@ -1,0 +1,29 @@
+[package]
+name = "fe-net"
+description = "HTTPS requests to the hosts the app grants. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-io.workspace = true
+async-net.workspace = true
+futures.workspace = true
+futures-rustls.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+kiln-command.workspace = true
+log.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+smol-hyper.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+async-io.workspace = true
+
+[lints]
+workspace = true

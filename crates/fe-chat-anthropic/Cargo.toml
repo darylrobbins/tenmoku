@@ -1,0 +1,21 @@
+[package]
+name = "fe-chat-anthropic"
+description = "Claude through the Anthropic Messages API, for fe-chat. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-chat.workspace = true
+fe-net.workspace = true
+futures.workspace = true
+http.workspace = true
+kiln-command.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -117,6 +117,7 @@ fn notifications_reach_the_session_in_order() {
         records.iter().any(|record| record.method() == "initialize")
     });
     early.notify_sessions(WATCHED, |_, _| Some(json!({ "changes": [] })));
+    fake_clock.wait_for_sleep(Duration::from_secs(1));
     fake_clock.advance(Duration::from_secs(1));
     fake.wait_initialized();
     assert!(

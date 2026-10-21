@@ -40,7 +40,7 @@ pub(crate) use block::{insertion, spaced, width_from};
 pub(crate) use object::select_object;
 use operate::{extent, recased};
 pub(crate) use operate::{joined_marks, live_area, move_marks, operate, repeat, replay_area};
-pub(crate) use put::{put, put_block, put_size};
+pub(crate) use put::{Over, put, put_block, put_size, replace};
 
 /// A visual mode's ends, as anchors (see [`Ends`]).
 #[derive(Clone, Debug)]

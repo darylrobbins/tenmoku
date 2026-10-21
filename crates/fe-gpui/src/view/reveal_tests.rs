@@ -108,3 +108,6 @@ fn unfolds_a_hidden_target(cx: &mut TestAppContext) {
     assert!(folds[0].0 >= 99, "{folds:?}");
     assert!(visible_buffer_rows(&view, cx).contains(&20));
 }
+
+#[path = "foreground_decoration_tests.rs"]
+mod foreground;
