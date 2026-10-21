@@ -6,11 +6,12 @@
 //! Its commands (`workbench.close_tab`, `workbench.next_tab`,
 //! `workbench.previous_tab`, on the active pane, and the `pane.*` ones) are
 //! in the [`KEY_CONTEXT`] context, registered by [`init`] and bound in
-//! `fe-keymap`'s default keymap, as are the project panel's. The tab
-//! commands are typed commands, `#[kiln::command]` methods on [`Workbench`]
-//! that its root element handles; the others are `fe-command` commands,
-//! which a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that the
-//! focused editor doesn't know and propagates.
+//! `fe-keymap`'s default keymap, as are the project panel's. They are
+//! typed commands, `#[kiln::command]` methods on [`Workbench`] that its
+//! root element handles; the few left in `fe-command` registries (the
+//! search, project and Changes panels' own-context keys, the vim command
+//! line's) a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that
+//! the panel takes. [`command_catalog`] checks them all with no app.
 
 mod auto_save;
 mod chat_panel;
@@ -126,14 +127,17 @@ pub fn init(cx: &mut App) {
 /// The workbench's, the editor's and the app's commands, to check keymap
 /// bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
-    // The typed commands, with no app to have registered them.
+    // The typed commands, with no app to have registered them, ahead of
+    // the registries: the one a registry still names
+    // (`project_panel.reveal_active`) is checked as typed.
     let mut catalogs = vec![kiln::recorded_catalog("fe_workbench")];
     catalogs.extend(registry_catalogs());
     Box::new(Catalog(catalogs))
 }
 
-/// The catalogs of the commands that live in registries, the workbench's,
-/// the editor's and the app's.
+/// The catalogs of the commands that live in registries, each once: the
+/// window chrome's, the workbench's panels' own-context ones, and the
+/// editor's.
 fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     vec![
         kiln_shell::picker::catalog(),
@@ -147,14 +151,20 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
     ]
 }
 
-/// The workbench's commands and the editor's, for the command palette,
-/// which lists each where its context holds; it lists the typed commands
-/// itself.
+/// The commands the palette doesn't get from the typed ones: the
+/// workbench's registries' and the editor's. It lists each where its
+/// context holds.
 fn command_list() -> Vec<CommandMeta> {
-    let mut list: Vec<CommandMeta> = search_panel::registry().commands().cloned().collect();
-    list.extend(commit_box_registry().commands().cloned());
-    list.extend(project_panel::registry().commands().cloned());
-    list.extend(status_bar::registry().commands().cloned());
+    let typed = kiln::recorded_catalog("fe_workbench");
+    let mut list: Vec<CommandMeta> = (search_panel::registry().commands())
+        .chain(commit_box_registry().commands())
+        .chain(project_panel::registry().commands())
+        .chain(status_bar::registry().commands())
+        // A typed command a registry still names, for its panel to pass
+        // on, the palette lists as typed.
+        .filter(|meta| typed.check(&meta.id, &Value::Null) == Err(CatalogError::UnknownCommand))
+        .cloned()
+        .collect();
     list.extend(fe_gpui::commands::command_list());
     list.extend(workbench_commands::markdown_preview::palette_commands());
     list
@@ -201,6 +211,8 @@ impl CommandCatalog for Catalog {
     }
 }
 
+#[cfg(test)]
+mod command_catalog_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
