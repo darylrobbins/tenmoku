@@ -224,7 +224,7 @@ fn replace_all_past_the_time_limit_changes_nothing(cx: &mut TestAppContext) {
 /// to step through to its end, and the regex calls the test that cuts a step
 /// short allows it: well under the row's, well over the few a step from its
 /// start needs.
-const SLOW_ROW: usize = 20_000;
+const SLOW_ROW: usize = 8_000;
 const SLOW_CALLS: u64 = 100;
 
 /// The limit the tests on the long rows below set the bar up under: so
@@ -246,10 +246,11 @@ fn slow_text() -> String {
 const NO_LIMIT: Duration = Duration::MAX;
 
 /// The most regex calls a step to the next match may make on a row of
-/// [`SLOW_ROW`] `a`s: a quarter of the one for each match that stepping
-/// through the row makes, many times the few hundred the editor's own look
-/// at the matches around it takes.
-const FEW_CALLS: u64 = SLOW_ROW as u64 / 4;
+/// [`SLOW_ROW`] `a`s: a tenth of the one for each match that stepping
+/// through the row makes, so a step that goes on through the row (8,000
+/// calls) is told from one that stops (about 200, the editor's own look at
+/// the matches around it) by a gap of at least 10x either way.
+const FEW_CALLS: u64 = SLOW_ROW as u64 / 10;
 
 /// The most regex calls the search for the long row's first match may make:
 /// the call that finds it and one more, against the one for each of

@@ -242,6 +242,19 @@ fn long_texts(count: usize) -> (String, String) {
     (left.join("\n"), right.join("\n"))
 }
 
+/// [`long_texts`] with rows of about 200 bytes, so a few rows cross a byte
+/// threshold.
+fn wide_texts(count: usize) -> (String, String) {
+    let pad = "x".repeat(200);
+    let left: Vec<String> = (0..count).map(|row| format!("r{row}{pad}")).collect();
+    let mut right = left.clone();
+    right[5] = "changed".into();
+    for row in 0..3 {
+        right.insert(20, format!("new{row}"));
+    }
+    (left.join("\n"), right.join("\n"))
+}
+
 #[gpui::test]
 fn scroll_synced(cx: &mut TestAppContext) {
     let (left_text, right_text) = long_texts(500);
@@ -420,7 +433,7 @@ fn no_changes(cx: &mut TestAppContext) {
 #[gpui::test]
 fn large_sides_diff_off_the_main_thread(cx: &mut TestAppContext) {
     // Over a mebibyte a side.
-    let (left_text, right_text) = long_texts(150_000);
+    let (left_text, right_text) = wide_texts(6_000);
     assert!(left_text.len() > ASYNC_BYTES);
     let (diff, cx) = diff_view(&left_text, &right_text, cx);
     let left = side(&diff, 0, cx);
@@ -546,7 +559,7 @@ fn sides_stay_unwrapped_and_unfolded(cx: &mut TestAppContext) {
 #[gpui::test]
 fn too_large_to_compare(cx: &mut TestAppContext) {
     // Over fe-editor's diff limit, with a change.
-    let (left_text, right_text) = long_texts(800_000);
+    let (left_text, right_text) = wide_texts(26_000);
     assert!(left_text.len() > fe_editor::text_diff::MAX_DIFF_BYTES);
     let (diff, cx) = diff_view(&left_text, &right_text, cx);
     assert!(diff.read_with(cx, |diff, _| diff.diff().too_large()));

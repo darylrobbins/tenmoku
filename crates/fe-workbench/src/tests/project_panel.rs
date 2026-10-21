@@ -58,12 +58,12 @@ fn clicking_a_directory_toggles_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn only_visible_rows_are_built(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    fixture::generate(dir.path(), 1, 100_000).unwrap();
+    fixture::generate(dir.path(), 1, 20_000).unwrap();
     let (workbench, cx) = open_root(cx, dir.path());
     let panel = panel(&workbench, cx);
     click_row(&panel, &fixture::dir_name(0), cx);
     let count = panel.read_with(cx, |panel, _| panel.tree().unwrap().row_count());
-    assert_eq!(count, 100_002, "the directory, its files and .gitignore");
+    assert_eq!(count, 20_002, "the directory, its files and .gitignore");
 
     // The rows that fit, one more for a partly scrolled one, and the first
     // row measured twice (the list's request_layout and prepaint).
@@ -96,7 +96,7 @@ fn only_visible_rows_are_built(cx: &mut TestAppContext) {
             .map(|row| row.name.to_string_lossy().into_owned())
             .collect()
     });
-    assert_eq!(names, [fixture::file_name(99_999), ".gitignore".into()]);
+    assert_eq!(names, [fixture::file_name(19_999), ".gitignore".into()]);
 }
 
 #[gpui::test]

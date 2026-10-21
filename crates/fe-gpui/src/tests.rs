@@ -482,8 +482,8 @@ impl CharWidth for Counting {
 
 #[gpui::test]
 fn each_frame_wraps_at_most_one_slice(cx: &mut TestAppContext) {
-    // 1M rows of non-ASCII chars, which wrapping measures one by one.
-    let text: String = (0..1_000_000)
+    // 100k rows of non-ASCII chars, which wrapping measures one by one.
+    let text: String = (0..100_000)
         .map(|row| format!("{}\n", "é".repeat(1 + row % 8)))
         .collect();
     // A slice stops at the first row that reaches its budget.

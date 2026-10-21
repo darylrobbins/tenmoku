@@ -16,7 +16,9 @@ use crate::{EditorTheme, commands, init};
 /// `count` rows `r0` on, but row 5 `<prefix>5` and, after row 7, rows
 /// `extra` when given.
 fn rows(count: usize, prefix: &str, row2: &str, extra: bool) -> String {
-    let mut rows: Vec<String> = (0..count).map(|row| format!("r{row}")).collect();
+    let mut rows: Vec<String> = (0..count)
+        .map(|row| format!("r{row}{}", "x".repeat(200)))
+        .collect();
     rows[2] = row2.into();
     rows[5] = format!("{prefix}5");
     if extra {
@@ -94,7 +96,7 @@ fn sides(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> [Entity<EditorV
 fn editable_side_compares(app: &mut TestAppContext) {
     use RowChangeKind::*;
     // Small, then over 1.5 MiB, diffed off the main thread.
-    for count in [20, 250_000] {
+    for count in [20, 8_000] {
         let (head, working, index) = texts(count);
         assert_eq!(working.len() > ASYNC_BYTES * 3 / 2, count > 20);
         let (editor, diff, cx) = opened(&head, &working, &index, app);
