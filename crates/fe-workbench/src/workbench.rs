@@ -371,6 +371,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Self {
         let format_on_save = settings.format_on_save;
+        let inlay_hints = settings.inlay_hints;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
         let ui = UiTheme::default_dark();
@@ -652,6 +653,7 @@ impl Workbench {
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench.lsp.format_on_save.set(format_on_save);
+        workbench.lsp.inlay_hints_on.set(inlay_hints);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);
         if inline_blame {
@@ -2598,6 +2600,9 @@ impl Workbench {
         self.lsp
             .format_on_save
             .set(event.settings.editor.format_on_save);
+        self.lsp
+            .inlay_hints_on
+            .set(event.settings.editor.inlay_hints);
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
         self.reload_auto_save(&event.settings.editor, cx);

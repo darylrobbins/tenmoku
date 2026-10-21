@@ -525,6 +525,10 @@ pub(crate) struct Lsp {
     /// Every editor's save hook, and whether `editor.format_on_save` is on
     /// (set from the settings each reload).
     pub(crate) format_on_save: Rc<std::cell::Cell<bool>>,
+    /// Whether `editor.inlay_hints` is on (set from the settings each reload).
+    pub(crate) inlay_hints_on: std::cell::Cell<bool>,
+    /// Every editor's inlay hints.
+    inlay_hints: inlay_hints::Slots,
     save_hook: Option<Rc<dyn fe_gpui::SaveHook>>,
     /// A rename's guard while one is running ([`Workbench::rename_symbol`]).
     pub(crate) rename: std::rc::Weak<()>,
@@ -681,6 +685,8 @@ impl Lsp {
             highlights: Default::default(),
             markdown: Default::default(),
             format_on_save: Rc::default(),
+            inlay_hints_on: std::cell::Cell::new(true),
+            inlay_hints: Default::default(),
             save_hook: None,
             resolving: HashSet::new(),
             retry: HashMap::new(),
@@ -1202,6 +1208,7 @@ impl Workbench {
         let editors = self.open_editors(cx);
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
+        self.sync_inlay_hints(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
@@ -1735,6 +1742,10 @@ impl Workbench {
                     }
                 }
             }
+            LspEvent::Refresh {
+                server,
+                what: fe_lsp::Refresh::InlayHints,
+            } => self.refresh_inlay_hints(server, cx),
             _ => {}
         }
     }
@@ -2284,6 +2295,9 @@ impl Global for TestClock {}
 
 #[path = "lsp_highlights.rs"]
 mod highlights;
+
+#[path = "lsp_inlay_hints.rs"]
+mod inlay_hints;
 
 #[path = "lsp_file_operations.rs"]
 mod file_operations;

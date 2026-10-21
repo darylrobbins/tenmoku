@@ -110,3 +110,6 @@ fn hover_from_the_server(cx: &mut TestAppContext) {
         r.is_some_and(|r| r.text == "fn maxin() {}\n")
     });
 }
+
+#[path = "lsp_inlay_hints.rs"]
+mod inlay_hints;
