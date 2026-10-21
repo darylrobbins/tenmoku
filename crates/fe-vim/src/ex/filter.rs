@@ -331,10 +331,10 @@ impl VimState {
         // nvim's `']` is on the last row put in, or with none on the row
         // above the range.
         let end = match new {
-            0 => first.saturating_sub(1),
-            new => first + new - 1,
+            0 => first.checked_sub(1),
+            new => Some(first + new - 1),
         };
-        marks::filtered(self, model, first, end);
+        marks::filtered(self, model, transaction, first, end);
         let text = snapshot.text();
         let row = first.min(text.row_count() - 1);
         operator::land(model, &snapshot, [first_non_blank(text, row)]);
@@ -376,7 +376,13 @@ impl VimState {
         let put = u32::try_from(lines.len()).unwrap_or(u32::MAX);
         // nvim's `'[` and `']` are on the first and last rows put in; with
         // none, on the line below and the line.
-        marks::filtered(self, model, below, (below + put).saturating_sub(1));
+        marks::filtered(
+            self,
+            model,
+            transaction,
+            below,
+            (below + put).checked_sub(1),
+        );
         let row = match put {
             0 => below.max(1) - 1,
             put => below + put - 1,

@@ -1257,6 +1257,32 @@ impl Changes {
         self.at = self.list.len();
     }
 
+    /// `change` made the changelist's newest entry in `snapshot`, as
+    /// [`Changes::record`] does for a batch's.
+    fn record_at(&mut self, snapshot: &BufferSnapshot, change: Spot) {
+        let add = match self.list.last() {
+            None => true,
+            Some(_) if !self.fresh => false,
+            Some(newest) => match (newest.entry(snapshot), change.entry(snapshot)) {
+                (Some((row, column)), Some((at, own))) => {
+                    row != at || column + NEAR < own || own + NEAR < column
+                }
+                _ => true,
+            },
+        };
+        match self.list.last_mut() {
+            Some(newest) if !add => *newest = change,
+            _ => {
+                self.fresh = false;
+                if self.list.len() == JUMPS {
+                    self.list.remove(0);
+                }
+                self.list.push(change);
+            }
+        }
+        self.at = self.list.len();
+    }
+
     /// `marks` were set since a session was left to the state ending it.
     fn newer(&mut self, marks: Newer) {
         if let Some(newer) = &mut self.closing {
@@ -2368,21 +2394,38 @@ pub(crate) fn shifted(
     changes.change = Some(Spot::placed(Place::on(snapshot, first, 0)));
 }
 
-/// A filter or `:r !` (`ex/filter.rs`) just applied to `model`'s text:
-/// `'[` and `'.` at the start of row `first`, `']` at the start of row
-/// `last` (each the last row, past the end), as nvim's set them whatever
-/// text its batches changed, once those are read.
-pub(crate) fn filtered(state: &mut VimState, model: &mut EditorModel, first: u32, last: u32) {
+/// A filter or `:r !` (`ex/filter.rs`) just applied to `model`'s text as
+/// `transaction` (none if it made no edit): `'[` and `'.` at the start of
+/// row `first`, `']` at the start of row `last` (the last row put in, or
+/// the row above with none; unset with no row above), as nvim's set them
+/// whatever text its batches changed, once those are read. A row past the
+/// last stays past it. The changelist's entry for it is at `first` too,
+/// even with nothing changed, in place of those its batches made.
+pub(crate) fn filtered(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    transaction: Option<TransactionId>,
+    first: u32,
+    last: Option<u32>,
+) {
     state.marks.watch(model);
     catch_up(state);
     let snapshot = model.snapshot();
     let rows = snapshot.text().row_count();
-    let start = |row: u32| Spot::placed(Place::on(snapshot, row.min(rows - 1), 0));
+    let start = |row: u32| match row < rows {
+        true => Spot::placed(Place::on(snapshot, row, 0)),
+        false => Spot::of_entry(Entry::Past),
+    };
     let changes = &mut state.marks.changes;
     changes.newer(Newer::CHANGE);
     changes.start = Some(start(first));
-    changes.end = Some(start(last));
+    changes.end = last.map(start);
     changes.change = Some(start(first));
+    let read = changes
+        .last
+        .is_some_and(|(last, _)| Some(last) == transaction);
+    changes.fresh |= !read;
+    changes.record_at(snapshot, start(first));
 }
 
 /// A case operator covered `start` to `end` (row and byte column) of
