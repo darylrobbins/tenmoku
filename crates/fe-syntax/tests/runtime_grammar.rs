@@ -33,13 +33,14 @@ fn fixture_file(name: &str) -> PathBuf {
 /// Deadlines short enough for the looping grammars to stop soon, and long
 /// enough for the JSON fixture's load (a few milliseconds) on a loaded
 /// machine. Every test sets them before loading anything.
+const LOAD_DEADLINE: Duration = Duration::from_secs(10);
 const PARSE_DEADLINE: Duration = Duration::from_millis(1500);
 
 fn short_deadlines() {
     static SET: Once = Once::new();
     SET.call_once(|| {
         set_grammar_deadlines(GrammarDeadlines {
-            load: Duration::from_secs(2),
+            load: LOAD_DEADLINE,
             parse: PARSE_DEADLINE,
         });
     });
@@ -281,7 +282,7 @@ fn a_looping_grammar_is_stopped_at_its_deadline() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(started.elapsed() >= Duration::from_secs(2));
+    assert!(started.elapsed() >= LOAD_DEADLINE);
     assert!(language_by_name("loopinit").is_none());
 
     // Its scanner never returns, so every parse stops at the deadline, on
