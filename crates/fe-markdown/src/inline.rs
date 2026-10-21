@@ -44,6 +44,8 @@ pub(crate) enum Open<'a> {
     Emphasis,
     Strong,
     Strikethrough,
+    /// An HTML `<code>`: what it holds shows as code, its links still links.
+    Code,
     Link {
         dest: String,
         title: CowStr<'a>,
@@ -361,12 +363,11 @@ pub(crate) fn build(tokens: Vec<Tok<'_>>, max_depth: usize) -> Vec<Inline> {
                     continue;
                 }
                 let (tag, inner) = stack.pop().expect("kept tags are on the stack");
-                let inline = close(tag, inner);
                 let content = match stack.last_mut() {
                     Some((_, content)) => content,
                     None => &mut root,
                 };
-                content.push(inline);
+                close_into(tag, inner, content);
                 continue;
             }
             Token::Text(text) => {
@@ -392,17 +393,19 @@ pub(crate) fn build(tokens: Vec<Tok<'_>>, max_depth: usize) -> Vec<Inline> {
     }
     // Tags the events left open, which pulldown-cmark doesn't do.
     while let Some((tag, inner)) = stack.pop() {
-        let inline = close(tag, inner);
-        match stack.last_mut() {
-            Some((_, content)) => content.push(inline),
-            None => root.push(inline),
-        }
+        let content = match stack.last_mut() {
+            Some((_, content)) => content,
+            None => &mut root,
+        };
+        close_into(tag, inner, content);
     }
     root
 }
 
-fn close(tag: Open<'_>, content: Vec<Inline>) -> Inline {
-    match tag {
+/// Pushes what a tag and its content make onto `out`.
+fn close_into(tag: Open<'_>, content: Vec<Inline>, out: &mut Vec<Inline>) {
+    let inline = match tag {
+        Open::Code => return push_code(content, out),
         Open::Emphasis => Inline::Emphasis(content),
         Open::Strong => Inline::Strong(content),
         Open::Strikethrough => Inline::Strikethrough(content),
@@ -417,7 +420,57 @@ fn close(tag: Open<'_>, content: Vec<Inline>) -> Inline {
             alt: Inline::plain_text(&content),
         },
         Open::Other => unreachable!("other tags are left out"),
+    };
+    out.push(inline);
+}
+
+/// Pushes `content` as code: its text as code spans, joined to code before
+/// it, and a line ending in it as a space, as in a code span.
+fn push_code(content: Vec<Inline>, out: &mut Vec<Inline>) {
+    for inline in content {
+        let text = match inline {
+            Inline::Text(text) | Inline::Code(text) => text,
+            Inline::SoftBreak => " ".to_owned(),
+            Inline::Emphasis(content) => {
+                out.push(Inline::Emphasis(code(content)));
+                continue;
+            }
+            Inline::Strong(content) => {
+                out.push(Inline::Strong(code(content)));
+                continue;
+            }
+            Inline::Strikethrough(content) => {
+                out.push(Inline::Strikethrough(code(content)));
+                continue;
+            }
+            Inline::Link {
+                dest,
+                title,
+                content,
+            } => {
+                out.push(Inline::Link {
+                    dest,
+                    title,
+                    content: code(content),
+                });
+                continue;
+            }
+            inline @ (Inline::Image { .. } | Inline::HardBreak | Inline::Html(_)) => {
+                out.push(inline);
+                continue;
+            }
+        };
+        match out.last_mut() {
+            Some(Inline::Code(last)) => last.push_str(&text),
+            _ => out.push(Inline::Code(text)),
+        }
     }
+}
+
+fn code(content: Vec<Inline>) -> Vec<Inline> {
+    let mut out = Vec::new();
+    push_code(content, &mut out);
+    out
 }
 
 /// Pushes text, joined to the text before it.

@@ -227,13 +227,14 @@ fn autolinks_in_headings_tables_and_lists() {
 
 #[test]
 fn raw_html_is_kept_as_source() {
+    // Phrasing tags such as `<b>` are mapped: see html_code_spans.rs.
     assert_eq!(
-        inlines("a <b>bold</b> c"),
+        inlines("a <span>bold</span> c"),
         [
             text("a "),
-            Inline::Html("<b>".into()),
+            Inline::Html("<span>".into()),
             text("bold"),
-            Inline::Html("</b>".into()),
+            Inline::Html("</span>".into()),
             text(" c"),
         ]
     );

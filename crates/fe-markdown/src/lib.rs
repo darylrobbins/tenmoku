@@ -14,6 +14,7 @@ use std::ops::Range;
 
 mod autolink;
 mod code;
+mod html_inline;
 mod inline;
 mod parse;
 mod slug;

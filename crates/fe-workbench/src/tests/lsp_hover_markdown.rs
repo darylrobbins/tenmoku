@@ -83,10 +83,11 @@ fn hover_markdown_renders_rich(cx: &mut TestAppContext) {
     assert_eq!(tabs(&s), before);
 }
 
-/// Paints a document and reads back the colour of each glyph. The test
-/// platform's text system lays text out but paints no glyph, so a stand-in
-/// gives every glyph a box to paint, with no platform.
-mod painted {
+/// Paints a document and reads back the colour of each glyph, and the
+/// text laid out. The test platform's text system lays text out but paints
+/// no glyph, so a stand-in gives every glyph a box to paint, with no
+/// platform.
+pub(super) mod painted {
     use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc};
 
     use fe_gpui::{EditorTheme, MarkdownRenderer};
@@ -101,6 +102,8 @@ mod painted {
     use gpui::{Bounds, NoopTextSystem, PlatformTextSystem};
 
     type Glyphs = Rc<RefCell<Vec<Hsla>>>;
+    /// Each line of text laid out, in order.
+    pub(crate) type Lines = Arc<std::sync::Mutex<Vec<String>>>;
 
     /// A renderer that draws nothing and keeps the glyph colours of each
     /// scene it's given. Its atlas hands out a tile per glyph.
@@ -160,9 +163,10 @@ mod painted {
     }
 
     /// The test platform's text system, which lays text out but paints no
-    /// glyph, with a box rasterized for each glyph.
-    fn text_system() -> Arc<dyn PlatformTextSystem> {
-        struct Boxes(NoopTextSystem);
+    /// glyph, with a box rasterized for each glyph, and keeps each line it
+    /// lays out in `lines`.
+    pub(crate) fn text_system(lines: Lines) -> Arc<dyn PlatformTextSystem> {
+        struct Boxes(NoopTextSystem, Lines);
 
         impl PlatformTextSystem for Boxes {
             fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> gpui::Result<()> {
@@ -216,6 +220,7 @@ mod painted {
                 font_size: gpui::Pixels,
                 runs: &[gpui::FontRun],
             ) -> gpui::LineLayout {
+                self.1.lock().expect("the lines").push(text.to_owned());
                 self.0.layout_line(text, font_size, runs)
             }
             fn recommended_rendering_mode(
@@ -227,29 +232,42 @@ mod painted {
             }
         }
 
-        Arc::new(Boxes(NoopTextSystem::new()))
+        Arc::new(Boxes(NoopTextSystem::new(), lines))
     }
 
     /// The colour of each glyph `renderer` paints for `markdown`.
-    pub(super) fn glyphs(
+    pub(crate) fn glyphs(
         renderer: Rc<dyn MarkdownRenderer>,
         theme: EditorTheme,
-        markdown: &'static str,
+        markdown: &str,
     ) -> Vec<Hsla> {
-        struct Host(Rc<dyn MarkdownRenderer>, EditorTheme, &'static str);
+        paint(renderer, theme, markdown).0
+    }
+
+    /// The colour of each glyph `renderer` paints for `markdown`, and each
+    /// line of text it lays out.
+    pub(crate) fn paint(
+        renderer: Rc<dyn MarkdownRenderer>,
+        theme: EditorTheme,
+        markdown: &str,
+    ) -> (Vec<Hsla>, Vec<String>) {
+        struct Host(Rc<dyn MarkdownRenderer>, EditorTheme, String);
 
         impl Render for Host {
             fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                div().child(self.0.render(self.2, &self.1, px(400.), window, cx))
+                div().child(self.0.render(&self.2, &self.1, px(400.), window, cx))
             }
         }
 
         let recorded = Glyphs::default();
         let recorder = recorded.clone();
-        let mut cx = HeadlessAppContext::with_platform(text_system(), Arc::new(()), move || {
+        let lines = Lines::default();
+        let platform = text_system(lines.clone());
+        let mut cx = HeadlessAppContext::with_platform(platform, Arc::new(()), move || {
             let renderer = Recorder(recorder.clone(), Arc::default());
             Ok(Some(Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>))
         });
+        let markdown = markdown.to_owned();
         let window = cx
             .open_window(size(px(480.), px(160.)), |_, cx| {
                 cx.new(|_| Host(renderer, theme, markdown))
@@ -262,6 +280,7 @@ mod painted {
             window.render_to_image().expect("record the scene");
         })
         .expect("draw");
-        recorded.take()
+        let lines = std::mem::take(&mut *lines.lock().expect("the lines"));
+        (recorded.take(), lines)
     }
 }

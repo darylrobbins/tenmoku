@@ -3,10 +3,13 @@
 
 use std::{iter::Peekable, ops::Range};
 
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, LinkType, OffsetIter, Options, Tag};
+use pulldown_cmark::{
+    Alignment, BrokenLink, BrokenLinkCallback, CodeBlockKind, DefaultBrokenLinkCallback, Event,
+    LinkType, OffsetIter, Options, RefDefs, Tag,
+};
 
 use crate::{
-    Align, Block, BlockKind, Cell, Document, Inline, ListItem, Row, code,
+    Align, Block, BlockKind, Cell, Document, Inline, ListItem, Row, code, html_inline,
     inline::{self, Open, Tok, Token},
     slug::Slugs,
 };
@@ -16,10 +19,16 @@ use crate::{
 /// thousand `>`s mustn't run a background thread out of stack.
 const MAX_NESTING: usize = 64;
 
+const OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_STRIKETHROUGH);
+
+/// What an HTML block read as a paragraph is put after, so that its first
+/// line, a tag, continues a paragraph rather than starting a block.
+const LEAD: &str = "a\n";
+
 pub(crate) fn parse(text: &str) -> Document {
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
-    let events = pulldown_cmark::Parser::new_ext(text, options).into_offset_iter();
+    let events = pulldown_cmark::Parser::new_ext(text, OPTIONS).into_offset_iter();
     let mut parser = Parser {
         text,
         events: events.peekable(),
@@ -28,9 +37,129 @@ pub(crate) fn parse(text: &str) -> Document {
         depth: 0,
         task: None,
         paragraph: false,
+        definitions: None,
     };
     let blocks = parser.blocks();
     Document { blocks }
+}
+
+/// What an HTML block read as a paragraph comes to.
+enum Reread {
+    Paragraph(Vec<Inline>),
+    /// A row, 0 the lead's, starts a block of its own.
+    Block(usize),
+    /// It isn't a paragraph of mapped tags.
+    Not,
+}
+
+/// Reads `source`, an HTML block after [`LEAD`], as a paragraph. A
+/// backslash was put in at each of `inserted` to keep a row from starting
+/// a block; `definitions` are the document's link references.
+fn reread(source: &str, inserted: &[usize], definitions: &RefDefs<'_>, depth: usize) -> Reread {
+    let callback = |link: BrokenLink<'_>| {
+        let definition = definitions.get(&link.reference)?;
+        let title = definition.title.as_deref().unwrap_or_default();
+        Some((definition.dest.to_string().into(), title.to_owned().into()))
+    };
+    let events =
+        pulldown_cmark::Parser::new_with_broken_link_callback(source, OPTIONS, Some(callback));
+    let mut parser = Parser {
+        text: source,
+        events: events.into_offset_iter().peekable(),
+        line_starts: line_starts(source),
+        slugs: Slugs::default(),
+        depth,
+        task: None,
+        paragraph: false,
+        definitions: None,
+    };
+    match parser.events.next() {
+        Some((Event::Start(Tag::Paragraph), _)) => {}
+        // A setext heading takes the lead in: its underline starts it.
+        Some((Event::Start(Tag::Heading { .. }), range)) if range.start == 0 => {
+            return Reread::Block(parser.lines(range).end as usize - 1);
+        }
+        _ => return Reread::Not,
+    }
+    let mut tokens = parser.inline_tokens();
+    let [
+        lead,
+        Tok {
+            token: Token::SoftBreak,
+            ..
+        },
+        ..,
+    ] = &tokens[..]
+    else {
+        return Reread::Not;
+    };
+    if !matches!(lead.token, Token::Text(_)) || lead.range != (0..LEAD.len() - 1) {
+        return Reread::Not;
+    }
+    let Some((Event::End(_), _)) = parser.events.next() else {
+        return Reread::Not;
+    };
+    if let Some((event, range)) = parser.events.next() {
+        let row = parser.row(range.start) as usize;
+        return match event {
+            Event::Start(Tag::HtmlBlock) => Reread::Not,
+            // Its delimiter row, after its head, makes it a table.
+            Event::Start(Tag::Table(_)) => Reread::Block(row + 1),
+            _ => Reread::Block(row),
+        };
+    }
+    tokens.drain(..2);
+    // A code span shows a backslash as written.
+    for tok in &mut tokens {
+        if let Token::Code(code) = &mut tok.token
+            && inserted.iter().any(|at| tok.range.contains(at))
+        {
+            *code = unescaped_code(source, tok.range.clone(), inserted).into();
+        }
+    }
+    let tokens = html_inline::tags(inline::autolinks(source, tokens));
+    if tokens.iter().any(|tok| matches!(tok.token, Token::Html(_))) {
+        return Reread::Not;
+    }
+    Reread::Paragraph(inline::build(tokens, MAX_NESTING.saturating_sub(depth)))
+}
+
+/// Where a backslash keeps `line` from starting a block: before its first
+/// punctuation mark, or before the `.` or `)` after a list item's number.
+fn block_marker(line: &str) -> Option<usize> {
+    let rest = line.trim_start_matches([' ', '\t']);
+    let at = line.len() - rest.len();
+    if rest.starts_with(|c: char| c.is_ascii_punctuation()) {
+        return Some(at);
+    }
+    let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    match rest[digits..].chars().next() {
+        Some('.' | ')') if digits > 0 => Some(at + digits),
+        _ => None,
+    }
+}
+
+/// The text of the code span at `span` in `source`, without the
+/// backslashes put in at `inserted`, read as pulldown-cmark reads a code
+/// span's: each line ending a space, and a space stripped from each end
+/// when both have one.
+fn unescaped_code(source: &str, span: Range<usize>, inserted: &[usize]) -> String {
+    let mut text = String::new();
+    let mut from = span.start;
+    for &at in inserted.iter().filter(|at| span.contains(at)) {
+        text.push_str(&source[from..at]);
+        from = at + 1;
+    }
+    text.push_str(&source[from..span.end]);
+    let ticks = text.len() - text.trim_start_matches('`').len();
+    let text = text[ticks..text.len() - ticks].replace(['\r', '\n'], " ");
+    match text
+        .strip_prefix(' ')
+        .and_then(|text| text.strip_suffix(' '))
+    {
+        Some(stripped) if !text.bytes().all(|byte| byte == b' ') => stripped.to_owned(),
+        _ => text,
+    }
 }
 
 /// Where each source row starts.
@@ -43,9 +172,9 @@ fn line_starts(text: &str) -> Vec<usize> {
 /// Reads events into blocks. Text events aren't merged with
 /// `TextMergeWithOffset`: each entity or escape is an event of its own, so
 /// autolinks can tell its source from its text.
-struct Parser<'a> {
+struct Parser<'a, F: BrokenLinkCallback<'a> = DefaultBrokenLinkCallback> {
     text: &'a str,
-    events: Peekable<OffsetIter<'a>>,
+    events: Peekable<OffsetIter<'a, F>>,
     line_starts: Vec<usize>,
     slugs: Slugs,
     /// How many quotes and list items the next block is in.
@@ -55,9 +184,12 @@ struct Parser<'a> {
     /// Whether the current list item has a paragraph of its own, which
     /// makes its list loose.
     paragraph: bool,
+    /// A parser of `text` for its link reference definitions, made once an
+    /// HTML block is read as a paragraph.
+    definitions: Option<pulldown_cmark::Parser<'a>>,
 }
 
-impl<'a> Parser<'a> {
+impl<'a, F: BrokenLinkCallback<'a>> Parser<'a, F> {
     fn row(&self, offset: usize) -> u32 {
         (self.line_starts.partition_point(|&start| start <= offset) - 1) as u32
     }
@@ -181,7 +313,10 @@ impl<'a> Parser<'a> {
             Event::Start(Tag::HtmlBlock) => {
                 let (html, end) = self.text_to_end();
                 lines = self.lines_through(range, end);
-                BlockKind::Html(html)
+                match self.html_paragraph(&html) {
+                    Some(content) => BlockKind::Paragraph(content),
+                    None => BlockKind::Html(html),
+                }
             }
             Event::Start(Tag::List(start)) => {
                 let (kind, items_end) = self.list(start);
@@ -198,6 +333,48 @@ impl<'a> Parser<'a> {
             _ => return None,
         };
         Some(Block { kind, lines })
+    }
+
+    /// An HTML block's content, if the block is a paragraph's inlines and
+    /// phrasing tags [`html_inline`] maps, all with their pairs: rustdoc's
+    /// `<code>` alone on a line starts an HTML block in CommonMark.
+    fn html_paragraph(&mut self, html: &str) -> Option<Vec<Inline>> {
+        if !html_inline::starts_phrasing(html.lines().next()?) {
+            return None;
+        }
+        let text = self.text;
+        let definitions = self
+            .definitions
+            .get_or_insert_with(|| pulldown_cmark::Parser::new_ext(text, OPTIONS))
+            .reference_definitions();
+        let lines: Vec<&str> = html.split_inclusive('\n').collect();
+        // Where a backslash keeps each row from starting a block, once one
+        // has: as a paragraph's, the rest read as written.
+        let mut escapes: Vec<Option<usize>> = vec![None; lines.len()];
+        loop {
+            let mut source = LEAD.to_owned();
+            let mut inserted = Vec::new();
+            for (line, escape) in lines.iter().zip(&escapes) {
+                let (before, after) = line.split_at(escape.unwrap_or(0));
+                source.push_str(before);
+                if escape.is_some() {
+                    inserted.push(source.len());
+                    source.push('\\');
+                }
+                source.push_str(after);
+            }
+            match reread(&source, &inserted, definitions, self.depth) {
+                Reread::Paragraph(content) => return Some(content),
+                Reread::Block(0) | Reread::Not => return None,
+                Reread::Block(row) => {
+                    let escape = escapes.get_mut(row - 1)?;
+                    if escape.is_some() {
+                        return None;
+                    }
+                    *escape = Some(block_marker(lines[row - 1])?);
+                }
+            }
+        }
     }
 
     /// A list, through its end, and the row after its last item.
@@ -294,7 +471,7 @@ impl<'a> Parser<'a> {
             .first()
             .zip(tokens.last())
             .map(|(first, last)| first.range.start..last.range.end);
-        let tokens = inline::autolinks(self.text, tokens);
+        let tokens = html_inline::tags(inline::autolinks(self.text, tokens));
         let depth = MAX_NESTING.saturating_sub(self.depth);
         (inline::build(tokens, depth), span)
     }

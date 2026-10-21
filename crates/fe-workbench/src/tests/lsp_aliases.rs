@@ -58,3 +58,6 @@ fn closing_the_owning_alias_hands_the_document_to_the_other(cx: &mut TestAppCont
 
 #[path = "lsp_hover_markdown.rs"]
 mod hover_markdown;
+
+#[path = "lsp_hover_ra_html.rs"]
+mod hover_ra_html;
