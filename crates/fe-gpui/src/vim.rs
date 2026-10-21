@@ -359,6 +359,9 @@ struct Vim {
     host_waits: HashMap<gpui::EntityId, HostWait>,
     /// The last [`VimHostHold`] handed out.
     host_token: u64,
+    /// Drops a pending `<C-r>` when its editor loses focus; one at a time,
+    /// as only the focused editor takes keys.
+    register_blur: Option<gpui::Subscription>,
 }
 
 /// A map's replay, suspended while the host runs the file or window command
@@ -853,8 +856,11 @@ pub(crate) fn live_stack(
         // A replay held for a map's command owns the keys too, until it's
         // over ([`EditorView::feed_vim`]).
         let pending = view.vim_replaying
-            || (view.vim.as_ref())
-                .is_some_and(|state| state.pending().kind().is_some() || state.remap_waiting());
+            || (view.vim.as_ref()).is_some_and(|state| {
+                state.pending().kind().is_some()
+                    || state.remap_waiting()
+                    || state.insert_register_waiting()
+            });
         (view.live_frame(stack, cx), pending)
     })
 }
@@ -1424,6 +1430,7 @@ impl EditorView {
             return;
         };
         if matches!(state.mode(), fe_vim::Mode::Insert | fe_vim::Mode::Replace) {
+            self.cancel_register(cx);
             return;
         }
         // One `escape` drops the whole command; in a visual mode it may
@@ -1609,9 +1616,30 @@ impl EditorView {
         self.sync_vim(cx);
         self.drop_remap_wait(cx);
         if self.accepts_text() {
+            // The key after `<C-r>` names the register, whatever it is; one
+            // vim has no name for cancels the prefix and goes on.
+            if self.register_waiting() {
+                return match vim_key(keystroke) {
+                    Some(key) => {
+                        self.record_vim_key(key);
+                        self.register_typing(Some(key), cx)
+                    }
+                    None => {
+                        // A key vim can't name cancels it as `<Esc>` does,
+                        // which a macro records, so replay cancels too.
+                        self.record_vim_key(VimKey::Esc);
+                        self.cancel_register(cx);
+                        false
+                    }
+                };
+            }
             // `ctrl-t`, `ctrl-d` and `ctrl-o` are vim's in insert and
             // replace mode, and so are the other ctrl keys it takes.
             return match vim_key(keystroke) {
+                Some(key @ VimKey::Ctrl('r' | 'a')) if self.typing_mode() == Some(false) => {
+                    self.record_vim_key(key);
+                    self.register_typing(Some(key), cx)
+                }
                 Some(key @ VimKey::Ctrl('t' | 'd')) if self.typing_mode().is_some() => {
                     self.record_vim_key(key);
                     self.indent_typing(key, cx)
@@ -1884,6 +1912,98 @@ impl EditorView {
             return false;
         };
         let ((), transactions) = self.model.run_as(origin, |model| state.one_command(model));
+        let result: Result<_, DispatchError> =
+            Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
+        self.dispatched(result, &invocation, true, cx).is_ok()
+    }
+
+    /// Whether insert mode waits for the register name after `<C-r>`.
+    fn register_waiting(&self) -> bool {
+        self.vim
+            .as_ref()
+            .is_some_and(VimState::insert_register_waiting)
+    }
+
+    /// Drops a pending `<C-r>` once its editor loses focus, however the
+    /// prefix began (typed, or replayed by a macro or map), or at once if
+    /// the editor isn't focused. One editor at a time, as only the focused
+    /// one takes keys.
+    fn cancel_register_on_blur(&self, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        cx.defer(move |cx| {
+            let focus = view.read(cx).focus.clone();
+            let Some(window) = editor_window(&focus, cx) else {
+                view.update(cx, |view, cx| view.cancel_register(cx));
+                return;
+            };
+            window
+                .update(cx, |_, window, cx| {
+                    if !focus.is_focused(window) {
+                        view.update(cx, |view, cx| view.cancel_register(cx));
+                        return;
+                    }
+                    let blur = view.update(cx, |view, cx| {
+                        cx.on_blur(&view.focus, window, |view, _, cx| view.cancel_register(cx))
+                    });
+                    cx.default_global::<Vim>().register_blur = Some(blur);
+                })
+                .ok();
+        });
+    }
+
+    /// Drops a pending `<C-r>`, as an `<Esc>` after it does.
+    pub(crate) fn cancel_register(&mut self, cx: &mut Context<Self>) {
+        if self.register_waiting() {
+            self.register_typing(Some(VimKey::Esc), cx);
+        }
+    }
+
+    /// `<C-r>` or `<C-a>` in insert or replace mode, or the key after
+    /// `<C-r>`: to fe-vim's register insert ([`VimState::insert_register_start`],
+    /// [`VimState::insert_register_key`], [`VimState::insert_last_inserted`]),
+    /// in the session. Returns whether it ran.
+    fn register_typing(&mut self, key: Option<VimKey>, cx: &mut Context<Self>) -> bool {
+        if self.typing_mode().is_none() {
+            return false;
+        }
+        let waiting = self.register_waiting();
+        if self.read_only && !waiting {
+            self.refuse_edit(cx);
+            return true;
+        }
+        if !waiting && key == Some(VimKey::Ctrl('r')) {
+            if let Some(state) = &mut self.vim {
+                state.insert_register_start();
+            }
+            self.cancel_register_on_blur(cx);
+            return true;
+        }
+        let invocation = Invocation::of(KEY)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        let origin = fe_editor::commands::origin(&invocation.actor);
+        let page_rows = self.page_rows();
+        let syntax = synced_syntax(&self.syntax, &self.model);
+        let language = loaded_language(&self.syntax);
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        // Out of the global while the host holds `cx`, and back after.
+        let mut registers = std::mem::take(&mut cx.default_global::<Vim>().registers);
+        let mut host = ViewHost {
+            cx,
+            page_rows,
+            syntax,
+            language,
+            vim: true,
+        };
+        let ((), transactions) = self.model.run_as(origin, |model| match key {
+            Some(key) if waiting => {
+                state.insert_register_key(model, &mut host, &mut registers, key)
+            }
+            _ => state.insert_last_inserted(model, &mut host, &mut registers),
+        });
+        cx.default_global::<Vim>().registers = registers;
         let result: Result<_, DispatchError> =
             Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
         self.dispatched(result, &invocation, true, cx).is_ok()
@@ -2354,6 +2474,11 @@ impl EditorView {
         match mode {
             fe_vim::Mode::Insert | fe_vim::Mode::Replace => {
                 state.record_key(key);
+                if state.insert_register_waiting()
+                    || (mode == fe_vim::Mode::Insert && matches!(key, VimKey::Ctrl('r' | 'a')))
+                {
+                    return self.register_typing(Some(key), cx);
+                }
                 let command = match key {
                     VimKey::Char(ch) => {
                         self.type_text(ch.encode_utf8(&mut [0; 4]), cx);
@@ -2498,6 +2623,16 @@ impl EditorView {
 
     /// [`EditorView::run_vim`] without the replay: for the replay's own keys.
     pub(crate) fn run_vim_once(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
+        // `<Esc>` after `<C-r>` only drops the prefix: insert mode goes on.
+        if self.register_waiting()
+            && matches!(
+                invocation.command.as_str(),
+                NORMAL_MODE | REPLACE_NORMAL_MODE
+            )
+        {
+            self.cancel_register(cx);
+            return true;
+        }
         // Every vim command comes this way, however its keys came: typed,
         // replayed by the keymap or a macro, or dispatched as an action.
         if self.refuses_vim(invocation) {

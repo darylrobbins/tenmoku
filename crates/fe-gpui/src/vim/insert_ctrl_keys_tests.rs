@@ -238,3 +238,97 @@ fn ctrl_w_and_ctrl_u_reach_vim_in_insert_mode(cx: &mut TestAppContext) {
 fn text_of(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
     state(view, cx).0
 }
+
+/// `<C-r>{reg}` and `<C-a>` insert as in nvim, on both platform keymaps.
+#[gpui::test]
+fn ctrl_r_inserts_a_register(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        // (keys, text after): `foo` is yanked into `"` and `a`, `bar` is
+        // the last text inserted.
+        for (keys, after) in [
+            ("y i w A ctrl-r \" escape", "foo barfoo"),
+            ("\" a y i w A ctrl-r a escape", "foo barfoo"),
+            ("y i w A ctrl-r ctrl-r \" escape", "foo barfoo"),
+            ("y i w A ctrl-r ctrl-o \" escape", "foo barfoo"),
+            ("y i w A ctrl-r ctrl-p \" escape", "foo barfoo"),
+            ("y i w A ctrl-r escape escape", "foo bar"),
+            ("y i w A ctrl-r f1 x escape", "foo barx"),
+            ("y i w A ctrl-r ctrl-r escape escape", "foo bar"),
+            ("A x y ctrl-r escape ctrl-w z escape", "foo barz"),
+            ("A x y ctrl-r f1 ctrl-w z escape", "foo barz"),
+            ("A x y escape A ctrl-a escape", "foo barxyxy"),
+        ] {
+            let (view, cx) = editor(cx, source, "foo bar");
+            cx.simulate_keystrokes(keys);
+            assert_eq!(text_of(&view, cx), after, "{os}: {keys}");
+            assert_eq!(mode(&view, cx), Some("normal"), "{os}: {keys}");
+        }
+
+        // A macro replays `<C-r>a`.
+        let (view, cx) = editor(cx, source, "foo\nbar");
+        cx.simulate_keystrokes("\" a y i w q b A ctrl-r a escape j q");
+        assert_eq!(text_of(&view, cx), "foofoo\nbar", "{os}");
+        cx.simulate_keystrokes("@ b");
+        assert_eq!(text_of(&view, cx), "foofoo\nbarfoo", "{os}");
+    }
+}
+
+/// Replace mode is a known limit: `<C-r>` there leaves nothing pending, and
+/// the next key types as it did before insert mode took the key.
+#[gpui::test]
+fn ctrl_r_in_replace_mode_leaves_nothing_pending(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        let (view, cx) = editor(cx, source, "foo bar");
+        cx.simulate_keystrokes("shift-r ctrl-r x");
+        assert!(
+            !view.read_with(cx, |view, _| view.register_waiting()),
+            "{os}"
+        );
+        assert_eq!(text_of(&view, cx), "xoo bar", "{os}");
+        cx.simulate_keystrokes("ctrl-w y escape");
+        assert_eq!(mode(&view, cx), Some("normal"), "{os}");
+    }
+}
+
+/// A pending `<C-r>` owns the next key over the keymap's bindings of it.
+#[gpui::test]
+fn a_bound_key_after_ctrl_r_cancels_it(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        for key in ["tab", "left", "enter", "backspace"] {
+            let (view, cx) = editor(cx, source, "foo bar");
+            cx.simulate_keystrokes(&format!("A x ctrl-r {key} ctrl-w z escape"));
+            assert_eq!(text_of(&view, cx), "foo barz", "{os}: {key}");
+        }
+    }
+}
+
+/// A prefix a replay leaves open doesn't outlive the editor's focus.
+#[gpui::test]
+fn a_replayed_ctrl_r_is_dropped_on_blur(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        let (view, cx) = editor(cx, source, "A\u{12}\nfoo");
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        cx.simulate_keystrokes("\" a y $ j @ a");
+        assert_eq!(mode(&view, cx), Some("insert"), "{os}");
+        let other = cx.update(|_, cx| cx.focus_handle());
+        cx.update(|window, cx| window.focus(&other, cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("x space y ctrl-w escape");
+        assert_eq!(text_of(&view, cx), "A\u{12}\nfoox ", "{os}");
+    }
+}
+
+/// A key vim has no name for cancels `<C-r>` in a recording as `<Esc>`.
+#[gpui::test]
+fn a_macro_replays_a_cancelled_ctrl_r(cx: &mut TestAppContext) {
+    for (os, source) in PLATFORMS {
+        let (view, cx) = editor(cx, source, "foo\nbar");
+        cx.simulate_keystrokes("q a A x ctrl-r f1 ctrl-w z escape j q");
+        assert_eq!(text_of(&view, cx), "fooz\nbar", "{os}");
+        cx.simulate_keystrokes("@ a");
+        assert_eq!(text_of(&view, cx), "fooz\nbarz", "{os}");
+    }
+}
