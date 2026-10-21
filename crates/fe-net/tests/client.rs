@@ -332,6 +332,10 @@ fn a_trickling_reply_keeps_the_idle_timeout_off_and_silence_trips_it() {
         b" world",
         b"\r\n",
     ];
+    // How long the server stays silent after the last piece. The idle timeout
+    // must fire long before it ends, so it bounds the wait however loaded the
+    // machine is.
+    const SILENCE: Duration = Duration::from_secs(10);
     let server = Server::start(move |mut stream, _| {
         for piece in pieces {
             thread::sleep(Duration::from_millis(120));
@@ -339,7 +343,7 @@ fn a_trickling_reply_keeps_the_idle_timeout_off_and_silence_trips_it() {
             stream.flush().unwrap();
         }
         // Then nothing, with the connection open.
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(SILENCE);
     });
     let client = loopback().with_idle_timeout(Duration::from_millis(300));
     let started = Instant::now();
@@ -357,8 +361,8 @@ fn a_trickling_reply_keeps_the_idle_timeout_off_and_silence_trips_it() {
     assert_eq!(error, NetError::Timeout);
     let waited = started.elapsed();
     assert!(
-        waited < Duration::from_secs(2),
-        "timed out after {waited:?}"
+        waited < SILENCE / 2,
+        "timed out after {waited:?}, not well inside the server's {SILENCE:?} of silence"
     );
     assert!(block_on(response.body.next()).is_none());
 }
