@@ -19,7 +19,6 @@ const UNCOLOURED: &[&str] = &[
     "punctuation.delimiter",
     "type.builtin",
     "variable",
-    "variable.parameter",
 ];
 
 fn color(text: &str) -> Color {
