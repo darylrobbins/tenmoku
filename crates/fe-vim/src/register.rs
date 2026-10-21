@@ -97,6 +97,10 @@ pub struct Registers {
     /// 'ignorecase' and 'smartcase', global as nvim's are.
     ignore_case: bool,
     smart_case: bool,
+    /// 'incsearch' is off: on by default, as in nvim, and global like the
+    /// case options. Each editor's [`crate::VimState`] takes it from here
+    /// before a preview ([`crate::VimState::set_incsearch`]).
+    incsearch_off: bool,
     /// The last `:s`, which `:&` repeats; shared like the last search.
     pub(crate) substitute: LastSubstitute,
     /// `clipboard=unnamedplus`: registers named by no command are `+`.
@@ -151,10 +155,20 @@ impl Registers {
         (self.ignore_case, self.smart_case)
     }
 
+    /// Turns 'incsearch' on or off for every editor sharing these registers.
+    pub fn set_incsearch(&mut self, on: bool) {
+        self.incsearch_off = !on;
+    }
+
+    /// Whether 'incsearch' is on ([`Registers::set_incsearch`]).
+    pub fn incsearch(&self) -> bool {
+        !self.incsearch_off
+    }
+
     /// Whether a search for `pattern` ignores case, by 'ignorecase' and,
     /// unless it's a `word`'s (`*`, `#`), 'smartcase'. `\c` and `\C` in
     /// the pattern still override it.
-    pub(crate) fn ignores_case(&self, pattern: &str, word: bool) -> bool {
+    pub fn ignores_case(&self, pattern: &str, word: bool) -> bool {
         self.ignore_case && (word || !self.smart_case || !crate::search::has_uppercase(pattern))
     }
 

@@ -1268,11 +1268,19 @@ impl EditorView {
         let Some(state) = &self.vim else {
             return;
         };
-        let shown = state.search_preview(&self.model, line).and_then(|found| {
-            let (pattern, _) = fe_vim::search::split_search(line, delimiter);
-            let pattern = Pattern::parse(&pattern).ok()?;
-            Some((found, pattern))
-        });
+        // 'incsearch', 'ignorecase' and 'smartcase' are global: `:set` in
+        // any editor changed the shared registers, which the submitted
+        // search reads too.
+        let fallback = Registers::default();
+        let registers = vim_registers(cx).unwrap_or(&fallback);
+        let shown = state
+            .search_preview_in(&self.model, line, registers)
+            .and_then(|found| {
+                let (pattern, _) = fe_vim::search::split_search(line, delimiter);
+                let ignore_case = registers.ignores_case(&pattern, false);
+                let pattern = Pattern::parse_with(&pattern, ignore_case).ok()?;
+                Some((found, pattern))
+            });
         if let Some((found, pattern)) = shown {
             let before = self.model.text().clone();
             let events = self.model.buffer_mut().subscribe();

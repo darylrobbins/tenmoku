@@ -350,11 +350,65 @@ fn turning_vim_off_ends_the_preview(cx: &mut TestAppContext) {
 #[gpui::test]
 fn incsearch_off_previews_nothing(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
-    view.update(cx, |view, _| {
-        view.vim.as_mut().unwrap().set_incsearch(false)
-    });
+    cx.simulate_keystrokes("/");
+    draw(cx);
+    cx.update(|_, cx| cx.default_global::<Vim>().registers.set_incsearch(false));
+    preview(&view, "far", cx);
+    assert_eq!(shown(&view, cx), (None, false, 0., None));
+}
+
+#[gpui::test]
+fn incsearch_set_through_the_shared_registers_reaches_another_editor(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    cx.update(|_, cx| cx.default_global::<Vim>().registers.set_incsearch(true));
     cx.simulate_keystrokes("/");
     draw(cx);
     preview(&view, "far", cx);
+    assert!(shown(&view, cx).2 > 300.);
+    cx.update(|_, cx| cx.default_global::<Vim>().registers.set_incsearch(false));
+    preview(&view, "far", cx);
     assert_eq!(shown(&view, cx), (None, false, 0., None));
+}
+
+#[gpui::test]
+fn a_preview_follows_ignorecase_and_smartcase_as_the_submit_does(cx: &mut TestAppContext) {
+    let (view, cx) = editor_with(cx, "x\nHello\nhello\n".to_string());
+    let (upper, lower) = (2, 8);
+    cx.update(|_, cx| {
+        cx.default_global::<Vim>()
+            .registers
+            .set_search_case(true, false);
+    });
+    cx.simulate_keystrokes("/");
+    draw(cx);
+    // The match submitting would land on, and the highlight's.
+    preview(&view, "hello", cx);
+    let (found, _, _, pattern) = shown(&view, cx);
+    assert_eq!(found, Some(upper..upper + 5));
+    assert!(
+        pattern.unwrap().contains("\\x{48}\\x{68}"),
+        "highlight ignores case"
+    );
+    run("vim.command_line_submit", "hello", cx);
+    assert_eq!(caret(&view, cx), upper);
+
+    cx.update(|_, cx| {
+        cx.default_global::<Vim>()
+            .registers
+            .set_search_case(true, true);
+    });
+    cx.simulate_keystrokes("g g /");
+    draw(cx);
+    // 'smartcase': an uppercase letter makes it exact; `\c` overrides.
+    preview(&view, "Hello", cx);
+    assert_eq!(shown(&view, cx).0, Some(upper..upper + 5));
+    preview(&view, "hello", cx);
+    assert_eq!(shown(&view, cx).0, Some(upper..upper + 5));
+    cx.update(|_, cx| {
+        cx.default_global::<Vim>()
+            .registers
+            .set_search_case(false, false);
+    });
+    preview(&view, "hello", cx);
+    assert_eq!(shown(&view, cx).0, Some(lower..lower + 5));
 }

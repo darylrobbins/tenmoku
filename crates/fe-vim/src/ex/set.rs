@@ -1,7 +1,10 @@
 //! `:se[t] {arg} …` (`:help :set`) for the options fastedit's editor
 //! holds: `wrap` (soft wrap), `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
 //! (0 meaning tabstop), `expandtab`/`et` and `clipboard`/`cb` (`unnamedplus`
-//! or empty). `shiftwidth` and `expandtab` are the editor's indent style:
+//! or empty), and the search options `ignorecase`/`ic`, `smartcase`/`scs`
+//! and `incsearch`/`is` (bools, all held by the shared `Registers`; each
+//! editor's vim state copies `incsearch` before a preview). `shiftwidth`
+//! and `expandtab` are the editor's indent style:
 //! spaces of that width, or tabs (`noexpandtab`) when shiftwidth is
 //! tabstop.
 //!
@@ -41,6 +44,9 @@ enum Opt {
     Shiftwidth,
     Expandtab,
     Clipboard,
+    Ignorecase,
+    Smartcase,
+    Incsearch,
 }
 
 /// The option `name` names, with its full name.
@@ -51,6 +57,9 @@ fn option(name: &str) -> Option<(Opt, &'static str)> {
         "shiftwidth" | "sw" => (Opt::Shiftwidth, "shiftwidth"),
         "expandtab" | "et" => (Opt::Expandtab, "expandtab"),
         "clipboard" | "cb" => (Opt::Clipboard, "clipboard"),
+        "ignorecase" | "ic" => (Opt::Ignorecase, "ignorecase"),
+        "smartcase" | "scs" => (Opt::Smartcase, "smartcase"),
+        "incsearch" | "is" => (Opt::Incsearch, "incsearch"),
         _ => return None,
     })
 }
@@ -110,7 +119,10 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
         }
     };
     let (which, full) = found;
-    let is_bool = matches!(which, Opt::Wrap | Opt::Expandtab);
+    let is_bool = matches!(
+        which,
+        Opt::Wrap | Opt::Expandtab | Opt::Ignorecase | Opt::Smartcase | Opt::Incsearch
+    );
     if !prefix.is_empty() && !is_bool {
         return Err(ExError::InvalidArgument(arg.to_string()));
     }
@@ -158,6 +170,9 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
 fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
     match which {
         Opt::Wrap => target.model.soft_wrap(),
+        Opt::Ignorecase => target.registers.search_case().0,
+        Opt::Smartcase => target.registers.search_case().1,
+        Opt::Incsearch => target.registers.incsearch(),
         _ => target.model.indent_style() != Some(IndentStyle::Tabs),
     }
 }
@@ -165,10 +180,12 @@ fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
 /// nvim's message for `opt?`.
 fn show(target: &VimTarget<'_>, which: Opt, full: &str) -> String {
     match which {
-        Opt::Wrap | Opt::Expandtab => match value_of(target, which) {
-            true => format!("  {full}"),
-            false => format!("no{full}"),
-        },
+        Opt::Wrap | Opt::Expandtab | Opt::Ignorecase | Opt::Smartcase | Opt::Incsearch => {
+            match value_of(target, which) {
+                true => format!("  {full}"),
+                false => format!("no{full}"),
+            }
+        }
         Opt::Tabstop => format!("  tabstop={}", target.model.tab_size()),
         Opt::Shiftwidth => format!("  shiftwidth={}", shiftwidth(target)),
         Opt::Clipboard => match target.registers.clipboard_unnamed() {
@@ -189,6 +206,18 @@ fn shiftwidth(target: &VimTarget<'_>) -> usize {
 fn set_bool(target: &mut VimTarget<'_>, which: Opt, on: bool) -> Result<(), ExError> {
     match which {
         Opt::Wrap => target.model.set_soft_wrap(on),
+        Opt::Ignorecase => {
+            let (_, smart) = target.registers.search_case();
+            target.registers.set_search_case(on, smart);
+        }
+        Opt::Smartcase => {
+            let (ignore, _) = target.registers.search_case();
+            target.registers.set_search_case(ignore, on);
+        }
+        Opt::Incsearch => {
+            target.registers.set_incsearch(on);
+            target.state.set_incsearch(on);
+        }
         _ => {
             let tab = target.model.tab_size();
             match (on, target.model.indent_style()) {

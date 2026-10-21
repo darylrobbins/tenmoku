@@ -1,0 +1,87 @@
+# `:set` for 'ignorecase', 'smartcase' and 'incsearch' cases for fe-vim's oracle:
+# each a `:set` (often after a `set` field that turned the option on) and then
+# a search it changes. Hand-written; recorded into ex_set_search.expected.json
+# by the ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "ic_then_search"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set ic<CR>/hello<CR>"
+
+[[case]]
+name = "ic_scs_lower"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set ic scs<CR>/hello<CR>"
+
+[[case]]
+name = "ic_scs_upper"
+buffer = "x\nhello world\nHello"
+cursor = [0, 0]
+keys = ":set ic scs<CR>/Hello<CR>"
+
+[[case]]
+name = "long_names"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set ignorecase smartcase<CR>/hello<CR>"
+
+[[case]]
+name = "invic"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set invic<CR>/hello<CR>"
+
+[[case]]
+name = "invic_twice"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set invic<CR>:set invic<CR>/hello<CR>"
+
+[[case]]
+name = "noic_after_set"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set noic<CR>/hello<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "invic_after_set"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set invic<CR>/hello<CR>"
+set = "ignorecase"
+
+[[case]]
+name = "bang_ic"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set ic!<CR>/hello<CR>"
+
+[[case]]
+name = "noscs_after_set"
+buffer = "x\nhello world\nHello"
+cursor = [0, 0]
+keys = ":set noscs<CR>/Hello<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "invscs_after_set"
+buffer = "x\nhello world\nHello"
+cursor = [0, 0]
+keys = ":set invscs<CR>/Hello<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "ic_backward"
+buffer = "x\nHello world\nhello"
+cursor = [2, 0]
+keys = ":set ic<CR>?hello<CR>"
+
+[[case]]
+name = "noic_after_ic_with_scs"
+buffer = "x\nHello world\nhello"
+cursor = [0, 0]
+keys = ":set noic scs<CR>/hello<CR>"
+set = "ignorecase"

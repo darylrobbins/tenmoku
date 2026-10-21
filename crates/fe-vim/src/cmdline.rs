@@ -91,7 +91,29 @@ impl VimState {
     /// rather than hold up typing. It changes nothing: the last search, its
     /// highlight and the history are submit's.
     pub fn search_preview(&self, model: &EditorModel, line: &str) -> Option<Range<usize>> {
-        if self.incsearch_off {
+        self.preview(model, line, !self.incsearch_off, None)
+    }
+
+    /// [`VimState::search_preview`] under `registers`' global options:
+    /// 'incsearch' and, as the search submitting the line will, 'ignorecase'
+    /// and 'smartcase' ([`Registers::ignores_case`]).
+    pub fn search_preview_in(
+        &self,
+        model: &EditorModel,
+        line: &str,
+        registers: &crate::Registers,
+    ) -> Option<Range<usize>> {
+        self.preview(model, line, registers.incsearch(), Some(registers))
+    }
+
+    fn preview(
+        &self,
+        model: &EditorModel,
+        line: &str,
+        incsearch: bool,
+        registers: Option<&crate::Registers>,
+    ) -> Option<Range<usize>> {
+        if !incsearch {
             return None;
         }
         let args = self.cmdline.as_ref()?.args;
@@ -105,7 +127,9 @@ impl VimState {
             return None;
         }
         let offset = offset::parse(offset_text.unwrap_or_default())?;
-        let parsed = Pattern::parse(&pattern).ok()?;
+        let ignore_case =
+            registers.is_some_and(|registers| registers.ignores_case(&pattern, false));
+        let parsed = Pattern::parse_with(&pattern, ignore_case).ok()?;
         // As submit's move or operator takes the caret: past its row's last
         // character, on it.
         let from = self.visual_cursor(model).unwrap_or_else(|| {
