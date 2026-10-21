@@ -1,0 +1,364 @@
+# Commenting cases for fe-vim's oracle (nvim 0.12's built-in commenting,
+# `:help commenting`): gcc with counts, commenting and uncommenting;
+# gc{motion} over rows, indented rows and mixed rows; visual gc, charwise,
+# linewise and blockwise; . and u; and gc as a text object after d y c and
+# gc. Every case sets 'commentstring' to `# %s`, which the harness gives
+# HeadlessVim as the line token `#`. No case toggles a blank row, a row
+# left empty but for the token, or rows indented with both tabs and spaces:
+# fastedit's toggle differs there (see src/feature/comment.rs).
+# Hand-written (by a script): name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column], keys in vim notation and set. What
+# nvim does with each is recorded in commentary.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "gcc"
+buffer = "foo\nbar\nbaz"
+cursor = [0, 1]
+keys = "gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_count"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "3gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_count_past_end"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "5gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_uncomments"
+buffer = "# foo\nbar"
+cursor = [0, 3]
+keys = "gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_indented"
+buffer = "  foo bar"
+cursor = [0, 6]
+keys = "gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_uncomments_indented"
+buffer = "  # foo"
+cursor = [0, 5]
+keys = "gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_uncomments_no_space"
+buffer = "#foo"
+cursor = [0, 2]
+keys = "gcc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_dot"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "gccj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_j"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "gcj"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_k"
+buffer = "one\ntwo\nthree"
+cursor = [2, 3]
+keys = "gck"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_G"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = "gcG"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_ip"
+buffer = "a\nb\nc\n\nd"
+cursor = [1, 0]
+keys = "gcip"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_count_motion"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "2gcj"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_word_motion"
+buffer = "one two\nthree"
+cursor = [0, 4]
+keys = "gcw"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_mixed_rows_comment"
+buffer = "# one\ntwo\n# three"
+cursor = [0, 0]
+keys = "gc2j"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_all_commented_uncomment"
+buffer = "# one\n#two\n  # three"
+cursor = [1, 0]
+keys = "gc2k"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_indented_rows"
+buffer = "    foo\n  bar\n      baz"
+cursor = [0, 4]
+keys = "gc2j"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_tab_indent"
+buffer = "\tfoo\n\t\tbar"
+cursor = [0, 1]
+keys = "gcj"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_dot_repeat"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "gcjjj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_undo"
+buffer = "foo\nbar"
+cursor = [0, 1]
+keys = "gcju"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_redo"
+buffer = "foo\nbar"
+cursor = [0, 1]
+keys = "gcju<C-r>"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_rows"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "Vjgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_rows_upward"
+buffer = "one\ntwo\nthree"
+cursor = [2, 2]
+keys = "Vkgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_charwise"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "vjlgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_block"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "<C-v>jjgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_uncomment"
+buffer = "# a\n# b"
+cursor = [0, 0]
+keys = "Vjgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_dot"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "Vjgcjj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcgc_uncomments_run"
+buffer = "x\n# a\n# b\ny"
+cursor = [1, 0]
+keys = "gcgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "dgc_object"
+buffer = "a\n# b\n# c\nd"
+cursor = [1, 2]
+keys = "dgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "dgc_object_count_ignored"
+buffer = "a\n# b\n# c\nd"
+cursor = [2, 0]
+keys = "2dgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "ygc_object"
+buffer = "a\n# b\n# c\nd"
+cursor = [2, 1]
+keys = "ygc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "cgc_object"
+buffer = "a\n# b\n# c\nd"
+cursor = [1, 2]
+keys = "cgcx<Esc>"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "dgc_indented_run"
+buffer = "  # a\n    # b\nc"
+cursor = [0, 0]
+keys = "dgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "dgc_not_commented"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "dgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "dgc_dot"
+buffer = "# a\nb\n# c\n# d"
+cursor = [0, 0]
+keys = "dgcj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_mark"
+buffer = "foo\nbar"
+cursor = [0, 2]
+keys = "majgck"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_indented_undo"
+buffer = "  foo bar"
+cursor = [0, 6]
+keys = "gccu"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_k_undo"
+buffer = "one\ntwo\nthree"
+cursor = [2, 3]
+keys = "gcku"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_visual_undo"
+buffer = "one\ntwo\nthree"
+cursor = [2, 2]
+keys = "Vkgcu"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcgc_dot"
+buffer = "# a\nb\n# c"
+cursor = [0, 0]
+keys = "gcgcjj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "cgc_dot"
+buffer = "# a\nb\n# c"
+cursor = [0, 0]
+keys = "cgcx<Esc>jj."
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gci_quote_empty"
+buffer = "x = \"\";"
+cursor = [0, 5]
+keys = "gci\""
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gci_paren_empty"
+buffer = "x = ();"
+cursor = [0, 5]
+keys = "gci("
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcit_empty"
+buffer = "<p></p>"
+cursor = [0, 1]
+keys = "gcit"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc0_column_0"
+buffer = "foo"
+cursor = [0, 0]
+keys = "gc0"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "zfgc"
+buffer = "x\n# a\n# b\ny"
+cursor = [1, 0]
+keys = "zfgc"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_search_forward"
+buffer = "a\nb\nfoo\nc"
+cursor = [0, 0]
+keys = "gc/foo<CR>"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_search_backward"
+buffer = "a\nfoo\nb\nc"
+cursor = [3, 0]
+keys = "gc?foo<CR>"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_operator_pending_map"
+buffer = "one two\nthree"
+cursor = [0, 0]
+keys = "gcj"
+mapping = ["onoremap j $"]
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcc_with_operator_pending_c_map"
+buffer = "one\ntwo"
+cursor = [0, 0]
+keys = "gcc"
+mapping = ["onoremap c j"]
+set = "commentstring=#\\ %s"

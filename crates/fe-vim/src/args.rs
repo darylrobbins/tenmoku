@@ -18,7 +18,8 @@ use crate::{line_motions, prose};
 /// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object;
 /// `reindent` (`=`) to `feature/reindent.rs`; `fold` (`zf`) to `folds.rs`;
 /// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`;
-/// `replace_with_register` (`gr`) to `feature/replace_register.rs`.
+/// `replace_with_register` (`gr`) to `feature/replace_register.rs`;
+/// `comment` (`gc`) to `feature/comment.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -63,6 +64,10 @@ pub enum Operator {
     /// `gr`: what it covers is replaced by the register's text, as the
     /// ReplaceWithRegister plugin does (`feature/replace_register.rs`).
     ReplaceWithRegister,
+    /// `gc`: toggles the line comment on the rows it covers, linewise, from
+    /// the host's comment tokens, as nvim's built-in commenting does
+    /// (`feature/comment.rs`).
+    Comment,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -468,7 +473,8 @@ impl Motion {
 /// i< a< it at i` a` `` (`delimiters.rs`); `inner_entire` `a_entire`
 /// `inner_indent` `a_indent` `a_big_indent` are `ie ae ii ai aI`
 /// (`feature/objects.rs`); `inner_argument` `a_argument` are `ia aa`
-/// (`feature/argument.rs`).
+/// (`feature/argument.rs`); `comment` is `gc` after an operator, the run of
+/// commented rows around the caret, linewise (`feature/comment.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextObject {
@@ -503,6 +509,7 @@ pub enum TextObject {
     ABigIndent,
     InnerArgument,
     AArgument,
+    Comment,
 }
 
 /// What an operator acts on.

@@ -263,6 +263,9 @@ fn operate_as_wide(
     if args.operator == Operator::ReplaceWithRegister {
         return crate::feature::replace_register::selection(target, actor, args, columns);
     }
+    if args.operator == Operator::Comment {
+        return crate::feature::comment::selection(target, actor, args);
+    }
     target.model.sync_display();
     let Some(ends) = ends(target.model, target.state) else {
         return Err(CommandError::new("no visual selection to operate on"));
@@ -405,6 +408,7 @@ fn operate_as_wide(
         Operator::Fold => unreachable!("folds' own"),
         Operator::Surround { .. } => unreachable!("refused by operator::operate"),
         Operator::ReplaceWithRegister => unreachable!("replace_register's own"),
+        Operator::Comment => unreachable!("comment's own"),
         Operator::ToggleCase
         | Operator::Lowercase
         | Operator::Uppercase

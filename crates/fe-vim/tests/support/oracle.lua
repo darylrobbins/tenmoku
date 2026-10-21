@@ -26,7 +26,8 @@
 -- still grow.
 -- A case may hold `set`, `:set` arguments (`ignorecase smartcase`) run
 -- with vim.cmd just before the keys; 'ignorecase' and 'smartcase' are put
--- back off before each case.
+-- back off before each case, and 'commentstring' (`commentstring=#\ %s`,
+-- which `gc` and `gcc` read) back to --clean's default.
 
 local input, output = arg[1], arg[2]
 
@@ -67,6 +68,9 @@ local recorded = {}
 for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz/'):gmatch(".") do
   table.insert(recorded, reg)
 end
+
+-- --clean's 'commentstring', which each case starts from.
+local default_commentstring = vim.o.commentstring
 
 -- The window's own height, which cases without window_rows keep.
 local default_rows = vim.api.nvim_win_get_height(0)
@@ -125,6 +129,7 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   vim.o.wrap = true
   vim.o.ignorecase = false
   vim.o.smartcase = false
+  vim.o.commentstring = default_commentstring
   -- A fresh buffer, no registers and no last character search.
   local old = vim.api.nvim_get_current_buf()
   vim.cmd("enew!")

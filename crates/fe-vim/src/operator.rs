@@ -18,8 +18,8 @@ use fe_text::{Bias, Text};
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, cmdline,
-    feature::replace_register,
+    Registers, Target, TextObject, VimState, VimTarget, Write, cmdline,
+    feature::{comment, replace_register},
     folds, g_operators, history, insert, line_motions, marks,
     motion::{self, Cursor},
     text_object, visual,
@@ -577,8 +577,9 @@ fn keeping_last_change<R>(
 /// `vim.operate`: over a motion or text object in normal mode, or over the
 /// selection in a visual mode (see `visual::operate`). Over a motion or
 /// object, `gr` is `feature::replace_register::operate`'s and an operator
-/// but `d y c > < = zf` is `g_operators::operate`'s; visual `zf` is
-/// `folds::fold_selection`.
+/// but `d y c > < = zf gc` is `g_operators::operate`'s; visual `zf` is
+/// `folds::fold_selection`. Any operator over the `gc` object is
+/// `feature::comment::operate_object`'s.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -658,11 +659,20 @@ fn operate_over(
             }));
         }
     }
+    if args.target == Target::TextObject(TextObject::Comment) {
+        return keeping_last_change(target, |target| {
+            comment::operate_object(target, actor, args)
+        });
+    }
     if args.target.is_selection() && args.operator == Operator::Fold {
         return folds::fold_selection(target);
     }
     if args.target.is_selection() {
         return keeping_last_change(target, |target| visual::operate(target, actor, args));
+    }
+    // With no comment tokens `gc` does nothing, as the editor's toggle.
+    if args.operator == Operator::Comment && comment::tokens(&*target.host).is_none() {
+        return Ok(Dispatched::new(Effect::Nothing));
     }
     if args.operator == Operator::ReplaceWithRegister {
         return keeping_last_change(target, |target| {
@@ -678,6 +688,7 @@ fn operate_over(
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Fold
+            | Operator::Comment
     ) {
         return keeping_last_change(target, |target| g_operators::operate(target, actor, args));
     }
@@ -879,7 +890,11 @@ fn operate_unless_failing(
     if resolved
         && matches!(
             args.operator,
-            Operator::Delete | Operator::Indent | Operator::Outdent | Operator::Reindent
+            Operator::Delete
+                | Operator::Indent
+                | Operator::Outdent
+                | Operator::Reindent
+                | Operator::Comment
         )
     {
         state.set_last_change(Change::Operate(args).into());
@@ -928,15 +943,26 @@ fn operate_unless_failing(
             })
             .collect()
     };
-    // `zf` takes rows as `>` does, closing a fold over them instead.
-    if let Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Fold =
-        args.operator
+    // `zf` takes rows as `>` does, closing a fold over them instead, and
+    // `gc` toggles their comment.
+    if let Operator::Indent
+    | Operator::Outdent
+    | Operator::Reindent
+    | Operator::Fold
+    | Operator::Comment = args.operator
     {
         // Each caret's rows: an empty range (`>h` at column 0) still has
-        // its own.
+        // its own, but for `gc` an empty object (`i"` in `""`) has none, as
+        // nvim's `gc` leaves it.
+        let empty_object = |range: &Range<usize>| {
+            range.is_empty()
+                && args.operator == Operator::Comment
+                && matches!(measured, Target::TextObject(_))
+        };
         let rows: Vec<Option<RangeInclusive<u32>>> = spans
             .iter()
             .map(|span| match span {
+                Span::Chars(range) if empty_object(range) => None,
                 Span::Chars(range) => {
                     let last = range.end.max(range.start + 1) - 1;
                     Some(row(&text, range.start)..=row(&text, last))
@@ -960,11 +986,40 @@ fn operate_unless_failing(
         shifted.dedup();
         let reindent = args.operator == Operator::Reindent;
         let fold = args.operator == Operator::Fold;
+        // Where `gc` puts `'[` and `']` and leaves each caret (at `'['s):
+        // where its target starts and ends, as nvim's, at the same rows and
+        // byte columns once toggled.
+        let comment_ends: Vec<Option<(usize, usize)>> = match args.operator {
+            Operator::Comment => before
+                .iter()
+                .zip(&spans)
+                .zip(&goals)
+                .map(|((selection, span), goal)| {
+                    let head = Cursor::at(&text, selection.head()).offset();
+                    let Target::Motion(motion) = measured else {
+                        return comment::ends(&text, span, head, None);
+                    };
+                    let mut cursor = Cursor::at(&text, head);
+                    cursor.op = true;
+                    let moved = MoveArgs {
+                        motion,
+                        extend: false,
+                        count: args.count,
+                    };
+                    let reached = motion::motion(&mut cursor, moved, last_find, *goal, tab)
+                        .ok()
+                        .map(|_| cursor.offset());
+                    comment::ends(&text, span, head, reached)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let (transaction, snapshot) = match args.operator {
             Operator::Reindent => {
                 crate::feature::reindent::rows(model, &**host, &shifted, origin(actor))
             }
             Operator::Fold => (None, model.snapshot().clone()),
+            Operator::Comment => comment::rows(model, &**host, &shifted, origin(actor)),
             _ => {
                 let indent = args.operator == Operator::Indent;
                 let (unit, tabs) = shift_unit(model);
@@ -982,10 +1037,17 @@ fn operate_unless_failing(
             }
         };
         if let Some(id) = transaction {
-            let firsts = rows
-                .iter()
-                .map(|rows| rows.as_ref().map(|rows| (*rows.start(), None)))
-                .collect();
+            // `u` after `gc` puts the caret back where it starts.
+            let firsts = match comment_ends.is_empty() {
+                true => rows
+                    .iter()
+                    .map(|rows| rows.as_ref().map(|rows| (*rows.start(), None)))
+                    .collect(),
+                false => comment_ends
+                    .iter()
+                    .map(|ends| ends.map(|(start, _)| (row(&text, start), Some(start))))
+                    .collect(),
+            };
             state.carets.record(id, begins(&text, firsts));
         }
         // `'[` and `']` span the rows, from where the shift began: a
@@ -1004,7 +1066,15 @@ fn operate_unless_failing(
             },
         );
         let column = began.map_or(0, |at| history::pair(&text, at).1);
-        if !fold {
+        let commented = comment_ends.iter().zip(&rows).find_map(|(ends, rows)| {
+            let (start, end) = (*ends)?;
+            rows.as_ref()
+                .map(|_| (history::pair(&text, start), history::pair(&text, end)))
+        });
+        if let Some((start, end)) = commented {
+            let version = transaction.map(|_| snapshot.version());
+            marks::recased(state, model, version, start, end);
+        } else if !fold {
             marks::shifted(
                 state,
                 model,
@@ -1021,10 +1091,16 @@ fn operate_unless_failing(
             .zip(&rows)
             .zip(&spans)
             .zip(&goals)
-            .map(|(((selection, rows), span), goal)| {
+            .enumerate()
+            .map(|(ix, (((selection, rows), span), goal))| {
                 let (at, goal) = match (rows, span) {
                     (Some(rows), _) if reindent => {
                         return on_row(&after, *rows.start(), None, tab, true);
+                    }
+                    (Some(_), _) if !comment_ends.is_empty() => {
+                        let (start, _) = comment_ends[ix].expect("a start for the rows");
+                        let (row, column) = history::pair(&text, start);
+                        return after.row_start(row) + column.min(after.row_len(row) as usize);
                     }
                     (Some(rows), _) if args.target == Target::Motion(Motion::LineEnd) => {
                         (*rows.start(), Some(usize::MAX))

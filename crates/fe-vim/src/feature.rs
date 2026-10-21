@@ -35,6 +35,7 @@
 //! ([`FeaturePrefix::with_target`]).
 
 pub(crate) mod argument;
+pub(crate) mod comment;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
 pub(crate) mod surround;
@@ -184,6 +185,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &argument::FEATURE,
     &surround::FEATURE,
     &replace_register::FEATURE,
+    &comment::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

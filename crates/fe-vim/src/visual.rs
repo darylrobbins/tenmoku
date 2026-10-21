@@ -494,6 +494,66 @@ pub(crate) fn leave_for_ex(target: &mut VimTarget<'_>) -> bool {
     true
 }
 
+/// Where nvim's `g@` over the visual selection puts `'[` and `']`, as
+/// offsets: a charwise extent's ends; for rows, the anchor's row start and
+/// the cursor, in order; a block's top-left corner and its right column on
+/// its last row. `None` outside a visual mode.
+pub(crate) fn operator_ends(model: &EditorModel, state: &VimState) -> Option<(usize, usize)> {
+    let ends = ends(model, state)?;
+    let text = model.text();
+    Some(match ends.kind {
+        VisualKind::Char => (ends.lo(), ends.hi()),
+        VisualKind::Line => {
+            let anchor = text.row_start(text.offset_to_point(ends.anchor).row);
+            (anchor.min(ends.cursor), anchor.max(ends.cursor))
+        }
+        VisualKind::Block => {
+            let tab = model.tab_size().max(1);
+            let (first, last) = ends.rows(text);
+            let (anchor, cursor) = (
+                column_of(text, ends.anchor, tab),
+                column_of(text, ends.cursor, tab),
+            );
+            (
+                at_column(text, first, anchor.min(cursor), tab),
+                at_column(text, last, anchor.max(cursor), tab),
+            )
+        }
+    })
+}
+
+/// Selects the rows from `first` through `last` linewise, as nvim's
+/// `{first}GV{last}G` does from the primary caret: each end on its row at
+/// the caret's goal column. `'<` and `'>` take the extent even under `.`,
+/// as running those keys sets them (nvim's `gc` object, `feature/comment.rs`).
+pub(crate) fn select_rows(model: &mut EditorModel, state: &mut VimState, first: u32, last: u32) {
+    model.sync_display();
+    let goal = held_goal(model, state);
+    let text = model.text();
+    let tab = model.tab_size().max(1);
+    let on_row = |row: u32| {
+        let mut cursor = Cursor::at(text, text.row_start(row));
+        cursor.vertical(row, goal, tab);
+        cursor.offset()
+    };
+    let ends = Ends {
+        kind: VisualKind::Line,
+        anchor: on_row(first),
+        cursor: on_row(last),
+        goal,
+    };
+    select(model, state, ends);
+    let snapshot = model.snapshot();
+    state.last_visual = Some(LastVisual {
+        kind: ends.kind,
+        start: Pos::at(snapshot, ends.lo()),
+        end: Pos::at(snapshot, ends.hi()),
+        cursor_first: false,
+        goal,
+        deleted: [false; 2],
+    });
+}
+
 /// The goal a cursor set afresh takes before the anchor: the first column of
 /// the character it is on, as nvim shows it there; none after the anchor.
 fn before_anchor_goal(cursor: &Cursor<'_>, anchor: usize, tab: usize) -> Option<usize> {

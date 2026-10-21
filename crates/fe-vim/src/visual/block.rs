@@ -541,6 +541,7 @@ pub(super) fn operate_block(
         Operator::Fold => unreachable!("folds' own"),
         Operator::Surround { .. } => unreachable!("refused by operator::operate"),
         Operator::ReplaceWithRegister => unreachable!("replace_register's own"),
+        Operator::Comment => unreachable!("comment's own"),
     };
     let corner = block.corner(&text, tab);
     let begins = vec![history::pair(&text, corner)];

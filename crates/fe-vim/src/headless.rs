@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use fe_buffer::{Buffer, Point, TransactionId};
 use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
 use fe_editor::{
-    EditorModel,
+    CommentTokens, EditorModel,
     commands::{EditorHost, HeadlessHost, ScrollRequest, Viewport},
 };
 
@@ -37,6 +37,9 @@ pub struct HeadlessVim {
     line: String,
     /// Where `<Up>` and `<Down>` are in the line's history.
     recall: HistoryRecall,
+    /// What its host gives as the buffer's comment tokens
+    /// ([`HeadlessVim::set_comment_tokens`]).
+    comment_tokens: Option<CommentTokens>,
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -70,6 +73,7 @@ impl HeadlessVim {
             registry: registry(),
             line: String::new(),
             recall: HistoryRecall::default(),
+            comment_tokens: None,
         }
     }
 
@@ -310,6 +314,7 @@ impl HeadlessVim {
         let mut host = ViewHost {
             host: &mut self.host,
             view: &mut self.view,
+            comment_tokens: self.comment_tokens,
         };
         let mut target = VimTarget {
             model: &mut self.model,
@@ -395,6 +400,13 @@ impl HeadlessVim {
     /// 'ignorecase' and 'smartcase' for the registers ([`Registers::set_search_case`]).
     pub fn set_search_case(&mut self, ignore_case: bool, smart_case: bool) {
         self.registers.set_search_case(ignore_case, smart_case);
+    }
+
+    /// Sets the comment tokens its host gives for the buffer's language,
+    /// which `gc` and `gcc` toggle with; `None` (the default) is no
+    /// language.
+    pub fn set_comment_tokens(&mut self, tokens: Option<CommentTokens>) {
+        self.comment_tokens = tokens;
     }
 
     /// The host, whose `clipboard` is `+` and `*`.
@@ -488,11 +500,12 @@ impl HeadlessVim {
     }
 }
 
-/// The host [`HeadlessVim`] dispatches with: its [`HeadlessHost`], and its
-/// view as the viewport.
+/// The host [`HeadlessVim`] dispatches with: its [`HeadlessHost`], its
+/// view as the viewport, and its comment tokens.
 struct ViewHost<'a> {
     host: &'a mut HeadlessHost,
     view: &'a mut Viewport,
+    comment_tokens: Option<CommentTokens>,
 }
 
 impl EditorHost for ViewHost<'_> {
@@ -522,6 +535,10 @@ impl EditorHost for ViewHost<'_> {
 
     fn view_columns(&self) -> Option<std::ops::Range<u32>> {
         Some(0..80)
+    }
+
+    fn comment_tokens(&self) -> Option<CommentTokens> {
+        self.comment_tokens
     }
 
     fn scroll(&mut self, request: ScrollRequest) {

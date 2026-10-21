@@ -47,6 +47,9 @@ pub(crate) fn select(
             objects::select(text, offset, object, count, tab)
         }
         InnerArgument | AArgument => argument::select(text, offset, object, count),
+        // Which rows are commented is the host's to say:
+        // `feature::comment::operate_object` acts over it instead.
+        Comment => Span::Failed,
     }
 }
 

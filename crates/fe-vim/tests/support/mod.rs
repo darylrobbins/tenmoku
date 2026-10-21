@@ -13,6 +13,7 @@ use std::{
     sync::Arc,
 };
 
+use fe_editor::CommentTokens;
 use fe_vim::{HeadlessVim, RemapSet, VimKey, parse_keys, parse_vimrc};
 use serde::{Deserialize, Serialize};
 
@@ -49,8 +50,9 @@ pub(crate) struct Case {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) mapping: Vec<String>,
     /// nvim `:set` arguments run before the keys (`"ignorecase
-    /// smartcase"`): in nvim with `vim.cmd`, here through
-    /// [`HeadlessVim`]'s setters for the options [`check`] knows.
+    /// smartcase"`, `commentstring=#\ %s`): in nvim with `vim.cmd`,
+    /// here through [`HeadlessVim`]'s setters for the options [`check`]
+    /// knows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) set: Option<String>,
 }
@@ -502,11 +504,27 @@ fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
 }
 
 /// Runs a case's `set`, nvim `:set` arguments, on `vim`: `ignorecase`
-/// (`ic`) and `smartcase` (`scs`), and their `no` forms. Any other
-/// argument is an error.
+/// (`ic`) and `smartcase` (`scs`), and their `no` forms, and
+/// `commentstring=<token>\ %s` (`cms`), whose `<token>` the host then
+/// gives as the line comment token. Any other argument is an error.
 fn set_options(vim: &mut HeadlessVim, set: &str) -> Result<(), String> {
     let (mut ignore_case, mut smart_case) = vim.registers().search_case();
-    for argument in set.split_whitespace() {
+    for argument in set_arguments(set) {
+        let argument = argument.as_str();
+        if let Some((name, value)) = argument.split_once('=') {
+            if !matches!(name, "commentstring" | "cms") {
+                return Err(format!("unknown option {argument:?}"));
+            }
+            let Some(token) = value.strip_suffix(" %s").filter(|token| !token.is_empty()) else {
+                return Err(format!("{argument:?} isn't a line token, a space and %s"));
+            };
+            let token: &'static str = Box::leak(token.into());
+            vim.set_comment_tokens(Some(CommentTokens {
+                line: Some(token),
+                block: None,
+            }));
+            continue;
+        }
         let (name, on) = match argument.strip_prefix("no") {
             Some(name) => (name, false),
             None => (argument, true),
@@ -519,6 +537,34 @@ fn set_options(vim: &mut HeadlessVim, set: &str) -> Result<(), String> {
     }
     vim.set_search_case(ignore_case, smart_case);
     Ok(())
+}
+
+/// `:set`'s arguments, as nvim splits them: at blanks, but not at one
+/// escaped with `\`, which (before a blank, `\`, `|` or `"`) goes.
+fn set_arguments(set: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut argument = String::new();
+    let mut chars = set.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' if chars
+                .peek()
+                .is_some_and(|next| matches!(next, ' ' | '\t' | '\\' | '|' | '"')) =>
+            {
+                argument.extend(chars.next());
+            }
+            ' ' | '\t' => {
+                if !argument.is_empty() {
+                    arguments.push(std::mem::take(&mut argument));
+                }
+            }
+            ch => argument.push(ch),
+        }
+    }
+    if !argument.is_empty() {
+        arguments.push(argument);
+    }
+    arguments
 }
 
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,

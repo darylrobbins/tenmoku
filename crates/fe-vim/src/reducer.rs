@@ -642,7 +642,8 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                     Some(pending_operator) if pending_operator == operator => {
                         pending.commit(Target::Motion(Motion::Line))
                     }
-                    Some(_) => Step::Cancel,
+                    // A feature's operator may take it (`gcc`).
+                    Some(_) => pending.reject(key),
                 };
             }
             if let Some(motion) = motion(ch) {

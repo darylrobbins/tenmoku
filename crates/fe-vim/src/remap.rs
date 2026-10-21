@@ -525,6 +525,10 @@ fn map_mode(state: &VimState, key: VimKey) -> Option<RemapMode> {
     if key == VimKey::Char('0') && state.pending.kind() == Some(PendingKind::Count) {
         return None;
     }
+    // `gcc`'s second `c`: nvim maps `gcc` whole, in normal mode.
+    if key == VimKey::Char('c') && state.pending.operator() == Some(crate::Operator::Comment) {
+        return None;
+    }
     match state.mode {
         Mode::Normal if state.pending.has_operator() => Some(RemapMode::OperatorPending),
         Mode::Normal => Some(RemapMode::Normal),
