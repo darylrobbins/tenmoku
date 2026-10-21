@@ -845,7 +845,7 @@ fn operate_unless_failing(
                     motion::match_pair(&text, head).map(|found| found.offset.min(head))
                 }
                 (Span::Lines { .. }, _) => mark(head).map(|offset| {
-                    let mut cursor = Cursor::at(&text, offset);
+                    let mut cursor = Cursor::whole(&text, offset);
                     cursor.ix = cursor.line.first_non_blank();
                     cursor.offset().min(head)
                 }),

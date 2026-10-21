@@ -185,7 +185,7 @@ pub(crate) fn lands(text: &Text, offset: usize, motion: Motion, count: Option<u3
         extend: false,
         count,
     };
-    self::motion(&mut Cursor::at(text, offset), args, None, 1).is_ok()
+    self::motion(&mut Cursor::whole(text, offset), args, None, 1).is_ok()
 }
 
 /// The row `count` paragraph boundaries from `row`: each step goes on to
@@ -242,7 +242,7 @@ pub(crate) fn select(text: &Text, offset: usize, object: TextObject, count: u32)
             }
         }
         _ => {
-            let cursor = Cursor::at(text, offset);
+            let cursor = Cursor::whole(text, offset);
             let at = Walk::at(text, cursor.row, cursor.ix);
             sentences(at, count, object == TextObject::ASentence)
         }
@@ -364,7 +364,7 @@ fn visual_sentences(
     around: bool,
 ) -> (usize, usize) {
     let walk = |offset: usize| {
-        let at = Cursor::at(text, offset);
+        let at = Cursor::whole(text, offset);
         Walk::at(text, at.row, at.ix)
     };
     let items = items(count, around);
@@ -794,7 +794,7 @@ impl<'a> Walk<'a> {
 
     /// At a visual cursor's `offset`, which can be a row's end.
     fn visual(text: &'a Text, offset: usize) -> Self {
-        let cursor = Cursor::at(text, offset);
+        let cursor = Cursor::whole(text, offset);
         let mut at = Walk::at(text, cursor.row, cursor.ix);
         let row_end = text.row_start(at.row) + text.row_len(at.row) as usize;
         at.past_end = !at.empty() && offset == row_end;

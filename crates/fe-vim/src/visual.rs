@@ -261,7 +261,7 @@ impl Ends {
 
 /// A caret at `offset` that may stand on its row's end: a visual position.
 fn cursor_at(text: &Text, offset: usize) -> Cursor<'_> {
-    let mut cursor = Cursor::at(text, offset);
+    let mut cursor = Cursor::whole(text, offset);
     if offset == row_end(text, cursor.row) {
         cursor.ix = cursor.line.len();
     }
@@ -731,6 +731,8 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
             }
             Ok(None)
         }
+        // From where the cursor stands, even past the row's last character.
+        Motion::Unmatched { .. } => motion::motion(&mut cursor, args, state.last_find, goal, tab),
         _ => {
             cursor.ix = cursor.ix.min(cursor.line.last());
             let moved = motion::motion(&mut cursor, args, state.last_find, goal, tab);

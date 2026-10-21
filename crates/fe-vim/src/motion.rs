@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use fe_buffer::{ResolvedSelection, TransactionId, Version};
 use fe_command::{Dispatched, Effect};
 use fe_editor::EditorModel;
-use fe_text::Text;
+use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
@@ -222,6 +222,32 @@ pub(crate) fn motion(
     goal: Option<usize>,
     tab: usize,
 ) -> Result<Option<usize>, Option<usize>> {
+    // Only these read along the row a window at a time; the rest need it
+    // whole.
+    if !matches!(
+        args.motion,
+        Motion::WordForward
+            | Motion::WordBackward
+            | Motion::WordEnd
+            | Motion::BigWordForward
+            | Motion::BigWordBackward
+            | Motion::BigWordEnd
+            | Motion::WordEndBackward
+            | Motion::BigWordEndBackward
+            | Motion::FindForward(_)
+            | Motion::FindBackward(_)
+            | Motion::TillForward(_)
+            | Motion::TillBackward(_)
+            | Motion::RepeatFind
+            | Motion::RepeatFindReverse
+            | Motion::Left
+            | Motion::Right
+            | Motion::LineStart
+            | Motion::LineEnd
+    ) && !(args.motion == Motion::MatchPair && args.count.is_none())
+    {
+        cursor.widen();
+    }
     let count = args.count.unwrap_or(1).max(1);
     let n = count as usize;
     let (row, last_row) = (cursor.row, cursor.text.row_count() - 1);
@@ -230,17 +256,18 @@ pub(crate) fn motion(
         // A motion that fails leaves the goal alone, as in Vim. For an
         // operator, `l` may step past the last grapheme: `x` takes it.
         Motion::Left | Motion::Right => {
-            let ix = match args.motion {
-                Motion::Left => cursor.ix.saturating_sub(n),
-                _ if cursor.op => cursor.ix.saturating_add(n).min(line.len()),
-                _ => cursor.ix.saturating_add(n).min(line.last()),
-            };
+            let before = cursor.offset();
+            match args.motion {
+                _ if cursor.windowed => cursor.slide_along(args.motion == Motion::Right, n),
+                Motion::Left => cursor.ix = cursor.ix.saturating_sub(n),
+                _ if cursor.op => cursor.ix = cursor.ix.saturating_add(n).min(line.len()),
+                _ => cursor.ix = cursor.ix.saturating_add(n).min(line.last()),
+            }
             // An operator's `h` at the row's start (or `l` at its end) only
             // has nothing to act on: `>h` still shifts the row.
-            if ix == cursor.ix {
+            if cursor.offset() == before {
                 return if cursor.op { Ok(goal) } else { Err(goal) };
             }
-            cursor.ix = ix;
         }
         // Vim fails `k` on the first row and `j` on the last, keeping the
         // goal; from elsewhere a count past the end clamps.
@@ -283,13 +310,20 @@ pub(crate) fn motion(
         Motion::Unmatched { brace, forward } => {
             return unmatched::motion(cursor, brace, forward, count, goal);
         }
-        Motion::LineStart => cursor.ix = 0,
+        Motion::LineStart => match cursor.windowed {
+            true => cursor.goto(cursor.text.row_start(row)),
+            false => cursor.ix = 0,
+        },
         Motion::FirstNonBlank => cursor.ix = line.first_non_blank(),
         // Vim fails a `{count}$` from the last row (still aiming at line
         // ends), and clamps one from above.
         Motion::LineEnd if count > 1 && row == last_row => return Err(Some(usize::MAX)),
         Motion::LineEnd => {
-            cursor.enter(row.saturating_add(count - 1).min(last_row));
+            let to = row.saturating_add(count - 1).min(last_row);
+            if to != row || cursor.windowed {
+                let end = cursor.text.row_start(to) + cursor.text.row_len(to) as usize;
+                cursor.window(to, end);
+            }
             cursor.ix = cursor.line.last();
             return Ok(Some(usize::MAX));
         }
@@ -526,6 +560,133 @@ pub(crate) struct Line {
     pub(crate) start: usize,
     pub(crate) text: String,
     pub(crate) starts: Vec<usize>,
+    /// For a window of a row ([`Line::around`]): the text, to take the
+    /// columns before the window from, and the row's start.
+    lead: Option<(Text, usize)>,
+    /// The tab width and display columns of that lead, once taken.
+    lead_columns: std::cell::Cell<Option<(usize, usize)>>,
+}
+
+/// How far each side of a caret a row's text is read at first: the caret's
+/// reach, which [`Line::around`] moves out to where the text is sure to
+/// break. A row of at most four times this is read whole.
+const CARET_WINDOW: usize = 16 * 1024;
+
+/// How many places where the class of an ASCII char changes lie between a
+/// window's edge and the reach it must hold: a run, the blanks after it, and
+/// one more run, so that `iw` and `aw` on a long run see their ends.
+const CLASS_MARGIN: usize = 3;
+
+/// How far past its reach a window looks for blank / non-blank places to end
+/// at, so that a WORD isn't cut, before it settles for the end of a word.
+const BLANK_REACH: usize = 8 * CARET_WINDOW;
+
+#[cfg(test)]
+thread_local! {
+    /// The bytes of rows [`Line`]s on this thread have been made of.
+    static ROW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a row of `len` bytes is read in windows, not whole.
+fn huge(len: usize) -> bool {
+    len > 4 * CARET_WINDOW
+}
+
+/// Whether `row` is read in spans for `%` and the bracket objects: it is
+/// huge and has no double quote, whose state runs from the row's start.
+fn spanned(text: &Text, row: u32) -> bool {
+    let len = text.row_len(row) as usize;
+    let start = text.row_start(row);
+    huge(len)
+        && !text
+            .chunks_in_range(start..start + len)
+            .any(|chunk| chunk.as_bytes().contains(&b'"'))
+}
+
+/// Whether every byte is printable ASCII (a column wide), a word at a time.
+fn printable(bytes: &[u8]) -> bool {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = ONES << 7;
+    let (words, rest) = bytes.as_chunks::<8>();
+    for word in words {
+        let word = u64::from_le_bytes(*word);
+        // A non-ASCII byte, one below a space, or a DEL.
+        let low = word.wrapping_sub(ONES * 0x20) & !word;
+        let del = (word ^ (ONES * 0x7f)).wrapping_sub(ONES);
+        if (word | low | del) & HIGHS != 0 {
+            return false;
+        }
+    }
+    rest.iter().all(|byte| (0x20..0x7f).contains(byte))
+}
+
+/// Whether `[prev, next]` is a place where the segmentation of graphemes
+/// breaks whatever is around it: between two ASCII bytes. (No Prepend,
+/// Extend, ZWJ, SpacingMark or regional indicator is ASCII, so no rule that
+/// joins graphemes, or counts what came before, reaches across one. A row
+/// holds no line feed for a CR to join.)
+fn breaks(prev: u8, next: u8) -> bool {
+    prev < 0x80 && next < 0x80
+}
+
+/// Whether one of ASCII bytes `prev` and `next` is a blank and the other
+/// not: where a WORD begins or ends.
+fn blank_change(prev: u8, next: u8) -> bool {
+    let blank = |byte: u8| char_info(char::from(byte)).0 == 0;
+    blank(prev) != blank(next)
+}
+
+/// Whether the class of ASCII bytes `prev` and `next` differ: where a word
+/// begins or ends.
+fn word_change(prev: u8, next: u8) -> bool {
+    char_info(char::from(prev)).0 != char_info(char::from(next)).0
+}
+
+/// Whether the ASCII byte before `ix` is a grapheme of its own and `ix`
+/// starts another, so that their classes are those of the bytes: not when
+/// something before it (a Prepend char) may join it.
+fn starts_alone(bytes: &[u8], ix: usize) -> bool {
+    ix >= 2 && bytes[ix - 2] < 0x80 && breaks(bytes[ix - 1], bytes[ix])
+}
+
+/// The nearest place to `from` in `bytes`, outward (`forward` or back) and
+/// at least [`CLASS_MARGIN`] class changes out, where graphemes break.
+fn edge(bytes: &[u8], from: usize, forward: bool) -> Option<usize> {
+    // Where a WORD ends if there is one in reach, else a word.
+    let within = |by: fn(u8, u8) -> bool| edge_by(bytes, from, forward, by);
+    let room = match forward {
+        true => bytes.len().saturating_sub(from),
+        false => from,
+    };
+    within(blank_change).or_else(|| match room >= BLANK_REACH {
+        true => within(word_change),
+        false => None,
+    })
+}
+
+/// [`edge`] at the [`CLASS_MARGIN`]th place `change` holds.
+fn edge_by(bytes: &[u8], from: usize, forward: bool, change: fn(u8, u8) -> bool) -> Option<usize> {
+    let mut changes = 0;
+    if forward {
+        for ix in from.max(1)..bytes.len() {
+            if starts_alone(bytes, ix) && change(bytes[ix - 1], bytes[ix]) {
+                changes += 1;
+                if changes == CLASS_MARGIN {
+                    return Some(ix);
+                }
+            }
+        }
+    } else {
+        for ix in (1..=from.min(bytes.len().saturating_sub(1))).rev() {
+            if starts_alone(bytes, ix) && change(bytes[ix - 1], bytes[ix]) {
+                changes += 1;
+                if changes == CLASS_MARGIN {
+                    return Some(ix);
+                }
+            }
+        }
+    }
+    None
 }
 
 impl Line {
@@ -533,13 +694,90 @@ impl Line {
         Self::of(text.row_start(row), text.row_to_string(row))
     }
 
+    /// `row` as far as a caret at `offset` needs it: all of it, or for a
+    /// huge row, [`CARET_WINDOW`] bytes each side of `offset` and on to the
+    /// nearest edges where its graphemes are sure to be the row's own: between
+    /// two ASCII bytes, past a few class changes ([`CLASS_MARGIN`]).
+    fn around(text: &Text, row: u32, offset: usize) -> Self {
+        let start = text.row_start(row);
+        let len = text.row_len(row) as usize;
+        if !huge(len) {
+            return Self::new(text, row);
+        }
+        let end = start + len;
+        let at = offset.clamp(start, end);
+        let (mut back, mut ahead) = (2 * CARET_WINDOW, 2 * CARET_WINDOW);
+        loop {
+            let lo = text.clip_offset(at.saturating_sub(back).max(start), Bias::Left);
+            let hi = text.clip_offset((at + ahead).min(end), Bias::Right);
+            let window = text.slice_to_string(lo..hi);
+            let bytes = window.as_bytes();
+            let caret = at - lo;
+            // From the reach inward, the nearest edges there.
+            let first = match lo == start {
+                true => Some(0),
+                false => edge(bytes, caret.saturating_sub(CARET_WINDOW), false),
+            };
+            let last = match hi == end {
+                true => Some(bytes.len()),
+                false => edge(bytes, caret + CARET_WINDOW, true),
+            };
+            let (Some(first), Some(last)) = (first, last) else {
+                if first.is_none() {
+                    back *= 2;
+                }
+                if last.is_none() {
+                    ahead *= 2;
+                }
+                continue;
+            };
+            let mut line = Self::of(lo + first, window[first..last].to_string());
+            if lo + first > start {
+                line.lead = Some((text.clone(), start));
+            }
+            return line;
+        }
+    }
+
     /// `text` as a row starting at byte `start`.
     pub(crate) fn of(start: usize, text: String) -> Self {
+        #[cfg(test)]
+        ROW_BYTES.set(ROW_BYTES.get() + text.len());
         let starts = text.grapheme_indices(true).map(|(ix, _)| ix).collect();
         Self {
             start,
             text,
             starts,
+            lead: None,
+            lead_columns: std::cell::Cell::new(None),
+        }
+    }
+
+    /// The display columns of the row before this window of it (0 for a
+    /// row read whole).
+    fn lead_columns(&self, tab: usize) -> usize {
+        match (&self.lead, self.lead_columns.get()) {
+            (None, _) => 0,
+            (_, Some((at, columns))) if at == tab => columns,
+            (Some((text, row_start)), _) => {
+                // Printable ASCII is a column a byte: no need to cut it into
+                // graphemes.
+                let mut plain = 0;
+                let all_plain = text.chunks_in_range(*row_start..self.start).all(|chunk| {
+                    plain += chunk.len();
+                    printable(chunk.as_bytes())
+                });
+                let columns = match all_plain {
+                    true => plain,
+                    false => {
+                        let before =
+                            Line::of(*row_start, text.slice_to_string(*row_start..self.start));
+                        (0..before.len()).fold(0, |at, ix| at + before.width(ix, at, tab))
+                    }
+                };
+                self.lead_columns.set(Some((tab, columns)));
+                columns
+            }
         }
     }
 
@@ -588,7 +826,9 @@ impl Line {
 
     /// The display column grapheme `ix` starts at.
     pub(crate) fn start_column(&self, ix: usize, tab: usize) -> usize {
-        (0..ix).fold(0, |column, i| column + self.width(i, column, tab))
+        (0..ix).fold(self.lead_columns(tab), |column, i| {
+            column + self.width(i, column, tab)
+        })
     }
 
     /// Vim's goal column for a normal-mode caret on grapheme `ix`: the
@@ -598,7 +838,7 @@ impl Line {
         if self.len() == 0 {
             return 0;
         }
-        let start = (0..ix).fold(0, |column, i| column + self.width(i, column, tab));
+        let start = self.start_column(ix, tab);
         match self.grapheme(ix) {
             "\t" => start + self.width(ix, start, tab) - 1,
             _ => start,
@@ -627,32 +867,102 @@ pub(crate) struct Cursor<'a> {
     /// Whether `%` matched preprocessor rows, which an operator takes
     /// whole.
     pub(crate) rows_matched: bool,
+    /// Whether `line` is only part of the row, a window around the caret.
+    windowed: bool,
+    /// Whether rows this caret goes to are read in windows too, as the one
+    /// it began on is ([`Cursor::widen`] ends that).
+    bounded: bool,
 }
 
 impl<'a> Cursor<'a> {
     /// The normal-mode caret for `offset`: on the grapheme holding it,
-    /// clamped to the row's last.
+    /// clamped to the row's last. On a huge row `line` holds only a window
+    /// around the caret ([`Line::around`]); the motions here that move along
+    /// the row slide it, and the rest read the row whole ([`Cursor::widen`]).
     pub(crate) fn at(text: &'a Text, offset: usize) -> Self {
         let row = text.offset_to_point(offset).row;
         let mut cursor = Self {
             text,
             row,
             ix: 0,
-            line: Line::new(text, row),
+            line: Line::around(text, row, offset),
             op: false,
             visual: false,
             word_row: row,
             hit_end: false,
             stuck_at_start: false,
             rows_matched: false,
+            windowed: false,
+            bounded: true,
         };
+        cursor.windowed = cursor.partial();
         cursor.goto(offset);
         cursor
     }
 
+    /// [`Cursor::at`] with the row read whole, for what takes the row's
+    /// graphemes by index or its ends as `line`'s.
+    pub(crate) fn whole(text: &'a Text, offset: usize) -> Self {
+        let mut cursor = Self::at(text, offset);
+        cursor.widen();
+        cursor
+    }
+
+    /// Whether `line` is only part of its row.
+    fn partial(&self) -> bool {
+        let start = self.text.row_start(self.row);
+        let end = start + self.text.row_len(self.row) as usize;
+        self.line.start > start || self.line.start + self.line.text.len() < end
+    }
+
+    /// Whether the row goes on past `line`'s end.
+    fn more_after(&self) -> bool {
+        self.windowed
+            && self.line.start + self.line.text.len()
+                < self.text.row_start(self.row) + self.text.row_len(self.row) as usize
+    }
+
+    /// Whether the row goes on before `line`'s start.
+    fn more_before(&self) -> bool {
+        self.windowed && self.line.start > self.text.row_start(self.row)
+    }
+
+    /// Reads `row` around `offset` ([`Line::around`]), or whole once the
+    /// caret has been widened, leaving `ix` to the caller.
+    fn window(&mut self, row: u32, offset: usize) {
+        self.row = row;
+        self.line = match self.bounded {
+            true => Line::around(self.text, row, offset),
+            false => Line::new(self.text, row),
+        };
+        self.windowed = self.partial();
+    }
+
+    /// Reads the whole row if only part of it is, keeping the caret (and an
+    /// operator's place past the row's last grapheme).
+    pub(crate) fn widen(&mut self) {
+        self.bounded = false;
+        if !self.windowed {
+            return;
+        }
+        let past = self.ix >= self.line.len();
+        let offset = self.offset();
+        self.windowed = false;
+        self.line = Line::new(self.text, self.row);
+        self.goto(offset);
+        if past && offset == self.line.start + self.line.text.len() {
+            self.ix = self.line.len();
+        }
+    }
+
     /// To the grapheme holding `offset`, clamped to its row's last.
     pub(crate) fn goto(&mut self, offset: usize) {
-        self.enter(self.text.offset_to_point(offset).row);
+        let row = self.text.offset_to_point(offset).row;
+        let end = self.line.start + self.line.text.len();
+        let inside = offset >= self.line.start && (offset < end || !self.more_after());
+        if row != self.row || self.windowed && !inside {
+            self.window(row, offset);
+        }
         let column = offset.saturating_sub(self.line.start);
         let ix = self.line.starts.partition_point(|&start| start <= column);
         self.ix = ix.saturating_sub(1).min(self.line.last());
@@ -669,48 +979,157 @@ impl<'a> Cursor<'a> {
     /// matches. `skip` is `;` and `,`: a till next to its char goes on to
     /// the following one.
     fn find(&mut self, find: Motion, n: usize, skip: bool) -> bool {
-        let line = &self.line;
-        match find {
+        let origin = self.offset();
+        let target = match find {
             Motion::FindForward(ch) | Motion::TillForward(ch) => {
                 let till = matches!(find, Motion::TillForward(_));
-                let from = self.ix + 1 + usize::from(till && skip);
-                let mut found = (from..line.len()).filter(|&ix| line.starts_with(ix, ch));
-                // `t` onto the very next grapheme fails too, though an
-                // operator then takes the caret's own; `T` doesn't.
-                match found.nth(n - 1).map(|ix| ix - usize::from(till)) {
-                    Some(ix) if ix != self.ix || self.op => self.ix = ix,
-                    _ => return false,
-                }
+                self.find_forward(ch, n, usize::from(till && skip) + 1)
+                    // `t` stops on the grapheme before the match.
+                    .map(|(at, before)| if till { before } else { at })
+                    // `t` onto the very next grapheme fails too, though an
+                    // operator then takes the caret's own; `T` doesn't.
+                    .filter(|&at| at != origin || self.op)
             }
             Motion::FindBackward(ch) | Motion::TillBackward(ch) => {
                 let till = matches!(find, Motion::TillBackward(_));
-                let to = self.ix.saturating_sub(usize::from(till && skip));
-                let mut found = (0..to).rev().filter(|&ix| line.starts_with(ix, ch));
-                match found.nth(n - 1) {
-                    // `T` steps one character past the match, which inside a
-                    // grapheme with combining marks is the match itself.
-                    Some(ix) => {
-                        self.ix =
-                            ix + usize::from(till && line.grapheme(ix).chars().nth(1).is_none())
-                    }
-                    None => return false,
-                }
+                self.find_backward(ch, n, usize::from(till && skip))
+                    .map(|at| {
+                        // `T` steps one character past the match, which inside a
+                        // grapheme with combining marks is the match itself.
+                        match till && at.1.chars().nth(1).is_none() {
+                            true => at.0 + at.1.len(),
+                            false => at.0,
+                        }
+                    })
             }
-            _ => return false,
+            _ => None,
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        self.goto(target);
+        // An operator's `T` may land past the row's last grapheme.
+        let (start, len) = (self.text.row_start(self.row), self.text.row_len(self.row));
+        if len > 0 && target == start + len as usize {
+            self.ix = self.line.len();
         }
         true
+    }
+
+    /// The `n`th grapheme starting with `ch`, from `skip` graphemes past the
+    /// caret along the row: its offset, and the offset of the grapheme
+    /// before it. Windows past this one are read as the search goes on.
+    fn find_forward(&self, ch: char, mut n: usize, skip: usize) -> Option<(usize, usize)> {
+        let mut owned: Option<Line> = None;
+        let mut from = self.ix + skip;
+        let mut before = None;
+        loop {
+            let line = owned.as_ref().unwrap_or(&self.line);
+            for ix in from..line.len() {
+                if line.starts_with(ix, ch) {
+                    n -= 1;
+                    if n == 0 {
+                        let at = line.start + line.starts[ix];
+                        let prev = match ix.checked_sub(1) {
+                            Some(prev) => line.start + line.starts[prev],
+                            None => before?,
+                        };
+                        return Some((at, prev));
+                    }
+                }
+            }
+            let end = line.start + line.text.len();
+            let row_end = self.text.row_start(self.row) + self.text.row_len(self.row) as usize;
+            if end >= row_end {
+                return None;
+            }
+            before = line.starts.last().map(|&last| line.start + last);
+            from = from.saturating_sub(line.len());
+            let next = Line::around(self.text, self.row, end);
+            from += next
+                .starts
+                .partition_point(|&start| next.start + start < end);
+            owned = Some(next);
+        }
+    }
+
+    /// The `n`th grapheme starting with `ch`, from before the one `skip`
+    /// graphemes back of the caret, backward along the row: its offset and
+    /// text.
+    fn find_backward(&self, ch: char, mut n: usize, skip: usize) -> Option<(usize, String)> {
+        let mut owned: Option<Line> = None;
+        let to = self.ix.saturating_sub(skip);
+        let mut limit = self.line.start
+            + self
+                .line
+                .starts
+                .get(to)
+                .copied()
+                .unwrap_or(self.line.text.len());
+        loop {
+            let line = owned.as_ref().unwrap_or(&self.line);
+            let below = line
+                .starts
+                .partition_point(|&start| line.start + start < limit);
+            for ix in (0..below).rev() {
+                if line.starts_with(ix, ch) {
+                    n -= 1;
+                    if n == 0 {
+                        return Some((line.start + line.starts[ix], line.grapheme(ix).to_string()));
+                    }
+                }
+            }
+            if line.start <= self.text.row_start(self.row) {
+                return None;
+            }
+            limit = line.start;
+            let before = self.text.clip_offset(limit - 1, Bias::Left);
+            owned = Some(Line::around(self.text, self.row, before));
+        }
     }
 
     pub(crate) fn enter(&mut self, row: u32) {
         if row != self.row {
             self.row = row;
             self.line = Line::new(self.text, row);
+            self.windowed = false;
         }
+    }
+
+    /// `n` graphemes along a windowed row (`l` or `h`), stopping at its
+    /// last or first; an operator's `l` may go on to the row's end.
+    fn slide_along(&mut self, forward: bool, n: usize) {
+        for _ in 0..n {
+            if !self.step(forward) {
+                if forward && self.op && self.ix < self.line.len() {
+                    self.ix = self.line.len();
+                }
+                return;
+            }
+        }
+    }
+
+    /// One grapheme along the row, sliding the window on past its edge;
+    /// false at the row's start or end.
+    fn step(&mut self, forward: bool) -> bool {
+        match forward {
+            true if self.ix + 1 < self.line.len() => self.ix += 1,
+            true if self.more_after() => self.goto(self.line.start + self.line.text.len()),
+            false if self.ix > 0 => self.ix -= 1,
+            false if self.more_before() => {
+                let before = self.text.clip_offset(self.line.start - 1, Bias::Left);
+                self.goto(before);
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// To the grapheme on `row` covering the goal column (by default, the
     /// one this caret is on), or the row's last; returns the goal.
     pub(crate) fn vertical(&mut self, row: u32, goal: Option<usize>, tab: usize) -> Option<usize> {
+        // The goal column is the whole row's, and the graphemes found in it.
+        self.widen();
         let goal = goal.unwrap_or_else(|| self.line.goal_column(self.ix, tab));
         self.enter(row);
         let mut end = 0;
@@ -737,28 +1156,29 @@ impl<'a> Cursor<'a> {
 
     /// To the next grapheme, or the next row's first; false at the end.
     pub(crate) fn forward(&mut self) -> bool {
-        if self.ix + 1 < self.line.len() {
-            self.ix += 1;
-        } else if self.row + 1 < self.text.row_count() {
-            self.enter(self.row + 1);
-            self.ix = 0;
-        } else {
+        if self.step(true) {
+            return true;
+        }
+        if self.row + 1 >= self.text.row_count() {
             return false;
         }
+        self.window(self.row + 1, self.text.row_start(self.row + 1));
+        self.ix = 0;
         true
     }
 
     /// To the previous grapheme, or the previous row's last; false at the
     /// start.
     pub(crate) fn backward(&mut self) -> bool {
-        if self.ix > 0 {
-            self.ix -= 1;
-        } else if self.row > 0 {
-            self.enter(self.row - 1);
-            self.ix = self.line.last();
-        } else {
+        if self.step(false) {
+            return true;
+        }
+        if self.row == 0 {
             return false;
         }
+        let end = self.text.row_start(self.row) - 1;
+        self.window(self.row - 1, end);
+        self.ix = self.line.last();
         true
     }
 
@@ -766,14 +1186,14 @@ impl<'a> Cursor<'a> {
     /// doesn't move.
     pub(crate) fn words(&mut self, motion: Motion, count: u32, big: bool) {
         for step in 0..count {
-            let before = (self.row, self.ix);
+            let before = (self.row, self.offset());
             self.word_row = self.row;
             match motion {
                 Motion::WordForward => self.word_forward(big),
                 Motion::WordBackward => self.word_backward(big),
                 _ => self.word_end(big),
             }
-            if (self.row, self.ix) == before {
+            if (self.row, self.offset()) == before {
                 self.stuck_at_start = motion == Motion::WordBackward
                     && before == (0, 0)
                     && (step == 0 || self.line.len() == 0);
@@ -815,8 +1235,11 @@ impl<'a> Cursor<'a> {
             }
         }
         let class = self.class(big);
-        while self.class_on_row(self.ix + 1, big) == Some(class) {
-            self.ix += 1;
+        while self.step(true) {
+            if self.class(big) != class {
+                self.step(false);
+                break;
+            }
         }
     }
 
@@ -828,11 +1251,11 @@ impl<'a> Cursor<'a> {
         }
         while self.class(big) == Class::Blank && self.backward() {}
         let class = self.class(big);
-        while class != Class::EmptyRow
-            && self.ix > 0
-            && self.class_on_row(self.ix - 1, big) == Some(class)
-        {
-            self.ix -= 1;
+        while class != Class::EmptyRow && self.step(false) {
+            if self.class(big) != class {
+                self.step(true);
+                break;
+            }
         }
     }
 }
@@ -859,7 +1282,11 @@ pub(crate) struct Scan {
 
 impl Scan {
     pub(crate) fn new(text: &Text, row: u32) -> Self {
-        let bytes = text.row_to_string(row).into_bytes();
+        Self::of(text.row_start(row), text.row_to_string(row).into_bytes())
+    }
+
+    /// The bytes at `start` as a row.
+    fn of(start: usize, bytes: Vec<u8>) -> Self {
         let (mut escaped, mut quoted) = (Vec::with_capacity(bytes.len()), Vec::new());
         let (mut slashes, mut inside) = (0usize, false);
         for &byte in &bytes {
@@ -878,11 +1305,38 @@ impl Scan {
         }
         quoted.resize(bytes.len(), false);
         Self {
-            start: text.row_start(row),
+            start,
             bytes,
             escaped,
             quoted,
         }
+    }
+
+    /// Bytes `lo..hi` of `row` for a huge row, with what [`Scan::escaped`]
+    /// and [`Scan::char_literal`] read around them: the backslashes before
+    /// `lo` and a byte each side. Its strings are told apart from `lo` on:
+    /// where a huge row's strings begin is not worth reading the row for.
+    fn span(text: &Text, row: u32, lo: usize, hi: usize) -> Self {
+        let lo = text.clip_offset(lo, Bias::Left);
+        let start = text.row_start(row);
+        let end = start + text.row_len(row) as usize;
+        let mut back = 256;
+        let from = loop {
+            let from = text.clip_offset(lo.saturating_sub(back).max(start), Bias::Left);
+            let before = text.slice_to_string(from..lo);
+            let slashes = before
+                .bytes()
+                .rev()
+                .take_while(|&byte| byte == b'\\')
+                .count();
+            if slashes < before.len() || from == start {
+                let context = lo - slashes - usize::from(slashes < before.len());
+                break text.clip_offset(context, Bias::Left);
+            }
+            back *= 2;
+        };
+        let hi = text.clip_offset((hi + 1).min(end), Bias::Right);
+        Self::of(from, text.slice_to_string(from..hi).into_bytes())
     }
 
     /// Whether byte `ix` is a bracket quoted as a char, `'('`.
@@ -963,35 +1417,59 @@ pub(crate) fn nth_unmatched(
         if rules.quotes == Quotes::Within && row != first {
             return None;
         }
-        let scan = Scan::new(text, row);
-        let len = scan.bytes.len();
-        // A search starting on a char literal's quote counts its bracket.
-        let touches = |ix: usize| {
-            row == first && (from - scan.start + 1 == ix || from - scan.start == ix + 1)
+        let (start, len) = (text.row_start(row), text.row_len(row) as usize);
+        // The part of the row to look over, in the order to look.
+        let (lo, hi) = match (row == first, forward) {
+            (true, true) => (from + 1, start + len),
+            (true, false) => (start, from.min(start + len)),
+            (false, _) => (start, start + len),
         };
-        let ixs: Box<dyn Iterator<Item = usize>> = match (row == first, forward) {
-            (true, true) => Box::new(from - scan.start + 1..len),
-            (true, false) => Box::new((0..(from - scan.start).min(len)).rev()),
-            (false, true) => Box::new(0..len),
-            (false, false) => Box::new((0..len).rev()),
+        let spanned = spanned(text, row);
+        let mut spans = Vec::new();
+        let step = match spanned {
+            true => CARET_WINDOW,
+            false => len.max(1),
         };
-        for ix in ixs {
-            if rules.quotes == Quotes::Within && scan.quote_at(ix) {
-                return None;
-            }
-            let byte = scan.bytes[ix];
-            if (byte != want && byte != other)
-                || scan.escaped[ix] != rules.escaped
-                || (rules.quotes == Quotes::Skip && scan.quoted[ix])
-                || (rules.literals && scan.char_literal(ix) && !touches(ix))
-            {
-                continue;
-            }
-            match (byte == want, depth) {
-                (true, 0) if n <= 1 => return Some(scan.start + ix),
-                (true, 0) => n -= 1,
-                (true, _) => depth -= 1,
-                (false, _) => depth += 1,
+        let mut at = lo;
+        while at < hi {
+            spans.push((at, (at + step).min(hi)));
+            at += step;
+        }
+        if !forward {
+            spans.reverse();
+        }
+        for (lo, hi) in spans {
+            let scan = match spanned {
+                true => Scan::span(text, row, lo, hi),
+                false => Scan::new(text, row),
+            };
+            // A search starting on a char literal's quote counts its bracket.
+            let touches = |ix: usize| {
+                row == first && (from + 1 == scan.start + ix || from == scan.start + ix + 1)
+            };
+            let ixs = lo - scan.start..hi - scan.start;
+            let ixs: Box<dyn Iterator<Item = usize>> = match forward {
+                true => Box::new(ixs),
+                false => Box::new(ixs.rev()),
+            };
+            for ix in ixs {
+                if rules.quotes == Quotes::Within && scan.quote_at(ix) {
+                    return None;
+                }
+                let byte = scan.bytes[ix];
+                if (byte != want && byte != other)
+                    || scan.escaped[ix] != rules.escaped
+                    || (rules.quotes == Quotes::Skip && scan.quoted[ix])
+                    || (rules.literals && scan.char_literal(ix) && !touches(ix))
+                {
+                    continue;
+                }
+                match (byte == want, depth) {
+                    (true, 0) if n <= 1 => return Some(scan.start + ix),
+                    (true, 0) => n -= 1,
+                    (true, _) => depth -= 1,
+                    (false, _) => depth += 1,
+                }
             }
         }
     }
@@ -1011,7 +1489,16 @@ pub(crate) struct Match {
 /// the caret on its row, its match; failing that, the conditional again.
 pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
     let row = text.offset_to_point(offset).row;
-    let scan = Scan::new(text, row);
+    // A huge row is read a window at a time: the bytes around the caret for
+    // what is next to it, and its head for a directive.
+    let spanned = spanned(text, row);
+    let scan = match spanned {
+        true => {
+            let lo = offset.saturating_sub(2).max(text.row_start(row));
+            Scan::span(text, row, lo, offset + 3)
+        }
+        false => Scan::new(text, row),
+    };
     let col = offset - scan.start;
     let bytes = &scan.bytes;
     let at = |ix: usize, byte: u8| bytes.get(ix) == Some(&byte);
@@ -1034,11 +1521,18 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
         let before = text.slice_to_string(0..close + 2).into_bytes();
         return comment_open(&before, close).map(chars);
     }
-    let directive = directive(bytes);
+    let directive = match spanned {
+        true => row_directive(text, row),
+        false => directive(bytes),
+    };
     if let Some((hash, _)) = directive
-        && col <= hash
+        && offset - text.row_start(row) <= hash
     {
         return conditional(text, row);
+    }
+    if spanned {
+        return match_bracket(text, row, offset)
+            .or_else(|| directive.and_then(|_| conditional(text, row)));
     }
     let bracket = (col..bytes.len()).find_map(|ix| {
         let byte = bytes[ix];
@@ -1057,6 +1551,64 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
         literals: true,
     };
     unmatched(text, scan.start + ix, forward, pair, rules).map(chars)
+}
+
+/// [`directive`] of a huge row, reading as much of its head as it takes to
+/// tell: the blanks, the `#`, the blanks and the keyword.
+fn row_directive(text: &Text, row: u32) -> Option<(usize, Directive)> {
+    let start = text.row_start(row);
+    let len = text.row_len(row) as usize;
+    let blank = |byte: &u8| matches!(byte, b' ' | b'\t');
+    let mut size = CARET_WINDOW;
+    loop {
+        let end = text.clip_offset(start + size.min(len), Bias::Right);
+        let head = text.slice_to_string(start..end);
+        let bytes = head.as_bytes();
+        if let Some(found) = directive(bytes) {
+            return Some(found);
+        }
+        // Whether more of the row could make it one: only blanks so far, or
+        // a `#` and too little after it for the longest keyword.
+        let rest = &bytes[bytes.iter().position(|b| !blank(b)).unwrap_or(bytes.len())..];
+        let open = rest.is_empty()
+            || rest[0] == b'#' && rest[1..].iter().skip_while(|b| blank(b)).count() < "endif".len();
+        if end >= start + len || !open {
+            return None;
+        }
+        size *= 2;
+    }
+}
+
+/// `%`'s bracket on a huge row: the match of the first bracket at or after
+/// `offset`, found a window of the row at a time.
+fn match_bracket(text: &Text, row: u32, offset: usize) -> Option<Match> {
+    let end = text.row_start(row) + text.row_len(row) as usize;
+    let mut lo = offset;
+    while lo < end {
+        let hi = (lo + CARET_WINDOW).min(end);
+        let scan = Scan::span(text, row, lo, hi);
+        let found = (lo - scan.start..hi - scan.start).find_map(|ix| {
+            let byte = scan.bytes[ix];
+            PAIRS.iter().find_map(|&pair| match byte {
+                _ if byte == pair.0 => Some((ix, pair, true)),
+                _ if byte == pair.1 => Some((ix, pair, false)),
+                _ => None,
+            })
+        });
+        if let Some((ix, pair, forward)) = found {
+            let rules = Rules {
+                escaped: scan.escaped[ix],
+                quotes: Quotes::from(scan.quoted[ix]),
+                literals: true,
+            };
+            return unmatched(text, scan.start + ix, forward, pair, rules).map(|offset| Match {
+                offset,
+                rows: false,
+            });
+        }
+        lo = hi;
+    }
+    None
 }
 
 /// The `/*` that `%` matches with the `*/` at `close` in `text` (which
@@ -1187,4 +1739,174 @@ fn conditional(text: &Text, row: u32) -> Option<Match> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod caret_window_tests {
+    use super::*;
+
+    /// 3,000,000 bytes on one row, between two short ones.
+    fn huge_row() -> (Text, usize) {
+        let row = "ab (c) ".repeat(430_000);
+        let text = Text::new(&format!("x\n{row}\ny"));
+        let middle = 2 + 7 * 215_000 + 1;
+        (text, middle)
+    }
+
+    /// The most bytes of the row a key may read: its windows, a few.
+    const BUDGET: usize = 16 * CARET_WINDOW;
+
+    fn key(text: &Text, offset: usize, motion: Motion) -> usize {
+        let mut cursor = Cursor::at(text, offset);
+        let args = MoveArgs {
+            motion,
+            extend: false,
+            count: (motion != Motion::MatchPair).then_some(3),
+        };
+        let _ = super::motion(&mut cursor, args, None, None, 4);
+        cursor.offset()
+    }
+
+    #[test]
+    fn a_caret_on_a_huge_row_reads_a_window_of_it() {
+        let (text, middle) = huge_row();
+        ROW_BYTES.set(0);
+        let cursor = Cursor::at(&text, middle);
+        assert_eq!(cursor.offset(), middle);
+        assert_eq!(cursor.line.grapheme(cursor.ix), "b");
+        assert!(ROW_BYTES.get() <= BUDGET, "{} bytes read", ROW_BYTES.get());
+        // Near either end the window is cut short, not the caret moved.
+        for offset in [2, 3, text.len() - 3] {
+            ROW_BYTES.set(0);
+            let cursor = Cursor::at(&text, offset);
+            assert_eq!(cursor.offset(), offset, "{offset}");
+            assert!(ROW_BYTES.get() <= BUDGET, "{offset}");
+        }
+    }
+
+    #[test]
+    fn motions_from_the_middle_of_a_huge_row_read_windows_of_it() {
+        let (text, middle) = huge_row();
+        for motion in [
+            Motion::WordForward,
+            Motion::WordBackward,
+            Motion::WordEnd,
+            Motion::WordEndBackward,
+            Motion::BigWordForward,
+            Motion::FindForward('c'),
+            Motion::FindBackward('c'),
+            Motion::TillForward('c'),
+            Motion::Left,
+            Motion::Right,
+            Motion::LineStart,
+            Motion::LineEnd,
+            Motion::MatchPair,
+        ] {
+            ROW_BYTES.set(0);
+            let at = key(&text, middle, motion);
+            assert!(
+                ROW_BYTES.get() <= 3 * BUDGET,
+                "{motion:?} read {} bytes",
+                ROW_BYTES.get()
+            );
+            assert!(at > 0, "{motion:?}");
+        }
+    }
+
+    /// Letters and punctuation alternating, with no blank to end a WORD at.
+    #[test]
+    fn a_row_without_blanks_is_read_in_windows_too() {
+        let text = Text::new(&format!("x\n{}\ny", "a.".repeat(1_500_000)));
+        let middle = 2 + 1_500_000;
+        ROW_BYTES.set(0);
+        let cursor = Cursor::at(&text, middle);
+        assert_eq!(cursor.offset(), middle);
+        assert!(
+            ROW_BYTES.get() <= 40 * CARET_WINDOW,
+            "{} bytes",
+            ROW_BYTES.get()
+        );
+        for motion in [
+            Motion::WordForward,
+            Motion::WordBackward,
+            Motion::WordEnd,
+            Motion::WordEndBackward,
+            Motion::FindForward('a'),
+            Motion::FindBackward('.'),
+            Motion::Left,
+            Motion::Right,
+        ] {
+            ROW_BYTES.set(0);
+            key(&text, middle, motion);
+            assert!(
+                ROW_BYTES.get() <= 3 * 40 * CARET_WINDOW,
+                "{motion:?} read {} bytes",
+                ROW_BYTES.get()
+            );
+        }
+    }
+
+    #[test]
+    fn a_short_row_is_read_whole() {
+        let text = Text::new("ab cd\nef");
+        ROW_BYTES.set(0);
+        let cursor = Cursor::at(&text, 1);
+        assert_eq!(cursor.line.text, "ab cd");
+        assert!(!cursor.windowed);
+        assert_eq!(ROW_BYTES.get(), 5);
+    }
+
+    #[test]
+    fn the_window_never_cuts_the_carets_grapheme() {
+        // One grapheme of 120,001 bytes in the middle of a 220 KB row.
+        let marks = "\u{301}".repeat(60_000);
+        let (before, after) = ("x".repeat(50_000), "y".repeat(50_000));
+        let text = Text::new(&format!("{before}e{marks}{after}"));
+        let start = before.len();
+        for offset in [start, start + 2, start + 60_000, start + 120_000 - 1] {
+            let cursor = Cursor::at(&text, offset);
+            assert_eq!(cursor.offset(), start, "{offset}");
+            assert_eq!(cursor.line.grapheme(cursor.ix).len(), 120_001, "{offset}");
+        }
+    }
+
+    #[test]
+    fn the_window_keeps_regional_indicator_pairs_whole() {
+        // 80,000 flags' halves (320 KB, 40,000 pairs) between ASCII.
+        let flags = "\u{1f1e6}".repeat(80_000);
+        let pad = "x".repeat(60_000);
+        let text = Text::new(&format!("{pad}{flags}{pad}"));
+        let start = pad.len();
+        for pair in [0, 1, 9_999, 20_000, 39_999] {
+            let first = start + pair * 8;
+            for offset in [first, first + 4] {
+                let cursor = Cursor::at(&text, offset);
+                assert_eq!(cursor.offset(), first, "{offset}");
+                assert_eq!(cursor.line.grapheme(cursor.ix).len(), 8, "{offset}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod printable_tests {
+    use super::printable;
+
+    #[test]
+    fn printable_agrees_with_a_byte_at_a_time() {
+        let mut bytes = [b'a'; 40];
+        assert!(printable(&bytes));
+        for at in 0..40 {
+            for byte in [0u8, 9, 0x1f, 0x20, 0x7e, 0x7f, 0x80, 0xc3, 0xff] {
+                let old = bytes[at];
+                bytes[at] = byte;
+                assert_eq!(
+                    printable(&bytes),
+                    (0x20..0x7f).contains(&byte),
+                    "{at} {byte}"
+                );
+                bytes[at] = old;
+            }
+        }
+    }
 }

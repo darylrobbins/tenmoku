@@ -1809,7 +1809,8 @@ fn suggested_indent(
 /// and `dW` do.
 pub(crate) fn change_word(text: &Text, head: usize, motion: Motion, count: u32) -> Option<Span> {
     let big = motion == Motion::BigWordForward;
-    let mut cursor = Cursor::at(text, head);
+    // The word's run is stepped along `line`, which may be a window.
+    let mut cursor = Cursor::whole(text, head);
     if cursor.line.len() == 0 || cursor.class(big) == crate::motion::Class::Blank {
         return None;
     }

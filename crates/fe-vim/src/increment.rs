@@ -369,7 +369,7 @@ pub(crate) fn increment(
         None => before
             .iter()
             .map(|selection| {
-                let cursor = Cursor::at(&text, selection.head());
+                let cursor = Cursor::whole(&text, selection.head());
                 Window {
                     row: cursor.row,
                     from: selection.head() - cursor.line.start,

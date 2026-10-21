@@ -271,7 +271,7 @@ pub(crate) fn replace_char(
         .selections()
         .iter()
         .map(|selection| {
-            let cursor = Cursor::at(&text, selection.head());
+            let cursor = Cursor::whole(&text, selection.head());
             let line = &cursor.line;
             if line.len() < cursor.ix.saturating_add(count) {
                 return Acts::default();
@@ -382,7 +382,7 @@ pub(crate) fn toggle_case(
         .selections()
         .iter()
         .map(|selection| {
-            let cursor = Cursor::at(&text, selection.head());
+            let cursor = Cursor::whole(&text, selection.head());
             let line = &cursor.line;
             if line.len() == 0 {
                 return Acts::default();

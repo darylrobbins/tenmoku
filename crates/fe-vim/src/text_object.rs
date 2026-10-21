@@ -153,6 +153,10 @@ fn blank(cursor: &Cursor, big: bool) -> bool {
 /// leaving the caret on the last grapheme as nvim does.
 fn words(text: &Text, offset: usize, count: u32, big: bool, inner: bool) -> Span {
     let mut cursor = Cursor::at(text, offset);
+    // Counted items, and a WORD, may go on past a window's reach.
+    if count > 1 || big {
+        cursor.widen();
+    }
     // On an empty last row, nvim's `iw` takes the line break before it and
     // the grapheme before that; its `aw` fails.
     let last_row = text.row_count() - 1;
@@ -251,7 +255,10 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
     let end = cursor.offset() + len;
     let mut start = start;
     if !ended_white && !started_white && cursor.line.len() > 0 {
-        let mut back = Cursor::at(text, start);
+        let mut back = match count > 1 || big {
+            true => Cursor::whole(text, start),
+            false => Cursor::at(text, start),
+        };
         while back.ix > 0 && back.class_on_row(back.ix - 1, big) == Some(Class::Blank) {
             back.ix -= 1;
         }
