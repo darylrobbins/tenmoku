@@ -1,5 +1,8 @@
 //! Search patterns: Vim's pattern language, translated to a [`regex::Regex`]
 //! and matched one row at a time. The crate docs list what translates.
+//! [`Pattern::parse_across`] also translates the atoms that match a line
+//! break (`\n`, `\_x`, `\_.`, `\_[...]`), and [`Pattern::find_across`]
+//! matches a pattern holding one over a window of rows at a time.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -60,8 +63,8 @@ pub fn set_call_limit(limit: Option<u64>) {
 /// applies from the next command.
 ///
 /// The limit is checked between regex calls, each of which scans at most
-/// one row, so a command can overrun it by one row's scan. A command that
-/// passes it stops: `:s` changes nothing ([`crate::substitute`]'s `run`)
+/// one row (a window of rows for [`Pattern::find_across`]), so a command
+/// can overrun it by one such scan. A command that passes it stops: `:s` changes nothing ([`crate::substitute`]'s `run`)
 /// and a search doesn't move the cursor ([`Pattern::try_find`]); both leave
 /// the message `Interrupted`.
 pub fn set_time_limit(limit: Duration) {
@@ -178,7 +181,7 @@ impl Deadline {
 }
 
 /// A search pattern in Vim's syntax, translated to a [`Regex`] that matches
-/// within one row.
+/// within one row, or for one that [`Pattern::spans_rows`] over several.
 #[derive(Clone, Debug)]
 pub struct Pattern {
     engine: Engine,
@@ -191,6 +194,91 @@ pub struct Pattern {
     whole: bool,
     /// The translated regex's source with the flags it's built with.
     key: String,
+    /// How many line breaks a match may take.
+    reach: Reach,
+}
+
+/// How many line breaks a [`Pattern`]'s match may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    /// It matches within one row: none.
+    Row,
+    /// It [`Pattern::spans_rows`], with at most this many: a match starting
+    /// on a row ends by this many rows on.
+    Breaks(u32),
+    /// It spans rows, with no bound.
+    Unbounded,
+}
+
+/// The most rows past its first a [`Reach::Breaks`] may reach before the
+/// pattern is matched as [`Reach::Unbounded`], against the rest of the text.
+const MAX_BREAKS: u32 = 100_000;
+
+/// How many line breaks a match of `tokens` (a multi-row pattern's) may
+/// take at most: each of `\n`, `\_x`, `\_.` and `\_[...]` one, a
+/// sequence their sum, alternatives their most, and a repeat its count of
+/// them, unbounded for `*`, `\+` and `\{n,}` of one that takes any.
+fn reach(tokens: &[Token]) -> Reach {
+    /// One group's branches: the most breaks of those ended, then of the
+    /// one going on, and of its last piece (`None` for no bound).
+    struct Level {
+        most: Option<u32>,
+        branch: Option<u32>,
+        last: Option<u32>,
+    }
+    const NEW: Level = Level {
+        most: Some(0),
+        branch: Some(0),
+        last: Some(0),
+    };
+    let max = |a: Option<u32>, b: Option<u32>| a.zip(b).map(|(a, b)| a.max(b));
+    let add = |a: Option<u32>, b: Option<u32>| a.zip(b).map(|(a, b)| a.saturating_add(b));
+    let piece = |level: &mut Level, breaks: Option<u32>| {
+        level.branch = add(level.branch, breaks);
+        level.last = breaks;
+    };
+    let mut levels = vec![NEW];
+    for token in tokens {
+        let nested = levels.len() > 1;
+        let level = levels.last_mut().expect("the pattern's level");
+        match token {
+            Token::Open { .. } => levels.push(NEW),
+            Token::Close if nested => {
+                let group = levels.pop().expect("an open group");
+                let level = levels.last_mut().expect("the pattern's level");
+                piece(level, max(group.most, group.branch));
+            }
+            Token::Alt => {
+                level.most = max(level.most, level.branch);
+                (level.branch, level.last) = (Some(0), Some(0));
+            }
+            &Token::Multi { multi, .. } => {
+                let most = match multi {
+                    Multi::Star | Multi::Plus => None,
+                    Multi::Optional => Some(1),
+                    Multi::Brace { max, .. } => max,
+                };
+                // The piece before, repeated: written out, it was there once.
+                let repeated = match (level.last, most) {
+                    (Some(0), _) => Some(0),
+                    (Some(last), Some(most)) => Some(last.saturating_mul(most)),
+                    _ => None,
+                };
+                level.branch = level
+                    .branch
+                    .zip(level.last)
+                    .and_then(|(branch, last)| add(Some(branch - last), repeated));
+                level.last = repeated;
+            }
+            Token::Newline | Token::OrNewline(_) => piece(level, Some(1)),
+            _ => piece(level, Some(0)),
+        }
+    }
+    let level = levels.swap_remove(0);
+    match max(level.most, level.branch) {
+        Some(breaks) if breaks <= MAX_BREAKS => Reach::Breaks(breaks),
+        _ => Reach::Unbounded,
+    }
 }
 
 /// What matches a [`Pattern`].
@@ -256,10 +344,33 @@ impl Pattern {
     /// `I` is `false`) unless the pattern says otherwise: `\c` ignores case
     /// and `\C` matches it, `\c` winning.
     pub fn parse_with(pattern: &str, ignore_case: bool) -> Result<Self, PatternError> {
+        Self::compile(pattern, ignore_case, false)
+    }
+
+    /// [`Pattern::parse_with`], also reading the atoms that match a line
+    /// break, as `:help /\_x` has them: `\n`; `\_s`, `\_a` and the rest of
+    /// the backslash classes, and `\_.`, each the class or a line break;
+    /// `\_[...]`, and a collection holding `\n` (but for one starting `^`,
+    /// where nvim ignores it); `\_^` and `\_$`, the start and end of a row
+    /// anywhere; and `^` after `\n` and `$` before it, as at a branch's
+    /// start and end. A pattern holding any of them [`Pattern::spans_rows`],
+    /// and only [`Pattern::find_across`] matches it over rows; the other
+    /// searches match within one row, as they do every pattern.
+    pub fn parse_across(pattern: &str, ignore_case: bool) -> Result<Self, PatternError> {
+        Self::compile(pattern, ignore_case, true)
+    }
+
+    /// Whether the pattern holds an atom that matches a line break, or `\_^`
+    /// or `\_$` ([`Pattern::parse_across`]).
+    pub fn spans_rows(&self) -> bool {
+        self.reach != Reach::Row
+    }
+
+    fn compile(pattern: &str, ignore_case: bool, across: bool) -> Result<Self, PatternError> {
         if pattern.is_empty() {
             return Err(PatternError::Invalid("empty pattern"));
         }
-        let (mut tokens, case) = Lexer::new(pattern).run()?;
+        let (mut tokens, case, rows) = Lexer::new(pattern, across).run()?;
         let ignore_case = case.unwrap_or(ignore_case);
         let word = word_bounds(&mut tokens);
         let mut translator = Translator {
@@ -270,17 +381,31 @@ impl Pattern {
             ignore_case,
             budget: 0,
             inexact: false,
+            rows,
         };
         let source = unique_names(&translator.pattern()?);
+        let reach = match rows {
+            true => reach(&tokens),
+            false => Reach::Row,
+        };
+        // A multi-row pattern's `^` and `$` are a row's start and end
+        // anywhere in the haystack.
+        let rows_key = if rows { "\0rows" } else { "" };
         if translator.inexact {
             return Ok(Self {
-                engine: Engine::Backtrack(Arc::new(backtrack::compile(&tokens, ignore_case)?)),
+                engine: Engine::Backtrack(Arc::new(backtrack::compile(
+                    &tokens,
+                    ignore_case,
+                    rows,
+                )?)),
                 word,
                 whole: false,
-                key: format!("{source}\0{ignore_case}\0backtrack\0{word:?}"),
+                key: format!("{source}\0{ignore_case}\0backtrack\0{word:?}{rows_key}"),
+                reach,
             });
         }
-        let builder = RegexBuilder::new(&source);
+        let mut builder = RegexBuilder::new(&source);
+        builder.multi_line(rows);
         let regex = build(builder, |error| {
             // Past the nesting limit: its message's last line says so.
             PatternError::TooLarge(
@@ -319,7 +444,8 @@ impl Pattern {
             },
             word,
             whole: false,
-            key: format!("{source}\0{ignore_case}\0{word:?}"),
+            key: format!("{source}\0{ignore_case}\0{word:?}{rows_key}"),
+            reach,
         })
     }
 
@@ -354,6 +480,7 @@ impl Pattern {
             word: (false, false),
             whole: query.whole_word,
             key: format!("{source}\0{}\0{}", query.match_case, query.whole_word),
+            reach: Reach::Row,
         })
     }
 
@@ -502,6 +629,180 @@ impl Pattern {
         Ok(wrapped)
     }
 
+    /// The match `/` (`forward`) or `?` would go to from `from`, as nvim's
+    /// search finds it, for a pattern that [`Pattern::spans_rows`]: one
+    /// that may start on a row and end on a later one. The text's rows are
+    /// matched as one haystack, with a line break after each, the last row
+    /// included, as nvim matches one there as if the text ended in one: a
+    /// match that takes it ends one past the text's end.
+    ///
+    /// A row's matches are those starting on it (at its end too, before
+    /// its line break), found from its start, each search resuming where
+    /// the last match ended, and none after one that ends on a later row.
+    /// Going forward the match is the first on `from`'s row starting a
+    /// whole character on from `from` (from its last character, only one
+    /// that `\zs` starts on a later row), else the first on a later row,
+    /// else, wrapping, the first from the text's start; going back, the
+    /// last starting before `from` on its row or an earlier one, else,
+    /// wrapping, the last from the text's end. A match `\zs` starts after
+    /// the last row's line break starts one past the text's end, where nvim
+    /// puts the cursor on the text's last character.
+    ///
+    /// Rows are read a window at a time, holding as many rows past the
+    /// first a match may start on as its matches can reach (for one with
+    /// no bound, like `\_s\+`, the rest of the text), so a search for the
+    /// next row with a match scans a window at most, and one that finds
+    /// none goes on from the first row it couldn't rule out: for a pattern
+    /// with a bound the rows are scanned a bounded number of times each.
+    /// A match attempt may read as far as its matches can reach, so a
+    /// pattern like `a\_.*b` reads on to the text's end from each row with
+    /// an `a`, as in nvim. `Err(Interrupted)` once `deadline` has passed,
+    /// which is read between regex calls. A pattern that doesn't span rows
+    /// is searched as [`Pattern::find`] searches.
+    pub fn find_across(
+        &self,
+        text: &Text,
+        from: usize,
+        forward: bool,
+        deadline: &Deadline,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
+        if self.reach == Reach::Row {
+            return self.try_find_by(text, from, forward, deadline);
+        }
+        let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
+        let from = text.point_to_offset(at);
+        let rows = text.row_count();
+        let mut window = Window::new(text, self.reach);
+        if !forward {
+            let (found, _) = self.list_row(&mut window, at.row, deadline, |found| {
+                starts_from(found, from)
+            })?;
+            if let Some(found) = found.iter().rev().find(|found| found.start < from) {
+                return Ok(Some(found.clone()));
+            }
+            if let Some(found) = self.last_in_rows(&mut window, 0..at.row, from, deadline)? {
+                return Ok(Some(found));
+            }
+            return self.last_in_rows(&mut window, 0..rows, usize::MAX, deadline);
+        }
+        window.hold(at.row);
+        let (start, end) = (text.row_start(at.row), row_end(text, at.row));
+        let row = &window.hay[start - window.base..end - window.base];
+        let column = from - start;
+        let past = start + column + unit(&row[column..]).unwrap_or(0);
+        // From the row's last character only a match that `\zs` starts on
+        // a later row is past it.
+        let taken = |found: &Range<usize>| (found.start >= past && past < end) || found.start > end;
+        let (found, _) = self.list_row(&mut window, at.row, deadline, |found| {
+            found.last().is_some_and(taken)
+        })?;
+        if let Some(found) = found.into_iter().find(taken) {
+            return Ok(Some(found));
+        }
+        if let Some(found) = self.first_in_rows(&mut window, at.row + 1..rows, deadline)? {
+            return Ok(Some(found));
+        }
+        self.first_in_rows(&mut window, 0..at.row + 1, deadline)
+    }
+
+    /// For [`Pattern::find_across`]: the first match on the first of `rows`
+    /// with one.
+    fn first_in_rows(
+        &self,
+        window: &mut Window,
+        rows: Range<u32>,
+        deadline: &Deadline,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
+        let mut row = rows.start;
+        while row < rows.end {
+            let (found, next) = self.list_row(window, row, deadline, |found| !found.is_empty())?;
+            if let Some(found) = found.into_iter().next() {
+                return Ok(Some(found));
+            }
+            match next {
+                Some(next) => row = next,
+                None => break,
+            }
+        }
+        Ok(None)
+    }
+
+    /// For [`Pattern::find_across`]: the last match starting before
+    /// `before` on the last of `rows` with one. The rows are listed forward
+    /// a window at a time, from the last window back.
+    fn last_in_rows(
+        &self,
+        window: &mut Window,
+        rows: Range<u32>,
+        before: usize,
+        deadline: &Deadline,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
+        let mut end = rows.end;
+        while end > rows.start {
+            let start = match self.reach {
+                Reach::Breaks(breaks) => {
+                    end.saturating_sub(WINDOW_ROWS.max(breaks)).max(rows.start)
+                }
+                _ => rows.start,
+            };
+            let mut last = None;
+            let mut row = start;
+            loop {
+                let (found, next) =
+                    self.list_row(window, row, deadline, |found| starts_from(found, before))?;
+                if let Some(found) = found.into_iter().rev().find(|found| found.start < before) {
+                    last = Some(found);
+                }
+                match next {
+                    Some(next) if next < end => row = next,
+                    _ => break,
+                }
+            }
+            if last.is_some() {
+                return Ok(last);
+            }
+            end = start;
+        }
+        Ok(None)
+    }
+
+    /// `row`'s matches as [`Pattern::find_across`] lists them (as offsets
+    /// in the text), as far as `enough` of them, and the next row to list:
+    /// with none on `row`, the first on which one may start, as far as the
+    /// window can tell; `None` past the last. `Err` if `deadline` has run
+    /// out, before or while listing them.
+    fn list_row(
+        &self,
+        window: &mut Window,
+        row: u32,
+        deadline: &Deadline,
+        enough: impl Fn(&[Range<usize>]) -> bool,
+    ) -> Result<(Vec<Range<usize>>, Option<u32>), Interrupted> {
+        if deadline.expired() {
+            return Err(Interrupted);
+        }
+        window.hold(row);
+        let (text, base) = (window.text, window.base);
+        let mut matches = self.matches_from(&window.hay, text.row_start(row) - base, deadline);
+        matches.row_end = row_end(text, row) - base;
+        let mut found = Vec::new();
+        while !enough(&found) {
+            let Some(next) = matches.next() else {
+                break;
+            };
+            found.push(base + next.start..base + next.end);
+        }
+        let beyond = matches.beyond;
+        deadline.check()?;
+        let next = match (found.is_empty(), beyond) {
+            (false, _) => row + 1,
+            (true, Some(beyond)) => window.row_of(base + beyond).min(window.told_through() + 1),
+            (true, None) => window.told_through() + 1,
+        };
+        let next = next.max(row + 1);
+        Ok((found, (next < text.row_count()).then_some(next)))
+    }
+
     /// Where `count` searches from `from` land, each from the match the
     /// last found (`3/foo`): the start of the last match, or `None` if
     /// there is none. Past the last match the searches go round the text
@@ -570,6 +871,8 @@ impl Pattern {
             word: self.word,
             whole: self.whole,
             hay,
+            row_end: hay.len(),
+            beyond: None,
             at: Some(at),
             found: match &self.engine {
                 Engine::Regex { regex, .. } => Found::Regex(regex.capture_locations()),
@@ -781,6 +1084,111 @@ impl<'a> RowList<'a> {
     }
 }
 
+/// How many rows a [`Window`] reads past those a row's matches can reach,
+/// so that one search for the next row with a match scans that many.
+const WINDOW_ROWS: u32 = 256;
+
+/// Rows of a text read into one haystack for a pattern that spans rows
+/// ([`Pattern::find_across`]): rows `first..=last`, with the line breaks
+/// between them, and after the text's last row the one nvim matches there.
+/// A match starting on a row is told from the rows its [`Reach`] can take
+/// it to: past the window's last row the text's next line break is
+/// missing, which reads as the end of the haystack does to every anchor
+/// and boundary, so the line break is the only difference.
+struct Window<'t> {
+    text: &'t Text,
+    reach: Reach,
+    /// Empty while `first > last`.
+    first: u32,
+    last: u32,
+    /// `first`'s offset in the text.
+    base: usize,
+    hay: String,
+}
+
+impl<'t> Window<'t> {
+    fn new(text: &'t Text, reach: Reach) -> Self {
+        Self {
+            text,
+            reach,
+            first: 1,
+            last: 0,
+            base: 0,
+            hay: String::new(),
+        }
+    }
+
+    /// The most line breaks a match takes, `None` for no bound.
+    fn breaks(&self) -> Option<u32> {
+        match self.reach {
+            Reach::Breaks(breaks) => Some(breaks),
+            Reach::Row => Some(0),
+            Reach::Unbounded => None,
+        }
+    }
+
+    /// Reads rows until it holds `row` and those its matches can reach (all
+    /// the rest for an unbounded reach), and [`WINDOW_ROWS`] more. It starts
+    /// again from `row` for a row before its first, or for one so far past
+    /// it that the rows held before are as many as it would read.
+    fn hold(&mut self, row: u32) {
+        let last_row = self.text.row_count() - 1;
+        let through = match self.breaks() {
+            Some(breaks) => row.saturating_add(breaks).min(last_row),
+            None => last_row,
+        };
+        let stale = match self.breaks() {
+            Some(breaks) => row.saturating_sub(self.first) > breaks.saturating_add(WINDOW_ROWS),
+            None => false,
+        };
+        if self.first > self.last || row < self.first || stale {
+            self.first = row;
+            self.base = self.text.row_start(row);
+            self.hay.clear();
+            self.read(through.saturating_add(WINDOW_ROWS).min(last_row));
+        } else if through > self.last {
+            self.read(through.saturating_add(WINDOW_ROWS).min(last_row));
+        }
+    }
+
+    /// Reads on through row `last`, which it doesn't hold yet.
+    fn read(&mut self, last: u32) {
+        let from = self.base + self.hay.len();
+        for chunk in self.text.chunks_in_range(from..row_end(self.text, last)) {
+            self.hay.push_str(chunk);
+        }
+        if last + 1 == self.text.row_count() {
+            self.hay.push('\n');
+        }
+        self.last = last;
+    }
+
+    /// The last row on which where the matches start, and how, the window
+    /// tells: a row whose matches can reach past it can't be told.
+    fn told_through(&self) -> u32 {
+        match self.breaks() {
+            Some(breaks) if self.last + 1 < self.text.row_count() => {
+                self.last.saturating_sub(breaks)
+            }
+            _ => self.last,
+        }
+    }
+
+    /// The row of `at`, an offset in the text or the one after it.
+    fn row_of(&self, at: usize) -> u32 {
+        self.text.offset_to_point(at.min(self.text.len())).row
+    }
+}
+
+/// Where `row` ends in `text`, before its line break.
+fn row_end(text: &Text, row: u32) -> usize {
+    if row + 1 < text.row_count() {
+        text.row_start(row + 1) - 1
+    } else {
+        text.len()
+    }
+}
+
 /// `pattern` translated, ignoring case if `ignore_case` unless it says
 /// otherwise ([`Pattern::parse_with`]), the last one kept on each thread: a
 /// search motion asks once for each caret.
@@ -804,17 +1212,32 @@ pub(crate) fn parsed(pattern: SearchPattern, ignore_case: bool) -> Result<Patter
 /// backslash (`\S`, `\_S`, `\%V`) doesn't count, unless the pattern is
 /// very magic (`\v`) where it ends, which then skips `%X` and `_X`
 /// instead. As in nvim, only `\v` and `\V` change how it reads the
-/// pattern, and the last one written decides for all of it.
+/// pattern, and the last one written outside a collection decides for all
+/// of it: nvim's `skip_regexp_ex()` steps over a collection (`[`, or after
+/// `\V` `\[`) whole, so a `\v` or `\V` in one is no switch.
 pub fn has_uppercase(pattern: &str) -> bool {
-    let mut very_magic = false;
-    let mut chars = pattern.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            match chars.next() {
-                Some('v') => very_magic = true,
-                Some('V') => very_magic = false,
-                _ => {}
-            }
+    let (mut very_magic, mut very_nomagic) = (false, false);
+    let mut at = 0;
+    while let Some(ch) = pattern[at..].chars().next() {
+        at += ch.len_utf8();
+        let collection = match ch {
+            '[' => !very_nomagic,
+            '\\' => match pattern[at..].chars().next() {
+                Some(next) => {
+                    at += next.len_utf8();
+                    match next {
+                        'v' => (very_magic, very_nomagic) = (true, false),
+                        'V' => (very_magic, very_nomagic) = (false, true),
+                        _ => {}
+                    }
+                    next == '[' && very_nomagic
+                }
+                None => false,
+            },
+            _ => false,
+        };
+        if collection {
+            at += collection_len(&pattern[at..]);
         }
     }
     let upper = |ch: char| !ch.to_lowercase().eq(std::iter::once(ch));
@@ -1142,6 +1565,14 @@ pub(crate) struct RowMatches<'a> {
     word: (bool, bool),
     whole: bool,
     hay: &'a str,
+    /// Where the row ends in `hay`, which for [`Pattern::find_across`] holds
+    /// the rows after it too: a match starts at or before it, and the next
+    /// search before it.
+    row_end: usize,
+    /// The start of a match found starting past `row_end`, which ended the
+    /// row's matches: where the first of later rows' starts, if `hay`
+    /// holds enough of them to tell ([`Window`]).
+    beyond: Option<usize>,
     at: Option<usize>,
     /// The last match's groups, read through [`RowMatches::group`] if
     /// `groups`.
@@ -1251,6 +1682,10 @@ impl Iterator for RowMatches<'_> {
                 }
                 _ => unreachable!("an engine's own state"),
             };
+            if found.start > self.row_end {
+                self.beyond = Some(found.start);
+                return None;
+            }
             let next = if found.is_empty() {
                 unit(&self.hay[found.start..]).map_or(usize::MAX, |unit| found.start + unit)
             } else {
@@ -1274,14 +1709,15 @@ impl Iterator for RowMatches<'_> {
                 };
                 let on = found.start + step;
                 // A whole-word query's `$` can still match at the row's end.
-                self.at =
-                    (on < self.hay.len() || (self.whole && on == self.hay.len())).then_some(on);
+                self.at = (on < self.row_end || (self.whole && on == self.row_end)).then_some(on);
                 continue;
             }
             if let Some(last_end) = &mut self.last_end {
                 *last_end = (!found.is_empty()).then_some(found.end);
             }
-            self.at = (next < self.hay.len()).then_some(next);
+            // After a match that ends on a later row the row has no more,
+            // as in nvim.
+            self.at = (next < self.row_end).then_some(next);
             self.bounds = self.bounded(whole_match);
             return Some(self.bounds.clone());
         }
@@ -1431,6 +1867,11 @@ enum Token {
     /// A backslash class, as `regex` syntax.
     Class(&'static str),
     Set(Collection),
+    /// `\n`: a line break.
+    Newline,
+    /// `\_x`, `\_.` or `\_[...]` (or a collection holding `\n`): the `.`,
+    /// class or collection it holds, or a line break.
+    OrNewline(Box<Token>),
     WordStart,
     WordEnd,
     /// `\zs`: where the match starts, as the search reports it.
@@ -1470,17 +1911,25 @@ struct Lexer<'a> {
     ignore_case: bool,
     /// The pattern holds `\C`.
     match_case: bool,
+    /// Whether atoms that match a line break are read ([`Pattern::parse_across`]),
+    /// else refused as unsupported.
+    across: bool,
+    /// Whether the pattern holds one: `\n`, `\_x`, `\_.`, `\_[...]`, a
+    /// collection with `\n`, `\_^` or `\_$`.
+    rows: bool,
     tokens: Vec<Token>,
 }
 
 impl<'a> Lexer<'a> {
-    fn new(pattern: &'a str) -> Self {
+    fn new(pattern: &'a str, across: bool) -> Self {
         Self {
             pattern,
             at: 0,
             magic: Magic::On,
             ignore_case: false,
             match_case: false,
+            across,
+            rows: false,
             tokens: Vec::new(),
         }
     }
@@ -1495,10 +1944,11 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
-    /// The pattern's tokens, and whether it ignores case: `Some(true)` if it
+    /// The pattern's tokens; whether it ignores case: `Some(true)` if it
     /// holds `\c` (which wins over `\C`, wherever either is), `Some(false)`
-    /// if it holds only `\C`, `None` if neither.
-    fn run(mut self) -> Result<(Vec<Token>, Option<bool>), PatternError> {
+    /// if it holds only `\C`, `None` if neither; and whether it holds an
+    /// atom that matches a line break ([`Lexer::rows`]).
+    fn run(mut self) -> Result<(Vec<Token>, Option<bool>, bool), PatternError> {
         while let Some(ch) = self.bump() {
             let start = self.at - ch.len_utf8();
             let (escaped, ch) = match ch {
@@ -1528,7 +1978,23 @@ impl<'a> Lexer<'a> {
             (false, true) => Some(false),
             (false, false) => None,
         };
-        Ok((self.tokens, case))
+        // After `\n` a magic `^` starts a row, and before it a `$` ends
+        // one, as at a branch's start and end (`:help /^`).
+        let real: Vec<usize> = (0..self.tokens.len())
+            .filter(|&ix| self.tokens[ix] != Token::Flag)
+            .collect();
+        for (at, &ix) in real.iter().enumerate() {
+            let newline =
+                |other: Option<&usize>| other.is_some_and(|&o| self.tokens[o] == Token::Newline);
+            let starts = newline(at.checked_sub(1).and_then(|at| real.get(at)));
+            let ends = newline(real.get(at + 1));
+            match &mut self.tokens[ix] {
+                Token::Caret { anywhere } if starts => *anywhere = true,
+                Token::Dollar { anywhere } if ends => *anywhere = true,
+                _ => {}
+            }
+        }
+        Ok((self.tokens, case, self.rows))
     }
 
     /// A special `op` from [`OPERATORS`], which began at `start`, `bare` if
@@ -1551,10 +2017,14 @@ impl<'a> Lexer<'a> {
             '$' => Token::Dollar { anywhere: very },
             // `~` is the last substitute string, and there is none yet.
             '~' => Token::Char('~'),
-            '[' => match collection(self.pattern, self.at)? {
-                Some((set, end)) => {
+            '[' => match collection(self.pattern, self.at, self.across)? {
+                Some((set, end, newline)) => {
                     self.at = end;
-                    Token::Set(set)
+                    self.rows |= newline;
+                    match newline {
+                        true => Token::OrNewline(Box::new(Token::Set(set))),
+                        false => Token::Set(set),
+                    }
                 }
                 // With no `]` to end it, `[` is itself.
                 None => Token::Char('['),
@@ -1641,6 +2111,31 @@ impl<'a> Lexer<'a> {
                 Some('s') => Token::MatchStart,
                 _ => Token::MatchEnd,
             },
+            'n' if self.across => {
+                self.rows = true;
+                Token::Newline
+            }
+            '_' if self.across => {
+                let token = match self.bump() {
+                    Some('^') => Token::Caret { anywhere: true },
+                    Some('$') => Token::Dollar { anywhere: true },
+                    Some('.') => Token::OrNewline(Box::new(Token::Any)),
+                    Some('[') => match collection(self.pattern, self.at, true)? {
+                        Some((set, end, _)) => {
+                            self.at = end;
+                            Token::OrNewline(Box::new(Token::Set(set)))
+                        }
+                        None => return Err(PatternError::Invalid("missing ] after \\_[")),
+                    },
+                    Some(letter) => match class(letter) {
+                        Some(class) => Token::OrNewline(Box::new(Token::Class(class))),
+                        None => return Err(self.unsupported(start)),
+                    },
+                    None => return Err(self.unsupported(start)),
+                };
+                self.rows = true;
+                token
+            }
             '_' | 'z' => {
                 self.bump();
                 return Err(self.unsupported(start));
@@ -1800,10 +2295,16 @@ fn case_class(upper: bool) -> &'static [(char, char)] {
 }
 
 /// The collection from byte `at` (just after its `[`) to its `]`, as a
-/// `regex` class, and the offset after the `]`; `None` if no `]` ends it,
-/// when Vim takes the `[` as itself. Errors inside count only once a `]`
-/// makes it a collection.
-fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, PatternError> {
+/// `regex` class, the offset after the `]`, and whether it holds `\n`, a
+/// line break, which `across` reads ([`Lexer::across`]) and a `^` first
+/// leaves out (`[^\n]` is `.`, as in nvim); `None` if no `]` ends it, when
+/// Vim takes the `[` as itself. Errors inside count only once a `]` makes
+/// it a collection.
+fn collection(
+    pattern: &str,
+    at: usize,
+    across: bool,
+) -> Result<Option<(Collection, usize, bool)>, PatternError> {
     let mut rest = &pattern[at..];
     let negated = rest.starts_with('^');
     if negated {
@@ -1818,6 +2319,7 @@ fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, P
     // Which of `a-z A-Z 0-9 _` the members are, or `None` once one isn't.
     let mut shape = Some(0u8);
     let mut error = None;
+    let mut newline = false;
     // A `]` first is itself (and may start a range).
     let mut first = true;
     loop {
@@ -1861,6 +2363,11 @@ fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, P
         if rest.starts_with("[=") || rest.starts_with("[.") {
             error.get_or_insert(PatternError::Unsupported(rest[..2].to_string()));
             rest = &rest[2..];
+            continue;
+        }
+        if across && let Some(after) = rest.strip_prefix("\\n") {
+            newline |= !negated;
+            rest = after;
             continue;
         }
         let low = match member(&mut rest) {
@@ -1928,7 +2435,7 @@ fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, P
     if matches!(shape, Some(1 | 2 | 3 | 11 | 15)) {
         set.ascii.append(&mut set.folded);
     }
-    Ok(Some((set, pattern.len() - rest.len())))
+    Ok(Some((set, pattern.len() - rest.len(), newline)))
 }
 
 /// A collection's members, kept apart until the whole pattern says
@@ -1948,8 +2455,14 @@ struct Collection {
 impl Collection {
     /// As a `regex` class, without the marks in it (a character carries
     /// them, and isn't one); or, if `marks`, only those, for a mark after a
-    /// bare base.
-    fn syntax(&self, ignore_case: bool, marks: bool) -> String {
+    /// bare base. With `rows`, for a haystack of several rows, never a line
+    /// break: a collection matches one only with `\_` or `\n`
+    /// ([`Token::OrNewline`]). `None` for one with no member.
+    fn syntax(&self, ignore_case: bool, marks: bool, rows: bool) -> Option<String> {
+        if !self.negated && self.ascii.is_empty() && self.folded.is_empty() && self.cased.is_empty()
+        {
+            return None;
+        }
         let mut ranges: Vec<(char, char)> = self
             .ascii
             .iter()
@@ -1990,6 +2503,7 @@ impl Collection {
             }
         }
         let mut class = String::from(match (self.negated, marks) {
+            (true, false) if rows => r"[^\n\p{M}",
             (true, false) => r"[^\p{M}",
             (true, true) => r"[\p{M}&&[^",
             (false, _) => "[[",
@@ -2003,10 +2517,11 @@ impl Collection {
         class.push_str(match (self.negated, marks) {
             (true, false) => "]",
             (true, true) => "]]",
+            (false, false) if rows => r"]--[\n\p{M}]]",
             (false, false) => r"]--\p{M}]",
             (false, true) => r"]&&\p{M}]",
         });
-        class
+        Some(class)
     }
 }
 
@@ -2165,6 +2680,10 @@ struct Translator<'a> {
     /// order: the pattern is then matched by [`backtrack`], and the
     /// translation is only checked for what it rejects.
     inexact: bool,
+    /// Whether the pattern is matched over several rows at once
+    /// ([`Pattern::find_across`]), so that only the atoms written to match
+    /// a line break do.
+    rows: bool,
 }
 
 /// A way through some of a pattern, in `regex` syntax, and how it ends:
@@ -2611,7 +3130,8 @@ impl Translator<'_> {
             Token::Char(mark) if is_mark(mark) => {
                 self.next -= 1;
                 let marks = self.written_marks();
-                format!(r"\P{{M}}{}", carrying(&marks)?)
+                let base = if self.rows { r"[^\n\p{M}]" } else { r"\P{M}" };
+                format!("{base}{}", carrying(&marks)?)
             }
             Token::Char(ch) => {
                 // Alone, a base matches only itself without marks: the
@@ -2634,24 +3154,14 @@ impl Translator<'_> {
                     ),
                 }
             }
-            Token::Any => self.character(r"[^\n\p{M}]", after_bare.then_some(r"\p{M}"), true)?,
-            Token::Class(class) => match class.strip_prefix("[^") {
-                Some(members) => self.character(
-                    &format!(r"[^\p{{M}}{members}"),
-                    after_bare
-                        .then(|| format!(r"[\p{{M}}&&[^{members}]"))
-                        .as_deref(),
-                    false,
-                )?,
-                None => self.character(class, None, false)?,
+            Token::Any | Token::Class(_) | Token::Set(_) => self
+                .one_character(&token, after_bare)?
+                .expect("only a collection holding `\\n` has no member"),
+            Token::Newline => r"\n".into(),
+            Token::OrNewline(inner) => match self.one_character(&inner, after_bare)? {
+                Some(text) => format!(r"(?:{text}|\n)"),
+                None => r"\n".into(),
             },
-            Token::Set(set) => self.character(
-                &set.syntax(self.ignore_case, false),
-                after_bare
-                    .then(|| set.syntax(self.ignore_case, true))
-                    .as_deref(),
-                true,
-            )?,
             Token::WordStart => r"\b{start}".into(),
             Token::WordEnd => r"\b{end}".into(),
             // Empty groups the matcher reads the match's bounds from; they
@@ -2678,6 +3188,42 @@ impl Translator<'_> {
             Token::Open { capture } => return Ok((self.group(capture, after_bare)?, false)),
         };
         Ok((vec![Path { text, bare }], start_of_line))
+    }
+
+    /// A `.`, backslash class or collection (`token`), after a bare base or
+    /// not, as the one character (and its marks) it takes; `None` for a
+    /// collection with no member, which only `\n` in it makes match.
+    fn one_character(
+        &mut self,
+        token: &Token,
+        after_bare: bool,
+    ) -> Result<Option<String>, PatternError> {
+        Ok(Some(match token {
+            Token::Any => self.character(r"[^\n\p{M}]", after_bare.then_some(r"\p{M}"), true)?,
+            Token::Class(class) => match class.strip_prefix("[^") {
+                Some(members) => {
+                    let newline = if self.rows { r"\n" } else { "" };
+                    self.character(
+                        &format!(r"[^{newline}\p{{M}}{members}"),
+                        after_bare
+                            .then(|| format!(r"[\p{{M}}&&[^{members}]"))
+                            .as_deref(),
+                        false,
+                    )?
+                }
+                None => self.character(class, None, false)?,
+            },
+            Token::Set(set) => {
+                let Some(whole) = set.syntax(self.ignore_case, false, self.rows) else {
+                    return Ok(None);
+                };
+                let lone = after_bare
+                    .then(|| set.syntax(self.ignore_case, true, self.rows))
+                    .flatten();
+                self.character(&whole, lone.as_deref(), true)?
+            }
+            _ => unreachable!("not one character"),
+        }))
     }
 
     /// A group's contents after its `\(` or `\%(`, through its `\)`, as
@@ -2897,6 +3443,43 @@ mod tests {
         assert!(deadline.ran_out());
     }
 
+    /// How many line breaks a multi-row pattern's match can take, which
+    /// decides how many rows past a match's first a window must hold.
+    #[test]
+    fn reach_counts_the_line_breaks_a_match_takes() {
+        for (pattern, reach) in [
+            ("abc", Reach::Row),
+            (r"[^\n]", Reach::Row),
+            (r"x\_$", Reach::Breaks(0)),
+            (r"\_^", Reach::Breaks(0)),
+            (r"c\nd", Reach::Breaks(1)),
+            (r"[\n]", Reach::Breaks(1)),
+            (r"a*\n", Reach::Breaks(1)),
+            (r"\%(\n\)\=x", Reach::Breaks(1)),
+            (r"\n\n", Reach::Breaks(2)),
+            (r"\n\{2,3}b\|\_s", Reach::Breaks(3)),
+            (r"\(a\n\|\n\n\n\)\{2}", Reach::Breaks(6)),
+            (r"\n\{0}", Reach::Breaks(0)),
+            (r"\_s\+", Reach::Unbounded),
+            (r"a\_.\{-}z", Reach::Unbounded),
+            (r"\n*", Reach::Unbounded),
+            (r"\%(\n\{400}\)\{300}", Reach::Unbounded),
+        ] {
+            let parsed = Pattern::parse_across(pattern, false).unwrap();
+            assert_eq!(parsed.reach, reach, "{pattern}");
+        }
+        assert_eq!(
+            Pattern::parse_across(r"a\_[b", false).unwrap_err(),
+            PatternError::Invalid("missing ] after \\_[")
+        );
+        for (pattern, atom) in [(r"a\_y", r"\_y"), (r"a\_", r"\_")] {
+            assert_eq!(
+                Pattern::parse_across(pattern, false).unwrap_err(),
+                PatternError::Unsupported(atom.into())
+            );
+        }
+    }
+
     /// A limit past `Instant`'s range never runs out, instead of at once.
     #[test]
     fn a_limit_too_long_to_count_never_runs_out() {
@@ -2953,8 +3536,36 @@ mod uppercase_tests {
             (r"\v\Sello\V", false),
             ("[A-Z]", true),
             ("\\", false),
+            // A `\v` or `\V` in a collection switches nothing: nvim 0.12.4
+            // with 'ic' 'scs' on "x", "vhello", "Vhello" lands
+            // `/\v[\V]hello` on "Vhello" (exact case), and on "x",
+            // "vSELLO", "vsello" lands `/[\v]\Sello` on "vSELLO" (case
+            // ignored), as `/\V\[\v]\Sello`; `/\V[\v]\Sello`, whose `[`
+            // starts nothing, on "x", "[]xELLO", "[]xello" lands on
+            // "[]xello".
+            (r"\v[\V]hello", true),
+            (r"[\v]\Sello", false),
+            (r"\V\[\v]\Sello", false),
+            (r"\V[\v]\Sello", true),
         ] {
             assert_eq!(has_uppercase(pattern), upper, "{pattern}");
+        }
+    }
+
+    /// The cases above as searches, against what nvim 0.12.4 does with
+    /// them under 'ignorecase' and 'smartcase'.
+    #[test]
+    fn collections_hold_no_magic_switch_for_smartcase() {
+        for (buffer, keys, want) in [
+            ("x\nvhello\nVhello", r"/\v[\V]hello<CR>", (2, 0)),
+            ("x\nvSELLO\nvsello", r"/[\v]\Sello<CR>", (1, 0)),
+            ("x\nvSELLO\nvsello", r"/\V\[\v]\Sello<CR>", (1, 0)),
+            ("x\n[]xELLO\n[]xello", r"/\V[\v]\Sello<CR>", (2, 0)),
+        ] {
+            let mut vim = crate::HeadlessVim::new(buffer, (0, 0));
+            vim.set_search_case(true, true);
+            vim.feed(keys).unwrap();
+            assert_eq!(vim.cursor(), want, "{keys} on {buffer:?}");
         }
     }
 }

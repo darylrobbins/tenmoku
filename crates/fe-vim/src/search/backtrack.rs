@@ -125,8 +125,13 @@ pub(super) fn group(slots: &Slots, n: usize) -> Option<std::ops::Range<usize>> {
     }
 }
 
-/// `tokens` as a program.
-pub(super) fn compile(tokens: &[Token], ignore_case: bool) -> Result<Program, PatternError> {
+/// `tokens` as a program, to match over several rows at once if `rows`
+/// ([`Translator::rows`]).
+pub(super) fn compile(
+    tokens: &[Token],
+    ignore_case: bool,
+    rows: bool,
+) -> Result<Program, PatternError> {
     let mut builder = Builder {
         tr: Translator {
             tokens,
@@ -136,6 +141,7 @@ pub(super) fn compile(tokens: &[Token], ignore_case: bool) -> Result<Program, Pa
             ignore_case,
             budget: 0,
             inexact: false,
+            rows,
         },
         regexes: Vec::new(),
         known: HashMap::new(),
@@ -537,9 +543,10 @@ impl Program {
                     }
                 }
                 Inst::Look(look) => {
+                    // A haystack of several rows has their line breaks.
                     let ok = match look {
-                        Look::LineStart => at == 0,
-                        Look::LineEnd => at == hay.len(),
+                        Look::LineStart => at == 0 || hay.as_bytes()[at - 1] == b'\n',
+                        Look::LineEnd => at == hay.len() || hay.as_bytes()[at] == b'\n',
                         Look::WordStart => {
                             !word(hay[..at].chars().next_back()) && word(hay[at..].chars().next())
                         }
