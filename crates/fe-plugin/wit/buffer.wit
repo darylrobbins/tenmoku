@@ -1,0 +1,44 @@
+package fastedit:editor@1.0.0;
+
+/// Reading and editing the editor's buffers.
+interface buffer {
+    use kiln:extension/types@1.0.0.{buffer-id, version, range, error};
+
+    /// A buffer's whole text at one version.
+    record snapshot {
+        buffer: buffer-id,
+        version: version,
+        text: string,
+        path: option<string>,
+        language: option<string>,
+    }
+
+    /// Replaces `range` with `text`.
+    record text-edit {
+        range: range,
+        text: string,
+    }
+
+    /// Edits the user reviews before any apply, such as an assistant's rewrite.
+    record proposed-change {
+        buffer: buffer-id,
+        /// The version the edits' ranges are against.
+        version: version,
+        /// Shown with the change, such as `Rename to parse_header`.
+        title: string,
+        edits: list<text-edit>,
+    }
+
+    /// The buffer as it is now.
+    read: func(buffer: buffer-id) -> result<snapshot, error>;
+
+    /// The text of each range at `version`; `conflict` once the buffer has moved past it.
+    read-ranges: func(buffer: buffer-id, version: version, ranges: list<range>) -> result<list<string>, error>;
+
+    /// Applies `edits`, ranges against `version` and not overlapping, as one undo step, and
+    /// returns the new version; `conflict` if the buffer has moved past `version`.
+    edit: func(buffer: buffer-id, version: version, edits: list<text-edit>) -> result<version, error>;
+
+    /// Offers a change for the user to accept or reject; it returns once the editor shows it.
+    propose: func(change: proposed-change) -> result<_, error>;
+}

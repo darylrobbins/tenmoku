@@ -1,0 +1,55 @@
+package kiln:extension@1.0.0;
+
+/// Types every kiln:extension interface shares.
+interface types {
+    /// A command's id, dotted by namespace: `git.blame`.
+    type command-id = string;
+
+    /// Names an open buffer for as long as it stays open.
+    type buffer-id = u64;
+
+    /// A buffer's version. It increases with every change, so a call that names a version
+    /// fails with `conflict` once the buffer has moved past it.
+    type version = u64;
+
+    /// A half-open byte range `[start, end)` in a buffer's UTF-8 text.
+    record range {
+        start: u64,
+        end: u64,
+    }
+
+    enum severity {
+        error,
+        warning,
+        info,
+        hint,
+    }
+
+    /// A problem a plugin reports against a range of a buffer.
+    record diagnostic {
+        range: range,
+        severity: severity,
+        message: string,
+        /// Who found it, such as the linter's name.
+        source: option<string>,
+        /// The finder's own code for it.
+        code: option<string>,
+    }
+
+    /// Why a host import failed. Each case carries a message for the plugin's log.
+    variant error {
+        /// The host does not implement this import yet; the message names it, such as
+        /// `kiln:extension/process.spawn`.
+        unimplemented(string),
+        /// The plugin's grants do not allow this.
+        denied(string),
+        /// What the call named does not exist.
+        not-found(string),
+        /// An argument is malformed or out of range.
+        invalid-argument(string),
+        /// The buffer is no longer at the version the call named.
+        conflict(string),
+        /// The host tried and failed.
+        failed(string),
+    }
+}

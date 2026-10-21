@@ -1,0 +1,32 @@
+package kiln:extension@1.0.0;
+
+/// HTTP requests, to the hosts the plugin's grants allow.
+interface net {
+    use types.{error};
+
+    enum method {
+        get,
+        head,
+        post,
+        put,
+        patch,
+        delete,
+    }
+
+    record request {
+        method: method,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        /// None takes the host's default.
+        timeout-ms: option<u32>,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    fetch: func(request: request) -> result<response, error>;
+}

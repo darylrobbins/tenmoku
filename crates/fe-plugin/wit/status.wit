@@ -1,0 +1,24 @@
+package fastedit:editor@1.0.0;
+
+/// Items a plugin shows in the status bar.
+interface status {
+    use kiln:extension/types@1.0.0.{command-id, error};
+
+    enum alignment {
+        left,
+        right,
+    }
+
+    record item {
+        /// Unique among the plugin's items; setting it again replaces it.
+        id: string,
+        text: string,
+        tooltip: option<string>,
+        /// Run when the item is clicked.
+        command: option<command-id>,
+        alignment: alignment,
+    }
+
+    set-item: func(item: item) -> result<_, error>;
+    remove-item: func(id: string) -> result<_, error>;
+}

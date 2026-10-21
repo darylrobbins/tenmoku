@@ -1,0 +1,16 @@
+package kiln:extension@1.0.0;
+
+/// Runs programs, when the plugin's grants allow them.
+interface process {
+    use types.{error};
+
+    record output {
+        /// The exit code; none when a signal ended the program.
+        status: option<s32>,
+        stdout: list<u8>,
+        stderr: list<u8>,
+    }
+
+    /// Runs `program` with `args` to completion, feeding it `stdin`.
+    spawn: func(program: string, args: list<string>, stdin: option<list<u8>>) -> result<output, error>;
+}

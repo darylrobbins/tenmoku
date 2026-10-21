@@ -1,0 +1,42 @@
+package fastedit:editor@1.0.0;
+
+/// Highlights and gutter marks a plugin draws on a buffer. A plugin draws in named sets; setting
+/// a set replaces it, and the editor maps it through later edits until the plugin sets it again.
+interface decorations {
+    use kiln:extension/types@1.0.0.{buffer-id, version, range, error};
+
+    enum decoration-style {
+        highlight,
+        underline,
+        squiggle,
+        strikethrough,
+        faded,
+    }
+
+    record decoration {
+        range: range,
+        style: decoration-style,
+        /// The theme colour, such as `diagnostic.warning`; none takes the style's default.
+        color: option<string>,
+        /// Shown on hover.
+        hover: option<string>,
+    }
+
+    record gutter-entry {
+        /// Zero-based.
+        line: u32,
+        /// A short glyph or icon name.
+        symbol: string,
+        color: option<string>,
+        tooltip: option<string>,
+    }
+
+    /// Replaces decoration set `set` on `buffer`, ranges against `version`.
+    set-decorations: func(buffer: buffer-id, version: version, set: string, decorations: list<decoration>) -> result<_, error>;
+
+    /// Replaces gutter set `set` on `buffer`, lines as of `version`.
+    set-gutter: func(buffer: buffer-id, version: version, set: string, entries: list<gutter-entry>) -> result<_, error>;
+
+    /// Removes both kinds of set `set` from `buffer`.
+    clear: func(buffer: buffer-id, set: string) -> result<_, error>;
+}
