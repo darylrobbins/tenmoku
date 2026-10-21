@@ -568,6 +568,10 @@ pub struct LspServerSettings {
     /// Work-done progress token prefixes that don't hold back readiness.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_ignores_progress: Option<Vec<String>>,
+    /// File or folder names that mark a project root, in priority order;
+    /// replaces the server's built-in list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_markers: Option<Vec<String>>,
     /// Sent with `initialize`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initialization_options: Option<serde_json::Value>,
@@ -588,6 +592,7 @@ impl Default for LspServerSettings {
             languages: None,
             readiness: None,
             ready_ignores_progress: None,
+            root_markers: None,
             initialization_options: None,
             settings: None,
         }

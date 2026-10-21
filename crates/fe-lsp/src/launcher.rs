@@ -43,6 +43,10 @@ pub struct ServerSpec {
     pub ready_ignores_progress: Vec<String>,
     pub unversioned_diagnostics: UnversionedDiagnostics,
     pub pull_diagnostics: PullDiagnostics,
+    /// File or folder names that mark a project root, tried in priority
+    /// order: a file outside the window's folder gets the nearest ancestor
+    /// holding the first marker found anywhere up its tree.
+    pub root_markers: Vec<String>,
 }
 
 impl ServerSpec {
@@ -61,6 +65,7 @@ impl ServerSpec {
             ready_ignores_progress: Vec::new(),
             unversioned_diagnostics: UnversionedDiagnostics::default(),
             pull_diagnostics: PullDiagnostics::default(),
+            root_markers: Vec::new(),
         }
     }
 }

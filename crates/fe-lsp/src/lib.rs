@@ -134,7 +134,7 @@ pub use launcher::{
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
-pub use registry::extension_spec;
+pub use registry::{extension_spec, server_root};
 pub use requests::{ORPHANS_MAX, Reply};
 pub use semantic_tokens::{SemanticToken, SemanticTokens};
 pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};

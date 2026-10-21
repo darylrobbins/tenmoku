@@ -296,6 +296,16 @@
             "null"
           ]
         },
+        "root_markers": {
+          "description": "File or folder names that mark a project root, in priority order;\nreplaces the server's built-in list.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "settings": {
           "additionalProperties": true,
           "description": "Answers the server's `workspace/configuration` requests, by section:\n`[lsp.servers.rust-analyzer.settings.rust-analyzer]` is the\n`rust-analyzer` section. Changing it doesn't restart the server.",

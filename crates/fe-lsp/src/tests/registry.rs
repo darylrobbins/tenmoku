@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod language_ids;
+mod root_markers;
 mod routed_save;
 
 /// A manager on the fake, with a clock that never moves.

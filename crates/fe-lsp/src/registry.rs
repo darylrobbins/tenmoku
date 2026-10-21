@@ -5,6 +5,8 @@
 //! The settings reaching here are the effective ones, whose project layer
 //! fe-config has already narrowed to turning servers off.
 
+use std::path::{Component, Path, PathBuf};
+
 use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, TypescriptServer};
 use serde_json::Value;
 
@@ -12,7 +14,9 @@ use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec, UnversionedDia
 
 /// The built-in servers, in the order a language's server is chosen.
 pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
+    let ts_markers = ["tsconfig.json", "jsconfig.json", "package.json"];
     let typescript = ["javascript", "typescript", "tsx"];
+    let markers = |markers: &[&str]| markers.iter().map(|&m| m.into()).collect::<Vec<String>>();
     let spec = |name: &str, command: &str, args: &[&str], languages: &[&str]| ServerSpec {
         args: args.iter().map(|&arg| arg.into()).collect(),
         languages: languages.iter().map(|&language| language.into()).collect(),
@@ -23,14 +27,25 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
         ServerSpec {
             readiness: ReadinessMode::ServerStatus,
             ready_ignores_progress: vec!["rust-analyzer/flycheck/".into()],
+            root_markers: markers(&["Cargo.lock", "Cargo.toml"]),
             ..spec("rust-analyzer", "rust-analyzer", &[], &["rust"])
         },
-        spec("pyright", "pyright-langserver", &["--stdio"], &["python"]),
+        ServerSpec {
+            root_markers: markers(&[
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+                "pyrightconfig.json",
+                "requirements.txt",
+            ]),
+            ..spec("pyright", "pyright-langserver", &["--stdio"], &["python"])
+        },
         // Its pushes carry no version, so they're dropped (§4.1); its
         // diagnostics are pulled through tsserver instead.
         ServerSpec {
             unversioned_diagnostics: UnversionedDiagnostics::Drop,
             pull_diagnostics: PullDiagnostics::TsserverRequest,
+            root_markers: markers(&ts_markers),
             ..spec(
                 "typescript-language-server",
                 "typescript-language-server",
@@ -38,7 +53,10 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
                 &typescript,
             )
         },
-        spec("typescript-go", "tsc", &["--lsp", "--stdio"], &typescript),
+        ServerSpec {
+            root_markers: markers(&ts_markers),
+            ..spec("typescript-go", "tsc", &["--lsp", "--stdio"], &typescript)
+        },
     ]
 }
 
@@ -222,6 +240,44 @@ pub(crate) fn server_for<'a>(specs: &'a [ServerSpec], language: &str) -> Option<
         .find(|spec| spec.languages.iter().any(|l| l == language))
 }
 
+/// The folder a server runs in for `path`: `window_root` when the file is
+/// under it (one server per window folder); otherwise the nearest ancestor
+/// holding the first of `markers` found anywhere up the tree, so
+/// `Cargo.lock`'s workspace beats a member's `Cargo.toml`; with none, the
+/// file's own folder. Only checks that entries exist.
+pub fn server_root(path: &Path, window_root: Option<&Path>, markers: &[String]) -> PathBuf {
+    let path = lexically_normal(path);
+    if let Some(root) = window_root
+        && root.is_absolute()
+        && path.starts_with(root)
+    {
+        return root.to_path_buf();
+    }
+    let folder = path.parent().unwrap_or(&path);
+    for marker in markers {
+        if let Some(found) = folder.ancestors().find(|dir| dir.join(marker).exists()) {
+            return found.to_path_buf();
+        }
+    }
+    folder.to_path_buf()
+}
+
+/// `path` with its `.` and `..` components resolved by name, so a path
+/// through `..` isn't taken for one under the window root.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// `spec` with what `settings` sets.
 fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
     if let Some(command) = &settings.command {
@@ -244,6 +300,9 @@ fn apply(mut spec: ServerSpec, settings: &LspServerSettings) -> ServerSpec {
     }
     if let Some(prefixes) = &settings.ready_ignores_progress {
         spec.ready_ignores_progress.clone_from(prefixes);
+    }
+    if let Some(markers) = &settings.root_markers {
+        spec.root_markers.clone_from(markers);
     }
     if let Some(options) = &settings.initialization_options {
         spec.initialization_options = Some(options.clone());
