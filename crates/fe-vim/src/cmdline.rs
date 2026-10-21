@@ -14,7 +14,8 @@
 //!
 //! While a search line is typed, [`VimState::search_preview`] gives the
 //! match submitting it would land on ('incsearch', on as in nvim), for the
-//! host to highlight and reveal; it changes nothing.
+//! host to highlight and reveal, and [`VimState::search_preview_pattern`]
+//! the pattern it found it by, for the host to paint; they change nothing.
 
 use std::{ops::Range, time::Duration};
 
@@ -24,7 +25,7 @@ use fe_editor::EditorModel;
 
 use crate::{
     CancelArgs, CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending,
-    SearchOffset, Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
+    Registers, SearchOffset, Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
     ex, insert, motion, operator,
     search::{self, Deadline, Pattern},
@@ -83,53 +84,25 @@ impl VimState {
     /// pattern and its offset find from the caret (in a visual mode, the
     /// vim cursor), going round an end of the text as a search does, and
     /// with an `e` offset taken by its last character as submit takes it.
-    /// The match itself, not where its offset moves the caret. `None` with
-    /// no search line open, for an empty pattern (which would be the last
-    /// search's) or an invalid one, an offset fe-vim doesn't take, no match,
-    /// 'incsearch' off, or past [`SEARCH_PREVIEW_LIMIT`] (or
-    /// [`search::time_limit`], if shorter), so a slow pattern gives up
-    /// rather than hold up typing. It changes nothing: the last search, its
-    /// highlight and the history are submit's.
-    pub fn search_preview(&self, model: &EditorModel, line: &str) -> Option<Range<usize>> {
-        self.preview(model, line, !self.incsearch_off, None)
-    }
-
-    /// [`VimState::search_preview`] under `registers`' global options:
-    /// 'incsearch' and, as the search submitting the line will, 'ignorecase'
-    /// and 'smartcase' ([`Registers::ignores_case`]).
-    pub fn search_preview_in(
+    /// The match itself, not where its offset moves the caret; one that
+    /// crosses rows ends on a later one. It matches case as submit would,
+    /// by `registers`' 'ignorecase' and 'smartcase'
+    /// ([`VimState::search_preview_pattern`]). `None` with no search line
+    /// open, for an empty pattern (which would be the last search's) or an
+    /// invalid one, an offset fe-vim doesn't take, no match, 'incsearch'
+    /// off, or past [`SEARCH_PREVIEW_LIMIT`] (or [`search::time_limit`], if
+    /// shorter), so a slow pattern gives up rather than hold up typing. It
+    /// changes nothing: the last search, its highlight and the history are
+    /// submit's.
+    pub fn search_preview(
         &self,
         model: &EditorModel,
+        registers: &Registers,
         line: &str,
-        registers: &crate::Registers,
     ) -> Option<Range<usize>> {
-        self.preview(model, line, registers.incsearch(), Some(registers))
-    }
-
-    fn preview(
-        &self,
-        model: &EditorModel,
-        line: &str,
-        incsearch: bool,
-        registers: Option<&crate::Registers>,
-    ) -> Option<Range<usize>> {
-        if !incsearch {
-            return None;
-        }
-        let args = self.cmdline.as_ref()?.args;
-        let forward = match args.kind {
-            CommandLineKind::SearchForward => true,
-            CommandLineKind::SearchBackward => false,
-            CommandLineKind::Ex => return None,
-        };
-        let (pattern, offset_text) = search::split_search(line, if forward { '/' } else { '?' });
-        if pattern.is_empty() {
-            return None;
-        }
+        let (forward, parsed, offset_text) = self.preview_line(registers, line)?;
         let offset = offset::parse(offset_text.unwrap_or_default())?;
-        let ignore_case =
-            registers.is_some_and(|registers| registers.ignores_case(&pattern, false));
-        let parsed = Pattern::parse_with(&pattern, ignore_case).ok()?;
+        let args = self.cmdline.as_ref()?.args;
         // As submit's move or operator takes the caret: past its row's last
         // character, on it.
         let from = self.visual_cursor(model).unwrap_or_else(|| {
@@ -152,6 +125,53 @@ impl VimState {
         let deadline = Deadline::after(limit.min(search::time_limit()));
         let (found, _) = offset::nth_match(model.text(), &parsed, from, search, count, &deadline)?;
         Some(found)
+    }
+
+    /// [`VimState::search_preview`] under `registers`' options, with the
+    /// line before them as the Mac side's callers pass it.
+    pub fn search_preview_in(
+        &self,
+        model: &EditorModel,
+        line: &str,
+        registers: &Registers,
+    ) -> Option<Range<usize>> {
+        self.search_preview(model, registers, line)
+    }
+
+    /// The pattern of the open search line `line`, as
+    /// [`VimState::search_preview`] finds its match, for a host to paint its
+    /// matches: matching case as a search with it would, by `registers`'
+    /// 'ignorecase' and 'smartcase', and across rows. `None` where the
+    /// preview has no match for the line's pattern alone (no search line,
+    /// an empty or invalid pattern, 'incsearch' off).
+    pub fn search_preview_pattern(&self, registers: &Registers, line: &str) -> Option<Pattern> {
+        self.preview_line(registers, line)
+            .map(|(_, pattern, _)| pattern)
+    }
+
+    /// The open search line `line`'s direction, pattern and offset text, as
+    /// the preview reads them.
+    fn preview_line<'l>(
+        &self,
+        registers: &Registers,
+        line: &'l str,
+    ) -> Option<(bool, Pattern, Option<&'l str>)> {
+        // Off on this state, or globally (`vim.incsearch`, `:set noincsearch`).
+        if self.incsearch_off || !registers.incsearch() {
+            return None;
+        }
+        let forward = match self.cmdline.as_ref()?.args.kind {
+            CommandLineKind::SearchForward => true,
+            CommandLineKind::SearchBackward => false,
+            CommandLineKind::Ex => return None,
+        };
+        let (pattern, offset_text) = search::split_search(line, if forward { '/' } else { '?' });
+        if pattern.is_empty() {
+            return None;
+        }
+        let ignore_case = registers.ignores_case(&pattern, false);
+        let parsed = Pattern::parse_across(&pattern, ignore_case).ok()?;
+        Some((forward, parsed, offset_text))
     }
 }
 
@@ -332,7 +352,7 @@ pub(crate) fn check_search(
         _ => search.forward,
     };
     let pattern = search.pattern.as_str();
-    let parsed = match Pattern::parse_with(pattern, search.ignore_case) {
+    let parsed = match Pattern::parse_across(pattern, search.ignore_case) {
         Ok(parsed) => parsed,
         Err(error) => return Err(error.to_string()),
     };
@@ -342,7 +362,8 @@ pub(crate) fn check_search(
     target.state.highlight = Some(parsed.clone());
     let from = caret(target);
     // Past one match, a count goes round: any match will do.
-    match parsed.try_find(target.model.text(), from, search.forward) {
+    let text = target.model.text();
+    match parsed.find_across(text, from, search.forward, &Deadline::new()) {
         Ok(Some(_)) => Ok(()),
         Err(interrupted) => Err(interrupted.to_string()),
         Ok(None) => Err(format!("E486: Pattern not found: {pattern}")),

@@ -1,0 +1,407 @@
+# Cases for fe-vim's oracle of searches whose pattern matches across rows
+# (`\n`, `\_s`, `\_.`, `\_[...]`): / and ? landing on a match that crosses
+# rows, n and N after them, counts, wrapping round an end of the text, the
+# offsets e (on a match's last character, which is the line break for one
+# ending in one), s and line offsets measured from the match's start and
+# end, an operator over a search (d, c, y, inclusive with e) and a search
+# extending a visual selection. A failing search is a case's last key.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in multiline_search.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "slash_across_rows"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd<CR>"
+
+[[case]]
+name = "question_across_rows"
+buffer = "abc\ndef"
+cursor = [1, 2]
+keys = "?c\\nd<CR>"
+
+[[case]]
+name = "n_next_across"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd<CR>n"
+
+[[case]]
+name = "N_back_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd<CR>nnN"
+
+[[case]]
+name = "count_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "2/c\\nd<CR>"
+
+[[case]]
+name = "count_wraps_across"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "3/c\\nd<CR>"
+
+[[case]]
+name = "question_count_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [5, 2]
+keys = "2?c\\nd<CR>"
+
+[[case]]
+name = "e_offset_across"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd/e<CR>"
+
+[[case]]
+name = "e_on_line_break"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\n/e<CR>"
+
+[[case]]
+name = "e_plus_from_line_break"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\n/e+1<CR>"
+
+[[case]]
+name = "e_minus_from_line_break"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\n/e-1<CR>"
+
+[[case]]
+name = "e_over_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "/c\\n\\n/e<CR>"
+
+[[case]]
+name = "e_plus_over_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "/c\\n\\n/e+1<CR>"
+
+[[case]]
+name = "e_from_on_match"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 2]
+keys = "/c\\nd/e<CR>"
+
+[[case]]
+name = "e_from_inside_match"
+buffer = "xabc\ndef"
+cursor = [0, 3]
+keys = "/bc\\nd/e<CR>"
+
+[[case]]
+name = "e_n_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd/e<CR>n"
+
+[[case]]
+name = "e_N_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd/e<CR>nnN"
+
+[[case]]
+name = "e_count_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "2/c\\nd/e<CR>"
+
+[[case]]
+name = "e_n_on_line_break"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\n/e<CR>n"
+
+[[case]]
+name = "question_e_across"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [3, 2]
+keys = "?c\\nd?e<CR>"
+
+[[case]]
+name = "question_e_from_row_start"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [1, 0]
+keys = "?c\\n?e<CR>"
+
+[[case]]
+name = "question_e_ending_on_cursor"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [1, 0]
+keys = "?c\\nd?e<CR>"
+
+[[case]]
+name = "question_e_ending_before_cursor"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [1, 1]
+keys = "?c\\nd?e<CR>"
+
+[[case]]
+name = "s_offset_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd/s+1<CR>"
+
+[[case]]
+name = "s_plus_two_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd/s+2<CR>"
+
+[[case]]
+name = "b_minus_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd/b-1<CR>"
+
+[[case]]
+name = "s_minus_from_line_break"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/\\nd/s-1<CR>"
+
+[[case]]
+name = "line_offset_across"
+buffer = "q\nabc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd/+2<CR>"
+
+[[case]]
+name = "line_offset_back_across"
+buffer = "q\nabc\ndef\nxyz"
+cursor = [3, 1]
+keys = "/c\\nd/-1<CR>"
+
+[[case]]
+name = "line_offset_n_across"
+buffer = "abc\ndef\nabc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd/+1<CR>n"
+
+[[case]]
+name = "match_at_line_break"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/\\nd<CR>"
+
+[[case]]
+name = "zs_on_later_row"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\n\\zsd<CR>"
+
+[[case]]
+name = "line_break_after_last_row"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/z\\n<CR>"
+
+[[case]]
+name = "zs_past_last_row"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/z\\n\\zs<CR>"
+
+[[case]]
+name = "underscore_s_across"
+buffer = "one\n  two\nthree"
+cursor = [0, 0]
+keys = "/e\\_s\\+t<CR>n"
+
+[[case]]
+name = "underscore_dot_across"
+buffer = "ab\ncd\nef"
+cursor = [0, 0]
+keys = "/b\\_.\\{3}<CR>"
+
+[[case]]
+name = "underscore_collection_across"
+buffer = "ab\ncd\nef"
+cursor = [0, 0]
+keys = "/\\_[bc]\\+<CR>n"
+
+[[case]]
+name = "d_slash_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "d/c\\nd<CR>"
+
+[[case]]
+name = "d_slash_e_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "d/c\\nd/e<CR>"
+
+[[case]]
+name = "d_slash_line_offset_across"
+buffer = "q\nabc\ndef\nxyz"
+cursor = [0, 0]
+keys = "d/c\\nd/+1<CR>"
+
+[[case]]
+name = "c_slash_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 1]
+keys = "c/c\\nd<CR>X<Esc>"
+
+[[case]]
+name = "y_slash_e_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "y/c\\nd/e<CR>"
+
+[[case]]
+name = "d_question_across"
+buffer = "abc\ndef\nxyz"
+cursor = [2, 2]
+keys = "d?c\\nd<CR>"
+
+[[case]]
+name = "d_n_across"
+buffer = "abc\ndef\nabc\ndef\nxyz"
+cursor = [0, 0]
+keys = "/c\\nd<CR>dn"
+
+[[case]]
+name = "visual_search_across"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "v/c\\nd/e<CR>"
+
+[[case]]
+name = "visual_search_across_d"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "v/c\\nd/e<CR>d"
+
+[[case]]
+name = "visual_search_on_line_break"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 0]
+keys = "v/c\\n/e<CR>"
+
+[[case]]
+name = "visual_question_across"
+buffer = "abc\ndef\nxyz"
+cursor = [2, 2]
+keys = "v?c\\nd<CR>"
+
+[[case]]
+name = "wrap_across"
+buffer = "abc\ndef\nabc"
+cursor = [2, 2]
+keys = "/c\\nd<CR>"
+
+[[case]]
+name = "wrap_onto_itself"
+buffer = "abc\ndef\nabc"
+cursor = [0, 2]
+keys = "/c\\nd<CR>"
+
+[[case]]
+name = "question_wrap_across"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "?c\\nd<CR>"
+
+[[case]]
+name = "n_wraps_across"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd<CR>nn"
+
+[[case]]
+name = "not_found_across"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/c\\nx<CR>"
+
+[[case]]
+name = "slash_repeats_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "/c\\nd<CR>/<CR>"
+
+[[case]]
+name = "question_e_count_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [5, 2]
+keys = "2?c\\nd?e<CR>"
+
+[[case]]
+name = "e_minus_count_across"
+buffer = "abc\ndef\nabc\ndef\nabc\ndef"
+cursor = [0, 0]
+keys = "2/c\\nd/e-1<CR>"
+
+[[case]]
+name = "visual_question_e_across"
+buffer = "abc\ndef\nxyz"
+cursor = [2, 2]
+keys = "v?c\\nd?e<CR>"
+
+[[case]]
+name = "e_count_on_line_breaks"
+buffer = "ab\n\n\ncd"
+cursor = [0, 0]
+keys = "3/\\n/e<CR>"
+
+[[case]]
+name = "question_count_on_line_breaks"
+buffer = "ab\n\n\ncd"
+cursor = [3, 1]
+keys = "2?\\n<CR>"
+
+[[case]]
+name = "y_question_e_across"
+buffer = "abc\ndef\nxyz"
+cursor = [2, 2]
+keys = "y?c\\nd?e<CR>"
+
+[[case]]
+name = "question_e_count_stops_where_it_started"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "2?c\\nd?e<CR>"
+
+[[case]]
+name = "d_question_e_count_stops_where_it_started"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "d2?c\\nd?e<CR>"
+
+[[case]]
+name = "question_zs_count_stops_where_it_started"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "2?c\\n\\zsd<CR>"
+
+[[case]]
+name = "d_question_zs_count_stops_where_it_started"
+buffer = "abc\ndef\nxyz"
+cursor = [0, 1]
+keys = "d2?c\\n\\zsd<CR>"
+
+[[case]]
+name = "question_e_count_wraps_to_its_row"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [1, 0]
+keys = "3?c\\nd?e<CR>"
+
+[[case]]
+name = "question_zs_count_wraps"
+buffer = "abc\ndef\nabc\ndef"
+cursor = [3, 2]
+keys = "3?c\\n\\zsd<CR>"

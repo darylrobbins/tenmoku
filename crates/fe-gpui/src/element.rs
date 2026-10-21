@@ -125,6 +125,12 @@ pub(crate) struct FrameLayout {
 }
 
 impl FrameLayout {
+    /// How wide a space is, which an empty match or a line break paints.
+    #[cfg(test)]
+    pub(crate) fn space_width(&mut self) -> Pixels {
+        px(self.glyph_widths.char_width(' '))
+    }
+
     pub(crate) fn to_frame(&self, position: Point<Pixels>) -> Vec2 {
         Vec2 {
             x: (position.x - self.origin.x).into(),
@@ -2306,13 +2312,18 @@ thread_local! {
 /// find pattern ([`EditorView::set_find`]) while one is set, else vim's
 /// last search, none with vim off or after `:noh`. Folded rows aren't searched, and for vim's matches
 /// off the displayed part of a wrapped or scrolled line don't use the
-/// budget. A zero-width match is one space wide.
+/// budget. A zero-width match is one space wide, as is a line break one
+/// takes in ([`part_on_row`]).
 ///
 /// Each displayed buffer row's matches are enumerated once, from the row's
 /// start, keeping those that reach what's displayed of it: from the text
 /// area's left edge on its first displayed row to the right edge on its
 /// last. The find pattern's [`MAX_MATCHES`] go to those, for the whole
-/// frame, so matches scrolled off don't use them.
+/// frame, so matches scrolled off don't use them. A vim pattern that spans
+/// rows (`\n`, `\_s`) has the frame's matches found at once
+/// ([`fe_vim::search::matches_across_until`]): one crossing rows paints
+/// its part on each displayed row, from a match starting above the frame's
+/// first row too, looked for as far back as the time limit allows.
 ///
 /// The frame has one [`fe_vim::search::time_limit`] for all its rows. Once
 /// it runs out the frame paints what it has and searches no more rows, and
@@ -2375,34 +2386,62 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let mut whole: Option<(u32, Vec<Range<usize>>)> = None;
     let edge = space;
     let (left_x, right_x) = (visible.x - edge, visible.x + visible.width + edge);
+    // The part of the buffer row displayed from `frame.rows[ix]` on that
+    // its matches must reach: from the text area's left edge on its first
+    // displayed row to the right edge on its last.
+    let shown = |ix: usize, long_rows: &mut LongRows, glyph_widths: &mut GlyphWidths| {
+        let row = &frame.rows[ix];
+        let last = frame.rows[ix..]
+            .iter()
+            .take_while(|next| next.buffer_row == row.buffer_row)
+            .last()
+            .unwrap_or(row);
+        // Conservative at the right: a row that fits entirely reaches
+        // its end, else one character past the hit-test offset, which
+        // clamps a wrapped row's last character and rounds a tab down.
+        let fits = frame.view_x(last.x_for_offset(last.end, long_rows, glyph_widths)) <= right_x;
+        let mut at = |shown: &fe_display::layout::RowLayout<_>, x: f32| {
+            let y = frame.row_top(shown.row) + frame.line_height / 2.;
+            frame.offset_at(text, Vec2 { x, y }, long_rows, glyph_widths)
+        };
+        let start = at(row, left_x);
+        let end = match fits {
+            true => last.end,
+            false => {
+                let hit = at(last, right_x);
+                text.clip_offset(hit + 1, fe_buffer::Bias::Right)
+            }
+        };
+        start..end
+    };
+    // A pattern that spans rows has the frame's matches found at once, a
+    // match crossing rows painting each displayed row's part, from one
+    // starting above the frame's first row too.
+    let across = pattern.spans_rows().then(|| {
+        let rows: Vec<(u32, Range<usize>)> = (0..frame.rows.len())
+            .filter(|&ix| ix == 0 || frame.rows[ix - 1].buffer_row != frame.rows[ix].buffer_row)
+            .map(|ix| {
+                (
+                    frame.rows[ix].buffer_row,
+                    shown(ix, long_rows, glyph_widths),
+                )
+            })
+            .collect();
+        let all = fe_vim::search::matches_across_until(text, &rows, pattern, &mut deadline);
+        deadline.expired();
+        if deadline.ran_out() {
+            latch = Some((pattern.regex_str().to_string(), version));
+        }
+        #[cfg(test)]
+        FOUND.with(|n| n.set(n.get() + all.len()));
+        all
+    });
     'rows: for (ix, row) in frame.rows.iter().enumerate() {
-        if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
+        if across.is_none() && whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
             if deadline.ran_out() {
                 break;
             }
-            let last = frame.rows[ix..]
-                .iter()
-                .take_while(|next| next.buffer_row == row.buffer_row)
-                .last()
-                .unwrap_or(row);
-            // Conservative at the right: a row that fits entirely reaches
-            // its end, else one character past the hit-test offset, which
-            // clamps a wrapped row's last character and rounds a tab down.
-            let fits =
-                frame.view_x(last.x_for_offset(last.end, long_rows, glyph_widths)) <= right_x;
-            let mut at = |shown: &fe_display::layout::RowLayout<_>, x: f32| {
-                let y = frame.row_top(shown.row) + frame.line_height / 2.;
-                frame.offset_at(text, Vec2 { x, y }, long_rows, glyph_widths)
-            };
-            let start = at(row, left_x);
-            let end = match fits {
-                true => last.end,
-                false => {
-                    let hit = at(last, right_x);
-                    text.clip_offset(hit + 1, fe_buffer::Bias::Right)
-                }
-            };
-            let window = start..end;
+            let window = shown(ix, long_rows, glyph_widths);
             let all = fe_vim::search::matches_reaching_until(
                 text,
                 row.buffer_row,
@@ -2422,7 +2461,10 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
             FOUND.with(|n| n.set(n.get() + all.len()));
             whole = Some((row.buffer_row, all));
         }
-        let found = whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice());
+        let found = match &across {
+            Some(all) => all.as_slice(),
+            None => whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice()),
+        };
         // The matches ordered by position: from the first that reaches the
         // displayed part to the first that starts past it.
         let displayed = row.shown();
@@ -2430,23 +2472,15 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
         for range in found[first..]
             .iter()
             .take_while(|range| range.start <= displayed.end)
-            .cloned()
         {
             #[cfg(test)]
             CANDIDATES.with(|n| n.set(n.get() + 1));
-            let (start, end) = (range.start.max(row.start), range.end.min(row.end));
-            let shown = match range.is_empty() {
-                true => row.contains(range.start),
-                false => start < end,
-            };
-            if !shown {
+            let Some((part, cell)) = part_on_row(range, row) else {
                 continue;
-            }
-            let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
-            let width = match range.is_empty() {
-                true => space,
-                false => frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)) - left,
             };
+            let left = frame.view_x(row.x_for_offset(part.start, long_rows, glyph_widths));
+            let width = frame.view_x(row.x_for_offset(part.end, long_rows, glyph_widths)) - left
+                + if cell { space } else { 0. };
             // Off to a side of a scrolled line: not worth the budget.
             if left + width <= visible.x || left >= visible.x + visible.width {
                 continue;
@@ -2476,9 +2510,26 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     rects
 }
 
+/// The part of a search's match `range` that paints on displayed `row`, as
+/// buffer offsets, and whether a cell one space wide paints past it: an
+/// empty match's, at its offset, or the row's line break where the match
+/// takes it in, which nvim highlights as a cell past the row's end (a blank
+/// row's the only one). `None` with none of it on the row.
+fn part_on_row<L>(
+    range: &Range<usize>,
+    row: &fe_display::layout::RowLayout<L>,
+) -> Option<(Range<usize>, bool)> {
+    if range.is_empty() {
+        return row.contains(range.start).then(|| (range.clone(), true));
+    }
+    let (start, end) = (range.start.max(row.start), range.end.min(row.end));
+    let line_break = row.last && range.start <= row.end && range.end > row.end;
+    (start < end || line_break).then_some((start..end, line_break))
+}
+
 /// The rects of the match a vim search line's preview shows
 /// ([`EditorView::search_preview`]) on the frame's displayed rows: one per
-/// row it covers, an empty match one space wide.
+/// row it covers, as [`part_on_row`] paints it.
 fn current_match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let Some(range) = view.search_preview() else {
         return Vec::new();
@@ -2494,19 +2545,10 @@ fn current_match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect>
         .rows
         .iter()
         .filter_map(|row| {
-            let (start, end) = (range.start.max(row.start), range.end.min(row.end));
-            let shown = match range.is_empty() {
-                true => row.contains(range.start),
-                false => start < end,
-            };
-            if !shown {
-                return None;
-            }
-            let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
-            let width = match range.is_empty() {
-                true => space,
-                false => frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)) - left,
-            };
+            let (part, cell) = part_on_row(&range, row)?;
+            let left = frame.view_x(row.x_for_offset(part.start, long_rows, glyph_widths));
+            let width = frame.view_x(row.x_for_offset(part.end, long_rows, glyph_widths)) - left
+                + if cell { space } else { 0. };
             Some(Rect {
                 x: left,
                 y: frame.row_top(row.row),

@@ -287,3 +287,6 @@ fn nothing_with_vim_off(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx, "ab ab", false);
     assert!(matches(&view, cx).is_empty());
 }
+
+#[path = "multiline_highlight_tests.rs"]
+mod multiline_highlight_tests;

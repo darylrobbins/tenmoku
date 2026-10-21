@@ -21,7 +21,9 @@ fn preview(
 ) -> (Option<Range<usize>>, (u32, usize)) {
     let mut vim = HeadlessVim::new(text, cursor);
     vim.feed(open).unwrap();
-    let found = vim.state().search_preview(vim.model(), line);
+    let found = vim
+        .state()
+        .search_preview(vim.model(), vim.registers(), line);
     vim.feed(&format!("{line}<CR>")).unwrap();
     (found, vim.cursor())
 }
@@ -48,14 +50,20 @@ fn search_preview_finds_the_landing_match() {
     assert_eq!(preview(TEXT, (0, 0), "v/", "word"), (Some(4..8), (0, 4)));
     let mut vim = HeadlessVim::new(TEXT, (0, 0));
     vim.feed("d/").unwrap();
-    assert_eq!(vim.state().search_preview(vim.model(), "two"), Some(9..12));
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "two"),
+        Some(9..12)
+    );
     // A caret past its row's last character (End, or a click there)
     // searches from that character, as submit does.
     for (open, found, landed) in [("?", 2..3, (1, 0)), ("/", 2..3, (1, 0))] {
         let mut vim = HeadlessVim::new("a\na", (0, 0));
         vim.model_mut().set_cursor(1);
         vim.feed(open).unwrap();
-        let previewed = vim.state().search_preview(vim.model(), "a");
+        let previewed = vim
+            .state()
+            .search_preview(vim.model(), vim.registers(), "a");
         vim.feed("a<CR>").unwrap();
         assert_eq!((previewed, vim.cursor()), (Some(found), landed), "{open}");
     }
@@ -64,7 +72,8 @@ fn search_preview_finds_the_landing_match() {
     let none = |line: &str| {
         let mut vim = HeadlessVim::new(TEXT, (0, 0));
         vim.feed("/word<CR>/").unwrap();
-        vim.state().search_preview(vim.model(), line)
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), line)
     };
     // An empty pattern would be the last search's: not previewed.
     assert_eq!(none(""), None);
@@ -76,23 +85,43 @@ fn search_preview_finds_the_landing_match() {
     // The preview changed nothing: `n` goes on from the submitted search.
     let mut vim = HeadlessVim::new(TEXT, (0, 0));
     vim.feed("/word<CR>/").unwrap();
-    assert_eq!(vim.state().search_preview(vim.model(), "two"), Some(9..12));
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "two"),
+        Some(9..12)
+    );
     vim.feed("<Esc>n").unwrap();
     assert_eq!(vim.cursor(), (1, 4));
     // An ex line, and no line at all.
     let mut vim = HeadlessVim::new(TEXT, (0, 0));
-    assert_eq!(vim.state().search_preview(vim.model(), "word"), None);
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "word"),
+        None
+    );
     vim.feed(":").unwrap();
-    assert_eq!(vim.state().search_preview(vim.model(), "word"), None);
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "word"),
+        None
+    );
 
     // 'incsearch' off.
     let mut vim = HeadlessVim::new(TEXT, (0, 0));
     assert!(vim.state().incsearch());
     vim.state_mut().set_incsearch(false);
     vim.feed("/").unwrap();
-    assert_eq!(vim.state().search_preview(vim.model(), "word"), None);
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "word"),
+        None
+    );
     vim.state_mut().set_incsearch(true);
-    assert_eq!(vim.state().search_preview(vim.model(), "word"), Some(4..8));
+    assert_eq!(
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), "word"),
+        Some(4..8)
+    );
 
     // A slow pattern gives up at the preview's own 100 ms, though a search
     // may run for a minute: each match of `a` scans to the row's end for a
@@ -102,7 +131,9 @@ fn search_preview_finds_the_landing_match() {
     let mut vim = HeadlessVim::new(&text, (0, 199_999));
     vim.feed("?").unwrap();
     let started = Instant::now();
-    let found = vim.state().search_preview(vim.model(), r"a.*z\|a");
+    let found = vim
+        .state()
+        .search_preview(vim.model(), vim.registers(), r"a.*z\|a");
     let took = started.elapsed();
     set_time_limit(DEFAULT_TIME_LIMIT);
     assert_eq!(found, None);
@@ -111,7 +142,54 @@ fn search_preview_finds_the_landing_match() {
     let mut vim = HeadlessVim::new("aaaz", (0, 3));
     vim.feed("?").unwrap();
     assert_eq!(
-        vim.state().search_preview(vim.model(), r"a.*z\|a"),
+        vim.state()
+            .search_preview(vim.model(), vim.registers(), r"a.*z\|a"),
         Some(0..4)
+    );
+}
+
+/// The preview matches case as submitting the line does, by 'ignorecase'
+/// and 'smartcase', and its pattern, which a host paints, matches alike.
+#[test]
+fn search_preview_matches_case_as_submit_does() {
+    let text = "x\nHello\nhello";
+    for (ignore, smart, line, found) in [
+        (true, true, "hello", 2..7),
+        (true, true, "Hello", 2..7),
+        (true, false, "hello", 2..7),
+        (false, true, "hello", 8..13),
+        (true, true, "\\Chello", 8..13),
+    ] {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.set_search_case(ignore, smart);
+        vim.feed("/").unwrap();
+        let state = vim.state();
+        let previewed = state.search_preview(vim.model(), vim.registers(), line);
+        let pattern = state.search_preview_pattern(vim.registers(), line).unwrap();
+        let painted = fe_vim::search::matches_in(vim.model().text(), 0..3, &pattern, 10);
+        vim.feed(&format!("{line}<CR>")).unwrap();
+        let landed = vim.model().primary_selection().head();
+        let case = (ignore, smart, line);
+        assert_eq!(previewed, Some(found.clone()), "{case:?}");
+        assert_eq!(landed, found.start, "{case:?}");
+        assert!(painted.contains(&found), "{case:?}: {painted:?}");
+        // What the pattern paints is what the search matches.
+        let submitted = vim.state().highlight().unwrap();
+        let searched = fe_vim::search::matches_in(vim.model().text(), 0..3, submitted, 10);
+        assert_eq!(painted, searched, "{case:?}");
+    }
+}
+
+/// A pattern that crosses rows previews the match a search with it lands
+/// on, ending on a later row.
+#[test]
+fn search_preview_finds_a_match_across_rows() {
+    assert_eq!(
+        preview("abc\ndef\nabc\ndef", (0, 0), "/", "c\\nd"),
+        (Some(2..5), (0, 2))
+    );
+    assert_eq!(
+        preview("abc\ndef\nabc\ndef", (0, 0), "2/", "c\\nd/e"),
+        (Some(10..13), (3, 0))
     );
 }

@@ -1,0 +1,1629 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "slash_across_rows",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_across_rows",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "?c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_next_across",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>n",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_back_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>nnN",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_wraps_across",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3/c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_count_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        5,
+        2
+      ],
+      "keys": "2?c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_offset_across",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_on_line_break",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_plus_from_line_break",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n/e+1<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_minus_from_line_break",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n/e-1<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_over_empty_row",
+      "buffer": "abc\n\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n\\n/e<CR>",
+      "expect": {
+        "buffer": "abc\n\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_plus_over_empty_row",
+      "buffer": "abc\n\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n\\n/e+1<CR>",
+      "expect": {
+        "buffer": "abc\n\ndef",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_from_on_match",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_from_inside_match",
+      "buffer": "xabc\ndef",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "/bc\\nd/e<CR>",
+      "expect": {
+        "buffer": "xabc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bc\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_n_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/e<CR>n",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_N_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/e<CR>nnN",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_count_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_n_on_line_break",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n/e<CR>n",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_across",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_from_row_start",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "?c\\n?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_ending_on_cursor",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_ending_before_cursor",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_offset_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/s+1<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_plus_two_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/s+2<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "b_minus_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/b-1<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_minus_from_line_break",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\nd/s-1<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "line_offset_across",
+      "buffer": "q\nabc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/+2<CR>",
+      "expect": {
+        "buffer": "q\nabc\ndef\nxyz",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "line_offset_back_across",
+      "buffer": "q\nabc\ndef\nxyz",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": "/c\\nd/-1<CR>",
+      "expect": {
+        "buffer": "q\nabc\ndef\nxyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "line_offset_n_across",
+      "buffer": "abc\ndef\nabc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd/+1<CR>n",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nxyz",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "match_at_line_break",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "zs_on_later_row",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\n\\zsd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\zsd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "line_break_after_last_row",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/z\\n<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "z\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "zs_past_last_row",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/z\\n\\zs<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "z\\n\\zs",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "underscore_s_across",
+      "buffer": "one\n  two\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/e\\_s\\+t<CR>n",
+      "expect": {
+        "buffer": "one\n  two\nthree",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "e\\_s\\+t",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "underscore_dot_across",
+      "buffer": "ab\ncd\nef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/b\\_.\\{3}<CR>",
+      "expect": {
+        "buffer": "ab\ncd\nef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b\\_.\\{3}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "underscore_collection_across",
+      "buffer": "ab\ncd\nef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\_[bc]\\+<CR>n",
+      "expect": {
+        "buffer": "ab\ncd\nef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\_[bc]\\+",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_slash_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/c\\nd<CR>",
+      "expect": {
+        "buffer": "c\ndef\nxyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "ab",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_slash_e_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "ef\nxyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_slash_line_offset_across",
+      "buffer": "q\nabc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/c\\nd/+1<CR>",
+      "expect": {
+        "buffer": "xyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "q\nabc\ndef\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "q\nabc\ndef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "c_slash_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "c/c\\nd<CR>X<Esc>",
+      "expect": {
+        "buffer": "aXc\ndef\nxyz",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_slash_e_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_question_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "d?c\\nd<CR>",
+      "expect": {
+        "buffer": "abz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\ndef\nxy",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\ndef\nxy",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_n_across",
+      "buffer": "abc\ndef\nabc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>dn",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\ndef\nab",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\ndef\nab",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_search_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v/c\\nd/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_search_across_d",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v/c\\nd/e<CR>d",
+      "expect": {
+        "buffer": "ef\nxyz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_search_on_line_break",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v/c\\n/e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c\\n",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_question_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "v?c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        },
+        "visual": [
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "name": "wrap_across",
+      "buffer": "abc\ndef\nabc",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "/c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "wrap_onto_itself",
+      "buffer": "abc\ndef\nabc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "/c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_wrap_across",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?c\\nd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_wraps_across",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>nn",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found_across",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nx<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nx",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_repeats_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/c\\nd<CR>/<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_count_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        5,
+        2
+      ],
+      "keys": "2?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "e_minus_count_across",
+      "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/c\\nd/e-1<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef\nabc\ndef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_question_e_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "v?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        },
+        "visual": [
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "name": "e_count_on_line_breaks",
+      "buffer": "ab\n\n\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3/\\n/e<CR>",
+      "expect": {
+        "buffer": "ab\n\n\ncd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_count_on_line_breaks",
+      "buffer": "ab\n\n\ncd",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": "2?\\n<CR>",
+      "expect": {
+        "buffer": "ab\n\n\ncd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_question_e_across",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "y?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\nxyz",
+            "linewise": false
+          },
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          },
+          "0": {
+            "text": "def\nxyz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_count_stops_where_it_started",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_question_e_count_stops_where_it_started",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_zs_count_stops_where_it_started",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2?c\\n\\zsd<CR>",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\zsd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_question_zs_count_stops_where_it_started",
+      "buffer": "abc\ndef\nxyz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2?c\\n\\zsd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nxyz",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\zsd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_count_wraps_to_its_row",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "3?c\\nd?e<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\nd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_zs_count_wraps",
+      "buffer": "abc\ndef\nabc\ndef",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "3?c\\n\\zsd<CR>",
+      "expect": {
+        "buffer": "abc\ndef\nabc\ndef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c\\n\\zsd",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

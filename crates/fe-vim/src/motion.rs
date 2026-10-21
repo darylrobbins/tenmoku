@@ -698,7 +698,7 @@ impl Line {
     /// huge row, [`CARET_WINDOW`] bytes each side of `offset` and on to the
     /// nearest edges where its graphemes are sure to be the row's own: between
     /// two ASCII bytes, past a few class changes ([`CLASS_MARGIN`]).
-    fn around(text: &Text, row: u32, offset: usize) -> Self {
+    pub(crate) fn around(text: &Text, row: u32, offset: usize) -> Self {
         let start = text.row_start(row);
         let len = text.row_len(row) as usize;
         if !huge(len) {

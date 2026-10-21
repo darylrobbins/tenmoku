@@ -98,7 +98,10 @@ fn place(
     let forward = search.forward;
     let base = match search.offset {
         SearchOffset::End(_) => nth_match(text, pattern, from, search, count, deadline)
-            .map(|(found, _)| last_char(text, found)),
+            .map(|(found, _)| last_char(text, found, &mut None)),
+        _ if pattern.spans_rows() => {
+            nth_match(text, pattern, from, search, count, deadline).map(|(found, _)| found.start)
+        }
         SearchOffset::Start(n) => by_start(text, pattern, from, forward, n, count, deadline),
         SearchOffset::None | SearchOffset::Lines(_) => {
             by_start(text, pattern, from, forward, 0, count, deadline)
@@ -154,8 +157,8 @@ fn by_start(
 /// itself again). Once a match comes back the rest
 /// of the count goes round, not searched, so the work is bounded by the
 /// text's matches and rows, not the count, and each row's matches are
-/// listed only as far as a step needs. `None` if nothing matches, or past
-/// `deadline`.
+/// listed only as far as a step needs. A pattern that [`Pattern::spans_rows`]
+/// goes by [`across`]. `None` if nothing matches, or past `deadline`.
 pub(crate) fn nth_match(
     text: &Text,
     pattern: &Pattern,
@@ -164,6 +167,9 @@ pub(crate) fn nth_match(
     count: usize,
     deadline: &Deadline,
 ) -> Option<(Range<usize>, bool)> {
+    if pattern.spans_rows() {
+        return across(text, pattern, from, search, count, deadline);
+    }
     let (by_end, n) = match search.offset {
         SearchOffset::End(n) => (true, n),
         SearchOffset::Start(n) => (false, n),
@@ -209,6 +215,57 @@ pub(crate) fn nth_match(
             return Some((cycle[(count - 1 - first) % cycle.len()].clone(), wrapped));
         }
         seen.insert(next.start, step);
+        found.push(next);
+    }
+    Some((found.pop()?, wrapped))
+}
+
+/// [`nth_match`] for a pattern that [`Pattern::spans_rows`], whose matches
+/// may end on a later row than they start, as nvim's search finds them
+/// ([`Pattern::find_across`]): the first search from `from` with its
+/// character offset taken back, by the matches' last character with an `e`
+/// offset; each search after it from where the last match landed (with an
+/// `e` offset its last character, a line break for one ending in one), by
+/// the matches' start going forward and as the first went back. A match
+/// that comes back has the rest of the count go round, not searched.
+fn across(
+    text: &Text,
+    pattern: &Pattern,
+    from: usize,
+    search: Search,
+    count: usize,
+    deadline: &Deadline,
+) -> Option<(Range<usize>, bool)> {
+    let (by_end, n) = match search.offset {
+        SearchOffset::End(n) => (true, n),
+        SearchOffset::Start(n) => (false, n),
+        SearchOffset::None | SearchOffset::Lines(_) => (false, 0),
+    };
+    let forward = search.forward;
+    let mut walk = pattern.across(text, deadline);
+    let (first, mut wrapped) = match taken_back(text, from, n) {
+        Some(at) => walk.next(at, forward, by_end).ok()??,
+        None => (walk.outermost(forward).ok()??, forward != (n > 0)),
+    };
+    let mut seen = HashMap::from([(first.clone(), 0)]);
+    let mut found = vec![first];
+    let mut line = None;
+    for step in 1..count {
+        let last = found.last().expect("one match was found").clone();
+        let landed = match by_end {
+            true => last_char(text, last, &mut line),
+            false => last.start,
+        };
+        let (next, crossed) = walk.next(landed, forward, by_end && !forward).ok()??;
+        if deadline.expired() {
+            return None;
+        }
+        wrapped |= crossed;
+        if let Some(&first) = seen.get(&next) {
+            let cycle = &found[first..];
+            return Some((cycle[(count - 1 - first) % cycle.len()].clone(), wrapped));
+        }
+        seen.insert(next.clone(), step);
         found.push(next);
     }
     Some((found.pop()?, wrapped))
@@ -409,12 +466,32 @@ fn taken_back(text: &Text, from: usize, n: i32) -> Option<usize> {
 }
 
 /// Where an `e` offset counts from: a match's last character, or an empty
-/// match itself.
-fn last_char(text: &Text, found: Range<usize>) -> usize {
-    match found.is_empty() {
-        true => found.start,
-        false => Cursor::at(text, text.clip_offset(found.end - 1, Bias::Left)).offset(),
+/// match itself. A match ending in a line break ends on it, at its row's
+/// end, as nvim's does (one taking the line break nvim matches after the
+/// text's last row ends at the text's end). `line` holds the part of a row
+/// the last one read, which a count's steps along the row read again only
+/// past its end.
+fn last_char(text: &Text, found: Range<usize>, line: &mut Option<(u32, Line)>) -> usize {
+    let last = found.end.saturating_sub(1).min(text.len());
+    if found.is_empty() {
+        return found.start;
     }
+    if last == text.len() || text.char_at(last) == Some('\n') {
+        return last;
+    }
+    let last = text.clip_offset(last, Bias::Left);
+    let row = text.offset_to_point(last).row;
+    let held = line.as_ref().is_some_and(|(at, line)| {
+        *at == row && (line.start..line.start + line.text.len()).contains(&last)
+    });
+    if !held {
+        *line = Some((row, Line::around(text, row, last)));
+    }
+    let (_, line) = line.as_ref().expect("the row is read");
+    let ix = line
+        .starts
+        .partition_point(|&start| start <= last - line.start);
+    line.start + line.starts[ix.saturating_sub(1)]
 }
 
 /// Moves `cursor` to `at`, a row's end if `at` is one.

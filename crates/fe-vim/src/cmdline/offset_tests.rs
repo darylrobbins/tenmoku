@@ -1,5 +1,8 @@
 use super::parse;
-use crate::{HeadlessVim, Motion, Search, SearchOffset, SearchPattern, search::ROWS_SEARCHED};
+use crate::{
+    HeadlessVim, Motion, Search, SearchOffset, SearchPattern,
+    search::{ROWS_SEARCHED, regex_calls},
+};
 
 #[test]
 fn offsets_parse() {
@@ -150,4 +153,26 @@ fn a_counted_n_stuck_on_an_empty_match_is_quick() {
     vim.feed("999999n").unwrap();
     assert_eq!(vim.cursor(), (0, 3));
     assert!(ROWS_SEARCHED.get() <= 4, "{} rows", ROWS_SEARCHED.get());
+}
+
+/// A count of searches for a pattern over rows steps along a row of dense
+/// matches listing each once, going on from where the last step stopped,
+/// not from the row's start, and reading the row once: regex calls in
+/// proportion to the matches passed, either way, with an `e` offset or not.
+#[test]
+fn counted_searches_over_rows_list_a_dense_row_once() {
+    let row = "a".repeat(16_000);
+    for (keys, from, to) in [
+        ("4000/\\_a<CR>", (0, 0), (0, 4_000)),
+        ("4000/\\_a/e<CR>", (0, 0), (0, 4_000)),
+        ("4000?\\_a<CR>", (0, 15_999), (0, 11_999)),
+        ("4000?\\_a?e<CR>", (0, 15_999), (0, 11_999)),
+    ] {
+        let mut vim = HeadlessVim::new(&row, from);
+        let before = regex_calls();
+        vim.feed(keys).unwrap();
+        let calls = regex_calls() - before;
+        assert_eq!(vim.cursor(), to, "{keys}");
+        assert!(calls <= 2 * 16_000, "{keys}: {calls} regex calls");
+    }
 }

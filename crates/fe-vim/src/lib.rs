@@ -263,6 +263,15 @@
 //! [`VimState::search_preview`] gives the match it would land on, for the
 //! host to highlight and reveal ('incsearch', [`VimState::set_incsearch`]).
 //!
+//! `/`, `?`, `n` and `N` (an operator or a visual selection over them too)
+//! also take a pattern that matches across rows, with `\n`, `\_x`, `\_.`
+//! or `\_[...]` ([`search::Pattern::parse_across`]), and land where nvim's
+//! do ([`search::Pattern::find_across`]): counts, wrapping and offsets
+//! count from the match's start and its last character, which for a match
+//! ending in a line break is that line break, at its row's end. Its
+//! highlight crosses rows too ([`search::matches_across_until`]). `*`, `#`,
+//! `:s`, `:g` and ex addresses match within one row, as below.
+//!
 //! # Ex commands
 //!
 //! Submitting an ex line parses it ([`Ex::parse`], pure) and runs it. A

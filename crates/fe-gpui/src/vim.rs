@@ -1289,11 +1289,14 @@ impl EditorView {
     /// leaves them, the caret landing on the match in view.
     pub fn preview_search(&mut self, line: &str, cx: &mut Context<Self>) {
         self.sync_vim(cx);
-        let delimiter = match self.vim.as_ref().map(VimState::mode) {
-            Some(fe_vim::Mode::CmdLine(CommandLineKind::SearchForward)) => '/',
-            Some(fe_vim::Mode::CmdLine(CommandLineKind::SearchBackward)) => '?',
-            _ => return,
-        };
+        if !matches!(
+            self.vim.as_ref().map(VimState::mode),
+            Some(fe_vim::Mode::CmdLine(
+                CommandLineKind::SearchForward | CommandLineKind::SearchBackward
+            ))
+        ) {
+            return;
+        }
         if self.search_preview.is_none() {
             self.search_preview = Some(SearchPreview::from(self.place()));
         }
@@ -1302,19 +1305,12 @@ impl EditorView {
         let Some(state) = &self.vim else {
             return;
         };
-        // 'incsearch', 'ignorecase' and 'smartcase' are global: `:set` in
-        // any editor changed the shared registers, which the submitted
-        // search reads too.
-        let fallback = Registers::default();
-        let registers = vim_registers(cx).unwrap_or(&fallback);
+        // The pattern the preview found its match by, case and all.
+        let unset = Registers::default();
+        let registers = vim_registers(cx).unwrap_or(&unset);
         let shown = state
-            .search_preview_in(&self.model, line, registers)
-            .and_then(|found| {
-                let (pattern, _) = fe_vim::search::split_search(line, delimiter);
-                let ignore_case = registers.ignores_case(&pattern, false);
-                let pattern = Pattern::parse_with(&pattern, ignore_case).ok()?;
-                Some((found, pattern))
-            });
+            .search_preview(&self.model, registers, line)
+            .and_then(|found| Some((found, state.search_preview_pattern(registers, line)?)));
         if let Some((found, pattern)) = shown {
             let before = self.model.text().clone();
             let events = self.model.buffer_mut().subscribe();
