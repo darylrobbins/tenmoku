@@ -1,6 +1,7 @@
 //! Standalone fastedit host: `fastedit [--perf] [folder or file]`, a
 //! [`Workbench`] in a window.
 
+mod app_icon;
 mod config;
 mod perf;
 mod theme;
@@ -390,6 +391,7 @@ fn main() {
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
+        app_icon::set();
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.
