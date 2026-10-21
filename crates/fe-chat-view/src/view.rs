@@ -157,6 +157,13 @@ pub struct ChatView {
     /// the user attached, rather than the host gathered: Edit brings back
     /// only those.
     attached: HashMap<usize, Vec<bool>>,
+    /// The authorization generation the host set ([`ChatView::set_authorization`])
+    /// when each turn, by index, was sent: its context is only good for a
+    /// Retry under the same one.
+    sent_under: HashMap<usize, u64>,
+    /// The authorization generation now: the host counts a change of root,
+    /// of trust or of `buffer.read` grant.
+    authorization: u64,
     /// The tokens a turn's context may take.
     context_budget: u32,
     notice: bool,
@@ -223,6 +230,8 @@ impl ChatView {
         let attachments = items.iter().map(attachment_of).collect();
         self.set_composer_text("", cx);
         self.attached.insert(self.conversation.turns.len(), mine);
+        self.sent_under
+            .insert(self.conversation.turns.len(), self.authorization);
         self.start_turn(user_content, attachments, cx);
     }
 
@@ -256,11 +265,31 @@ impl ChatView {
         else {
             return;
         };
-        let (user_content, attachments) = (turn.user_content.clone(), turn.attachments.clone());
+        // The context is rebuilt from what is authorized now, not copied
+        // from the failed turn: the host's items stand only while the host
+        // still gathers them, and the user's only while the host hasn't
+        // cleared them (a root, trust or `buffer.read` change does).
         let last = self.conversation.turns.len() - 1;
-        if let Some(mine) = self.attached.get(&last).cloned() {
-            self.attached.insert(last + 1, mine);
-        }
+        let question = question_of(turn);
+        let flags = self.attached.get(&last).cloned().unwrap_or_default();
+        // Nothing sent under another authorization generation is sent
+        // again, whatever it matches now: the same relative path may be
+        // another root's file.
+        let current = self.sent_under.get(&last) == Some(&self.authorization);
+        let (items, mine): (Vec<ContextItem>, Vec<bool>) = items_of(turn)
+            .into_iter()
+            .filter(|_| current)
+            .zip(flags.into_iter().chain(std::iter::repeat(false)))
+            .filter(|(item, mine)| {
+                *mine
+                    || (self.context.iter())
+                        .any(|host| host.kind == item.kind || covers(item, host))
+            })
+            .unzip();
+        let user_content = render_user_content(&question, &items);
+        let attachments = items.iter().map(attachment_of).collect();
+        self.attached.insert(last + 1, mine);
+        self.sent_under.insert(last + 1, self.authorization);
         self.start_turn(user_content, attachments, cx);
     }
 }
@@ -303,6 +332,8 @@ impl ChatView {
             dismissed: HashSet::new(),
             removed: Vec::new(),
             attached: HashMap::new(),
+            sent_under: HashMap::new(),
+            authorization: 0,
             context_budget: CONTEXT_BUDGET,
             notice: false,
             stream: None,
@@ -480,6 +511,13 @@ impl ChatView {
         self.attachments.clear();
         self.attached.clear();
         cx.notify();
+    }
+
+    /// Sets the authorization generation, which the host changes whenever
+    /// the root, its trust or the `buffer.read` grant does. A Retry sends
+    /// no context a turn was sent with under another one.
+    pub fn set_authorization(&mut self, generation: u64) {
+        self.authorization = generation;
     }
 
     /// Shows or hides the first-run notice.

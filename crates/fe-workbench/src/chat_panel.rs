@@ -695,9 +695,6 @@ impl ChatPanel {
         self._workbench = vec![
             cx.observe(workbench, |this, _, cx| this.gather_soon(cx)),
             cx.subscribe(workbench, |this, _, _: &RootChanged, cx| {
-                // What the user attached from the old root goes, being read
-                // or not.
-                this.view.update(cx, |view, cx| view.clear_attachments(cx));
                 this.root_changed(cx)
             }),
             cx.subscribe(workbench, |this, _, _: &TrustChanged, cx| {
@@ -718,6 +715,13 @@ impl ChatPanel {
     /// again.
     fn root_changed(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
+        // What the user attached under the old root or trust goes, being
+        // read or not, and no retry sends what was sent under them.
+        let generation = self.generation;
+        self.view.update(cx, |view, cx| {
+            view.clear_attachments(cx);
+            view.set_authorization(generation);
+        });
         (self.vetted, self.vetting) = (None, None);
         self.set_context(None, cx);
         self.gather(cx);
@@ -911,9 +915,14 @@ impl ChatPanel {
 
     pub(crate) fn set_grants(&mut self, grants: Grants, cx: &mut Context<Self>) {
         self.grants = grants;
-        if !self.grants.allows(&Capability::BufferRead) {
-            self.view.update(cx, |view, cx| view.clear_attachments(cx));
-        }
+        self.generation += 1;
+        let (generation, read) = (self.generation, self.grants.allows(&Capability::BufferRead));
+        self.view.update(cx, |view, cx| {
+            if !read {
+                view.clear_attachments(cx);
+            }
+            view.set_authorization(generation);
+        });
         self.set_context(None, cx);
         self.gather(cx);
     }

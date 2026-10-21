@@ -17,9 +17,12 @@ use std::{
     task::{Context as TaskContext, Poll},
 };
 
-use fe_chat::{ChatEvent, ChatProvider, ChatRequest, ChatStream, Effort, ScriptedProvider};
+use fe_chat::{
+    ChatEvent, ChatProvider, ChatRequest, ChatStream, ContextItem, ContextKind, Effort,
+    ScriptedProvider, StopReason,
+};
 use fe_chat_anthropic::ApiKey;
-use fe_chat_view::{ChatOptions, SendMessage};
+use fe_chat_view::{ChatOptions, RetryTurn, SendMessage};
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::SettingsStore;
 use fe_gpui::commands::RunCommand;
@@ -500,6 +503,71 @@ fn replies_stream_on_the_background_executor(cx: &mut TestAppContext) {
     drop(send);
     dispatch_in("chat.new", &[crate::KEY_CONTEXT, "chat"], cx);
     assert_eq!(provider.dropped.load(Ordering::SeqCst), 2);
+}
+
+/// A reply that ends refused, so the turn can be retried.
+fn refused() -> Vec<ChatEvent> {
+    vec![
+        ChatEvent::Started {
+            model: "claude-opus-5-5".to_owned(),
+            message_id: "msg".to_owned(),
+        },
+        ChatEvent::Finished {
+            stop_reason: StopReason::Refusal,
+            stop_details: None,
+        },
+    ]
+}
+
+#[gpui::test]
+fn retry_after_trust_is_revoked_sends_no_attached_file(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    let provider = Arc::new(ScriptedProvider::new((0..3).map(|_| refused())));
+    let shared = provider.clone();
+    cx.update(|_, cx| {
+        ChatPanel::set_provider_factory(
+            cx,
+            Rc::new(move |_, _| shared.clone() as Arc<dyn ChatProvider>),
+        );
+    });
+    set_source(Some("key"), &Arc::new(MemoryStore::new()), cx);
+    dispatch("chat.open", cx);
+    let panel = chat(&workbench, cx).expect("made");
+    let view = panel.read_with(cx, |panel, _| panel.view().clone());
+    workbench.update(cx, |workbench, cx| workbench.set_root_trust(true, cx));
+    draw(cx);
+
+    let secret = ContextItem {
+        kind: ContextKind::File {
+            path: "secret.txt".to_owned(),
+            rows: None,
+        },
+        label: "secret.txt".to_owned(),
+        text: "hunter2".to_owned(),
+    };
+    view.update(cx, |view, cx| {
+        view.attach(secret, cx);
+        view.set_composer_text("What is in it?", cx);
+    });
+    cx.update(|window, cx| window.dispatch_action(Box::new(SendMessage), cx));
+    draw(cx);
+    let sent = |request: &ChatRequest| format!("{:?}", request.messages.last().unwrap().content);
+    assert!(sent(&provider.requests()[0]).contains("hunter2"));
+
+    // The same authorization sends it again.
+    cx.update(|window, cx| window.dispatch_action(Box::new(RetryTurn), cx));
+    draw(cx);
+    assert!(sent(&provider.requests()[1]).contains("hunter2"));
+
+    // Trust revoked through the workbench: the panel's own handler cuts it.
+    workbench.update(cx, |workbench, cx| workbench.set_root_trust(false, cx));
+    draw(cx);
+    cx.update(|window, cx| window.dispatch_action(Box::new(RetryTurn), cx));
+    draw(cx);
+    let retried = sent(&provider.requests()[2]);
+    assert!(!retried.contains("hunter2"), "{retried}");
+    assert!(retried.contains("What is in it?"));
 }
 
 /// How many times [`flaky_open`] was called.
