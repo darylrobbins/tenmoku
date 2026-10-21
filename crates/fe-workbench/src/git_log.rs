@@ -2,10 +2,8 @@
 //! Graph and fugitive's `:Gclog` show it: `git.log` ("Git: Log", typed as
 //! `:Gclog`) lists HEAD's history and `git.log_all` ("Git: Log (All
 //! Branches)", `:Gclog --all`) every branch's, remote-tracking branch's and
-//! tag's, newest first in topo order ([`Repo::log`]), in the Git Log panel,
-//! the Graph view of the right dock's Source Control
-//! (`dock::source_control`), which they show expanded and focused. The
-//! repository is the active file's, else the root's.
+//! tag's, newest first in topo order ([`Repo::log`]), in the Git Log panel
+//! on the right dock. The repository is the active file's, else the root's.
 //!
 //! The list is read on the background executor a page of [`PAGE`] commits
 //! at a time: the first when the command runs, the next once the selection
@@ -78,9 +76,18 @@ use super::{
 };
 use crate::{Workbench, dock::DockOp, git};
 
-/// The id the Git Log panel had on the sidebar, before it was Source
-/// Control's Graph view, which layouts saved then name.
-pub(crate) const OLD_PANEL: &str = "git_log";
+/// The repository's log in the sidebar: on the rail under Changes; focused
+/// when shown, as its rows take keys.
+pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
+    panel: crate::DockPanel::new("git_log"),
+    name: "Git Log",
+    icon: fe_ui::Icon::GitGraph,
+    show_command: "git.log",
+    show_op: crate::dock::DockOp::ShowGitLog,
+    order: 45,
+    always_on_rail: true,
+    focus_on_show: true,
+};
 
 /// The commits a page reads.
 pub(crate) const PAGE: usize = 200;
@@ -538,14 +545,14 @@ impl GitLogPanel {
         }
     }
 
-    /// Graph's header in Source Control: `Graph: <branch>`, `Graph: HEAD
-    /// (detached)` or `Graph: All Branches`.
+    /// The dock's title row: `Git Log: <branch>`, `Git Log: HEAD
+    /// (detached)` or `Git Log: All Branches`.
     pub(crate) fn title(&self, _: &App) -> SharedString {
         match (self.scope, &self.head) {
-            (LogScope::All, _) => "Graph: All Branches".into(),
-            (_, Some(Head::Branch(name) | Head::Unborn(name))) => format!("Graph: {name}").into(),
-            (_, Some(Head::Detached(_))) => "Graph: HEAD (detached)".into(),
-            (_, None) => "Graph".into(),
+            (LogScope::All, _) => "Git Log: All Branches".into(),
+            (_, Some(Head::Branch(name) | Head::Unborn(name))) => format!("Git Log: {name}").into(),
+            (_, Some(Head::Detached(_))) => "Git Log: HEAD (detached)".into(),
+            (_, None) => "Git Log".into(),
         }
     }
 

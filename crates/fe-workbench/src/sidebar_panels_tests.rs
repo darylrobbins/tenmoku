@@ -24,7 +24,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 7] {
+); 8] {
     [
         (
             DockPanel::Explorer,
@@ -43,12 +43,20 @@ fn base() -> [(
             DockOp::ShowSearch,
         ),
         (
-            DockPanel::SourceControl,
-            "Source Control",
-            "scm",
+            DockPanel::Changes,
+            "Changes",
+            "changes",
             Icon::GitBranch,
             "git.show_changes",
             DockOp::ShowChanges,
+        ),
+        (
+            DockPanel::GitLog,
+            "Git Log",
+            "git_log",
+            panel_icon(DockPanel::GitLog),
+            "git.log",
+            DockOp::ShowGitLog,
         ),
         (
             DockPanel::Chat,
@@ -194,13 +202,14 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_four() {
+fn the_rail_always_has_the_base_five() {
     assert_eq!(
         DockPanel::ALL,
         [
             DockPanel::Explorer,
             DockPanel::Search,
-            DockPanel::SourceControl,
+            DockPanel::Changes,
+            DockPanel::GitLog,
             DockPanel::Chat,
         ]
     );
@@ -220,7 +229,8 @@ fn the_rail_always_has_the_base_four() {
         focused,
         [
             DockPanel::Search,
-            DockPanel::SourceControl,
+            DockPanel::Changes,
+            DockPanel::GitLog,
             DockPanel::Chat,
             DockPanel::Problems,
             DockPanel::History,
@@ -235,7 +245,8 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     let base = [
         (DockPanel::Explorer, Icon::Files),
         (DockPanel::Search, Icon::Search),
-        (DockPanel::SourceControl, Icon::GitBranch),
+        (DockPanel::Changes, Icon::GitBranch),
+        (DockPanel::GitLog, panel_icon(DockPanel::GitLog)),
         (DockPanel::Chat, Icon::MessageSquare),
     ];
     assert_eq!(rail(&workbench, cx), base);
@@ -264,7 +275,7 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     assert_eq!(rail(&workbench, cx), both);
     assert_eq!(
         shown(&workbench, cx),
-        (true, DockPanel::SourceControl, "Source Control".to_owned())
+        (true, DockPanel::GitLog, "Git Log: main".to_owned())
     );
 
     dispatch("git.file_history", cx);
@@ -291,7 +302,8 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
     let order = [
         DockPanel::Search,
         DockPanel::Explorer,
-        DockPanel::SourceControl,
+        DockPanel::Changes,
+        DockPanel::GitLog,
         DockPanel::References,
         DockPanel::Problems,
         DockPanel::History,
@@ -312,7 +324,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
     assert_eq!(order.len(), PANELS.len());
 }
 
-/// The Git Log, Source Control's Graph, listed by Source Control's button.
+/// The Git Log on the rail from the start, under Changes, with its own icon.
 mod git_log_rail_tests {
     use std::collections::HashSet;
 
@@ -347,7 +359,9 @@ mod git_log_rail_tests {
     }
 
     #[gpui::test]
-    fn the_rail_has_source_control_from_the_start_with_its_own_icon(cx: &mut TestAppContext) {
+    fn the_rail_has_git_log_under_changes_from_the_start_with_its_own_icon(
+        cx: &mut TestAppContext,
+    ) {
         let dir = repo();
         let (workbench, cx) = opened(cx, dir.path());
         let panels = |cx: &mut VisualTestContext| {
@@ -369,12 +383,13 @@ mod git_log_rail_tests {
             [
                 DockPanel::Explorer,
                 DockPanel::Search,
-                DockPanel::SourceControl,
+                DockPanel::Changes,
+                DockPanel::GitLog,
                 DockPanel::Chat,
             ]
         );
         let icons = distinct(cx);
-        assert_eq!(icons[2], Icon::GitBranch);
+        assert_ne!(icons[3], Icon::GitBranch);
 
         dispatch("git.log", cx);
         distinct(cx);
@@ -385,26 +400,24 @@ mod git_log_rail_tests {
     }
 
     #[gpui::test]
-    fn clicking_source_control_on_the_rail_lists_heads_log(cx: &mut TestAppContext) {
+    fn clicking_git_log_on_the_rail_lists_heads_log(cx: &mut TestAppContext) {
         let dir = repo();
         let (workbench, cx) = opened(cx, dir.path());
-        click(&workbench, DockPanel::SourceControl, cx);
+        click(&workbench, DockPanel::GitLog, cx);
         assert_eq!(
             shown(&workbench, cx),
-            (true, DockPanel::SourceControl, "Source Control".to_owned())
+            (true, DockPanel::GitLog, "Git Log: main".to_owned())
         );
         let (lines, message) = log(&workbench, cx);
         assert!(lines.iter().any(|line| line.contains("init")), "{lines:?}");
         assert_eq!(message, None);
 
-        click(&workbench, DockPanel::SourceControl, cx);
+        click(&workbench, DockPanel::GitLog, cx);
         assert!(!shown(&workbench, cx).0);
     }
 
     #[gpui::test]
-    fn source_control_from_the_rail_outside_a_repository_says_so_without_a_toast(
-        cx: &mut TestAppContext,
-    ) {
+    fn git_log_from_the_rail_outside_a_repository_says_so_without_a_toast(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
         let launch = Launch {
             root: Some(dir.path().to_owned()),
@@ -413,8 +426,8 @@ mod git_log_rail_tests {
         let (workbench, cx, _) = open(cx, launch);
         cx.update(|window: &mut Window, _| window.activate_window());
         draw(cx);
-        click(&workbench, DockPanel::SourceControl, cx);
-        assert_eq!(shown(&workbench, cx).1, DockPanel::SourceControl);
+        click(&workbench, DockPanel::GitLog, cx);
+        assert_eq!(shown(&workbench, cx).1, DockPanel::GitLog);
         assert_eq!(log(&workbench, cx).1, Some("Not in a git repository"));
         let layer = workbench.read_with(cx, |workbench, _| workbench.toasts().clone());
         let shown = layer.read_with(cx, |layer, _| layer.queue().shown().len());
