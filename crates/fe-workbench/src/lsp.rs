@@ -520,6 +520,8 @@ pub(crate) struct Lsp {
     hover: Rc<LspHover>,
     /// Every editor's caret highlights.
     highlights: highlights::Highlights,
+    /// Every editor's documentation renderer.
+    markdown: markdown::Renderers,
     /// Every editor's save hook, and whether `editor.format_on_save` is on
     /// (set from the settings each reload).
     pub(crate) format_on_save: Rc<std::cell::Cell<bool>>,
@@ -677,6 +679,7 @@ impl Lsp {
             resolved_from: HashMap::new(),
             hover: Rc::default(),
             highlights: Default::default(),
+            markdown: Default::default(),
             format_on_save: Rc::default(),
             save_hook: None,
             resolving: HashSet::new(),
@@ -1199,6 +1202,7 @@ impl Workbench {
         let editors = self.open_editors(cx);
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
+        self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
         let signature_help: Rc<dyn fe_gpui::SignatureHelpProvider> = self.lsp.hover.clone();
@@ -2283,6 +2287,9 @@ mod highlights;
 
 #[path = "lsp_file_operations.rs"]
 mod file_operations;
+
+#[path = "lsp_markdown.rs"]
+mod markdown;
 
 #[cfg(test)]
 #[path = "lsp_trust_tests.rs"]

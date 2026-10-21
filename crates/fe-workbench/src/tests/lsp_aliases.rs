@@ -55,3 +55,6 @@ fn closing_the_owning_alias_hands_the_document_to_the_other(cx: &mut TestAppCont
     assert_eq!(s.sent(1, "textDocument/didClose", &main), 1);
     assert_eq!(s.sent(1, "textDocument/didOpen", &main), 2);
 }
+
+#[path = "lsp_hover_markdown.rs"]
+mod hover_markdown;
