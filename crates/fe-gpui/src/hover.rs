@@ -159,6 +159,9 @@ struct Hovered {
     /// The index of the gutter annotation the pointer rests on, whose
     /// popover this is ([`EditorView::hover_annotation`]).
     annotation: Option<usize>,
+    /// The index of the inlay hint the pointer rests on, whose tooltip
+    /// this is ([`EditorView::hover_inlay_hint`]).
+    hint: Option<u64>,
 }
 
 impl Hovered {
@@ -379,6 +382,7 @@ impl EditorView {
             caret,
             host: false,
             annotation: None,
+            hint: None,
         }
     }
 
@@ -392,7 +396,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.hover_after_line(position, window, cx) {
+        if self.hover_after_line(position, window, cx)
+            || self.hover_inlay_hint(position, window, cx)
+        {
             return;
         }
         let under = position.and_then(|position| Some((self.under(position)?, position)));
@@ -472,7 +478,9 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) -> bool {
         let shows_after_line = (self.popover.current.as_ref()).is_some_and(|current| {
-            current.hovered.found_by_pointer_for_host() && current.hovered.annotation.is_none()
+            current.hovered.found_by_pointer_for_host()
+                && current.hovered.annotation.is_none()
+                && current.hovered.hint.is_none()
         });
         let Some((position, bottom, content)) = position.and_then(|position| {
             let (label, content) = self.popover.after_line.as_ref()?;
@@ -509,10 +517,98 @@ impl EditorView {
             caret: None,
             host: true,
             annotation: None,
+            hint: None,
         };
         let at = gpui::point(position.x, bottom);
         self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, Some(content), cx);
         true
+    }
+
+    /// The pointer moved to `position`, or off the text: on an inlay hint,
+    /// waits out the delay, resolves the hint through the host (once) and
+    /// shows its tooltip below it, or keeps that shown; off it, hides it.
+    /// Whether the pointer is over a hint.
+    fn hover_inlay_hint(
+        &mut self,
+        position: Option<Point<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let shows = (self.popover.current.as_ref()).and_then(|current| current.hovered.hint);
+        let found = position.and_then(|position| Some((position, self.inlay_hint_at(position)?)));
+        let Some((position, id)) = found else {
+            if shows.is_some() {
+                self.leave_popover(window, cx);
+            }
+            return false;
+        };
+        if shows == Some(id) {
+            self.keep_popover();
+            return true;
+        }
+        if self.leave_popover(window, cx) {
+            return true;
+        }
+        let Some(ix) = self.inlay_hint_ix(id) else {
+            return false;
+        };
+        let offset = self.inlay_hints.hints[ix].offset;
+        let bottom = (self.inlay_hints_bounds.iter())
+            .find(|(found, _)| *found == ix)
+            .map_or(position.y, |(_, bounds)| bounds.bottom());
+        let hovered = Hovered {
+            under: Under::RowEnd(offset),
+            items: Vec::new(),
+            word: None,
+            version: self.model.snapshot().version(),
+            scroll: self.scroll,
+            caret: None,
+            host: true,
+            annotation: None,
+            hint: Some(id),
+        };
+        let at = gpui::point(position.x, bottom);
+        self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, None, cx);
+        let task = cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(HOVER_DELAY).await;
+            view.update(cx, |view, cx| {
+                let stands = (view.popover.current.as_ref())
+                    .is_some_and(|current| view.popover_stands(&current.hovered));
+                match view.popover.current.as_mut().filter(|_| stands) {
+                    Some(current) => {
+                        current.shown = true;
+                        cx.notify();
+                        // Resolved once per hint, whoever asks first.
+                        view.request_inlay_hint(id, false, cx);
+                        view.show_hint_tooltip(id, cx);
+                    }
+                    None => view.popover.current = None,
+                }
+            })
+            .ok();
+        });
+        if let Some(current) = self.popover.current.as_mut() {
+            current._task = task;
+        }
+        true
+    }
+
+    /// Shows hint `id`'s tooltip, if its popover is the one up and the
+    /// hint is resolved.
+    pub(crate) fn show_hint_tooltip(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(tooltip) = self.inlay_hint_tooltip(id) else {
+            return;
+        };
+        let Some(current) =
+            (self.popover.current.as_mut()).filter(|current| current.hovered.hint == Some(id))
+        else {
+            return;
+        };
+        current.content = Some(HoverContent {
+            text: tooltip,
+            range: None,
+        });
+        cx.notify();
     }
 
     /// Has the pointer resting on an after-line decoration whose text is
@@ -528,7 +624,9 @@ impl EditorView {
         }
         self.popover.after_line = popover;
         if (self.popover.current.as_ref()).is_some_and(|current| {
-            current.hovered.found_by_pointer_for_host() && current.hovered.annotation.is_none()
+            current.hovered.found_by_pointer_for_host()
+                && current.hovered.annotation.is_none()
+                && current.hovered.hint.is_none()
         }) {
             self.hide_popover(cx);
         }
@@ -590,6 +688,7 @@ impl EditorView {
             caret: None,
             host: true,
             annotation: Some(ix),
+            hint: None,
         };
         let at = gpui::point(position.x, slot.bottom());
         self.wait_for_popover(hovered, at, Some(HOVER_DELAY), false, content, cx);
@@ -611,6 +710,7 @@ impl EditorView {
             caret: Some(caret),
             host: true,
             annotation: None,
+            hint: None,
         };
         let Some(at) = (self.layout.as_mut())
             .filter(|layout| layout.version == hovered.version)
@@ -763,6 +863,7 @@ impl EditorView {
             && (shown.caret).is_none_or(|caret| caret == self.model.primary_selection().head())
             && (shown.host || shown.under.items(&self.model.diagnostics()) == shown.items)
             && (shown.annotation).is_none_or(|_| self.gutter && self.annotations.is_some())
+            && (shown.hint).is_none_or(|id| self.inlay_hint_ix(id).is_some())
     }
 
     /// What the popover says, if it's shown, still stands and has
@@ -807,9 +908,9 @@ impl EditorView {
     /// as a fresh move. One waiting, or shown at the caret, goes at once.
     /// Whether one is still shown.
     fn leave_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(current) = (self.popover.current.as_mut())
-            .filter(|current| current.shown && current.hovered.caret.is_none())
-        else {
+        let Some(current) = (self.popover.current.as_mut()).filter(|current| {
+            current.shown && current.hovered.caret.is_none() && !current.blocks().is_empty()
+        }) else {
             self.hide_popover(cx);
             return false;
         };
@@ -1054,7 +1155,7 @@ mod host_popover_tests {
     };
 
     use super::HOVER_DELAY;
-    use crate::{EditorTheme, EditorView, HoverContent, init};
+    use crate::{EditorTheme, EditorView, HoverContent, HoverFuture, HoverProvider, init};
 
     const TEXT: &str = "one\ntwo\nthree\n";
 
@@ -1153,6 +1254,59 @@ mod host_popover_tests {
         assert!(shown(&view, cx).is_some());
         view.update(cx, |view, cx| view.set_after_line_popover(None, cx));
         assert_eq!(shown(&view, cx), None);
+    }
+
+    /// A provider that counts its questions and answers nothing, at once or
+    /// never.
+    struct Silent {
+        asked: Rc<std::cell::Cell<usize>>,
+        never: bool,
+    }
+
+    impl HoverProvider for Silent {
+        fn hover(&self, _: fe_buffer::BufferId, _: fe_buffer::Version, _: usize) -> HoverFuture {
+            self.asked.set(self.asked.get() + 1);
+            match self.never {
+                true => Box::pin(std::future::pending()),
+                false => Box::pin(async { None }),
+            }
+        }
+    }
+
+    /// Leaving a word whose popover isn't visible, while the provider is
+    /// still working or after it answered nothing, drops it at once: the
+    /// next word's request goes out after the plain delay.
+    fn leaving_an_invisible_popover(never: bool, cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx);
+        let asked = Rc::new(std::cell::Cell::new(0));
+        view.update(cx, |view, _| {
+            let asked = asked.clone();
+            view.set_hover_provider(Some(Rc::new(Silent { asked, never })));
+        });
+        let at = |offset: usize, cx: &mut VisualTestContext| {
+            view.update(cx, |view, _| {
+                let caret = view.layout.as_mut().unwrap().caret_bounds(offset).unwrap();
+                caret.center()
+            })
+        };
+        let one = at(1, cx);
+        rest(one, cx);
+        assert_eq!(asked.get(), 1);
+        assert_eq!(shown(&view, cx), None);
+
+        let two = at(5, cx);
+        rest(two, cx);
+        assert_eq!(asked.get(), 2);
+    }
+
+    #[gpui::test]
+    fn leaving_during_a_pending_request(cx: &mut TestAppContext) {
+        leaving_an_invisible_popover(true, cx);
+    }
+
+    #[gpui::test]
+    fn leaving_after_a_none_answer(cx: &mut TestAppContext) {
+        leaving_an_invisible_popover(false, cx);
     }
 
     #[gpui::test]

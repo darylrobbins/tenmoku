@@ -7,7 +7,9 @@ use std::{sync::Arc, time::Duration};
 use fe_config::{Settings, SettingsEvent};
 use fe_gpui::EditorView;
 use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
-use gpui::{Entity, Focusable as _, TestAppContext};
+use gpui::{
+    Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext,
+};
 use lsp_types::request::InlayHintRefreshRequest;
 use lsp_types::{InlayHintOptions, OneOf, PositionEncodingKind, ServerCapabilities};
 use serde_json::{Value, json};
@@ -224,4 +226,134 @@ fn a_server_without_a_provider_is_not_asked(cx: &mut TestAppContext) {
     wait(&mut s, REST + Duration::from_millis(10));
     assert_eq!(asked(&s).len(), 0);
     assert_eq!(shown(&s, &editor), vec![]);
+}
+
+/// A fake whose server resolves hints, with its hint shown.
+fn resolving(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
+    let mut init = initialize_result(Some(PositionEncodingKind::UTF8));
+    init.capabilities = ServerCapabilities {
+        inlay_hint_provider: Some(OneOf::Right(
+            lsp_types::InlayHintServerCapabilities::Options(InlayHintOptions {
+                work_done_progress_options: Default::default(),
+                resolve_provider: Some(true),
+            }),
+        )),
+        ..init.capabilities
+    };
+    let script = Script {
+        initialize: InitializeReply::Result(Box::new(init)),
+        ..Script::default()
+    };
+    let mut s = Lsp::with_fake_clock(cx, script, Script::default());
+    s.fake.set_reply(
+        METHOD,
+        Scripted::now(Reply::Result(json!([
+            {
+                "position": { "line": 0, "character": 7 },
+                "label": ": ()",
+                "kind": 1,
+                "data": { "id": 7 },
+            },
+        ]))),
+    );
+    s.fake.set_reply(
+        "inlayHint/resolve",
+        Scripted::now(Reply::Result(json!({
+            "position": { "line": 0, "character": 7 },
+            "label": ": ()",
+            "kind": 1,
+            "data": { "id": 7 },
+            "tooltip": "the unit type",
+            "textEdits": [
+                { "range": {
+                    "start": { "line": 0, "character": 7 },
+                    "end": { "line": 0, "character": 7 },
+                  }, "newText": ": ()" },
+            ],
+        }))),
+    );
+    s.set_trust(true);
+    s.open("src/main.rs");
+    let main = s.uri("src/main.rs");
+    s.fake
+        .wait_for_document(&main, "didOpen", |r| r.is_some_and(|r| r.open));
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .expect("main.rs is shown");
+    s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    s.draw();
+    wait(&mut s, REST + Duration::from_millis(10));
+    s.until("the hint", |s| !shown(s, &editor).is_empty());
+    s.draw();
+
+    (s, editor)
+}
+
+/// Double-clicks the first hint shown.
+fn double_click_hint(s: &mut Lsp, editor: &Entity<EditorView>) {
+    let at = editor.read_with(&s.cx, |view, _| view.inlay_hint_bounds())[0]
+        .1
+        .center();
+    for click_count in [1, 2] {
+        s.cx.simulate_event(MouseDownEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count,
+            first_mouse: false,
+        });
+        s.cx.simulate_event(MouseUpEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count,
+        });
+    }
+}
+
+fn resolves(s: &Lsp) -> Vec<Value> {
+    (s.fake.records().iter())
+        .filter_map(|record| match record {
+            Record::Request { method, params, .. } if method == "inlayHint/resolve" => {
+                Some(params.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn resolved_hints_insert_their_edits(cx: &mut TestAppContext) {
+    let (mut s, editor) = resolving(cx);
+    double_click_hint(&mut s, &editor);
+    s.until("the resolved edit", |s| {
+        editor.read_with(&s.cx, |view, _| {
+            view.model().text().to_string().starts_with("fn main: ()()")
+        })
+    });
+    let resolves = resolves(&s);
+    assert_eq!(resolves.len(), 1);
+    assert_eq!(resolves[0]["data"], json!({ "id": 7 }));
+}
+
+#[gpui::test]
+fn a_new_manager_resolves_its_own_hints(cx: &mut TestAppContext) {
+    let (mut s, editor) = resolving(cx);
+    let root = s.root.clone();
+    let workbench = s.workbench.clone();
+    s.cx.update(|window, cx| workbench.update(cx, |w, cx| w.set_root(root, window, cx)));
+    s.draw();
+    // The old manager's hints go; the new server's come.
+    assert!(shown(&s, &editor).is_empty());
+    s.set_trust(true);
+    wait(&mut s, REST + Duration::from_millis(10));
+    s.until("the hint again", |s| !shown(s, &editor).is_empty());
+    s.draw();
+    double_click_hint(&mut s, &editor);
+    s.until("the resolved edit", |s| {
+        editor.read_with(&s.cx, |view, _| {
+            view.model().text().to_string().starts_with("fn main: ()()")
+        })
+    });
+    assert_eq!(resolves(&s).len(), 1);
 }

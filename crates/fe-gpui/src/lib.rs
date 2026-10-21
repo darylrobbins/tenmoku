@@ -45,7 +45,7 @@ pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
 pub use hover::{HoverContent, HoverFuture, HoverProvider, MarkdownRenderer};
-pub use inlay_hints::{InlayHint, InlayHintKind};
+pub use inlay_hints::{InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
 
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;

@@ -179,6 +179,10 @@ pub struct EditorView {
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
     /// The host's inlay hints ([`crate::inlay_hints`]).
     pub(crate) inlay_hints: crate::inlay_hints::Hints,
+    /// Resolves a hint's tooltip and edits.
+    pub(crate) inlay_hint_host: Option<std::rc::Rc<dyn crate::inlay_hints::InlayHintHost>>,
+    /// The hints the last frame painted: their index and window bounds.
+    pub(crate) inlay_hints_bounds: Vec<(usize, Bounds<Pixels>)>,
     /// The suggestion losing focus dropped, with the buffer's version then,
     /// for a palette pick that accepts it if the buffer hasn't changed since
     /// ([`ghost_text`]).
@@ -359,6 +363,8 @@ impl EditorView {
             lens_rows: Vec::new(),
             ghost_text: None,
             inlay_hints: Default::default(),
+            inlay_hint_host: None,
+            inlay_hints_bounds: Vec::new(),
             blurred_ghost_text: None,
             ghost_text_subscriptions: Vec::new(),
             reported_top: 0.,
@@ -882,6 +888,11 @@ impl EditorView {
             return;
         }
         if self.click_change_bar(event.position, cx) {
+            self.drag = None;
+            self.changed(cx);
+            return;
+        }
+        if event.click_count == 2 && self.double_click_inlay_hint(event.position, cx) {
             self.drag = None;
             self.changed(cx);
             return;

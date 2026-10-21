@@ -1249,6 +1249,7 @@ impl Element for EditorElement {
         let mut painted_proposals = Vec::new();
         #[cfg(test)]
         let mut painted_ghost = None;
+        let mut inlay_hints_bounds = Vec::new();
         #[cfg(test)]
         let mut painted_inlay_hints = Vec::new();
 
@@ -1361,6 +1362,7 @@ impl Element for EditorElement {
                         theme.gutter_foreground,
                         window,
                         cx,
+                        &mut inlay_hints_bounds,
                         #[cfg(test)]
                         &mut painted_inlay_hints,
                     );
@@ -1531,6 +1533,7 @@ impl Element for EditorElement {
             view.drop_stale_hover(hover_shown);
             view.proposal_buttons = proposal_buttons;
             view.lens_rows = lens_rows;
+            view.inlay_hints_bounds = inlay_hints_bounds;
             view.glyph_hit = glyph.map(|(_, bounds, _)| bounds);
             #[cfg(test)]
             {

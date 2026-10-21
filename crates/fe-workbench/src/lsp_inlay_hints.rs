@@ -8,10 +8,17 @@
 //! server without a provider is not asked again until the buffer's server
 //! changes.
 
-use std::{collections::HashMap, ops::Range, rc::Rc, time::Duration};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+    sync::{Arc, Mutex, Weak},
+    time::Duration,
+};
 
 use fe_buffer::Version;
-use fe_gpui::{EditorView, InlayHint, InlayHintKind};
+use fe_gpui::{EditorView, InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
+use fe_lsp::LspManager;
 use fe_lsp::{LspError, ServerId};
 use gpui::{Context, Entity, EntityId, Task};
 
@@ -39,6 +46,8 @@ struct Slot {
     no_provider: Option<ServerId>,
     /// The wait, then the request.
     task: Option<Task<()>>,
+    /// The manager the editor's host resolves through.
+    hosted: Option<Weak<Mutex<LspManager>>>,
 }
 
 /// Every open editor's hints.
@@ -82,7 +91,32 @@ impl Workbench {
                     asked: None,
                     no_provider: None,
                     task: None,
+                    hosted: None,
                 });
+            // A new manager (the root changed) doesn't know the old one's
+            // hints: they go, and the host follows.
+            if let Some(manager) = &self.lsp.manager {
+                let manager = Arc::downgrade(manager);
+                if !slot
+                    .hosted
+                    .as_ref()
+                    .is_some_and(|w| Weak::ptr_eq(w, &manager))
+                {
+                    if slot.hosted.replace(manager.clone()).is_some() {
+                        slot.server = None;
+                        slot.key = None;
+                        slot.asked = None;
+                        slot.no_provider = None;
+                        slot.task = None;
+                    }
+                    let host = Rc::new(Host { manager });
+                    editor.update(cx, |view, cx| {
+                        view.clear_inlay_hints();
+                        view.set_inlay_hint_host(Some(host));
+                        cx.notify();
+                    });
+                }
+            }
             let Some(server) = server else {
                 if slot.server.take().is_some() {
                     slot.key = None;
@@ -97,9 +131,19 @@ impl Workbench {
                 continue;
             };
             if slot.server != Some(server) {
-                slot.server = Some(server);
+                // Straight from another server: its hints and its request
+                // in flight go.
+                let moved = slot.server.replace(server).is_some();
                 slot.key = None;
                 slot.no_provider = None;
+                if moved {
+                    slot.asked = None;
+                    slot.task = None;
+                    editor.update(cx, |view, cx| {
+                        view.clear_inlay_hints();
+                        cx.notify();
+                    });
+                }
             }
             if slot.no_provider == Some(server) {
                 continue;
@@ -223,6 +267,39 @@ impl Workbench {
     }
 }
 
+/// Resolves an editor's hints through the language servers.
+struct Host {
+    manager: Weak<Mutex<LspManager>>,
+}
+
+impl InlayHintHost for Host {
+    fn resolve(&self, hint: InlayHint) -> InlayHintFuture {
+        let manager = self.manager.upgrade();
+        Box::pin(async move {
+            let Some(manager) = manager else { return hint };
+            let Some(listed) = (hint.data.as_ref())
+                .and_then(|data| data.downcast_ref::<fe_lsp::InlayHint>())
+                .cloned()
+            else {
+                return hint;
+            };
+            // Sent with the lock held, and awaited without it.
+            let reply = super::lock(&manager).resolve_inlay_hint(listed);
+            drop(manager);
+            match reply.await {
+                Ok(resolved) => InlayHint {
+                    offset: hint.offset,
+                    ..convert(resolved)
+                },
+                Err(error) => {
+                    log::debug!("inlay hint not resolved: {error}");
+                    hint
+                }
+            }
+        })
+    }
+}
+
 /// `hint` as an editor draws it, keeping the server's in `data`.
 fn convert(hint: fe_lsp::InlayHint) -> InlayHint {
     InlayHint {
@@ -234,6 +311,8 @@ fn convert(hint: fe_lsp::InlayHint) -> InlayHint {
         }),
         padding_left: hint.padding_left,
         padding_right: hint.padding_right,
+        tooltip: hint.tooltip.clone(),
+        edits: hint.edits.clone(),
         data: Some(Rc::new(hint)),
     }
 }

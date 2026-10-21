@@ -41,6 +41,8 @@ fn hint(offset: usize, label: &str, left: bool, right: bool) -> InlayHint {
         padding_left: left,
         padding_right: right,
         data: Some(Rc::new(offset)),
+        tooltip: None,
+        edits: Vec::new(),
     }
 }
 
