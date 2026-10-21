@@ -178,8 +178,24 @@ impl HeadlessVim {
     /// context first, as the host's does.
     fn type_key(&mut self, key: VimKey) -> Result<(), FeedError> {
         let context = context(&self.state);
+        // The key after `<C-r>` names the register to insert.
+        if self.state.insert_register_waiting() {
+            self.state.insert_register_key(
+                &mut self.model,
+                &mut self.host,
+                &mut self.registers,
+                key,
+            );
+            return Ok(());
+        }
         match key {
             VimKey::Char(ch) => self.model.insert(ch.encode_utf8(&mut [0; 4])),
+            VimKey::Ctrl('r') => self.state.insert_register_start(),
+            VimKey::Ctrl('a') => self.state.insert_last_inserted(
+                &mut self.model,
+                &mut self.host,
+                &mut self.registers,
+            ),
             // `<C-j>` (`<NL>`) is `<CR>` here.
             VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
             VimKey::Backspace => self.model.backspace(),

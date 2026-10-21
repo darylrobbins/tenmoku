@@ -64,6 +64,29 @@ pub enum Mode {
     CmdLine(CommandLineKind),
 }
 
+/// What insert mode's `<C-r>` has read so far ([`VimState::insert_register_start`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RegisterKey {
+    /// `<C-r>`: a register's name, or `<C-r>`, `<C-o>` or `<C-p>` for a
+    /// literal insert, comes next.
+    Start,
+    /// `<C-r><C-r>`, `<C-r><C-o>` or `<C-r><C-p>`: the register's name
+    /// comes next.
+    Literal(LiteralInsert),
+}
+
+/// How `<C-r><C-r>`, `<C-r><C-o>` and `<C-r><C-p>` insert a register.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LiteralInsert {
+    /// `<C-r><C-r>`: the text as it is.
+    Plain,
+    /// `<C-r><C-o>`: as it is, whole lines above the caret's row.
+    Above,
+    /// `<C-r><C-p>`: as it is, whole lines above the row, with their
+    /// indent made the row's.
+    FixIndent,
+}
+
 /// Each caret's head and its goal column.
 pub(crate) type Goals = Vec<(usize, Option<usize>)>;
 
@@ -91,6 +114,10 @@ pub struct VimState {
     /// Set while `<C-o>` left a session for one normal-mode command: what
     /// resumes once it's done ([`VimState::one_command`]).
     pub(crate) one_command: Option<OneCommand>,
+    /// Set while insert mode waits for the register `<C-r>` names
+    /// ([`VimState::insert_register_start`]), and the session it began in,
+    /// which a prefix left over from an ended one doesn't belong to.
+    pub(crate) register_key: Option<(RegisterKey, usize)>,
     /// Set while `<C-n>` or `<C-p>` completes a keyword in insert mode
     /// ([`VimState::completion`]).
     pub(crate) completion: Option<Completion>,

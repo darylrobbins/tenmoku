@@ -1,0 +1,214 @@
+# Insert-mode <C-r>{reg} (and <C-r><C-r>, <C-r><C-o>, <C-r><C-p>) and <C-a>
+# cases for fe-vim's oracle: a register's text typed as if typed or literally,
+# the read-only registers, an empty one, a cancelled <C-r>, the last inserted
+# text, and . and macros replaying them.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation; a key that fails is
+# a case's last key. What nvim does with each is recorded in
+# insert_registers.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+[[case]]
+name = "ctrl_a_nothing_inserted"
+buffer = "abc"
+cursor = [0, 0]
+keys = "A<C-a>x<Esc>"
+
+
+[[case]]
+name = "ctrl_r_named"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r>a<Esc>"
+
+[[case]]
+name = "ctrl_r_unnamed"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yiwjA <C-r>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_linewise"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yyjA <C-r>\"x<Esc>"
+
+[[case]]
+name = "ctrl_r_multirow_autoindent"
+buffer = "p q\nr s\n    abc"
+cursor = [0, 0]
+keys = "vjyGA<C-r>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_multirow_linewise_autoindent"
+buffer = "p q\nr s\n    abc"
+cursor = [0, 0]
+keys = "yjGA<C-r>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_r_literal"
+buffer = "    abc\nx"
+cursor = [0, 4]
+keys = "yyjA<C-r><C-r>\"y<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_o_linewise_above"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yyjA<C-r><C-o>\"X<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_o_charwise"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yiwjA <C-r><C-o>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_p_fixes_indent"
+buffer = "foo\n    bar\nbaz"
+cursor = [0, 0]
+keys = "jyyjA<C-r><C-p>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_p_fixes_indent_below"
+buffer = "    foo\nbar\n        baz"
+cursor = [2, 0]
+keys = "yyggA<C-r><C-p>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_dot"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "Ax<Esc>jA<C-r>.<Esc>"
+
+[[case]]
+name = "ctrl_r_colon"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = ":s/b/B/<CR>jA<C-r>:<Esc>"
+
+[[case]]
+name = "ctrl_r_slash"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "/de<CR>A<C-r>/<Esc>"
+
+[[case]]
+name = "ctrl_r_empty_register"
+buffer = "abc"
+cursor = [0, 0]
+keys = "A<C-r>zx<Esc>"
+
+[[case]]
+name = "ctrl_r_numbered"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "ddA<C-r>1<Esc>"
+
+[[case]]
+name = "ctrl_r_small_delete"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "dwA<C-r>-<Esc>"
+
+[[case]]
+name = "ctrl_r_escape_cancels"
+buffer = "abc"
+cursor = [0, 0]
+keys = "yiwA<C-r><Esc>x<Esc>"
+
+[[case]]
+name = "ctrl_r_not_a_register"
+buffer = "abc"
+cursor = [0, 0]
+keys = "yiwA<C-r>!x<Esc>"
+
+[[case]]
+name = "ctrl_a_last_insert"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "Ax<Esc>jA<C-a><Esc>"
+
+[[case]]
+name = "ctrl_r_dot_repeat"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r>a<Esc>j\"byiw0\"aywj."
+
+[[case]]
+name = "ctrl_r_dot_repeat_changed_register"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwA <C-r>a<Esc>j\"ayiwj."
+
+[[case]]
+name = "ctrl_r_count"
+buffer = "abc"
+cursor = [0, 0]
+keys = "\"ayiw2A<C-r>a<Esc>"
+
+[[case]]
+name = "ctrl_a_dot_repeat"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "Ax<Esc>jA<C-a><Esc>j."
+
+[[case]]
+name = "ctrl_r_macro"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "\"ayiwqqA <C-r>a<Esc>jq@q"
+
+[[case]]
+name = "ctrl_r_inserts_into_middle"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "\"ayiwi<C-r>a<C-r>a<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_r_dot_register"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Ax<Esc>A<C-r><C-r>.<Esc>"
+
+[[case]]
+name = "ctrl_a_same_session"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Ax<Esc>A<C-a><C-a>y<Esc>"
+
+[[case]]
+name = "ctrl_r_dot_same_session"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Ax<Esc>Ay<C-r>.<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_o_charwise_multirow"
+buffer = "a b\nc d\n    efg"
+cursor = [0, 0]
+keys = "vjyGA<C-r><C-o>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_p_charwise_multirow"
+buffer = "a b\nc d\n    efg"
+cursor = [0, 0]
+keys = "vjyGA<C-r><C-p>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_p_charwise_relative_indent"
+buffer = "first\n second\n  third\n    row"
+cursor = [0, 0]
+keys = "vjj$yGA<C-r><C-p>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_ctrl_p_charwise_dedent_clamps"
+buffer = "first\n        second\n  third\n    row"
+cursor = [0, 0]
+keys = "vjj$yGA<C-r><C-p>\"<Esc>"
+
+[[case]]
+name = "ctrl_r_slash_unset_stops_macro"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "qqA<C-r>/X<Esc>jq@q<Esc>"

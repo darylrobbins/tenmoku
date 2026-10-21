@@ -20,15 +20,18 @@
 //! `:help i_CTRL-U`). They go in the session as marks too, so `.` and a
 //! count type them again, as nvim's do.
 
+use std::sync::Arc;
+
 use fe_buffer::Origin;
 use fe_editor::{EditorModel, IndentStyle, commands::EditorHost};
 
 use super::{Ended, Indent, MAX_PUT, Session, place, type_at_carets};
 use crate::{
-    LastChange, Mode, VimKey, VimState, VimTarget,
+    LastChange, Mode, Register, Registers, VimKey, VimState, VimTarget,
     motion::{Line, class},
-    operator::{apply, caret, sync},
+    operator::{apply, caret, indent_width, sync},
     replace::BACKSPACE,
+    state::{LiteralInsert, RegisterKey},
 };
 
 #[cfg(test)]
@@ -750,6 +753,233 @@ impl VimState {
         }
         model.set_selections(ends.into_iter().map(caret).collect::<Vec<_>>());
         moved
+    }
+}
+
+/// Whether `name` is a register `<C-r>` reads: `" 0-9 a-z A-Z - / . : + *`
+/// and `_`, which holds nothing (`:help i_CTRL-R`).
+fn readable(name: char) -> bool {
+    matches!(name, '"' | '-' | '/' | '.' | ':' | '+' | '*' | '_') || name.is_ascii_alphanumeric()
+}
+
+/// `lines` (whole lines) with their indent changed by the amount that makes
+/// the first non-empty line's `target` columns wide, rewritten from `unit`
+/// (tabs as many as fit, then spaces, if it is a tab), as `]p` does it.
+fn reindent_lines(lines: &str, target: usize, tab: usize, unit: &str) -> String {
+    let first = lines
+        .split_inclusive('\n')
+        .find(|line| !line.trim_end_matches('\n').is_empty())
+        .map_or(0, |line| indent_width(line, tab));
+    let mut out = String::with_capacity(lines.len());
+    for line in lines.split_inclusive('\n') {
+        let body = line.trim_end_matches('\n');
+        if body.is_empty() {
+            out.push_str(line);
+            continue;
+        }
+        let blanks = body
+            .bytes()
+            .take_while(|&b| b == b' ' || b == b'\t')
+            .count();
+        let width = (indent_width(line, tab) + target).saturating_sub(first);
+        match unit.starts_with('\t') {
+            true => {
+                out.push_str(&"\t".repeat(width / tab));
+                out.push_str(&" ".repeat(width % tab));
+            }
+            false => out.push_str(&" ".repeat(width)),
+        }
+        out.push_str(&line[blanks..]);
+    }
+    out
+}
+
+impl VimState {
+    /// `<C-r>` in insert mode (`:help i_CTRL-R`): the next key names the
+    /// register to insert, which [`VimState::insert_register_key`] reads;
+    /// `<C-r>`, `<C-o>` or `<C-p>` first make it a literal insert.
+    pub fn insert_register_start(&mut self) {
+        self.register_key = self.session_id().map(|id| (RegisterKey::Start, id));
+    }
+
+    /// Which open insert session this is, while in insert mode.
+    fn session_id(&self) -> Option<usize> {
+        let session = self
+            .session
+            .as_ref()
+            .filter(|_| self.mode == Mode::Insert)?;
+        Some(Arc::as_ptr(&session.ledger) as *const () as usize)
+    }
+
+    /// Whether insert mode waits for the key after `<C-r>`, which
+    /// [`VimState::insert_register_key`] takes.
+    pub fn insert_register_waiting(&self) -> bool {
+        self.register_key
+            .is_some_and(|(_, id)| self.session_id() == Some(id))
+    }
+
+    /// The key after `<C-r>`, or after `<C-r><C-r>`, `<C-r><C-o>` or
+    /// `<C-r><C-p>`: a register's name inserts its text, typed as if typed
+    /// (a line break indents as `<CR>` does) or, after one of those,
+    /// literally. `<C-r><C-o>` puts whole lines above the caret's row as
+    /// `P` does, and `<C-r><C-p>` does too with their indent made the
+    /// row's; for text within a row `<C-r><C-p>` gives the rows after the
+    /// first the caret's row's indent. An empty register inserts nothing.
+    /// `<Esc>`, `=` (an expression, which fe-vim has none of) and a key
+    /// that names no register insert nothing and leave insert mode as it
+    /// was. Known limit: only the primary caret's row takes a
+    /// `<C-r><C-p>`'s indent.
+    pub fn insert_register_key(
+        &mut self,
+        model: &mut EditorModel,
+        host: &mut dyn EditorHost,
+        registers: &mut Registers,
+        key: VimKey,
+    ) {
+        let Some((waiting, id)) = self.register_key.take() else {
+            return;
+        };
+        if self.session_id() != Some(id) {
+            return;
+        }
+        let how = match (waiting, key) {
+            (RegisterKey::Start, VimKey::Ctrl('r')) => Some(LiteralInsert::Plain),
+            (RegisterKey::Start, VimKey::Ctrl('o')) => Some(LiteralInsert::Above),
+            (RegisterKey::Start, VimKey::Ctrl('p')) => Some(LiteralInsert::FixIndent),
+            (RegisterKey::Start, _) => None,
+            (RegisterKey::Literal(how), _) => Some(how),
+        };
+        if let (RegisterKey::Start, Some(how)) = (waiting, how) {
+            self.register_key = Some((RegisterKey::Literal(how), id));
+            return;
+        }
+        let VimKey::Char(name) = key else {
+            return;
+        };
+        if !readable(name) || self.mode != Mode::Insert || self.session.is_none() {
+            return;
+        }
+        registers.adopt_inserted(self);
+        if name == '/' && registers.last_search().is_none() {
+            self.failed = true;
+            self.message = Some("E35: No previous regular expression".to_string());
+            return;
+        }
+        let Ok(Some(value)) = registers.read(Some(name), host) else {
+            return;
+        };
+        self.insert_value(model, host, value, how);
+    }
+
+    /// `<C-a>` in insert mode (`:help i_CTRL-A`): the text the last insert
+    /// typed, as `<C-r>.` inserts it. With none yet it fails, as nvim's
+    /// E29.
+    pub fn insert_last_inserted(
+        &mut self,
+        model: &mut EditorModel,
+        host: &mut dyn EditorHost,
+        registers: &mut Registers,
+    ) {
+        if self.mode != Mode::Insert || self.session.is_none() {
+            return;
+        }
+        registers.adopt_inserted(self);
+        match registers
+            .get('.')
+            .cloned()
+            .filter(|value| !value.text.is_empty())
+        {
+            Some(value) => self.insert_value(model, host, value, None),
+            None => {
+                self.failed = true;
+                self.message = Some("E29: No inserted text yet".to_string());
+            }
+        }
+    }
+
+    /// `value` inserted at every caret: typed as if typed if `how` is
+    /// `None`, else as [`VimState::insert_register_key`] says.
+    fn insert_value(
+        &mut self,
+        model: &mut EditorModel,
+        host: &dyn EditorHost,
+        value: Register,
+        how: Option<LiteralInsert>,
+    ) {
+        let mut text = value.text.replace("\r\n", "\n").replace('\r', "\n");
+        if value.linewise && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        let carets = model.selections().len();
+        if text.is_empty() {
+            return;
+        }
+        if text.len().saturating_mul(carets) > MAX_PUT {
+            self.failed = true;
+            self.message = Some(format!(
+                "inserting {} bytes at {carets} carets would pass {MAX_PUT} bytes",
+                text.len()
+            ));
+            return;
+        }
+        model.sync_display();
+        let whole_lines = value.linewise && value.block_width.is_none();
+        match how {
+            None => {
+                for (ix, part) in text.split('\n').enumerate() {
+                    if ix > 0 {
+                        self.line_break_in(model, host);
+                    }
+                    if !part.is_empty() {
+                        model.insert(part);
+                    }
+                }
+            }
+            Some(LiteralInsert::Plain) => model.insert(&text),
+            Some(LiteralInsert::Above) if !whole_lines => model.insert(&text),
+            Some(LiteralInsert::FixIndent) if !whole_lines => {
+                let snapshot = model.text().clone();
+                let row = snapshot
+                    .offset_to_point(model.primary_selection().head())
+                    .row;
+                let (tab, unit) = (model.tab_size().max(1), model.indent_unit());
+                let target = indent_width(&snapshot.row_to_string(row), tab);
+                // The rows after the first take the row's indent, keeping
+                // their indents relative to the second's.
+                let fixed = match text.split_once('\n') {
+                    Some((first, rest)) => {
+                        format!("{first}\n{}", reindent_lines(rest, target, tab, &unit))
+                    }
+                    None => text.clone(),
+                };
+                model.insert(&fixed);
+            }
+            Some(how) => {
+                let snapshot = model.text().clone();
+                let mut starts: Vec<usize> = model
+                    .selections()
+                    .iter()
+                    .map(|selection| {
+                        snapshot.row_start(snapshot.offset_to_point(selection.head()).row)
+                    })
+                    .collect();
+                starts.sort_unstable();
+                starts.dedup();
+                if how == LiteralInsert::FixIndent {
+                    let row = snapshot
+                        .offset_to_point(model.primary_selection().head())
+                        .row;
+                    let tab = model.tab_size().max(1);
+                    let target = indent_width(&snapshot.row_to_string(row), tab);
+                    text = reindent_lines(&text, target, tab, &model.indent_unit());
+                }
+                // The carets end after the lines, at the start of the rows
+                // they were on.
+                model.set_selections(starts.into_iter().map(caret).collect::<Vec<_>>());
+                model.insert(&text);
+            }
+        }
+        self.goals = None;
     }
 }
 
