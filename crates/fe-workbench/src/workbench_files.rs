@@ -408,6 +408,59 @@ impl Workbench {
     /// folders they're in, resolved ([`under`]), so another spelling of the
     /// root matches too.
     pub(crate) fn busy_under(path: &Path, window: &Window, cx: &App) -> Option<Busy> {
+        let this_window = window.window_handle().window_id();
+        let this = window.root::<Workbench>().flatten();
+        let others = (cx.windows().into_iter())
+            .filter(|other| other.window_id() != this_window)
+            .filter_map(|other| other.downcast::<Workbench>())
+            .filter_map(|other| other.entity(cx).ok());
+        let workbenches = (this.into_iter().chain(others)).map(|workbench| workbench.read(cx));
+        Self::busy_among(path, workbenches, cx)
+    }
+
+    /// [`Workbench::busy_under`] from inside this workbench's update, which
+    /// has no window to ask: this workbench and `others`
+    /// ([`Workbench::other_workbenches`]).
+    pub(crate) fn busy_under_here(
+        &self,
+        path: &Path,
+        others: &[Entity<Workbench>],
+        cx: &App,
+    ) -> Option<Busy> {
+        Self::busy_among(path, self.and_others(others, cx), cx)
+    }
+
+    /// Every other window's workbench, from inside this one's update. A
+    /// window being updated (this one's, as a picker in it applies an
+    /// edit) can't be read, and is passed over: reading it panics, where
+    /// updating it fails.
+    pub(crate) fn other_workbenches(cx: &mut Context<Self>) -> Vec<Entity<Workbench>> {
+        let this = cx.entity_id();
+        let windows: Vec<_> = (cx.windows().into_iter())
+            .filter(|window| window.downcast::<Workbench>().is_some())
+            .collect();
+        (windows.into_iter())
+            .filter_map(|window| cx.update_window(window, |root, _, _| root).ok())
+            .filter_map(|root| root.downcast::<Workbench>().ok())
+            .filter(|other| other.entity_id() != this)
+            .collect()
+    }
+
+    /// This workbench, then `others`, read.
+    pub(crate) fn and_others<'a>(
+        &'a self,
+        others: &'a [Entity<Workbench>],
+        cx: &'a App,
+    ) -> impl Iterator<Item = &'a Workbench> {
+        std::iter::once(self).chain(others.iter().map(|other| other.read(cx)))
+    }
+
+    /// [`Workbench::busy_under`] over `workbenches`.
+    fn busy_among<'a>(
+        path: &Path,
+        workbenches: impl Iterator<Item = &'a Workbench>,
+        cx: &'a App,
+    ) -> Option<Busy> {
         let from = resolved(path);
         let under = |other: &Path| under(other, path, &from);
         if open::reserved_paths().iter().any(|held| under(held)) {
@@ -424,14 +477,7 @@ impl Workbench {
         if detached.is_some_and(|saves| saves.0.iter().any(saving_under)) {
             return Some(Busy::Saving);
         }
-        let this_window = window.window_handle().window_id();
-        let this = window.root::<Workbench>().flatten();
-        let others = (cx.windows().into_iter())
-            .filter(|other| other.window_id() != this_window)
-            .filter_map(|other| other.downcast::<Workbench>())
-            .filter_map(|other| other.entity(cx).ok());
-        for workbench in this.into_iter().chain(others) {
-            let workbench = workbench.read(cx);
+        for workbench in workbenches {
             if workbench.open_editors(cx).iter().any(saving_under) {
                 return Some(Busy::Saving);
             }
@@ -465,6 +511,34 @@ impl Workbench {
         (this.into_iter().chain(others))
             .flat_map(|workbench| workbench.read(cx).moves(from, to, cx))
             .collect()
+    }
+
+    /// [`Workbench::plan_rename`] from inside this workbench's update, over
+    /// it and `others`.
+    pub(crate) fn plan_rename_here(
+        &self,
+        from: &Path,
+        to: &Path,
+        others: &[Entity<Workbench>],
+        cx: &App,
+    ) -> Moves {
+        (self.and_others(others, cx))
+            .flat_map(|workbench| workbench.moves(from, to, cx))
+            .collect()
+    }
+
+    /// [`Workbench::follow_moves`] in this workbench and `others`, from
+    /// inside this one's update.
+    pub(crate) fn follow_moves_everywhere(
+        &mut self,
+        moves: &Moves,
+        others: &[Entity<Workbench>],
+        cx: &mut Context<Self>,
+    ) {
+        self.follow_moves(moves, cx);
+        for other in others {
+            other.update(cx, |other, cx| other.follow_moves(moves, cx));
+        }
     }
 
     /// [`Workbench::plan_rename`]'s moves of this workbench's editors.

@@ -80,7 +80,7 @@ use lsp_types::{
     InlayHintClientCapabilities, InlayHintResolveClientCapabilities,
     InlayHintWorkspaceClientCapabilities, MarkupKind, NumberOrString, ParameterInformationSettings,
     PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
-    RenameClientCapabilities, SemanticTokensClientCapabilities,
+    RenameClientCapabilities, ResourceOperationKind, SemanticTokensClientCapabilities,
     SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
     SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
@@ -2287,11 +2287,16 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             // Answered by the host, through `LspEvent::ApplyEdit`
-            // (workspace_edit.rs), which takes edits to files' text only.
+            // (workspace_edit.rs), which applies text edits and file
+            // operations in order, stopping at the first that fails.
             apply_edit: Some(true),
             workspace_edit: Some(WorkspaceEditClientCapabilities {
                 document_changes: Some(true),
-                resource_operations: Some(Vec::new()),
+                resource_operations: Some(vec![
+                    ResourceOperationKind::Create,
+                    ResourceOperationKind::Rename,
+                    ResourceOperationKind::Delete,
+                ]),
                 failure_handling: Some(FailureHandlingKind::Abort),
                 ..Default::default()
             }),

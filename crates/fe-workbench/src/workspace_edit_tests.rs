@@ -669,3 +669,6 @@ fn stub_commands_in_the_editor_context(cx: &mut TestAppContext) {
         }
     });
 }
+
+#[path = "workspace_edit_ops_tests.rs"]
+mod ops;

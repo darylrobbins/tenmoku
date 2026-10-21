@@ -20,15 +20,25 @@
 //!   delete keeps its order: the output lists, in order, each run of text
 //!   edits (merged per file) and each operation ([`EditTarget::Create`],
 //!   [`Rename`](EditTarget::Rename), [`Delete`](EditTarget::Delete)), with
-//!   the operation's options. Text edits to a file created or renamed to
-//!   earlier are [`EditTarget::Closed`], against empty text for a created
-//!   one. A version on such an edit is refused, as the server can't know
-//!   one for a file the edit makes; a null version is accepted. Operations
+//!   the operation's options. A text edit to a file created or renamed to
+//!   earlier is decoded against the text the server had for it: a
+//!   rename's, the file it was renamed from as it was then, or empty for a
+//!   created one. If the server has that file open, the edit is
+//!   [`EditTarget::Open`] for its buffer and version, which the host
+//!   checks as any other; otherwise [`EditTarget::Closed`]. A create or
+//!   rename that `ignoreIfExists` may skip (without `overwrite`) is made
+//!   only if its target isn't there, which only the host finds out: a text
+//!   edit whose file depends on it is [`EditTarget::Depends`], decoded both
+//!   ways (made, as above; skipped, the target's own text, and a rename's
+//!   source still there). A version on an edit to a path an operation
+//!   covers is refused, as the server can't know one for a file the edit
+//!   may make; a null version is accepted. Operations
 //!   cover the paths under a directory, compared by components: a delete
-//!   removes them, a rename moves them (the old paths are gone, those
-//!   under the new name are fresh), and a later create makes a path fresh
-//!   again. fe-lsp decodes them but doesn't advertise them yet
-//!   (`resourceOperations` stays empty), and the workbench refuses them.
+//!   removes them, a rename moves them (the old paths are gone, unless it
+//!   may be skipped, and those under the new name are fresh), and a later
+//!   create makes a path fresh again. fe-lsp advertises all three (`resourceOperations`), with
+//!   `failureHandling` `abort`: the host applies them in order with the
+//!   text edits, stopping at the first that fails.
 //! - Both forms are read: `documentChanges` if the server sent it,
 //!   otherwise `changes`. Several `TextDocumentEdit`s for one file are
 //!   merged, all read against the same text, and each file's edits come
@@ -48,7 +58,7 @@
 //!   to it is dropped.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -88,7 +98,9 @@ pub struct FileEdits {
 #[non_exhaustive]
 pub enum EditTarget {
     /// The server has the file open as `buffer`: byte edits of its text at
-    /// `version`, sorted by start, none overlapping.
+    /// `version`, sorted by start, none overlapping. For a path an earlier
+    /// rename of the edit moved to, `buffer` is the file it was renamed
+    /// from, which its editors follow to the path.
     Open {
         buffer: BufferId,
         version: Version,
@@ -116,6 +128,18 @@ pub enum EditTarget {
     Delete {
         recursive: bool,
         ignore_if_not_exists: bool,
+    },
+    /// Text edits whose file depends on whether `on`, a create or rename
+    /// `ignoreIfExists` may skip, is made: the target if it's made, and if
+    /// it's skipped, or why the edits can't apply that way. `on` is the
+    /// latest operation before this entry equal to it (an edit joined
+    /// after another keeps its own). Each is [`Open`](Self::Open),
+    /// [`Closed`](Self::Closed), or another `Depends` on an earlier
+    /// operation.
+    Depends {
+        on: Arc<FileEdits>,
+        made: Arc<Result<EditTarget, String>>,
+        skipped: Arc<Result<EditTarget, String>>,
     },
 }
 
@@ -211,9 +235,87 @@ struct Sent {
     versions: Vec<i32>,
     edits: Vec<TextEdit>,
     /// The edit created it, renamed another file to it, or renamed a
-    /// directory to a path above it, earlier: it's closed, whatever the
-    /// server has open under the path, and a version for it is refused.
+    /// directory to a path above it, earlier: a version for it is refused.
     fresh: bool,
+    /// What the path holds, which the edits are against: a node of the
+    /// reader's [`Graph`] ([`Reader::holds`]).
+    holds: usize,
+}
+
+/// What a path holds once the edit's earlier operations are made, for
+/// decoding the text edits to it: a node of a [`Graph`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Holds {
+    /// The text this file had before the edit: its document, if the server
+    /// has it open, else what's on disk.
+    File(PathBuf),
+    /// Created, empty.
+    Empty,
+    /// Deleted or renamed away: why edits to it are refused.
+    Gone(String),
+    /// Depending on whether the `op`th operation, which `ignoreIfExists`
+    /// may skip, is made: the nodes it holds then.
+    Either {
+        op: usize,
+        made: usize,
+        skipped: usize,
+    },
+}
+
+/// What the edit's paths come to, each node once: equal nodes are one,
+/// and a node's parts come before it. Operations that may be skipped
+/// branch what a path holds, and branches meet again, so the nodes are
+/// shared rather than a tree, which would double with each.
+#[derive(Default)]
+struct Graph {
+    nodes: Vec<Holds>,
+    numbers: HashMap<Holds, usize>,
+    /// For each node, the [`Holds::Gone`] it comes to whichever way the
+    /// operations go, if it does.
+    gone: Vec<Option<usize>>,
+    /// The node a path holds once a number of effects are made, for each
+    /// worked out.
+    memo: HashMap<(PathBuf, usize), usize>,
+}
+
+impl Graph {
+    /// `holds`'s number, made if it's new; an [`Holds::Either`] the same
+    /// both ways is the node it is.
+    fn node(&mut self, holds: Holds) -> usize {
+        if let Holds::Either { made, skipped, .. } = holds
+            && made == skipped
+        {
+            return made;
+        }
+        if let Some(&number) = self.numbers.get(&holds) {
+            return number;
+        }
+        let number = self.nodes.len();
+        let gone = match &holds {
+            Holds::Gone(_) => Some(number),
+            Holds::Either { made, skipped, .. } => self.gone[*skipped].and(self.gone[*made]),
+            Holds::File(_) | Holds::Empty => None,
+        };
+        self.nodes.push(holds.clone());
+        self.numbers.insert(holds, number);
+        self.gone.push(gone);
+        number
+    }
+}
+
+/// What a path holds after some effects, in terms of what it held before
+/// the latest of them that covers it.
+enum Next {
+    Is(Holds),
+    /// The same as this path after this many effects.
+    Same(PathBuf, usize),
+    /// Depending on the `op`th operation: `made`, a node or a path after a
+    /// number of effects, or, skipped, this one.
+    Choice {
+        op: usize,
+        made: Result<Holds, (PathBuf, usize)>,
+        skipped: (PathBuf, usize),
+    },
 }
 
 /// A step of a workspace edit, in the order the server sent them.
@@ -230,37 +332,144 @@ struct Reader {
     steps: Vec<Step>,
     /// The current run of text edits.
     files: Vec<Sent>,
-    /// What its operations did to paths, in order: `None` made the path
-    /// fresh (created, or renamed to), `Some(how)` removed it (deleted or
-    /// renamed away). An effect covers the path and every path under it,
-    /// by components; the last one that covers a path is the one that
-    /// holds.
-    effects: Vec<(PathBuf, Option<&'static str>)>,
+    /// What its operations did to paths, in order. An effect covers the
+    /// path and every path under it, by components; the last one that
+    /// covers a path is the one that holds.
+    effects: Vec<(PathBuf, Effect)>,
+    /// The operations read so far.
+    operations: Vec<FileEdits>,
+    graph: Graph,
+}
+
+/// What an operation did to a path and those under it. `kept` is the
+/// operation's number if `ignoreIfExists` (without `overwrite`) may skip
+/// it, leaving the path as it was.
+#[derive(Clone, Debug)]
+enum Effect {
+    /// Deleted, or renamed away: how.
+    Removed {
+        how: &'static str,
+        kept: Option<usize>,
+    },
+    Created {
+        kept: Option<usize>,
+    },
+    /// Renamed to, from `from`. Always just after `from`'s
+    /// [`Effect::Removed`].
+    Renamed {
+        from: PathBuf,
+        kept: Option<usize>,
+    },
 }
 
 impl Reader {
     /// The latest effect an earlier operation had on `path`, if any.
-    fn effect(&self, path: &Path) -> Option<Option<&'static str>> {
+    fn effect(&self, path: &Path) -> Option<&Effect> {
         (self.effects.iter().rev())
             .find(|(under, _)| path.starts_with(under))
-            .map(|(_, how)| *how)
+            .map(|(_, effect)| effect)
+    }
+
+    /// What `path` holds once the first `before` effects are made: its
+    /// node. Each path after a number of effects is worked out once, from
+    /// the latest effect covering it, without recursing: a long chain of
+    /// renames is a long walk, not a deep stack.
+    fn holds(&mut self, path: &Path, before: usize) -> usize {
+        let mut stack = vec![(path.to_owned(), before)];
+        while let Some(key) = stack.last().cloned() {
+            if self.graph.memo.contains_key(&key) {
+                stack.pop();
+                continue;
+            }
+            let number = match self.next(&key.0, key.1) {
+                Next::Is(holds) => Some(self.graph.node(holds)),
+                Next::Same(path, before) => {
+                    let found = self.graph.memo.get(&(path.clone(), before)).copied();
+                    if found.is_none() {
+                        stack.push((path, before));
+                    }
+                    found
+                }
+                Next::Choice { op, made, skipped } => {
+                    let made = match made {
+                        Ok(holds) => Some(self.graph.node(holds)),
+                        Err(key) => self.graph.memo.get(&key).copied().or_else(|| {
+                            stack.push(key);
+                            None
+                        }),
+                    };
+                    let skipped = self.graph.memo.get(&skipped).copied().or_else(|| {
+                        stack.push(skipped);
+                        None
+                    });
+                    made.zip(skipped)
+                        .map(|(made, skipped)| self.graph.node(Holds::Either { op, made, skipped }))
+                }
+            };
+            if let Some(number) = number {
+                self.graph.memo.insert(key, number);
+                stack.pop();
+            }
+        }
+        self.graph.memo[&(path.to_owned(), before)]
+    }
+
+    /// What `path` holds after the first `before` effects, by the latest
+    /// of them that covers it. Skipped, an operation leaves the path as it
+    /// was before it.
+    fn next(&self, path: &Path, before: usize) -> Next {
+        let found = (self.effects[..before].iter().enumerate().rev())
+            .find(|(_, (under, _))| path.starts_with(under));
+        let Some((at, (under, effect))) = found else {
+            return Next::Is(Holds::File(path.to_owned()));
+        };
+        let kept_or = |kept: &Option<usize>, made: Result<Holds, (PathBuf, usize)>, before| match (
+            kept, made,
+        ) {
+            (Some(op), made) => Next::Choice {
+                op: *op,
+                made,
+                skipped: (path.to_owned(), before),
+            },
+            (None, Ok(holds)) => Next::Is(holds),
+            (None, Err((path, before))) => Next::Same(path, before),
+        };
+        match effect {
+            Effect::Removed { how, kept } => {
+                let display = path.display();
+                let gone = Holds::Gone(format!("it edits {display}, which it {how} earlier"));
+                kept_or(kept, Ok(gone), at)
+            }
+            Effect::Created { kept } => kept_or(kept, Ok(Holds::Empty), at),
+            Effect::Renamed { from, kept } => {
+                let rest = path.strip_prefix(under).unwrap_or(Path::new(""));
+                let from = match rest.as_os_str().is_empty() {
+                    true => from.clone(),
+                    false => from.join(rest),
+                };
+                // Before the rename, whose source's removal comes just
+                // ahead of this.
+                kept_or(kept, Err((from, at - 1)), at - 1)
+            }
+        }
     }
 
     fn add(&mut self, uri: Url, version: Option<i32>, edits: Vec<TextEdit>) -> Result<(), String> {
         let path = file_path(&uri)?;
-        let effect = self.effect(&path);
-        if let Some(Some(how)) = effect {
-            return Err(format!(
-                "it edits {}, which it {how} earlier",
-                path.display()
-            ));
+        let holds = self.holds(&path, self.effects.len());
+        if let Some(gone) = self.graph.gone[holds]
+            && let Holds::Gone(why) = &self.graph.nodes[gone]
+        {
+            return Err(why.clone());
         }
+        let fresh = self.effect(&path).is_some();
         let at = match self.files.iter().position(|file| file.path == path) {
             Some(at) => at,
             None => {
                 self.files.push(Sent {
                     uri,
-                    fresh: effect == Some(None),
+                    fresh,
+                    holds,
                     path,
                     versions: Vec::new(),
                     edits: Vec::new(),
@@ -278,39 +487,59 @@ impl Reader {
             self.steps
                 .push(Step::Edits(std::mem::take(&mut self.files)));
         }
+        let op_number = self.operations.len();
+        let kept = |overwrite: bool, ignore_if_exists: bool| {
+            (ignore_if_exists && !overwrite).then_some(op_number)
+        };
         let (path, target) = match op {
             ResourceOp::Create(create) => {
                 let path = file_path(&create.uri)?;
                 let options = create.options;
-                self.effects.push((path.clone(), None));
+                let overwrite = options.as_ref().and_then(|o| o.overwrite).unwrap_or(false);
+                let ignore_if_exists = (options.as_ref())
+                    .and_then(|o| o.ignore_if_exists)
+                    .unwrap_or(false);
+                let kept = kept(overwrite, ignore_if_exists);
+                self.effects.push((path.clone(), Effect::Created { kept }));
                 let target = EditTarget::Create {
-                    overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
-                    ignore_if_exists: options
-                        .as_ref()
-                        .and_then(|o| o.ignore_if_exists)
-                        .unwrap_or(false),
+                    overwrite,
+                    ignore_if_exists,
                 };
                 (path, target)
             }
             ResourceOp::Rename(rename) => {
                 let (from, to) = (file_path(&rename.old_uri)?, file_path(&rename.new_uri)?);
                 let options = rename.options;
-                self.effects.push((from.clone(), Some("renamed")));
-                self.effects.push((to.clone(), None));
+                let overwrite = options.as_ref().and_then(|o| o.overwrite).unwrap_or(false);
+                let ignore_if_exists = (options.as_ref())
+                    .and_then(|o| o.ignore_if_exists)
+                    .unwrap_or(false);
+                let kept = kept(overwrite, ignore_if_exists);
+                let removed = Effect::Removed {
+                    how: "renamed",
+                    kept,
+                };
+                self.effects.push((from.clone(), removed));
+                let renamed = Effect::Renamed {
+                    from: from.clone(),
+                    kept,
+                };
+                self.effects.push((to.clone(), renamed));
                 let target = EditTarget::Rename {
                     to,
-                    overwrite: options.as_ref().and_then(|o| o.overwrite).unwrap_or(false),
-                    ignore_if_exists: options
-                        .as_ref()
-                        .and_then(|o| o.ignore_if_exists)
-                        .unwrap_or(false),
+                    overwrite,
+                    ignore_if_exists,
                 };
                 (from, target)
             }
             ResourceOp::Delete(delete) => {
                 let path = file_path(&delete.uri)?;
                 let options = delete.options;
-                self.effects.push((path.clone(), Some("deleted")));
+                let removed = Effect::Removed {
+                    how: "deleted",
+                    kept: None,
+                };
+                self.effects.push((path.clone(), removed));
                 let target = EditTarget::Delete {
                     recursive: options.as_ref().and_then(|o| o.recursive).unwrap_or(false),
                     ignore_if_not_exists: options
@@ -321,15 +550,19 @@ impl Reader {
                 (path, target)
             }
         };
-        self.steps.push(Step::Operation(FileEdits { path, target }));
+        let operation = FileEdits { path, target };
+        self.operations.push(operation.clone());
+        self.steps.push(Step::Operation(operation));
         Ok(())
     }
 
-    fn finish(mut self) -> Vec<Step> {
+    /// The steps, the operations, which [`Holds::Either`] numbers, and
+    /// the graph.
+    fn finish(mut self) -> (Vec<Step>, Vec<FileEdits>, Graph) {
         if !self.files.is_empty() {
             self.steps.push(Step::Edits(self.files));
         }
-        self.steps
+        (self.steps, self.operations, self.graph)
     }
 }
 
@@ -369,73 +602,165 @@ pub(crate) fn decode(
         }
     }
     let mut decoded = Vec::new();
-    for step in reader.finish() {
+    let (steps, operations, graph) = reader.finish();
+    let operations: Vec<_> = operations.into_iter().map(Arc::new).collect();
+    for step in steps {
         match step {
             Step::Edits(files) => {
                 for file in files {
-                    decoded.push(decode_file(file, documents, encoding)?);
+                    let empty = file.edits.is_empty();
+                    let file = decode_file(file, documents, &operations, &graph, encoding)?;
+                    // Only once every file's version has been checked.
+                    if !empty {
+                        decoded.push(file);
+                    }
                 }
             }
             Step::Operation(operation) => decoded.push(operation),
         }
     }
-    // Only once every file's version has been checked.
-    decoded.retain(|file| match &file.target {
-        EditTarget::Open { edits, .. } => !edits.is_empty(),
-        EditTarget::Closed { edits, .. } => !edits.is_empty(),
-        _ => true,
-    });
     Ok(decoded)
 }
 
-/// One file's edits, decoded if `documents` has it open: at the version
-/// there, which every version the edit names must be.
+/// One file's edits, decoded against what its path holds
+/// ([`Holds`]): for a file `documents` has open, at the version there,
+/// which every version the edit names must be.
 fn decode_file(
     file: Sent,
     documents: &[SentDocument],
+    operations: &[Arc<FileEdits>],
+    graph: &Graph,
     encoding: PositionEncoding,
 ) -> Result<FileEdits, String> {
-    let display = file.path.display();
-    let mut open = (documents.iter())
-        .filter(|document| {
-            document.uri == file.uri || file_path(&document.uri).is_ok_and(|path| path == file.path)
-        })
-        .filter(|_| !file.fresh);
-    let target = match (open.next(), open.next()) {
-        (Some(_), Some(_)) => return Err(format!("{display} is open twice")),
-        (Some(document), None) => {
-            let sent = &document.sent;
-            // Every one named, whatever the rest are.
-            if let Some(version) = (file.versions.iter()).find(|&&v| v != sent.lsp_version) {
-                return Err(format!(
-                    "{display} has changed: the edit is for version {version}, \
-                     the server has {}",
-                    sent.lsp_version
-                ));
-            }
-            let edits = decode_closed(&sent.text, &file.edits, encoding)
-                .map_err(|why| format!("{display}: {why}"))?;
-            EditTarget::Open {
-                buffer: document.buffer,
-                version: sent.version,
-                edits,
-            }
-        }
-        (None, _) => {
-            if let Some(version) = file.versions.first() {
-                return Err(if file.fresh {
-                    format!("{display} is made by the edit, which can't know its version {version}")
-                } else {
-                    format!("{display} isn't open at version {version}")
-                });
-            }
-            let edits = sorted(file.edits).map_err(|why| format!("{display}: {why}"))?;
-            EditTarget::Closed { edits, encoding }
-        }
-    };
+    if let Some(version) = file.versions.first().filter(|_| file.fresh) {
+        return Err(format!(
+            "{} is made by the edit, which can't know its version {version}",
+            file.path.display()
+        ));
+    }
+    let target = Arc::unwrap_or_clone(decode_holds(&file, documents, operations, graph, encoding))?;
     Ok(FileEdits {
         path: file.path,
         target,
+    })
+}
+
+/// A decoded target, or why the edits can't apply that way.
+type Decoded = Arc<Result<EditTarget, String>>;
+
+/// `file`'s edits against what its path holds, each node it can come to
+/// decoded once, parts first. Equal targets are one: a leaf by what decodes
+/// it, a [`EditTarget::Depends`] by its operation and parts, which collapses
+/// if its parts are one.
+fn decode_holds(
+    file: &Sent,
+    documents: &[SentDocument],
+    operations: &[Arc<FileEdits>],
+    graph: &Graph,
+    encoding: PositionEncoding,
+) -> Decoded {
+    let display = file.path.display();
+    // The nodes it can come to, in order: each node's parts come before
+    // it.
+    let mut reachable = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![file.holds];
+    while let Some(number) = stack.pop() {
+        if !seen.insert(number) {
+            continue;
+        }
+        reachable.push(number);
+        if let Holds::Either { made, skipped, .. } = &graph.nodes[number] {
+            stack.extend([*made, *skipped]);
+        }
+    }
+    reachable.sort_unstable();
+    let mut decoded: HashMap<usize, Decoded> = HashMap::new();
+    let mut closed: Option<Decoded> = None;
+    let mut open: HashMap<usize, Decoded> = HashMap::new();
+    // By operation and the addresses of its parts.
+    let mut depends: HashMap<(usize, usize, usize), Decoded> = HashMap::new();
+    for number in reachable {
+        let mut closed = || {
+            closed
+                .get_or_insert_with(|| {
+                    Arc::new(
+                        sorted(file.edits.clone())
+                            .map(|edits| EditTarget::Closed { edits, encoding })
+                            .map_err(|why| format!("{display}: {why}")),
+                    )
+                })
+                .clone()
+        };
+        let target = match &graph.nodes[number] {
+            Holds::Gone(why) => Arc::new(Err(why.clone())),
+            Holds::Empty => closed(),
+            Holds::Either { op, made, skipped } => {
+                let (made, skipped) = (&decoded[made], &decoded[skipped]);
+                if Arc::ptr_eq(made, skipped) || (made.is_err() && skipped.is_err()) {
+                    made.clone()
+                } else {
+                    let key = (*op, Arc::as_ptr(made).addr(), Arc::as_ptr(skipped).addr());
+                    (depends.entry(key))
+                        .or_insert_with(|| {
+                            Arc::new(Ok(EditTarget::Depends {
+                                on: operations[*op].clone(),
+                                made: made.clone(),
+                                skipped: skipped.clone(),
+                            }))
+                        })
+                        .clone()
+                }
+            }
+            Holds::File(origin) => {
+                let mut matching = (documents.iter().enumerate()).filter(|(_, document)| {
+                    (!file.fresh && document.uri == file.uri)
+                        || file_path(&document.uri).is_ok_and(|path| path == *origin)
+                });
+                match (matching.next(), matching.next()) {
+                    (Some(_), Some(_)) => Arc::new(Err(format!("{display} is open twice"))),
+                    (Some((at, document)), None) => open
+                        .entry(at)
+                        .or_insert_with(|| Arc::new(decode_open(file, document, encoding)))
+                        .clone(),
+                    (None, _) => match file.versions.first() {
+                        Some(version) => {
+                            Arc::new(Err(format!("{display} isn't open at version {version}")))
+                        }
+                        None => closed(),
+                    },
+                }
+            }
+        };
+        decoded.insert(number, target);
+    }
+    decoded
+        .remove(&file.holds)
+        .expect("its own node is reachable")
+}
+
+/// `file`'s edits against `document`, which the server has open.
+fn decode_open(
+    file: &Sent,
+    document: &SentDocument,
+    encoding: PositionEncoding,
+) -> Result<EditTarget, String> {
+    let display = file.path.display();
+    let sent = &document.sent;
+    // Every one named, whatever the rest are.
+    if let Some(version) = (file.versions.iter()).find(|&&v| v != sent.lsp_version) {
+        return Err(format!(
+            "{display} has changed: the edit is for version {version}, \
+             the server has {}",
+            sent.lsp_version
+        ));
+    }
+    let edits = decode_closed(&sent.text, &file.edits, encoding)
+        .map_err(|why| format!("{display}: {why}"))?;
+    Ok(EditTarget::Open {
+        buffer: document.buffer,
+        version: sent.version,
+        edits,
     })
 }
 

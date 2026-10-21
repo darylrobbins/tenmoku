@@ -269,7 +269,7 @@ fn capabilities_are_declared() {
         workspace["workspaceEdit"],
         json!({
             "documentChanges": true,
-            "resourceOperations": [],
+            "resourceOperations": ["create", "rename", "delete"],
             "failureHandling": "abort",
         })
     );
@@ -858,6 +858,192 @@ fn apply_edit_reads_what_was_handed() {
     let documents = handed.documents();
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].identity, reopened.identity);
+}
+
+/// A text edit to a path an earlier operation made is decoded against the
+/// text the server had for it: a rename's source, or empty for a create;
+/// open, it's for that buffer at its version, which the host checks. An
+/// operation `ignoreIfExists` may skip decodes both ways, the source and
+/// the files under it staying if it's skipped.
+#[test]
+fn edits_after_an_operation_decode_against_their_origin() {
+    let mut s = Started::new();
+    let text = "alpha beta\n";
+    let mut buffers: Vec<Buffer> = (0..5).map(|_| Buffer::new("")).collect();
+    let names = ["a.rs", "c.rs", "d/y.rs", "s.rs", "f/z.rs"];
+    let uris: Vec<Url> = (buffers.iter_mut().zip(names))
+        .map(|(buffer, name)| s.open(buffer, name, text))
+        .collect();
+    let ids: Vec<_> = buffers.iter().map(Buffer::id).collect();
+    let sent: Vec<_> = (uris.iter())
+        .map(|uri| document(documents(&s), uri).sent.version)
+        .collect();
+    // What a target is, in brief: `open <n>` for the nth buffer opened,
+    // `on <path>` for the operation it depends on.
+    fn brief(
+        target: &Result<EditTarget, String>,
+        ids: &[fe_buffer::BufferId],
+        sent: &[fe_buffer::Version],
+    ) -> String {
+        match target {
+            Ok(EditTarget::Open {
+                buffer,
+                version,
+                edits,
+            }) => {
+                let n = ids.iter().position(|id| id == buffer).unwrap();
+                assert_eq!(*version, sent[n]);
+                assert_eq!(edits, &[(6..10, "gamma".to_owned())]);
+                format!("open {n}")
+            }
+            Ok(EditTarget::Closed { .. }) => "closed".to_owned(),
+            Ok(EditTarget::Depends { on, made, skipped }) => format!(
+                "on {}: made {}, skipped {}",
+                on.path.strip_prefix(path("")).unwrap().display(),
+                brief(made, ids, sent),
+                brief(skipped, ids, sent)
+            ),
+            Ok(other) => panic!("{other:?}"),
+            Err(why) => format!("refused: {why}"),
+        }
+    }
+    let edit = |name: &str| {
+        json!({ "textDocument": { "uri": uri(name), "version": null },
+                "edits": [text_edit(text, 6..10, "gamma")] })
+    };
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            // 0: renamed, then edited where it went.
+            { "kind": "rename", "oldUri": uri("a.rs"), "newUri": uri("b.rs") },
+            edit("b.rs"),
+            // 1: made, unless it's there, as open it is.
+            { "kind": "create", "uri": uri("c.rs"), "options": { "ignoreIfExists": true } },
+            edit("c.rs"),
+            // 2: a folder renamed: the file in it.
+            { "kind": "rename", "oldUri": uri("d"), "newUri": uri("e") },
+            edit("e/y.rs"),
+            // 3: an open file renamed unless the target's there: edited
+            // where it goes, and where it was.
+            { "kind": "rename", "oldUri": uri("s.rs"), "newUri": uri("t.rs"),
+              "options": { "ignoreIfExists": true } },
+            edit("t.rs"),
+            edit("s.rs"),
+            // 4: the same for a folder, and the file in it.
+            { "kind": "rename", "oldUri": uri("f"), "newUri": uri("g"),
+              "options": { "ignoreIfExists": true } },
+            edit("g/z.rs"),
+            edit("f/z.rs"),
+            // 5: made over it: empty.
+            { "kind": "create", "uri": uri("e/y.rs"), "options": { "overwrite": true } },
+            edit("e/y.rs"),
+            // 6: renamed from a file the server doesn't have open, unless
+            // the target's there: read from disk either way.
+            { "kind": "rename", "oldUri": uri("q.rs"), "newUri": uri("r.rs"),
+              "options": { "ignoreIfExists": true } },
+            edit("r.rs"),
+        ]}))
+        .unwrap();
+    let briefs: Vec<_> = (decoded.iter())
+        .map(|file| {
+            let path = file
+                .path
+                .strip_prefix(path(""))
+                .unwrap()
+                .display()
+                .to_string();
+            match &file.target {
+                EditTarget::Rename { .. }
+                | EditTarget::Create { .. }
+                | EditTarget::Delete { .. } => {
+                    format!("{path}: operation")
+                }
+                target => format!("{path}: {}", brief(&Ok(target.clone()), &ids, &sent)),
+            }
+        })
+        .collect();
+    assert_eq!(
+        briefs,
+        [
+            "a.rs: operation",
+            "b.rs: open 0",
+            "c.rs: operation",
+            "c.rs: on c.rs: made closed, skipped open 1",
+            "d: operation",
+            "e/y.rs: open 2",
+            "s.rs: operation",
+            "t.rs: on s.rs: made open 3, skipped closed",
+            "s.rs: on s.rs: made refused: it edits /fake/root/s.rs, which it renamed earlier, skipped open 3",
+            "f: operation",
+            "g/z.rs: on f: made open 4, skipped closed",
+            "f/z.rs: on f: made refused: it edits /fake/root/f/z.rs, which it renamed earlier, skipped open 4",
+            "e/y.rs: operation",
+            "e/y.rs: closed",
+            "q.rs: operation",
+            "r.rs: closed",
+        ]
+    );
+}
+
+/// Renames `ignoreIfExists` may skip, back and forth, don't double the
+/// work with each: what each path holds after each operation is worked out
+/// once, and the branches share it. Taken all made or all skipped, the
+/// edits after them are a.rs's buffer, and b.rs's gone or on disk.
+#[test]
+fn back_and_forth_skippable_renames_decode_in_bounded_time() {
+    let mut s = Started::new();
+    let text = "alpha beta\n";
+    let mut a = Buffer::new("");
+    s.open(&mut a, "a.rs", text);
+    let edit = |name: &str| {
+        json!({ "textDocument": { "uri": uri(name), "version": null },
+                "edits": [text_edit(text, 6..10, "gamma")] })
+    };
+    let mut changes: Vec<Value> = (0..2000)
+        .map(|n| {
+            let (from, to) = if n % 2 == 0 {
+                ("a.rs", "b.rs")
+            } else {
+                ("b.rs", "a.rs")
+            };
+            json!({ "kind": "rename", "oldUri": uri(from), "newUri": uri(to),
+                    "options": { "ignoreIfExists": true } })
+        })
+        .collect();
+    changes.extend([edit("a.rs"), edit("b.rs")]);
+    let started = Instant::now();
+    let decoded = s.decode(json!({ "documentChanges": changes })).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // As the host takes them, every operation made or every one skipped.
+    let resolve = |target: &EditTarget, skipped: bool| {
+        let mut target = Ok(target.clone());
+        while let Ok(EditTarget::Depends {
+            made,
+            skipped: kept,
+            ..
+        }) = &target
+        {
+            target = if skipped {
+                (**kept).clone()
+            } else {
+                (**made).clone()
+            };
+        }
+        target
+    };
+    let opened = |target: Result<EditTarget, String>| match target {
+        Ok(EditTarget::Open { buffer, .. }) => Some(buffer),
+        _ => None,
+    };
+    let (to_a, to_b) = (&decoded[2000].target, &decoded[2001].target);
+    assert_eq!(opened(resolve(to_a, false)), Some(a.id()));
+    assert!(resolve(to_b, false).unwrap_err().contains("b.rs"));
+    assert_eq!(opened(resolve(to_a, true)), Some(a.id()));
+    assert!(matches!(resolve(to_b, true), Ok(EditTarget::Closed { .. })));
 }
 
 #[path = "workspace_edit_ops_tests.rs"]
