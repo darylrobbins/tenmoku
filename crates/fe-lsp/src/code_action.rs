@@ -224,20 +224,10 @@ impl LspManager {
             .disabled
             .as_ref()
             .map(|why| LspError::Unavailable(format!("disabled: {why}")));
-        let from = action.payload.from;
         let reply = match (&refused, &action.payload.raw.command) {
-            (None, Some(command)) => Some(
-                self.request_if::<ExecuteCommand>(
-                    server,
-                    ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        work_done_progress_params: Default::default(),
-                    },
-                    move |opened| has_open(opened, from),
-                )
-                .boxed(),
-            ),
+            (None, Some(command)) => {
+                Some(self.execute_command(server, command, action.payload.from))
+            }
             _ => None,
         };
         async move {
@@ -245,13 +235,38 @@ impl LspManager {
                 return Err(err);
             }
             match reply {
-                Some(reply) => match reply.await? {
-                    Some(_) => Ok(()),
-                    None => Err(LspError::Unavailable(
-                        "the action is from an earlier session or opening".into(),
-                    )),
-                },
+                Some(reply) => reply.await,
                 None => Ok(()),
+            }
+        }
+    }
+
+    /// Has `server` run `command` with its arguments
+    /// (`workspace/executeCommand`), sent only while the session `from`
+    /// came from has that opening of the document: `Unavailable` if not.
+    pub(crate) fn execute_command(
+        &self,
+        server: ServerId,
+        command: &lsp_types::Command,
+        from: (BufferId, (SessionId, IncarnationId)),
+    ) -> impl Future<Output = Result<(), LspError>> + Send + 'static + use<> {
+        let reply = self
+            .request_if::<ExecuteCommand>(
+                server,
+                ExecuteCommandParams {
+                    command: command.command.clone(),
+                    arguments: command.arguments.clone().unwrap_or_default(),
+                    work_done_progress_params: Default::default(),
+                },
+                move |opened| has_open(opened, from),
+            )
+            .boxed();
+        async move {
+            match reply.await? {
+                Some(_) => Ok(()),
+                None => Err(LspError::Unavailable(
+                    "the action is from an earlier session or opening".into(),
+                )),
             }
         }
     }

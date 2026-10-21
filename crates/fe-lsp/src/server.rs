@@ -2450,7 +2450,13 @@ fn client_capabilities() -> ClientCapabilities {
             ]),
             ..Default::default()
         }),
-        experimental: Some(serde_json::json!({ "serverStatusNotification": true })),
+        experimental: Some(serde_json::json!({
+            "serverStatusNotification": true,
+            "commands": { "commands": [
+                "editor.action.triggerParameterHints",
+                "editor.action.triggerSuggest",
+            ] },
+        })),
     }
 }
 

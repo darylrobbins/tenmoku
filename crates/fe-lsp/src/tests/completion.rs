@@ -4,6 +4,7 @@
 //! 2 s timeouts.
 
 mod commit_characters;
+mod item_command;
 mod resolve_edits;
 
 use std::collections::HashMap;

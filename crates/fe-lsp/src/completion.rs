@@ -23,6 +23,12 @@
 //!   completions, and a resolve past `lsp.timeouts.resolve` (2 s) is the
 //!   item as it was: §3.5's "the menu closes". Both cancel the request.
 //!   Other failures are errors.
+//! - **Command.** An item's `command` (as resolved, if it was) is run after
+//!   the item is accepted. One its server lists in `executeCommandProvider`
+//!   goes to it as `workspace/executeCommand`
+//!   ([`LspManager::run_completion_command`]); any other, such as the
+//!   client command `editor.action.triggerParameterHints`, is the
+//!   editor's to run and is never sent.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -120,6 +126,14 @@ impl Decoded {
                 text: edit.new_text.clone(),
             })
             .collect()
+    }
+}
+
+impl CompletionItem {
+    /// The item's command, to run after it is accepted: as resolved, if it
+    /// was.
+    pub fn command(&self) -> Option<&lsp_types::Command> {
+        self.raw.command.as_ref()
     }
 }
 
@@ -248,6 +262,33 @@ impl LspManager {
                 Err(err) => Err(err),
             }
         }
+    }
+
+    /// Has `item`'s server run its command (`workspace/executeCommand`).
+    /// Any edit it applies in doing so arrives as
+    /// [`LspEvent::ApplyEdit`](crate::LspEvent::ApplyEdit).
+    ///
+    /// Nothing is sent for an item with no command (`Ok`), nor for one
+    /// its server doesn't list in `executeCommandProvider.commands`
+    /// (`Unavailable`): a client command is never the server's.
+    pub fn run_completion_command(
+        &self,
+        item: &CompletionItem,
+    ) -> impl Future<Output = Result<(), LspError>> + Send + 'static + use<> {
+        let Some(command) = item.command() else {
+            return async { Ok(()) }.boxed();
+        };
+        let listed = self.capabilities(item.server).is_some_and(|capabilities| {
+            (capabilities.execute_command_provider.as_ref())
+                .is_some_and(|provider| provider.commands.contains(&command.command))
+        });
+        if !listed {
+            let err =
+                LspError::Unavailable(format!("{}: not a command of the server", command.command));
+            return async move { Err(err) }.boxed();
+        }
+        self.execute_command(item.server, command, item.from)
+            .boxed()
     }
 
     /// The characters that should ask the server of open buffer `buffer`
