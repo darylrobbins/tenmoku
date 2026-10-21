@@ -1,6 +1,6 @@
 # Extensions and plugins for kiln apps
 
-**Status: proposed.** Waiting for the user's sign-off (§12). Task T839.
+**Status: accepted** (user, 2026-10-21; §12). Task T839.
 Amends `app-framework.md` §8 ("There's no themes directory or picker by name")
 by reference; that file isn't edited here (T401 holds it).
 
@@ -442,8 +442,9 @@ user's rights), if users ask for it.
 
 ## 9. Snippets
 
-fastedit has no snippet engine, so stage 1 doesn't take `contributes.snippets`.
-Needed first: a snippet parser (LSP snippet grammar: `$1`, `${1:default}`,
+fastedit had no snippet engine, so stage 1 didn't take `contributes.snippets`.
+The engine has landed (T856, T857) and `snippets` is now a stage-1 kind. What it
+needed: a snippet parser (LSP snippet grammar: `$1`, `${1:default}`,
 `${1|a,b|}`, `$0`, variables), a tabstop session in fe-editor on fe-buffer
 anchors, next/previous-tabstop commands and their vim behaviour, then
 `snippetSupport: true` in fe-lsp. Then `snippets` becomes a fastedit kind
@@ -455,8 +456,10 @@ Stage 1 (drafted with this record): the manifest and loader (kiln-core);
 discovery and hot reload (kiln-core, kiln-platform, kiln); themes; keymaps and
 menus; LSP servers (fe-lsp, fe-workbench, fastedit); grammars (fe-syntax, after
 this record and T401). Later: workspace extensions behind trust; disabling by
-setting; installing from an archive; query overrides for built-in languages;
-the snippet engine. Stage 2: drafted after sign-off.
+setting; installing from an archive; query overrides for built-in languages.
+The snippet engine has landed (T856, T857); workspace extensions, disabling by setting, snippets as a contribution kind, and
+the consent prompt and extensions list are being carded. Stage 2: drafted after
+stage 1 is finished (user, 2026-10-21: finish stage 1 first).
 
 ## 11. Corrections to the spec's draft
 
@@ -479,18 +482,14 @@ Checked at the base; changes, none to a decision:
    trusted, for grammars, LSP configs and snippets (§3).
 4. ~~Network, process, wildcard, escalation, combination and secrets policy~~:
    decided 2026-10-17 (§7).
-5. **Disclosed in this revision:** stage 1 is no longer called code-free (host-spawned LSP commands,
-   sandboxed grammar WASM); any change to an `lsp` server's effective invocation asks again; the grammar
-   card needs an execution deadline first. Do you accept that?
-6. **Sign-off.** Do you approve this record (status proposed → accepted), so the
-   stage-1 cards can be drafted?
-7. **WASM or mlua.** Do you accept WASM components for stage 2, with mlua only
-   as a possible later user-scripting layer?
+5. ~~Stage 1 isn't code-free~~: accepted 2026-10-21 (§1, §6). Any change to an `lsp` server's effective
+   invocation asks again; the grammar card's execution deadline is T845's.
+6. ~~Sign-off~~: approved 2026-10-21; this record is accepted and the stage-1 cards are drafted.
+7. ~~WASM or mlua~~: accepted 2026-10-21: WASM components for stage 2; mlua only as a possible later
+   user-scripting layer (§7).
 8. **Grammar WASM cost.** Is a larger binary and slower first parse an
    acceptable price for runtime grammars, pending the card's measurements, or is
-   there a size ceiling?
-9. **Stage-2 signing and registry.** Should plugins be signed, and who reviews
-   a registry's wildcard requests? (Decided with the registry; asked now so it
-   isn't a surprise.)
-10. **Admin `allowed_licenses`.** Is it enough as an app setting, or should a
-   managed deployment be able to lock it so users can't change it?
+   there a size ceiling? Left open 2026-10-21 pending the grammar card's (T845) size and first-parse
+   measurements.
+9. **Stage-2 signing and registry.** **Deferred 2026-10-21:** decided with the registry, not before (§8).
+10. **Admin `allowed_licenses`.** **Deferred 2026-10-21:** revisited with managed deployments.
