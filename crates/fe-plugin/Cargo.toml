@@ -1,0 +1,23 @@
+[package]
+name = "fe-plugin"
+description = "Binds the plugin host (kiln-plugin) to the editor. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-buffer.workspace = true
+fe-editor.workspace = true
+fe-net.workspace = true
+fe-text.workspace = true
+kiln-command.workspace = true
+kiln-plugin.workspace = true
+
+[dev-dependencies]
+tree-sitter.workspace = true
+wasmtime.workspace = true
+
+[lints]
+workspace = true

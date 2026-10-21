@@ -48,6 +48,8 @@ fe-chat = { path = "crates/fe-chat" }
 fe-chat-anthropic = { path = "crates/fe-chat-anthropic" }
 fe-chat-view = { path = "crates/fe-chat-view" }
 fe-net = { path = "crates/fe-net" }
+fe-plugin = { path = "crates/fe-plugin" }
+kiln-plugin = { path = "kiln/crates/kiln-plugin" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.9 is zed@93d7456. Every snapshot crate must be bumped together; to move to
@@ -186,6 +188,12 @@ toml_edit = "0.25"
 # when added, see THIRD_PARTY.md). `wasm` loads extensions' grammars at run time
 # through wasmtime (Apache-2.0 WITH LLVM-exception).
 tree-sitter = { version = "0.27", features = ["wasm"] }
+# Plugin host (kiln-plugin). The one wasmtime in the tree: tree-sitter's `wasm`
+# feature links the same 48 through wasmtime-c-api-impl, so a plugin `Engine`
+# is tree-sitter's `wasmtime::Engine`. Tests add the `wat` feature.
+wasmtime = { version = "48", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime-wasi = "48"
+sha2 = "0.10"
 tree-sitter-bash = "0.25"
 tree-sitter-c = "0.24"
 tree-sitter-c-sharp = "0.23"
