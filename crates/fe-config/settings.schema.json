@@ -783,6 +783,16 @@
           "minimum": 100,
           "type": "integer"
         },
+        "ignorecase": {
+          "default": false,
+          "description": "true: a search with `/`, `?`, `n` or `N` ignores case, as nvim's\n'ignorecase' does. `\\c` and `\\C` in a pattern override it.",
+          "type": "boolean"
+        },
+        "incsearch": {
+          "default": true,
+          "description": "true: a search shows its first match as the pattern is typed, as\nnvim's 'incsearch' does.",
+          "type": "boolean"
+        },
         "jump_on_s": {
           "default": false,
           "description": "true: `s` and `S` start the forward and backward jump, as leap and\nflash map them, instead of changing a char or a line (`cl` and `cc`\nstill do). `gs` and `gS` start it either way.",
@@ -817,6 +827,11 @@
           "default": "",
           "description": "The program vim's `!` filter and `:r !` run commands with, as\n`shell -c command`. Empty: your shell (`$SHELL`, else `/bin/sh`; on\nWindows `%COMSPEC%`). A project file can't set it.",
           "type": "string"
+        },
+        "smartcase": {
+          "default": false,
+          "description": "true: with `ignorecase` on, a typed search pattern with an uppercase\nletter matches case (`*` and `#` still ignore it), as nvim's\n'smartcase' does.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -937,12 +952,15 @@
         "clipboard": "",
         "enabled": false,
         "filter_time_limit": 10000,
+        "ignorecase": false,
+        "incsearch": true,
         "jump_on_s": false,
         "leader": "\\",
         "regex_time_limit": 2000,
         "remap": [],
         "replace_with_register": false,
-        "shell": ""
+        "shell": "",
+        "smartcase": false
       },
       "description": "Vim mode."
     },

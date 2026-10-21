@@ -5,6 +5,9 @@ use fe_command::ContextFrame;
 use fe_editor::EditorModel;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
+#[path = "search_setting_tests.rs"]
+mod search_setting_tests;
+
 use super::*;
 use crate::{EditorTheme, EditorView, init};
 

@@ -467,6 +467,20 @@ pub fn set_vim_clipboard(cx: &mut App, unnamedplus: bool) {
         .set_clipboard_unnamed(unnamedplus);
 }
 
+/// Sets 'ignorecase' and 'smartcase' on the registers every editor's vim
+/// shares (`vim.ignorecase`, `vim.smartcase`): open editors' next search
+/// follows.
+pub fn set_vim_search_case(cx: &mut App, ignorecase: bool, smartcase: bool) {
+    cx.default_global::<Vim>()
+        .registers
+        .set_search_case(ignorecase, smartcase);
+}
+
+/// Sets 'incsearch' on the shared registers (`vim.incsearch`).
+pub fn set_vim_incsearch(cx: &mut App, on: bool) {
+    cx.default_global::<Vim>().registers.set_incsearch(on);
+}
+
 /// Lets `s` and `S` start the jump in every editor, and in any opened or
 /// switched on later (`vim.jump_on_s`).
 pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {

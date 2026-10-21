@@ -95,6 +95,14 @@
 # true: s and S start the forward and backward jump, as leap and flash map
 # them, instead of changing a char or a line. gs and gS start it either way.
 # jump_on_s = false
+# true: a search ignores case, as nvim's 'ignorecase'. \c and \C in a pattern
+# override it.
+# ignorecase = false
+# true: with ignorecase on, a search pattern with an uppercase letter matches
+# case, as nvim's 'smartcase'.
+# smartcase = false
+# true: a search shows its first match as the pattern is typed.
+# incsearch = true
 # true: gr{motion}, grr and visual gr replace text with a register's contents,
 # as the ReplaceWithRegister plugin does, instead of running nvim 0.12's
 # language-server gr keys (grr references, grn rename, gra code action, gri,

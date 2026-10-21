@@ -226,6 +226,16 @@ pub struct VimSettings {
     /// flash map them, instead of changing a char or a line (`cl` and `cc`
     /// still do). `gs` and `gS` start it either way.
     pub jump_on_s: bool,
+    /// true: a search with `/`, `?`, `n` or `N` ignores case, as nvim's
+    /// 'ignorecase' does. `\c` and `\C` in a pattern override it.
+    pub ignorecase: bool,
+    /// true: with `ignorecase` on, a typed search pattern with an uppercase
+    /// letter matches case (`*` and `#` still ignore it), as nvim's
+    /// 'smartcase' does.
+    pub smartcase: bool,
+    /// true: a search shows its first match as the pattern is typed, as
+    /// nvim's 'incsearch' does.
+    pub incsearch: bool,
     /// true: `gr{motion}`, `grr` and visual `gr` replace text with a
     /// register's contents, as the ReplaceWithRegister plugin does, instead
     /// of running nvim 0.12's language-server `gr` keys (`grr` references,
@@ -259,6 +269,9 @@ impl Default for VimSettings {
             enabled: false,
             clipboard: VimClipboard::default(),
             jump_on_s: false,
+            ignorecase: false,
+            smartcase: false,
+            incsearch: true,
             replace_with_register: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,

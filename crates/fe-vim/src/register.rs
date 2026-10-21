@@ -313,11 +313,19 @@ impl Registers {
 
     /// Makes `pattern` the last search, as `/` (`forward`) or `?` does. Its
     /// offset stays, as `:s` and `:g` leave it. 'smartcase' applies to it
-    /// until [`Registers::set_search_word`] says otherwise.
+    /// until [`Registers::set_search_word`] says otherwise; setting the
+    /// pattern already there (`:s//x/`, an empty `:g` or address pattern
+    /// reusing the last search) keeps whether it was `*`'s or `#`'s.
     pub(crate) fn set_search(&mut self, pattern: &str, forward: bool) {
+        let same = self
+            .search
+            .as_ref()
+            .is_some_and(|last| last.text == pattern);
         self.search = Some(Register::new(pattern, false));
         self.search_forward = forward;
-        self.search_word = false;
+        if !same {
+            self.search_word = false;
+        }
     }
 
     /// Whether the last search's pattern is `*`'s or `#`'s, which
@@ -629,5 +637,29 @@ mod inserted_order_tests {
         older.offer_inserted(5, "z".into());
         registers.adopt_inserted(&mut older);
         assert_eq!(registers.get('.'), Some(&Register::new("y", false)));
+    }
+}
+
+#[cfg(test)]
+mod search_provenance_tests {
+    use super::*;
+
+    #[test]
+    fn reusing_the_last_pattern_keeps_its_word_provenance() {
+        let mut registers = Registers::new();
+        registers.set_search("Foo", true);
+        registers.set_search_word(true);
+        registers.set_search("Foo", true);
+        assert!(registers.last_search_word(), "same pattern reused");
+        registers.set_search("Bar", true);
+        assert!(!registers.last_search_word(), "a new pattern");
+    }
+
+    #[test]
+    fn incsearch_is_on_until_switched_off() {
+        let mut registers = Registers::new();
+        assert!(registers.incsearch());
+        registers.set_incsearch(false);
+        assert!(!registers.incsearch());
     }
 }

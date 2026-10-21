@@ -133,6 +133,8 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         let (now, before) = (global.settings(), global.previous());
         let jump_on_s = now.vim.jump_on_s;
+        let (ignorecase, smartcase, incsearch) =
+            (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
         let replace_with_register = now.vim.replace_with_register;
         let now_limit = now.vim.regex_time_limit;
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
@@ -147,6 +149,8 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
+        fe_gpui::set_vim_search_case(cx, ignorecase, smartcase);
+        fe_gpui::set_vim_incsearch(cx, incsearch);
         fe_gpui::set_vim_replace_with_register(cx, replace_with_register);
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         for window in cx.windows() {
@@ -410,6 +414,8 @@ fn main() {
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
+        fe_gpui::set_vim_search_case(cx, settings.vim.ignorecase, settings.vim.smartcase);
+        fe_gpui::set_vim_incsearch(cx, settings.vim.incsearch);
         fe_gpui::set_vim_replace_with_register(cx, settings.vim.replace_with_register);
         fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
