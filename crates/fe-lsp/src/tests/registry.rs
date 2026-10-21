@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod language_ids;
+mod outside_root;
 mod root_markers;
 mod routed_save;
 
@@ -352,22 +353,7 @@ fn lazy_start_per_server_and_root() {
         fake.records()
     );
 
-    // Outside the root, or with no root: no server, nothing launched.
-    let mut outside = Buffer::new("c = 3\n");
-    for (root, path) in [
-        (root(), "/elsewhere/c.py"),
-        (root(), "/fake/root/../c.py"),
-        (root(), "/fake/rooted/c.py"),
-        (None, "/fake/root/c.py"),
-    ] {
-        assert_eq!(
-            open(&mut manager, root, &mut outside, path, "python"),
-            None,
-            "{path}"
-        );
-        assert_eq!(manager.server_of(outside.id()), None);
-    }
-    // Nor for a language no server lists.
+    // None for a language no server lists.
     let mut text = Buffer::new("notes\n");
     assert_eq!(
         open(

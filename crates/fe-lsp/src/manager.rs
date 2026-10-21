@@ -2,10 +2,11 @@
 //!
 //! Documents opened with [`LspManager::open`] are routed (§3.2): each goes
 //! to the first enabled server listing its language (registry.rs), one
-//! instance per (server, root), started by the first document that needs
-//! it and left running when its last document closes. One with no server
-//! to go to waits, parked, until settings, an extension or a host spec
-//! give it one.
+//! instance per (server, root), its root the window root for a file under
+//! it and the file's marker root otherwise (`registry::server_root`),
+//! started by the first document that needs it and left running when its
+//! last document closes. One with no server to go to waits, parked, until
+//! settings, an extension or a host spec give it one.
 //!
 //! A server that crashes restarts itself (restart.rs); the manager keeps
 //! each (server, root)'s crash list and log ring across the instances it
@@ -21,7 +22,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
@@ -39,7 +40,7 @@ use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
-use crate::registry::{Registry, needs_restart, server_for};
+use crate::registry::{Registry, needs_restart, server_for, server_root};
 use crate::requests::{Reply, call, timeout, within};
 use crate::restart::SharedCrashes;
 use crate::server::{
@@ -192,7 +193,13 @@ enum Kind {
 }
 
 struct Route {
+    /// Where its server runs: [`server_root`] of `path`, `window` and the
+    /// markers of the spec its language has, kept up to date by
+    /// [`LspManager::reconcile`].
     root: PathBuf,
+    /// The window root it was opened under, if any.
+    window: Option<PathBuf>,
+    path: PathBuf,
     /// The document's URI: a server has one document per URI.
     uri: Url,
     /// fe-syntax's name.
@@ -933,12 +940,15 @@ impl LspManager {
     }
 
     /// Starts syncing buffer `buffer`, at `path`, to the server for
-    /// fe-syntax's `language` and the workspace at `root` (§3.2), starting
-    /// that server if it isn't running, and returns which it is. As
-    /// [`open_on`](Self::open_on) otherwise.
+    /// fe-syntax's `language` and the folder [`server_root`] gives it from
+    /// the window root `root` and that server's root markers (§3.2),
+    /// starting that server if it isn't running there, and returns which it
+    /// is. As [`open_on`](Self::open_on) otherwise.
     ///
-    /// A document with no root, or whose path isn't under it, gets no
-    /// server, and isn't kept. One with no server for its language (none
+    /// So a document under `root` goes to the window root's server; one
+    /// outside it, or opened with no root, to a server at its marker root
+    /// (or its own folder, with no marker above), under the same trust rule
+    /// as the window root. One with no server for its language (none
     /// listing it, or `[lsp]` turning it off) is kept, without a server,
     /// until [`update_settings`](Self::update_settings) or
     /// [`register_spec`](Self::register_spec) give it one; its subscription
@@ -962,9 +972,10 @@ impl LspManager {
             LspError::Unavailable(format!("{} isn't an absolute path", path.display()))
         })?;
         self.close(buffer);
-        let Some(root) = root.filter(|root| is_under(path, root)) else {
-            return Ok(None);
-        };
+        let window = root;
+        let specs = self.registry.specs();
+        let markers = server_for(&specs, language).map_or(&[][..], |spec| &spec.root_markers);
+        let root = server_root(path, window, markers);
         let subscribed = Subscribed::new(subscription);
         let opening = Opening {
             buffer,
@@ -981,20 +992,21 @@ impl LspManager {
             Placed {
                 subscribed,
                 kind: Kind::Routed(Route {
-                    root: root.to_owned(),
+                    root: root.clone(),
+                    window: window.map(Path::to_owned),
+                    path: path.to_owned(),
                     uri: opening.uri.clone(),
                     language: language.to_owned(),
                 }),
             },
         );
-        let specs = self.registry.specs();
         let server = self.place(opening, &specs);
         // Documents waiting for the same server (after it failed, say) go
         // to it too.
         if server.is_some()
             && let Some(spec) = server_for(&specs, language)
         {
-            let only = (spec.name.clone(), root.to_owned());
+            let only = (spec.name.clone(), root);
             self.place_waiting(&specs, Some(&only));
         }
         Ok(server)
@@ -1089,6 +1101,7 @@ impl LspManager {
     fn reconcile(&mut self) {
         self.prune();
         let specs = self.registry.specs();
+        self.reroot(&specs);
         let routed: Vec<ServerId> = self
             .servers
             .iter()
@@ -1127,6 +1140,19 @@ impl LspManager {
             }
         }
         self.place_waiting(&specs, None);
+    }
+
+    /// Gives each routed document the root its language's server under
+    /// `specs` has for it, whose markers may have changed. One whose
+    /// language no server lists keeps its root.
+    fn reroot(&mut self, specs: &[ServerSpec]) {
+        for placed in self.documents.values_mut() {
+            if let Kind::Routed(route) = &mut placed.kind
+                && let Some(spec) = server_for(specs, &route.language)
+            {
+                route.root = server_root(&route.path, route.window.as_deref(), &spec.root_markers);
+            }
+        }
     }
 
     /// Stops routed server `id`, first placing each of its documents on
@@ -1586,16 +1612,6 @@ impl Drop for LspManager {
             handle.stop(&mut self.retiring);
         }
     }
-}
-
-/// Whether `path` is within the workspace at `root`, by its components:
-/// a path through `..` never is.
-fn is_under(path: &Path, root: &Path) -> bool {
-    root.is_absolute()
-        && path.starts_with(root)
-        && !path
-            .components()
-            .any(|component| component == Component::ParentDir)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
