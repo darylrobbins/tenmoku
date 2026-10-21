@@ -57,9 +57,9 @@ impl DockPanel {
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References, Problems,
-    /// History and Chat follow once they have shown.
-    pub const ALL: [DockPanel; 4] = always_on_rail();
+    /// The panels the rail always has, in its order; References, Problems
+    /// and History follow once they have shown.
+    pub const ALL: [DockPanel; 5] = always_on_rail();
 
     /// The panel registered as `id`, for a module's [`SidebarPanel`].
     pub(crate) const fn new(id: &'static str) -> Self {
@@ -125,10 +125,10 @@ const PANELS: &[&SidebarPanel] = &[
     &search_panel::SIDEBAR,
     &crate::git_panel::SIDEBAR,
     &crate::workbench::git_commands::git_log::SIDEBAR,
+    &crate::chat_panel::SIDEBAR,
     &crate::references_panel::SIDEBAR,
     &problems_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
-    &crate::chat_panel::SIDEBAR,
 ];
 
 const _: () = {
@@ -287,8 +287,8 @@ fn folders(project: &Entity<ProjectPanel>) -> ViewSpec {
 }
 
 impl Dock {
-    /// Shows the Explorer, of `project` and `outline`, first; `git_log`
-    /// follows `changes` on the rail.
+    /// Shows the Explorer, of `project` and `outline`, first; `git_log` and
+    /// `chat` follow `changes` on the rail.
     #[allow(clippy::too_many_arguments, private_interfaces)]
     pub fn new(
         project: Entity<ProjectPanel>,
@@ -296,6 +296,7 @@ impl Dock {
         outline: Entity<OutlinePanel>,
         changes: Entity<GitPanel>,
         git_log: Entity<GitLogPanel>,
+        chat: Entity<ChatPanel>,
         references: Entity<ReferencesPanel>,
         problems: Entity<ProblemsPanel>,
         cx: &mut Context<Self>,
@@ -311,6 +312,7 @@ impl Dock {
         // Registered here, not after the References and Problems panels,
         // as the rail lists the panels in the order they were added.
         state.add_panel(git_log.clone(), cx);
+        state.add_panel(chat.clone(), cx);
         state.add_panel(references.clone(), cx);
         state.add_panel(problems.clone(), cx);
         Self {
@@ -324,7 +326,7 @@ impl Dock {
             problems,
             history: None,
             git_log: Some(git_log),
-            chat: None,
+            chat: Some(chat),
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
@@ -401,14 +403,6 @@ impl Dock {
 
     pub(crate) fn chat(&self) -> Option<&Entity<ChatPanel>> {
         self.chat.as_ref()
-    }
-
-    /// Registers `chat`, the Chat panel made on first use, in the place of
-    /// any before it, as [`Dock::set_history`] does.
-    pub(crate) fn set_chat(&mut self, chat: Entity<ChatPanel>, cx: &mut Context<Self>) {
-        self.state.add_panel(chat.clone(), cx);
-        self.chat = Some(chat);
-        cx.notify();
     }
 
     /// The dock's state, in kiln-shell.

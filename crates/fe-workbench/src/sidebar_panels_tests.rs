@@ -59,6 +59,14 @@ fn base() -> [(
             DockOp::ShowGitLog,
         ),
         (
+            DockPanel::Chat,
+            "Chat",
+            "chat",
+            Icon::MessageSquare,
+            "chat.open",
+            DockOp::ShowChat,
+        ),
+        (
             DockPanel::References,
             "References",
             "references",
@@ -81,14 +89,6 @@ fn base() -> [(
             Icon::FileDiff,
             "git.file_history",
             DockOp::ShowHistory,
-        ),
-        (
-            DockPanel::Chat,
-            "Chat",
-            "chat",
-            Icon::MessageSquare,
-            "chat.open",
-            DockOp::ShowChat,
         ),
     ]
 }
@@ -202,7 +202,7 @@ fn each_panel_keeps_its_base_name_id_icon_and_show_command() {
 }
 
 #[test]
-fn the_rail_always_has_the_base_four() {
+fn the_rail_always_has_the_base_five() {
     assert_eq!(
         DockPanel::ALL,
         [
@@ -210,6 +210,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Search,
             DockPanel::Changes,
             DockPanel::GitLog,
+            DockPanel::Chat,
         ]
     );
     let on_rail: Vec<DockPanel> = (PANELS.iter())
@@ -230,9 +231,9 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Search,
             DockPanel::Changes,
             DockPanel::GitLog,
+            DockPanel::Chat,
             DockPanel::Problems,
             DockPanel::History,
-            DockPanel::Chat,
         ]
     );
 }
@@ -246,6 +247,7 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
         (DockPanel::Search, Icon::Search),
         (DockPanel::Changes, Icon::GitBranch),
         (DockPanel::GitLog, panel_icon(DockPanel::GitLog)),
+        (DockPanel::Chat, Icon::MessageSquare),
     ];
     assert_eq!(rail(&workbench, cx), base);
     assert_eq!(
@@ -285,12 +287,7 @@ fn the_rail_lists_the_panels_in_base_order_and_others_join_once_shown(cx: &mut T
     );
 
     dispatch("chat.open", cx);
-    let with_chat = [
-        with_history.as_slice(),
-        &[(DockPanel::Chat, Icon::MessageSquare)],
-    ]
-    .concat();
-    assert_eq!(rail(&workbench, cx), with_chat);
+    assert_eq!(rail(&workbench, cx), with_history);
     assert_eq!(
         shown(&workbench, cx),
         (true, DockPanel::Chat, "Chat".to_owned())
@@ -388,6 +385,7 @@ mod git_log_rail_tests {
                 DockPanel::Search,
                 DockPanel::Changes,
                 DockPanel::GitLog,
+                DockPanel::Chat,
             ]
         );
         let icons = distinct(cx);

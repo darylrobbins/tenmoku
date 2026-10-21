@@ -1,7 +1,7 @@
 //! The AI chat in the sidebar (the decision record:
-//! `docs/decisions/5at38c8v89-ai-chat.md`, § 1): `chat.open` ("Chat: Open")
-//! makes the Chat panel the first time it runs, after which it's on the
-//! rail as History is, and shows it with the composer focused. The panel
+//! `docs/decisions/5at38c8v89-ai-chat.md`, § 1): the Chat panel is made with
+//! the dock and always on the rail, under Git Log, as it is; `chat.open`
+//! ("Chat: Open") or its rail button shows it with the composer focused. The panel
 //! holds `fe-chat-view`'s [`ChatView`] under a header with a New Chat
 //! button (`chat.new`).
 //!
@@ -12,8 +12,9 @@
 //! - **The key** (record § 7): `ANTHROPIC_API_KEY` if set, and the header
 //!   then says so; else the keychain's [`KEY_ACCOUNT`] entry under the app
 //!   id, read on the background executor (the platform may ask the user),
-//!   the view in its no-key state until it's read. [`ChatPanel::reload_key`]
-//!   reads it again. The view's Set API Key runs `chat.set_api_key`
+//!   the view in its no-key state until it's read. It's read the first time
+//!   the panel draws, not at launch, as the platform may ask the user;
+//!   [`ChatPanel::reload_key`] reads it again. The view's Set API Key runs `chat.set_api_key`
 //!   ("Chat: Set API Key…"), which shows a masked form in place of the chat
 //!   (Enter or Save stores the trimmed text in the keychain, Escape or
 //!   Cancel closes it); `chat.clear_api_key` deletes the entry. Its Open
@@ -53,16 +54,16 @@ use crate::{
     workbench::toast::{self, Toast},
 };
 
-/// The AI chat in the sidebar: on the rail once it has shown; focused when
-/// shown, as the composer takes the keys.
+/// The AI chat in the sidebar: always on the rail, under Git Log; focused
+/// when shown, as the composer takes the keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("chat"),
     name: "Chat",
     icon: fe_ui::Icon::MessageSquare,
     show_command: "chat.open",
     show_op: DockOp::ShowChat,
-    order: 90,
-    always_on_rail: false,
+    order: 47,
+    always_on_rail: true,
     focus_on_show: true,
 };
 
@@ -251,16 +252,35 @@ pub(crate) struct ChatPanel {
     reading: Option<Task<()>>,
     /// Whether the first-run notice shows, in a chat started now.
     notice: bool,
+    /// Whether the key has been read, or a read asked for.
+    key_read: bool,
+    /// How many key forms have been shown.
+    forms_made: u64,
+    /// Keychain writes not yet run, oldest first: they run one at a time,
+    /// in the order asked, whatever happens to the form.
+    writes: std::collections::VecDeque<Write>,
+    /// The write under way, which the panel owns, so a form closed
+    /// meanwhile doesn't drop it.
+    writing: Option<Task<()>>,
     /// The key form, while it shows in place of the chat.
     key_form: Option<KeyForm>,
     _view_events: Subscription,
 }
 
+/// A change to the keychain's key.
+enum Write {
+    /// The key, from the form with this id.
+    Save(u64, String),
+    Clear,
+}
+
 /// The form that takes a key.
 struct KeyForm {
     field: Entity<TextField>,
-    /// The key being stored: a second save waits for it.
-    saving: Option<Task<()>>,
+    /// Which form this is, for the saves made from it.
+    id: u64,
+    /// Whether its key is queued or being stored: a second save waits.
+    saving: bool,
     _field_events: Subscription,
 }
 
@@ -305,22 +325,24 @@ impl ChatPanel {
 }
 
 impl ChatPanel {
-    /// A panel with a new chat, reading the key.
+    /// A panel with a new chat; the key is read when it first draws.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let notice = notice_file(cx).is_none_or(|file| !file.exists());
         let (view, options, view_events) = Self::chat_view(notice, window, cx);
-        let mut panel = Self {
+        Self {
             view,
             options,
             grants: chat_grants(),
             key: None,
             reading: None,
             notice,
+            key_read: false,
+            forms_made: 0,
+            writes: Default::default(),
+            writing: None,
             key_form: None,
             _view_events: view_events,
-        };
-        panel.reload_key(cx);
-        panel
+        }
     }
 
     /// A view of a new chat, from the settings now, with no provider until
@@ -353,6 +375,7 @@ impl ChatPanel {
     /// Shows the key form in place of the chat, focused and empty.
     fn show_key_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.key_form.is_none() {
+            self.forms_made += 1;
             let field = cx.new(|cx| {
                 TextField::new(window, cx)
                     .placeholder("Anthropic API key")
@@ -365,7 +388,8 @@ impl ChatPanel {
             });
             self.key_form = Some(KeyForm {
                 field,
-                saving: None,
+                id: self.forms_made,
+                saving: false,
                 _field_events: events,
             });
         }
@@ -386,58 +410,76 @@ impl ChatPanel {
         }
     }
 
-    /// Stores the form's text, trimmed, in the keychain, then closes the
-    /// form and reads the key again; an error is a toast, the form and its
-    /// text kept.
+    /// Queues storing the form's text, trimmed, in the keychain; when it's
+    /// stored the form closes and the key is read again, and an error is a
+    /// toast, the form and its text kept.
     fn save_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = self.key_form.as_mut().filter(|form| form.saving.is_none()) else {
+        let Some(form) = self.key_form.as_mut().filter(|form| !form.saving) else {
             return;
         };
         let key = form.field.read(cx).value().trim().to_owned();
         if key.is_empty() {
             return;
         }
+        form.saving = true;
+        self.writes.push_back(Write::Save(form.id, key));
+        self.run_writes(window, cx);
+    }
+
+    /// Queues deleting the keychain's key.
+    fn clear_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.writes.push_back(Write::Clear);
+        self.run_writes(window, cx);
+    }
+
+    /// Starts the oldest queued write unless one is under way. Each ends
+    /// by reading the key again and starting the next.
+    fn run_writes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.writing.is_some() {
+            return;
+        }
+        let Some(write) = self.writes.pop_front() else {
+            return;
+        };
         let (store, service) = (KeySource::of(cx).store, key_service());
-        let write = cx.background_spawn(async move { store.set(&service, KEY_ACCOUNT, &key) });
-        form.saving = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = write.await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(()) => {
-                    this.close_key_form(window, cx);
-                    this.reload_key(cx);
-                }
-                Err(error) => {
-                    if let Some(form) = this.key_form.as_mut() {
-                        form.saving = None;
+        // The form a save was made from, which only it may change.
+        let from = match &write {
+            Write::Save(id, _) => Some(*id),
+            Write::Clear => None,
+        };
+        let run = cx.background_spawn(async move {
+            match write {
+                Write::Save(_, key) => store.set(&service, KEY_ACCOUNT, &key),
+                Write::Clear => store.delete(&service, KEY_ACCOUNT),
+            }
+        });
+        self.writing = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = run.await;
+            this.update_in(cx, |this, window, cx| {
+                this.writing = None;
+                let owns = |form: &KeyForm| Some(form.id) == from;
+                match result {
+                    Ok(()) => {
+                        if (this.key_form.as_ref()).is_some_and(owns) {
+                            this.close_key_form(window, cx);
+                        }
                     }
-                    toast::show(
-                        cx,
-                        Toast::error(format!("Couldn't save the API key: {error}")),
-                    );
+                    Err(error) => {
+                        let what = if from.is_some() { "save" } else { "clear" };
+                        if let Some(form) = this.key_form.as_mut().filter(|form| owns(form)) {
+                            form.saving = false;
+                        }
+                        toast::show(
+                            cx,
+                            Toast::error(format!("Couldn't {what} the API key: {error}")),
+                        );
+                    }
                 }
+                this.reload_key(cx);
+                this.run_writes(window, cx);
             })
             .ok();
         }));
-    }
-
-    /// Deletes the keychain's key, then reads the key again.
-    fn clear_key(&mut self, cx: &mut Context<Self>) {
-        let (store, service) = (KeySource::of(cx).store, key_service());
-        let delete = cx.background_spawn(async move { store.delete(&service, KEY_ACCOUNT) });
-        cx.spawn(async move |this, cx| {
-            let result = delete.await;
-            this.update(cx, |this, cx| {
-                if let Err(error) = result {
-                    toast::show(
-                        cx,
-                        Toast::error(format!("Couldn't clear the API key: {error}")),
-                    );
-                }
-                this.reload_key(cx);
-            })
-            .ok();
-        })
-        .detach();
     }
 
     /// Escape closes the key form.
@@ -509,6 +551,7 @@ impl ChatPanel {
     /// Reads the key again: the environment's at once, else the keychain's
     /// on the background executor, the key in use kept until it's read.
     pub(crate) fn reload_key(&mut self, cx: &mut Context<Self>) {
+        self.key_read = true;
         let source = KeySource::of(cx);
         if let Some(key) = source.env.filter(|key| !key.trim().is_empty()) {
             self.reading = None;
@@ -654,6 +697,11 @@ impl ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The first draw reads the key, past the frame.
+        if !self.key_read {
+            self.key_read = true;
+            cx.defer_in(window, |this, _, cx| this.reload_key(cx));
+        }
         let ui = ui_theme(cx);
         let new_chat = cx.listener(|this, _, window, cx| {
             kiln::with_cx(window, cx, |cx| this.new_chat(cx));
@@ -703,13 +751,8 @@ impl Focusable for ChatPanel {
 }
 
 impl Workbench {
-    /// Shows the Chat panel, made now if it hasn't been.
+    /// Shows the Chat panel.
     pub(crate) fn open_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dock = self.dock().clone();
-        if dock.read(cx).chat().is_none() {
-            let panel = cx.new(|cx| ChatPanel::new(window, cx));
-            dock.update(cx, |dock, cx| dock.set_chat(panel, cx));
-        }
         self.run_dock_op(DockOp::ShowChat, window, cx);
     }
 
@@ -721,11 +764,11 @@ impl Workbench {
         }
     }
 
-    /// Clears the chat's key, with the Chat panel made if it hasn't been.
+    /// Clears the chat's key.
     fn clear_chat_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_chat(window, cx);
         if let Some(panel) = self.dock().read(cx).chat().cloned() {
-            panel.update(cx, |panel, cx| panel.clear_key(cx));
+            panel.update(cx, |panel, cx| panel.clear_key(window, cx));
         }
     }
 }

@@ -126,6 +126,7 @@ fn the_rail_has_one_explorer_of_folders_over_the_outline(cx: &mut TestAppContext
             DockPanel::Search.id(),
             DockPanel::Changes.id(),
             DockPanel::GitLog.id(),
+            DockPanel::Chat.id(),
         ]
     );
     assert!(!panels.contains(&PanelId("outline")), "{panels:?}");

@@ -158,3 +158,119 @@ fn a_store_error_keeps_the_form(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     assert_eq!(toasts(&workbench, cx).len(), 1, "the same toast, once more");
 }
+
+/// A store noting its writes, in the order they ran.
+struct Logging {
+    inner: MemoryStore,
+    log: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl SecretStore for Logging {
+    fn get(&self, service: &str, account: &str) -> Result<Option<Secret>, SecretError> {
+        self.inner.get(service, account)
+    }
+
+    fn set(&self, service: &str, account: &str, secret: &str) -> Result<(), SecretError> {
+        self.log.lock().unwrap().push("set");
+        self.inner.set(service, account, secret)
+    }
+
+    fn delete(&self, service: &str, account: &str) -> Result<(), SecretError> {
+        self.log.lock().unwrap().push("delete");
+        self.inner.delete(service, account)
+    }
+}
+
+fn logging() -> Arc<Logging> {
+    Arc::new(Logging {
+        inner: MemoryStore::new(),
+        log: Default::default(),
+    })
+}
+
+fn use_store(store: &Arc<Logging>, cx: &mut VisualTestContext) {
+    let source = crate::chat_panel::KeySource {
+        env: None,
+        store: store.clone(),
+    };
+    cx.update(|_, cx| cx.set_global(source));
+}
+
+#[gpui::test]
+fn a_save_then_a_clear_ends_cleared_and_a_clear_then_a_save_ends_stored(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    scripted(cx);
+    let store = logging();
+    use_store(&store, cx);
+    dispatch("chat.open", cx);
+    let panel = chat(&workbench, cx).expect("made");
+
+    // Both asked before either runs: they apply in that order.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.show_key_form(window, cx);
+    });
+    cx.simulate_input("first");
+    cx.simulate_keystrokes("enter");
+    panel.update_in(cx, |panel, window, cx| panel.clear_key(window, cx));
+    cx.run_until_parked();
+    assert_eq!(*store.log.lock().unwrap(), ["set", "delete"]);
+    assert_eq!(stored(&store.inner), None);
+    assert_eq!(origin(&panel, cx), None);
+
+    store.log.lock().unwrap().clear();
+    panel.update_in(cx, |panel, window, cx| {
+        panel.clear_key(window, cx);
+        panel.show_key_form(window, cx);
+    });
+    cx.simulate_input("second");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(*store.log.lock().unwrap(), ["delete", "set"]);
+    assert_eq!(stored(&store.inner).as_deref(), Some("second"));
+    assert_eq!(origin(&panel, cx), Some(KeyOrigin::Keychain));
+}
+
+#[gpui::test]
+fn closing_the_form_while_a_save_runs_still_reads_the_key(cx: &mut gpui::TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    scripted(cx);
+    let store = logging();
+    use_store(&store, cx);
+    dispatch("chat.set_api_key", cx);
+    let panel = chat(&workbench, cx).expect("made by the command");
+    cx.simulate_input("sk-ant-test");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(stored(&store.inner).as_deref(), Some("sk-ant-test"));
+    assert_eq!(origin(&panel, cx), Some(KeyOrigin::Keychain));
+}
+
+#[gpui::test]
+fn a_dismissed_saves_result_leaves_the_next_form_alone(cx: &mut gpui::TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, cx) = opened(cx, dir.path());
+    scripted(cx);
+    let store = logging();
+    use_store(&store, cx);
+    dispatch("chat.set_api_key", cx);
+    let panel = chat(&workbench, cx).expect("made by the command");
+    cx.simulate_input("first");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("escape");
+    // A second form, opened and submitted before the first save lands.
+    panel.update_in(cx, |panel, window, cx| panel.show_key_form(window, cx));
+    cx.simulate_input("second");
+    // The first save lands: the second form is still open, unsaved.
+    cx.run_until_parked();
+    assert_eq!(stored(&store.inner).as_deref(), Some("first"));
+    assert!(cx.debug_bounds("chat-key-form").is_some());
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(stored(&store.inner).as_deref(), Some("second"));
+    assert!(cx.debug_bounds("chat-key-form").is_none());
+}

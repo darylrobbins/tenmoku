@@ -72,10 +72,11 @@ fn rail(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<DockPa
                 (panels.into_iter())
                     .chain([
                         DockPanel::GitLog,
+                        DockPanel::Chat,
                         DockPanel::References,
                         DockPanel::Problems,
                     ])
-                    .chain([DockPanel::History, DockPanel::Chat])
+                    .chain([DockPanel::History])
                     .find(|panel| panel.id() == id)
                     .expect("a sidebar panel")
             })
@@ -142,7 +143,7 @@ fn reload_key(panel: &Entity<ChatPanel>, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
-fn chat_open_makes_and_shows_the_panel(cx: &mut TestAppContext) {
+fn chat_open_shows_the_panel(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (workbench, cx) = opened(cx, dir.path());
     let base = [
@@ -150,15 +151,16 @@ fn chat_open_makes_and_shows_the_panel(cx: &mut TestAppContext) {
         DockPanel::Search,
         DockPanel::Changes,
         DockPanel::GitLog,
+        DockPanel::Chat,
     ];
     assert_eq!(rail(&workbench, cx), base);
-    assert!(chat(&workbench, cx).is_none());
+    let panel = chat(&workbench, cx).expect("made with the dock");
+    assert!(!shown(&workbench, cx).0 || shown(&workbench, cx).1 != DockPanel::Chat);
 
     dispatch("chat.open", cx);
-    let panel = chat(&workbench, cx).expect("made by chat.open");
     assert_eq!(shown(&workbench, cx), (true, DockPanel::Chat));
     assert!(composer_focused(&panel, cx));
-    let with_chat = [base.as_slice(), &[DockPanel::Chat]].concat();
+    let with_chat = base;
     assert_eq!(rail(&workbench, cx), with_chat);
     let title = workbench.read_with(cx, |workbench, cx| {
         let dock = workbench.dock().read(cx);
@@ -409,5 +411,7 @@ fn the_notice_shows_until_dismissed(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("chat-notice").is_none());
 }
 
+#[path = "chat_rail_tests.rs"]
+mod rail;
 #[path = "chat_key_tests.rs"]
 mod set_key;
