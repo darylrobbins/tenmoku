@@ -80,6 +80,15 @@ fn wait(s: &mut Lsp, by: Duration) {
     s.draw();
 }
 
+/// `until`, advancing the manager's manual clock 20 ms per poll so that
+/// `admit_once_known`'s capability poll wakes even under load.
+fn until_ticking(s: &mut Lsp, what: &str, done: impl Fn(&mut Lsp) -> bool) {
+    s.until(what, |s| {
+        s.clock.advance(Duration::from_millis(20));
+        done(s)
+    });
+}
+
 fn type_in(s: &mut Lsp, editor: &Entity<EditorView>, text: &str) {
     s.cx.update(|_, cx| {
         editor.update(cx, |view, cx| {
@@ -100,7 +109,7 @@ fn server_hints_show_and_follow_the_view(cx: &mut TestAppContext) {
     wait(&mut s, Duration::from_millis(100));
     assert_eq!(asked(&s).len(), 0);
     wait(&mut s, REST);
-    s.until("the hints", |s| !shown(s, &editor).is_empty());
+    until_ticking(&mut s, "the hints", |s| !shown(s, &editor).is_empty());
     assert_eq!(shown(&s, &editor), expect(": ()"));
     let sent = asked(&s);
     assert_eq!(sent.len(), 1);
@@ -132,7 +141,9 @@ fn server_hints_show_and_follow_the_view(cx: &mut TestAppContext) {
     s.fake.wait_for_document(&main, "both edits", |r| {
         r.is_some_and(|r| r.text.contains("ab"))
     });
-    s.until("the hints again", |s| shown(s, &editor) == expect(": ()"));
+    until_ticking(&mut s, "the hints again", |s| {
+        shown(s, &editor) == expect(": ()")
+    });
 
     // An answer for the older version is dropped: the first request is
     // still waiting when the second goes out.
@@ -192,7 +203,7 @@ fn set_hints_setting(s: &mut Lsp, on: bool) {
 fn refresh_and_the_setting(cx: &mut TestAppContext) {
     let (mut s, editor) = setup(cx, true);
     wait(&mut s, REST + Duration::from_millis(10));
-    s.until("the hints", |s| shown(s, &editor) == expect(": ()"));
+    until_ticking(&mut s, "the hints", |s| shown(s, &editor) == expect(": ()"));
 
     // A refresh asks at once, and its answer replaces the hints.
     s.fake.set_reply(METHOD, hints("r"));
@@ -283,7 +294,7 @@ fn resolving(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
     s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
     s.draw();
     wait(&mut s, REST + Duration::from_millis(10));
-    s.until("the hint", |s| !shown(s, &editor).is_empty());
+    until_ticking(&mut s, "the hint", |s| !shown(s, &editor).is_empty());
     s.draw();
 
     (s, editor)
@@ -347,7 +358,9 @@ fn a_new_manager_resolves_its_own_hints(cx: &mut TestAppContext) {
     assert!(shown(&s, &editor).is_empty());
     s.set_trust(true);
     wait(&mut s, REST + Duration::from_millis(10));
-    s.until("the hint again", |s| !shown(s, &editor).is_empty());
+    // The ask may find the new server's capabilities not yet known and poll
+    // for them every 20 ms of the manager's (manual) clock.
+    until_ticking(&mut s, "the hint again", |s| !shown(s, &editor).is_empty());
     s.draw();
     double_click_hint(&mut s, &editor);
     s.until("the resolved edit", |s| {

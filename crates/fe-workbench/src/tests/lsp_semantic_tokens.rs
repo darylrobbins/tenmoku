@@ -67,6 +67,14 @@ fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
         .expect("main.rs is shown");
     s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
     s.draw();
+    // The first ask can find the server's capabilities not yet known: it
+    // polls for them every 20 ms of the manager's (manual) clock, answers
+    // `Retry`, and asks again after REST on the executor's (fake) clock.
+    s.until("the first ask", |s| {
+        s.clock.advance(Duration::from_millis(20));
+        s.cx.executor().advance_clock(REST);
+        !asked(s).is_empty()
+    });
     (s, editor)
 }
 
