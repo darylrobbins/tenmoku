@@ -570,6 +570,42 @@ fn percent_finds_a_directive_after_long_blanks_on_a_huge_row() {
     }
 }
 
+/// A directive after indentation far longer than any window, on rows beside
+/// huge rows that are not directives: `%` reads each row's head only as far
+/// as its first non-blank token.
+#[test]
+fn percent_reads_a_directive_head_incrementally_past_long_indentation() {
+    let indent = "\t".repeat(REACH * 20);
+    let plain = "x".repeat(REACH * 20);
+    let rows = format!("{indent}#if A\n{plain}\n{plain} #endif\n{indent}#else\n{indent}#endif\nz");
+    let started = Instant::now();
+    let (_, cursor, _) = leave(&rows, (0, 0), "%");
+    assert_eq!(cursor.0, 3);
+    let (_, cursor, _) = leave(&rows, (3, 0), "%");
+    assert_eq!(cursor.0, 4);
+    let (_, cursor, _) = leave(&rows, (4, indent.len()), "%");
+    assert_eq!(cursor.0, 0);
+    assert!(started.elapsed() < limit() * 20);
+}
+
+/// `iw` and `aw` on a letters-only run longer than the window take all of it.
+#[test]
+fn word_objects_take_a_whole_uninterrupted_run() {
+    for unit in ["a", "\u{436}", "\u{1f600}"] {
+        let run = unit.repeat(REACH * 3);
+        let row = format!("{run} b");
+        for caret in [0, row.len() / 4 / unit.len() * unit.len()] {
+            let (_, _, register) = leave(&row, (0, caret), "yiw");
+            assert!(register == run, "iw from {caret} over {unit:?}");
+            let (_, _, register) = leave(&row, (0, caret), "yaw");
+            assert!(
+                register == format!("{run} "),
+                "aw from {caret} over {unit:?}"
+            );
+        }
+    }
+}
+
 /// `cW` over a WORD that is the whole of a huge row with no blank in it.
 #[test]
 fn change_big_word_takes_a_whole_row_word_with_no_blank() {

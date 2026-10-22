@@ -154,7 +154,7 @@ fn blank(cursor: &Cursor, big: bool) -> bool {
 fn words(text: &Text, offset: usize, count: u32, big: bool, inner: bool) -> Span {
     let mut cursor = Cursor::at(text, offset);
     // Counted items, and a WORD, may go on past a window's reach.
-    if count > 1 || big {
+    if count > 1 || big || cursor.runs_reach_edge(big) {
         cursor.widen();
     }
     // On an empty last row, nvim's `iw` takes the line break before it and

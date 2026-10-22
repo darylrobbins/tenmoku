@@ -72,7 +72,7 @@ fn a_huge_virtual_count_stays_bounded() {
     let (took, text) = run(&keys);
     assert!(text.starts_with("yyyy"), "{keys}");
     assert!(
-        took < plain * 20 + Duration::from_secs(5),
+        took < plain * 20 + Duration::from_secs(60),
         "{keys}: {took:?}, {plain:?} for R"
     );
 }

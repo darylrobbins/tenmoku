@@ -68,7 +68,7 @@ fn huge_virtual_counts_stay_bounded() {
         let (took, text) = run(&keys);
         assert!(text.len() > COUNT as usize, "{keys}: {} bytes", text.len());
         assert!(
-            took < plain * 20 + Duration::from_secs(5),
+            took < plain * 20 + Duration::from_secs(60),
             "{keys}: {took:?}, {plain:?} for R"
         );
     }

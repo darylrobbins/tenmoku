@@ -659,9 +659,59 @@ fn edge(bytes: &[u8], from: usize, forward: bool) -> Option<usize> {
         false => from,
     };
     within(blank_change).or_else(|| match room >= BLANK_REACH {
-        true => within(word_change),
+        true => within(word_change).or_else(|| inert_edge(bytes, from, forward)),
         false => None,
     })
+}
+
+/// Whether `ch` joins nothing, whatever is next to it: a grapheme of its own
+/// beside any other such char (not a Prepend, Extend, ZWJ, SpacingMark,
+/// regional indicator, Hangul jamo or syllable).
+fn inert(ch: char) -> bool {
+    if ch.is_ascii() {
+        return true;
+    }
+    if matches!(ch, '\u{1100}'..='\u{11ff}' | '\u{a960}'..='\u{a97f}' | '\u{ac00}'..='\u{d7ff}') {
+        return false;
+    }
+    let mut buf = [0u8; 4];
+    let ch = &*ch.encode_utf8(&mut buf);
+    // Joins an `a` after it (Prepend) or before it (Extend, ZWJ,
+    // SpacingMark), or its own kind (regional indicators).
+    let count = |text: String| text.graphemes(true).count();
+    count(format!("{ch}a")) == 2 && count(format!("a{ch}")) == 2 && count(format!("{ch}{ch}")) == 2
+}
+
+/// [`edge`] for a window with no class change to end at (a long run of
+/// letters, Cyrillic, emoji, tabs or blanks): the nearest place to `from`,
+/// outward, between two chars that join nothing.
+fn inert_edge(bytes: &[u8], from: usize, forward: bool) -> Option<usize> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let from = from.min(text.len());
+    let mut at = from;
+    while !text.is_char_boundary(at) {
+        at = if forward { at + 1 } else { at - 1 };
+    }
+    let (mut prev, mut next) = (text[..at].chars().next_back(), text[at..].chars().next());
+    loop {
+        if let (Some(a), Some(b)) = (prev, next)
+            && inert(a)
+            && inert(b)
+        {
+            return Some(at);
+        }
+        if forward {
+            let ch = next?;
+            at += ch.len_utf8();
+            prev = Some(ch);
+            next = text[at..].chars().next();
+        } else {
+            let ch = prev?;
+            at -= ch.len_utf8();
+            next = Some(ch);
+            prev = text[..at].chars().next_back();
+        }
+    }
 }
 
 /// [`edge`] at the [`CLASS_MARGIN`]th place `change` holds.
@@ -913,6 +963,30 @@ impl<'a> Cursor<'a> {
         let start = self.text.row_start(self.row);
         let end = start + self.text.row_len(self.row) as usize;
         self.line.start > start || self.line.start + self.line.text.len() < end
+    }
+
+    /// Whether a window with more of the row beyond it cuts the runs around
+    /// the caret short: fewer than [`CLASS_MARGIN`] changes of class lie
+    /// between the caret and an edge, so that `iw` and `aw` can't see their
+    /// ends. (Only a window ended without class changes does.)
+    pub(crate) fn runs_reach_edge(&self, big: bool) -> bool {
+        let reaches = |range: &mut dyn Iterator<Item = usize>| {
+            let mut changes = 0;
+            let mut prev = self.class_on_row(self.ix, big);
+            for ix in range {
+                let class = self.class_on_row(ix, big);
+                if class != prev {
+                    changes += 1;
+                    if changes >= CLASS_MARGIN {
+                        return false;
+                    }
+                }
+                prev = class;
+            }
+            true
+        };
+        self.more_after() && reaches(&mut (self.ix + 1..self.line.len()))
+            || self.more_before() && reaches(&mut (0..self.ix).rev())
     }
 
     /// Whether the row goes on past `line`'s end.
@@ -1553,30 +1627,34 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
     unmatched(text, scan.start + ix, forward, pair, rules).map(chars)
 }
 
-/// [`directive`] of a huge row, reading as much of its head as it takes to
-/// tell: the blanks, the `#`, the blanks and the keyword.
+/// [`directive`] of `row`, reading its head a chunk at a time, only as far
+/// as the first non-blank token takes: the blanks, the `#`, the blanks and
+/// the keyword.
 fn row_directive(text: &Text, row: u32) -> Option<(usize, Directive)> {
     let start = text.row_start(row);
     let len = text.row_len(row) as usize;
     let blank = |byte: &u8| matches!(byte, b' ' | b'\t');
-    let mut size = CARET_WINDOW;
-    loop {
-        let end = text.clip_offset(start + size.min(len), Bias::Right);
-        let head = text.slice_to_string(start..end);
-        let bytes = head.as_bytes();
-        if let Some(found) = directive(bytes) {
-            return Some(found);
+    let (mut hash, mut at) = (None, 0);
+    let mut word = [0u8; "endif".len()];
+    let mut have = 0;
+    'head: for chunk in text.chunks_in_range(start..start + len) {
+        for byte in chunk.as_bytes() {
+            match hash {
+                None if blank(byte) => at += 1,
+                None if *byte == b'#' => hash = Some(at),
+                None => return None,
+                Some(_) if have == 0 && blank(byte) => {}
+                Some(_) => {
+                    word[have] = *byte;
+                    have += 1;
+                    if have == word.len() {
+                        break 'head;
+                    }
+                }
+            }
         }
-        // Whether more of the row could make it one: only blanks so far, or
-        // a `#` and too little after it for the longest keyword.
-        let rest = &bytes[bytes.iter().position(|b| !blank(b)).unwrap_or(bytes.len())..];
-        let open = rest.is_empty()
-            || rest[0] == b'#' && rest[1..].iter().skip_while(|b| blank(b)).count() < "endif".len();
-        if end >= start + len || !open {
-            return None;
-        }
-        size *= 2;
     }
+    Some((hash?, directive_kind(&word[..have])?))
 }
 
 /// `%`'s bracket on a huge row: the match of the first bracket at or after
@@ -1692,19 +1770,23 @@ fn directive(bytes: &[u8]) -> Option<(usize, Directive)> {
         .iter()
         .position(|byte| !blank(byte))
         .unwrap_or(word.len())..];
-    let kind = match () {
-        _ if word.starts_with(b"endif") => Directive::Endif,
-        _ if word.starts_with(b"if") => Directive::If,
-        _ if word.starts_with(b"el") => Directive::Else,
-        _ => return None,
-    };
-    Some((hash, kind))
+    Some((hash, directive_kind(word)?))
+}
+
+/// The kind of directive whose keyword starts `word`.
+fn directive_kind(word: &[u8]) -> Option<Directive> {
+    match () {
+        _ if word.starts_with(b"endif") => Some(Directive::Endif),
+        _ if word.starts_with(b"if") => Some(Directive::If),
+        _ if word.starts_with(b"el") => Some(Directive::Else),
+        _ => None,
+    }
 }
 
 /// From the conditional on `row`: the next `#else`, `#elif` or `#endif` at
 /// its level, or from an `#endif`, its `#if`. The `#`'s offset, as rows.
 fn conditional(text: &Text, row: u32) -> Option<Match> {
-    let (_, kind) = directive(&text.row_to_string(row).into_bytes())?;
+    let (_, kind) = row_directive(text, row)?;
     let forward = kind != Directive::Endif;
     let mut depth = 0usize;
     let rows: Box<dyn Iterator<Item = u32>> = match forward {
@@ -1712,7 +1794,7 @@ fn conditional(text: &Text, row: u32) -> Option<Match> {
         false => Box::new((0..row).rev()),
     };
     for other in rows {
-        let Some((hash, found)) = directive(&text.row_to_string(other).into_bytes()) else {
+        let Some((hash, found)) = row_directive(text, other) else {
             continue;
         };
         let opens = if forward {
@@ -1841,6 +1923,30 @@ mod caret_window_tests {
             assert!(
                 ROW_BYTES.get() <= 3 * 40 * CARET_WINDOW,
                 "{motion:?} read {} bytes",
+                ROW_BYTES.get()
+            );
+        }
+    }
+
+    /// A caret in the middle of a 3 MB run of one kind reads a bounded window.
+    #[test]
+    fn a_caret_in_a_huge_uninterrupted_run_reads_a_bounded_window() {
+        for (kind, unit) in [
+            ("letters", "a"),
+            ("cyrillic", "\u{436}"),
+            ("emoji", "\u{1f600}"),
+            ("tabs", "\t"),
+            ("blanks", " "),
+        ] {
+            let run = unit.repeat(3_000_000 / unit.len());
+            let text = Text::new(&format!("x\n{run}\ny"));
+            let middle = 2 + (run.len() / 2) / unit.len() * unit.len();
+            ROW_BYTES.set(0);
+            let cursor = Cursor::at(&text, middle);
+            assert_eq!(cursor.offset(), middle, "{kind}");
+            assert!(
+                ROW_BYTES.get() <= 40 * CARET_WINDOW,
+                "{kind}: {} bytes",
                 ROW_BYTES.get()
             );
         }
