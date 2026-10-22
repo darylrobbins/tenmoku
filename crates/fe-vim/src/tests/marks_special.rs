@@ -450,6 +450,49 @@ fn a_clone_adopts_insert_marks_only_if_nothing_newer_set_them() {
     assert_ne!(newer, (at(vim.state(), '['), at(vim.state(), ']')));
 }
 
+/// Carried T159 F2: `:delmarks ^` and `:delmarks!` in a clone ending an
+/// insert session, before its outcome is published, stay done once the
+/// clone adopts it: `'^` isn't set again.
+#[test]
+fn deleting_the_insert_mark_while_a_clone_closes_keeps_it_deleted() {
+    use std::{cell::Cell, cell::RefCell, rc::Rc};
+
+    use super::Measuring;
+
+    let deletes: [fn(&mut crate::VimState); 2] = [
+        |state| crate::marks::delete(state, '^'),
+        crate::marks::delete_lowercase,
+    ];
+    for delete in deletes {
+        let mut vim = HeadlessVim::new("ab\ncd", (0, 1));
+        vim.feed("3ix").unwrap();
+        let clone = Rc::new(RefCell::new(vim.state().clone()));
+        let mut split = vim.model().split();
+        split.set_cursor(vim.model().primary_selection().head());
+        let ended = Rc::new(Cell::new(false));
+        let measuring = {
+            let (ended, clone) = (Rc::clone(&ended), Rc::clone(&clone));
+            Measuring::new(move |edited| {
+                if !edited || ended.replace(true) {
+                    return;
+                }
+                let mut clone = clone.borrow_mut();
+                dispatch(&mut clone, &mut split, &["<Esc>"]);
+                delete(&mut clone);
+            })
+        };
+        vim.feed("<Esc>").unwrap();
+        drop(measuring);
+        assert!(ended.get());
+        let mut clone = Rc::try_unwrap(clone).ok().unwrap().into_inner();
+        assert!(vim.state().mark('^').is_some());
+        assert!(clone.mark('^').is_none());
+        assert!(clone.closing.is_some());
+        crate::insert::adopt_closing(&mut clone);
+        assert!(clone.mark('^').is_none());
+    }
+}
+
 #[test]
 fn a_blocks_end_follows_edits_made_while_measuring() {
     use super::Measuring;

@@ -187,3 +187,28 @@ fn picking_with_the_newest_entry_on_the_cursor_row() {
         assert_eq!(vim.cursor(), want, "row {ix}");
     }
 }
+
+/// Carried T160 F5: choosing the current entry when it's past the last row
+/// (where `<C-o>` left the list after E19, the caret moved up since) is E19
+/// too, the caret staying, not a move to the last row.
+#[test]
+fn picking_an_entry_past_the_last_row_is_e19() {
+    let mut vim = HeadlessVim::new("a\nb\nc\nd\ne\nf\ng\nh", (0, 0));
+    vim.feed("5GGggGddgg<C-o><C-o>k").unwrap();
+    let before = vim.cursor();
+    let pick = picked(&mut vim, "jumps");
+    assert_eq!(cells(&pick)[1], [">0", "8", "0", ""]);
+    let current = pick
+        .rows
+        .iter()
+        .find(|row| row.cells[0].starts_with('>'))
+        .unwrap();
+    let invocation = current.then.invocation();
+    vim.dispatch(&invocation.context(fe_vim::context(vim.state())))
+        .unwrap();
+    assert_eq!(
+        vim.state().message(),
+        Some("E19: Mark has invalid line number")
+    );
+    assert_eq!(vim.cursor(), before);
+}

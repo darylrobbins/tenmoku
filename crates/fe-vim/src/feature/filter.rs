@@ -17,8 +17,12 @@
 //! line would be for any actor but the user and inside `:g` or `:normal`
 //! (`vim.filter`, which runs it, is no different).
 //!
-//! Known limits: the `gc` object isn't taken (`!gc` fails, where nvim's
-//! filters the commented rows); `.` after a visual `!` takes as many rows
+//! `!gc` selects the run of commented rows around the caret, as nvim's
+//! object (a visual selection) does, and opens `'<,'>!`; `.` finds the run
+//! around the caret again, whatever its size, and off a comment does
+//! nothing.
+//!
+//! Known limits: `.` after a visual `!` takes as many rows
 //! as the selection had, as fe-vim's `.` after any visual change does; and
 //! a macro's replay runs no shell command, through the maps it runs too
 //! (`ex/filter.rs`), so a filter in a register asks for nothing, where
@@ -30,14 +34,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Change, CommandLineArgs, CommandLineKind, Motion, OperateArgs, Operator, Pending, Step, Target,
-    VimCommands, VimKey, VimTarget, cmdline, commands,
+    Change, CommandLineArgs, CommandLineKind, Motion, MoveArgs, OperateArgs, Operator, Pending,
+    Step, Target, TextObject, VimCommands, VimKey, VimTarget, cmdline, commands,
     ex::{self, HostCommand, ShellCommand},
-    feature::Feature,
-    insert, marks,
+    feature::{Feature, comment},
+    folds, insert, line_motions, marks,
     motion::{self, Cursor},
     operator::{self, Span},
-    text_object,
+    text_object, visual,
 };
 
 pub(crate) const FEATURE: Feature = Feature {
@@ -69,6 +73,10 @@ pub(crate) struct Filters {
     /// The last shell command a line ran (`:.!!` repeats it), nvim's
     /// `prevcmd`.
     pub(crate) last: Option<ShellCommand>,
+    /// While `.` finds a `gc` object's run again ([`comment_run`]): the
+    /// rows `comment::operate_object` selected for [`operate`], which notes
+    /// them here, leaving the visual mode, instead of opening a line.
+    finding: Option<Option<(u32, u32)>>,
 }
 
 /// A command line `!` opened: what over, the text it started with and the
@@ -243,6 +251,21 @@ pub(crate) fn operate(
         operator: None,
     };
     let (repeat, count, suffix) = match args.target {
+        Target::Selection | Target::SelectedLines | Target::SelectedToEnd
+            if target.state.filter.finding.is_some() =>
+        {
+            visual::exit(target)?;
+            let snapshot = target.model.snapshot();
+            let row = |name| {
+                let mark = target.state.mark(name)?;
+                Some(mark.get(snapshot)?.0)
+            };
+            let run = row('<')
+                .zip(row('>'))
+                .map(|(first, last)| (first.min(last), first.max(last)));
+            target.state.filter.finding = Some(run);
+            return Ok(Dispatched::new(Effect::Changed));
+        }
         Target::Selection | Target::SelectedLines | Target::SelectedToEnd => {
             // Leaving the visual mode sets `'<` and `'>`, and the line
             // starts with them.
@@ -289,6 +312,42 @@ pub(crate) fn operate(
     Ok(Dispatched::new(Effect::Changed))
 }
 
+/// `!gc`: the `gc` object's run selected, as `comment::operate_object`
+/// selects it for any operator (nvim's object is a visual selection too:
+/// `'<,'>!`), the line it opens noting the object, which `.` finds again
+/// around the caret ([`comment_run`]), whatever its size.
+pub(crate) fn operate_object(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: OperateArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    target.state.filter.opened = None;
+    let dispatched = comment::operate_object(target, actor, args)?;
+    if target.state.cmdline.is_some()
+        && let Some(opened) = target.state.filter.opened.as_mut()
+    {
+        opened.target = args.target;
+        opened.count = args.count;
+    }
+    Ok(dispatched)
+}
+
+/// The `gc` object's run around the caret again, for `.` repeating `args`
+/// as `actor`: selected as the `!gc` selected it, then left; `None` off a
+/// comment or with no comment tokens.
+fn comment_run(target: &mut VimTarget<'_>, actor: &Actor, args: &FilterArgs) -> Option<(u32, u32)> {
+    let operate = OperateArgs {
+        operator: OPERATOR,
+        target: args.target,
+        count: args.count,
+        register: None,
+    };
+    target.state.filter.finding = Some(None);
+    let ran = comment::operate_object(target, actor, operate);
+    let found = target.state.filter.finding.take().flatten();
+    ran.ok().and(found)
+}
+
 /// Before an ex `line` runs, with the caret on `row`: whether it's the one
 /// `!` opened, still starting as it did, on the row it was opened on; then
 /// the filter it runs is what `.` repeats. Any line drops the one opened.
@@ -332,6 +391,34 @@ pub(crate) fn run(
     if let Err(refused) = ex::shell_refusal(target.state, actor) {
         return Ok(target.state.fail(refused.to_string()));
     }
+    // Its motion made ready as `vim.operate` makes it: `gj`, `gk` and `g$`
+    // over display rows, `zj` and `zk` among the host's folds and those
+    // closed.
+    let motion = match args.target {
+        Target::Motion(motion) => Some(motion),
+        _ => None,
+    };
+    if let Some(motion) = motion {
+        insert::began_line(target.state, motion);
+    }
+    let viewed = motion.and_then(|motion| {
+        line_motions::moved(&MoveArgs {
+            motion,
+            extend: false,
+            count: args.count,
+        })
+    });
+    line_motions::with_view(target, viewed, |target| {
+        folds::with_candidates(target, motion, |target| run_over(target, actor, args))
+    })
+}
+
+/// [`run`] once its motion is ready.
+fn run_over(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: &FilterArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     // A search target is checked, and becomes the last search, as
     // `vim.operate` has it; a mark's must be set.
     if let Target::Motion(motion) = args.target {
@@ -353,7 +440,13 @@ pub(crate) fn run(
             }
         }
     }
-    let (first, last, start) = match covered(target, args.target, args.count) {
+    let covered = match args.target {
+        Target::TextObject(TextObject::Comment) => comment_run(target, actor, &args)
+            .map(|(first, last)| (first, last, target.model.text().row_start(first)))
+            .ok_or(None),
+        over => covered(target, over, args.count),
+    };
+    let (first, last, start) = match covered {
         Ok(covered) => covered,
         Err(moved) => return Ok(failed(target, moved)),
     };

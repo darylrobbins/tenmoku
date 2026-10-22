@@ -681,9 +681,12 @@ fn operate_over(
             }));
         }
     }
-    // Before the `gc` object, which it doesn't take.
+    // Over the `gc` object, `!` notes the object for `.` to find again.
     if args.operator == Operator::Filter {
-        return filter::operate(target, args);
+        return match args.target {
+            Target::TextObject(TextObject::Comment) => filter::operate_object(target, actor, args),
+            _ => filter::operate(target, args),
+        };
     }
     if args.target == Target::TextObject(TextObject::Comment) {
         return keeping_last_change(target, |target| {

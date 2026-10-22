@@ -985,3 +985,79 @@ fn a_counted_gc_target_is_mapped() {
     check("2gcc", "# a\n# b\nc\nd\ne");
     check("gcc", "# a\nb\nc\nd\ne");
 }
+
+/// T166 review F2: a kept row the filter empties keeps its marks, with
+/// fewer rows after it (nvim `:1,3!printf '\n'`) or more (`:1,2!printf
+/// 'x\n\ny\nz\n'`), as any kept row does.
+#[test]
+fn an_emptied_kept_row_keeps_its_marks() {
+    let mut vim = after("aaa\nbbb\nccc\nddd", (0, 0), "lmajmbgg");
+    host_applies(&mut vim, |state, model| {
+        state.apply_filter(model, 0..3, "\n")
+    });
+    assert_eq!(vim.text(), "\nddd");
+    assert_eq!([vim.mark('a'), vim.mark('b')], [Some((0, 1)), None]);
+    let mut vim = after("aaa\nbbb\nccc", (1, 0), "lmajmbgg");
+    host_applies(&mut vim, |state, model| {
+        state.apply_filter(model, 0..2, "x\n\ny\nz\n")
+    });
+    assert_eq!(vim.text(), "x\n\ny\nz\nccc");
+    assert_eq!([vim.mark('a'), vim.mark('b')], [Some((1, 1)), Some((4, 1))]);
+}
+
+/// T166 review F3: a filter's `.` makes its motion ready as the `!` did:
+/// `gj` down a wrapped row stays on it, `zj` finds a closed fold, and a
+/// search is the last search again, as nvim's redo runs `/x<CR>` again.
+#[test]
+fn repeating_a_filter_prepares_its_motion() {
+    let sort = || vec![text("sort")];
+    let long = "x".repeat(100);
+    let mut vim = HeadlessVim::new(&format!("{long}\nb\nc"), (0, 0));
+    vim.model_mut().set_soft_wrap(true);
+    vim.feed("!gjsort<CR>").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(0..1, sort()));
+    vim.feed(".").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(0..1, sort()));
+    let mut vim = HeadlessVim::new("a\nb\nc\nd\ne", (0, 0));
+    vim.feed("3Gzfjgg!zjsort<CR>").unwrap();
+    let first = vim.state_mut().take_host_command();
+    assert!(first.is_some());
+    vim.feed("gg.").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), first);
+    // (`!/x<CR>` ends at the next row's start: the row before, `.!`.)
+    let mut vim = HeadlessVim::new("a\nx\ny\nx", (0, 0));
+    vim.feed("!/x<CR>").unwrap();
+    let line = format!("{}sort", vim.state().command_line_prefill());
+    let submit = Invocation::of("vim.command_line_submit")
+        .unwrap()
+        .args(serde_json::json!({ "text": line }))
+        .source(Source::Keyboard)
+        .context(fe_vim::context(vim.state()));
+    vim.dispatch(&submit).unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(0..1, sort()));
+    vim.feed("/y<CR>gg.").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(0..1, sort()));
+    vim.feed("ggn").unwrap();
+    assert_eq!(vim.cursor(), (1, 0));
+}
+
+/// T166 review F4: `!gc` filters the comment run (`'<,'>!`, as nvim's
+/// object is a visual selection), and `.` the run around the caret then,
+/// whatever its size; off a comment, nothing.
+#[test]
+fn repeating_a_gc_filter_finds_the_comment_run() {
+    let sort = || vec![text("sort")];
+    let mut vim = HeadlessVim::new("// a\n// b\nx\n// c\n// d\n// e\ny", (1, 0));
+    vim.set_comment_tokens(Some(fe_editor::CommentTokens {
+        line: Some("//"),
+        block: None,
+    }));
+    vim.feed("!gc").unwrap();
+    assert_eq!(vim.state().command_line_prefill(), "'<,'>!");
+    vim.feed("sort<CR>").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(0..2, sort()));
+    vim.feed("5G.").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), filter(3..6, sort()));
+    vim.feed("7G.").unwrap();
+    assert_eq!(vim.state_mut().take_host_command(), None);
+}

@@ -41,7 +41,6 @@ use std::ops::Range;
 use fe_buffer::{BufferSnapshot, TransactionId};
 use fe_command::Actor;
 use fe_editor::{EditorModel, commands::origin};
-use fe_text::Text;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -226,8 +225,8 @@ fn follow(state: &mut VimState, model: &mut EditorModel) {
 }
 
 /// One step of an [`apply`]: edits planned from the text the steps before
-/// left.
-type Step<'a> = Box<dyn FnOnce(&Text) -> Vec<(Range<usize>, String)> + 'a>;
+/// left (with the state, for the marks to be set on it first).
+type Step<'a> = Box<dyn FnOnce(&mut VimState, &BufferSnapshot) -> Vec<(Range<usize>, String)> + 'a>;
 
 /// `steps` as one transaction, the user's (only the user's keys ask for
 /// one), each step's edits a batch of their own; with none, still an undo
@@ -244,7 +243,7 @@ fn apply(
         buffer.start_transaction(origin.clone());
         let mut changed = false;
         for step in steps {
-            let edits = step(buffer.snapshot().text());
+            let edits = step(state, &buffer.snapshot());
             if !edits.is_empty() {
                 buffer.edit(edits, origin.clone());
                 changed = true;
@@ -299,32 +298,54 @@ impl VimState {
         let mut steps: Vec<Step<'_>> = Vec::new();
         if kept < old {
             self.marks.deleting(model.snapshot(), first + kept, last);
-            steps.push(Box::new(move |text: &Text| {
-                let range = match kept {
-                    _ if last + 1 < count => text.row_start(first + kept)..text.row_start(last + 1),
-                    0 if first > 0 => operator::row_end(text, first - 1)..text.len(),
-                    0 => 0..text.len(),
-                    _ => operator::row_end(text, first + kept - 1)..text.len(),
-                };
-                vec![(range, String::new())]
-            }));
+            steps.push(Box::new(
+                move |_: &mut VimState, snapshot: &BufferSnapshot| {
+                    let text = snapshot.text();
+                    let range = match kept {
+                        _ if last + 1 < count => {
+                            text.row_start(first + kept)..text.row_start(last + 1)
+                        }
+                        0 if first > 0 => operator::row_end(text, first - 1)..text.len(),
+                        0 => 0..text.len(),
+                        _ => operator::row_end(text, first + kept - 1)..text.len(),
+                    };
+                    vec![(range, String::new())]
+                },
+            ));
         }
         let rewrites = &lines[..kept as usize];
-        steps.push(Box::new(move |text: &Text| {
-            (first..)
-                .zip(rewrites)
-                .filter_map(|(row, &line)| {
-                    let range = text.row_start(row)..operator::row_end(text, row);
-                    (text.slice_to_string(range.clone()) != line).then(|| (range, line.to_string()))
-                })
-                .collect()
-        }));
+        steps.push(Box::new(
+            move |_: &mut VimState, snapshot: &BufferSnapshot| {
+                let text = snapshot.text();
+                (first..)
+                    .zip(rewrites)
+                    .filter_map(|(row, &line)| {
+                        let range = text.row_start(row)..operator::row_end(text, row);
+                        (text.slice_to_string(range.clone()) != line)
+                            .then(|| (range, line.to_string()))
+                    })
+                    .collect()
+            },
+        ));
         if kept < new {
             let put = format!("\n{}", lines[kept as usize..].join("\n"));
-            steps.push(Box::new(move |text: &Text| {
-                let end = operator::row_end(text, last);
-                vec![(end..end, put)]
-            }));
+            // The kept rows rewritten (an emptied one too) keep their marks,
+            // set on them anew, so the rows put in after don't take them.
+            let refilled: Vec<u32> = (first..)
+                .zip(rewrites)
+                .filter(|&(row, &line)| {
+                    let range = text.row_start(row)..operator::row_end(&text, row);
+                    text.slice_to_string(range) != line
+                })
+                .map(|(row, _)| row)
+                .collect();
+            steps.push(Box::new(
+                move |state: &mut VimState, snapshot: &BufferSnapshot| {
+                    state.marks.refilled(snapshot, &refilled);
+                    let end = operator::row_end(snapshot.text(), last);
+                    vec![(end..end, put)]
+                },
+            ));
         }
         let undone = (last, 0);
         let (transaction, snapshot) = apply(self, model, steps);
@@ -372,7 +393,11 @@ impl VimState {
             }
         };
         let before = history::pairs(model);
-        let (transaction, snapshot) = apply(self, model, vec![Box::new(move |_: &Text| edits)]);
+        let (transaction, snapshot) = apply(
+            self,
+            model,
+            vec![Box::new(move |_: &mut VimState, _: &BufferSnapshot| edits)],
+        );
         if let Some(id) = transaction {
             self.carets.record(id, before);
         }

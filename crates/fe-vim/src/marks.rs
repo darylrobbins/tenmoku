@@ -1795,6 +1795,17 @@ impl Marks {
         });
     }
 
+    /// After an edit put new text on `rows` (a filter's output), before one
+    /// that puts rows in after them: their marks stay on their rows, as
+    /// nvim's do, set there anew, so an emptied row is one now (whose marks
+    /// a row opened below it leaves where they are).
+    pub(crate) fn refilled(&mut self, snapshot: &BufferSnapshot, rows: &[u32]) {
+        self.update(|place| match place.position(snapshot)? {
+            (row, column) if rows.contains(&row) => Some(Place::on(snapshot, row, column)),
+            _ => Some(place.clone()),
+        });
+    }
+
     /// Before `gq` reflows the rows from `first` through `last`, joining
     /// and breaking them only at blanks: as in nvim, their marks go with
     /// their text, and their rows are never deleted.
@@ -2155,7 +2166,10 @@ pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Moti
     if let Motion::Position { row, column } = motion {
         target.model.sync_display();
         let text = target.model.snapshot().text();
-        let row = row.min(text.row_count() - 1);
+        // A list's entry on a row since taken out, as `<C-o>` finds it.
+        if row >= text.row_count() {
+            return Err(INVALID_ROW.to_string());
+        }
         let offset = text.row_start(row) + (column as usize).min(text.row_len(row) as usize);
         return Ok(Motion::MarkAt {
             offset: text.clip_offset(offset, Bias::Left),
@@ -2254,7 +2268,16 @@ pub(crate) fn jump(
 /// doesn't delete.
 pub(crate) fn delete(state: &mut VimState, name: char) {
     match name {
-        'a'..='z' | '^' => {
+        'a'..='z' => {
+            state.marks.named.remove(&name);
+        }
+        // Newer than what a session left to a state ending it sets, so
+        // adopting that doesn't set it again.
+        '^' => {
+            state.marks.changes.newer(Newer {
+                exit: true,
+                ..Newer::default()
+            });
             state.marks.named.remove(&name);
         }
         'A'..='Z' => {

@@ -137,6 +137,14 @@ Review F1 (high): a macro's provenance is lost through remaps, so a macro key th
 - **`.`** is set only when the line `!{motion}` opened is submitted still starting with its prefill on the
   row it opened on (`Change::Filter`, repeated through `vim.filter`); a line typed by hand isn't
   repeatable, as in nvim. After a visual `!`, `.` takes as many rows.
+- **T220 (T166 review F2/F3/F4, ported onto this card's filter):** a kept row the output rewrites (an
+  emptied one too) keeps its marks when rows are put in after it (`marks.rs`'s `refilled`, set anew
+  between the rewrite batch and the put); `.` makes its motion ready as the `!` did (`vim.filter` runs
+  in the display rows of `gj`, `gk` and `g$`, and `zj` and `zk` among the host's and closed folds, as
+  `vim.operate`); `!gc` selects the comment run as `comment::operate_object` does for any operator
+  (`'<,'>!`, as nvim's object is a visual selection), `operator.rs` handing it to
+  `feature::filter::operate_object`, and its `.` finds the run around the caret again the same way (the
+  selection's rows noted, not a line opened), doing nothing off a comment.
 - **Refused for v1** with a message, not run with something else in their place: `%`/`#` with a filename
   modifier (`%:p`, `#:h`), `#2`, `#<2`, `##`, and the `<cword>`-style words nvim expands.
 - **Review round 1:** a macro replay's `.` after a filter leaves no shell command (`fe-gpui`'s
@@ -148,8 +156,8 @@ Review F1 (high): a macro's provenance is lost through remaps, so a macro key th
   `!!` goes to the first non-blank as nvim's does (the review suggested column 0; nvim 0.12.4 gives the
   first non-blank). Scope widened again for `cmdline.rs`, `marks.rs`, `fe-gpui/src/vim.rs` and its
   `macro_tests.rs`.
-- **Known limits:** `!gc` (the comment object) fails rather than filter the commented rows; redo puts the
-  caret where undo does (fe-vim's default), not where nvim's redo of a filter goes.
+- **Known limits:** redo puts the caret where undo does (fe-vim's default), not where nvim's redo of a
+  filter goes. (`!gc` once failed; T220 has it filter the comment run, below.)
 - **Review round 2 (rev 4):** a macro's provenance now goes through the maps it runs:
   `remap::Origin::Expansion { replayed }` carries whether a key of the map's left side was a replay's,
   `VimState` notes `from_macro` for each key read (`feed_key`, `record_key`), clears it once the replay
