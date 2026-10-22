@@ -44,9 +44,26 @@ fn copied(dir: &Path, name: &str) -> ProgramIdentity {
         .map(|system| system.join(name))
         .find(|path| path.is_file())
         .unwrap_or_else(|| panic!("no {name} in {SYSTEM_PATH}"));
-    fs::copy(system, dir.join(name)).unwrap();
+    let copy = dir.join(name);
+    fs::copy(system, &copy).unwrap();
+    resign(&copy);
     resolve_program(name, dir.as_os_str()).unwrap()
 }
+
+/// macOS kills (SIGKILL at exec) a copied system binary: its signature is the platform's, which
+/// binds it to `/usr/bin` and `/bin`. An ad-hoc signature makes the copy an ordinary program.
+#[cfg(target_os = "macos")]
+fn resign(path: &Path) {
+    let status = std::process::Command::new("codesign")
+        .args(["--force", "--sign", "-"])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(status.status.success(), "{status:?}");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resign(_: &Path) {}
 
 /// An executable script `name` in `dir`, bound as a grant would bind it.
 fn script(dir: &Path, name: &str, body: &str) -> ProgramIdentity {
