@@ -3,7 +3,7 @@
 //! The one `wasmtime::Engine` every plugin runs on, with epoch interruption, and the ticker
 //! thread advancing its epoch while any call into a plugin is running.
 //!
-//! Modelled on fe-syntax's grammar runtime: the ticker sleeps while no call runs, so an idle
+//! Modelled on the editor's Wasm grammar runtime: the ticker sleeps while no call runs, so an idle
 //! app pays nothing for it. Each tick also wakes the calls waiting on a host import
 //! ([`wake_on_tick`]), so they see their deadline pass.
 
