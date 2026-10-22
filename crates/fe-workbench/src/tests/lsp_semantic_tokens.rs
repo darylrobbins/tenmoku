@@ -5,7 +5,7 @@
 use std::{sync::Arc, time::Duration};
 
 use fe_config::{Settings, SettingsEvent};
-use fe_editor::decorations::DecorationKind;
+use fe_editor::decorations::{DecorationKind, Tint};
 use fe_gpui::EditorView;
 use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
 use gpui::{Entity, Focusable as _, TestAppContext};
@@ -210,3 +210,6 @@ fn refresh_and_the_setting(cx: &mut TestAppContext) {
     set_setting(&mut s, true);
     s.until("the request after turning on", |s| asked(s).len() == 3);
 }
+
+#[path = "lsp_semantic_underline.rs"]
+mod underline;

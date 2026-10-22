@@ -4,7 +4,8 @@
 //! the previous answer for a delta. `editor.semantic_highlighting` off shows
 //! none and asks for none.
 //!
-//! Each buffer has one [`DecorationSet`] of `Foreground` decorations, shared
+//! Each buffer has one [`DecorationSet`] of `Foreground` decorations (and
+//! `Underline` ones for the `mutable` modifier), shared
 //! by its editors. An answer lands only for the buffer's current version; the
 //! decorations already shown follow edits until the next answer.
 
@@ -276,16 +277,24 @@ impl Workbench {
         let Some((editor, _)) = slot.editors.values().next().cloned() else {
             return;
         };
-        let items: Vec<Decoration> = (tokens.tokens.iter())
-            .filter_map(|token| {
-                let name = highlight_name(&token.token_type, &token.modifiers)?;
-                Some(Decoration::new(
+        let mut items: Vec<Decoration> = Vec::new();
+        for token in &tokens.tokens {
+            if let Some(name) = highlight_name(&token.token_type, &token.modifiers) {
+                items.push(Decoration::new(
                     token.range.clone(),
                     DecorationKind::Foreground(Arc::from(name)),
                     Tint::Muted,
-                ))
-            })
-            .collect();
+                ));
+            }
+            // As VS Code underlines what rust-analyzer marks `mutable`.
+            if token.modifiers.iter().any(|m| m.as_ref() == "mutable") {
+                items.push(Decoration::new(
+                    token.range.clone(),
+                    DecorationKind::Underline { wavy: false },
+                    Tint::Muted,
+                ));
+            }
+        }
         slot.previous = Some(tokens);
         let snapshot = editor.read(cx).model().snapshot().clone();
         // An answer for an older version is dropped.
