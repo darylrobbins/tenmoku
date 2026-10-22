@@ -1107,6 +1107,15 @@ static void ts_parser__accept(
             well_formed = false;
           }
         }
+        // A valid accepted stack holds one non-extra tree besides extras and
+        // the end of input, except where error recovery wraps the whole stack
+        // in an ERROR root (recover_eof, or an ERROR left in place of a root),
+        // which takes the others as its children.
+        if (ts_subtree_symbol(tree) != ts_builtin_sym_error) {
+          for (uint32_t k = 0; k < trees.size; k++) {
+            if (k != j && !ts_subtree_extra(*array_get(&trees, k))) well_formed = false;
+          }
+        }
         if (!well_formed) break;
         for (uint32_t k = 0; k < child_count; k++) {
           ts_subtree_retain(children[k]);
