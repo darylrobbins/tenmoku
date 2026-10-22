@@ -45,3 +45,6 @@ fn servers_start_only_in_a_trusted_root(cx: &mut TestAppContext) {
 
 #[path = "lsp_highlights_tests.rs"]
 mod caret_highlights;
+
+#[path = "lsp_lenses_tests.rs"]
+mod lenses;

@@ -147,6 +147,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("lsp.show_log", "Language Server Log", "workbench"),
     ("lsp.rename", "Rename Symbol…", "editor"),
     ("lsp.code_actions", "Code Actions…", "editor"),
+    ("lsp.run_lens", "Run Code Lens", "editor"),
     ("lsp.format_document", "Format Document", "editor"),
     ("lsp.format_selection", "Format Selection", "editor"),
     ("workbench.open_folder", "Open Folder…", "workbench"),

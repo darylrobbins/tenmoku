@@ -708,6 +708,18 @@ impl Workbench {
         self.in_editor(cx, |this, window, cx| this.show_code_actions(window, cx));
     }
 
+    /// Run Code Lens
+    #[command(id = "lsp.run_lens", context = "editor", palette = false)]
+    fn run_code_lens(&mut self, cx: &mut Cx<Self>) {
+        let id = kiln::current_invocation(cx.cx)
+            .and_then(|invocation| invocation.args.get("lens")?.as_u64());
+        self.in_editor(cx, |this, _, cx| {
+            if let Some(id) = id {
+                this.run_lens(id, cx);
+            }
+        });
+    }
+
     /// Format Document
     #[command(id = "lsp.format_document", context = "editor")]
     fn format_document(&mut self, cx: &mut Cx<Self>) {

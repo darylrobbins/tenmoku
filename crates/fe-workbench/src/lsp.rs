@@ -558,6 +558,10 @@ pub(crate) struct Lsp {
     pub(crate) inlay_hints_on: std::cell::Cell<bool>,
     /// Every editor's inlay hints.
     inlay_hints: inlay_hints::Slots,
+    /// Whether `editor.code_lens` is on (set from the settings each reload).
+    pub(crate) code_lens_on: std::cell::Cell<bool>,
+    /// The code lenses of each open buffer.
+    lenses: lenses::Lenses,
     /// Whether `editor.semantic_highlighting` is on (set from the settings each reload).
     pub(crate) semantic_highlighting_on: std::cell::Cell<bool>,
     /// Every shown buffer's semantic tokens.
@@ -728,6 +732,8 @@ impl Lsp {
             format_on_save: Rc::default(),
             inlay_hints_on: std::cell::Cell::new(true),
             inlay_hints: Default::default(),
+            code_lens_on: std::cell::Cell::new(true),
+            lenses: Default::default(),
             semantic_highlighting_on: std::cell::Cell::new(true),
             semantic_tokens: Default::default(),
             code_actions_on_save: Rc::default(),
@@ -1314,6 +1320,7 @@ impl Workbench {
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
         self.sync_inlay_hints(cx);
+        self.sync_lenses(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
@@ -1856,6 +1863,10 @@ impl Workbench {
                 server,
                 what: fe_lsp::Refresh::InlayHints,
             } => self.refresh_inlay_hints(server, cx),
+            LspEvent::Refresh {
+                server,
+                what: fe_lsp::Refresh::CodeLens,
+            } => self.refresh_lenses(server, cx),
             LspEvent::Refresh {
                 server,
                 what: fe_lsp::Refresh::SemanticTokens,
@@ -2482,6 +2493,8 @@ mod highlights;
 
 #[path = "lsp_inlay_hints.rs"]
 mod inlay_hints;
+#[path = "lsp_lenses.rs"]
+mod lenses;
 
 #[path = "lsp_semantic_tokens.rs"]
 mod semantic_tokens;

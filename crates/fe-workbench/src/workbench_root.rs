@@ -222,6 +222,7 @@ impl Workbench {
         self.lsp
             .inlay_hints_on
             .set(event.settings.editor.inlay_hints);
+        self.lsp.code_lens_on.set(event.settings.editor.code_lens);
         self.lsp
             .semantic_highlighting_on
             .set(event.settings.editor.semantic_highlighting);
