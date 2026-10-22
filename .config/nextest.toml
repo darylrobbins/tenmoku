@@ -5,6 +5,21 @@ dir = "target/nextest"
 
 [profile.ci]
 fail-fast = false
+# The slow set runs after merge only (post_merge's test_all stage passes
+# --ignore-default-filter). List from the 2026-10-21 gate run
+# 01m5fxp99b1bhcpxe072zx1n1d (tests over 30 s; the fe-vim names are the
+# run's report names). Add a test here in the task that adds it; see TESTING.md.
+default-filter = '''
+not (
+  (package(fe-workbench) and test(=tests::m3_signoff::a_100k_file_project_end_to_end))
+  or (package(fe-project) and test(=tests::finder::a_100k_file_index_bounds_query_work))
+  or (package(fe-project) and test(=tests::large::a_100k_file_tree_loads_lazily))
+  or (package(fe-editor) and test(=a_new_file_saves_on_an_exfat_volume))
+  or (package(fe-vim) and test(=counted_replace_of_regional_indicators_stays_bounded))
+  or (package(fe-vim) and test(=huge_virtual_counts_stay_bounded))
+  or (package(fe-vim) and test(=a_huge_virtual_count_stays_bounded))
+)
+'''
 
 [profile.ci.junit]
 path = "junit.xml"

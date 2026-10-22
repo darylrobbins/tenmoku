@@ -30,16 +30,29 @@ vet = 'scripts/ci-env.sh cargo clippy --workspace --all-targets -- -D warnings'
 build = 'scripts/ci-env.sh cargo build --workspace --all-targets'
 # JUnit lands in target/nextest/ci/junit.xml (.config/nextest.toml), where the stack reads it.
 test = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci'
-test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci -E "test(={test})"'
+# --ignore-default-filter: nextest applies the profile's default-filter to -E too, and a regression
+# test or flake rerun that names a slow test must still run it.
+test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-default-filter -E "test(={test})"'
 no_gpui = 'scripts/ci-env.sh scripts/check-no-gpui.sh'
 syntax_features = 'scripts/ci-env.sh scripts/check-syntax-features.sh'
 # Licenses, bans and sources only: advisories need the network and run in CI.
 deny = 'scripts/ci-env.sh cargo deny check licenses bans sources'
 
+# Runs everything, slow set included, in post_merge only (stage test_all). A second component, because
+# the rust-cargo stack registers a JUnit report only for the verbs test and test_one, so a verb named
+# test_all would produce no parsed report. Same path, same junit.xml.
+[[components]]
+name = "fastedit-all"
+path = "."
+stack = "rust-cargo"
+[components.commands]
+test = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-default-filter'
+test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-default-filter -E "test(={test})"'
+
 [pipeline]
 gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
 fast = ["fmt", "vet", "test"]
-post_merge = ["build", "test"]
+post_merge = ["build", "test_all"]
 # Each lane has its own target/; ci-env.sh caps cargo at 6 jobs apiece. 1 stage at a time since 2026-10-10
 # (user-approved): the Mac hit load 150+ with several gates at once.
 max_parallel = 1
@@ -59,6 +72,13 @@ run = "build"
 [[pipeline.stages]]
 name = "test"
 run = "test"
+component = "fastedit"
+needs = ["build"]
+
+[[pipeline.stages]]
+name = "test_all"
+run = "test"
+component = "fastedit-all"
 needs = ["build"]
 
 [[pipeline.stages]]

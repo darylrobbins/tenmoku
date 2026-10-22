@@ -28,6 +28,20 @@ are only caught by `fe-gpui`'s tests; add `--test-workspace true` to count them.
 
 ```zsh
 cargo nextest run --workspace     # what CI runs on every push; each test in its own process
+```
+
+**Slow tests.** A test belongs in the `profile.ci` `default-filter` slow set
+(`.config/nextest.toml`) when it takes over 30 s on the gate machine in a
+nextest run, or over 10 s and is not on a path the gate exists to protect. Add it
+by editing that filterset in the same task that adds the test, and first try to
+make it faster or smaller (see the imara Histogram and large-text notes). A test
+that a task criterion or `--regression-test` names must not be in the slow set:
+the gate must run it, and Regatta refuses a criterion whose test did not run in
+the gate. The gate and `rgt ci run --fast` skip the slow set; `post_merge` runs
+it (stage `test_all`). By hand: `cargo nextest run --profile ci
+--ignore-default-filter`, or the unfiltered default profile.
+
+```zsh
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
