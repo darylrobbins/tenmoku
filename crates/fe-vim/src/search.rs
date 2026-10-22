@@ -595,19 +595,21 @@ impl Pattern {
             // The row's first match: if it starts at or after `from` it is
             // the answer; else look on from `from`, and fall back to it
             // once wrapped. Each stretch of the row is searched once.
-            first = self.matches(hay, deadline).next();
+            first = in_time(self.matches(hay, deadline).next(), deadline)?;
             if let Some(found) = &first
                 && found.start >= column
             {
                 return Ok(Some(shift(found.clone(), start)));
             }
             if first.is_some()
-                && let Some(found) = self.matches_from(hay, column, deadline).next()
+                && let Some(found) =
+                    in_time(self.matches_from(hay, column, deadline).next(), deadline)?
             {
                 return Ok(Some(shift(found, start)));
             }
         } else {
-            for found in self.matches(hay, deadline) {
+            let mut matches = self.matches(hay, deadline);
+            while let Some(found) = in_time(matches.next(), deadline)? {
                 if found.start >= past && !on_last {
                     return Ok(Some(shift(found, start)));
                 }
@@ -617,14 +619,11 @@ impl Pattern {
                 }
             }
         }
-        deadline.check()?;
         // What `from`'s row offers once the search wraps back to it.
         let wrapped = first.map(|found| shift(found, start));
         for row in (at.row + 1..rows).chain(0..at.row) {
             let (start, hay) = row_text(text, row, &mut buf);
-            let found = self.matches(hay, deadline).next();
-            deadline.check()?;
-            if let Some(found) = found {
+            if let Some(found) = in_time(self.matches(hay, deadline).next(), deadline)? {
                 return Ok(Some(shift(found, start)));
             }
         }
@@ -857,6 +856,16 @@ impl<'a> Rows<'a> {
     }
 }
 
+/// `found`, what a regex call gave, unless `deadline` has passed, which it
+/// reads: a call that overran it counts for nothing, whether it found a
+/// match or none.
+fn in_time<T>(found: T, deadline: &Deadline) -> Result<T, Interrupted> {
+    match deadline.expired() {
+        true => Err(Interrupted),
+        false => Ok(found),
+    }
+}
+
 /// Whether the last of `found` starts at or after `at`, so that no match
 /// listed after it can come before.
 pub(crate) fn starts_from(found: &[Range<usize>], at: usize) -> bool {
@@ -975,6 +984,20 @@ pub(crate) struct Across<'a> {
     deadline: &'a Deadline,
     /// The rows listed, but for those found to have no match.
     rows: HashMap<u32, Listed>,
+    /// The rows found to have no match, as stretches: each start's end.
+    /// Kept as stretches rather than a row each, so a search that passes a
+    /// row with none, which one regex call can rule out with the rows
+    /// after it, keeps no more than one with a match does.
+    none: BTreeMap<u32, u32>,
+}
+
+/// What an [`Across`] knows of a row without listing it again.
+enum Told {
+    /// It has a match listed.
+    Matches,
+    /// It has none, nor has any row from the first given on.
+    None(u32),
+    Unknown,
 }
 
 /// A row's matches as far as an [`Across`] has listed them, in the text.
@@ -994,6 +1017,7 @@ impl<'a> Across<'a> {
             window: Window::new(text, pattern.reach),
             deadline,
             rows: HashMap::new(),
+            none: BTreeMap::new(),
         }
     }
 
@@ -1097,6 +1121,25 @@ impl<'a> Across<'a> {
     ) -> Result<Option<Range<usize>>, Interrupted> {
         let mut end = rows.end;
         while end > rows.start {
+            // Back over the rows listed already, by what they hold, so a
+            // count's steps back don't list again from the window's start.
+            match self.told(end - 1) {
+                Told::Matches => {
+                    let row = end - 1;
+                    let (found, _) =
+                        self.list_row(row, |found| found.last().is_some_and(|last| !before(last)))?;
+                    if let Some(ix) = found.partition_point(&before).checked_sub(1) {
+                        return Ok(Some(found[ix].clone()));
+                    }
+                    end = row;
+                    continue;
+                }
+                Told::None(first) => {
+                    end = first.max(rows.start);
+                    continue;
+                }
+                Told::Unknown => {}
+            }
             let start = match self.pattern.reach {
                 Reach::Breaks(breaks) => {
                     end.saturating_sub(WINDOW_ROWS.max(breaks)).max(rows.start)
@@ -1152,6 +1195,40 @@ impl<'a> Across<'a> {
         next
     }
 
+    /// What listing `row` found, if it has been listed.
+    fn told(&self, row: u32) -> Told {
+        if let Some(none) = self.none_around(row) {
+            return Told::None(none.start);
+        }
+        match self.rows.get(&row) {
+            Some(listed) if !listed.found.is_empty() => Told::Matches,
+            _ => Told::Unknown,
+        }
+    }
+
+    /// The stretch of rows with no match that holds `row`, if one does.
+    fn none_around(&self, row: u32) -> Option<Range<u32>> {
+        let (&first, &end) = self.none.range(..=row).next_back()?;
+        (row < end).then_some(first..end)
+    }
+
+    /// Records that rows `rows` have no match, joining the stretches it
+    /// meets.
+    fn none_in(&mut self, rows: Range<u32>) {
+        let (mut first, mut end) = (rows.start, rows.end);
+        if let Some((&before, &before_end)) = self.none.range(..=first).next_back()
+            && before_end >= first
+        {
+            first = before;
+            end = end.max(before_end);
+        }
+        while let Some((&after, &after_end)) = self.none.range(first..=end).next() {
+            self.none.remove(&after);
+            end = end.max(after_end);
+        }
+        self.none.insert(first, end);
+    }
+
     /// `row`'s matches listed so far.
     fn listed(&self, row: u32) -> &[Range<usize>] {
         self.rows.get(&row).map_or(&[], |listed| &listed.found)
@@ -1160,7 +1237,9 @@ impl<'a> Across<'a> {
     /// Lists `row`'s matches on from where its listing last stopped, until
     /// `enough` of them or none left, and gives the next row to list
     /// ([`Across::list_row`]). A regex call that overran the deadline lists
-    /// nothing and leaves the row's next search where it was.
+    /// nothing and leaves the row's next search where it was. A row found
+    /// to have no match isn't searched again: the next row to list is the
+    /// first past the stretch of them it is in.
     fn list(
         &mut self,
         row: u32,
@@ -1170,18 +1249,25 @@ impl<'a> Across<'a> {
             return Err(Interrupted);
         }
         let text = self.window.text;
+        if let Some(none) = self.none_around(row) {
+            return Ok((none.end < text.row_count()).then_some(none.end));
+        }
         let mut listed = self.rows.remove(&row).unwrap_or_else(|| Listed {
             found: Vec::new(),
             resume: Some(text.row_start(row)),
             emitted: 0,
         });
         let next = self.list_on(row, &mut listed, enough);
-        // A row with no match is listed again if asked for, rather than
-        // kept for each row a search passes.
-        if !(listed.found.is_empty() && listed.resume.is_none()) {
+        let ruled_out = listed.found.is_empty() && listed.resume.is_none();
+        if !ruled_out {
             self.rows.insert(row, listed);
         }
-        let next = next?.max(row + 1);
+        let next = next?.max(row + 1).min(text.row_count());
+        // A row with no match is kept with the rows up to the next that
+        // may have one, which the same call ruled out.
+        if ruled_out {
+            self.none_in(row..next);
+        }
         Ok((next < text.row_count()).then_some(next))
     }
 
@@ -1592,8 +1678,7 @@ pub(crate) fn first_in_row(
 ) -> Result<Option<Range<usize>>, Interrupted> {
     let mut buf = String::new();
     let (start, hay) = row_text(text, row, &mut buf);
-    let found = pattern.matches(hay, deadline).next();
-    deadline.check()?;
+    let found = in_time(pattern.matches(hay, deadline).next(), deadline)?;
     Ok(found.map(|range| start + range.start..start + range.end))
 }
 
