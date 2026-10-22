@@ -628,14 +628,6 @@ keys = { macos = "alt-cmd-w", default = "alt-w" }
 command = "search.toggle_whole_word"
 context = "search_panel"
 
-# Search details: the include and exclude fields, as VS Code's
-# toggleQueryDetails. Off macOS no other binding takes ctrl-shift-j, and the
-# panel's context keeps it from vim's <C-J> in an editor.
-[[bindings]]
-keys = { macos = "cmd-shift-j", default = "ctrl-shift-j" }
-command = "search.toggle_details"
-context = "search_panel"
-
 # Only in search's input: the palettes' Enter is `picker.confirm`.
 [[bindings]]
 keys = "enter"

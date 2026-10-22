@@ -128,9 +128,6 @@ pub struct SearchPanel {
     /// The replacement, under the query while `replace_shown`.
     replace: Entity<TextInput>,
     replace_shown: bool,
-    /// Whether the include and exclude fields are shown. Hidden globs still
-    /// filter every search.
-    details_shown: bool,
     /// The results list's, which moves through the match rows.
     results_focus: FocusHandle,
     /// The selected line row, in `rows`.
@@ -204,7 +201,6 @@ impl SearchPanel {
             exclude,
             replace,
             replace_shown: false,
-            details_shown: false,
             results_focus: cx.focus_handle(),
             selected: None,
             regex: false,
@@ -483,7 +479,6 @@ impl SearchPanel {
                     .update(cx, TextInput::submit);
             }
             Some(SearchOp::ToggleReplace) => return self.toggle_replace(window, cx),
-            Some(SearchOp::ToggleDetails) => return self.toggle_details(window, cx),
             Some(SearchOp::FocusResults) => return self.focus_results(window, cx),
             Some(SearchOp::SelectNext) => return self.select_next(true, cx),
             Some(SearchOp::SelectPrevious) => return self.select_next(false, cx),
@@ -553,21 +548,6 @@ impl SearchPanel {
         self.replace_shown = false;
         if gpui::Focusable::focus_handle(&self.replace, cx).is_focused(window) {
             window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
-        }
-        cx.notify();
-    }
-
-    /// Shows or hides the include and exclude fields, focusing the query if
-    /// one of them had focus.
-    fn toggle_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.details_shown = !self.details_shown;
-        if !self.details_shown {
-            let filter_focused = [&self.include, &self.exclude]
-                .into_iter()
-                .any(|input| gpui::Focusable::focus_handle(input, cx).is_focused(window));
-            if filter_focused {
-                window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
-            }
         }
         cx.notify();
     }
@@ -1322,13 +1302,6 @@ impl Render for SearchPanel {
                 .on(on)
                 .on_click(cx.listener(move |panel, _, _, cx| panel.toggle(option, cx)))
         });
-        let details_toggle = div()
-            .debug_selector(|| "search-details-toggle".into())
-            .child(
-                ToggleButton::new("search-details-toggle", "...", &ui)
-                    .on(self.details_shown)
-                    .on_click(cx.listener(|panel, _, window, cx| panel.toggle_details(window, cx))),
-            );
         let list = uniform_list(
             "search-results",
             self.rows.len(),
@@ -1431,21 +1404,18 @@ impl Render for SearchPanel {
                             .flex_none()
                             .gap_0p5()
                             .track_scroll(&self.toggles)
-                            .children(toggles)
-                            .child(details_toggle),
+                            .children(toggles),
                     ),
             )
             .children(replace)
-            .when(self.details_shown, |panel| {
-                panel.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .child(self.include.clone())
-                        .child(self.exclude.clone()),
-                )
-            })
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(self.include.clone())
+                    .child(self.exclude.clone()),
+            )
             .when_some(self.status(), |panel, (status, error)| {
                 let color = if error { ui.error_text } else { ui.muted_text };
                 panel.child(
@@ -1470,7 +1440,6 @@ pub(crate) enum SearchOp {
     /// Enter in the search panel's input: [`TextInput::submit`].
     Submit,
     ToggleReplace,
-    ToggleDetails,
     FocusResults,
     SelectNext,
     SelectPrevious,
@@ -1517,12 +1486,6 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
             "Toggle Replace",
             search,
             ToggleReplace,
-        ),
-        (
-            "search.toggle_details",
-            "Toggle Search Details",
-            search,
-            ToggleDetails,
         ),
         (
             "search.focus_results",
@@ -1632,10 +1595,6 @@ impl SearchPanel {
             .collect()
     }
 
-    pub(crate) fn details_shown(&self) -> bool {
-        self.details_shown
-    }
-
     pub(crate) fn include_input(&self) -> &Entity<TextInput> {
         &self.include
     }
@@ -1698,7 +1657,3 @@ mod search_replace;
 #[cfg(test)]
 #[path = "search_panel_filter_tests.rs"]
 mod filter_tests;
-
-#[cfg(test)]
-#[path = "search_panel_details_tests.rs"]
-mod details_tests;

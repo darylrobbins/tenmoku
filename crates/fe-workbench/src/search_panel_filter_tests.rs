@@ -55,18 +55,7 @@ fn searching(
             ..SearchOptions::default()
         })
     });
-    cx.simulate_keystrokes("cmd-shift-f");
-    open_details(cx);
     (dir, search, cx)
-}
-
-/// Draws, then clicks the "..." button to show the include and exclude fields.
-fn open_details(cx: &mut VisualTestContext) {
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    let bounds = cx.debug_bounds("search-details-toggle").expect("toggle");
-    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.run_until_parked();
 }
 
 /// Replaces `input`'s text with `text` by typing, as the keyboard does.
@@ -159,7 +148,6 @@ fn a_filter_with_focus_leaves_with_its_dock(cx: &mut TestAppContext) {
     };
     cx.simulate_keystrokes("cmd-shift-f");
     assert!(focused(&query, cx));
-    cx.run_until_parked();
     cx.update(|window, cx| window.focus(&include.focus_handle(cx), cx));
     assert!(focused(&include, cx));
     cx.simulate_keystrokes("cmd-shift-e");
