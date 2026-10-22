@@ -393,6 +393,30 @@ with capabilities granted by the app.
    only, never the app's own variables, and a secret only if the plugin passes
    it explicitly as an argument or on stdin.
 
+### Stage 2 decisions (user, 2026-10-21)
+
+- Uninstalling a plugin deletes its per-plugin secrets (decision 5's store),
+  and the uninstall confirmation says so.
+- Targets: macOS and Linux only. Windows is not a target now.
+- The AI chat stays built in; moving it to a plugin is out of the stage-2
+  series. Panels are deferred.
+- Signing, a registry and auto-update (Q9) and the admin `allowed_licenses`
+  lock (Q10) are deferred. The manifest reserves a `signature` slot that
+  nothing verifies yet.
+- Command authority: a small allowlist of existing commands is annotated
+  plugin-callable (read-only and navigation commands, plus `editor.insert` and
+  `editor.newline` with `buffer.write`). Every other command is refused to
+  plugins by default.
+- Defaults, as named constants that settings may override later: 100 ms epoch
+  deadline per call, 64 MB of memory per plugin, 256 queued events per plugin,
+  16 MB for one buffer read.
+- Guest fixtures are prebuilt `.wasm` files checked in beside their Rust or
+  WAT source and a build script. CI never builds guests, and `.wat` fixtures
+  (compiled by wasmtime's `wat` feature in tests) are preferred wherever they
+  suffice.
+- Plugins run on their own wasmtime `Engine` (tree-sitter's lives inside its C
+  API), sharing the one wasmtime crate version through feature unification.
+
 ### VS Code extension risks and this design's answer
 
 | VS Code risk | This design |
@@ -458,8 +482,14 @@ menus; LSP servers (fe-lsp, fe-workbench, fastedit); grammars (fe-syntax, after
 this record and T401). Later: workspace extensions behind trust; disabling by
 setting; installing from an archive; query overrides for built-in languages.
 The snippet engine has landed (T856, T857); workspace extensions, disabling by setting, snippets as a contribution kind, and
-the consent prompt and extensions list are being carded. Stage 2: drafted after
-stage 1 is finished (user, 2026-10-21: finish stage 1 first).
+the consent prompt and extensions list are being carded. Stage 2 (user,
+2026-10-21), as a card series in this order: crate and dependency; WIT worlds;
+instance runner with limits; hostile-plugin suite; plugin manifest kind; grant
+store and escalation; install prompt and combination warnings; host-side
+dispatch authorization; commands; events; editor read and edit; decorations,
+gutter and status items; filesystem and process spawn; network; per-plugin
+secrets; versioning adapters; compiled-component cache; running granted
+plugins in the app; management surface (list, uninstall, revoke).
 
 ## 11. Corrections to the spec's draft
 
