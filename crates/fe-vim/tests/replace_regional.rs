@@ -56,20 +56,23 @@ fn counted_replace_pairs_regional_indicators_with_an_empty_tail() {
 
 #[test]
 fn counted_replace_of_regional_indicators_stays_bounded() {
-    // Every count this large writes as much as a put may insert, which
-    // takes a while in a debug build and longer under load: each session
-    // is timed against copies typed without a `<BS>` to replay, writing as
-    // much. Load comes and goes mid-run, so while a session is over the
-    // bound it is timed again, up to ROUNDS times in all, each side the
-    // fastest of its runs. A stall rarely spoils every one, and replaying
-    // the count one copy at a time would take many times longer in each.
+    // Each session is timed against the same count of copies typed without
+    // a `<BS>` to replay. The count is large enough that a per-character
+    // history, or replaying the count one copy at a time, takes many times
+    // longer, and small enough to be cheap in a debug build; the cap on
+    // the largest count is `counted_replace_of_regional_indicators_caps_at_max_put`.
+    // Load comes and goes mid-run, so while a session is over the bound it
+    // is timed again, up to ROUNDS times in all, against the baseline,
+    // which is measured once.
     const ROUNDS: usize = 3;
-    let count = u32::MAX;
+    let count = 1u32 << 18;
     let timed = |keys: &str| {
         let started = Instant::now();
         let text = fed("abcdefghijklmno", keys);
         (started.elapsed(), text)
     };
+    let baseline = format!("{count}R🇦🇧<Esc>");
+    let plain = timed(&baseline).0;
     for (keys, starts) in [
         ("R🇦<CR><BS>🇧<BS>🇨<Esc>", "🇨🇦🇨🇦🇨"),
         ("R🇦🇧🇨<CR><BS><BS>🇦<Esc>", "🇦🇧🇦🇦🇦🇦🇦"),
@@ -77,20 +80,34 @@ fn counted_replace_of_regional_indicators_stays_bounded() {
         ("R🇦<CR><BS><Esc>", "🇦🇦🇦🇦🇦"),
     ] {
         for keys in [format!("{count}{keys}"), format!("{keys}0{count}.")] {
-            let (mut plain, mut took) = (Duration::MAX, Duration::MAX);
+            let bound =
+                |plain: Duration| (plain * 4 + Duration::from_secs(1)).min(Duration::from_secs(60));
+            let mut took = Duration::MAX;
             for _ in 0..ROUNDS {
-                plain = plain.min(timed(&format!("{count}R🇦🇧<Esc>")).0);
                 let (t, text) = timed(&keys);
                 took = took.min(t);
                 assert!(text.starts_with(starts), "{keys}");
-                if took < (plain * 4 + Duration::from_secs(1)).min(Duration::from_secs(60)) {
+                if took < bound(plain) {
                     break;
                 }
             }
             assert!(
-                took < (plain * 4 + Duration::from_secs(1)).min(Duration::from_secs(60)),
+                took < bound(plain),
                 "{keys}: {took:?}, {plain:?} without a `<BS>`"
             );
         }
     }
+}
+
+/// A count above what a put may insert is clamped to it: the largest count
+/// writes no more than 64 MiB, and still writes more than a mid-size one.
+/// No clock; the timing is `..._stays_bounded`'s.
+#[test]
+fn counted_replace_of_regional_indicators_caps_at_max_put() {
+    let text = fed(
+        "abcdefghijklmno",
+        &format!("{}R🇦<CR><BS>🇧<BS>🇨<Esc>", u32::MAX),
+    );
+    assert!(text.len() <= 65 << 20, "{} bytes", text.len());
+    assert!(text.len() > 1 << 20, "{} bytes", text.len());
 }

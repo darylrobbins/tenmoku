@@ -43,29 +43,46 @@ fn virtual_replace_breaks_match_neovim() {
     );
 }
 
-/// The largest counts stay within the 64 MiB a put may insert, counted in
-/// the bytes typed tabs expand to, and break rows in a time bounded against
-/// the same count of `R`'s copies run beside it, so load can't cross it.
+/// A mid-size count breaks rows in a time bounded against the same count of
+/// `R`'s copies run beside it, so load can't cross it: no history per
+/// character, however large the count. The cap on the largest count is
+/// `huge_virtual_counts_cap_at_max_put`.
 #[test]
 fn huge_virtual_counts_stay_bounded() {
     use std::time::{Duration, Instant};
 
     use fe_vim::HeadlessVim;
 
+    const COUNT: u32 = 1 << 18;
     let run = |keys: &str| {
         let started = Instant::now();
         let mut vim = HeadlessVim::new("abcdefghijklmno\npq", (0, 0));
         vim.feed(keys).unwrap();
         (started.elapsed(), vim.text())
     };
-    let (plain, _) = run("4294967295Rx<Esc>");
-    for keys in ["4294967295gR<Tab><Esc>", "4294967295gRx<CR>y<Esc>"] {
-        let (took, text) = run(keys);
-        assert!(text.len() <= 65 << 20, "{keys}: {} bytes", text.len());
-        assert!(text.len() > 1 << 20, "{keys}: {} bytes", text.len());
+    let (plain, _) = run(&format!("{COUNT}Rx<Esc>"));
+    for keys in [
+        format!("{COUNT}gR<Tab><Esc>"),
+        format!("{COUNT}gRx<CR>y<Esc>"),
+    ] {
+        let (took, text) = run(&keys);
+        assert!(text.len() > COUNT as usize, "{keys}: {} bytes", text.len());
         assert!(
             took < plain * 20 + Duration::from_secs(5),
             "{keys}: {took:?}, {plain:?} for R"
         );
     }
+}
+
+/// The largest count is clamped to the 64 MiB a put may insert, counted in
+/// the bytes a typed tab expands to. No clock.
+#[test]
+fn huge_virtual_counts_cap_at_max_put() {
+    use fe_vim::HeadlessVim;
+
+    let mut vim = HeadlessVim::new("abcdefghijklmno\npq", (0, 0));
+    vim.feed(&format!("{}gR<Tab><Esc>", u32::MAX)).unwrap();
+    let text = vim.text();
+    assert!(text.len() <= 65 << 20, "{} bytes", text.len());
+    assert!(text.len() > 1 << 20, "{} bytes", text.len());
 }
