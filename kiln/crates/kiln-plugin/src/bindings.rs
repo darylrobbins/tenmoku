@@ -44,7 +44,7 @@ impl HostState {
             fs: fs::State,
             process: process::State::default(),
             net: net::State::default(),
-            secrets: secrets::State,
+            secrets: secrets::State::default(),
         }
     }
 }
