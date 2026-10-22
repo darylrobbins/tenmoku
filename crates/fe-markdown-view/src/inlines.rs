@@ -10,7 +10,7 @@ use gpui::{
     Styled as _, StyledText, TextRun, UnderlineStyle, Window, div, px,
 };
 
-use crate::{MarkdownStyle, image, view::RenderCx};
+use crate::{MarkdownStyle, blocks, image, view::RenderCx};
 
 /// A block's inline content, laid out.
 pub(crate) enum Inlines {
@@ -360,7 +360,11 @@ impl Piece {
         match self {
             Piece::Text(runs) => runs.render(cx),
             Piece::Image { dest, alt, link } => {
-                let image = image::render(&dest, &alt, cx);
+                let image = if alt_text_only() {
+                    alt_text(&alt, cx)
+                } else {
+                    image::render(&dest, &alt, cx)
+                };
                 let Some(to) = link else {
                     return image;
                 };
@@ -376,6 +380,24 @@ impl Piece {
     }
 }
 
+/// Whether images are drawn as their alt text alone, as a
+/// [`crate::document_element`] with [`crate::Images::AltText`] asks.
+fn alt_text_only() -> bool {
+    blocks::element().is_some_and(|element| element.alt_text)
+}
+
+/// An image as its alt text, muted, with nothing read. Its
+/// `debug_selector` is `md-image-alt-<n>`, `n` being its place among the
+/// document's images.
+fn alt_text(alt: &str, cx: &mut RenderCx) -> AnyElement {
+    let n = cx.next_image();
+    div()
+        .debug_selector(|| format!("md-image-alt-{n}"))
+        .text_color(cx.style.muted)
+        .child(alt.to_owned())
+        .into_any_element()
+}
+
 /// How wide `inlines` are on their widest line, unwrapped.
 pub(crate) fn max_width(inlines: &Inlines, cx: &mut RenderCx) -> f32 {
     match inlines {
@@ -388,6 +410,7 @@ pub(crate) fn max_width(inlines: &Inlines, cx: &mut RenderCx) -> f32 {
                 (line.iter())
                     .map(|piece| match piece {
                         Piece::Text(runs) => cx.shaped_width(runs.text.clone(), &runs.runs),
+                        Piece::Image { alt, .. } if alt_text_only() => cx.text_width(alt),
                         Piece::Image { dest, alt, .. } => image::width(dest, alt, cx),
                     })
                     .sum::<f32>()

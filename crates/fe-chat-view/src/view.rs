@@ -24,7 +24,10 @@ use kiln::{Cx, ViewCommands};
 use kiln_ui::{Button, ScrollArea, UiTheme, h_flex, ui_theme, v_flex};
 use serde_json::Value;
 
-use crate::COMPOSER_CONTEXT;
+use crate::{
+    COMPOSER_CONTEXT,
+    reply::{self, CodeBlock, Documents},
+};
 
 /// The context window the meter measures against.
 const CONTEXT_WINDOW: u64 = 1_000_000;
@@ -74,6 +77,12 @@ pub enum ChatViewEvent {
     /// The user asked to attach a file: typed `@` at the start of a word,
     /// which the view takes back out, or pressed Attach.
     AttachFileRequested,
+    /// The user clicked a link in a reply to `path`, relative to the
+    /// project, with a `#L12` fragment naming `row`, 1-based.
+    OpenPath { path: String, row: Option<u32> },
+    /// The user pressed Apply on code block `block` of turn `turn`'s reply:
+    /// see [`ChatView::code_block`].
+    ApplyBlock { turn: usize, block: usize },
 }
 
 /// The record's § 14 line under a turn, and what its button does.
@@ -174,6 +183,8 @@ pub struct ChatView {
     tail: Tail,
     /// The turns whose thinking is open.
     thinking_open: HashSet<usize>,
+    /// The replies and thinking as Markdown, parsed as they're drawn.
+    documents: Documents,
     _composer_changed: Subscription,
 }
 
@@ -340,6 +351,7 @@ impl ChatView {
             scroll: ScrollHandle::new(),
             tail: Tail::Off,
             thinking_open: HashSet::new(),
+            documents: Documents::default(),
             _composer_changed: composer_changed,
         }
     }
@@ -596,6 +608,16 @@ impl ChatView {
         self.thinking_open.contains(&index)
     }
 
+    /// Opens or closes turn `index`'s thinking, as clicking its toggle does.
+    pub fn set_thinking_open(&mut self, index: usize, open: bool, cx: &mut Context<Self>) {
+        if open {
+            self.thinking_open.insert(index);
+        } else {
+            self.thinking_open.remove(&index);
+        }
+        cx.notify();
+    }
+
     /// What turn `index` shows.
     pub fn turn_display(&self, index: usize) -> Option<TurnDisplay> {
         let turn = self.conversation.turns.get(index)?;
@@ -610,6 +632,24 @@ impl ChatView {
             answered_by: answered_by.map(str::to_owned),
             banner: self.banner(index, turn),
         })
+    }
+
+    /// Code block `block` of turn `index`'s reply, as its header shows it:
+    /// blocks are counted in document order, those in lists and quotes
+    /// too, as [`ChatViewEvent::ApplyBlock`] counts them.
+    pub fn code_block(&self, index: usize, block: usize) -> Option<CodeBlock> {
+        let turn = self.conversation.turns.get(index)?;
+        reply::code_blocks(&fe_markdown::parse(&turn.text()))
+            .into_iter()
+            .nth(block)
+    }
+
+    /// How many times the view has parsed a reply or a thinking summary
+    /// as Markdown: at most once a frame for the turn streaming, since it
+    /// parses as it draws, and never again for a turn whose text hasn't
+    /// changed.
+    pub fn parses(&self) -> usize {
+        self.documents.parses()
     }
 
     /// The footer's meter, from the last reply's prompt size: `<n>k of 1M
@@ -815,7 +855,7 @@ impl ChatView {
         };
     }
 
-    fn render_turn(&self, index: usize, ui: &UiTheme, cx: &mut Context<Self>) -> AnyElement {
+    fn render_turn(&mut self, index: usize, ui: &UiTheme, cx: &mut Context<Self>) -> AnyElement {
         let Some(shown) = self.turn_display(index) else {
             return div().into_any_element();
         };
@@ -835,8 +875,10 @@ impl ChatView {
                 user.child(h_flex().flex_wrap().gap_1().children(chips))
             })
             .child(shown.question.clone());
+        let style = reply::reply_style(self.composer.read(cx).theme(), ui);
         let thinking = shown.thinking.clone().map(|text| {
             let open = self.thinking_open(index);
+            let document = open.then(|| self.documents.thinking(index, &text, !streaming));
             let toggle = cx.listener(move |this, _, _, cx| {
                 if !this.thinking_open.remove(&index) {
                     this.thinking_open.insert(index);
@@ -854,22 +896,25 @@ impl ChatView {
                         .child(if open { "▾ Thinking" } else { "▸ Thinking" })
                         .on_click(toggle),
                 )
-                .when(open, |element| {
-                    element.child(
-                        div()
-                            .debug_selector(move || format!("chat-thinking-text-{index}"))
-                            .pl_3()
-                            .border_l_1()
-                            .border_color(ui.border)
-                            .text_color(ui.muted_text)
-                            .child(text),
-                    )
-                })
+                .children(document.map(|document| {
+                    let style = reply::thinking_style(&style);
+                    // Its own id scope, as the reply's: each document numbers
+                    // its texts and code blocks from 0.
+                    div()
+                        .id(("chat-thinking-text", index))
+                        .debug_selector(move || format!("chat-thinking-text-{index}"))
+                        .pl_3()
+                        .border_l_1()
+                        .border_color(ui.border)
+                        .child(reply::thinking_element(&document, &style, cx.weak_entity()))
+                }))
         });
         let reply = if shown.reply.is_empty() && streaming {
-            "…".to_owned()
+            div().text_color(ui.text).child("…").into_any_element()
         } else {
-            shown.reply.clone()
+            let document = self.documents.reply(index, &shown.reply, !streaming);
+            let view = cx.weak_entity();
+            reply::reply_element(index, &document, &style, streaming, *ui, view)
         };
         let answered_by = shown.answered_by.clone().map(|model| {
             div()
@@ -887,7 +932,11 @@ impl ChatView {
             .child(user)
             .children(thinking)
             .child(
+                // Its own id scope: every document numbers its texts and code
+                // blocks from 0, and their click and scroll state is kept by
+                // id.
                 div()
+                    .id(("chat-reply", index))
                     .debug_selector(move || format!("chat-reply-{index}"))
                     .text_color(ui.text)
                     .child(reply),
@@ -1123,9 +1172,10 @@ impl Render for ChatView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = ui_theme(cx);
         self.follow_tail();
-        let turns: Vec<AnyElement> = (0..self.conversation.turns.len())
-            .map(|index| self.render_turn(index, &ui, cx))
-            .collect();
+        let mut turns: Vec<AnyElement> = Vec::new();
+        for index in 0..self.conversation.turns.len() {
+            turns.push(self.render_turn(index, &ui, cx));
+        }
         let transcript = ScrollArea::new("chat-transcript")
             .track_scroll(&self.scroll)
             .debug_selector(|| "chat-transcript".into())

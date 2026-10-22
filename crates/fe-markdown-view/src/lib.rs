@@ -13,12 +13,18 @@
 //! - [`markdown_element`] lays a document out statelessly in a narrow,
 //!   unpadded column for hover popovers and completion docs: no scroll, no
 //!   focus, images shown as their alt text, link clicks to a callback.
+//! - [`document_element`] lays a document's blocks out as the view does,
+//!   with no scroll or width cap, for a host that places documents in a
+//!   scrolling view of its own: a chat's replies. Images are loaded or
+//!   shown as their alt text, link clicks go to a callback, and a host can
+//!   draw a header over each code block.
 //!
 //! Test builds give elements `debug_selector`s: `md-block-<ix>` for each
 //! top-level block; `md-image-<n>` and `md-image-blocked-<n>` for the
 //! document's `n`th image, with `md-image-<n>-loading` and
-//! `md-image-<n>-failed` for the alt text shown in its place; and
-//! `md-task-<n>` for the `n`th task checkbox.
+//! `md-image-<n>-failed` for the alt text shown in its place, and
+//! `md-image-alt-<n>` for [`Images::AltText`]'s; `md-task-<n>` for the
+//! `n`th task checkbox; and `md-code-<n>` for the `n`th code block.
 
 mod blocks;
 mod compact;
@@ -28,6 +34,7 @@ mod style;
 mod table;
 mod view;
 
+pub use blocks::{CodeHeader, CodeHeaderFn, ElementOptions, Images, document_element};
 pub use compact::markdown_element;
 pub use style::MarkdownStyle;
 pub use view::LinkHandler;

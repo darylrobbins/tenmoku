@@ -9,28 +9,193 @@
 // this file is ours.
 
 //! Blocks: paragraphs, headings, quotes, lists and task items, code, rules
-//! and raw HTML.
+//! and raw HTML; and [`document_element`], a document's blocks for a host
+//! to place.
 
-use std::sync::Arc;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
-use fe_markdown::{Block, BlockKind, ListItem};
+use fe_markdown::{Block, BlockKind, Document, ListItem};
 use gpui::{
-    AnyElement, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _, IntoElement,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, StyledText, div, img,
-    prelude::FluentBuilder as _, px, relative,
+    AnyElement, App, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _,
+    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement as _, Styled as _,
+    StyledText, Window, div, img, prelude::FluentBuilder as _, px, relative,
 };
 
 use crate::{
     MarkdownStyle,
     inlines::{self, Base},
     table,
-    view::RenderCx,
+    view::{LinkHandler, RenderCx, Sink},
 };
 
 const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
 
 const CHECK_SVG_LIGHT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none"><path d="m3.25 8.25 3 3 6.5-7" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
 const CHECK_SVG_DARK: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none"><path d="m3.25 8.25 3 3 6.5-7" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>"#;
+
+/// How [`document_element`] draws a document's images, links and code
+/// blocks.
+#[derive(Clone)]
+pub struct ElementOptions {
+    pub images: Images,
+    /// Called with a clicked link's destination, as written (see
+    /// [`fe_markdown::link_target`]).
+    pub on_link: Option<LinkHandler>,
+    /// Draws the header above each code block, fenced or indented.
+    pub code_header: Option<CodeHeaderFn>,
+}
+
+/// Draws a code block's header: see [`ElementOptions::code_header`].
+pub type CodeHeaderFn = Rc<dyn Fn(CodeHeader<'_>, &mut Window, &mut App) -> AnyElement>;
+
+/// Whether a document's images are drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Images {
+    /// As [`crate::MarkdownView`] draws them: local files inside the folder
+    /// of `doc_path`, the document's file, or inside `root`, the workspace
+    /// folder, and placeholders for the rest.
+    Load {
+        doc_path: PathBuf,
+        root: Option<PathBuf>,
+    },
+    /// Each image is its alt text, muted, and no file is read.
+    AltText,
+}
+
+/// A code block, for its header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodeHeader<'a> {
+    /// Its place among the document's code blocks, in document order.
+    pub index: usize,
+    /// The fence's info string; empty for an indented block.
+    pub info: &'a str,
+    /// The fe-syntax language the info string names.
+    pub language: Option<&'static str>,
+    /// The code, with `\n` line endings.
+    pub code: &'a str,
+}
+
+/// `document`'s blocks as [`crate::MarkdownView`] draws them, in a column
+/// as wide as its parent and as tall as they are: no scroll, padding,
+/// width cap or focus, for a host that places documents in a scrolling
+/// view of its own, such as a chat's replies. Images, link clicks and code
+/// block headers are as `options` says; links aren't underlined on hover.
+/// Test builds give each block the `debug_selector` `md-block-<ix>`.
+pub fn document_element(
+    document: &Arc<Document>,
+    style: &MarkdownStyle,
+    options: ElementOptions,
+) -> AnyElement {
+    DocumentElement {
+        document: document.clone(),
+        style: style.clone(),
+        options,
+    }
+    .into_any_element()
+}
+
+/// Built when drawn, which is when the window is at hand to shape text.
+#[derive(IntoElement)]
+struct DocumentElement {
+    document: Arc<Document>,
+    style: MarkdownStyle,
+    options: ElementOptions,
+}
+
+impl RenderOnce for DocumentElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let style = &self.style;
+        let (doc_path, root) = match &self.options.images {
+            Images::Load { doc_path, root } => (doc_path.as_path(), root.as_deref()),
+            Images::AltText => (Path::new(""), None),
+        };
+        let mut images = HashMap::new();
+        let mut rcx = RenderCx {
+            style,
+            doc_path,
+            root,
+            images: &mut images,
+            sink: Sink::Callback(self.options.on_link.clone()),
+            compact: false,
+            tracked: Rc::default(),
+            font: window.text_style().font(),
+            window,
+            app: cx,
+            hovered: Vec::new(),
+            list_depth: 0,
+            links: 0,
+            texts: 0,
+            images_seen: 0,
+            tasks: 0,
+            codes: 0,
+        };
+        let element = Element {
+            alt_text: self.options.images == Images::AltText,
+            code_header: self.options.code_header.clone(),
+        };
+        let blocks: Vec<_> = with_element(element, || {
+            (self.document.blocks.iter().enumerate())
+                .map(|(ix, block)| {
+                    div()
+                        .debug_selector(|| format!("md-block-{ix}"))
+                        .flex_none()
+                        .w_full()
+                        .child(render(block, ix == 0, &mut rcx))
+                })
+                .collect()
+        });
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .gap(MarkdownStyle::BLOCK_GAP)
+            .text_color(style.foreground)
+            .text_size(style.text_size)
+            .line_height(relative(style.line_height))
+            .children(blocks)
+    }
+}
+
+/// What [`document_element`] asks of the drawing that [`RenderCx`] doesn't
+/// carry. It's set for the blocks that element draws, and read where it
+/// matters, so that [`crate::MarkdownView`] and [`crate::markdown_element`]
+/// draw through the same code without it: `RenderCx` is the view's, and
+/// the view is left alone.
+#[derive(Clone)]
+pub(crate) struct Element {
+    /// Images drawn as their alt text.
+    pub(crate) alt_text: bool,
+    code_header: Option<CodeHeaderFn>,
+}
+
+thread_local! {
+    static ELEMENT: RefCell<Option<Element>> = const { RefCell::new(None) };
+}
+
+/// Runs `draw` with `element` as [`element`]'s, putting back what was
+/// there before, even if `draw` panics.
+fn with_element<R>(element: Element, draw: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Element>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ELEMENT.with(|current| *current.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(ELEMENT.with(|current| current.borrow_mut().replace(element)));
+    draw()
+}
+
+/// What the [`document_element`] being drawn asks for; `None` while a
+/// [`crate::MarkdownView`] or [`crate::markdown_element`] is drawn.
+pub(crate) fn element() -> Option<Element> {
+    ELEMENT.with(|current| current.borrow().clone())
+}
 
 /// An ordered-list item's ordinal, the list starting at one if it doesn't
 /// say.
@@ -132,16 +297,35 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
             list
         }
         BlockKind::Code {
-            code, highlights, ..
+            info,
+            language,
+            code,
+            highlights,
         } => {
+            let id = cx.next_code();
+            let element = element();
+            let header = (element.as_ref())
+                .and_then(|element| element.code_header.as_ref())
+                .map(|header| {
+                    let block = CodeHeader {
+                        index: id,
+                        info,
+                        language: *language,
+                        code,
+                    };
+                    header(block, cx.window, cx.app)
+                });
             let code = code.strip_suffix('\n').unwrap_or(code);
             let runs = style.code_runs(code, highlights);
-            let id = cx.next_code();
-            div()
+            let block = div()
                 .id(("md-code", id))
+                .debug_selector(|| format!("md-code-{id}"))
                 .w_full()
                 .overflow_x_scroll()
-                .rounded(px(4.))
+                // In a host's scrolling view, a vertical wheel scrolls
+                // the view, not the code sideways.
+                .when(element.is_some(), |this| this.restrict_scroll_to_axis())
+                .when(header.is_none(), |this| this.rounded(px(4.)))
                 .bg(style.code_background)
                 .p(px(16.))
                 .font_family(style.code_font_family.clone())
@@ -149,8 +333,20 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .text_size(style.code_font_size)
                 .line_height(relative(style.code_line_height))
                 .whitespace_nowrap()
-                .child(StyledText::new(code.to_owned()).with_runs(runs))
-                .into_any_element()
+                .child(StyledText::new(code.to_owned()).with_runs(runs));
+            match header {
+                None => block.into_any_element(),
+                Some(header) => div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .rounded(px(4.))
+                    .overflow_hidden()
+                    .bg(style.code_background)
+                    .child(header)
+                    .child(block)
+                    .into_any_element(),
+            }
         }
         BlockKind::Table { align, head, rows } => {
             table::render(align, head, rows, &block.lines, cx)

@@ -683,10 +683,10 @@ fn edit_brings_back_the_question_and_its_attachments(cx: &mut TestAppContext) {
     assert_eq!(chat.state(3), TurnState::Done);
 }
 
-/// A reply of `lines` lines, cut off at the token limit, so it ends in a
-/// banner.
+/// A reply of `lines` paragraphs, a line each, cut off at the token
+/// limit, so it ends in a banner.
 fn long_reply(lines: usize) -> Vec<ChatEvent> {
-    let lines: Vec<String> = (0..lines).map(|n| format!("line {n}\n")).collect();
+    let lines: Vec<String> = (0..lines).map(|n| format!("line {n}\n\n")).collect();
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
     reply_from(MODEL, &lines, StopReason::MaxTokens)
 }

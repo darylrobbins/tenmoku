@@ -832,6 +832,9 @@ impl ChatPanel {
                     (panel.update(cx, |panel, cx| panel.pick_file(window, cx))).ok();
                 });
             }
+            // Opening a reply's links to files and applying its code
+            // blocks come with `chat_apply.rs` (the record's § 8).
+            ChatViewEvent::OpenPath { .. } | ChatViewEvent::ApplyBlock { .. } => {}
         }
     }
 

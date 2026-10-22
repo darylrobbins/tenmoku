@@ -8,15 +8,20 @@
 //!   or refused turn ([`RetryTurn`]).
 //! - Each turn shows the record's § 14 state: the error, refusal, fallback
 //!   and cut-off banners, with their actions.
-//! - Replies are plain text; Markdown is a later card.
+//! - Replies and thinking are drawn as Markdown as they stream, each code
+//!   block with a header to copy it or ask the host to apply it
+//!   ([`ChatViewEvent::ApplyBlock`]); a link opens in the browser or asks
+//!   the host to open a project file ([`ChatViewEvent::OpenPath`]).
 //!
 //! It knows nothing of fastedit's workbench: the host gives it a provider
 //! and context items and listens for [`ChatViewEvent`]s.
 
 use gpui::App;
 
+mod reply;
 mod view;
 
+pub use reply::CodeBlock;
 pub use view::{
     Banner, BannerAction, ChatOptions, ChatView, ChatViewEvent, RetryTurn, SendMessage, StopReply,
     TurnDisplay,

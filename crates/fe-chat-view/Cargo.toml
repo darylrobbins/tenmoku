@@ -14,6 +14,8 @@ fe-buffer.workspace = true
 fe-chat.workspace = true
 fe-editor.workspace = true
 fe-gpui.workspace = true
+fe-markdown.workspace = true
+fe-markdown-view.workspace = true
 futures.workspace = true
 gpui.workspace = true
 kiln.workspace = true
@@ -23,7 +25,10 @@ serde_json.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+# The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
+# The screenshots example's harness: settling, comparison and goldens.
+kiln-platform = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
