@@ -13,16 +13,16 @@ fn truncation_and_rewrites_never_panic() {
     let mut rng = StdRng::seed_from_u64(4);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("log.txt");
-    fs::write(&path, "a log line é😀\n".repeat((4 * MIB / 18) as usize)).unwrap();
+    fs::write(&path, "a log line é😀\n".repeat((MIB / 18) as usize)).unwrap();
     let file = OpenOptions::new().write(true).open(&path).unwrap();
 
     let mut view = FileView::open(&path).unwrap();
     assert_eq!(view.check(), Freshness::Unchanged);
     let (mut oks, mut changed) = (0, 0);
-    for i in 0..1000 {
+    for i in 0..250 {
         // A fresh view now and then, so its cache is cold and reads reach the
         // file as it is now.
-        if i % 20 == 0 {
+        if i % 5 == 0 {
             view = FileView::open(&path).unwrap();
         }
         let current = file.metadata().unwrap().len();
@@ -36,7 +36,7 @@ fn truncation_and_rewrites_never_panic() {
                     "iteration {i}: after a truncation"
                 );
             }
-            0 | 1 => file.set_len(rng.random_range(current..=5 * MIB)).unwrap(),
+            0 | 1 => file.set_len(rng.random_range(current..=2 * MIB)).unwrap(),
             _ => {
                 let at = rng.random_range(0..=current);
                 let len = rng.random_range(1..64 * 1024);

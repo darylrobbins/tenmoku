@@ -45,9 +45,19 @@ fn arg_max() -> usize {
     String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
 }
 
-/// Enough file names, in a long directory, that their relative paths exceed ARG_MAX.
+fn path_max() -> usize {
+    let out = Command::new("getconf")
+        .args(["PATH_MAX", "/"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+}
+
+/// Enough file names, in a directory nested to near PATH_MAX (so few files
+/// are needed), that their relative paths exceed ARG_MAX.
 fn many_names() -> Vec<String> {
-    let dir = "d".repeat(200);
+    let levels = (path_max() / 2 - 100) / 251;
+    let dir = vec!["d".repeat(250); levels].join("/");
     let each = dir.len() + 1 + 12;
     let count = arg_max() / each + 200;
     (0..count).map(|n| format!("{dir}/f{n:09}.txt")).collect()
