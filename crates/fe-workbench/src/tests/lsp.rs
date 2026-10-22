@@ -575,7 +575,8 @@ fn opening_a_file_starts_its_server(cx: &mut TestAppContext) {
     assert_eq!(s.sent(1, "textDocument/didOpen", &main), 1);
     assert_eq!(s.sent(1, "textDocument/didClose", &main), 0);
 
-    // A workbench with no root has no manager.
+    // A workbench with no root has a manager too: its file, in the trusted
+    // project, gets a server at its own folder (no marker above it).
     let launch = Launch {
         root: None,
         file: Some((
@@ -585,11 +586,17 @@ fn opening_a_file_starts_its_server(cx: &mut TestAppContext) {
     };
     let (workbench, mut cx) = window(&mut s.cx, launch);
     workbench.update(&mut cx, |w, cx| w.set_root_trust(true, cx));
-    cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    for _ in 0..2 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
     assert!(workbench.read_with(&cx, |w, cx| w.active_editor(cx).is_some()));
-    assert_eq!(workbench.read_with(&cx, |w, _| w.lsp_manager()), None);
-    assert_eq!(s.fake.launches(), 1);
+    assert_eq!(
+        workbench.read_with(&cx, |w, _| w.lsp_manager()),
+        Some(false)
+    );
+    s.fake.wait_initialized_at(2);
+    assert_eq!(s.fake.launched()[1].1, s.root.join("src"));
 }
 
 #[gpui::test]

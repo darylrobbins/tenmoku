@@ -9,7 +9,8 @@
 //! host view holds a [`RootTrust`] for its root, follows the decisions
 //! and emits [`TrustChanged`] when its root's trust changes. The first
 //! time a folder is opened as one, it asks whether to trust it, with the
-//! host's [`TrustPrompt`].
+//! host's [`TrustPrompt`]. Any other folder's trust is the decision
+//! [`decided`] gives it, which [`observe`] follows.
 //!
 //! ```ignore
 //! impl TrustHost for Notes {
@@ -216,6 +217,39 @@ pub fn decide(folder: &Path, trusted: bool, cx: &mut App) {
     writer.replace(Some(task));
 }
 
+/// The decision recorded for canonical path `path`, or for its nearest
+/// decided ancestor: `None` if neither it nor an ancestor has one. No I/O.
+pub fn decided(path: &Path, cx: &App) -> Option<bool> {
+    trust_of(cx.try_global::<TrustState>()?.store.trust_of(path))
+}
+
+/// The decisions as they are now, as [`decided`] gives them, for a check
+/// off the main thread or without the app; they don't follow later ones
+/// ([`observe`] does).
+pub fn decisions(cx: &App) -> impl Fn(&Path) -> Option<bool> + Send + Sync + 'static {
+    let store = cx
+        .try_global::<TrustState>()
+        .map(|state| state.store.clone());
+    move |path| trust_of(store.as_ref()?.trust_of(path))
+}
+
+/// Calls `changed` on `host` whenever a decision may have changed, any
+/// folder's, in any window, for as long as the subscription is held.
+pub fn observe<H: 'static>(
+    cx: &mut Context<H>,
+    mut changed: impl FnMut(&mut H, &mut Context<H>) + 'static,
+) -> Subscription {
+    cx.observe_global::<TrustState>(move |host, cx| changed(host, cx))
+}
+
+fn trust_of(trust: Trust) -> Option<bool> {
+    match trust {
+        Trust::Trusted => Some(true),
+        Trust::Untrusted => Some(false),
+        Trust::Undecided => None,
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -410,5 +444,42 @@ impl RootTrust {
             .ok();
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use gpui::TestAppContext;
+
+    use super::{decide, decided, decisions, init};
+
+    #[gpui::test]
+    fn decided_is_the_nearest_decided_ancestors(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(decided(Path::new("/t"), cx), None, "no decisions yet");
+            init(cx);
+            decide(Path::new("/t"), true, cx);
+            decide(Path::new("/t/w/no"), false, cx);
+            let snapshot = decisions(cx);
+            for (path, expected) in [
+                ("/t", Some(true)),
+                ("/t/other/src", Some(true)),
+                ("/t/w/no", Some(false)),
+                ("/t/w/no/deeper", Some(false)),
+                ("/t/w", Some(true)),
+                // By components: `/tt` isn't under `/t`.
+                ("/tt", None),
+                ("/", None),
+            ] {
+                assert_eq!(decided(Path::new(path), cx), expected, "{path}");
+                assert_eq!(snapshot(Path::new(path)), expected, "{path}");
+            }
+            // The snapshot keeps the decisions it was taken with.
+            decide(Path::new("/tt"), true, cx);
+            assert_eq!(decided(Path::new("/tt/x"), cx), Some(true));
+            assert_eq!(snapshot(Path::new("/tt/x")), None);
+        });
     }
 }

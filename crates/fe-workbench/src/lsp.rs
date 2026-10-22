@@ -1,16 +1,20 @@
 //! Language servers for the workbench (docs/decisions/lsp-client.md §8,
-//! card 5): one fe-lsp [`LspManager`] per window, for its root.
+//! card 5): one fe-lsp [`LspManager`] per window, for its root or for none.
 //!
 //! - **Starting.** The manager is made with the host's launcher
 //!   ([`set_server_launcher`], else [`LocalLauncher`]) and the effective
 //!   `[lsp]` settings ([`set_lsp_settings`], then each reload), and the
 //!   servers extensions contribute that the user consented to
 //!   ([`crate::lsp_consent`]), its launcher wrapped in a [`ConsentGate`]
-//!   that checks each launch of one against its grant. With no
-//!   root there's none, and nothing starts. Servers start lazily, on the
-//!   first open file of their language (§3.2), and only once the root is
-//!   trusted ([`Workbench::root_trusted`]). A new root gets a new manager;
-//!   the old one's servers shut down.
+//!   that checks each launch of one against its grant. Servers
+//!   start lazily, on the first open file of their language (§3.2): for a
+//!   file under the root, at the root, only once it's trusted
+//!   ([`Workbench::root_trusted`]); for one outside it, or in a window with
+//!   no root, at its marker root, only if that's inside a folder the user
+//!   trusted, in any window ([`kiln_shell::trust::decided`]), followed as
+//!   decisions change. An untrusted one gets no prompt: its file is
+//!   highlighted alone, and the status item says why. A new root gets a
+//!   new manager; the old one's servers shut down.
 //! - **Trusted settings.** While the root is trusted, its manager gets the
 //!   project file's `[lsp]` table unfiltered: the root's
 //!   `.fastedit/settings.toml` read as an [`LspLayer`], which keeps its last
@@ -38,9 +42,8 @@
 //!   again at that buffer's next save, and every path at a root change
 //!   (a root that fails, at the next save of any shown buffer).
 //! - **Buffers.** Once a frame, after the draw, every buffer an editor
-//!   shows, with a file under the root and a language, is opened on the
-//!   manager once, however many panes show it, and closed when no view of
-//!   it is left. Path aliases of one file (`src/main.rs`, `src/../src/main.rs`)
+//!   shows, with a file and a language, is opened on the manager once,
+//!   however many panes show it, and closed when no view of it is left. Path aliases of one file (`src/main.rs`, `src/../src/main.rs`)
 //!   are separate buffers but one server document: the first to open owns
 //!   it, the others send nothing, and when the owner closes, a remaining
 //!   buffer opens at the next frame with its own text. A buffer that emitted events since the last frame (edits
@@ -449,15 +452,20 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// A workbench's language servers.
 pub(crate) struct Lsp {
-    /// `None` with no root, and once the window has closed. Shared with
-    /// its [`LspNavigation`], on navigation's background threads.
+    /// `None` while the root resolves, if it failed to, and once the
+    /// window has closed. Shared with its [`LspNavigation`], on
+    /// navigation's background threads.
     manager: Option<Arc<Mutex<LspManager>>>,
     /// The manager's launcher, which lets an extension's server run only
     /// what the user granted it.
     gate: Option<Arc<ConsentGate>>,
     watch: Option<Watch>,
-    /// The root the manager serves.
+    /// The window root the manager serves, if the window has one.
     pub(crate) root: Option<PathBuf>,
+    /// The first marker root the manager's trust predicate was asked about
+    /// since it was last taken: taken around each `open`, it's the root the
+    /// document routes to. Only written under the manager's lock.
+    asked: Arc<Mutex<Option<PathBuf>>>,
     /// Bumped with each manager, so a replaced one's events are dropped.
     generation: u64,
     sender: async_channel::Sender<(u64, LspEvent)>,
@@ -510,8 +518,8 @@ pub(crate) struct Lsp {
     /// What the watcher would send a change to.
     #[cfg(test)]
     project_changed: Option<async_channel::Sender<()>>,
-    /// The item's text as last set.
-    shown: Option<(String, StatusTone)>,
+    /// The item's text as last set, and its tooltip if it isn't the log's.
+    shown: Option<(String, StatusTone, Option<String>)>,
     /// The manager was made with fe-lsp's own launcher.
     #[cfg(test)]
     local: bool,
@@ -597,6 +605,9 @@ struct Document {
     language: &'static str,
     /// The server it went to, kept after the server stops.
     server: Option<ServerId>,
+    /// The folder its server runs in, or would: the window root for a file
+    /// under it, else the file's marker root.
+    root: Option<PathBuf>,
     /// The buffer's events, only to tell it moved since the last frame.
     moved: fe_buffer::Subscription,
 }
@@ -671,6 +682,7 @@ impl Lsp {
             rename: std::rc::Weak::new(),
             watch: None,
             root: None,
+            asked: Arc::default(),
             generation: 0,
             sender,
             events,
@@ -789,6 +801,19 @@ pub(crate) fn lsp_status_item(text: String, tone: StatusTone) -> kiln_shell::Sta
     item
 }
 
+/// The status item for a file whose server `name` doesn't start because
+/// its marker root, `root`, isn't inside a trusted folder.
+fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<String>) {
+    (
+        format!("{name}: folder not trusted"),
+        StatusTone::Warning,
+        Some(format!(
+            "{} isn't inside a trusted folder, so its language servers don't start",
+            root.display()
+        )),
+    )
+}
+
 impl Workbench {
     /// Starts following the language servers; call once, from `new`.
     pub(crate) fn start_lsp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -812,6 +837,12 @@ impl Workbench {
         });
         let trust = cx.subscribe_self(|workbench, TrustChanged(trusted), cx| {
             workbench.apply_trust(*trusted, cx)
+        });
+        // Any folder's decision: a file's marker root outside the root may
+        // be in it.
+        let decisions = kiln_shell::trust::observe(cx, |workbench, cx| {
+            workbench.set_lsp_trust(cx);
+            cx.notify();
         });
         let root = cx.subscribe_self(|workbench, _: &RootChanged, cx| {
             workbench.new_lsp_manager(cx);
@@ -841,7 +872,7 @@ impl Workbench {
         self.lsp._tasks.push(applied);
         self.lsp
             ._subscriptions
-            .extend([trust, root, closed, released]);
+            .extend([trust, decisions, root, closed, released]);
         self.new_lsp_manager(cx);
     }
 
@@ -866,9 +897,9 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Replaces the manager with one for the current root, or none: the old
-    /// one's servers shut down, and the open buffers go to the new one at
-    /// the next frame.
+    /// Replaces the manager with one for the current root, or for no root:
+    /// the old one's servers shut down, and the open buffers go to the new
+    /// one at the next frame.
     fn new_lsp_manager(&mut self, cx: &mut Context<Self>) {
         self.retire_lsp(cx);
         // The old manager's servers and identities aren't comparable with
@@ -907,7 +938,7 @@ impl Workbench {
         }
         let lsp = &mut self.lsp;
         let Some(root) = self.root.clone() else {
-            return;
+            return self.start_lsp_manager(None, cx);
         };
         // Resolved first, off this thread: the buffers wait for it.
         let generation = lsp.generation;
@@ -923,7 +954,7 @@ impl Workbench {
                         return;
                     }
                     match resolved {
-                        Ok(root) => workbench.start_lsp_manager(root, cx),
+                        Ok(root) => workbench.start_lsp_manager(Some(root), cx),
                         Err(error) => {
                             log::warn!("no language servers for {}: {error}", root.display());
                             workbench.lsp.root_failed = Some(root);
@@ -935,13 +966,15 @@ impl Workbench {
         }));
     }
 
-    /// Makes the manager for `root`, resolved.
-    fn start_lsp_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+    /// Makes the manager for `root`, resolved, or for a window with none.
+    fn start_lsp_manager(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
-        lsp.root = Some(root.clone());
-        let path = fe_config::project_settings_path(&root);
-        lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
-        lsp.project_path = Some(path);
+        lsp.root.clone_from(&root);
+        if let Some(root) = &root {
+            let path = fe_config::project_settings_path(root);
+            lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
+            lsp.project_path = Some(path);
+        }
         lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
@@ -1011,14 +1044,42 @@ impl Workbench {
             switch: manager.kill_switch(),
         });
         let manager = Arc::new(Mutex::new(manager));
-        let navigation = LspNavigation::new(Arc::downgrade(&manager), &root);
         *lsp.hover.manager.borrow_mut() = Arc::downgrade(&manager);
-        lsp.manager = Some(manager);
-        // Replaces the last manager's.
-        self.navigation().add(Arc::new(navigation), PRECEDENCE);
+        if let Some(root) = &root {
+            let navigation = LspNavigation::new(Arc::downgrade(&manager), root);
+            // Replaces the last manager's.
+            self.navigation().add(Arc::new(navigation), PRECEDENCE);
+        }
+        self.lsp.manager = Some(manager);
+        self.set_lsp_trust(cx);
         if self.root_trusted() {
             self.apply_trust(true, cx);
         }
+    }
+
+    /// Gives the manager the trust predicate for where it stands now:
+    /// servers start for the window root once its trusted settings are
+    /// applied, and for another marker root if it's inside a folder the
+    /// user trusted, in any window ([`kiln_shell::trust::decided`]), but
+    /// for none while a trusted root's settings are read, so none launches
+    /// with the filtered settings first. Again at each decision.
+    fn set_lsp_trust(&mut self, cx: &mut Context<Self>) {
+        let lsp = &self.lsp;
+        let Some(manager) = lsp.manager.clone() else {
+            return;
+        };
+        let (root, open) = (lsp.root.clone(), lsp.gate_open);
+        let hold = !open && self.root_trusted();
+        let decided = kiln_shell::trust::decisions(cx);
+        let asked = lsp.asked.clone();
+        lock(&manager).set_trust(move |path| {
+            lock(&asked).get_or_insert_with(|| path.to_owned());
+            match &root {
+                _ if hold => false,
+                Some(root) if path == root => open,
+                _ => decided(path) == Some(true),
+            }
+        });
     }
 
     /// Lets servers start for the root once its trusted settings are read,
@@ -1027,6 +1088,8 @@ impl Workbench {
     fn apply_trust(&mut self, trusted: bool, cx: &mut Context<Self>) {
         self.lsp.trusted_read += 1;
         if trusted {
+            // Nothing starts until they're read.
+            self.set_lsp_trust(cx);
             self.watch_project(cx);
             return self.read_trusted_settings(cx);
         }
@@ -1036,10 +1099,10 @@ impl Workbench {
         if lsp.drop_file_diagnostics(None) {
             self.sync_problems(cx);
         }
+        self.set_lsp_trust(cx);
         let lsp = &mut self.lsp;
         if let Some(manager) = lsp.manager.clone() {
             let mut manager = lock(&manager);
-            manager.set_trust(|_| false);
             manager.update_settings(&lsp.settings);
             #[cfg(test)]
             {
@@ -1156,7 +1219,7 @@ impl Workbench {
         if lsp.trusted_read != read || lsp.generation != generation || !self.trust.trusted() {
             return;
         }
-        let (Some(manager), root) = (lsp.manager.clone(), lsp.root.clone()) else {
+        let Some(manager) = lsp.manager.clone() else {
             return;
         };
         let settings = layers.apply();
@@ -1175,8 +1238,9 @@ impl Workbench {
         {
             lsp.handed = Some(settings.clone());
         }
-        manager.set_trust(move |path| Some(path) == root.as_deref());
         lsp.gate_open = true;
+        drop(manager);
+        self.set_lsp_trust(cx);
     }
 
     /// Passes reloaded `[lsp]` settings on: the manager applies what
@@ -1264,7 +1328,7 @@ impl Workbench {
             self.retry_lsp_root(&editors, cx);
         }
         let lsp = &mut self.lsp;
-        let (Some(manager), Some(root)) = (lsp.manager.clone(), &lsp.root) else {
+        let (Some(manager), root) = (lsp.manager.clone(), lsp.root.as_deref()) else {
             return;
         };
         // A failed file whose buffer was saved is resolved again.
@@ -1395,11 +1459,9 @@ impl Workbench {
             let Some(language) = language else {
                 continue;
             };
-            let Some(Some(path)) = lsp
-                .resolved
-                .get(&buffer)
-                .filter(|path| path.as_ref().is_some_and(|path| path.starts_with(root)))
-            else {
+            // Under the root or not: one outside it goes to a server at its
+            // marker root, if that's trusted.
+            let Some(Some(path)) = lsp.resolved.get(&buffer) else {
                 continue;
             };
             let path = path.clone();
@@ -1434,11 +1496,16 @@ impl Workbench {
                     buffer.version(),
                 )
             });
-            let opened = manager.open(Some(root), buffer, text, version, synced, &path, language);
+            // The first root the trust predicate is asked about is the
+            // document's: `manager.close` above left nothing for `open` to
+            // close first.
+            lock(&lsp.asked).take();
+            let opened = manager.open(root, buffer, text, version, synced, &path, language);
             let server = opened.unwrap_or_else(|error| {
                 log::warn!("{}: {error}", path.display());
                 None
             });
+            let server_root = lock(&lsp.asked).take();
             owners.insert(route, buffer);
             documents.insert(
                 buffer,
@@ -1447,6 +1514,7 @@ impl Workbench {
                     server_name,
                     language,
                     server,
+                    root: server_root,
                     moved,
                 },
             );
@@ -1585,7 +1653,7 @@ impl Workbench {
                             workbench.lsp.root_failed = None;
                             workbench.lsp.root_saves.clear();
                             workbench.lsp.root_save_pending = false;
-                            workbench.start_lsp_manager(root, cx);
+                            workbench.start_lsp_manager(Some(root), cx);
                         }
                         Err(_) if workbench.lsp.root_save_pending => {
                             workbench.resolve_lsp_root(root, cx);
@@ -1856,18 +1924,43 @@ impl Workbench {
             .active_editor(cx)
             .map(|editor| editor.read(cx).model().buffer().id());
         let lsp = &self.lsp;
-        let shown = lsp.server(buffer).and_then(|(server, name, status)| {
-            let message = lsp.messages.get(&server).map(String::as_str);
-            status_text(name, status, message)
-        });
+        // An untrusted folder says so, over a server it stopped.
+        let shown = match self.untrusted_root(buffer, cx) {
+            Some((name, root)) => Some(untrusted_status(&name, &root)),
+            None => lsp.server(buffer).and_then(|(server, name, status)| {
+                let message = lsp.messages.get(&server).map(String::as_str);
+                status_text(name, status, message).map(|(text, tone)| (text, tone, None))
+            }),
+        };
         if shown == self.lsp.shown {
             return;
         }
         self.lsp.shown.clone_from(&shown);
         self.status_bar().clone().update(cx, |bar, cx| match shown {
-            Some((text, tone)) => bar.set_item(lsp_status_item(text, tone), cx),
+            Some((text, tone, None)) => bar.set_item(lsp_status_item(text, tone), cx),
+            Some((text, tone, Some(tooltip))) => {
+                let item = kiln_shell::StatusItem::new(ITEM, StatusSide::Right, 0, text)
+                    .icon(Icon::Server)
+                    .tone(tone)
+                    .tooltip(tooltip);
+                bar.set_item(item, cx)
+            }
             None => bar.remove_item(ITEM, cx),
         });
+    }
+
+    /// The server `buffer` is routed to and the marker root it runs in, if
+    /// that root, outside the window root, isn't inside a trusted folder,
+    /// so the server doesn't start there or was stopped.
+    fn untrusted_root(&self, buffer: Option<BufferId>, cx: &App) -> Option<(String, PathBuf)> {
+        let lsp = &self.lsp;
+        let buffer = buffer?;
+        let document = lsp.documents.get(&buffer)?;
+        let (name, root) = (document.server_name.clone()?, document.root.clone()?);
+        if lsp.root.as_ref() == Some(&root) || kiln_shell::trust::decided(&root, cx) == Some(true) {
+            return None;
+        }
+        Some((name, root))
     }
 
     /// Restarts the active editor's server, or opens its log in a tab if
@@ -1877,7 +1970,12 @@ impl Workbench {
             .active_editor(cx)
             .map(|editor| editor.read(cx).model().buffer().id());
         let lsp = &mut self.lsp;
-        let (Some((server, name, _)), Some(root)) = (lsp.server(buffer), lsp.root.clone()) else {
+        // The folder the server runs in: the window root, or a marker root
+        // outside it.
+        let root = buffer
+            .and_then(|buffer| lsp.documents.get(&buffer)?.root.clone())
+            .or_else(|| lsp.root.clone());
+        let (Some((server, name, _)), Some(root)) = (lsp.server(buffer), root) else {
             return;
         };
         let name = name.to_owned();
@@ -2241,7 +2339,7 @@ impl Workbench {
 
     /// Starts a manager for `root` as a root change does.
     pub(crate) fn lsp_start_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
-        self.start_lsp_manager(root, cx);
+        self.start_lsp_manager(Some(root), cx);
     }
 
     /// The `[lsp]` settings last handed to a manager.

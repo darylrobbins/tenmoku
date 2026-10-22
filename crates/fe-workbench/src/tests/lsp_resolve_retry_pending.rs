@@ -70,11 +70,19 @@ fn a_save_during_a_failing_root_retry_opens_the_file_after_it(cx: &mut TestAppCo
     fs::create_dir_all(later.join("src")).unwrap();
     fs::write(later.join("src/main.rs"), "fn main() {}\n").unwrap();
     s.save_and_hold();
-    assert_eq!(s.sent(1, "textDocument/didOpen", &main), 0);
+    // Each launch: `src/main.rs`, outside the root in the trusted
+    // project, gets one of its own.
+    let opened = |s: &Lsp| {
+        let launches = 1..=s.fake.launches();
+        launches
+            .map(|launch| s.sent(launch, "textDocument/didOpen", &main))
+            .sum::<usize>()
+    };
+    assert_eq!(opened(&s), 0);
 
     s.draw();
     s.fake.wait_for_document(&main, "didOpen", |r| r.is_some());
-    assert_eq!(s.sent(1, "textDocument/didOpen", &main), 1);
+    assert_eq!(opened(&s), 1);
 }
 
 #[gpui::test]
