@@ -135,6 +135,18 @@ impl HeadlessVim {
     }
 
     fn feed_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
+        // A character on the command line changes neither the text nor the
+        // cursor, so there is nothing to paint or scroll before or after it:
+        // the next key does both. Macros push hundreds of thousands through.
+        if let VimKey::Char(ch) = key
+            && !self.state.remap_command_next()
+            && matches!(self.state.mode(), Mode::CmdLine(_))
+        {
+            self.state.record_key(key);
+            self.line.push(ch);
+            self.recall.edited();
+            return Ok(());
+        }
         self.sync_visual();
         self.follow_cursor();
         let fed = self.feed_mode_key(key, replayed);
