@@ -798,6 +798,12 @@ impl Workbench {
         self.trust_command(false, cx);
     }
 
+    /// Vim: Cancel Filter
+    #[command(id = "workbench.cancel_vim_filter")]
+    fn cancel_vim_filter_command(&mut self, cx: &mut Cx<Self>) {
+        self.cancel_vim_filter(cx.window, cx.cx);
+    }
+
     /// Toggle Terminal
     #[command(id = "terminal.toggle")]
     fn toggle_terminal_command(&mut self, cx: &mut Cx<Self>) {

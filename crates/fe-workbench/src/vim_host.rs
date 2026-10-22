@@ -13,6 +13,10 @@
 //! search's Replace All with `text`, through its question, saying "No
 //! search to replace" when its query is empty.
 //!
+//! `!` filters and `:r !{cmd}` run through the user's shell, off the UI
+//! thread, only from the user's own keys in a trusted folder: see
+//! [`vim_filter`].
+//!
 //! The other commands named with a capital, fugitive's and gitsigns', and
 //! `:diffsplit`, run as [`super::git_commands`] says; so do the host
 //! commands typed in an editor a git feature shows outside the tabs, which
@@ -44,11 +48,14 @@ use crate::dock::{DockOp, DockPanel, ProblemsOp};
 #[path = "vim_pick.rs"]
 mod vim_pick;
 
+#[path = "vim_filter.rs"]
+pub(super) mod vim_filter;
+
 const E32: &str = "E32: No file name";
 pub(crate) const E13: &str = "E13: File exists (add ! to override)";
 pub(super) const E37: &str = "E37: No write since last change (add ! to override)";
-/// What a filter or `:r !{cmd}` says until the workbench runs shell
-/// commands.
+/// What a filter or `:r !{cmd}` says in an editor shown outside the tabs
+/// (a diff view's side), which doesn't run shell commands.
 pub(super) const NO_SHELL: &str = "Not supported yet: shell commands";
 const E99: &str = "E99: Current buffer is not in diff mode";
 pub(super) const RELOAD: &str = "Not supported yet: reloading a file from disk";
@@ -140,8 +147,9 @@ impl Workbench {
             } => self.vim_edit(&editor, &path, window, cx),
             HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
             HostCommand::Read { path, below } => self.vim_read(&editor, path, below, cx),
-            HostCommand::Filter { .. } | HostCommand::ReadCommand { .. } => {
-                message(&editor, NO_SHELL, cx)
+            command @ (HostCommand::Filter { .. } | HostCommand::ReadCommand { .. }) => {
+                let window = window.window_handle().window_id();
+                self.vim_shell(&editor, command, window, cx)
             }
             HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
             HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),

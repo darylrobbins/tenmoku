@@ -78,6 +78,12 @@ impl Choices {
         &self.titles
     }
 
+    /// Answers `choice`, as clicking its button does.
+    #[cfg(test)]
+    pub(crate) fn choose(&self, choice: usize) {
+        self.answer(Some(choice));
+    }
+
     /// Answers `choice` (an index into the titles, or none), unless it was
     /// answered already.
     fn answer(&self, choice: Option<usize>) {
@@ -412,12 +418,15 @@ impl ToastLayer {
         &self.queue
     }
 
-    fn push(&mut self, toast: Toast, cx: &mut Context<Self>) {
+    /// Shows `toast` in this layer's window, whichever is active: for
+    /// [`ToastLayer::dismiss`] once it's out of date.
+    pub(crate) fn push(&mut self, toast: Toast, cx: &mut Context<Self>) -> ToastId {
         let now = cx.background_executor().now();
-        self.queue.push(toast, now);
+        let id = self.queue.push(toast, now);
         // The newest, at the bottom, shows even when they don't all fit.
         self.scroll.scroll_to_bottom();
         self.changed(cx);
+        id
     }
 
     pub(crate) fn dismiss(&mut self, id: ToastId, cx: &mut Context<Self>) {

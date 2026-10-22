@@ -593,3 +593,6 @@ fn read_puts_the_cursor_on_the_last_blank_of_a_blank_first_line(cx: &mut TestApp
 
 #[path = "vim_pick_tests.rs"]
 mod pick_tests;
+
+#[path = "vim_filter_tests.rs"]
+mod vim_filter_tests;

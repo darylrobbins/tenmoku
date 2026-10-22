@@ -1156,6 +1156,20 @@ impl EditorView {
         self.vim.as_ref()
     }
 
+    /// Runs `f` on the vim state and the model, as a host handing back a
+    /// command's answer does ([`VimState::apply_filter`]), then shows what
+    /// it changed; `None` with vim off.
+    pub fn update_vim<R>(
+        &mut self,
+        f: impl FnOnce(&mut VimState, &mut EditorModel) -> R,
+        cx: &mut Context<Self>,
+    ) -> Option<R> {
+        let state = self.vim.as_mut()?;
+        let answer = f(state, &mut self.model);
+        self.changed(cx);
+        Some(answer)
+    }
+
     /// Whether typing and input methods insert text: with vim off, or in
     /// insert or replace mode.
     pub(crate) fn accepts_text(&self) -> bool {
