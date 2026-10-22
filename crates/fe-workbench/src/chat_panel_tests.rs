@@ -601,6 +601,8 @@ mod apply;
 #[path = "chat_context_tests.rs"]
 mod context;
 
+#[path = "chat_commands_tests.rs"]
+mod commands;
 #[path = "chat_rail_tests.rs"]
 mod rail;
 #[path = "chat_key_tests.rs"]

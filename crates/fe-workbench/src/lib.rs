@@ -137,6 +137,8 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
     // the registries: the one a registry still names
     // (`project_panel.reveal_active`) is checked as typed.
     let mut catalogs = vec![kiln::recorded_catalog("fe_workbench")];
+    // The chat view's, which the default keymap binds (`chat.send`).
+    catalogs.push(kiln::recorded_catalog("fe_chat_view"));
     catalogs.extend(registry_catalogs());
     Box::new(Catalog(catalogs))
 }

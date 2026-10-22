@@ -426,6 +426,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         assert!(
             crate::keymap_tests::is_window_key(&bindings[index])
                 || bindings[index].command.as_str().starts_with("git.")
+                || bindings[index].command.as_str().starts_with("chat.")
                 || matches!(
                     context.as_deref(),
                     Some(

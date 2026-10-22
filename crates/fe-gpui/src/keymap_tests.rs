@@ -98,7 +98,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     (
         "escape",
         "editor.single_selection",
-        Some("editor && !vim.enabled"),
+        Some("editor && !vim.enabled && !chat_composer"),
     ),
     ("cmd-]", "editor.indent", Some("editor")),
     ("cmd-[", "editor.outdent", Some("editor")),
@@ -128,7 +128,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("shift-backspace", "editor.backspace", Some("editor")),
     ("delete", "editor.delete", Some("editor")),
     ("alt-backspace", "editor.delete_word_left", Some("editor")),
-    ("enter", "editor.newline", Some("editor")),
+    ("enter", "editor.newline", Some("editor && !chat_composer")),
     ("tab", "editor.tab", Some("editor")),
     ("cmd-alt-[", "editor.fold", Some("editor")),
     ("cmd-alt-]", "editor.unfold", Some("editor")),
@@ -306,10 +306,12 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
             )
     };
     // `find.show`, the `lsp.`, `git.` and `markdown.` commands are the
-    // workbench's too, though bound in `editor` (or the Changes panel).
+    // workbench's too, though bound in `editor` (or the Changes panel); so
+    // are the chat's, bound in the composer.
     let find = |binding: &&fe_keymap::Binding| {
         let command = binding.command.as_str();
         command.starts_with("find.")
+            || command.starts_with("chat.")
             || command.starts_with("lsp.")
             || command.starts_with("git.")
             || command.starts_with("markdown.")

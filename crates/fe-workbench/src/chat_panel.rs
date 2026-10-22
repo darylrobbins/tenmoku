@@ -39,11 +39,15 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use fe_chat::{ChatProvider, ChatSettings, Conversation, Effort, ScriptedProvider};
+use fe_chat::{
+    ChatProvider, ChatSettings, ContextItem, ContextKind, Conversation, Effort, Rows,
+    ScriptedProvider,
+};
 use fe_chat_anthropic::ApiKey;
 use fe_chat_view::{ChatOptions, ChatView, ChatViewEvent};
 use fe_command::Invocation;
 use fe_config::ChatEffort;
+use fe_editor::EditorModel;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
@@ -67,6 +71,8 @@ use crate::{
 mod chat_apply;
 #[path = "chat_context.rs"]
 mod chat_context;
+
+use chat_context::MAX_FILE;
 
 /// The AI chat in the sidebar: always on the rail, under Git Log; focused
 /// when shown, as the composer takes the keys.
@@ -359,6 +365,17 @@ impl ChatPanel {
     /// Deletes the chat's Anthropic API key from the system keychain.
     #[command(id = "chat.clear_api_key", context = "workbench")]
     fn clear_api_key(&mut self, cx: &mut Cx<Self>) {
+        cx.propagate();
+    }
+
+    /// Chat: Ask About Selection
+    ///
+    /// Opens the chat with the active editor's selection attached, or its
+    /// current row if nothing is selected, and focuses the composer. Works in
+    /// an untrusted folder: the selection is the user's own.
+    // As `chat.open`, the workbench's to do.
+    #[command(id = "chat.ask_about_selection", context = "editor")]
+    fn ask_about_selection(&mut self, cx: &mut Cx<Self>) {
         cx.propagate();
     }
 
@@ -958,6 +975,10 @@ impl ChatPanel {
         self.gather(cx);
     }
 
+    pub(crate) fn key_form_closed(&self) -> bool {
+        self.key_form.is_none()
+    }
+
     pub(crate) fn notice(&self) -> bool {
         self.notice
     }
@@ -1041,6 +1062,28 @@ impl Workbench {
         }
     }
 
+    /// Shows the Chat panel with the active editor's selection attached, or
+    /// its current row if empty, and the composer focused.
+    fn ask_about_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let item = self.active_editor(cx).and_then(|editor| {
+            let model = editor.read(cx).model();
+            selection_or_row(self.root(), model)
+        });
+        self.open_chat(window, cx);
+        let Some(panel) = self.dock().read(cx).chat().cloned() else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            // The key form stands in for the chat while open.
+            panel.close_key_form(window, cx);
+            if let Some(item) = item {
+                panel.view.update(cx, |view, cx| view.attach(item, cx));
+            }
+            let focus = panel.focus_handle(cx);
+            window.focus(&focus, cx);
+        });
+    }
+
     /// Clears the chat's key.
     fn clear_chat_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_chat(window, cx);
@@ -1050,6 +1093,53 @@ impl Workbench {
     }
 }
 
+/// `model`'s primary selection as a chip's item, or its caret's row if the
+/// selection is empty; `None` if that is empty or over [`MAX_FILE`].
+fn selection_or_row(root: Option<&Path>, model: &EditorModel) -> Option<ContextItem> {
+    let range = model.primary_selection().range;
+    let text = model.text();
+    let (start, end) = (
+        text.offset_to_point(range.start),
+        text.offset_to_point(range.end),
+    );
+    let (range, first, last) = if range.is_empty() {
+        let at = text.row_start(start.row);
+        (
+            at..at + text.row_len(start.row) as usize,
+            start.row,
+            start.row,
+        )
+    } else {
+        // A selection ending at a row's start doesn't take that row.
+        let last = if end.column == 0 && end.row > start.row {
+            end.row - 1
+        } else {
+            end.row
+        };
+        (range, start.row, last)
+    };
+    if range.is_empty() || range.len() > MAX_FILE {
+        return None;
+    }
+    let path = match model.path() {
+        Some(path) => root
+            .and_then(|root| path.strip_prefix(root).ok())
+            .unwrap_or(path)
+            .display()
+            .to_string(),
+        None => "untitled".to_owned(),
+    };
+    let rows = Rows {
+        first: first + 1,
+        last: last + 1,
+    };
+    Some(ContextItem {
+        label: format!("{path}:{rows}"),
+        kind: ContextKind::Selection { path, rows },
+        text: text.slice_to_string(range),
+    })
+}
+
 /// Runs `chat.open`, `chat.set_api_key` and `chat.clear_api_key` in the
 /// window they were invoked in, wherever focus is: the workbench's root
 /// doesn't attach the panel's commands. After the dispatch, which has the
@@ -1057,6 +1147,9 @@ impl Workbench {
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenChat, cx| {
         on_workbench(cx, Workbench::open_chat);
+    });
+    cx.on_action(|_: &AskAboutSelection, cx| {
+        on_workbench(cx, Workbench::ask_about_selection);
     });
     cx.on_action(|_: &SetApiKey, cx| {
         on_workbench(cx, Workbench::set_chat_key);

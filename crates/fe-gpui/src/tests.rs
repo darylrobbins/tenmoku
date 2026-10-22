@@ -312,7 +312,11 @@ fn bindings_are_all_tested() {
             binding
                 .context
                 .as_ref()
-                .is_some_and(|context| context.to_string() == KEY_CONTEXT)
+                // `enter` leaves the chat's composer out, for its own.
+                .is_some_and(|context| {
+                    let context = context.to_string();
+                    context == KEY_CONTEXT || context == "editor && !chat_composer"
+                })
         })
         // `find.show` is fe-workbench's, tested there (`find_keys`).
         .filter(|binding| !binding.command.as_str().starts_with("find."))

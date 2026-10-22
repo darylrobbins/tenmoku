@@ -274,6 +274,10 @@ title = "Toggle Terminal"
 command = "terminal.toggle"
 
 [[menus.items]]
+title = "Chat"
+command = "chat.open"
+
+[[menus.items]]
 title = "Toggle Breadcrumbs"
 command = "view.toggle_breadcrumbs"
 

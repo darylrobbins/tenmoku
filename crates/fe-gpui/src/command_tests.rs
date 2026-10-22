@@ -139,6 +139,12 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
             ("alt-shift-f5".to_string(), "diff.previous_change", false),
             ("cmd-enter".to_string(), "git.commit_box.commit", false),
         ])
+        // The chat composer's keys.
+        .chain([
+            ("enter".to_string(), "chat.send", false),
+            ("shift-enter".to_string(), "editor.newline", false),
+            ("escape".to_string(), "chat.stop", false),
+        ])
         .collect();
     assert_eq!(others, context_free);
     for binding in bindings {

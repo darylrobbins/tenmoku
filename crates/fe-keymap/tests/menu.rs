@@ -318,9 +318,9 @@ fn hosts_extend_and_replace() {
             "problems.show",
             "dock.toggle",
             "terminal.toggle",
+            "chat.open",
             "view.toggle_breadcrumbs",
             "view.toggle_status_bar",
-            "-"
         ]
     );
     // An item with a taken ID replaces it where it was.

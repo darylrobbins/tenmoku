@@ -196,7 +196,7 @@ context = "editor && !vim.enabled"
 [[bindings]]
 keys = "escape"
 command = "editor.single_selection"
-context = "editor && !vim.enabled"
+context = "editor && !vim.enabled && !chat_composer"
 
 # Row commands and line comments, as VS Code binds them. vim claims `ctrl-[`
 # (escape) in every mode, so there the outdent is off with vim; shift-tab,
@@ -280,7 +280,7 @@ context = "editor"
 [[bindings]]
 keys = "enter"
 command = "editor.newline"
-context = "editor"
+context = "editor && !chat_composer"
 
 [[bindings]]
 keys = "tab"
@@ -1802,3 +1802,26 @@ context = "editor && vim.mode == normal && !vim.pending"
 keys = { macos = "cmd-alt-down", default = "alt-shift-down" }
 command = "editor.add_cursor_below"
 context = "editor && vim.mode == normal && !vim.pending"
+
+# The chat. The composer is an editor inside `chat_composer`, and the deepest
+# context wins, so these name both frames, and the editor's own `enter` and
+# `escape` leave the composer out rather than be shadowed there.
+[[bindings]]
+keys = { macos = "ctrl-cmd-i", default = "ctrl-alt-i" }
+command = "chat.open"
+context = "workbench"
+
+[[bindings]]
+keys = "enter"
+command = "chat.send"
+context = "chat_composer && editor"
+
+[[bindings]]
+keys = "shift-enter"
+command = "editor.newline"
+context = "chat_composer && editor"
+
+[[bindings]]
+keys = "escape"
+command = "chat.stop"
+context = "chat_composer && editor"
