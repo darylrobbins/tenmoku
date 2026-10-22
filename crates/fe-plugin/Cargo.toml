@@ -8,10 +8,13 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-io.workspace = true
 fe-buffer.workspace = true
 fe-editor.workspace = true
 fe-net.workspace = true
 fe-text.workspace = true
+futures.workspace = true
+http.workspace = true
 kiln-command.workspace = true
 kiln-plugin.workspace = true
 wasmtime.workspace = true

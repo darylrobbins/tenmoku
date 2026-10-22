@@ -2371,10 +2371,13 @@ dependencies = [
 name = "fe-plugin"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "fe-buffer",
  "fe-editor",
  "fe-net",
  "fe-text",
+ "futures",
+ "http",
  "kiln-command",
  "kiln-plugin",
  "tree-sitter",
@@ -5167,6 +5170,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
+ "url",
  "wasmtime",
  "wasmtime-wasi",
 ]

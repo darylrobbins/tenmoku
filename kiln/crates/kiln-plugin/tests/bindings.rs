@@ -44,7 +44,6 @@ fn every_unimplemented_import_returns_the_unimplemented_error() {
         ("try-invoke", "kiln:extension/commands.invoke"),
         ("try-subscribe", "kiln:extension/events.subscribe"),
         ("try-spawn", "kiln:extension/process.spawn"),
-        ("try-fetch", "kiln:extension/net.fetch"),
         ("try-get", "kiln:extension/secrets.get"),
         ("try-set", "kiln:extension/secrets.set"),
         ("try-delete", "kiln:extension/secrets.delete"),
