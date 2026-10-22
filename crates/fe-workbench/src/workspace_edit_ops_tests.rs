@@ -518,6 +518,34 @@ fn a_skippable_rename_goes_either_way(cx: &mut gpui::TestAppContext) {
     assert_eq!(s.text(&a), "// kept\npub fn b() {}\n");
 }
 
+/// The same skippable rename twice in one edit is two operations: the
+/// first is made, the second skipped, and the edit after them follows
+/// each one's own outcome, so it lands in the buffer the first moved.
+#[gpui::test]
+fn a_repeated_skippable_rename_resolves_each_occurrence(cx: &mut gpui::TestAppContext) {
+    let (mut s, _) = setup(cx);
+    fs::write(s.path("src/a.rs"), "pub fn a() {}\n").unwrap();
+    s.open("src/a.rs");
+    (s.fake)
+        .wait_for_document(&s.uri("src/a.rs"), "didOpen", |r| r.is_some())
+        .unwrap();
+    let a = s.editor();
+    let rename = |s: &Lsp| {
+        json!({ "kind": "rename", "oldUri": s.uri("src/a.rs"), "newUri": s.uri("src/b.rs"),
+                "options": { "ignoreIfExists": true } })
+    };
+    let changes = json!([
+        rename(&s),
+        { "kind": "create", "uri": s.uri("src/a.rs"), "options": { "ignoreIfExists": true } },
+        rename(&s),
+        s.edit_of("src/b.rs", vec![edit((0, 7), (0, 8), "b")]),
+    ]);
+    assert_eq!(s.push_changes(changes), json!({ "applied": true }));
+    let shown = a.read_with(&s.cx, |view, _| view.model().path().map(Path::to_owned));
+    assert_eq!(shown, Some(s.path("src/b.rs")));
+    assert_eq!(s.text(&a), "pub fn b() {}\n");
+}
+
 /// A create over a file keeps its permissions.
 #[gpui::test]
 fn a_create_over_a_file_keeps_its_permissions(cx: &mut gpui::TestAppContext) {
