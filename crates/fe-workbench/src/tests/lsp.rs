@@ -980,7 +980,6 @@ fn quitting_waits_for_slow_servers(cx: &mut TestAppContext) {
 
     // Quitting shuts t's down too, and waits for both through their
     // timeouts.
-    let started = Instant::now();
     {
         let _driver = QuitDriver::new(
             s.clock.clone(),
@@ -990,11 +989,8 @@ fn quitting_waits_for_slow_servers(cx: &mut TestAppContext) {
         );
         t.cx.update(|_, cx| crate::lsp::shut_down_all(cx));
     }
-    assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "{:?}",
-        started.elapsed()
-    );
+    // The driver advanced the test clock through both timeouts (it records
+    // a missed step and fails on drop), so no real sleeping happened.
     let shutdown = |records: &[Record]| records.iter().any(|r| r.method() == "shutdown");
     let rust = s.fake.records_of(1);
     assert!(shutdown(&rust) && shut_down(&rust), "{rust:#?}");

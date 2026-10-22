@@ -167,6 +167,19 @@ fn lsp_tone_follows_a_same_text_message(cx: &mut TestAppContext) {
     let uri = s.uri("a.rs");
     s.fake
         .wait_for_document(&uri, "didOpen", |r| r.is_some_and(|r| r.open));
+    // The workbench admits the buffer's server by polling the manual and
+    // executor clocks.
+    s.until("the buffer's server is admitted", |s| {
+        s.clock.advance(std::time::Duration::from_millis(20));
+        s.cx.executor()
+            .advance_clock(std::time::Duration::from_millis(250));
+        s.workbench.read_with(&s.cx, |w, cx| {
+            let buffer = w
+                .active_editor(cx)
+                .map(|e| e.read(cx).model().buffer().id());
+            buffer.is_some_and(|b| w.lsp_code_actioner(b).is_some())
+        })
+    });
     let tone = |s: &mut super::lsp::Lsp, message: Option<&str>| {
         let message = message.map(str::to_owned);
         s.workbench.update(&mut s.cx, |w, cx| {
