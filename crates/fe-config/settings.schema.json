@@ -776,6 +776,13 @@
           "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it and saves\nit here.",
           "type": "boolean"
         },
+        "filter_time_limit": {
+          "default": 10000,
+          "description": "How long, in milliseconds, a `!` filter or `:r !` may run before it is\nkilled and nothing changes.",
+          "format": "uint64",
+          "minimum": 100,
+          "type": "integer"
+        },
         "jump_on_s": {
           "default": false,
           "description": "true: `s` and `S` start the forward and backward jump, as leap and\nflash map them, instead of changing a char or a line (`cl` and `cc`\nstill do). `gs` and `gS` start it either way.",
@@ -805,6 +812,11 @@
           "default": false,
           "description": "true: `gr{motion}`, `grr` and visual `gr` replace text with a\nregister's contents, as the ReplaceWithRegister plugin does, instead\nof running nvim 0.12's language-server `gr` keys (`grr` references,\n`grn` rename, `gra` code action, `gri`, `grt`).",
           "type": "boolean"
+        },
+        "shell": {
+          "default": "",
+          "description": "The program vim's `!` filter and `:r !` run commands with, as\n`shell -c command`. Empty: your shell (`$SHELL`, else `/bin/sh`; on\nWindows `%COMSPEC%`). A project file can't set it.",
+          "type": "string"
         }
       },
       "type": "object"
@@ -924,11 +936,13 @@
       "default": {
         "clipboard": "",
         "enabled": false,
+        "filter_time_limit": 10000,
         "jump_on_s": false,
         "leader": "\\",
         "regex_time_limit": 2000,
         "remap": [],
-        "replace_with_register": false
+        "replace_with_register": false,
+        "shell": ""
       },
       "description": "Vim mode."
     },

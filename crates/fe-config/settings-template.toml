@@ -103,6 +103,12 @@
 # How long, in milliseconds, a vim search or :s may run before it stops and
 # changes nothing.
 # regex_time_limit = 2000
+# The program vim's ! filter and :r ! run commands with. Empty: your shell
+# ($SHELL, else /bin/sh; %COMSPEC% on Windows). A project file can't set it.
+# shell = ""
+# How long, in milliseconds, a ! filter or :r ! may run before it is killed
+# and changes nothing.
+# filter_time_limit = 10000
 # The key <leader> stands for in a remap, in vim notation.
 # leader = "\\"
 # Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", or a list

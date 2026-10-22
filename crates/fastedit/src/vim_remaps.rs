@@ -637,31 +637,24 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_project_tables_problems_are_in_its_file(cx: &mut TestAppContext) {
-        let files = Files::new(
-            "[[vim.remap]]\nmode = \"n\"\nfrom = \"a\"\nto = \"<Bogus>\"\n",
-            None,
-        );
-        let project = "[[vim.remap]]\nmode = \"n\"\nfrom = \"Q\"\nto = \"x\"\n\n\
-                       [[vim.remap]]\nmode = \"n\"\nfrom = \"b\"\nto = \"<Bogus>\"\n";
-        fs::write(files.project(), project).unwrap();
+    fn a_tables_problems_are_in_its_file(cx: &mut TestAppContext) {
+        // A project file's remaps are dropped, so the user's file holds them.
+        let table = "[[vim.remap]]\nmode = \"n\"\nfrom = \"Q\"\nto = \"x\"\n\n\
+                     [[vim.remap]]\nmode = \"n\"\nfrom = \"b\"\nto = \"<Bogus>\"\n";
+        let files = Files::new(table, None);
         let (sender, _) = start(&files, cx);
+        assert_eq!(normal("Q", cx), keys("x"));
+        assert_eq!(problems(&files.project(), cx), []);
         assert_eq!(
-            normal("Q", cx),
-            keys("x"),
-            "the project's table replaces the user's"
-        );
-        assert_eq!(problems(&files.settings(), cx), []);
-        assert_eq!(
-            places(&problems(&files.project(), cx)),
+            places(&problems(&files.settings(), cx)),
             [(Severity::Warning, "vim.remap[1].to", 9, 1)]
         );
 
         // An edit that only moves the entry moves its problem.
-        let moved = format!("# remaps\n\n{project}");
-        edit(&files.project(), &moved, &[files.project()], &sender, cx);
+        let moved = format!("# remaps\n\n{table}");
+        edit(&files.settings(), &moved, &[files.settings()], &sender, cx);
         assert_eq!(
-            places(&problems(&files.project(), cx)),
+            places(&problems(&files.settings(), cx)),
             [(Severity::Warning, "vim.remap[1].to", 11, 1)]
         );
     }
@@ -671,14 +664,9 @@ mod tests {
         let user = "[vim]\nleader = \"<Bogus>\"\n\n\
                     [[vim.remap]]\nmode = \"n\"\nfrom = \"a\"\nto = \"<Bogus>\"\n";
         let files = Files::new(user, None);
-        // `i` isn't a mode a remap may have, so the store rejects the file.
-        let project = |mode: &str| {
-            format!(
-                "[vim]\nleader = \"<Bogus>\"\n\n\
-                 [[vim.remap]]\nmode = \"{mode}\"\nfrom = \"b\"\nto = \"<Bogus>\"\n"
-            )
-        };
-        fs::write(files.project(), project("i")).unwrap();
+        // A string isn't a bool, so the store rejects the file.
+        let project = |jump: &str| format!("[vim]\nleader = \"<Bogus>\"\njump_on_s = {jump}\n");
+        fs::write(files.project(), project("\"i\"")).unwrap();
         let (sender, _) = start(&files, cx);
         assert!(
             problems(&files.project(), cx)
@@ -696,19 +684,21 @@ mod tests {
         // Taken once good, its leader and table are the ones in use.
         edit(
             &files.project(),
-            &project("n"),
+            &project("true"),
             &[files.project()],
             &sender,
             cx,
         );
-        assert_eq!(warnings(&files.settings(), cx), []);
-        let in_project = in_user;
+        // The user's table stays, so only its leader's warning moves.
+        let user_table = [(Severity::Warning, "vim.remap[0].to", 7, 1)];
+        assert_eq!(places(&warnings(&files.settings(), cx)), user_table);
+        let in_project = [(Severity::Warning, "vim.leader", 2, 1)];
         assert_eq!(places(&warnings(&files.project(), cx)), in_project);
 
         // Rejected again, it keeps them, at their lines in the text taken.
-        let broken = format!("not toml\n\n{}", project("n"));
+        let broken = format!("not toml\n\n{}", project("true"));
         edit(&files.project(), &broken, &[files.project()], &sender, cx);
-        assert_eq!(warnings(&files.settings(), cx), []);
+        assert_eq!(places(&warnings(&files.settings(), cx)), user_table);
         assert_eq!(places(&warnings(&files.project(), cx)), in_project);
 
         // A rejected user file keeps its place too, under the project's.
@@ -801,8 +791,8 @@ mod tests {
         assert_eq!(normal("H", cx), keys("0"));
     }
 
-    const ACCEPTED_USER: &str = "[[vim.remap]]\nmode = \"n\"\nfrom = \"a\"\nto = \"x\"\n";
-    const ACCEPTED_PROJECT: &str = "# project\n\n[vim]\nleader = \"<Bogus>\"\n\n\
+    const ACCEPTED_PROJECT: &str = "# project\n\n[vim]\nleader = \"<Bogus>\"\n";
+    const ACCEPTED_USER: &str = "# user\n\n\
                            [[vim.remap]]\nmode = \"n\"\nfrom = \"b\"\nto = \"<Bogus>\"\n\n\
                            [[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>w\"\nto = \"y\"\n";
 
@@ -843,21 +833,18 @@ mod tests {
     }
 
     fn accepted_expected(files: &AcceptedFiles) -> Vec<(PathBuf, &'static str, usize)> {
-        [
-            ("vim.leader", 4),
-            ("vim.remap[0].to", 9),
-            ("vim.remap[1].from", 13),
+        vec![
+            (files.project(), "vim.leader", 4),
+            (files.user(), "vim.remap[0].to", 6),
+            (files.user(), "vim.remap[1].from", 10),
         ]
-        .into_iter()
-        .map(|(key, line)| (files.project(), key, line))
-        .collect()
     }
 
     #[test]
     fn a_project_file_changing_between_load_and_construction_keeps_its_warning_lines() {
         let files = AcceptedFiles::new();
         let store = files.store();
-        fs::write(files.project(), "not toml\n").unwrap();
+        fs::write(files.user(), "not toml\n").unwrap();
         let remaps = VimRemaps::new(None, &store);
         assert_eq!(
             accepted_places(&remaps.table_diagnostics),
@@ -869,8 +856,8 @@ mod tests {
     fn construction_after_a_rejected_reload_keeps_the_accepted_lines() {
         let files = AcceptedFiles::new();
         let mut store = files.store();
-        fs::write(files.project(), "not toml\n").unwrap();
-        assert!(store.reload(&[files.project()]).is_some());
+        fs::write(files.user(), "not toml\n").unwrap();
+        assert!(store.reload(&[files.user()]).is_some());
         let remaps = VimRemaps::new(None, &store);
         assert_eq!(
             accepted_places(&remaps.table_diagnostics),
@@ -882,7 +869,7 @@ mod tests {
     fn the_remaps_and_the_leader_keep_their_lines_when_the_file_moves() {
         let files = AcceptedFiles::new();
         let store = files.store();
-        fs::write(files.project(), format!("# moved\n\n{ACCEPTED_PROJECT}")).unwrap();
+        fs::write(files.user(), format!("# moved\n\n{ACCEPTED_USER}")).unwrap();
         let remaps = VimRemaps::new(None, &store);
         let lines: Vec<_> = (remaps.table_diagnostics.iter())
             .map(|d| (d.key.clone().unwrap(), d.line))
@@ -891,8 +878,8 @@ mod tests {
             lines,
             [
                 ("vim.leader".to_owned(), 4),
-                ("vim.remap[0].to".to_owned(), 9),
-                ("vim.remap[1].from".to_owned(), 13),
+                ("vim.remap[0].to".to_owned(), 6),
+                ("vim.remap[1].from".to_owned(), 10),
             ]
         );
     }

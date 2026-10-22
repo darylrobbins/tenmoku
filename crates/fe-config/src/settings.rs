@@ -236,6 +236,14 @@ pub struct VimSettings {
     /// 'redrawtime' is the same default).
     #[schemars(range(min = 1))]
     pub regex_time_limit: u64,
+    /// The program vim's `!` filter and `:r !` run commands with, as
+    /// `shell -c command`. Empty: your shell (`$SHELL`, else `/bin/sh`; on
+    /// Windows `%COMSPEC%`). A project file can't set it.
+    pub shell: String,
+    /// How long, in milliseconds, a `!` filter or `:r !` may run before it is
+    /// killed and nothing changes.
+    #[schemars(range(min = 100))]
+    pub filter_time_limit: u64,
     /// The leader key `<leader>` stands for in a remap, in vim notation
     /// (`"<Space>"` works).
     pub leader: String,
@@ -254,6 +262,8 @@ impl Default for VimSettings {
             replace_with_register: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,
+            shell: String::new(),
+            filter_time_limit: 10_000,
             leader: "\\".to_string(),
             remap: Vec::new(),
         }
@@ -795,6 +805,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
         .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
+        .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
 }
 
@@ -1102,6 +1113,34 @@ fn drop_terminal_shell(layer: &mut Layer) {
             Some(format!("terminal.{key}")),
             offset,
             PROJECT_TERMINAL_SHELL.into(),
+        );
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// The warning for each `vim.shell` and `vim.remap` a project file sets.
+pub const PROJECT_VIM_USER_ONLY: &str = "vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you";
+
+/// Drops a project layer's `vim.shell` and `vim.remap`, with a
+/// [`PROJECT_VIM_USER_ONLY`] warning at each; its other `vim` keys stay.
+fn drop_vim_user_only(layer: &mut Layer) {
+    let Some(toml::Value::Table(vim)) = layer.table.get_mut("vim") else {
+        return;
+    };
+    let dropped: Vec<&str> = ["shell", "remap"]
+        .into_iter()
+        .filter(|key| vim.remove(*key).is_some())
+        .collect();
+    let document = DeTable::parse(&layer.source).ok();
+    for key in dropped {
+        let offset = document.as_ref().map_or(0, |document| {
+            key_offset(document.get_ref(), "vim", &[key.to_owned()])
+        });
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(format!("vim.{key}")),
+            offset,
+            PROJECT_VIM_USER_ONLY.into(),
         );
         layer.diagnostics.push(warning);
     }
