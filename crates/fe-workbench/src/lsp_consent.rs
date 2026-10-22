@@ -91,6 +91,10 @@ pub struct ExtensionServer {
     pub extension_id: String,
     /// The name people see.
     pub extension_name: String,
+    /// As `major.minor.patch`.
+    pub extension_version: String,
+    /// Its SPDX expression.
+    pub extension_license: String,
     /// The extension's directory, absolute.
     pub extension_dir: PathBuf,
     pub spec: ServerSpec,
@@ -189,10 +193,14 @@ fn hash_file(path: &Path) -> Option<String> {
 pub struct PendingConsent {
     pub extension_id: String,
     pub extension_name: String,
+    pub extension_version: String,
+    pub extension_license: String,
     /// The extension's directory, canonical.
     pub extension_dir: PathBuf,
     /// The server's name.
     pub server: String,
+    /// The languages it serves.
+    pub languages: Vec<String>,
     /// What it would run.
     pub invocation: Invocation,
     /// What the user granted it before it changed, which is what runs, if
@@ -618,8 +626,11 @@ fn apply(cx: &mut App) {
         let ask = |previous: Option<Invocation>, declined: bool| PendingConsent {
             extension_id: server.extension_id.clone(),
             extension_name: server.extension_name.clone(),
+            extension_version: server.extension_version.clone(),
+            extension_license: server.extension_license.clone(),
             extension_dir: server.extension_dir.clone(),
             server: server.spec.name.clone(),
+            languages: server.spec.languages.clone(),
             invocation: evaluated.invocation.clone(),
             previous,
             declined,
@@ -681,6 +692,8 @@ fn apply(cx: &mut App) {
     state.pending = pending;
     *lock(&state.grants) = grants;
     hand_extension_servers(cx, specs);
+    // Tells the views that follow the consents.
+    gpui::BorrowAppContext::update_global::<ExtensionConsent, _>(cx, |_, _| {});
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

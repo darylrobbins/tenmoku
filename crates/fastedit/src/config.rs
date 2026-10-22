@@ -279,6 +279,11 @@ fn extension_servers(
                 Some(spec) => servers.push(fe_workbench::ExtensionServer {
                     extension_id: manifest.id.clone(),
                     extension_name: manifest.name.clone(),
+                    extension_version: {
+                        let (major, minor, patch) = manifest.version;
+                        format!("{major}.{minor}.{patch}")
+                    },
+                    extension_license: manifest.license.expr.clone(),
                     extension_dir: manifest.dir.clone(),
                     spec,
                 }),

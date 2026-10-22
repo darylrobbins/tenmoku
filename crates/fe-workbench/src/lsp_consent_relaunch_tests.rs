@@ -26,6 +26,8 @@ fn taplo(extension: &Path) -> ExtensionServer {
     ExtensionServer {
         extension_id: "acme.toml".into(),
         extension_name: "Toml".into(),
+        extension_version: "1.0.0".into(),
+        extension_license: "MIT".into(),
         extension_dir: extension.to_owned(),
         spec: ServerSpec {
             args: vec!["server.js".into()],
