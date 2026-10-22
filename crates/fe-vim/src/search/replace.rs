@@ -243,6 +243,18 @@ impl Taken {
     pub(crate) fn joins(&self) -> bool {
         self.end_row > self.start_row
     }
+
+    /// Takes in `range` of `before`, which ends before the match on the row
+    /// searched or an earlier one, replaced by `new`, making `after`: the
+    /// match moves with the text.
+    pub(crate) fn edited(&mut self, before: &Text, range: Range<usize>, new: &str, after: &Text) {
+        let offset = |at: usize| at - range.len() + new.len();
+        let row = |at: usize| after.offset_to_point(at.min(after.len())).row;
+        self.searched = row(offset(row_end(before, self.searched).max(range.end)));
+        self.range = offset(self.range.start)..offset(self.range.end);
+        self.start_row = row(self.range.start);
+        self.end_row = row(self.range.end);
+    }
 }
 
 /// What `:s` did with the match [`Walk::next`] found.
@@ -268,9 +280,11 @@ pub(crate) enum Took {
 /// next row searched afresh is the one after the row searched. No match is
 /// taken that starts before the last replaced ended.
 ///
-/// The walk is plain positions in the text: a caller that replaces a match
-/// before searching on tells it so ([`Walk::edited`]); one that replaces
-/// them all at the end reads one text throughout.
+/// The walk is plain positions in the text it reads, which its caller keeps
+/// as nvim's `:s` keeps its buffer: a line's replacements are put in once
+/// nvim writes the line (after a join, before a match on a later row, and
+/// before the next row is searched afresh: see `writing` in
+/// [`Walk::next`]), and the walk is told so ([`Walk::edited`]).
 #[derive(Clone, Debug)]
 pub(crate) struct Walk {
     /// The range's last row.
@@ -312,13 +326,23 @@ impl Walk {
 
     /// The next match, `None` once the walk is over; `Err` once the
     /// finder's deadline has passed. Each one found must be told what
-    /// became of it ([`Walk::took`]) before the next is asked for.
-    pub(crate) fn next(&mut self, finder: &mut Finder<'_>) -> Result<Option<Taken>, Interrupted> {
-        let text = finder.window.text;
+    /// became of it ([`Walk::took`]) before the next is asked for. While
+    /// `writing` (a line, as nvim's `:s` writes its replacements), `None`
+    /// too before searching a row afresh: nvim writes the line first, and
+    /// the search reads what it wrote.
+    pub(crate) fn next(
+        &mut self,
+        finder: &mut Finder<'_>,
+        writing: bool,
+    ) -> Result<Option<Taken>, Interrupted> {
+        let text = &finder.text().clone();
         loop {
             let Some(search) = self.next else {
                 return Ok(None);
             };
+            if writing && search.first {
+                return Ok(None);
+            }
             // After a match `\zs` started on a later row, the next row
             // searched may hold it: what it replaced isn't searched again.
             let from = search.from.max(self.guard);
@@ -451,7 +475,7 @@ type Hit = (Range<usize>, Vec<String>);
 /// a time, as [`Pattern::find_across`] reads it, under `deadline`.
 pub(crate) struct Finder<'a> {
     pattern: &'a Pattern,
-    window: Window<'a>,
+    window: Window,
     deadline: &'a Deadline,
     /// How many groups a match gives, from group 0.
     groups: usize,
@@ -484,11 +508,11 @@ impl<'a> Finder<'a> {
     fn search(&mut self, row: u32, from: usize) -> Result<Option<Hit>, Interrupted> {
         let window = &mut self.window;
         window.hold(row, self.deadline)?;
-        let (text, base) = (window.text, window.base);
+        let base = window.base;
         let mut matches = self
             .pattern
             .matches_from(&window.hay, from - base, self.deadline);
-        matches.row_end = row_end(text, row) - base;
+        matches.row_end = row_end(&window.text, row) - base;
         matches.across = true;
         matches.groups = self.groups > 0;
         matches.emitted = from - base;
@@ -509,6 +533,17 @@ impl<'a> Finder<'a> {
             })
             .collect();
         Ok(Some((base + found.start..base + found.end, groups)))
+    }
+
+    /// The text it reads.
+    pub(crate) fn text(&self) -> &Text {
+        &self.window.text
+    }
+
+    /// Replaces `range` of the text it reads with `new`, reading on in the
+    /// text that makes.
+    pub(crate) fn edit(&mut self, range: Range<usize>, new: &str) {
+        self.window.edit(range, new);
     }
 
     /// Where a search one whole character on from `at` starts.

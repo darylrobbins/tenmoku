@@ -10,8 +10,10 @@
 //! left as it was). Read from each edit fe-vim makes: a line break taken
 //! out with a whole row is that row's (`dd`), else the row after it joins
 //! the one before; but in a join's edits every line break taken out joins
-//! the row after it, even to an empty row, and `:m` and `:sort` (which
-//! rewrite rows in place) say what they did. The rest follow the rows put
+//! the row after it, even to an empty row, `:m` and `:sort` (which
+//! rewrite rows in place) say what they did, and so does `:s`, whose
+//! replacement of a match over rows joins its rows even when it takes the
+//! whole first row. The rest follow the rows put
 //! in or taken out above them, and text put in at a row's start (`P`, `O`)
 //! goes above it.
 //!
@@ -64,7 +66,7 @@ struct Note {
 }
 
 /// What a command noted it did.
-pub(super) enum Change {
+pub(crate) enum Change {
     /// `:m` moved `rows` below line `to`.
     Moved { rows: RangeInclusive<u32>, to: u32 },
     /// `:sort` sorted `rows`, which are `by` more after it (fewer, with
@@ -73,6 +75,9 @@ pub(super) enum Change {
     /// Rows were joined: each line break taken out joins the row after it
     /// to the one before.
     Joined,
+    /// `:s` joined these stretches of rows (first and last, as they were)
+    /// to the rows before them, in one edit batch: no other row goes.
+    Substituted { joined: Vec<(u32, u32)> },
 }
 
 /// Whether `name` (a command's letters) is `:g[lobal]` (`Some(false)`) or
@@ -151,7 +156,7 @@ pub(super) fn running() -> bool {
 /// Notes for a `:g` running that a command did `change`, taking the buffer
 /// from version `from` to `until`, where its edits can't tell (`:m` and
 /// `:sort` rewrite rows in place; a join's edits are a delete's).
-pub(super) fn noted(from: Version, until: Version, change: Change) {
+pub(crate) fn noted(from: Version, until: Version, change: Change) {
     RUNNING.with_borrow_mut(|running| {
         if let Some(notes) = &mut running.notes
             && from != until
@@ -456,12 +461,18 @@ impl Marks {
             let note = notes
                 .iter()
                 .find(|note| note.from <= from && to <= note.until);
+            let whole = note.is_some_and(|note| note.from == from && to == note.until);
             match note.map(|note| (&note.change, to == note.until)) {
-                Some((Change::Joined, _)) => self.edited(&edits, &text, true),
+                Some((Change::Joined, _)) => self.edited(&edits, &text, Gone::Joins),
                 Some((Change::Moved { rows, to }, true)) => self.move_rows(rows, *to),
                 Some((Change::Sorted { rows, by }, true)) => self.sort_rows(rows, *by),
-                Some(_) => {}
-                None => self.edited(&edits, &text, false),
+                Some((Change::Substituted { joined }, _)) if whole => {
+                    self.edited(&edits, &text, Gone::Rows(joined));
+                }
+                Some((Change::Moved { .. } | Change::Sorted { .. }, false)) => {}
+                Some((Change::Substituted { .. }, _)) | None => {
+                    self.edited(&edits, &text, Gone::Edits);
+                }
             }
             self.text = text;
         }
@@ -521,9 +532,9 @@ impl Marks {
         };
     }
 
-    /// Follows one edit batch, from `self.text` to `after`; in a join's,
-    /// each line break taken out joins the row after it.
-    fn edited(&mut self, edits: &[Edit], after: &Text, joined: bool) {
+    /// Follows one edit batch, from `self.text` to `after`, the rows it
+    /// takes out told as `how` says.
+    fn edited(&mut self, edits: &[Edit], after: &Text, how: Gone<'_>) {
         let before = &self.text.clone();
         // Each edit's first and last rows, and how many rows it adds.
         let spans: Vec<(i64, i64, i64)> = edits
@@ -567,7 +578,7 @@ impl Marks {
             false => home + home_shift,
         };
         for (ix, row) in touched {
-            if self.alive[ix] && gone(before, edits, row, joined) {
+            if self.alive[ix] && gone(before, edits, row, how) {
                 self.alive[ix] = false;
             }
             let row = row_of(row);
@@ -576,12 +587,28 @@ impl Marks {
     }
 }
 
+/// How to tell the rows an edit batch takes out ([`gone`]).
+#[derive(Clone, Copy)]
+enum Gone<'a> {
+    /// From the edits.
+    Edits,
+    /// A join's: each row whose line break before it is taken out.
+    Joins,
+    /// These stretches of rows, first and last: a `:s`'s joins.
+    Rows(&'a [(u32, u32)]),
+}
+
 /// Whether `row` of `before` stops existing in `edits`: deleted (its whole
 /// text and a line break taken out), or joined into the row above (the line
 /// break before it taken out, unless only whole rows above it were deleted
-/// with it, nothing put in; in a join's edits, `joined`, always).
-fn gone(before: &Text, edits: &[Edit], row: i64, joined: bool) -> bool {
+/// with it, nothing put in; in a join's edits, always), or as `how` tells.
+fn gone(before: &Text, edits: &[Edit], row: i64, how: Gone<'_>) -> bool {
     let row = u32::try_from(row).unwrap_or(0);
+    if let Gone::Rows(joined) = how {
+        return joined
+            .iter()
+            .any(|&(first, last)| (first..=last).contains(&row));
+    }
     let last = before.row_count() - 1;
     let extent = |row: u32| {
         let start = before.row_start(row);
@@ -589,7 +616,7 @@ fn gone(before: &Text, edits: &[Edit], row: i64, joined: bool) -> bool {
     };
     let (start, end) = extent(row);
     let break_before = row > 0 && removed(edits, start - 1);
-    if joined {
+    if matches!(how, Gone::Joins) {
         return break_before;
     }
     let break_after = row < last && removed(edits, end);

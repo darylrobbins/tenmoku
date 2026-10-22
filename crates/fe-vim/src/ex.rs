@@ -91,7 +91,7 @@ use crate::{
 };
 
 mod complete;
-mod global;
+pub(crate) mod global;
 mod lines;
 pub(crate) mod normal;
 mod pick;

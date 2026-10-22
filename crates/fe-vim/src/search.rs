@@ -980,7 +980,7 @@ impl<'a> RowList<'a> {
 /// from where the last stopped.
 pub(crate) struct Across<'a> {
     pattern: &'a Pattern,
-    window: Window<'a>,
+    window: Window,
     deadline: &'a Deadline,
     /// The rows listed, but for those found to have no match.
     rows: HashMap<u32, Listed>,
@@ -1037,7 +1037,7 @@ impl<'a> Across<'a> {
         forward: bool,
         by_end: bool,
     ) -> Result<Option<(Range<usize>, bool)>, Interrupted> {
-        let text = self.window.text;
+        let text = &self.window.text.clone();
         let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
         let from = text.point_to_offset(at);
         let rows = text.row_count();
@@ -1248,7 +1248,7 @@ impl<'a> Across<'a> {
         if self.deadline.expired() {
             return Err(Interrupted);
         }
-        let text = self.window.text;
+        let text = &self.window.text.clone();
         if let Some(none) = self.none_around(row) {
             return Ok((none.end < text.row_count()).then_some(none.end));
         }
@@ -1284,7 +1284,7 @@ impl<'a> Across<'a> {
         };
         let window = &mut self.window;
         window.hold(row, self.deadline)?;
-        let (text, base) = (window.text, window.base);
+        let (text, base) = (&window.text, window.base);
         let mut matches = self
             .pattern
             .matches_from(&window.hay, at - base, self.deadline);
@@ -1328,8 +1328,8 @@ const WINDOW_ROWS: u32 = 256;
 /// it to: past the window's last row the text's next line break is
 /// missing, which reads as the end of the haystack does to every anchor
 /// and boundary, so the line break is the only difference.
-struct Window<'t> {
-    text: &'t Text,
+struct Window {
+    text: Text,
     reach: Reach,
     /// Empty while `first > last`.
     first: u32,
@@ -1339,10 +1339,10 @@ struct Window<'t> {
     hay: String,
 }
 
-impl<'t> Window<'t> {
-    fn new(text: &'t Text, reach: Reach) -> Self {
+impl Window {
+    fn new(text: &Text, reach: Reach) -> Self {
         Self {
-            text,
+            text: text.clone(),
             reach,
             first: 1,
             last: 0,
@@ -1392,7 +1392,7 @@ impl<'t> Window<'t> {
     /// deadline passes first, which leaves it holding nothing.
     fn read(&mut self, last: u32, deadline: &Deadline) -> Result<(), Interrupted> {
         let from = self.base + self.hay.len();
-        for chunk in self.text.chunks_in_range(from..row_end(self.text, last)) {
+        for chunk in self.text.chunks_in_range(from..row_end(&self.text, last)) {
             if deadline.expired() {
                 (self.first, self.last) = (1, 0);
                 self.hay.clear();
@@ -1423,6 +1423,26 @@ impl<'t> Window<'t> {
     /// The row of `at`, an offset in the text or the one after it.
     fn row_of(&self, at: usize) -> u32 {
         self.text.offset_to_point(at.min(self.text.len())).row
+    }
+
+    /// Replaces `range` of the text with `new`. What it holds takes the
+    /// edit in too if the edit is all in it, else it holds nothing.
+    fn edit(&mut self, range: Range<usize>, new: &str) {
+        let held = self.first <= self.last
+            && self.base <= range.start
+            && range.end <= row_end(&self.text, self.last);
+        let row = |text: &Text, at: usize| text.offset_to_point(at).row;
+        let joined = row(&self.text, range.end) - row(&self.text, range.start);
+        let at = range.start - self.base.min(range.start);
+        self.text.replace(range.clone(), new);
+        if !held {
+            (self.first, self.last) = (1, 0);
+            self.hay.clear();
+            return;
+        }
+        self.hay.replace_range(at..at + range.len(), new);
+        let broken = u32::try_from(new.matches('\n').count()).unwrap_or(u32::MAX);
+        self.last = (self.last + broken).saturating_sub(joined);
     }
 }
 

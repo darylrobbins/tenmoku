@@ -6,7 +6,7 @@ use serde_json::json;
 use super::{invocation, raised_time_limit, registers};
 use crate::{
     CommandLineKind, Ex, ExCommand, ExError, Flags, HeadlessVim, Substitute, context,
-    search::ROWS_SEARCHED,
+    search::{ROWS_SEARCHED, WINDOW_CHUNKS},
 };
 
 /// `buffer` after `keys` from `cursor`.
@@ -340,4 +340,28 @@ fn confirm_edges() {
         invocation("vim.substitute_answer", json!({"answer": "y"})).context(context(vim.state()));
     assert!(vim.dispatch(&answer).is_err());
     assert_eq!(vim.text(), "a");
+}
+
+/// `:%s` joining every row of a long text reads it into its search window
+/// about once: each line it writes goes into the window as it is, the
+/// search going on in the joined line without reading it again.
+#[test]
+fn joining_every_row_reads_the_text_once() {
+    let rows = 50_000;
+    let buffer = vec!["x,"; rows].join("\n");
+    let chunks = fe_text::Text::new(&buffer)
+        .chunks_in_range(0..buffer.len())
+        .count();
+    let mut vim = HeadlessVim::new(&buffer, (0, 0));
+    // Fifty thousand joins in a debug build can pass the default limit.
+    let raised = raised_time_limit();
+    WINDOW_CHUNKS.set(0);
+    vim.feed(":%s/,\\n/;/g<CR>").unwrap();
+    drop(raised);
+    // Read on a few hundred rows at a time, some chunks twice: read again
+    // for each line written, it would be tens of thousands.
+    let read = WINDOW_CHUNKS.get();
+    assert!(read <= 4 * chunks + 8, "{read} chunks read of {chunks}");
+    // The last row's `,` too, before the line break nvim matches there.
+    assert_eq!(vim.text(), "x;".repeat(rows));
 }

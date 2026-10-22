@@ -66,7 +66,8 @@ pub(crate) struct Pos {
     row: Anchor,
     column: usize,
     /// On the row after the anchor's, past the end of the text: where nvim
-    /// keeps a mark on rows a visual change deleted at the end.
+    /// keeps a mark on rows a visual change deleted at the end (or that
+    /// `:s` joined through it, the anchor then the text's end).
     past_end: bool,
 }
 
@@ -139,8 +140,9 @@ impl LastVisual {
 
 /// Before a change joins the rows from `first` (past the first row) to the
 /// end of the text onto the row before them, deleting them (`:s` over
-/// rows): `'<` and `'>` on them go past the new end, keeping their columns,
-/// as nvim's do.
+/// rows): `'<` and `'>` on them go past the last row of the text the change
+/// leaves, the line breaks it puts in counted, keeping their columns, as
+/// nvim's do.
 pub(crate) fn joining_at_end(state: &mut VimState, snapshot: &BufferSnapshot, first: u32) {
     let Some(marks) = state.last_visual.as_mut() else {
         return;
@@ -148,7 +150,7 @@ pub(crate) fn joining_at_end(state: &mut VimState, snapshot: &BufferSnapshot, fi
     let text = snapshot.text();
     for pos in [&mut marks.start, &mut marks.end] {
         if first > 0 && !pos.past_end && pos.position(snapshot).0 >= first {
-            pos.row = snapshot.anchor_after(text.row_start(first - 1));
+            pos.row = snapshot.anchor_after(text.len());
             pos.past_end = true;
         }
     }

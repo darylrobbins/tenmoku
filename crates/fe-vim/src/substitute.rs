@@ -15,7 +15,7 @@ use crate::{
     Mode, Pending, Step, VimKey, VimState, VimTarget,
     args::JoinArgs,
     edit,
-    ex::ExError,
+    ex::{ExError, global},
     insert, marks,
     motion::Cursor,
     operator, reducer,
@@ -550,7 +550,13 @@ pub(crate) fn run(
         model.set_selections([operator::caret(first_non_blank(text, row))]);
         return Ok(Ok(Dispatched::new(Effect::Changed)));
     }
+    let from = model.buffer().version();
     let (transaction, snapshot) = operator::apply(model, found.edits, origin(actor));
+    // A `:g` running drops the rows joined, and only those.
+    let joined = global::Change::Substituted {
+        joined: found.joined,
+    };
+    global::noted(from, snapshot.version(), joined);
     let text = snapshot.text();
     let caret = first_non_blank(text, found.last_row);
     operator::land(model, &snapshot, [caret]);
@@ -665,8 +671,10 @@ fn find(
 }
 
 /// [`find`] for a pattern that [`Pattern::spans_rows`]: the matches as
-/// nvim's `:s` takes them over rows ([`Walk`]), those found searching from
-/// the same row one edit, as for one row.
+/// nvim's `:s` takes them over rows ([`Walk`]), reading the text as nvim
+/// reads its buffer: with what it has replaced, but for the [`Line`] being
+/// written. Each line written is one edit, those written one after another
+/// on a line its joins make one, as for one row.
 fn find_across(
     target: &mut VimTarget<'_>,
     pattern: &Pattern,
@@ -682,30 +690,42 @@ fn find_across(
         (false, true) => 10,
         (false, false) => 1,
     };
-    let mut finder = Finder::new(pattern, text, &deadline, groups);
-    let mut walk = Walk::new(text, rows, flags.global);
-    let mut found = Found {
-        edits: Vec::new(),
-        matches: 0,
-        lines: 0,
-        first_row: 0,
-        last_row: 0,
-        joined: Vec::new(),
+    let mut across = Across {
+        text,
+        finder: Finder::new(pattern, text, &deadline, groups),
+        walk: Walk::new(text, rows, flags.global),
+        longer: 0,
+        edit: None,
+        found: Found {
+            edits: Vec::new(),
+            matches: 0,
+            lines: 0,
+            first_row: 0,
+            last_row: 0,
+            joined: Vec::new(),
+        },
     };
     let mut pass = None;
-    // The edit of the line being searched: its line, the text it replaces
-    // and what with.
-    let mut edit: Option<(u32, Range<usize>, String)> = None;
-    // How many more rows the edits before it leave than they replace.
-    let mut shift = 0i64;
-    let breaks = |new: &str| new.matches('\n').count() as i64;
-    let row = |at: usize| i64::from(text.offset_to_point(at).row);
-    while let Some(taken) = walk.next(&mut finder)? {
+    let mut line: Option<Line> = None;
+    loop {
+        let Some(mut taken) = across.walk.next(&mut across.finder, line.is_some())? else {
+            match line.take() {
+                Some(line) => {
+                    across.write(line, None);
+                    continue;
+                }
+                None => break,
+            }
+        };
+        if let Some(written) = line.take_if(|line| line.row != taken.start_row) {
+            across.write(written, Some(&mut taken));
+        }
         let took = match flags.count_only {
             true => Took::Passed,
             false => Took::Replaced,
         };
-        walk.took(text, &taken, took);
+        across.walk.took(across.finder.text(), &taken, took);
+        let found = &mut across.found;
         found.matches += 1;
         if pass != Some(taken.pass) {
             pass = Some(taken.pass);
@@ -714,36 +734,116 @@ fn find_across(
         if flags.count_only {
             continue;
         }
+        // Its rows in the text before the `:s`.
+        let row = |at: usize| {
+            text.offset_to_point(at.wrapping_add_signed(-across.longer))
+                .row
+        };
+        let (start_row, end_row) = (row(taken.range.start), row(taken.range.end));
         if found.matches == 1 {
-            found.first_row = taken.start_row;
+            found.first_row = start_row;
         }
         if taken.joins() {
             // Rows joined one after another go as one stretch.
             match found.joined.last_mut() {
-                Some((_, last)) if *last == taken.start_row => *last = taken.end_row,
-                _ => found.joined.push((taken.start_row + 1, taken.end_row)),
+                Some((_, last)) if *last == start_row => *last = end_row,
+                _ => found.joined.push((start_row + 1, end_row)),
             }
         }
-        if edit.as_ref().is_none_or(|(line, ..)| *line != taken.pass) {
-            if let Some((_, span, new)) = edit.take() {
-                shift += breaks(&new) - (row(span.end) - row(span.start));
-                found.edits.extend(joining(text, span, new));
-            }
-            let at = taken.range.start;
-            edit = Some((taken.pass, at..at, String::new()));
-        }
-        let (_, span, new) = edit.as_mut().expect("an edit for the line");
-        new.push_str(&text.slice_to_string(span.end..taken.range.start));
+        let new = Line::open(&mut line, across.finder.text(), &taken);
         replacement.apply(|n| taken.group(n), new);
-        span.end = taken.range.end;
+        if taken.joins() {
+            across.write(line.take().expect("a line open"), None);
+        }
+    }
+    if let Some((span, new)) = across.edit.take() {
+        across.found.edits.extend(joining(text, span, new));
+    }
+    Ok(across.found)
+}
+
+/// The replacements nvim's `:s` over rows has made since it last wrote a
+/// line, all on one row of the text it reads: it reads the row as it was
+/// until it writes the line, after a replacement that joins rows (the
+/// search going on in the joined line), before a match on a later row and
+/// once the row's searches are done.
+#[derive(Clone, Debug)]
+struct Line {
+    /// Its row, and the span of the text its replacements take, from the
+    /// first's start to the last's end.
+    row: u32,
+    span: Range<usize>,
+    /// What replaces the span: the replacements and the text between them.
+    new: String,
+}
+
+impl Line {
+    /// Adds `taken`, a match on `line`'s row (or the first of a new line),
+    /// to `line`, reading the text before it from `text`: what replaces it
+    /// goes after what this gives.
+    fn open<'a>(line: &'a mut Option<Self>, text: &fe_text::Text, taken: &Taken) -> &'a mut String {
+        let at = taken.range.start;
+        let line = line.get_or_insert_with(|| Self {
+            row: taken.start_row,
+            span: at..at,
+            new: String::new(),
+        });
+        line.new.push_str(&text.slice_to_string(line.span.end..at));
+        line.span.end = taken.range.end;
+        &mut line.new
+    }
+
+    /// How much longer the text is with it written.
+    fn longer(&self) -> isize {
+        self.new.len() as isize - self.span.len() as isize
+    }
+}
+
+/// [`find_across`]'s walk over `text`, reading it with the lines written.
+struct Across<'a> {
+    text: &'a fe_text::Text,
+    finder: Finder<'a>,
+    walk: Walk,
+    /// How much longer the text read is than `text`, past the lines written.
+    longer: isize,
+    /// The edit of the lines written last, those a join made one: the span
+    /// of `text` it replaces, and what with.
+    edit: Option<(Range<usize>, String)>,
+    found: Found,
+}
+
+impl Across<'_> {
+    /// Writes `line` into the text read, with `taken`, a match past it, and
+    /// adds its edit of `text`.
+    fn write(&mut self, line: Line, taken: Option<&mut Taken>) {
+        let before = self.finder.text().clone();
+        self.finder.edit(line.span.clone(), &line.new);
+        let after = self.finder.text();
+        self.walk
+            .edited(&before, line.span.clone(), &line.new, after);
+        if let Some(taken) = taken {
+            taken.edited(&before, line.span.clone(), &line.new, after);
+        }
         // Where the replacement ends, in the text after the edits.
-        let last = row(span.start) + shift + breaks(new);
-        found.last_row = u32::try_from(last).unwrap_or_default();
+        self.found.last_row = after.offset_to_point(line.span.start + line.new.len()).row;
+        let back = |at: usize| at.wrapping_add_signed(-self.longer);
+        let span = back(line.span.start)..back(line.span.end);
+        self.longer += line.longer();
+        let row = |at: usize| self.text.offset_to_point(at).row;
+        match &mut self.edit {
+            // The line a join made, written again.
+            Some((last, new)) if row(last.end) == row(span.start) => {
+                new.push_str(&self.text.slice_to_string(last.end..span.start));
+                new.push_str(&line.new);
+                last.end = span.end;
+            }
+            edit => {
+                if let Some((span, new)) = edit.replace((span, line.new)) {
+                    self.found.edits.extend(joining(self.text, span, new));
+                }
+            }
+        }
     }
-    if let Some((_, span, new)) = edit {
-        found.edits.extend(joining(text, span, new));
-    }
-    Ok(found)
 }
 
 /// The edits replacing `span` of `text` with `new`. Over rows, two: the
@@ -792,6 +892,7 @@ fn join(target: &mut VimTarget<'_>, actor: &Actor, rows: Range<u32>) -> Result<H
     }
     // `gJ`'s join, which `.` doesn't repeat.
     let last_change = (target.state.last_change.clone(), target.state.changes);
+    let from = target.model.buffer().version();
     let joined = edit::join_raw(
         target,
         actor,
@@ -801,6 +902,8 @@ fn join(target: &mut VimTarget<'_>, actor: &Actor, rows: Range<u32>) -> Result<H
         },
     );
     (target.state.last_change, target.state.changes) = last_change;
+    let until = target.model.buffer().version();
+    global::noted(from, until, global::Change::Joined);
     if let Some(report) = report(count as usize - 1, 1, false) {
         target.state.message = Some(report);
     }
@@ -895,11 +998,41 @@ pub(crate) struct Confirm {
     row_changed: bool,
     /// The row the last replacement ended on.
     last_row: u32,
-    /// For a pattern that spans rows, the walk over the range's rows, in
-    /// the text as it is now, and the match waiting from it; it reads the
-    /// rows in place of `row_end` and `end`.
-    walk: Option<Walk>,
+    /// For a pattern that spans rows, the walk over the range's rows; it
+    /// reads the rows in place of `row_end` and `end`.
+    rows: Option<Rows>,
+}
+
+/// A `:s` with `c`'s walk over rows ([`Walk`]) and the text it reads, as
+/// nvim's `:s` reads its buffer: the text but for the replacements of the
+/// [`Line`] being written, which nvim shows but doesn't match in until it
+/// writes the line.
+#[derive(Clone, Debug)]
+struct Rows {
+    walk: Walk,
+    read: fe_text::Text,
+    line: Option<Line>,
+    /// The match waiting.
     taken: Option<Taken>,
+}
+
+impl Rows {
+    /// Writes `line` into the text read, with `taken`, a match past it.
+    fn write(&mut self, line: Line, taken: Option<&mut Taken>) {
+        let before = self.read.clone();
+        self.read.replace(line.span.clone(), &line.new);
+        self.walk
+            .edited(&before, line.span.clone(), &line.new, &self.read);
+        if let Some(taken) = taken {
+            taken.edited(&before, line.span, &line.new, &self.read);
+        }
+    }
+
+    /// Where `at`, past the line being written in the text read, is in the
+    /// text.
+    fn shown(&self, at: usize) -> usize {
+        at.wrapping_add_signed(self.line.as_ref().map_or(0, Line::longer))
+    }
 }
 
 /// What a `:s` with `c` asks about: its pattern, its replacement, as run
@@ -948,11 +1081,15 @@ fn ask(
         lines: 0,
         row_changed: false,
         last_row: 0,
-        walk: None,
-        taken: None,
+        rows: None,
     });
     if confirm.pattern.spans_rows() {
-        confirm.walk = Some(Walk::new(text, rows, asked.flags.global));
+        confirm.rows = Some(Rows {
+            walk: Walk::new(text, rows, asked.flags.global),
+            read: text.clone(),
+            line: None,
+            taken: None,
+        });
     }
     let Ok(found) = confirm.next(target.model, &Deadline::new()) else {
         return Err(ExError::Pattern(Interrupted.to_string()));
@@ -975,16 +1112,28 @@ impl Confirm {
     fn next(&mut self, model: &EditorModel, deadline: &Deadline) -> Result<bool, Interrupted> {
         let snapshot = model.snapshot();
         let text = snapshot.text();
-        if let Some(walk) = &mut self.walk {
+        if let Some(rows) = &mut self.rows {
             if !self.waiting.is_empty() {
                 return Ok(true);
             }
             let groups = if self.replacement.groups { 10 } else { 1 };
-            let mut finder = Finder::new(&self.pattern, text, deadline, groups);
-            let Some(taken) = walk.next(&mut finder)? else {
-                return Ok(false);
+            let mut taken = loop {
+                let mut finder = Finder::new(&self.pattern, &rows.read, deadline, groups);
+                let next = rows.walk.next(&mut finder, rows.line.is_some());
+                drop(finder);
+                match (next?, rows.line.take()) {
+                    (Some(taken), line) => {
+                        rows.line = line;
+                        break taken;
+                    }
+                    (None, Some(line)) => rows.write(line, None),
+                    (None, None) => return Ok(false),
+                }
             };
-            if self
+            if let Some(line) = rows.line.take_if(|line| line.row != taken.start_row) {
+                rows.write(line, Some(&mut taken));
+            }
+            if rows
                 .taken
                 .as_ref()
                 .is_none_or(|last| last.pass != taken.pass)
@@ -993,9 +1142,9 @@ impl Confirm {
             }
             let mut new = String::new();
             self.replacement.apply(|n| taken.group(n), &mut new);
-            let at = snapshot.anchor_after(taken.range.start);
+            let at = snapshot.anchor_after(rows.shown(taken.range.start));
             self.waiting.push_back((at, taken.range.len(), new));
-            self.taken = Some(taken);
+            rows.taken = Some(taken);
             return Ok(true);
         }
         let row_of = |anchor: &Anchor| text.offset_to_point(snapshot.resolve(anchor)).row;
@@ -1061,20 +1210,28 @@ impl Confirm {
         let VimTarget { model, state, .. } = target;
         let row = model.text().offset_to_point(range.start).row;
         let before = model.text().clone();
-        if let (Some(walk), Some(taken)) = (&mut self.walk, &self.taken) {
-            walk.took(&before, taken, Took::Replaced);
+        if let Some(rows) = &mut self.rows
+            && let Some(taken) = rows.taken.take()
+        {
+            rows.walk.took(&rows.read, &taken, Took::Replaced);
             // The rows it joins go, and their marks with them, as nvim's do.
             if taken.joins() {
-                let (first, last) = (taken.start_row + 1, taken.end_row);
+                let row = |at: usize| before.offset_to_point(at).row;
+                let (first, last) = (row(range.start) + 1, row(range.end));
                 state.marks.deleting(model.snapshot(), first, last);
                 if last + 1 == before.row_count() {
                     visual::joining_at_end(state, model.snapshot(), first);
                 }
             }
+            Line::open(&mut rows.line, &rows.read, &taken).push_str(&new);
+            if taken.joins() {
+                let line = rows.line.take().expect("a line open");
+                rows.write(line, None);
+            }
+            rows.taken = Some(taken);
         }
         state.marks.typing(model.snapshot(), [range.start]);
         let end = range.start + new.len();
-        let new_text = new.clone();
         let (transaction, snapshot) = {
             let mut buffer = model.buffer_mut();
             let edits = joining(&before, range.clone(), new);
@@ -1088,9 +1245,6 @@ impl Confirm {
             (transaction, buffer.snapshot())
         };
         operator::sync(model);
-        if let Some(walk) = &mut self.walk {
-            walk.edited(&before, range.clone(), &new_text, snapshot.text());
-        }
         if let Some(id) = transaction {
             // As nvim's undo and redo leave it: the first changed line's
             // start.
@@ -1146,8 +1300,10 @@ pub(crate) fn answer(target: &mut VimTarget<'_>, actor: &Actor, args: AnswerArgs
         Answer::Yes => confirm.replace(target, actor),
         Answer::No => {
             confirm.waiting.pop_front();
-            if let (Some(walk), Some(taken)) = (&mut confirm.walk, &confirm.taken) {
-                walk.took(target.model.text(), taken, Took::Passed);
+            if let Some(rows) = &mut confirm.rows
+                && let Some(taken) = &rows.taken
+            {
+                rows.walk.took(&rows.read, taken, Took::Passed);
             }
         }
         Answer::Last => {
