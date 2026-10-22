@@ -7,7 +7,7 @@
 
 pub(crate) mod fs;
 
-pub use fs::open_for_reading;
+pub use fs::{create_private_dir, open_for_reading, owned_and_unshared, private};
 pub(crate) mod keychain;
 
 use std::fmt;

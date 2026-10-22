@@ -23,7 +23,7 @@ pub fn open_for_reading(path: &Path) -> io::Result<File> {
 }
 
 /// Creates `dir` and its missing ancestors, readable by the owner alone.
-pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
+pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -32,10 +32,25 @@ pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
 }
 
 /// `options` with new files readable and writable by the owner alone.
-pub(crate) fn private(options: &mut OpenOptions) -> &mut OpenOptions {
+pub fn private(options: &mut OpenOptions) -> &mut OpenOptions {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(options, 0o600);
     options
+}
+
+/// Whether `metadata` is of something owned by the user `reference` is owned by (a file just
+/// created) that no one else can write. Never on Windows, which has no such modes to check.
+pub fn owned_and_unshared(metadata: &fs::Metadata, reference: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        metadata.uid() == reference.uid() && metadata.mode() & 0o022 == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (metadata, reference);
+        false
+    }
 }
 
 /// What a path's own metadata (`symlink_metadata`) says of its identity and

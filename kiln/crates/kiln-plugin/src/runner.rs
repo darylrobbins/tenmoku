@@ -32,6 +32,7 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::bindings::kiln::extension::events::Event;
 use crate::bindings::{self, Error, ExtensionPre, HostState, Level, LogSink};
+use crate::cache::ComponentCache;
 use crate::compat;
 use crate::engine::{self, PluginEngine};
 use crate::fs::{self, Workspace};
@@ -154,10 +155,35 @@ impl Plugin {
         Self::load_logging_to(engine, component, id, grants, limits, guest_log(id))
     }
 
+    /// Loads `component` as [`load`](Self::load) does, taking its compiled form from `cache`.
+    /// The caller has checked the grants before this: the cache only skips compilation.
+    pub fn load_cached(
+        engine: &PluginEngine,
+        cache: Option<&ComponentCache>,
+        component: &[u8],
+        id: &str,
+        grants: &Grants,
+        limits: Limits,
+    ) -> Result<Self, LoadError> {
+        Self::load_with(engine, cache, component, id, grants, limits, guest_log(id))
+    }
+
     /// Loads `component` as plugin `id`, its logs going to `log`, which runs on the plugin's
     /// thread.
     pub fn load_logging_to(
         engine: &PluginEngine,
+        component: &[u8],
+        id: &str,
+        grants: &Grants,
+        limits: Limits,
+        log: LogSink,
+    ) -> Result<Self, LoadError> {
+        Self::load_with(engine, None, component, id, grants, limits, log)
+    }
+
+    fn load_with(
+        engine: &PluginEngine,
+        cache: Option<&ComponentCache>,
         component: &[u8],
         id: &str,
         grants: &Grants,
@@ -175,7 +201,11 @@ impl Plugin {
             plugin: id.to_owned(),
             message: format!("{error:#}"),
         };
-        let component = Component::new(engine.engine(), component).map_err(invalid)?;
+        let component = match cache {
+            Some(cache) => cache.load(engine.engine(), component),
+            None => Component::new(engine.engine(), component),
+        }
+        .map_err(invalid)?;
         // Links and type-checks the world here, so only a component that fits it gets a thread.
         let pre = linker(engine)
             .and_then(|linker| linker.instantiate_pre(&component))
