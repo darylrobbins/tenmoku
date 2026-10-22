@@ -15,6 +15,8 @@
 //!   in the record's order, cutting or dropping what doesn't fit.
 //! - [`parse_edit_block`] reads a reply's code block as an edit: a whole
 //!   file, the selection, or SEARCH/REPLACE sections.
+//! - [`ChatStore`] keeps a folder's chats as atomically written files,
+//!   listed newest first.
 //! - [`ScriptedProvider`] plays scripted replies and records the requests,
 //!   for tests.
 //!
@@ -26,6 +28,7 @@ mod edits;
 mod fake;
 mod provider;
 mod request;
+mod store;
 
 pub use context::{Budgeted, ContextItem, ContextKind, Fit, MIN_ROWS, budget};
 pub use conversation::{
@@ -42,3 +45,4 @@ pub use provider::{
     ErrorKind, ProviderError, Role, StopReason, SystemBlock, ToolCall, ToolChoice, ToolSpec, Usage,
 };
 pub use request::{ChatSettings, SYSTEM_PROMPT, build_request, render_user_content};
+pub use store::{ChatStore, ChatSummary, StoreError};

@@ -55,9 +55,24 @@ fn opened<'a>(
 
 /// Lets background work land, then draws a frame.
 fn draw(cx: &mut VisualTestContext) {
-    cx.run_until_parked();
+    run_store(cx);
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.run_until_parked();
+    run_store(cx);
+}
+
+/// Lets background work land, running the chat store's requests as they
+/// come: the worker is the by-hand kind under test.
+fn run_store(cx: &mut VisualTestContext) {
+    loop {
+        cx.run_until_parked();
+        let ran = cx.update(|_, cx| {
+            let worker = cx.try_global::<super::chat_store_worker::WorkerHandle>();
+            worker.map_or(0, |handle| handle.0.run_pending())
+        });
+        if ran == 0 {
+            break;
+        }
+    }
 }
 
 /// Runs command `id` as an unbound key would, in `contexts`.
@@ -607,3 +622,6 @@ mod commands;
 mod rail;
 #[path = "chat_key_tests.rs"]
 mod set_key;
+
+#[path = "chat_store_tests.rs"]
+mod store;

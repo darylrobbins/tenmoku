@@ -33,14 +33,24 @@
 //!   proposes it in its file, or over the selection its turn was sent with,
 //!   by dispatching `chat.propose_edit` as the AI actor; a link to a file
 //!   under the root opens it.
+//! - **Chats** (record § 11): each is kept at
+//!   `<state_dir>/chats/<layout_key(root)>/<id>.json` (`no-folder` with no
+//!   root) by [`ChatStore`], written after each finished turn on the
+//!   background executor, and the folder's newest reopens with the panel.
+//!   The header's History lists the folder's chats and opens one;
+//!   `chat.delete` deletes the shown one. In an untrusted folder (record
+//!   decision 6) chats stay in memory: nothing is read or written, and
+//!   History lists the window's own.
 
 use std::{
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
+    time::SystemTime,
 };
 
 use fe_chat::{
-    ChatProvider, ChatSettings, ContextItem, ContextKind, Conversation, Effort, Rows,
+    ChatId, ChatProvider, ChatSettings, ContextItem, ContextKind, Conversation, Effort, Rows,
     ScriptedProvider,
 };
 use fe_chat_anthropic::ApiKey;
@@ -49,9 +59,10 @@ use fe_command::Invocation;
 use fe_config::ChatEffort;
 use fe_editor::EditorModel;
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, WeakEntity, Window, div,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, FocusHandle, Focusable,
+    Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, PromptLevel,
+    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    WeakEntity, Window, div,
 };
 use kiln::{
     Cx,
@@ -71,6 +82,10 @@ use crate::{
 mod chat_apply;
 #[path = "chat_context.rs"]
 mod chat_context;
+#[path = "chat_store_worker.rs"]
+mod chat_store_worker;
+
+use chat_store_worker::{SaveState, Saved, Target, Worker, WorkerError};
 
 use chat_context::MAX_FILE;
 
@@ -219,12 +234,77 @@ impl Global for ChatStateDir {}
 /// `<state_dir>/chats/notice-seen`, unless the state directory is set
 /// otherwise. Under test, none unless set, so no test touches the user's.
 fn notice_file(cx: &App) -> Option<PathBuf> {
-    let dir = match cx.try_global::<ChatStateDir>() {
+    Some(state_dir(cx)?.join(NOTICE_SEEN))
+}
+
+/// The state directory, unless set otherwise. Under test, none unless set.
+fn state_dir(cx: &App) -> Option<PathBuf> {
+    match cx.try_global::<ChatStateDir>() {
         Some(ChatStateDir(dir)) => dir.clone(),
         None if cfg!(test) => None,
         None => fe_config::paths::state_dir(),
+    }
+}
+
+/// Where a folder's chats are kept: `<state_dir>/chats/<layout_key>` for
+/// the canonical `root`, else `<state_dir>/chats/no-folder`.
+#[cfg(test)]
+pub(crate) fn chats_dir(state_dir: &Path, root: Option<&Path>) -> PathBuf {
+    let canonical = root.map(canonical_root);
+    folder_dir(state_dir, canonical.as_deref())
+}
+
+/// `root` with its symlinks resolved, or as it is if that fails.
+fn canonical_root(root: &Path) -> PathBuf {
+    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())
+}
+
+/// The chats directory of the folder at `canonical`, which is worked out
+/// from the root once.
+fn folder_dir(state_dir: &Path, canonical: Option<&Path>) -> PathBuf {
+    let folder = match canonical {
+        Some(root) => kiln::core::layout::layout_key(root),
+        None => "no-folder".to_owned(),
     };
-    Some(dir?.join(NOTICE_SEEN))
+    state_dir.join("chats").join(folder)
+}
+
+/// A folder as the chat sees it, fixed at one moment: its canonical root
+/// and, with a state directory, where its chats are. A chat keeps the
+/// folder it began in, whatever its root's name points to later.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Folder {
+    root: Option<PathBuf>,
+    target: Option<Target>,
+}
+
+/// A chat in History.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryRow {
+    pub(crate) id: ChatId,
+    pub(crate) title: String,
+    pub(crate) updated: SystemTime,
+}
+
+impl HistoryRow {
+    fn label(&self) -> String {
+        let title = if self.title.is_empty() {
+            "Untitled chat"
+        } else {
+            &self.title
+        };
+        let ago = SystemTime::now()
+            .duration_since(self.updated)
+            .unwrap_or_default()
+            .as_secs();
+        let when = match ago {
+            0..60 => "just now".to_owned(),
+            60..3600 => format!("{}m ago", ago / 60),
+            3600..86400 => format!("{}h ago", ago / 3600),
+            _ => format!("{}d ago", ago / 86400),
+        };
+        format!("{title}  ·  {when}")
+    }
 }
 
 /// Writes the empty `file`, its directory made private if it's new.
@@ -316,6 +396,38 @@ pub(crate) struct ChatPanel {
     key_form: Option<KeyForm>,
     /// Applying the replies' code blocks.
     applies: chat_apply::Applies,
+    /// The window, for the replies that need it.
+    window: AnyWindowHandle,
+    /// Whether the folder's newest chat was opened, or given up on.
+    restored: bool,
+    /// The restoring under way: dropping it drops its answer.
+    restoring: Option<Task<()>>,
+    /// Counts the views made: an answer for an earlier one doesn't stand.
+    views_made: u64,
+    /// Chats finished while the folder is untrusted, or has no state
+    /// directory, oldest first.
+    memory: Vec<(Folder, Conversation, SystemTime)>,
+    /// The root the shown chat belongs to.
+    home: Folder,
+    /// The shown chat's lease on its folder, which it gives up on leaving.
+    lease: Option<u64>,
+    /// Whether the shown chat was written out on leaving its folder.
+    departed: bool,
+    /// The chats whose failed save was shown.
+    save_failed: HashSet<ChatId>,
+    /// Each chat as the store last held it for this window: what it
+    /// loaded, or acknowledged writing. A chat that differs has turns the
+    /// store hasn't acknowledged (pending, or rejected), and is the only
+    /// kind written.
+    acked: HashMap<ChatId, Conversation>,
+    /// Each chat's revision in the store: the one its snapshot derives
+    /// from, which a save must still find there. Shared with the saves
+    /// queued, which run in order and move it on.
+    bases: HashMap<ChatId, Arc<SaveState>>,
+    /// History, while it shows in place of the chat.
+    history: Option<Vec<HistoryRow>>,
+    /// The listing under way: dropping it drops its answer.
+    listing: Option<Task<()>>,
     /// The view's events, its gaining focus, and its changes.
     _view: [Subscription; 3],
     /// The workbench's changes, and its root's and its trust's.
@@ -379,6 +491,15 @@ impl ChatPanel {
         cx.propagate();
     }
 
+    /// Delete Chat
+    ///
+    /// Asks, then deletes the shown chat's file, or drops it if it is kept
+    /// in memory only, and starts a new chat.
+    #[command(id = "chat.delete")]
+    fn delete_chat(&mut self, cx: &mut Cx<Self>) {
+        self.confirm_delete(cx.window, cx.cx);
+    }
+
     /// New Chat
     ///
     /// Starts a chat with the chat settings as they are now.
@@ -395,7 +516,7 @@ impl ChatPanel {
     /// window's workbench followed, when it first draws.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let notice = notice_file(cx).is_none_or(|file| !file.exists());
-        let (view, options, view_subscriptions) = Self::chat_view(notice, window, cx);
+        let (view, options, view_subscriptions) = Self::chat_view(notice, None, window, cx);
         Self {
             workbench: None,
             view,
@@ -415,6 +536,19 @@ impl ChatPanel {
             writing: None,
             key_form: None,
             applies: chat_apply::Applies::new(),
+            window: window.window_handle(),
+            restored: false,
+            restoring: None,
+            views_made: 0,
+            memory: Vec::new(),
+            home: Folder::default(),
+            lease: None,
+            departed: false,
+            save_failed: HashSet::new(),
+            acked: HashMap::new(),
+            bases: HashMap::new(),
+            history: None,
+            listing: None,
             _view: view_subscriptions,
             _workbench: Vec::new(),
         }
@@ -425,10 +559,12 @@ impl ChatPanel {
     /// focus and its changes.
     fn chat_view(
         notice: bool,
+        conversation: Option<Conversation>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<ChatView>, ChatOptions, [Subscription; 3]) {
         let (settings, options) = new_chat_settings(cx);
+        let notice = notice && conversation.is_none();
         let budget = kiln::platform::config::settings::<fe_config::Settings>(cx)
             .chat
             .context_budget;
@@ -438,7 +574,7 @@ impl ChatPanel {
             let placeholder = Arc::new(ScriptedProvider::new([]));
             let mut view = ChatView::new(
                 placeholder,
-                Conversation::new(&settings),
+                conversation.unwrap_or_else(|| Conversation::new(&settings)),
                 options,
                 window,
                 cx,
@@ -458,6 +594,563 @@ impl ChatPanel {
         // A turn sent keeps the selection it was sent with.
         let changed = cx.observe(&view, |this, _, cx| this.note_turns(cx));
         (view, options, [events, focused, changed])
+    }
+
+    /// The shown folder now: its root canonical, its chats' directory
+    /// worked out from that.
+    fn current_folder(&self, cx: &App) -> Folder {
+        let root = self.current_root(cx).map(|root| canonical_root(&root));
+        let target = state_dir(cx).map(|state| Target {
+            dir: folder_dir(&state, root.as_deref()),
+            root: root.clone(),
+        });
+        Folder { root, target }
+    }
+
+    /// Has the worker track the shown folder, trusted as the decisions say
+    /// now, which are the app's and not this window's: a folder no window
+    /// shows is followed too.
+    fn track_current(&self, cx: &mut Context<Self>) -> Folder {
+        let folder = self.current_folder(cx);
+        if let Some(target) = &folder.target {
+            let trusted = folder_trusted(target.root.as_deref(), cx);
+            Worker::of(cx).track(target, trusted);
+        }
+        folder
+    }
+
+    /// Makes `folder` the shown chat's. Within one folder the lease, and
+    /// what was asked under it, stands; a new folder has a lease of its own.
+    fn adopt(&mut self, folder: Folder, cx: &mut Context<Self>) {
+        let worker = Worker::of(cx);
+        let same = folder == self.home && self.lease.is_some() && !self.departed;
+        if !same {
+            if let Some(lease) = self.lease.take() {
+                worker.release(lease);
+            }
+            self.lease = folder.target.as_ref().map(|_| worker.lease());
+            self.home = folder;
+            self.departed = false;
+        }
+    }
+
+    /// Permission for the chats of the folder the shown chat is from, held
+    /// by its lease.
+    fn home_token(&self, cx: &mut Context<Self>) -> Option<chat_store_worker::Token> {
+        let target = self.home.target.clone()?;
+        Worker::of(cx).token_leased(&target, self.lease?)
+    }
+
+    /// Permission for the shown folder, as the shown chat's lease holds it:
+    /// none while the chat is another folder's.
+    fn current_token(&self, cx: &mut Context<Self>) -> Option<chat_store_worker::Token> {
+        self.workbench()?;
+        if self.track_current(cx) != self.home {
+            return None;
+        }
+        self.home_token(cx)
+    }
+
+    /// Opens the folder's newest chat, once, if the shown one is untouched:
+    /// waits for the workbench, and for its root's trust to be known.
+    fn restore(&mut self, cx: &mut Context<Self>) {
+        if self.restored {
+            return;
+        }
+        let Some(token) = self.current_token(cx) else {
+            // Memory-only, or not known yet: nothing to read.
+            return;
+        };
+        self.restored = true;
+        let (views, generation) = (self.views_made, self.generation);
+        let read = Worker::of(cx).newest(token);
+        let handle = self.window;
+        self.restoring = Some(cx.spawn(async move |panel, cx| {
+            let Ok(Some((conversation, revision))) = read.await else {
+                return;
+            };
+            cx.update_window(handle, |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.restoring = None;
+                        let view = panel.view.read(cx);
+                        let untouched = view.conversation().turns.is_empty()
+                            && view.composer_text(cx).is_empty();
+                        if panel.views_made == views && panel.generation == generation && untouched
+                        {
+                            panel.adopt_disk(&conversation, revision);
+                            panel.show_chat(Some(conversation), window, cx);
+                        }
+                    })
+                    .ok();
+            })
+            .ok();
+        }));
+    }
+
+    /// Keeps the shown chat, if it has finished turns, under the folder it
+    /// began in: written if that folder is trusted, else in the window's
+    /// memory.
+    fn remember_chat(&mut self, cx: &mut Context<Self>) {
+        let conversation = self.view.read(cx).conversation();
+        if conversation.turns.is_empty() || self.departed {
+            return;
+        }
+        let conversation = conversation.clone();
+        // The window keeps its own snapshot whatever becomes of the write.
+        self.keep_in_memory(conversation.clone());
+        if let Some(token) = self.home_token(cx) {
+            let origin = self.home.clone();
+            self.save_chat(token, origin, conversation, cx);
+        }
+    }
+
+    /// Whether `conversation` has turns the store hasn't acknowledged. A
+    /// chat only looked at isn't written: another window may have gone on
+    /// with it.
+    fn dirty(&self, conversation: &Conversation) -> bool {
+        self.acked.get(&conversation.id) != Some(conversation)
+    }
+
+    /// The store now holds `conversation` at `revision`, as it was loaded.
+    fn adopt_disk(&mut self, conversation: &Conversation, revision: u64) {
+        // A state of its own: saves queued under the old one keep to it.
+        self.bases.insert(conversation.id, SaveState::new(revision));
+        self.acked.insert(conversation.id, conversation.clone());
+    }
+
+    /// Saves `conversation` of folder `origin` under `token` if it has
+    /// unacknowledged turns. The write is compare-and-swap on the revision
+    /// the chat derives from; one that finds the file written meanwhile
+    /// writes nothing, and the chat goes on as a copy.
+    fn save_chat(
+        &mut self,
+        token: chat_store_worker::Token,
+        origin: Folder,
+        conversation: Conversation,
+        cx: &mut Context<Self>,
+    ) {
+        let worker = Worker::of(cx);
+        if !self.dirty(&conversation) {
+            worker.release_token(token);
+            return;
+        }
+        let base = (self.bases.entry(conversation.id))
+            .or_insert_with(|| SaveState::new(0))
+            .clone();
+        let saved = worker.save(token, conversation.clone(), base);
+        cx.spawn(async move |panel, cx| {
+            let result = saved.await;
+            panel
+                .update(cx, |panel, cx| {
+                    panel.saved(conversation, origin, result, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// What became of a save: acknowledged, refused for trust or quitting
+    /// (the chat stays unacknowledged), failed (shown once per chat), or
+    /// diverged.
+    fn saved(
+        &mut self,
+        conversation: Conversation,
+        origin: Folder,
+        result: Result<Saved, WorkerError>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = conversation.id;
+        match result {
+            Ok(Saved::Written {
+                id: at,
+                title,
+                revision,
+            }) => {
+                self.acked.insert(id, conversation.clone());
+                if at != id {
+                    // Written in the copy the chat went on in.
+                    self.note_copy(conversation, origin, at, title, revision);
+                }
+            }
+            Ok(Saved::Copied {
+                id: at,
+                title,
+                revision,
+            }) => {
+                // The file stands, the turns are safe in the copy (written by
+                // the save itself), and the chat in view is left as it is.
+                self.acked.insert(id, conversation.clone());
+                self.note_copy(conversation, origin, at, title, revision);
+                toast::show(
+                    cx,
+                    Toast::warning(
+                        "The chat was changed elsewhere; your turns were saved as a copy.",
+                    ),
+                );
+            }
+            Err(WorkerError::Store(error)) => {
+                log::warn!("chat: couldn't save chat {id}: {error}");
+                // Once a chat, not on every turn.
+                if self.save_failed.insert(id) {
+                    toast::show(cx, Toast::error(format!("Couldn't save the chat: {error}")));
+                }
+            }
+            Err(WorkerError::Diverged) => {
+                log::warn!("chat: the copy of chat {id} was changed elsewhere");
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// The window's own record of copy `at`, which holds `conversation` and
+    /// is on disk at `revision`: as good as loaded, so it opens from the
+    /// file, and its retained snapshot is the latest.
+    fn note_copy(
+        &mut self,
+        conversation: Conversation,
+        origin: Folder,
+        at: ChatId,
+        title: String,
+        revision: u64,
+    ) {
+        let mut copy = conversation;
+        (copy.id, copy.title) = (at, title);
+        self.bases.insert(at, SaveState::new(revision));
+        self.acked.insert(at, copy.clone());
+        self.memory.retain(|(_, chat, _)| chat.id != at);
+        self.memory.push((origin, copy, SystemTime::now()));
+    }
+
+    /// Keeps `conversation` in the window's memory under its folder, newest
+    /// last.
+    fn keep_in_memory(&mut self, conversation: Conversation) {
+        self.memory
+            .retain(|(_, chat, _)| chat.id != conversation.id);
+        let home = self.home.clone();
+        self.memory.push((home, conversation, SystemTime::now()));
+    }
+
+    /// The chat in view is leaving its folder: what it holds is written once
+    /// under a token of its own (or kept in memory), and what was asked
+    /// under its lease before is refused.
+    fn depart(&mut self, cx: &mut Context<Self>) {
+        let conversation = self.view.read(cx).conversation().clone();
+        if conversation.turns.is_empty() || self.departed {
+            return;
+        }
+        let worker = Worker::of(cx);
+        if let Some(lease) = self.lease.take() {
+            worker.release(lease);
+        }
+        self.departed = true;
+        self.keep_in_memory(conversation.clone());
+        let origin = self.home.clone();
+        let once = origin
+            .target
+            .as_ref()
+            .and_then(|target| worker.token_once(target));
+        if let Some(token) = once {
+            self.save_chat(token, origin, conversation, cx);
+        }
+    }
+
+    /// The root now, which the shown chat belongs to unless it changed.
+    fn current_root(&self, cx: &App) -> Option<PathBuf> {
+        let workbench = self.workbench()?;
+        workbench.read(cx).root().map(Path::to_owned)
+    }
+
+    /// Shows or closes History: the folder's chats newest first, from disk
+    /// where it is trusted, with the window's own not written, so that
+    /// those chats are listed whatever the trust has been since.
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        if self.history.take().is_some() || self.listing.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let Some(token) = self.current_token(cx) else {
+            self.history = Some(self.memory_rows(&[], cx));
+            cx.notify();
+            return;
+        };
+        let generation = self.generation;
+        let list = Worker::of(cx).list(token);
+        self.listing = Some(cx.spawn(async move |panel, cx| {
+            let rows: Vec<HistoryRow> = match list.await {
+                Ok(summaries) => (summaries.into_iter())
+                    .map(|summary| HistoryRow {
+                        id: summary.id,
+                        title: summary.title,
+                        updated: summary.updated,
+                    })
+                    .collect(),
+                Err(WorkerError::Store(error)) => {
+                    log::warn!("chat: couldn't list the chats: {error}");
+                    Vec::new()
+                }
+                Err(_) => return,
+            };
+            panel
+                .update(cx, |panel, cx| {
+                    panel.listing = None;
+                    // The root or its trust changed meanwhile.
+                    if panel.generation == generation {
+                        let ids: Vec<ChatId> = rows.iter().map(|row| row.id).collect();
+                        let mut rows = rows;
+                        rows.extend(panel.memory_rows(&ids, cx));
+                        rows.sort_by_key(|row| std::cmp::Reverse(row.updated));
+                        panel.history = Some(rows);
+                        cx.notify();
+                    }
+                })
+                .ok();
+        }));
+    }
+
+    /// The window's own chats of the shown folder, newest first, but for
+    /// those in `except`.
+    fn memory_rows(&self, except: &[ChatId], cx: &App) -> Vec<HistoryRow> {
+        let folder = self.current_folder(cx);
+        (self.memory.iter().rev())
+            .filter(|(at, chat, _)| *at == folder && !except.contains(&chat.id))
+            .map(|(_, chat, updated)| HistoryRow {
+                id: chat.id,
+                title: chat.title.clone(),
+                updated: *updated,
+            })
+            .collect()
+    }
+
+    /// Opens chat `id` from History: a streaming reply is stopped and kept
+    /// first.
+    fn open_history_chat(&mut self, id: ChatId, window: &mut Window, cx: &mut Context<Self>) {
+        self.stop_and_remember(window, cx);
+        let shown = self.view.read(cx).conversation().clone();
+        // This window's own copy: the shown chat, or what it retained. It is
+        // all untrusted History has.
+        let folder = self.current_folder(cx);
+        let local = if shown.id == id && !shown.turns.is_empty() {
+            Some(shown.clone())
+        } else {
+            (self.memory.iter())
+                .find(|(at, chat, _)| *at == folder && chat.id == id)
+                .map(|(_, chat, _)| chat.clone())
+        };
+        let Some(token) = self.current_token(cx) else {
+            self.open_chosen(local, id, window, cx);
+            return;
+        };
+        let load = Worker::of(cx).load(token, id);
+        let (handle, views, generation) = (self.window, self.views_made, self.generation);
+        self.listing = Some(cx.spawn(async move |panel, cx| {
+            let result = load.await;
+            cx.update_window(handle, |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.listing = None;
+                        if panel.views_made != views || panel.generation != generation {
+                            return;
+                        }
+                        // The user went on in the chat meanwhile: it stays as
+                        // it is, with its draft.
+                        if *panel.view.read(cx).conversation() != shown {
+                            return;
+                        }
+                        match result {
+                            Ok((disk, revision)) => {
+                                panel.open_loaded(local, disk, revision, folder, window, cx)
+                            }
+                            Err(WorkerError::Store(error)) if local.is_none() => {
+                                toast::show(
+                                    cx,
+                                    Toast::error(format!("Couldn't open the chat: {error}")),
+                                );
+                            }
+                            Err(_) => panel.open_chosen(local, id, window, cx),
+                        }
+                    })
+                    .ok();
+            })
+            .ok();
+        }));
+    }
+
+    /// Opens a chat whose file is `disk` at `revision`, given this window's
+    /// own copy `local`:
+    /// - with no turns the store hasn't acknowledged, the file is the chat,
+    ///   even at the same length;
+    /// - with some, derived from this revision, the copy is the chat and is
+    ///   written;
+    /// - with some, derived from another, the file stands and the copy goes
+    ///   on as a chat of its own.
+    fn open_loaded(
+        &mut self,
+        local: Option<Conversation>,
+        disk: Conversation,
+        revision: u64,
+        origin: Folder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = disk.id;
+        let Some(local) = local else {
+            self.adopt_disk(&disk, revision);
+            self.show_chat(Some(disk), window, cx);
+            return;
+        };
+        if !self.dirty(&local) {
+            self.adopt_disk(&disk, revision);
+            if local == disk {
+                self.open_chosen(Some(local), id, window, cx);
+            } else {
+                self.show_chat(Some(disk), window, cx);
+            }
+            return;
+        }
+        let state = self.bases.get(&id).cloned();
+        let derived = state.as_ref().map_or(0, |state| state.revision());
+        let gone_to_copy = state.as_ref().is_some_and(|state| state.has_copy());
+        if derived == revision && !gone_to_copy {
+            self.open_chosen(Some(local.clone()), id, window, cx);
+            if let Some(token) = self.home_token(cx) {
+                self.save_chat(token, origin, local, cx);
+            }
+        } else {
+            // Derived from another revision: the file stands. The turns
+            // not acknowledged are written, by the worker, as a copy.
+            if !gone_to_copy && let Some(token) = self.home_token(cx) {
+                self.save_chat(token, origin, local, cx);
+            }
+            self.adopt_disk(&disk, revision);
+            self.show_chat(Some(disk), window, cx);
+        }
+    }
+
+    /// Shows `chosen` for chat `id`; if that is the chat already shown it
+    /// stays as it is, and History closes.
+    fn open_chosen(
+        &mut self,
+        chosen: Option<Conversation>,
+        id: ChatId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = self.view.read(cx).conversation();
+        if shown.id == id
+            && chosen
+                .as_ref()
+                .is_some_and(|c| c.turns.len() <= shown.turns.len())
+        {
+            self.history = None;
+            cx.notify();
+            return;
+        }
+        self.show_chat(chosen, window, cx);
+    }
+
+    /// Stops a streaming reply, then keeps the chat as it is.
+    fn stop_and_remember(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.view.read(cx).is_streaming() {
+            self.view.update(cx, |view, cx| {
+                kiln::with_cx(window, cx, |cx| view.stop_reply(cx));
+            });
+        }
+        self.remember_chat(cx);
+    }
+
+    /// Asks whether to delete the shown chat, and does.
+    fn confirm_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let conversation = self.view.read(cx).conversation();
+        if conversation.turns.is_empty() {
+            return;
+        }
+        let (id, title) = (conversation.id, conversation.title.clone());
+        // Deleted where it began, whatever has happened to the window since.
+        let origin = self.home.clone();
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete this chat?",
+            Some(&format!("“{title}” will be deleted for good.")),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        let handle = self.window;
+        cx.spawn(async move |panel, cx| {
+            if answer.await.ok() != Some(0) {
+                return;
+            }
+            cx.update_window(handle, |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.delete_chat_now(id, origin, window, cx)
+                    })
+                    .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Deletes chat `id`'s file under `origin`, the folder it began in, or
+    /// its in-memory copy, and starts a new chat if it's the shown one. The
+    /// worker checks the folder's trust when it runs.
+    fn delete_chat_now(
+        &mut self,
+        id: ChatId,
+        origin: Folder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.memory.retain(|(_, chat, _)| chat.id != id);
+        if let Some(target) = &origin.target {
+            let worker = Worker::of(cx);
+            // Under the lease while the chat is still in its folder; else
+            // as the user's confirmation, once. Files already written stay
+            // when the root turned untrusted, until the user deletes them in
+            // a trusted folder.
+            let held = (origin == self.home && !self.departed)
+                .then_some(self.lease)
+                .flatten();
+            let token = match held {
+                Some(lease) => worker.token_leased(target, lease),
+                None => worker.token_once(target),
+            };
+            if let Some(token) = token {
+                let deleted = worker.delete(token, id);
+                cx.spawn(async move |panel, cx| {
+                    let failure = match deleted.await {
+                        Ok(()) => {
+                            panel
+                                .update(cx, |panel, _| {
+                                    panel.acked.remove(&id);
+                                    panel.bases.remove(&id);
+                                })
+                                .ok();
+                            return;
+                        }
+                        Err(WorkerError::Store(error)) => {
+                            log::warn!("chat: couldn't delete chat {id}: {error}");
+                            error.to_string()
+                        }
+                        Err(WorkerError::Stale) => "the folder isn't trusted any more".to_owned(),
+                        Err(_) => return,
+                    };
+                    panel
+                        .update(cx, |_, cx| {
+                            toast::show(
+                                cx,
+                                Toast::error(format!("Couldn't delete the chat: {failure}")),
+                            );
+                        })
+                        .ok();
+                })
+                .detach();
+            }
+        }
+        if self.view.read(cx).conversation().id == id {
+            self.start_chat(window, cx);
+        }
     }
 
     /// Shows the key form in place of the chat, focused and empty.
@@ -628,13 +1321,62 @@ impl ChatPanel {
             }))
     }
 
+    /// History: the chats, newest first, each a button that opens it.
+    fn render_history(&self, rows: &[HistoryRow], cx: &mut Context<Self>) -> impl IntoElement {
+        let ui = ui_theme(cx);
+        let list = v_flex()
+            .id("chat-history-list")
+            .debug_selector(|| "chat-history-list".into())
+            .size_full()
+            .gap_1()
+            .p_2()
+            .overflow_y_scroll();
+        if rows.is_empty() {
+            return list.child(div().text_color(ui.muted_text).child("No chats yet."));
+        }
+        list.children(rows.iter().enumerate().map(|(i, row)| {
+            let id = row.id;
+            let open =
+                cx.listener(move |this, _, window, cx| this.open_history_chat(id, window, cx));
+            Button::new(("chat-history-row", i), row.label())
+                .small()
+                .ghost()
+                .debug_selector(move || format!("chat-history-row-{i}"))
+                .on_click(open)
+        }))
+    }
+
     /// Replaces the chat with a new one, from the settings now.
     fn start_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (view, options, subscriptions) = Self::chat_view(self.notice, window, cx);
+        self.show_chat(None, window, cx);
+    }
+
+    /// Replaces the chat with `conversation`, or a new one, and closes
+    /// History.
+    fn show_chat(
+        &mut self,
+        conversation: Option<Conversation>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.views_made += 1;
+        let folder = self.current_folder(cx);
+        self.adopt(folder, cx);
+        // The list's buttons or the old composer had focus: the new view's
+        // composer takes it.
+        let refocus =
+            self.history.is_some() || self.view.focus_handle(cx).contains_focused(window, cx);
+        self.history = None;
+        self.listing = None;
+        let (view, options, subscriptions) = Self::chat_view(self.notice, conversation, window, cx);
         (self.view, self.options, self._view) = (view, options, subscriptions);
         self.applies.new_chat();
         self.apply_key(cx);
         self.gather_soon(cx);
+        if refocus {
+            let focus = self.focus_handle(cx);
+            window.focus(&focus, cx);
+        }
         cx.notify();
     }
 
@@ -721,6 +1463,8 @@ impl ChatPanel {
     /// its root or trust does.
     fn follow(&mut self, workbench: &Entity<Workbench>, cx: &mut Context<Self>) {
         self.workbench = Some(workbench.downgrade());
+        let folder = self.track_current(cx);
+        self.adopt(folder, cx);
         self._workbench = vec![
             cx.observe(workbench, |this, _, cx| this.gather_soon(cx)),
             cx.subscribe(workbench, |this, _, _: &RootChanged, cx| {
@@ -731,6 +1475,7 @@ impl ChatPanel {
             }),
         ];
         self.gather_soon(cx);
+        self.restore(cx);
     }
 
     /// The workbench followed, if it's still there.
@@ -757,6 +1502,38 @@ impl ChatPanel {
         (self.vetted, self.vetting) = (None, None);
         self.set_context(None, cx);
         self.gather(cx);
+        // What was being read for the old root or trust doesn't show.
+        (self.history, self.listing, self.restoring) = (None, None, None);
+        let folder = self.track_current(cx);
+        if folder != self.home {
+            if self.view.read(cx).conversation().turns.is_empty() {
+                self.adopt(folder, cx);
+            } else {
+                // The chat in view is another folder's: it is written out
+                // under its own once, whatever was asked before is
+                // refused, and this folder's newest opens in its place.
+                self.depart(cx);
+                let handle = self.window;
+                cx.spawn(async move |panel, cx| {
+                    cx.update_window(handle, |_, window, cx| {
+                        panel
+                            .update(cx, |panel, cx| {
+                                panel.show_chat(None, window, cx);
+                                panel.restored = false;
+                                panel.restore(cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+                })
+                .detach();
+                return;
+            }
+        }
+        if self.view.read(cx).conversation().turns.is_empty() {
+            self.restored = false;
+        }
+        self.restore(cx);
     }
 
     /// Gives the view the context gathered now, from the active file only
@@ -860,7 +1637,7 @@ impl ChatPanel {
                 window.defer(cx, |window, cx| run_command(SETTINGS_COMMAND, window, cx));
             }
             ChatViewEvent::NoticeDismissed => self.dismiss_notice(cx),
-            ChatViewEvent::TurnFinished => {}
+            ChatViewEvent::TurnFinished => self.remember_chat(cx),
             ChatViewEvent::AttachFileRequested => {
                 let panel = cx.weak_entity();
                 window.defer(cx, move |window, cx| {
@@ -983,6 +1760,12 @@ impl ChatPanel {
         self.notice
     }
 
+    /// The titles History shows, if it does.
+    pub(crate) fn history_titles(&self) -> Option<Vec<String>> {
+        let rows = self.history.as_ref()?;
+        Some(rows.iter().map(|row| row.title.clone()).collect())
+    }
+
     pub(crate) fn header_note(&self) -> Option<SharedString> {
         self.key_note()
     }
@@ -1010,6 +1793,7 @@ impl Render for ChatPanel {
                 .text_color(ui.muted_text)
                 .child(note)
         });
+        let history = cx.listener(|this, _, _, cx| this.toggle_history(cx));
         let header = h_flex()
             .gap_2()
             .px_2()
@@ -1018,6 +1802,12 @@ impl Render for ChatPanel {
             .border_b_1()
             .border_color(ui.border)
             .child(div().flex_1().min_w_0().children(note))
+            .child(
+                Button::new("chat-history", "History")
+                    .small()
+                    .debug_selector(|| "chat-history".into())
+                    .on_click(history),
+            )
             .child(
                 Button::new("chat-new", "New Chat")
                     .small()
@@ -1032,7 +1822,13 @@ impl Render for ChatPanel {
                     .flex_1()
                     .min_h_0()
                     .child(self.render_key_form(form, window, cx)),
-                None => div().flex_1().min_h_0().child(self.view.clone()),
+                None => match &self.history {
+                    Some(rows) => div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.render_history(rows, cx)),
+                    None => div().flex_1().min_h_0().child(self.view.clone()),
+                },
             });
         <Self as kiln::ViewCommands>::attach(root, cx)
     }
@@ -1140,11 +1936,52 @@ fn selection_or_row(root: Option<&Path>, model: &EditorModel) -> Option<ContextI
     })
 }
 
+/// Whether the app's decisions trust the folder at canonical `root`, its own
+/// or an ancestor's; a window with no folder has no trust to ask.
+fn folder_trusted(root: Option<&Path>, cx: &App) -> bool {
+    root.is_none_or(|root| kiln_shell::trust::decided(root, cx) == Some(true))
+}
+
+/// Sets the trust of every folder the chat store tracks from the app's
+/// decisions, shown in a window or not.
+fn refresh_trust(cx: &mut App) {
+    let worker = Worker::of(cx);
+    let cx: &App = cx;
+    worker.refresh(|target| folder_trusted(target.root.as_deref(), cx));
+}
+
+/// Has the worker track `workbench`'s folder.
+fn track_workbench(workbench: &Workbench, cx: &mut App) {
+    let Some(state) = state_dir(cx) else {
+        return;
+    };
+    let root = workbench.root().map(canonical_root);
+    let trusted = folder_trusted(root.as_deref(), cx);
+    let target = Target {
+        dir: folder_dir(&state, root.as_deref()),
+        root,
+    };
+    Worker::of(cx).track(&target, trusted);
+}
+
 /// Runs `chat.open`, `chat.set_api_key` and `chat.clear_api_key` in the
 /// window they were invoked in, wherever focus is: the workbench's root
 /// doesn't attach the panel's commands. After the dispatch, which has the
 /// window out.
 pub(crate) fn init(cx: &mut App) {
+    // The worker's view of each folder's trust follows the app's decisions,
+    // not a window's: an unresolved window is no revocation, and a folder
+    // no window shows is followed too.
+    cx.observe_new(|workbench: &mut Workbench, _, cx| {
+        let this = cx.entity();
+        cx.subscribe(&this, |workbench, _, _: &RootChanged, cx| {
+            track_workbench(workbench, cx);
+        })
+        .detach();
+        kiln_shell::trust::observe(cx, |_, cx| refresh_trust(cx)).detach();
+        track_workbench(workbench, cx);
+    })
+    .detach();
     cx.on_action(|_: &OpenChat, cx| {
         on_workbench(cx, Workbench::open_chat);
     });

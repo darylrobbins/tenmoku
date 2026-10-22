@@ -928,7 +928,6 @@ fn too_large() -> Vec<ChatEvent> {
 fn earlier_at_files_dont_come_back_once_their_authority_goes(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
-    let other = tempfile::tempdir().unwrap();
     let (workbench, cx) = opened(cx, root);
     let provider = Arc::new(ScriptedProvider::new([
         refusal(),
@@ -956,11 +955,9 @@ fn earlier_at_files_dont_come_back_once_their_authority_goes(cx: &mut TestAppCon
     attach_file(&panel, &root.join("src/lib.go"), cx);
     send(&panel, "One?", cx);
     assert_eq!(new_turn(&provider.requests()[0]).len(), 2);
-    cx.update(|window, cx| {
-        workbench.update(cx, |workbench, cx| {
-            workbench.set_root(other.path().to_owned(), window, cx)
-        })
-    });
+    // (A trust change ends a root's authority as a root change does; the
+    // chat in view stays, as a root change would start another folder's.)
+    workbench.update(cx, |workbench, cx| workbench.set_root_trust(true, cx));
     draw(cx);
     click("chat-banner-action-0", cx);
     assert_eq!(attached(&panel, cx), []);
@@ -968,11 +965,7 @@ fn earlier_at_files_dont_come_back_once_their_authority_goes(cx: &mut TestAppCon
     assert_eq!(new_turn(&provider.requests()[1]), ["One again?"]);
 
     // Too large, then `buffer.read` goes: nor does Remove Attachments.
-    cx.update(|window, cx| {
-        workbench.update(cx, |workbench, cx| {
-            workbench.set_root(root.to_owned(), window, cx)
-        })
-    });
+    workbench.update(cx, |workbench, cx| workbench.set_root_trust(false, cx));
     draw(cx);
     attach_file(&panel, &root.join("src/lib.go"), cx);
     send(&panel, "Two?", cx);
