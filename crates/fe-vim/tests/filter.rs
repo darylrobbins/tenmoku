@@ -553,12 +553,18 @@ fn filters_run_only_for_the_user() {
         agent: "agent".into(),
         session: "s1".into(),
     };
-    for actor in [
-        Actor::Host("acme.x".into()),
-        ai(),
-        Actor::Lsp,
-        Actor::Format,
-    ] {
+    // A plugin (host) actor never reaches the command at all: the registry's
+    // plugin policy refuses it before it runs (kiln-command, Mac T1046).
+    let mut denied = HeadlessVim::new(ROWS, (0, 0));
+    denied.feed(":").unwrap();
+    let as_host = Invocation::of("vim.command_line_submit")
+        .unwrap()
+        .args(serde_json::json!({ "text": "%!sort" }))
+        .actor(Actor::Host("acme.x".into()))
+        .context(fe_vim::context(denied.state()));
+    assert!(denied.dispatch(&as_host).is_err());
+    assert_eq!(denied.state_mut().take_host_command(), None);
+    for actor in [ai(), Actor::Lsp, Actor::Format] {
         let mut vim = HeadlessVim::new(ROWS, (0, 0));
         assert_eq!(
             submit_as(&mut vim, "%!sort", actor.clone()),
