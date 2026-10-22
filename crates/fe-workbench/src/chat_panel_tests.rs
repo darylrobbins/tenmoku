@@ -596,6 +596,8 @@ fn the_keychain_opens_again_after_failing() {
     assert_eq!(OPENS.load(Ordering::SeqCst), 2);
 }
 
+#[path = "chat_apply_tests.rs"]
+mod apply;
 #[path = "chat_context_tests.rs"]
 mod context;
 

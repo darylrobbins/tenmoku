@@ -29,6 +29,10 @@
 //!   the active editor or its selection changes while the panel shows, and
 //!   when it gains focus; and the @files the user picks. The view budgets
 //!   them to `chat.context_budget`.
+//! - **Replies** (record § 8; `chat_apply.rs`): Apply on a code block
+//!   proposes it in its file, or over the selection its turn was sent with,
+//!   by dispatching `chat.propose_edit` as the AI actor; a link to a file
+//!   under the root opens it.
 
 use std::{
     path::{Path, PathBuf},
@@ -59,6 +63,8 @@ use crate::{
     workbench::toast::{self, Toast},
 };
 
+#[path = "chat_apply.rs"]
+mod chat_apply;
 #[path = "chat_context.rs"]
 mod chat_context;
 
@@ -302,8 +308,10 @@ pub(crate) struct ChatPanel {
     writing: Option<Task<()>>,
     /// The key form, while it shows in place of the chat.
     key_form: Option<KeyForm>,
-    /// The view's events, and its gaining focus.
-    _view: [Subscription; 2],
+    /// Applying the replies' code blocks.
+    applies: chat_apply::Applies,
+    /// The view's events, its gaining focus, and its changes.
+    _view: [Subscription; 3],
     /// The workbench's changes, and its root's and its trust's.
     _workbench: Vec<Subscription>,
 }
@@ -389,19 +397,20 @@ impl ChatPanel {
             writes: Default::default(),
             writing: None,
             key_form: None,
+            applies: chat_apply::Applies::new(),
             _view: view_subscriptions,
             _workbench: Vec::new(),
         }
     }
 
     /// A view of a new chat, from the settings now, with no provider until
-    /// the key is applied, and the subscriptions to its events and its
-    /// gaining focus.
+    /// the key is applied, and the subscriptions to its events, its gaining
+    /// focus and its changes.
     fn chat_view(
         notice: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Entity<ChatView>, ChatOptions, [Subscription; 2]) {
+    ) -> (Entity<ChatView>, ChatOptions, [Subscription; 3]) {
         let (settings, options) = new_chat_settings(cx);
         let budget = kiln::platform::config::settings::<fe_config::Settings>(cx)
             .chat
@@ -429,7 +438,9 @@ impl ChatPanel {
             this.vetted = None;
             this.gather(cx);
         });
-        (view, options, [events, focused])
+        // A turn sent keeps the selection it was sent with.
+        let changed = cx.observe(&view, |this, _, cx| this.note_turns(cx));
+        (view, options, [events, focused, changed])
     }
 
     /// Shows the key form in place of the chat, focused and empty.
@@ -604,6 +615,7 @@ impl ChatPanel {
     fn start_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (view, options, subscriptions) = Self::chat_view(self.notice, window, cx);
         (self.view, self.options, self._view) = (view, options, subscriptions);
+        self.applies.new_chat();
         self.apply_key(cx);
         self.gather_soon(cx);
         cx.notify();
@@ -722,6 +734,9 @@ impl ChatPanel {
             view.clear_attachments(cx);
             view.set_authorization(generation);
         });
+        // Nor is a block applied, or a link opened, that was asked for
+        // under them.
+        self.applies.stale();
         (self.vetted, self.vetting) = (None, None);
         self.set_context(None, cx);
         self.gather(cx);
@@ -734,6 +749,9 @@ impl ChatPanel {
             return;
         };
         let items = chat_context::gather(workbench.read(cx), &self.grants, vetted, cx);
+        // A turn sent with the chip the view has now keeps it.
+        self.note_turns(cx);
+        self.note_chip(&items, workbench.read(cx), cx);
         self.view.update(cx, |view, cx| view.set_context(items, cx));
     }
 
@@ -832,9 +850,18 @@ impl ChatPanel {
                     (panel.update(cx, |panel, cx| panel.pick_file(window, cx))).ok();
                 });
             }
-            // Opening a reply's links to files and applying its code
-            // blocks come with `chat_apply.rs` (the record's § 8).
-            ChatViewEvent::OpenPath { .. } | ChatViewEvent::ApplyBlock { .. } => {}
+            ChatViewEvent::OpenPath { path, row } => {
+                let (panel, path, row) = (cx.weak_entity(), path.clone(), *row);
+                window.defer(cx, move |window, cx| {
+                    (panel.update(cx, |panel, cx| panel.open_link(&path, row, window, cx))).ok();
+                });
+            }
+            ChatViewEvent::ApplyBlock { turn, block } => {
+                let (panel, turn, block) = (cx.weak_entity(), *turn, *block);
+                window.defer(cx, move |window, cx| {
+                    (panel.update(cx, |panel, cx| panel.apply_block(turn, block, window, cx))).ok();
+                });
+            }
         }
     }
 
@@ -919,6 +946,7 @@ impl ChatPanel {
     pub(crate) fn set_grants(&mut self, grants: Grants, cx: &mut Context<Self>) {
         self.grants = grants;
         self.generation += 1;
+        self.applies.stale();
         let (generation, read) = (self.generation, self.grants.allows(&Capability::BufferRead));
         self.view.update(cx, |view, cx| {
             if !read {

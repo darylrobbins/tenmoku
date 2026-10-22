@@ -85,6 +85,16 @@ pub enum ChatViewEvent {
     ApplyBlock { turn: usize, block: usize },
 }
 
+/// How a turn was made in a view: what [`ChatView::was_sent`] and
+/// [`ChatView::retry_of`] answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TurnOrigin {
+    /// Sent from the composer, with the chips there then.
+    Sent,
+    /// Retry sent turn `of` again, with its context as still authorized.
+    Retry(usize),
+}
+
 /// The record's § 14 line under a turn, and what its button does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Banner {
@@ -170,6 +180,9 @@ pub struct ChatView {
     /// when each turn, by index, was sent: its context is only good for a
     /// Retry under the same one.
     sent_under: HashMap<usize, u64>,
+    /// How each turn made in this view, by index, was made: see
+    /// [`ChatView::was_sent`] and [`ChatView::retry_of`].
+    origins: HashMap<usize, TurnOrigin>,
     /// The authorization generation now: the host counts a change of root,
     /// of trust or of `buffer.read` grant.
     authorization: u64,
@@ -243,7 +256,7 @@ impl ChatView {
         self.attached.insert(self.conversation.turns.len(), mine);
         self.sent_under
             .insert(self.conversation.turns.len(), self.authorization);
-        self.start_turn(user_content, attachments, cx);
+        self.start_turn(TurnOrigin::Sent, user_content, attachments, cx);
     }
 
     /// Stop Reply
@@ -301,7 +314,7 @@ impl ChatView {
         let attachments = items.iter().map(attachment_of).collect();
         self.attached.insert(last + 1, mine);
         self.sent_under.insert(last + 1, self.authorization);
-        self.start_turn(user_content, attachments, cx);
+        self.start_turn(TurnOrigin::Retry(last), user_content, attachments, cx);
     }
 }
 
@@ -344,6 +357,7 @@ impl ChatView {
             removed: Vec::new(),
             attached: HashMap::new(),
             sent_under: HashMap::new(),
+            origins: HashMap::new(),
             authorization: 0,
             context_budget: CONTEXT_BUDGET,
             notice: false,
@@ -634,6 +648,23 @@ impl ChatView {
         })
     }
 
+    /// Whether turn `index` was sent from this view's composer, with the
+    /// chips it showed then: by `chat.send`, from a key, a command or the
+    /// Send button. Recorded as the turn is made; `false` for a retry, and
+    /// for a turn the view didn't make, such as one read back from disk.
+    pub fn was_sent(&self, index: usize) -> bool {
+        self.origins.get(&index) == Some(&TurnOrigin::Sent)
+    }
+
+    /// The turn that turn `index` sent again, if a Retry made it, from a
+    /// key, a command or the banner's button. Recorded as the turn is made.
+    pub fn retry_of(&self, index: usize) -> Option<usize> {
+        match self.origins.get(&index)? {
+            TurnOrigin::Retry(of) => Some(*of),
+            TurnOrigin::Sent => None,
+        }
+    }
+
     /// Code block `block` of turn `index`'s reply, as its header shows it:
     /// blocks are counted in document order, those in lists and quotes
     /// too, as [`ChatViewEvent::ApplyBlock`] counts them.
@@ -737,9 +768,11 @@ impl ChatView {
         }
     }
 
-    /// Begins a turn of `user_content` and streams its reply.
+    /// Begins a turn of `user_content`, made as `origin` says, and streams
+    /// its reply.
     fn start_turn(
         &mut self,
+        origin: TurnOrigin,
         user_content: Vec<Value>,
         attachments: Vec<Attachment>,
         cx: &mut Cx<Self>,
@@ -754,6 +787,7 @@ impl ChatView {
             max_tokens: self.options.max_tokens,
         };
         let request = build_request(&self.conversation, user_content.clone(), &settings);
+        self.origins.insert(self.conversation.turns.len(), origin);
         self.conversation.begin_turn(user_content, attachments);
         // The request is made and its stream polled on the background
         // executor, as connecting and checking certificates can block, and
