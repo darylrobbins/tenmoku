@@ -43,9 +43,11 @@
 //!   [`Workbench::busy_under`] the path, as the tree's rename is. Servers
 //!   are told, as the tree tells them (`didCreateFiles` and the rest).
 //!   - **Create** makes an empty file, with the folders above it. An
-//!     existing one is refused, unless `overwrite` (it's moved to the
-//!     Trash and made again, with its permissions) or `ignoreIfExists`
-//!     (skipped). One shown in
+//!     existing one is refused, unless `overwrite` or `ignoreIfExists`
+//!     (skipped). A file it overwrites is emptied in place, keeping its
+//!     owner, permissions, ACLs and extended attributes, and servers aren't
+//!     told it was created; anything else there, as a symlink, is moved to
+//!     the Trash and a file made in its place. One shown in
 //!     any window's editor, being read into one or held by a Save As is
 //!     refused.
 //!   - **Rename** renames a file or folder within its folder (`fs_ops`
@@ -73,7 +75,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs, io,
     ops::Range,
-    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -297,26 +299,34 @@ impl Workbench {
                     return Err(format!("{display} is open"));
                 }
                 self.check_idle(&file.path, others, cx)?;
-                let name = (path.strip_prefix(&root).ok())
-                    .and_then(Path::to_str)
-                    .ok_or_else(|| format!("can't create {display}: its name isn't UTF-8"))?;
-                // Overwritten as a new file, through the tree's operations,
-                // the old one kept in the Trash, and its permissions on the
-                // new one, set through a handle found as the tree finds
-                // files, before any text is in it.
-                if existing.is_some() {
-                    fs_ops::trash(&root, &[&path])
-                        .map_err(|error| format!("can't move {display} to the Trash: {error}"))?;
+                match existing {
+                    // Emptied in place, so it keeps its owner, permissions,
+                    // ACLs and extended attributes, through a handle found
+                    // as the tree finds files. It isn't new, so servers
+                    // aren't told it was created.
+                    Some(meta) if meta.is_file() => {
+                        fs_ops::open_truncated(&root, &path)
+                            .map_err(|error| format!("can't overwrite {display}: {error}"))?;
+                    }
+                    // Anything else, as a symlink, which could lead out of
+                    // the project, is moved to the Trash, and a file made in
+                    // its place through the tree's operations.
+                    existing => {
+                        let name = (path.strip_prefix(&root).ok())
+                            .and_then(Path::to_str)
+                            .ok_or_else(|| {
+                                format!("can't create {display}: its name isn't UTF-8")
+                            })?;
+                        if existing.is_some() {
+                            fs_ops::trash(&root, &[&path]).map_err(|error| {
+                                format!("can't move {display} to the Trash: {error}")
+                            })?;
+                        }
+                        fs_ops::create_file(&root, &root, name)
+                            .map_err(|error| format!("can't create {display}: {error}"))?;
+                        self.lsp_files_created(&[(file.path.clone(), false)]);
+                    }
                 }
-                fs_ops::create_file(&root, &root, name)
-                    .map_err(|error| format!("can't create {display}: {error}"))?;
-                if let Some(meta) = existing.filter(fs::Metadata::is_file) {
-                    let mode = fs::Permissions::from_mode(meta.permissions().mode() & 0o777);
-                    (fe_project::open_file_under(&root, Path::new(name)))
-                        .and_then(|file| file.set_permissions(mode))
-                        .map_err(|error| format!("can't keep {display}'s permissions: {error}"))?;
-                }
-                self.lsp_files_created(&[(file.path.clone(), false)]);
             }
             EditTarget::Rename {
                 to,

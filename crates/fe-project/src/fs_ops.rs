@@ -1,5 +1,6 @@
 //! File operations on the project tree: create a file or a folder, rename,
-//! duplicate and move to the Trash, all kept under the project root.
+//! duplicate, move to the Trash and empty a file, all kept under the project
+//! root.
 //!
 //! Every path is resolved under the root through directory handles opened a
 //! component at a time without following a symlink, as
@@ -203,6 +204,41 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
     result.map(|()| path)
 }
 
+/// Opens the file at `path` for writing and empties it, as a create that
+/// overwrites it does, and returns it. The file stays the same file, so it
+/// keeps its owner, group, permissions, ACLs and extended attributes (and
+/// its other hard links see it emptied).
+///
+/// It is found through the root's handles, and opened from its folder's
+/// without following a symlink: a symlinked folder on the way fails with
+/// [`io::ErrorKind::InvalidInput`], as a symlink in its place does, whenever
+/// it appeared. Anything but a regular file, such as a FIFO, fails with
+/// [`io::ErrorKind::InvalidInput`] too, before it is emptied, and a folder
+/// with [`io::ErrorKind::IsADirectory`]. A missing file fails with
+/// [`io::ErrorKind::NotFound`]: this never creates one.
+pub fn open_truncated(root: &Path, path: &Path) -> io::Result<File> {
+    let root = Root::open(root)?;
+    let target = root.resolve(path)?;
+    reach(Point::Truncating)?;
+    // Not `O_TRUNC`, which would empty something else found there before it
+    // is checked; non-blocking, so a FIFO doesn't wait for a reader.
+    let flags =
+        libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+    let file = open_in(&target.parent, target.name, flags, 0).map_err(|err| {
+        // `O_NOFOLLOW` fails on a symlink with `ELOOP`.
+        if err.raw_os_error() == Some(libc::ELOOP) {
+            invalid("a symlink, which could lead outside the project root")
+        } else {
+            err
+        }
+    })?;
+    if !file.metadata()?.is_file() {
+        return Err(invalid("not a regular file"));
+    }
+    file.set_len(0)?;
+    Ok(file)
+}
+
 /// Renames the entry at `from` to `new_name` in the same folder, and returns
 /// its new path. `new_name` is a single component.
 ///
@@ -305,6 +341,9 @@ enum Point {
     Opening,
     /// `create` made the folders above its entry and is about to make it.
     Parents,
+    /// `open_truncated` opened the folder of its file and is about to open
+    /// it.
+    Truncating,
     /// A copy made a folder and opened it, and is about to fill it.
     Made,
     /// A copy is complete, and its folders are about to get their
@@ -1500,6 +1539,10 @@ fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
 #[cfg(test)]
 #[path = "fs_ops_race_tests.rs"]
 mod race_tests;
+
+#[cfg(test)]
+#[path = "fs_ops_truncate_tests.rs"]
+mod truncate_tests;
 
 #[cfg(test)]
 mod tests {

@@ -284,19 +284,143 @@ fn another_windows_editors_are_kept(cx: &mut gpui::TestAppContext) {
     assert!(s.path("src/other.rs").is_file());
 }
 
-/// A create over an existing file makes it again, empty, through the
-/// tree's operations, the old one in the Trash.
+/// A create over an existing file empties it, and the edits after it
+/// write it.
 #[gpui::test]
-fn a_create_over_a_file_trashes_it(cx: &mut gpui::TestAppContext) {
+fn a_create_over_a_file_empties_it(cx: &mut gpui::TestAppContext) {
     let (mut s, server) = setup(cx);
     let changes = json!([
         { "kind": "create", "uri": s.uri("src/lib.rs"), "options": { "overwrite": true } },
         s.edit_of("src/lib.rs", vec![edit((0, 0), (0, 0), "// new\n")]),
     ]);
-    let applied = s.apply_changes(server, changes);
-    purge(&s.root, &s.path("src/lib.rs"));
-    applied.unwrap();
+    s.apply_changes(server, changes).unwrap();
     assert_eq!(s.bytes("src/lib.rs"), b"// new\n");
+}
+
+/// Sets extended attribute `name` of `path` to `value`: false where its
+/// file system has none.
+fn set_xattr(path: &Path, name: &str, value: &[u8]) -> bool {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let (path, name) = (
+        CString::new(path.as_os_str().as_bytes()).unwrap(),
+        CString::new(name).unwrap(),
+    );
+    // SAFETY: `path` and `name` are NUL-terminated and `value` is valid for
+    // reads of its length.
+    #[cfg(target_os = "linux")]
+    let set = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            name.as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+        )
+    };
+    // SAFETY: as above.
+    #[cfg(target_vendor = "apple")]
+    let set = unsafe {
+        libc::setxattr(
+            path.as_ptr(),
+            name.as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+            0,
+        )
+    };
+    if set == 0 {
+        return true;
+    }
+    let error = std::io::Error::last_os_error();
+    assert_eq!(error.raw_os_error(), Some(libc::ENOTSUP), "{error}");
+    false
+}
+
+/// Extended attribute `name` of `path`, if it has one.
+fn xattr(path: &Path, name: &str) -> Option<Vec<u8>> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
+
+    let (path, name) = (
+        CString::new(path.as_os_str().as_bytes()).unwrap(),
+        CString::new(name).unwrap(),
+    );
+    let mut value = vec![0u8; 256];
+    // SAFETY: `path` and `name` are NUL-terminated and `value` is valid for
+    // writes of its length.
+    #[cfg(target_os = "linux")]
+    let len = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            name.as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+        )
+    };
+    // SAFETY: as above.
+    #[cfg(target_vendor = "apple")]
+    let len = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            name.as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+            0,
+            0,
+        )
+    };
+    value.truncate(usize::try_from(len).ok()?);
+    Some(value)
+}
+
+/// A create over a file empties that file, rather than making another: it
+/// keeps its inode, its permissions and its extended attributes.
+#[gpui::test]
+fn a_create_over_a_file_keeps_the_file(cx: &mut gpui::TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (mut s, server) = setup(cx);
+    let notes = s.path("src/notes.txt");
+    fs::write(&notes, "notes\n").unwrap();
+    fs::set_permissions(&notes, fs::Permissions::from_mode(0o640)).unwrap();
+    #[cfg(target_os = "linux")]
+    let name = "user.fastedit.test";
+    #[cfg(target_vendor = "apple")]
+    let name = "com.example.fastedit";
+    let tagged = set_xattr(&notes, name, b"kept");
+    let before = fs::metadata(&notes).unwrap();
+    let changes = json!([
+        { "kind": "create", "uri": s.uri("src/notes.txt"), "options": { "overwrite": true } },
+    ]);
+    s.apply_changes(server, changes).unwrap();
+    assert_eq!(s.bytes("src/notes.txt"), b"");
+    let after = fs::metadata(&notes).unwrap();
+    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+    assert_eq!(after.permissions().mode() & 0o777, 0o640);
+    assert_eq!(after.gid(), before.gid());
+    if tagged {
+        assert_eq!(xattr(&notes, name).as_deref(), Some(&b"kept"[..]));
+    }
+}
+
+/// A create over a symlink moves the link to the Trash and makes a file in
+/// its place, never emptying what it leads to.
+#[gpui::test]
+fn a_create_over_a_symlink_replaces_the_link(cx: &mut gpui::TestAppContext) {
+    let (mut s, server) = setup(cx);
+    let link = s.path("src/link.rs");
+    std::os::unix::fs::symlink(s.path("src/main.rs"), &link).unwrap();
+    let main = s.bytes("src/main.rs");
+    let changes = json!([
+        { "kind": "create", "uri": s.uri("src/link.rs"), "options": { "overwrite": true } },
+    ]);
+    let applied = s.apply_changes(server, changes);
+    purge(&s.root, &link);
+    applied.unwrap();
+    assert!(fs::symlink_metadata(&link).unwrap().is_file());
+    assert_eq!(s.bytes("src/link.rs"), b"");
+    assert_eq!(s.bytes("src/main.rs"), main);
 }
 
 /// A later run's edits move past what the earlier run made, as made: a
@@ -407,9 +531,7 @@ fn a_create_over_a_file_keeps_its_permissions(cx: &mut gpui::TestAppContext) {
         { "kind": "create", "uri": s.uri("src/tool.sh"), "options": { "overwrite": true } },
         s.edit_of("src/tool.sh", vec![edit((0, 0), (0, 0), "#!/bin/bash\n")]),
     ]);
-    let applied = s.apply_changes(server, changes);
-    purge(&s.root, &tool);
-    applied.unwrap();
+    s.apply_changes(server, changes).unwrap();
     assert_eq!(s.bytes("src/tool.sh"), b"#!/bin/bash\n");
     let mode = fs::metadata(&tool).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o750);

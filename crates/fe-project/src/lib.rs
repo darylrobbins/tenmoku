@@ -18,7 +18,8 @@
 //!   following a symlink, for readers of the project's files.
 //! - [`fs_ops`] creates, renames, duplicates and trashes entries of the tree,
 //!   all kept under the project root ([`create_file`], [`create_dir`],
-//!   [`rename`], [`duplicate`], [`trash`], [`relative_path`]).
+//!   [`rename`], [`duplicate`], [`trash`], [`relative_path`]), and empties
+//!   a file in place ([`open_truncated`]).
 //!
 //! This crate must never depend on GPUI.
 
@@ -33,7 +34,8 @@ mod watcher;
 
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use fs_ops::{
-    NameError, create_dir, create_file, duplicate, relative_path, rename, trash, validate_name,
+    NameError, create_dir, create_file, duplicate, open_truncated, relative_path, rename, trash,
+    validate_name,
 };
 pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
