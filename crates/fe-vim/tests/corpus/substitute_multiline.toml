@@ -1,0 +1,320 @@
+# `:s` with a pattern that matches across rows (`\n` and the other atoms of
+# `:help /\_x`): a replaced match joins its rows, a `\r` in the replacement
+# still breaks one, the rows a replacement joins drop out of the range, and
+# a match may run past its last row; the flags `g`, `c`, `n`, `e`, `i` and a
+# count; one undo step; marks on joined rows; and `:s/\n//`, which nvim runs
+# as `:join!`. Hand-written: name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. What nvim
+# does with each is recorded in substitute_multiline.expected.json by the
+# ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "join_comma_rows"
+buffer = "a,\nb,\nc\nd,\ne"
+cursor = [2, 0]
+keys = ":%s/,\\n/, /<CR>"
+
+[[case]]
+name = "join_comma_rows_indented"
+buffer = "  a,\n  b,\n  c\nd"
+cursor = [3, 0]
+keys = ":%s/,\\n \\{}/, /<CR>"
+
+[[case]]
+name = "join_all_rows"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":%s/\\n//<CR>"
+
+[[case]]
+name = "join_all_rows_g"
+buffer = "ab\ncd\nef"
+cursor = [0, 1]
+keys = ":%s/\\n//g<CR>"
+
+[[case]]
+name = "join_all_rows_kept_blanks"
+buffer = "  a\n  b\n  c"
+cursor = [0, 0]
+keys = ":%s/\\n//<CR>"
+
+[[case]]
+name = "join_range_takes_next_row"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":1,2s/\\n//<CR>"
+
+[[case]]
+name = "join_last_row_does_nothing"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = ":$s/\\n//<CR>"
+
+[[case]]
+name = "join_then_n_searches_newline"
+buffer = "a\nb\na\nb"
+cursor = [0, 0]
+keys = ":1s/\\n//<CR>n"
+
+[[case]]
+name = "newline_replaced_each_row"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":%s/\\n/X/<CR>"
+
+[[case]]
+name = "newline_to_r_splits"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":%s/\\n/\\r\\r/<CR>"
+
+[[case]]
+name = "r_and_join_together"
+buffer = "a,b,\nc,d"
+cursor = [0, 0]
+keys = ":%s/,\\n\\|,/\\r/g<CR>"
+
+[[case]]
+name = "g_flag_across"
+buffer = "x x,\ny x,\nz x"
+cursor = [0, 0]
+keys = ":%s/x,\\n\\|x/Q/g<CR>"
+
+[[case]]
+name = "without_g_goes_on_after_a_join"
+buffer = "x x,\ny x,\nz x"
+cursor = [0, 0]
+keys = ":%s/x,\\n\\|x/Q/<CR>"
+
+[[case]]
+name = "g_flag_joined_rows_only"
+buffer = "x,\ny x,\nz x"
+cursor = [0, 0]
+keys = ":%s/x,\\n/Q/g<CR>"
+
+[[case]]
+name = "n_flag_counts"
+buffer = "a,\nb,\nc,\nd"
+cursor = [2, 1]
+keys = ":%s/,\\n/, /n<CR>"
+
+[[case]]
+name = "n_flag_counts_every_newline"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":%s/\\n//n<CR>"
+
+[[case]]
+name = "range_end_past"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":1,2s/b\\nc\\nd/X/<CR>"
+
+[[case]]
+name = "range_end_inside_join"
+buffer = "a,\nb,\nc,\nd"
+cursor = [0, 0]
+keys = ":2s/,\\n/-/g<CR>"
+
+[[case]]
+name = "range_rows_joined_drop_out"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1,3s/\\n/-/<CR>"
+
+[[case]]
+name = "count_argument"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":s/\\n/-/ 3<CR>"
+
+[[case]]
+name = "last_row_newline"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = ":$s/b\\n/X/<CR>"
+
+[[case]]
+name = "whole_match_newline"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = ":%s/\\n/[&]/<CR>"
+
+[[case]]
+name = "groups_across"
+buffer = "key:\n  value\nk2:\n  v2"
+cursor = [0, 0]
+keys = ":%s/\\(\\w\\{1,}\\):\\n\\s\\{}\\(\\w\\{1,}\\)/\\2=\\1/<CR>"
+
+[[case]]
+name = "empty_or_newline"
+buffer = "ab\ncd"
+cursor = [0, 0]
+keys = ":%s/x\\{}\\n\\|x\\{}/-/g<CR>"
+
+[[case]]
+name = "zs_on_later_row"
+buffer = "a\nb\na\nb"
+cursor = [0, 0]
+keys = ":%s/a\\n\\zsb/X/g<CR>"
+
+[[case]]
+name = "zs_empty_after_newline"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":%s/\\n\\zs/-/<CR>"
+
+[[case]]
+name = "e_flag_quiet"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = ":%s/x\\n//e<CR>"
+
+[[case]]
+name = "no_match_fails"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = ":%s/x\\n//<CR>"
+
+[[case]]
+name = "i_flag_across"
+buffer = "A,\nb\nc"
+cursor = [0, 0]
+keys = ":%s/a,\\n/X/i<CR>"
+
+[[case]]
+name = "underscore_s_across"
+buffer = "one\n  two\nthree"
+cursor = [0, 0]
+keys = ":%s/e\\_s\\{1,}t/E T/g<CR>"
+
+[[case]]
+name = "marks_on_joined_rows"
+buffer = "a,\nb,\nc\nd"
+cursor = [0, 0]
+keys = "jmajmbjmcgg:%s/,\\n/, /<CR>"
+
+[[case]]
+name = "marks_on_joined_rows_by_join"
+buffer = "ab\ncd\nef\ngh"
+cursor = [0, 0]
+keys = "jlmajmbjmcgg:%s/\\n//<CR>"
+
+[[case]]
+name = "visual_marks_on_joined_rows"
+buffer = "a,\nb,\nc\nd"
+cursor = [0, 0]
+keys = "jvj<Esc>gg:%s/,\\n/, /<CR>"
+
+[[case]]
+name = "visual_marks_on_joined_last_row"
+buffer = "a,\nb,\nc"
+cursor = [0, 0]
+keys = "jvj<Esc>gg:%s/,\\n/;/g<CR>"
+
+[[case]]
+name = "undo_restores"
+buffer = "a,\nb,\nc"
+cursor = [1, 1]
+keys = ":%s/,\\n/, /<CR>u"
+
+[[case]]
+name = "undo_restores_join"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = ":%s/\\n//<CR>u"
+
+[[case]]
+name = "redo_after_undo"
+buffer = "a,\nb,\nc"
+cursor = [1, 1]
+keys = ":%s/,\\n/, /<CR>u<C-r>"
+
+[[case]]
+name = "dot_does_not_repeat"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "x:1s/\\n//<CR>j."
+
+[[case]]
+name = "repeat_with_amp"
+buffer = "a,\nb\nc,\nd"
+cursor = [0, 0]
+keys = ":s/,\\n/;/<CR>j:&&<CR>"
+
+[[case]]
+name = "single_row_unchanged"
+buffer = "a,b\nc,d"
+cursor = [0, 0]
+keys = ":%s/,/;/g<CR>"
+
+[[case]]
+name = "confirm_yes_across"
+buffer = "a,\nb,\nc"
+cursor = [0, 0]
+keys = ":%s/,\\n/;/gc<CR>yy"
+
+[[case]]
+name = "confirm_no_then_yes"
+buffer = "a,\nb,\nc"
+cursor = [0, 0]
+keys = ":%s/,\\n/;/gc<CR>ny"
+
+[[case]]
+name = "confirm_all_without_g"
+buffer = "a,\nb,\nc,\nd"
+cursor = [0, 0]
+keys = ":%s/,\\n/;/c<CR>a"
+
+[[case]]
+name = "confirm_newline_no_skips_row"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":%s/\\n/-/gc<CR>nyy"
+
+[[case]]
+name = "confirm_quit_then_undo"
+buffer = "a,\nb,\nc"
+cursor = [0, 0]
+keys = ":%s/,\\n/;/gc<CR>yqu"
+
+[[case]]
+name = "global_joins"
+buffer = "a,\nb\nc,\nd"
+cursor = [0, 0]
+keys = ":g/,$/s/,\\n/ /<CR>"
+
+[[case]]
+name = "star_pattern_reused_twice"
+buffer = "Hello\nhello\nHELLO"
+cursor = [0, 0]
+keys = "#:%s//X/gn<CR>:%s//Y/g<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "typed_substitute_repeated_after_star"
+buffer = "Hello x\nhello\nHELLO"
+cursor = [0, 0]
+keys = ":s/Hello/X/<CR>u$#:%&&<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "star_substitute_kept_after_search"
+buffer = "Hello\nhello\nHELLO"
+cursor = [0, 0]
+keys = "#:s//X/<CR>u/l<CR>:%&&<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "star_global_reused"
+buffer = "Hello\nhello\nHELLO"
+cursor = [0, 0]
+keys = "#:g//s/^/-/<CR>"
+set = "ignorecase smartcase"
+
+[[case]]
+name = "star_address_reused"
+buffer = "Hello\nx\nhello\nHELLO"
+cursor = [0, 0]
+keys = "#:2;//d<CR>"
+set = "ignorecase smartcase"

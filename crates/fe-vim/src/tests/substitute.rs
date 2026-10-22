@@ -77,6 +77,7 @@ fn flags_specials_and_bounds() {
             with: Some(("a".into(), "b".into())),
             flags: Flags::default(),
             count: Some(2_147_483_646),
+            joins: false,
         })
     );
     for count in ["2147483647", "4294967296", "99999999999999999999"] {
@@ -132,6 +133,7 @@ fn flags_specials_and_bounds() {
                 ..Flags::default()
             },
             count: Some(2),
+            joins: false,
         })
     );
 

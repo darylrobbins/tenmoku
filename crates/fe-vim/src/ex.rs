@@ -1608,6 +1608,17 @@ fn offset(line: i64, by: i64) -> Result<i64, ExError> {
     }
 }
 
+/// Whether `search`'s pattern is `*`'s or `#`'s, which 'smartcase'
+/// doesn't apply to: one taken from the last search or the last substitute
+/// keeps theirs, as nvim's does.
+pub(crate) fn search_word(registers: &Registers, search: &LineSearch) -> bool {
+    match search {
+        LineSearch::LastSubstitute => registers.substitute.word(),
+        LineSearch::LastSearch { .. } | LineSearch::Repeat { .. } => registers.last_search_word(),
+        LineSearch::Pattern { pattern, .. } => pattern.is_empty() && registers.last_search_word(),
+    }
+}
+
 /// An address's own pattern, now the last search, goes into the search
 /// history; the repeats of the last search and `\&` don't.
 pub(crate) fn note_address_pattern(registers: &mut Registers, search: &LineSearch) {
@@ -1644,12 +1655,14 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     let keep = !matches!(search, LineSearch::LastSearch { .. });
     // The address's own pattern drops the last search's offset (`//` too).
     let drops_offset = matches!(search, LineSearch::Pattern { .. });
-    let parsed = match Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, false))
+    let word = search_word(target.registers, search);
+    let parsed = match Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, word))
     {
         Ok(parsed) => parsed,
         Err(error) => {
             if keep && matches!(error, PatternError::Invalid(_)) {
                 target.registers.set_search(&pattern, forward);
+                target.registers.set_search_word(word);
                 note_address_pattern(target.registers, search);
                 if drops_offset {
                     target.registers.set_search_offset(SearchOffset::None);
@@ -1661,6 +1674,7 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     };
     if keep {
         target.registers.set_search(&pattern, forward);
+        target.registers.set_search_word(word);
         note_address_pattern(target.registers, search);
         if drops_offset {
             target.registers.set_search_offset(SearchOffset::None);

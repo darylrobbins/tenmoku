@@ -12,12 +12,18 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Mode, Pending, Step, VimKey, VimState, VimTarget, edit,
+    Mode, Pending, Step, VimKey, VimState, VimTarget,
+    args::JoinArgs,
+    edit,
     ex::ExError,
     insert, marks,
     motion::Cursor,
     operator, reducer,
-    search::{self, Deadline, Interrupted, Pattern, PatternError},
+    search::{
+        self, Deadline, Interrupted, Pattern, PatternError,
+        replace::{Finder, Taken, Took, Walk},
+    },
+    visual,
 };
 
 /// A substitute's flags (`:help s_flags`): those fe-vim supports.
@@ -51,6 +57,9 @@ pub struct Substitute {
     pub flags: Flags,
     /// `[count]`: that many lines from the range's last.
     pub count: Option<u32>,
+    /// `:s/\n//`, with no flag or only one of `g l p #` and no count: nvim
+    /// joins the lines as `:join!` does instead (`sub_joining_lines`).
+    pub joins: bool,
 }
 
 /// The last substitute, which `:s` with no pattern, `:&`, `:&&` and `&`
@@ -65,12 +74,20 @@ pub(crate) struct LastSubstitute {
     /// the next `~` stands for.
     tilde: String,
     flags: Flags,
+    /// Whether its pattern is `*`'s or `#`'s, which 'smartcase' doesn't
+    /// apply to: it came from the last search when that was one.
+    word: bool,
 }
 
 impl LastSubstitute {
     /// Its pattern, for a range's `\&`.
     pub(crate) fn pattern(&self) -> Option<&str> {
         self.pattern.as_deref()
+    }
+
+    /// Whether its pattern is `*`'s or `#`'s ([`LastSubstitute::word`]).
+    pub(crate) fn word(&self) -> bool {
+        self.word
     }
 }
 
@@ -103,11 +120,15 @@ impl Substitute {
             None => (String::new(), ""),
         };
         Replacement::compile(&replacement)?;
+        let joins = pattern == "\\n"
+            && replacement.is_empty()
+            && matches!(after, "" | "g" | "l" | "p" | "#");
         let (flags, count) = flags_and_count(after, true)?;
         Ok(Self {
             with: Some((pattern, replacement)),
             flags,
             count,
+            joins,
         })
     }
 
@@ -129,6 +150,7 @@ impl Substitute {
             with: Some((pattern, replacement)),
             flags,
             count,
+            joins: false,
         })
     }
 
@@ -141,6 +163,7 @@ impl Substitute {
             with: None,
             flags,
             count,
+            joins: false,
         })
     }
 }
@@ -358,6 +381,14 @@ type Handled = Result<Dispatched<TransactionId>, CommandError>;
 /// With `c` (but not `n`), it asks before each match instead ([`ask`]),
 /// which a `:g` can't wait for: there it's refused, changing nothing.
 ///
+/// A pattern that matches line breaks ([`Pattern::spans_rows`]) is matched
+/// over rows as nvim's `:s` matches it ([`Walk`]): a replaced match joins
+/// the rows it spans, their marks going as nvim's do, and the rows it
+/// joins drop out of the range. A pattern taken from the last search or
+/// the last substitute keeps whether it was `*`'s or `#`'s, which
+/// 'smartcase' doesn't apply to. `:s/\n//` joins the lines as `:join!`
+/// does ([`Substitute::joins`]).
+///
 /// A command that passes [`search::time_limit`] before it has matched every
 /// row (an adversarial pattern on a long row) stops with
 /// `ExError::Pattern("Interrupted")`, changing nothing in the buffer: no
@@ -392,45 +423,44 @@ pub(crate) fn run(
     if confirm && UNASKED.get() {
         return Err(ExError::Unsupported("the c flag (confirm) under :g".into()));
     }
-    let (pattern, raw) = match &sub.with {
+    // The last search's pattern, and whether it is `*`'s or `#`'s.
+    let last_search = || {
+        target
+            .registers
+            .last_search()
+            .map(|(pattern, _)| (pattern.to_string(), target.registers.last_search_word()))
+            .ok_or(ExError::NoPreviousSearch)
+    };
+    let last_substitute = || {
+        last.pattern
+            .clone()
+            .map(|pattern| (pattern, last.word))
+            .ok_or(ExError::NoPreviousSubstitute)
+    };
+    // A pattern taken from the last search or the last substitute keeps
+    // whether it was `*`'s or `#`'s, as nvim's does.
+    let ((pattern, word), raw) = match &sub.with {
         Some((pattern, raw)) => {
             let pattern = match pattern.as_str() {
                 // `r` makes it the last search's, as for a repeat.
-                LAST_SUBSTITUTE_PATTERN if !flags.search_pattern => {
-                    last.pattern.clone().ok_or(ExError::NoPreviousSubstitute)?
-                }
-                LAST_SUBSTITUTE_PATTERN | "" => target
-                    .registers
-                    .last_search()
-                    .map(|(pattern, _)| pattern.to_string())
-                    .ok_or(ExError::NoPreviousSearch)?,
-                typed => typed.to_string(),
+                LAST_SUBSTITUTE_PATTERN if !flags.search_pattern => last_substitute()?,
+                LAST_SUBSTITUTE_PATTERN | "" => last_search()?,
+                typed => (typed.to_string(), false),
             };
             (pattern, raw.clone())
         }
-        None if flags.search_pattern => (
-            target
-                .registers
-                .last_search()
-                .map(|(pattern, _)| pattern.to_string())
-                .ok_or(ExError::NoPreviousSearch)?,
-            last.replacement.clone(),
-        ),
-        None => (
-            last.pattern.clone().ok_or(ExError::NoPreviousSubstitute)?,
-            last.replacement.clone(),
-        ),
+        None if flags.search_pattern => (last_search()?, last.replacement.clone()),
+        None => (last_substitute()?, last.replacement.clone()),
     };
     let replacement = expand_tilde(&raw, &last.tilde);
     let compiled = Replacement::compile(&replacement)?;
     // The prompt shows the replacement `~` expanded, as nvim's does.
     let replacement_shown = replacement.clone();
-    let ignore_case = flags
-        .ignore_case
-        .unwrap_or_else(|| target.registers.ignores_case(&pattern, false));
-    let parsed = Pattern::parse_with(&pattern, ignore_case);
+    let searched_ignoring = target.registers.ignores_case(&pattern, word);
+    let ignore_case = flags.ignore_case.unwrap_or(searched_ignoring);
+    let parsed = Pattern::parse_across(&pattern, ignore_case);
     // As nvim's: the next `~` is this replacement only if the pattern is
-    // valid, matching or not.
+    // valid, matching or not. `:s/\n//` leaves the last flags be.
     target.registers.substitute = LastSubstitute {
         pattern: Some(pattern.clone()),
         replacement: raw,
@@ -438,7 +468,11 @@ pub(crate) fn run(
             Ok(_) => replacement,
             Err(_) => last.tilde,
         },
-        flags,
+        flags: match sub.joins {
+            true => last.flags,
+            false => flags,
+        },
+        word,
     };
     // The pattern becomes the last search, as a search's does: even if Vim
     // rejects it, but not one fe-vim can't search.
@@ -454,6 +488,7 @@ pub(crate) fn run(
     {
         let forward = target.registers.last_search().is_none_or(|(_, f)| f);
         target.registers.set_search(&pattern, forward);
+        target.registers.set_search_word(word);
         // An empty pattern is the last search's already.
         if sub
             .with
@@ -462,10 +497,12 @@ pub(crate) fn run(
         {
             target.registers.note_pattern(&pattern);
         }
-        target.state.highlight =
-            Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, false)).ok();
+        target.state.highlight = Pattern::parse_across(&pattern, searched_ignoring).ok();
     }
     let parsed = parsed.map_err(|error| ExError::Pattern(error.to_string()))?;
+    if sub.joins {
+        return join(target, actor, rows);
+    }
     if confirm {
         let asked = Asked {
             pattern: parsed,
@@ -475,7 +512,11 @@ pub(crate) fn run(
         };
         return ask(target, asked, rows, pattern);
     }
-    let Ok(found) = find(target, &parsed, &compiled, rows, flags) else {
+    let found = match parsed.spans_rows() {
+        true => find_across(target, &parsed, &compiled, rows, flags),
+        false => find(target, &parsed, &compiled, rows, flags),
+    };
+    let Ok(found) = found else {
         return Err(ExError::Pattern(Interrupted.to_string()));
     };
     if found.matches == 0 {
@@ -486,6 +527,16 @@ pub(crate) fn run(
     }
     // Finding a match makes it a jump, as in nvim.
     marks::jump_here(target);
+    // The rows a replacement joins go, and their marks with them, as nvim's
+    // do.
+    let rows = target.model.text().row_count();
+    for &(first, last) in &found.joined {
+        let snapshot = target.model.snapshot();
+        target.state.marks.deleting(snapshot, first, last);
+        if last + 1 == rows {
+            visual::joining_at_end(target.state, snapshot, first);
+        }
+    }
     let starts = found.edits.iter().map(|(range, _)| range.start);
     target.state.marks.typing(target.model.snapshot(), starts);
     let VimTarget { model, state, .. } = target;
@@ -543,6 +594,9 @@ struct Found {
     first_row: u32,
     /// The last line changed, as a row of the text after the edits.
     last_row: u32,
+    /// The rows (first and last) that replacements join to the row before
+    /// them, which go.
+    joined: Vec<(u32, u32)>,
 }
 
 /// The matches on `rows` (the first on each, or all with `g`) and their
@@ -563,6 +617,7 @@ fn find(
         lines: 0,
         first_row: 0,
         last_row: 0,
+        joined: Vec::new(),
     };
     // Line breaks the replacements put in, so far.
     let mut breaks = 0;
@@ -607,6 +662,149 @@ fn find(
         }
     }
     Ok(found)
+}
+
+/// [`find`] for a pattern that [`Pattern::spans_rows`]: the matches as
+/// nvim's `:s` takes them over rows ([`Walk`]), those found searching from
+/// the same row one edit, as for one row.
+fn find_across(
+    target: &mut VimTarget<'_>,
+    pattern: &Pattern,
+    replacement: &Replacement,
+    rows: Range<u32>,
+    flags: Flags,
+) -> Result<Found, Interrupted> {
+    let deadline = Deadline::new();
+    target.model.sync_display();
+    let text = target.model.text();
+    let groups = match (flags.count_only, replacement.groups) {
+        (true, _) => 0,
+        (false, true) => 10,
+        (false, false) => 1,
+    };
+    let mut finder = Finder::new(pattern, text, &deadline, groups);
+    let mut walk = Walk::new(text, rows, flags.global);
+    let mut found = Found {
+        edits: Vec::new(),
+        matches: 0,
+        lines: 0,
+        first_row: 0,
+        last_row: 0,
+        joined: Vec::new(),
+    };
+    let mut pass = None;
+    // The edit of the line being searched: its line, the text it replaces
+    // and what with.
+    let mut edit: Option<(u32, Range<usize>, String)> = None;
+    // How many more rows the edits before it leave than they replace.
+    let mut shift = 0i64;
+    let breaks = |new: &str| new.matches('\n').count() as i64;
+    let row = |at: usize| i64::from(text.offset_to_point(at).row);
+    while let Some(taken) = walk.next(&mut finder)? {
+        let took = match flags.count_only {
+            true => Took::Passed,
+            false => Took::Replaced,
+        };
+        walk.took(text, &taken, took);
+        found.matches += 1;
+        if pass != Some(taken.pass) {
+            pass = Some(taken.pass);
+            found.lines += 1;
+        }
+        if flags.count_only {
+            continue;
+        }
+        if found.matches == 1 {
+            found.first_row = taken.start_row;
+        }
+        if taken.joins() {
+            // Rows joined one after another go as one stretch.
+            match found.joined.last_mut() {
+                Some((_, last)) if *last == taken.start_row => *last = taken.end_row,
+                _ => found.joined.push((taken.start_row + 1, taken.end_row)),
+            }
+        }
+        if edit.as_ref().is_none_or(|(line, ..)| *line != taken.pass) {
+            if let Some((_, span, new)) = edit.take() {
+                shift += breaks(&new) - (row(span.end) - row(span.start));
+                found.edits.extend(joining(text, span, new));
+            }
+            let at = taken.range.start;
+            edit = Some((taken.pass, at..at, String::new()));
+        }
+        let (_, span, new) = edit.as_mut().expect("an edit for the line");
+        new.push_str(&text.slice_to_string(span.end..taken.range.start));
+        replacement.apply(|n| taken.group(n), new);
+        span.end = taken.range.end;
+        // Where the replacement ends, in the text after the edits.
+        let last = row(span.start) + shift + breaks(new);
+        found.last_row = u32::try_from(last).unwrap_or_default();
+    }
+    if let Some((_, span, new)) = edit {
+        found.edits.extend(joining(text, span, new));
+    }
+    Ok(found)
+}
+
+/// The edits replacing `span` of `text` with `new`. Over rows, two: the
+/// rest of its first row replaced with `new` and what follows `span` on its
+/// last, and the rows after the first through the last deleted whole, so
+/// that what is anchored on them (`'<` and `'>`) goes to the row after
+/// them, as nvim's marks on the rows `:s` joins do. One if `span` ends on
+/// the last row.
+fn joining(text: &fe_text::Text, span: Range<usize>, new: String) -> Vec<(Range<usize>, String)> {
+    let first = text.offset_to_point(span.start).row;
+    let last = text.offset_to_point(span.end).row;
+    if first == last || last + 1 >= text.row_count() {
+        return vec![(span, new)];
+    }
+    let row_end = |row: u32| text.row_start(row) + text.row_len(row) as usize;
+    let tail = text.slice_to_string(span.end..row_end(last));
+    vec![
+        (span.start..row_end(first), new + &tail),
+        (
+            text.row_start(first + 1)..text.row_start(last + 1),
+            String::new(),
+        ),
+    ]
+}
+
+/// `:s/\n//` over `rows` ([`Substitute::joins`]), as nvim runs it: the
+/// lines joined with the one after the range (if it isn't the last), as
+/// they are, as `:join!` joins them, the caret where `gJ` leaves it, with
+/// nvim's report of substitutions and no match needed: over the last line
+/// alone, nothing is joined, and the caret goes to it.
+fn join(target: &mut VimTarget<'_>, actor: &Actor, rows: Range<u32>) -> Result<Handled, ExError> {
+    let text = target.model.text();
+    let last_row = text.row_count() - 1;
+    let first = rows.start.min(last_row);
+    let last = rows.end.saturating_sub(1).clamp(first, last_row);
+    let count = last - first + 1 + u32::from(last < last_row);
+    // The caret goes to the first line, at its byte column, as nvim's does.
+    let head = target.model.primary_selection().head();
+    let column = head - text.row_start(text.offset_to_point(head).row);
+    let start = text.row_start(first);
+    let at = Cursor::at(text, start + column.min(text.row_len(first) as usize)).offset();
+    target.model.set_selections([operator::caret(at)]);
+    target.state.goals = None;
+    if count < 2 {
+        return Ok(Ok(Dispatched::new(Effect::Changed)));
+    }
+    // `gJ`'s join, which `.` doesn't repeat.
+    let last_change = (target.state.last_change.clone(), target.state.changes);
+    let joined = edit::join_raw(
+        target,
+        actor,
+        JoinArgs {
+            count: Some(count),
+            raw: true,
+        },
+    );
+    (target.state.last_change, target.state.changes) = last_change;
+    if let Some(report) = report(count as usize - 1, 1, false) {
+        target.state.message = Some(report);
+    }
+    Ok(joined)
 }
 
 /// `&`: the last substitute on the cursor's line, or `count` lines from it,
@@ -697,6 +895,11 @@ pub(crate) struct Confirm {
     row_changed: bool,
     /// The row the last replacement ended on.
     last_row: u32,
+    /// For a pattern that spans rows, the walk over the range's rows, in
+    /// the text as it is now, and the match waiting from it; it reads the
+    /// rows in place of `row_end` and `end`.
+    walk: Option<Walk>,
+    taken: Option<Taken>,
 }
 
 /// What a `:s` with `c` asks about: its pattern, its replacement, as run
@@ -745,7 +948,12 @@ fn ask(
         lines: 0,
         row_changed: false,
         last_row: 0,
+        walk: None,
+        taken: None,
     });
+    if confirm.pattern.spans_rows() {
+        confirm.walk = Some(Walk::new(text, rows, asked.flags.global));
+    }
     let Ok(found) = confirm.next(target.model, &Deadline::new()) else {
         return Err(ExError::Pattern(Interrupted.to_string()));
     };
@@ -767,6 +975,29 @@ impl Confirm {
     fn next(&mut self, model: &EditorModel, deadline: &Deadline) -> Result<bool, Interrupted> {
         let snapshot = model.snapshot();
         let text = snapshot.text();
+        if let Some(walk) = &mut self.walk {
+            if !self.waiting.is_empty() {
+                return Ok(true);
+            }
+            let groups = if self.replacement.groups { 10 } else { 1 };
+            let mut finder = Finder::new(&self.pattern, text, deadline, groups);
+            let Some(taken) = walk.next(&mut finder)? else {
+                return Ok(false);
+            };
+            if self
+                .taken
+                .as_ref()
+                .is_none_or(|last| last.pass != taken.pass)
+            {
+                self.row_changed = false;
+            }
+            let mut new = String::new();
+            self.replacement.apply(|n| taken.group(n), &mut new);
+            let at = snapshot.anchor_after(taken.range.start);
+            self.waiting.push_back((at, taken.range.len(), new));
+            self.taken = Some(taken);
+            return Ok(true);
+        }
         let row_of = |anchor: &Anchor| text.offset_to_point(snapshot.resolve(anchor)).row;
         let end = self.end.as_ref().map_or(text.row_count(), row_of);
         let mut row = self
@@ -829,11 +1060,24 @@ impl Confirm {
         let (_, _, new) = self.waiting.pop_front().expect("a match waits");
         let VimTarget { model, state, .. } = target;
         let row = model.text().offset_to_point(range.start).row;
+        let before = model.text().clone();
+        if let (Some(walk), Some(taken)) = (&mut self.walk, &self.taken) {
+            walk.took(&before, taken, Took::Replaced);
+            // The rows it joins go, and their marks with them, as nvim's do.
+            if taken.joins() {
+                let (first, last) = (taken.start_row + 1, taken.end_row);
+                state.marks.deleting(model.snapshot(), first, last);
+                if last + 1 == before.row_count() {
+                    visual::joining_at_end(state, model.snapshot(), first);
+                }
+            }
+        }
         state.marks.typing(model.snapshot(), [range.start]);
         let end = range.start + new.len();
+        let new_text = new.clone();
         let (transaction, snapshot) = {
             let mut buffer = model.buffer_mut();
-            let edits = [(range, new)];
+            let edits = joining(&before, range.clone(), new);
             let transaction = match self.transaction {
                 // Undone or dropped from the history, it's a new one.
                 Some(id) => buffer
@@ -844,6 +1088,9 @@ impl Confirm {
             (transaction, buffer.snapshot())
         };
         operator::sync(model);
+        if let Some(walk) = &mut self.walk {
+            walk.edited(&before, range.clone(), &new_text, snapshot.text());
+        }
         if let Some(id) = transaction {
             // As nvim's undo and redo leave it: the first changed line's
             // start.
@@ -899,6 +1146,9 @@ pub(crate) fn answer(target: &mut VimTarget<'_>, actor: &Actor, args: AnswerArgs
         Answer::Yes => confirm.replace(target, actor),
         Answer::No => {
             confirm.waiting.pop_front();
+            if let (Some(walk), Some(taken)) = (&mut confirm.walk, &confirm.taken) {
+                walk.took(target.model.text(), taken, Took::Passed);
+            }
         }
         Answer::Last => {
             confirm.replace(target, actor);

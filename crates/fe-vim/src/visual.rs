@@ -137,6 +137,23 @@ impl LastVisual {
     }
 }
 
+/// Before a change joins the rows from `first` (past the first row) to the
+/// end of the text onto the row before them, deleting them (`:s` over
+/// rows): `'<` and `'>` on them go past the new end, keeping their columns,
+/// as nvim's do.
+pub(crate) fn joining_at_end(state: &mut VimState, snapshot: &BufferSnapshot, first: u32) {
+    let Some(marks) = state.last_visual.as_mut() else {
+        return;
+    };
+    let text = snapshot.text();
+    for pos in [&mut marks.start, &mut marks.end] {
+        if first > 0 && !pos.past_end && pos.position(snapshot).0 >= first {
+            pos.row = snapshot.anchor_after(text.row_start(first - 1));
+            pos.past_end = true;
+        }
+    }
+}
+
 /// `'<` and `'>` as `gq` reflows rows: see [`reflowing`].
 pub(crate) struct Reflowing([Option<(Anchor, usize)>; 2]);
 
