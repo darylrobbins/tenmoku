@@ -33,8 +33,6 @@ fn server(extension: &Path) -> ExtensionServer {
     ExtensionServer {
         extension_id: "acme.zig".into(),
         extension_name: "Zig".into(),
-        extension_version: "1.2.3".into(),
-        extension_license: "MIT".into(),
         extension_dir: extension.to_owned(),
         spec: ServerSpec {
             args: vec!["server.js".into(), "--stdio".into()],
@@ -233,11 +231,8 @@ fn an_unconsented_server_is_withheld_and_pending(cx: &mut TestAppContext) {
         [PendingConsent {
             extension_id: "acme.zig".into(),
             extension_name: "Zig".into(),
-            extension_version: "1.2.3".into(),
-            extension_license: "MIT".into(),
             extension_dir: extension.clone(),
             server: "zls".into(),
-            languages: vec!["zig".into()],
             invocation: expected,
             previous: None,
             declined: false,

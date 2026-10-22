@@ -29,7 +29,6 @@ pub mod loader;
 mod lsp;
 mod lsp_code_actions;
 mod lsp_consent;
-mod lsp_consent_prompt;
 mod lsp_format;
 mod lsp_rename;
 mod nav;
