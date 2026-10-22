@@ -319,3 +319,6 @@ fn empty_and_stale(cx: &mut TestAppContext) {
 
 #[path = "lsp_code_action_kinds_tests.rs"]
 mod kinds;
+
+#[path = "lsp_lightbulb_tests.rs"]
+mod lightbulb;

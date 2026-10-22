@@ -565,6 +565,10 @@ pub(crate) struct Lsp {
     inlay_hints: inlay_hints::Slots,
     /// Whether `editor.code_lens` is on (set from the settings each reload).
     pub(crate) code_lens_on: std::cell::Cell<bool>,
+    /// Whether `editor.lightbulb` is on (set from the settings each reload).
+    pub(crate) lightbulb_on: std::cell::Cell<bool>,
+    /// The active editor's lightbulb.
+    lightbulb: lightbulb::Lightbulb,
     /// The code lenses of each open buffer.
     lenses: lenses::Lenses,
     /// Whether `editor.semantic_highlighting` is on (set from the settings each reload).
@@ -738,6 +742,8 @@ impl Lsp {
             inlay_hints_on: std::cell::Cell::new(true),
             inlay_hints: Default::default(),
             code_lens_on: std::cell::Cell::new(true),
+            lightbulb_on: std::cell::Cell::new(true),
+            lightbulb: Default::default(),
             lenses: Default::default(),
             semantic_highlighting_on: std::cell::Cell::new(true),
             semantic_tokens: Default::default(),
@@ -1324,6 +1330,7 @@ impl Workbench {
         let editors = self.open_editors(cx);
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
+        self.sync_lightbulb(cx);
         self.sync_inlay_hints(cx);
         self.sync_lenses(cx);
         self.sync_semantic_tokens(cx);
@@ -2496,6 +2503,8 @@ impl Global for TestClock {}
 
 #[path = "lsp_highlights.rs"]
 mod highlights;
+#[path = "lsp_lightbulb.rs"]
+mod lightbulb;
 
 #[path = "lsp_inlay_hints.rs"]
 mod inlay_hints;
