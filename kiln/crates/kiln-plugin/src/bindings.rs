@@ -8,6 +8,8 @@
 //! `Host` impl, so a slice adds fields without touching this file. A slice whose card has not
 //! landed answers every call with [`unimplemented`], an error value rather than a trap.
 
+use std::time::Instant;
+
 use wasmtime::component::{HasSelf, Linker};
 
 use crate::{commands, events, fs, net, process, secrets};
@@ -26,6 +28,9 @@ pub type LogSink = Box<dyn FnMut(Level, String) + Send>;
 /// The data a plugin's store holds: what its host imports read and write.
 pub struct HostState {
     pub log: LogSink,
+    /// When the call into the plugin running now must end, as the runner sets it: none outside
+    /// a call, or with no deadline. An import that waits stops waiting then.
+    pub deadline: Option<Instant>,
     pub commands: commands::State,
     pub events: events::State,
     pub fs: fs::State,
@@ -39,7 +44,8 @@ impl HostState {
     pub fn new(log: LogSink) -> Self {
         Self {
             log,
-            commands: commands::State,
+            deadline: None,
+            commands: commands::State::default(),
             events: events::State,
             fs: fs::State,
             process: process::State::default(),

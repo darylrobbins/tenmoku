@@ -7,7 +7,9 @@ interface commands {
     /// A command a plugin contributes. The host runs it by calling the plugin's
     /// `command-handler.run-command`.
     record command {
-        /// Must start with the plugin's namespace.
+        /// `<extension id>.<name>`: the plugin's own id, then one or more segments, each
+        /// `[a-z][a-z0-9_]*`. Not a built-in's id, another plugin's, or in a namespace the
+        /// host reserves.
         id: command-id,
         /// Shown in the command palette.
         title: string,
@@ -19,9 +21,15 @@ interface commands {
         mutates-buffer: bool,
     }
 
+    /// Adds a command. Only during `init`, and only with the `commands` capability; a bad or
+    /// taken id fails.
     register: func(command: command) -> result<_, error>;
 
-    /// Runs a registered command, the host's or a plugin's, with JSON arguments.
+    /// Runs a registered command, the host's or a plugin's, with JSON arguments (empty for
+    /// none), as an invocation by this plugin from a script, recorded and observed like a
+    /// user's. It needs the `commands` capability, the command must be open to plugins, and
+    /// the plugin's grants must cover what it needs: a refusal is `denied`, naming what is
+    /// missing.
     invoke: func(id: command-id, args: string) -> result<_, error>;
 }
 

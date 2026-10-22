@@ -190,6 +190,31 @@ impl Plugin {
         limits: Limits,
         log: LogSink,
     ) -> Result<Self, LoadError> {
+        Self::load_hosted(
+            engine,
+            cache,
+            component,
+            id,
+            grants,
+            limits,
+            HostState::new(log),
+        )
+    }
+
+    /// Loads `component` as [`load_cached`](Self::load_cached) does, its imports running
+    /// against `host`, whose slices the caller has set up for plugin `id`: its commands slice
+    /// on the app's [`CommandHost`](crate::commands::CommandHost), say. `host` runs on the
+    /// plugin's thread; its commands slice takes registrations only while `init` runs, and it
+    /// learns each call's deadline as [`HostState::deadline`].
+    pub fn load_hosted(
+        engine: &PluginEngine,
+        cache: Option<&ComponentCache>,
+        component: &[u8],
+        id: &str,
+        grants: &Grants,
+        limits: Limits,
+        host: HostState,
+    ) -> Result<Self, LoadError> {
         if component.len() > limits.max_read_bytes {
             return Err(LoadError::TooLarge {
                 plugin: id.to_owned(),
@@ -212,7 +237,7 @@ impl Plugin {
             .map_err(invalid)?;
         ExtensionPre::new(pre.clone()).map_err(invalid)?;
         let data = Data {
-            host: HostState::new(log),
+            host,
             wasi: wasi_context(grants, &Workspace::default()),
             table: ResourceTable::new(),
             limiter: StoreLimiter::new(&limits),
@@ -470,6 +495,7 @@ impl Guest {
         let exports = Exports::new(&mut self.store, &instance).map_err(|error| {
             LoadError::Unloaded(self.diagnosis(Reason::Protocol, format!("{error:?}")))
         })?;
+        self.store.data_mut().host.commands.begin_init();
         let (initialized,) = self
             .guarded(async |store| exports.init.call_async(store, ()).await)
             .map_err(LoadError::Unloaded)?;
@@ -477,6 +503,7 @@ impl Guest {
             plugin: self.id.clone(),
             error,
         })?;
+        self.store.data_mut().host.commands.end_init();
         Ok(exports)
     }
 
@@ -491,6 +518,7 @@ impl Guest {
         let passed = || deadline.is_some_and(|deadline| Instant::now() >= deadline);
         let data = self.store.data_mut();
         data.deadline = deadline;
+        data.host.deadline = deadline;
         data.timed_out = false;
         data.limiter.clear_refused();
         self.store.set_epoch_deadline(1);
@@ -514,6 +542,7 @@ impl Guest {
         let overran = passed();
         let data = self.store.data_mut();
         data.deadline = None;
+        data.host.deadline = None;
         let timed_out = data.timed_out || overran;
         match returned {
             Some(Ok(returned)) if !timed_out => Ok(returned),
