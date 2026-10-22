@@ -78,6 +78,9 @@ pub struct LspManager {
     /// has ended, which the next instance there waits for before it
     /// launches.
     retiring: HashMap<(String, PathBuf), Done>,
+    /// The servers [`reconcile`](Self::reconcile) restarted since it was
+    /// last drained, for a spec that changed.
+    respecced: Vec<(String, PathBuf)>,
     registry: Registry,
     /// Which identity of each open buffer is active on each server,
     /// shared with the servers' threads.
@@ -229,6 +232,7 @@ impl LspManager {
             documents: HashMap::new(),
             routes: Routes::default(),
             retiring: HashMap::new(),
+            respecced: Vec::new(),
             registry: Registry::default(),
             identities: Identities::default(),
             crashes: HashMap::new(),
@@ -314,10 +318,14 @@ impl LspManager {
     /// spec is ignored, with a warning. Applies as
     /// [`update_settings`](Self::update_settings) does: only servers whose
     /// spec changed restart, and none for a change to its `settings` alone.
-    pub fn set_extension_specs(&mut self, specs: Vec<ServerSpec>) {
+    /// Returns the name and root of each server it restarted, which a
+    /// caller mustn't restart again.
+    pub fn set_extension_specs(&mut self, specs: Vec<ServerSpec>) -> Vec<(String, PathBuf)> {
+        self.respecced.clear();
         if self.registry.set_extension_specs(specs) {
             self.reconcile();
         }
+        std::mem::take(&mut self.respecced)
     }
 
     /// Registers a host's `spec`, which wins over a built-in, extension or
@@ -1129,6 +1137,7 @@ impl LspManager {
                 }
                 Some(spec) => {
                     let (spec, root) = (spec.clone(), handle.root.clone());
+                    self.respecced.push((spec.name.clone(), root.clone()));
                     self.retire(id, &specs);
                     // Launched again even with no documents, as it was
                     // running; its documents may have started it already.

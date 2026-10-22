@@ -772,19 +772,28 @@ impl ConsentGate {
 
     /// Keeps a launch of `name` at `root`, checked against `granted`,
     /// running `running` if it launched; returns its number. Wakes the app
-    /// if that grant has been replaced since.
+    /// if that grant has been replaced since. One whose server was stopped
+    /// meanwhile (`cancel`) isn't kept: its replacement is the last launch,
+    /// and a late record of the old one would have it restarted again.
     fn record(
         &self,
         name: &str,
         root: &Path,
         granted: Invocation,
         running: Option<Invocation>,
+        cancel: &LaunchCancel,
     ) -> u64 {
         let replaced = lock(&self.grants)
             .get(name)
             .is_none_or(|grant| grant.invocation != granted);
         let id = {
             let mut attempts = lock(&self.attempts);
+            // Checked holding the lock `stale` takes, so a server stopped
+            // for its replacement is either kept before that restarts
+            // things or not at all.
+            if cancel.is_cancelled() {
+                return 0;
+            }
             attempts.next += 1;
             let id = attempts.next;
             let attempt = Attempt {
@@ -839,7 +848,7 @@ impl ServerLauncher for ConsentGate {
         };
         let resolved = resolve_command(spec);
         if Invocation::of(&grant.spec, &grant.dir, resolved.as_deref()) != grant.invocation {
-            self.record(&spec.name, root, grant.invocation, None);
+            self.record(&spec.name, root, grant.invocation, None, cancel);
             // Worked out again, the change is asked about.
             self.wake.try_send(()).ok();
             return Err(io::Error::new(
@@ -851,7 +860,7 @@ impl ServerLauncher for ConsentGate {
             ));
         }
         let Some(command) = resolved.filter(|command| command.is_absolute()) else {
-            self.record(&spec.name, root, grant.invocation, None);
+            self.record(&spec.name, root, grant.invocation, None, cancel);
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("{} not found", spec.command.display()),
@@ -864,12 +873,12 @@ impl ServerLauncher for ConsentGate {
         let mut io = match self.inner.launch(&bound, root, cancel) {
             Ok(io) => io,
             Err(error) => {
-                self.record(&spec.name, root, grant.invocation, None);
+                self.record(&spec.name, root, grant.invocation, None, cancel);
                 return Err(error);
             }
         };
         let running = Some(grant.invocation.clone());
-        let id = self.record(&spec.name, root, grant.invocation, running);
+        let id = self.record(&spec.name, root, grant.invocation, running, cancel);
         io.process = Box::new(Tracked {
             inner: io.process,
             at: (spec.name.clone(), root.to_owned()),

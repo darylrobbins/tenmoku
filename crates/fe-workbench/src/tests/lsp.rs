@@ -42,9 +42,11 @@ use fe_gpui::{EditorSettings, EditorTheme};
 /// while held, each blocks until released.
 #[derive(Default)]
 struct Hold {
-    /// Held, and whether a launch is waiting.
-    state: Mutex<(bool, bool)>,
+    /// Held, whether a launch is waiting, and the releases not yet used.
+    state: Mutex<(bool, bool, usize)>,
     changed: Condvar,
+    /// Holds each launch once the fake has it, not before.
+    late: AtomicBool,
 }
 
 impl Hold {
@@ -53,13 +55,28 @@ impl Hold {
         self.changed.notify_all();
     }
 
-    fn pass(&self) {
+    fn pass(&self, late: bool) {
+        if self.late.load(Ordering::SeqCst) != late {
+            return;
+        }
         let mut state = self.state.lock().unwrap();
         state.1 = state.0;
         self.changed.notify_all();
         while state.0 {
+            if state.2 > 0 {
+                // One launch released, which is the one waiting.
+                state.2 -= 1;
+                break;
+            }
             state = self.changed.wait(state).unwrap();
         }
+        state.1 = false;
+    }
+
+    /// Lets the one launch waiting go, and holds the next.
+    fn release_one(&self) {
+        self.state.lock().unwrap().2 += 1;
+        self.changed.notify_all();
     }
 
     /// Blocks until a launch waits.
@@ -138,7 +155,7 @@ impl ServerLauncher for Switch {
         root: &Path,
         cancel: &LaunchCancel,
     ) -> io::Result<ServerIo> {
-        self.hold.pass();
+        self.hold.pass(false);
         if self.missing.load(Ordering::SeqCst) {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such file"));
         }
@@ -150,6 +167,7 @@ impl ServerLauncher for Switch {
                     inner: io.process,
                     gone: self.gone.clone(),
                 });
+                self.hold.pass(true);
                 Ok(io)
             }
         }
@@ -472,6 +490,23 @@ impl Lsp {
         self.until(&format!("the item to read {text:?}"), |lsp| {
             lsp.item().as_deref() == text
         });
+    }
+
+    /// Holds (or releases) every launch once the fake has it, before its
+    /// launcher returns to the caller.
+    pub(crate) fn hold_launches_late(&self, held: bool) {
+        self.hold.late.store(true, Ordering::SeqCst);
+        self.hold.set(held);
+    }
+
+    /// Blocks until a launch waits on the hold.
+    pub(crate) fn wait_launch_held(&self) {
+        self.hold.wait_waiting();
+    }
+
+    /// Lets the one launch waiting go; the next is held again.
+    pub(crate) fn release_one_launch(&self) {
+        self.hold.release_one();
     }
 
     /// Draws until `done` holds. Panics after 60 s, naming `what`: a fake

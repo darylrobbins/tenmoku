@@ -285,10 +285,15 @@ pub(crate) fn hand_extension_servers(cx: &mut App, specs: Vec<ServerSpec>) {
                 let lsp = &workbench.lsp;
                 if let Some(manager) = &lsp.manager {
                     let mut manager = lock(manager);
-                    manager.set_extension_specs(specs.clone());
+                    let restarted = manager.set_extension_specs(specs.clone());
                     // Those running what the user no longer grants, after
-                    // they granted a change, run it as granted now.
+                    // they granted a change, run it as granted now. One
+                    // just restarted for its new spec already does, and
+                    // restarting it again would launch it twice.
                     for (name, root) in lsp.gate.iter().flat_map(|gate| gate.stale()) {
+                        if restarted.contains(&(name.clone(), root.clone())) {
+                            continue;
+                        }
                         if let Err(error) = manager.restart(&name, &root) {
                             log::warn!("can't restart {name}: {error}");
                         }

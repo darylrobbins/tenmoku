@@ -222,6 +222,8 @@ impl CommandCatalog for Catalog {
 #[cfg(test)]
 mod command_catalog_tests;
 #[cfg(test)]
+mod lsp_consent_relaunch_tests;
+#[cfg(test)]
 mod lsp_consent_tests;
 #[cfg(test)]
 mod panel_width_tests;
