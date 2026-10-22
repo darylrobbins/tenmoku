@@ -347,6 +347,35 @@ impl<L: MeasuredLine> RowLayout<L> {
         self.start_x() + f64::from(self.line.x_for_index(display))
     }
 
+    /// The width of the ghost text's inlay drawn in this row, without the
+    /// hints; 0 where there is none.
+    pub fn ghost_width(&self) -> f64 {
+        (self.expanded.inlay_range()).map_or(0., |range| {
+            f64::from(self.line.x_for_index(range.end) - self.line.x_for_index(range.start))
+        })
+    }
+
+    /// X offset (from column 0) where the character at `offset` starts: past
+    /// every hint anchored at `offset`, unlike [`RowLayout::x_for_offset`],
+    /// which is before them. The same where no hint is.
+    pub fn x_after_hints(
+        &self,
+        offset: usize,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> f64 {
+        let shown = self.shown();
+        if !(shown.start..=shown.end).contains(&offset) {
+            let at_offset: f64 = (self.outside_hints.iter())
+                .filter(|(at, _)| *at == offset)
+                .map(|(_, width)| width)
+                .sum();
+            return self.x_for_offset(offset, long_rows, widths) + at_offset;
+        }
+        let display = self.expanded.to_display_after_hints(offset - shown.start);
+        self.start_x() + f64::from(self.line.x_for_index(display))
+    }
+
     /// The buffer offset closest to `x` (from column 0) in this row.
     fn offset_for_x(&self, x: f64, long_rows: &mut LongRows, widths: &mut dyn CharWidth) -> usize {
         let line_x = x - self.start_x();
@@ -1775,6 +1804,9 @@ mod cluster_row_tests;
 mod fold_column_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+#[path = "layout/hint_block_caret_tests.rs"]
+mod hint_block_caret_tests;
 #[cfg(test)]
 mod inlay_hints_tests;
 #[cfg(test)]

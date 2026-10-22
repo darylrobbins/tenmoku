@@ -200,6 +200,17 @@ impl ExpandedRow {
         self.expand(buffer_col) + spans
     }
 
+    /// The display column where the character at `buffer_col` starts: past
+    /// every hint at `buffer_col`, unlike [`ExpandedRow::to_display`].
+    pub fn to_display_after_hints(&self, buffer_col: usize) -> usize {
+        let hints: usize = (self.spans.iter())
+            .skip_while(|span| span.buffer_col < buffer_col)
+            .take_while(|span| span.buffer_col == buffer_col && span.hint)
+            .map(|span| span.len)
+            .sum();
+        self.to_display(buffer_col) + hints
+    }
+
     /// The buffer column for a display column. Columns inside an expanded tab
     /// snap to before (`Left`) or after (`Right`) it. Columns inside an inlay
     /// or a hint, or at either edge of it, give the buffer column it was

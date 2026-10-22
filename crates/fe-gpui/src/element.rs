@@ -2141,14 +2141,20 @@ fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect
     let line_end = text.row_start(line) + text.row_len(line) as usize;
     // Measured on the head's row: a wrap point's caret is on the next.
     let inlay = match ghost.inlay_offset() == Some(head) {
-        true => row.inlay_width,
+        true => row.ghost_width(),
         false => 0.,
     };
+    // Past the hints at `head`: the block is on the character, not them.
+    let start = frame.view_x(row.x_after_hints(head, long_rows, glyph_widths));
     let end = next_grapheme(text, head, row.end.min(line_end))
         .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths) - inlay))
-        .filter(|&end| end > bar.x);
-    let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
-    Some(Rect { width, ..bar })
+        .filter(|&end| end > start);
+    let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - start);
+    Some(Rect {
+        x: start,
+        width,
+        ..bar
+    })
 }
 
 /// The block over the grapheme after the caret of `composing`, drawn at
