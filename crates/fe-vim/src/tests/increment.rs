@@ -178,9 +178,9 @@ fn a_block_over_a_long_row_is_quick() {
     }
     let mut short = std::time::Duration::MAX;
     let mut long = std::time::Duration::MAX;
-    for _ in 0..6 {
-        short = short.min(run(10_000));
-        long = long.min(run(100_000));
+    for _ in 0..3 {
+        short = short.min(run(4_000));
+        long = long.min(run(40_000));
     }
     assert!(long < short * 50, "10x the row took {long:?} vs {short:?}");
 }

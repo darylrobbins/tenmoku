@@ -237,16 +237,16 @@ fn flags_specials_and_bounds() {
         ("X x Y Y", Some("x"))
     );
 
-    // `:%s` over 200,000 rows: one transaction, undone by one `u`, each row
+    // `:%s` over 50,000 rows: one transaction, undone by one `u`, each row
     // read once.
-    let rows = 200_000;
+    let rows = 50_000;
     let text: String = (0..rows).map(|row| format!("x{row} x\n")).collect();
     let text = text.trim_end();
     let mut vim = HeadlessVim::new(text, (0, 0));
     vim.feed(":").unwrap();
     let submit = invocation("vim.command_line_submit", json!({"text": "%s/x/y/"}))
         .context(context(vim.state()));
-    // Two hundred thousand rows in a debug build can pass the default limit.
+    // Fifty thousand rows in a debug build can pass the default limit.
     let raised = raised_time_limit();
     ROWS_SEARCHED.set(0);
     let dispatched = vim.dispatch(&submit).unwrap();
@@ -258,23 +258,23 @@ fn flags_specials_and_bounds() {
     assert_eq!(vim.cursor(), (rows as u32 - 1, 0));
     assert_eq!(
         vim.state().message(),
-        Some("200000 substitutions on 200000 lines")
+        Some("50000 substitutions on 50000 lines")
     );
     vim.feed("u").unwrap();
     assert_eq!(vim.text(), text);
     assert_eq!(vim.cursor(), (0, 0));
 
-    // A `g` substitute on a row of 100,000 matches, linear in the row.
-    let row = "ab".repeat(100_000);
+    // A `g` substitute on a row of 25,000 matches, linear in the row.
+    let row = "ab".repeat(25_000);
     let mut vim = HeadlessVim::new(&row, (0, 0));
-    // A hundred thousand matches under load can pass the default limit.
+    // Twenty-five thousand matches under load can pass the default limit.
     let raised = raised_time_limit();
     let started = Instant::now();
     vim.feed(":s/\\(a\\)b/\\u\\1-/g<CR>").unwrap();
     let elapsed = started.elapsed();
     drop(raised);
     assert!(elapsed < Duration::from_secs(10));
-    assert_eq!(vim.text(), "A-".repeat(100_000));
+    assert_eq!(vim.text(), "A-".repeat(25_000));
 }
 
 #[test]

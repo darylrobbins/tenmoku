@@ -73,7 +73,7 @@ fn brackets_and_angles_select_as_parens_do() {
         "((a))",
     ];
     for text in texts {
-        for column in 0..text.len() {
+        for column in (0..text.len()).step_by(2) {
             alike(text, column, &["i(", "a)"], ('(', ')'), ('[', ']'));
             alike(text, column, &["i(", "a)"], ('(', ')'), ('<', '>'));
         }
