@@ -1,0 +1,23 @@
+# The guest `tests/editor.rs` runs: a fastedit:editor plugin whose commands read, edit and propose
+# changes to buffers through the `buffer` imports. Built by `build.zsh` into the checked-in
+# `editor.wasm`; not a member of the workspace.
+[package]
+name = "fe-plugin-editor-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.57"
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[workspace]

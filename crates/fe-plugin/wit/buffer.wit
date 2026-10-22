@@ -4,7 +4,7 @@ package fastedit:editor@1.0.0;
 interface buffer {
     use kiln:extension/types@1.0.0.{buffer-id, version, range, error};
 
-    /// A buffer's whole text at one version.
+    /// A buffer's text, or a range of it, at one version.
     record snapshot {
         buffer: buffer-id,
         version: version,
@@ -29,16 +29,23 @@ interface buffer {
         edits: list<text-edit>,
     }
 
-    /// The buffer as it is now.
-    read: func(buffer: buffer-id) -> result<snapshot, error>;
+    /// The buffer's text as it is now, or the text in `range`, and its version. Needs
+    /// `buffer.read`. A read of more than the host's read limit (16 MiB by default) fails rather
+    /// than return part of the text. `range` is as for `edit`.
+    read: func(buffer: buffer-id, range: option<range>) -> result<snapshot, error>;
 
-    /// The text of each range at `version`; `conflict` once the buffer has moved past it.
-    read-ranges: func(buffer: buffer-id, version: version, ranges: list<range>) -> result<list<string>, error>;
-
-    /// Applies `edits`, ranges against `version` and not overlapping, as one undo step, and
-    /// returns the new version; `conflict` if the buffer has moved past `version`.
+    /// Applies `edits` as one undo step, under the plugin's own origin so undo can revert the
+    /// plugin's steps alone, and returns the new version. Needs `buffer.write`.
+    ///
+    /// The ranges are against `version`, which has to be the buffer's version now: once the
+    /// buffer has moved past it, nothing is applied and the call fails with `conflict`. Each
+    /// range starts and ends on a char boundary within the text, and they are in order and apart:
+    /// a range may touch the next, but two insertions can't share an offset. Any other range is
+    /// `invalid-argument`, and nothing is applied.
     edit: func(buffer: buffer-id, version: version, edits: list<text-edit>) -> result<version, error>;
 
-    /// Offers a change for the user to accept or reject; it returns once the editor shows it.
+    /// Offers a change for the user to accept or reject, hunk by hunk, instead of editing: the
+    /// buffer is unchanged until they accept. Needs `buffer.write`; the version and ranges are
+    /// as for `edit`. It returns once the editor holds the change.
     propose: func(change: proposed-change) -> result<_, error>;
 }
