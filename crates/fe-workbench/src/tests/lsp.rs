@@ -891,6 +891,9 @@ impl QuitDriver {
                     // Other timers may be armed too.
                     clock.sleeping().iter().filter(|s| **s == left).count() == n
                 };
+                let sleeps_at_least = |left: Duration, n: usize| {
+                    clock.sleeping().iter().filter(|s| **s == left).count() >= n
+                };
                 let wait = |ready: &dyn Fn() -> bool| {
                     let give_up = Instant::now() + Self::PATIENCE;
                     while !ready() {
@@ -912,18 +915,29 @@ impl QuitDriver {
                     (
                         "1 s: both shut_down, one 1-s sleep",
                         Duration::from_secs(1),
-                        // Once rust-analyzer's actor has seen it exit and
-                        // dropped its 1-s sleep, the one left is pyright's.
+                        // Once rust-analyzer's actor has seen it exit, its
+                        // 1-s sleep no longer matters (the exit won), so
+                        // pyright's is armed if there's one at all: another
+                        // 1-s sleep (a stderr drain's grace, dropped as soon
+                        // as it finds nothing to read) must not hide it.
                         &|| {
                             have(&shut_down)
                                 && rust_gone.load(Ordering::SeqCst)
-                                && sleeps(Duration::from_secs(1), 1)
+                                && sleeps_at_least(Duration::from_secs(1), 1)
                         },
                     ),
                 ];
                 for (name, by, ready) in steps {
                     if !wait(ready) {
                         missed.push(name);
+                        eprintln!(
+                            "QuitDriver stuck at {name:?}: rust gone {}, sleeping {:?}, \
+                             rust {:#?}, python {:#?}",
+                            rust_gone.load(Ordering::SeqCst),
+                            clock.sleeping(),
+                            rust.records_of(1),
+                            python.records_of(1),
+                        );
                         break;
                     }
                     clock.advance(by);
