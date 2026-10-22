@@ -48,6 +48,10 @@ pub struct EditorView {
     pub(crate) wrap_reserve: f32,
     /// Whether the gutter shows ([`EditorView::set_gutter`]).
     pub(crate) gutter: bool,
+    /// The minimap's options, if it's on ([`EditorView::set_minimap`]).
+    pub(crate) minimap: Option<fe_display::minimap::MinimapOptions>,
+    /// Whether the pointer is over the minimap and its slider.
+    pub(crate) minimap_hover: crate::element::minimap::Hover,
     /// The host's column left of the line numbers
     /// ([`EditorView::set_gutter_annotations`]).
     pub(crate) annotations: Option<crate::gutter_annotations::Annotated>,
@@ -266,6 +270,9 @@ pub struct EditorView {
     /// The inlay hints the last frame painted: their text and boxes.
     #[cfg(test)]
     pub(crate) painted_inlay_hints: Vec<(String, Bounds<Pixels>)>,
+    /// The minimap the last frame painted.
+    #[cfg(test)]
+    pub(crate) painted_minimap: Option<crate::element::minimap::Painted>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -280,13 +287,15 @@ struct Hover {
 
 /// What a mouse drag extends: characters, or whole words or rows starting
 /// from the range first clicked, or an alt-shift-drag's box from the
-/// (buffer row, display column) it started at.
+/// (buffer row, display column) it started at; or the minimap's slider
+/// ([`minimap`]).
 #[derive(Clone)]
 enum Drag {
     Chars,
     Words(Range<usize>),
     Rows(Range<usize>),
     Box((u32, usize)),
+    Minimap(Box<minimap::MinimapDrag>),
 }
 
 /// Which mouse button's press waits for a held prefix
@@ -308,6 +317,8 @@ impl EditorView {
             tab_tint: None,
             wrap_reserve: 0.,
             gutter: true,
+            minimap: None,
+            minimap_hover: Default::default(),
             annotations: None,
             scroll: Point::default(),
             autoscroll: true,
@@ -407,6 +418,8 @@ impl EditorView {
             painted_ghost: None,
             #[cfg(test)]
             painted_inlay_hints: Vec::new(),
+            #[cfg(test)]
+            painted_minimap: None,
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -864,6 +877,11 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The minimap scrolls, and leaves the carets, a composition and vim's
+        // mode be, whoever owns the mouse.
+        if self.press_minimap(event, window, cx) {
+            return;
+        }
         // A click ends a composition, typing nothing.
         self.composition = None;
         // A proposal's button leaves the carets where they are, as a lens
@@ -1229,6 +1247,10 @@ impl EditorView {
             self.drag = None;
             return;
         }
+        // Wherever the pointer goes ([`EditorView::drag_minimap`]).
+        if let Drag::Minimap(_) = drag {
+            return;
+        }
         if self.vim_owns_mouse(cx) {
             self.vim_mouse_drag(drag, event.position, cx);
             return;
@@ -1252,7 +1274,7 @@ impl EditorView {
                         model.extend_primary_to(offset);
                         return;
                     }
-                    Drag::Box(_) => return,
+                    Drag::Box(_) | Drag::Minimap(_) => return,
                     Drag::Words(origin) => (origin, model.word_range_at(offset)),
                     Drag::Rows(origin) => (origin, model.line_range_at(offset)),
                 };
@@ -1292,8 +1314,11 @@ impl EditorView {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.drag.take().is_some() {
-            self.write_primary(cx);
+        match self.drag.take() {
+            // The slider goes back to its colour at rest.
+            Some(Drag::Minimap(_)) => cx.notify(),
+            Some(_) => self.write_primary(cx),
+            None => {}
         }
     }
 
@@ -1378,7 +1403,7 @@ impl EditorView {
             Drag::Rows(origin) => self.select_visual(VisualKind::Line, origin.start, at),
             // Begun in insert mode, which a key has since left: vim's modes
             // have no box.
-            Drag::Box(_) => return,
+            Drag::Box(_) | Drag::Minimap(_) => return,
         }
         self.changed(cx);
     }
@@ -1671,6 +1696,7 @@ mod find;
 pub(crate) mod ghost_text;
 mod host;
 mod ime;
+mod minimap;
 mod proposal;
 mod proposal_commands;
 
@@ -1741,6 +1767,7 @@ impl EditorView {
 
 pub use ghost_text::GhostTextEvent;
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
+pub use minimap::minimap_options;
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;
 pub(crate) use proposal_commands::{ProposalCommands, registry as proposal_registry};

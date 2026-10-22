@@ -485,7 +485,9 @@ impl Pane {
         cx.notify();
     }
 
-    /// A tab per item, reusing the tab of an item still open.
+    /// A tab per item, reusing the tab of an item still open. Each editor,
+    /// however it came (opened, split or restored), shows the minimap as
+    /// the settings say.
     fn sync_tabs(&mut self, cx: &mut App) {
         let old = std::mem::take(&mut self.tabs);
         self.tabs = (self.state.items().iter())
@@ -497,8 +499,10 @@ impl Pane {
                     .unwrap_or_else(|| Tab::of(&**item, cx))
             })
             .collect();
+        let minimap = fe_gpui::minimap_options(&self.settings);
         for editor in self.tabs.iter().filter_map(Tab::editor) {
             configs::read(editor, cx);
+            editor.update(cx, |editor, cx| editor.set_minimap(minimap, cx));
         }
         let open: Vec<TabId> = self.tabs.iter().map(Tab::id).collect();
         self.viewer_events.retain(|id, _| open.contains(id));
@@ -1073,9 +1077,11 @@ impl Pane {
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.settings = event.settings.editor.clone();
         self.theme.set_metrics(&self.settings, cx);
+        let minimap = fe_gpui::minimap_options(&self.settings);
         for editor in self.tabs.iter().filter_map(Tab::editor) {
             editor.update(cx, |editor, cx| {
                 editor.reload_settings(event, cx);
+                editor.set_minimap(minimap, cx);
                 editor
                     .model_mut()
                     .set_auto_close(self.settings.auto_close_pairs);

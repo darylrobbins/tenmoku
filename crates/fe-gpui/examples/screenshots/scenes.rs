@@ -4,7 +4,7 @@ use std::{ops::Range, process::ExitCode, rc::Rc};
 
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
-use fe_gpui::{EditorTheme, EditorView, GutterAnnotation, GutterAnnotations};
+use fe_gpui::{EditorTheme, EditorView, GutterAnnotation, GutterAnnotations, MinimapOptions};
 use gpui::{AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
@@ -26,6 +26,10 @@ struct Scene {
     cold: &'static [&'static str],
     /// The gutter annotation column's entries: buffer rows, text and heat.
     annotations: Annotations,
+    /// The minimap beside the text, if it shows.
+    minimap: Option<MinimapOptions>,
+    /// The screen row scrolled to the top, if not where the caret puts it.
+    top: Option<f32>,
 }
 
 type Annotations = &'static [(Range<u32>, &'static str, Option<f32>)];
@@ -37,6 +41,8 @@ fn scenes() -> Vec<Scene> {
         text: text.to_owned(),
         cold: &[],
         annotations: &[],
+        minimap: None,
+        top: None,
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -78,6 +84,8 @@ fn scenes() -> Vec<Scene> {
             text: numbered,
             cold: &[],
             annotations: &[],
+            minimap: None,
+            top: None,
         },
         Scene {
             name: "markdown_fence",
@@ -86,6 +94,8 @@ fn scenes() -> Vec<Scene> {
             // markdown_inline is warm by now: highlighted_rust's doc comments inject it (T1015).
             cold: &["markdown", "python"],
             annotations: &[],
+            minimap: None,
+            top: None,
         },
         Scene {
             name: "large_c",
@@ -93,6 +103,8 @@ fn scenes() -> Vec<Scene> {
             text: large_c(),
             cold: &["c"],
             annotations: &[],
+            minimap: None,
+            top: None,
         },
         Scene {
             name: "annotated_gutter",
@@ -104,8 +116,40 @@ fn scenes() -> Vec<Scene> {
                 (3..5, "2025-03-02 Bob Example", Some(0.0)),
                 (6..9, "2026-10-11 Ann Example", Some(1.0)),
             ],
+            minimap: None,
+            top: None,
+        },
+        Scene {
+            name: "minimap",
+            path: "scene.rs",
+            text: long_rust(),
+            cold: &[],
+            annotations: &[],
+            minimap: Some(MinimapOptions {
+                show_slider: fe_display::minimap::MinimapShowSlider::Always,
+                ..MinimapOptions::default()
+            }),
+            top: Some(140.),
         },
     ]
+}
+
+/// About 300 rows of Rust: [`RUST`] in nine modules, the caret on row 150.
+fn long_rust() -> String {
+    let mut text = String::new();
+    for n in 0..9 {
+        text.push_str(&format!("mod part_{n} {{\n"));
+        for line in RUST.replacen("‸", "", 1).lines() {
+            match line.is_empty() {
+                true => text.push('\n'),
+                false => text.push_str(&format!("    {line}\n")),
+            }
+        }
+        text.push_str("}\n");
+    }
+    let row_150 = text.match_indices('\n').nth(149).expect("300 rows").0 + 1;
+    text.insert(row_150, '‸');
+    text
 }
 
 const MARKDOWN: &str = "‸# Notes\n\n\
@@ -210,6 +254,8 @@ fn capture(
     cx: &mut VisualTestAppContext,
     model: EditorModel,
     annotations: Annotations,
+    minimap: Option<MinimapOptions>,
+    top: Option<f32>,
     size: Size<Pixels>,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
@@ -221,6 +267,10 @@ fn capture(
         cx.new(|cx| {
             let mut view = EditorView::new(model, theme, cx);
             view.set_gutter_annotations(shown, cx);
+            view.set_minimap(minimap, cx);
+            if let Some(top) = top {
+                view.set_scroll_top(top, cx);
+            }
             view
         })
     })?;
@@ -252,7 +302,14 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
         let (text, selections) = parse(&scene.text);
         let mut model = EditorModel::new(Buffer::new(&text), Some(scene.path.into()));
         model.set_selections(selections);
-        let (image, notifications) = capture(cx, model, scene.annotations, SCENE_SIZE)?;
+        let (image, notifications) = capture(
+            cx,
+            model,
+            scene.annotations,
+            scene.minimap,
+            scene.top,
+            SCENE_SIZE,
+        )?;
         if !scene.cold.is_empty() && notifications < 2 {
             return Err(format!(
                 "{}: no background work landed after the language loaded",
@@ -270,7 +327,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
     let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, &[], size)?.0.save(out)?;
+    capture(cx, model, &[], None, None, size)?.0.save(out)?;
     println!("wrote {out}");
     Ok(())
 }

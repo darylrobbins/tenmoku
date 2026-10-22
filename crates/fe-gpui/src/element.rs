@@ -43,6 +43,7 @@ use decorations::{Decorations, Layer};
 mod ghost_text;
 mod host_blocks;
 mod indent_guides;
+pub(crate) mod minimap;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
@@ -119,6 +120,8 @@ pub(crate) struct FrameLayout {
     ghost: ghost_text::Placed,
     /// The hints the frame laid out, shaped small.
     inlay_hints: Vec<crate::inlay_hints::Shown>,
+    /// The minimap beside the text, if it shows ([`minimap`]).
+    pub(crate) minimap: Option<minimap::Placed>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -652,8 +655,11 @@ impl Element for EditorElement {
             .unwrap_or(font_size * 0.6)
             .into();
 
-        // Soft wrap fills the text area; catch the rows up with any edits.
-        let width: f32 = bounds.size.width.into();
+        // Soft wrap fills the text area, less the minimap's room at the
+        // right; catch the rows up with any edits.
+        let minimap_options = self.view.read(cx).minimap;
+        let shared: f32 = bounds.size.width.into();
+        let width = shared - minimap::width(minimap_options.as_ref(), shared, em);
         let annotation_width = self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
             let annotation_width =
@@ -1003,7 +1009,6 @@ impl Element for EditorElement {
             view.reveal_hunk = None;
             view.preview_revealed();
             view.report_scroll_top(host_top, cx);
-            view.load_injected_languages(cx);
         });
         let view = self.view.read(cx);
         let mut layout = FrameLayout {
@@ -1032,6 +1037,7 @@ impl Element for EditorElement {
             proposal_texts: mem::take(proposal_texts),
             ghost,
             inlay_hints,
+            minimap: None,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -1050,6 +1056,25 @@ impl Element for EditorElement {
                 .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
         }
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
+        layout.minimap = minimap_options.and_then(|options| {
+            let syntax = (view.syntax.as_ref().map(SyntaxDriver::syntax))
+                .filter(|syntax| syntax.version() == view.model.snapshot().version());
+            let unnecessary = &unnecessary;
+            minimap::layout(
+                &options,
+                &layout,
+                view,
+                syntax,
+                unnecessary,
+                shared,
+                em,
+                window,
+            )
+        });
+        // Once every highlight query of the frame, the minimap's too, has
+        // run: what they lacked loads, or another frame retries them.
+        self.view
+            .update(cx, |view, cx| view.load_injected_languages(cx));
         // A hand over each change mark, across the whole change lane.
         let lane = layout.bounds(layout.frame.change_lane);
         for placed in &layout.decorations.placed {
@@ -1096,6 +1121,7 @@ impl Element for EditorElement {
         let focus = view.focus.clone();
         let accepts_text = view.accepts_text();
         let column_hovered = view.fold_column_hovered;
+        let (minimap_hover, minimap_dragged) = (view.minimap_hover, view.minimap_dragging());
         let mut layout = layout.take().expect("prepaint ran");
         let shape = view.caret_shape();
         let block = shape != CaretShape::Bar;
@@ -1450,7 +1476,10 @@ impl Element for EditorElement {
                 #[cfg(test)]
                 painted_chevrons.push((toggle.buffer_row, toggle.folded, chevron));
             }
+            minimap::paint(&layout, &theme, minimap_hover, minimap_dragged, window);
         });
+        #[cfg(test)]
+        let painted_minimap = minimap::painted(&layout, &theme, minimap_hover, minimap_dragged);
         for hitbox in &layout.clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
@@ -1508,6 +1537,7 @@ impl Element for EditorElement {
             });
         }
         add_hover_editor(&view, window, cx);
+        minimap::listen(&view, &layout, window, cx);
         // Once this frame is the rendered one, check the column against the
         // still pointer, so a column moving under or away from it (a dock
         // opening, the gutter widening) shows or hides the chevrons; and the
@@ -1531,6 +1561,10 @@ impl Element for EditorElement {
             painted_at,
         };
         self.view.update(cx, |view, _| {
+            // Off or hidden, the minimap has no pointer over it.
+            if layout.minimap.is_none() {
+                view.minimap_hover = Default::default();
+            }
             view.layout = Some(layout);
             view.scrolled_top = None;
             view.scrolled_display_top = None;
@@ -1554,6 +1588,7 @@ impl Element for EditorElement {
                 view.painted_proposals = painted_proposals;
                 view.painted_ghost = painted_ghost;
                 view.painted_inlay_hints = painted_inlay_hints;
+                view.painted_minimap = painted_minimap;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;

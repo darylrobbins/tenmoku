@@ -48,6 +48,7 @@ pub use hover::{HoverContent, HoverFuture, HoverProvider, MarkdownRenderer};
 pub use inlay_hints::{InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
 
+pub use fe_display::minimap::MinimapOptions;
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use pane_item::{SaveFixes, SaveHook, set_restore_style};
@@ -60,6 +61,7 @@ pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
+pub use view::minimap_options;
 pub use view::{GlyphKind, GutterGlyph};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_vim_clipboard, set_vim_enabled, set_vim_incsearch,
