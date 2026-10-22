@@ -1067,7 +1067,11 @@ static void ts_parser__accept(
   StackVersion version,
   Subtree lookahead
 ) {
-  ts_assert(ts_subtree_is_eof(lookahead));
+  // fastedit patch: not an assert, for a malformed grammar's tables (T230).
+  if (!lookahead.ptr || !ts_subtree_is_eof(lookahead)) {
+    ts_stack_halt(self->stack, version);
+    return;
+  }
   ts_stack_push(self->stack, version, lookahead, false, 1);
 
   StackSliceArray pop = ts_stack_pop_all(self->stack, version);
@@ -1078,9 +1082,32 @@ static void ts_parser__accept(
     for (uint32_t j = trees.size - 1; j + 1 > 0; j--) {
       Subtree tree = *array_get(&trees, j);
       if (!ts_subtree_extra(tree)) {
-        ts_assert(!tree.data.is_inline);
+        // fastedit patch: a malformed grammar's tables can accept a stack
+        // that isn't a parse (T230), which stops this parse version.
+        if (tree.data.is_inline) break;
         uint32_t child_count = ts_subtree_child_count(tree);
         const Subtree *children = ts_subtree_children(tree);
+        // The new node takes the root's production, and indexes its alias
+        // sequence by the node's structural children: the other trees on the
+        // stack and the root's own, spliced in below. They must fit it.
+        bool well_formed = true;
+        if (child_count > 0) {
+          uint32_t production_id = tree.ptr->production_id;
+          uint32_t structural_count = 0;
+          for (uint32_t k = 0; k < trees.size; k++) {
+            if (k != j && !ts_subtree_extra(*array_get(&trees, k))) structural_count++;
+          }
+          for (uint32_t k = 0; k < child_count; k++) {
+            if (!ts_subtree_extra(children[k])) structural_count++;
+          }
+          if (production_id >= self->language->production_id_count && production_id != 0) {
+            well_formed = false;
+          }
+          if (production_id != 0 && structural_count > self->language->max_alias_sequence_length) {
+            well_formed = false;
+          }
+        }
+        if (!well_formed) break;
         for (uint32_t k = 0; k < child_count; k++) {
           ts_subtree_retain(children[k]);
         }
@@ -1088,7 +1115,9 @@ static void ts_parser__accept(
         root = ts_subtree_from_mut(ts_subtree_new_node(
           ts_subtree_symbol(tree),
           &trees,
-          tree.ptr->production_id,
+          // (A childless tree has no production: if it's an external token's
+          // leaf, the bytes where a node's production id is are the scanner's.)
+          child_count == 0 ? 0 : tree.ptr->production_id,
           self->language
         ));
         ts_subtree_release(&self->tree_pool, tree);
@@ -1096,7 +1125,10 @@ static void ts_parser__accept(
       }
     }
 
-    ts_assert(root.ptr);
+    if (!root.ptr) {
+      ts_subtree_array_delete(&self->tree_pool, &trees);
+      continue;
+    }
     self->accept_count++;
 
     if (self->finished_tree.ptr) {
@@ -1669,6 +1701,14 @@ static bool ts_parser__advance(
     for (uint32_t i = 0; i < table_entry.action_count; i++) {
       TSParseAction action = table_entry.actions[i];
 
+      // fastedit patch: with no lookahead (the end of a non-terminal extra),
+      // only a reduce makes sense. A malformed grammar's tables can say
+      // otherwise (T230), which ends this version.
+      if (!lookahead.ptr && action.type != TSParseActionTypeReduce) {
+        ts_stack_halt(self->stack, version);
+        return true;
+      }
+
       switch (action.type) {
         case TSParseActionTypeShift: {
           if (action.shift.repetition) break;
@@ -2237,7 +2277,11 @@ TSTree *ts_parser_parse(
   } while (version_count != 0);
 
 balance:
-  ts_assert(self->finished_tree.ptr);
+  // fastedit patch: a malformed grammar's tables can leave no accepted tree.
+  if (!self->finished_tree.ptr) {
+    ts_parser_reset(self);
+    return NULL;
+  }
   if (!ts_parser__balance_subtree(self)) {
     self->canceled_balancing = true;
     return NULL;

@@ -493,13 +493,36 @@ static void *copy(const WasmMemory *memory, int32_t address, size_t size, bool *
   return result;
 }
 
+// fastedit patch: the size of the table at `start_address`, which is the
+// distance to the next table's address, or 0 if it has none.
+static size_t unsized_static_array_size(
+  int32_t start_address,
+  const int32_t all_addresses[],
+  size_t address_count
+) {
+  if (start_address <= 0) return 0;
+  int32_t end_address = 0;
+  for (unsigned i = 0; i < address_count; i++) {
+    if (all_addresses[i] > start_address) {
+      if (!end_address || all_addresses[i] < end_address) {
+        end_address = all_addresses[i];
+      }
+    }
+  }
+  return end_address ? (size_t)end_address - (size_t)start_address : 0;
+}
+
 static void *copy_unsized_static_array(
   const WasmMemory *memory,
   int32_t start_address,
   const int32_t all_addresses[],
   size_t address_count,
+  size_t *copied_size,
   bool *ok
 ) {
+  // fastedit patch: the copy's size, for the table validation to bound the
+  // table by.
+  *copied_size = 0;
   if (!*ok || start_address == 0) return NULL;
   if (start_address < 0) {
     *ok = false;
@@ -515,14 +538,18 @@ static void *copy_unsized_static_array(
     }
   }
 
-  if (!end_address) return NULL;
-  size_t size = end_address - start_address;
+  if (!end_address) {
+    *ok = false;
+    return NULL;
+  }
+  size_t size = (size_t)end_address - (size_t)start_address;
   if (!wasm_memory__contains(memory, start_address, size)) {
     *ok = false;
     return NULL;
   }
   void *result = ts_malloc(size);
   memcpy(result, &memory->data[start_address], size);
+  *copied_size = size;
   return result;
 }
 
@@ -1444,6 +1471,303 @@ error:
   return false;
 }
 
+// fastedit patch: the sizes of the tables the loader copied out of a
+// module's memory, which the validation below bounds their contents by.
+typedef struct {
+  size_t parse_action_count;     // TSParseActionEntry elements
+  size_t small_parse_table_size; // uint16_t elements
+  size_t external_states_size;   // bytes of the external scanner's states
+  size_t alias_map_size;         // uint16_t elements
+  size_t field_map_entry_count;
+  size_t supertype_slice_count;
+  size_t supertype_entry_count;
+} TableSizes;
+
+// fastedit patch: checks the parse action entry at `index` in the actions
+// table lies in the table and holds actions that name states, symbols and
+// productions the language has. `checked` marks the entries already seen.
+static const char *ts_wasm_language__check_actions(
+  const TSLanguage *language,
+  const TableSizes *sizes,
+  uint8_t *checked,
+  uint32_t symbol,
+  size_t index
+) {
+  if (index >= sizes->parse_action_count) return "parse table: an action index outside the actions";
+  // 1 once the entry is checked, 2 if it holds an accept, which only the end
+  // of input can take.
+  if (checked[index]) {
+    return checked[index] == 2 && symbol != ts_builtin_sym_end
+      ? "parse actions: an accept on a token other than the end of input"
+      : NULL;
+  }
+  size_t count = language->parse_actions[index].entry.count;
+  if (count > sizes->parse_action_count - index - 1) {
+    return "parse actions: an entry runs past the end of the actions";
+  }
+  bool accepts = false;
+  for (size_t i = 1; i <= count; i++) {
+    TSParseAction action = language->parse_actions[index + i].action;
+    switch (action.type) {
+      case TSParseActionTypeShift:
+        if (!action.shift.extra && action.shift.state >= language->state_count) {
+          return "parse actions: a shift to a state the language doesn't have";
+        }
+        break;
+      case TSParseActionTypeReduce:
+        if (action.reduce.symbol >= language->symbol_count) {
+          return "parse actions: a reduce to a symbol the language doesn't have";
+        }
+        if (action.reduce.production_id >= language->production_id_count &&
+            action.reduce.production_id != 0) {
+          return "parse actions: a reduce of a production the language doesn't have";
+        }
+        if (action.reduce.production_id != 0 &&
+            action.reduce.child_count > language->max_alias_sequence_length) {
+          return "parse actions: a reduce of more children than an alias sequence holds";
+        }
+        break;
+      case TSParseActionTypeAccept:
+        if (symbol != ts_builtin_sym_end) {
+          return "parse actions: an accept on a token other than the end of input";
+        }
+        accepts = true;
+        break;
+      case TSParseActionTypeRecover:
+        break;
+      default:
+        return "parse actions: an action of an unknown type";
+    }
+  }
+  checked[index] = accepts ? 2 : 1;
+  return NULL;
+}
+
+// fastedit patch: checks a parse table's value for `symbol`: a terminal's is
+// an index into the actions, any other's a state.
+static const char *ts_wasm_language__check_table_value(
+  const TSLanguage *language,
+  const TableSizes *sizes,
+  uint8_t *checked,
+  uint32_t symbol,
+  uint16_t value
+) {
+  if (symbol >= language->symbol_count) return "parse table: a symbol the language doesn't have";
+  // A terminal's empty cell is the action entry 0, which is checked once.
+  if (value == 0) return NULL;
+  if (symbol < language->token_count) {
+    return ts_wasm_language__check_actions(language, sizes, checked, symbol, value);
+  }
+  if (value >= language->state_count) return "parse table: a state the language doesn't have";
+  return NULL;
+}
+
+// fastedit patch: checks every static table of a language copied out of Wasm
+// memory, so that the parser, which indexes them unchecked, stays inside
+// them. The header's counts were checked before the copies were sized from
+// them, and the loader sized the reserved words from the lex modes' set ids.
+// Returns a description of the first problem, or NULL.
+static const char *ts_wasm_language__validate(
+  const TSLanguage *language,
+  const TableSizes *sizes
+) {
+  uint32_t name_count = language->symbol_count + language->alias_count;
+
+  // The keyword fallback sets an inline subtree's symbol to it, which holds
+  // symbols below UINT8_MAX.
+  if (language->keyword_capture_token >= language->token_count ||
+      language->keyword_capture_token >= UINT8_MAX) {
+    return "keyword capture token: not a token the language has, or one inline subtrees can hold";
+  }
+
+  if (!language->symbol_names || !language->symbol_metadata || !language->public_symbol_map ||
+      !language->lex_modes || !language->parse_actions || !language->parse_table ||
+      (language->state_count > language->large_state_count &&
+       (!language->small_parse_table || !language->small_parse_table_map))) {
+    return "tables: a missing table";
+  }
+  for (uint32_t i = 0; i < name_count; i++) {
+    if (!language->symbol_names[i]) return "symbol names: a missing name";
+  }
+  for (uint32_t i = 0; i < name_count; i++) {
+    if (language->public_symbol_map[i] >= name_count) {
+      return "public symbol map: a symbol the language doesn't have";
+    }
+  }
+  if (language->field_count > 0) {
+    if (!language->field_names || !language->field_map_slices || !language->field_map_entries) {
+      return "field map: a missing table";
+    }
+    for (uint32_t i = 1; i <= language->field_count; i++) {
+      if (!language->field_names[i]) return "field names: a missing name";
+    }
+    for (uint32_t i = 0; i < language->production_id_count; i++) {
+      TSMapSlice slice = language->field_map_slices[i];
+      if ((size_t)slice.index + slice.length > sizes->field_map_entry_count) {
+        return "field map slices: a slice outside the entries";
+      }
+    }
+    for (size_t i = 0; i < sizes->field_map_entry_count; i++) {
+      if (language->field_map_entries[i].field_id > language->field_count) {
+        return "field map entries: a field the language doesn't have";
+      }
+    }
+  }
+
+  for (uint32_t state = 0; state < language->state_count; state++) {
+    TSLexerMode mode = ts_language_lex_mode_for_state(language, state);
+    if (mode.external_lex_state != 0 &&
+        (language->external_token_count == 0 ||
+         ((size_t)mode.external_lex_state + 1) * language->external_token_count >
+           sizes->external_states_size)) {
+      return "lex modes: an external lex state the language doesn't have";
+    }
+  }
+  if (language->abi_version >= LANGUAGE_VERSION_WITH_PRIMARY_STATES) {
+    if (!language->primary_state_ids) return "primary state ids: a missing table";
+    for (uint32_t i = 0; i < language->state_count; i++) {
+      if (language->primary_state_ids[i] >= language->state_count) {
+        return "primary state ids: a state the language doesn't have";
+      }
+    }
+  }
+  for (uint32_t i = 0; i < language->external_token_count; i++) {
+    if (language->external_scanner.symbol_map[i] >= language->token_count) {
+      return "external scanner symbol map: a symbol that isn't a token the language has";
+    }
+  }
+
+  // The alias map: symbols, alias counts and aliases, ended by a null symbol.
+  if (language->alias_map) {
+    size_t i = 0;
+    for (;;) {
+      if (i >= sizes->alias_map_size) return "alias map: not ended";
+      uint16_t symbol = language->alias_map[i++];
+      if (symbol == 0) break;
+      if (symbol >= language->symbol_count) return "alias map: a symbol the language doesn't have";
+      if (i >= sizes->alias_map_size) return "alias map: cut short";
+      size_t count = language->alias_map[i++];
+      if (count > sizes->alias_map_size - i) return "alias map: aliases past the end of the map";
+      for (size_t j = 0; j < count; j++) {
+        if (language->alias_map[i + j] >= name_count) {
+          return "alias map: an alias the language doesn't have";
+        }
+      }
+      i += count;
+    }
+  }
+  if (language->alias_sequences) {
+    size_t length = (size_t)language->production_id_count * language->max_alias_sequence_length;
+    for (size_t i = 0; i < length; i++) {
+      if (language->alias_sequences[i] >= name_count) {
+        return "alias sequences: an alias the language doesn't have";
+      }
+    }
+  }
+
+  if (language->abi_version >= LANGUAGE_VERSION_WITH_RESERVED_WORDS) {
+    if (language->supertype_count > 0) {
+      if (!language->supertype_symbols || !language->supertype_map_slices ||
+          (sizes->supertype_entry_count > 0 && !language->supertype_map_entries)) {
+        return "supertypes: a missing table";
+      }
+      for (uint32_t i = 0; i < language->supertype_count; i++) {
+        if (language->supertype_symbols[i] >= language->symbol_count) {
+          return "supertype symbols: a symbol the language doesn't have";
+        }
+      }
+      for (size_t i = 0; i < sizes->supertype_slice_count; i++) {
+        TSMapSlice slice = language->supertype_map_slices[i];
+        if ((size_t)slice.index + slice.length > sizes->supertype_entry_count) {
+          return "supertype map slices: a slice outside the entries";
+        }
+      }
+      for (size_t i = 0; i < sizes->supertype_entry_count; i++) {
+        if (language->supertype_map_entries[i] >= language->symbol_count) {
+          return "supertype map entries: a symbol the language doesn't have";
+        }
+      }
+    }
+    // The subtypes of any symbol marked a supertype are looked up in the map.
+    for (uint32_t symbol = 0; symbol < name_count; symbol++) {
+      if (language->symbol_metadata[symbol].supertype &&
+          (language->supertype_count == 0 || symbol >= sizes->supertype_slice_count)) {
+        return "symbol metadata: a supertype missing from the supertype map";
+      }
+    }
+  }
+
+  // Reserved words are terminals, ended early by a null.
+  if (language->abi_version >= LANGUAGE_VERSION_WITH_RESERVED_WORDS &&
+      language->reserved_words) {
+    uint32_t max_id = 0;
+    for (uint32_t state = 0; state < language->state_count; state++) {
+      if (language->lex_modes[state].reserved_word_set_id > max_id) {
+        max_id = language->lex_modes[state].reserved_word_set_id;
+      }
+    }
+    size_t count = ((size_t)max_id + 1) * language->max_reserved_word_set_size;
+    for (size_t i = 0; i < count; i++) {
+      if (language->reserved_words[i] >= language->token_count) {
+        return "reserved words: a token the language doesn't have";
+      }
+    }
+  }
+
+  // The parse tables, and the actions they name.
+  uint8_t *checked = ts_calloc(sizes->parse_action_count + 1, 1);
+  const char *problem = NULL;
+  // An absent terminal reads the entry 0, which holds no actions.
+  if (language->parse_actions[0].entry.count != 0) {
+    problem = "parse actions: a first entry that isn't empty";
+  }
+  if (!problem && sizes->parse_action_count == 0) problem = "parse actions: none";
+  for (uint32_t state = 0; !problem && state < language->large_state_count; state++) {
+    const uint16_t *row = &language->parse_table[(size_t)state * language->symbol_count];
+    for (uint32_t symbol = 0; !problem && symbol < language->symbol_count; symbol++) {
+      problem = ts_wasm_language__check_table_value(language, sizes, checked, symbol, row[symbol]);
+    }
+  }
+  for (
+    uint32_t state = language->large_state_count;
+    !problem && state < language->state_count;
+    state++
+  ) {
+    size_t index = language->small_parse_table_map[state - language->large_state_count];
+    if (index >= sizes->small_parse_table_size) {
+      problem = "small parse table map: a state's entry outside the table";
+      break;
+    }
+    const uint16_t *data = &language->small_parse_table[index];
+    size_t left = sizes->small_parse_table_size - index - 1;
+    size_t group_count = *data++;
+    for (size_t group = 0; !problem && group < group_count; group++) {
+      if (left < 2) {
+        problem = "small parse table: a group runs past the end of the table";
+        break;
+      }
+      uint16_t value = *data++;
+      size_t symbol_count = *data++;
+      left -= 2;
+      if (symbol_count > left) {
+        problem = "small parse table: a group runs past the end of the table";
+        break;
+      }
+      if (symbol_count == 0) {
+        problem = "small parse table: a group without symbols";
+        break;
+      }
+      for (size_t i = 0; !problem && i < symbol_count; i++) {
+        problem = ts_wasm_language__check_table_value(language, sizes, checked, data[i], value);
+      }
+      data += symbol_count;
+      left -= symbol_count;
+    }
+  }
+  ts_free(checked);
+  return problem;
+}
+
 static bool ts_wasm_store__sentinel_lex_fn(TSLexer *_lexer, TSStateId state) {
   return false;
 }
@@ -1532,6 +1856,31 @@ const TSLanguage *ts_wasm_store_load_language(
     goto invalid_language_memory;
   }
 
+  // fastedit patch: the counts everything else is sized and indexed by.
+  // Symbols, states, productions and fields are 16-bit ids, with the
+  // top two symbols the parser's own.
+  if (
+    wasm_language.symbol_count == 0 ||
+    wasm_language.symbol_count > UINT16_MAX - 2 ||
+    wasm_language.alias_count > UINT16_MAX - 2 - wasm_language.symbol_count ||
+    wasm_language.token_count == 0 ||
+    wasm_language.token_count > wasm_language.symbol_count ||
+    wasm_language.external_token_count > wasm_language.token_count ||
+    wasm_language.state_count < 2 ||
+    wasm_language.state_count > (uint32_t)UINT16_MAX + 1 ||
+    wasm_language.large_state_count > wasm_language.state_count ||
+    wasm_language.production_id_count > (uint32_t)UINT16_MAX + 1 ||
+    wasm_language.field_count > UINT16_MAX ||
+    (wasm_language.field_count > 0 && wasm_language.production_id_count == 0) ||
+    // (Before ABI 15 the supertype count isn't in the language.)
+    (wasm_language.abi_version >= LANGUAGE_VERSION_WITH_RESERVED_WORDS &&
+      wasm_language.supertype_count > wasm_language.symbol_count)
+  ) {
+    wasm_error->kind = TSWasmErrorKindInstantiate;
+    format(&wasm_error->message, "invalid language tables: counts the language's tables can't have");
+    goto error;
+  }
+
   bool has_supertypes =
     wasm_language.abi_version >= LANGUAGE_VERSION_WITH_RESERVED_WORDS &&
     wasm_language.supertype_count > 0;
@@ -1569,6 +1918,7 @@ const TSLanguage *ts_wasm_store_load_language(
     self->current_memory_offset,
   };
   uint32_t address_count = array_len(addresses);
+  TableSizes table_sizes = {0};
 
   result = ts_calloc(1, sizeof(TSWasmLanguage));
   language = &result->language;
@@ -1589,7 +1939,7 @@ const TSLanguage *ts_wasm_store_load_language(
     .parse_table = copy(
       &wasm_memory,
       wasm_language.parse_table,
-      wasm_language.large_state_count * wasm_language.symbol_count * sizeof(uint16_t),
+      (size_t)wasm_language.large_state_count * wasm_language.symbol_count * sizeof(uint16_t),
       &valid_wasm_memory
     ),
     .parse_actions = copy_unsized_static_array(
@@ -1597,6 +1947,7 @@ const TSLanguage *ts_wasm_store_load_language(
       wasm_language.parse_actions,
       addresses,
       address_count,
+      &table_sizes.parse_action_count,
       &valid_wasm_memory
     ),
     .symbol_names = copy_strings(
@@ -1609,19 +1960,22 @@ const TSLanguage *ts_wasm_store_load_language(
     .symbol_metadata = copy(
       &wasm_memory,
       wasm_language.symbol_metadata,
-      (wasm_language.symbol_count + wasm_language.alias_count) * sizeof(TSSymbolMetadata),
+      (size_t)(wasm_language.symbol_count + wasm_language.alias_count) * sizeof(TSSymbolMetadata),
       &valid_wasm_memory
     ),
     .public_symbol_map = copy(
       &wasm_memory,
       wasm_language.public_symbol_map,
-      (wasm_language.symbol_count + wasm_language.alias_count) * sizeof(TSSymbol),
+      (size_t)(wasm_language.symbol_count + wasm_language.alias_count) * sizeof(TSSymbol),
       &valid_wasm_memory
     ),
     .lex_modes = copy(
       &wasm_memory,
       wasm_language.lex_modes,
-      wasm_language.state_count * sizeof(TSLexerMode),
+      (size_t)wasm_language.state_count *
+        (wasm_language.abi_version < LANGUAGE_VERSION_WITH_RESERVED_WORDS
+          ? sizeof(TSLexMode)
+          : sizeof(TSLexerMode)),
       &valid_wasm_memory
     ),
   };
@@ -1631,17 +1985,17 @@ const TSLanguage *ts_wasm_store_load_language(
     language->field_map_slices = copy(
       &wasm_memory,
       wasm_language.field_map_slices,
-      wasm_language.production_id_count * sizeof(TSMapSlice),
+      (size_t)wasm_language.production_id_count * sizeof(TSMapSlice),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
 
     // Determine the number of field map entries by finding the greatest index
     // in any of the slices.
-    uint32_t field_map_entry_count = 0;
+    size_t field_map_entry_count = 0;
     for (uint32_t i = 0; i < wasm_language.production_id_count; i++) {
       TSMapSlice slice = language->field_map_slices[i];
-      uint32_t slice_end = slice.index + slice.length;
+      size_t slice_end = (size_t)slice.index + slice.length;
       if (slice_end > field_map_entry_count) {
         field_map_entry_count = slice_end;
       }
@@ -1653,6 +2007,7 @@ const TSLanguage *ts_wasm_store_load_language(
       field_map_entry_count * sizeof(TSFieldMapEntry),
       &valid_wasm_memory
     );
+    table_sizes.field_map_entry_count = field_map_entry_count;
     language->field_names = copy_strings(
       &wasm_memory,
       wasm_language.field_names,
@@ -1667,7 +2022,7 @@ const TSLanguage *ts_wasm_store_load_language(
     language->supertype_symbols = copy(
       &wasm_memory,
       wasm_language.supertype_symbols,
-      wasm_language.supertype_count * sizeof(TSSymbol),
+      (size_t)wasm_language.supertype_count * sizeof(TSSymbol),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
@@ -1677,6 +2032,11 @@ const TSLanguage *ts_wasm_store_load_language(
     int largest_supertype = 0;
     for (unsigned i = 0; i < language->supertype_count; i++) {
       TSSymbol supertype = language->supertype_symbols[i];
+      if (supertype >= language->symbol_count) {
+        wasm_error->kind = TSWasmErrorKindInstantiate;
+        format(&wasm_error->message, "invalid supertype symbols: a symbol the language doesn't have");
+        goto error;
+      }
       if (supertype > largest_supertype) {
         largest_supertype = supertype;
       }
@@ -1685,13 +2045,21 @@ const TSLanguage *ts_wasm_store_load_language(
     language->supertype_map_slices = copy(
       &wasm_memory,
       wasm_language.supertype_map_slices,
-      (largest_supertype + 1) * sizeof(TSMapSlice),
+      ((size_t)largest_supertype + 1) * sizeof(TSMapSlice),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
 
-    TSMapSlice last_slice = language->supertype_map_slices[largest_supertype];
-    uint32_t supertype_map_entry_count = last_slice.index + last_slice.length;
+    // fastedit patch: the slices aren't in order of their entries, so the
+    // entries run to the end of the furthest slice.
+    size_t supertype_map_entry_count = 0;
+    for (int i = 0; i <= largest_supertype; i++) {
+      TSMapSlice slice = language->supertype_map_slices[i];
+      size_t slice_end = (size_t)slice.index + slice.length;
+      if (slice_end > supertype_map_entry_count) supertype_map_entry_count = slice_end;
+    }
+    table_sizes.supertype_slice_count = (size_t)largest_supertype + 1;
+    table_sizes.supertype_entry_count = supertype_map_entry_count;
 
     language->supertype_map_entries = copy(
       &wasm_memory,
@@ -1702,10 +2070,16 @@ const TSLanguage *ts_wasm_store_load_language(
     if (!valid_wasm_memory) goto invalid_language_memory;
   }
 
-  if (language->max_alias_sequence_length > 0 && language->production_id_count > 0) {
+  {
+    // fastedit patch: the alias map is read whatever the alias sequences'
+    // dimensions, so it's always loaded.
     // The alias map contains symbols, alias counts, and aliases, terminated by a null symbol.
     int32_t alias_map_size = 0;
     for (;;) {
+      // fastedit patch: addresses stay in int32 range.
+      if ((int64_t)wasm_language.alias_map + alias_map_size + 4 > INT32_MAX) {
+        goto invalid_language_memory;
+      }
       TSSymbol symbol;
       if (!wasm_memory__read(&wasm_memory, wasm_language.alias_map + alias_map_size, &symbol, sizeof(symbol))) {
         goto invalid_language_memory;
@@ -1719,6 +2093,7 @@ const TSLanguage *ts_wasm_store_load_language(
       alias_map_size += sizeof(uint16_t);
       alias_map_size += value_count * sizeof(TSSymbol);
     }
+    table_sizes.alias_map_size = alias_map_size / sizeof(uint16_t);
     language->alias_map = copy(
       &wasm_memory,
       wasm_language.alias_map,
@@ -1728,7 +2103,7 @@ const TSLanguage *ts_wasm_store_load_language(
     language->alias_sequences = copy(
       &wasm_memory,
       wasm_language.alias_sequences,
-      wasm_language.production_id_count * wasm_language.max_alias_sequence_length * sizeof(TSSymbol),
+      (size_t)wasm_language.production_id_count * wasm_language.max_alias_sequence_length * sizeof(TSSymbol),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
@@ -1739,7 +2114,7 @@ const TSLanguage *ts_wasm_store_load_language(
     language->small_parse_table_map = copy(
       &wasm_memory,
       wasm_language.small_parse_table_map,
-      small_state_count * sizeof(uint32_t),
+      (size_t)small_state_count * sizeof(uint32_t),
       &valid_wasm_memory
     );
     language->small_parse_table = copy_unsized_static_array(
@@ -1747,6 +2122,7 @@ const TSLanguage *ts_wasm_store_load_language(
       wasm_language.small_parse_table,
       addresses,
       address_count,
+      &table_sizes.small_parse_table_size,
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
@@ -1756,7 +2132,7 @@ const TSLanguage *ts_wasm_store_load_language(
     language->primary_state_ids = copy(
       &wasm_memory,
       wasm_language.primary_state_ids,
-      wasm_language.state_count * sizeof(TSStateId),
+      (size_t)wasm_language.state_count * sizeof(TSStateId),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
@@ -1776,8 +2152,8 @@ const TSLanguage *ts_wasm_store_load_language(
     }
 
     if (max_reserved_word_set_id > 0 && language->max_reserved_word_set_size > 0) {
-      uint32_t reserved_word_count =
-        (max_reserved_word_set_id + 1) * language->max_reserved_word_set_size;
+      size_t reserved_word_count =
+        ((size_t)max_reserved_word_set_id + 1) * language->max_reserved_word_set_size;
       language->reserved_words = copy(
           &wasm_memory,
           wasm_language.reserved_words,
@@ -1792,11 +2168,39 @@ const TSLanguage *ts_wasm_store_load_language(
     language->external_scanner.symbol_map = copy(
       &wasm_memory,
       wasm_language.external_scanner.symbol_map,
-      wasm_language.external_token_count * sizeof(TSSymbol),
+      (size_t)wasm_language.external_token_count * sizeof(TSSymbol),
       &valid_wasm_memory
     );
     if (!valid_wasm_memory) goto invalid_language_memory;
     language->external_scanner.states = (void *)(uintptr_t)wasm_language.external_scanner.states;
+    table_sizes.external_states_size = unsized_static_array_size(
+      wasm_language.external_scanner.states,
+      addresses,
+      address_count
+    );
+    // fastedit patch: the states stay in the module's memory, whatever the
+    // next table's address says.
+    if (!wasm_memory__contains(
+      &wasm_memory,
+      wasm_language.external_scanner.states,
+      table_sizes.external_states_size
+    )) {
+      wasm_error->kind = TSWasmErrorKindInstantiate;
+      format(&wasm_error->message, "invalid external scanner states: outside the module's memory");
+      goto error;
+    }
+  }
+
+  // fastedit patch: the parser indexes the tables unchecked, so none may
+  // name anything outside the language or the tables themselves. (Sizes
+  // so far are in bytes.)
+  table_sizes.parse_action_count /= sizeof(TSParseActionEntry);
+  table_sizes.small_parse_table_size /= sizeof(uint16_t);
+  const char *invalid_table = ts_wasm_language__validate(language, &table_sizes);
+  if (invalid_table) {
+    wasm_error->kind = TSWasmErrorKindInstantiate;
+    format(&wasm_error->message, "invalid %s", invalid_table);
+    goto error;
   }
 
   unsigned name_len = strlen(language_name);

@@ -10,7 +10,7 @@ MIT; see `LICENSE`.
 
 fastedit loads extensions' grammars at run time as WebAssembly, through this
 crate's `wasm` feature (`crates/fe-syntax/src/runtime.rs`). A grammar's code is
-someone else's, and 0.27.0 trusts it in two ways the extensions decision
+someone else's, and 0.27.0 trusts it in ways the extensions decision
 (`docs/decisions/vmtnmkay62-extensions-and-plugins.md` §6) doesn't allow:
 
 - **No execution deadline.** A module initializer, lexer or external scanner
@@ -28,24 +28,24 @@ someone else's, and 0.27.0 trusts it in two ways the extensions decision
   dereference the running lexer when none is running, and print a debug
   message's string from any address. The token a lexer or scanner says it
   found indexes the grammar's tables unchecked.
+- **Trusts the grammar's static tables.** The parse table, small parse table,
+  actions, lex modes, alias sequences, field and supertype maps, reserved
+  words, public symbol map, primary state ids and symbol and field names were
+  copied out of the module's memory after checking only that they lie inside
+  it, and the parser then indexed them unchecked, so a module with correct
+  exports but corrupt tables could make it read out of bounds.
 
-`crates/fe-syntax/tests/runtime_grammar.rs` checks these stay fixed
+`crates/fe-syntax/tests/runtime_grammar.rs` checks the first three stay fixed
 (`a_looping_grammar_is_stopped_at_its_deadline`,
 `a_looping_injection_is_stopped_at_its_deadline`,
 `a_bad_export_is_an_error_not_an_abort`,
 `hostile_grammars_are_errors_not_crashes`), with the fixtures
-`tests/fixtures/hostile-grammars.md` describes.
+`tests/fixtures/hostile-grammars.md` describes, and
+`crates/fe-syntax/tests/wasm_table_validation.rs` the last, with a hostile
+module for each table.
 
-So a grammar's Wasm code can't touch host memory. A malformed grammar's
-tables, though, can still crash the editor until **T1005** validates them.
-The grammar's static tables are still trusted: the parse table, actions, lex
-modes, alias sequences, field and supertype maps, and symbol names. The loader
-copies them out of the module's memory after checking only that they lie
-inside it, and the parser then indexes them unchecked, so a module with
-correct exports but corrupt tables can still make it read out of bounds. The
-user accepted this narrowed claim for now, since grammars are user-installed
-(decision 2026-10-19, `docs/decisions/vmtnmkay62-extensions-and-plugins.md`
-§6). T1005 is the follow-up that adds the validation.
+So a grammar's Wasm code can't touch host memory, and a malformed grammar
+can't crash the editor: it fails to load, as an error naming its file.
 
 ## What changed
 
@@ -78,8 +78,40 @@ Every change is marked `fastedit patch` in a comment.
   fails and the parse stops. The memory is re-read after the call, in case
   the call grew it.
 
+- Every static table is validated when the language is loaded
+  (`ts_wasm_language__validate`), before `ts_wasm_store_load_language` returns
+  it, so the parser, which indexes them unchecked, stays inside them; a table
+  that isn't is an error from the load. The header's counts must fit the
+  16-bit symbol, state, production and field ids and each other, and the tables
+  are sized from them in `size_t`. Then: the parse table's terminal cells are
+  actions the table holds, whole, and the others states; so are the small parse
+  table's groups, reached through its map and kept inside the table; each action
+  shifts to a state, reduces to a symbol and a production the language has (an accept only on the
+  end of input, and the empty entry 0 empty), with
+  no more children than an alias sequence holds, and is of a known type; the
+  lex modes' external lex states, the primary state ids, the external scanner's
+  symbol map (tokens), the public symbol map, the alias map and sequences, the field
+  map's slices (entries sized by the furthest) and fields, and the supertype
+  symbols, map slices and entries all name symbols, states and fields the
+  language has, as does the keyword capture token; the symbol and field names
+  are present and end inside the module's memory; every symbol marked a
+  supertype is in the supertype map; the reserved words are sized from the lex
+  modes' set ids. Where a table's length isn't in the language (the actions,
+  the small parse table, the external scanner's states), it's the distance to
+  the next table's address. The lex modes of an ABI 14 or older language are
+  copied at their own, smaller size. Validating once here, not in each consumer
+  (`parser.c`, `language.c`, `subtree.c`, `query.c`, `node.c`), covers every
+  index they make, since they only read these copies.
+
 `src/parser.c`: a failed call into a Wasm main or keyword lexer stops the
 parse, as a failed external scanner call already did (`has_scanner_error`).
+Tables the validation allows can still say things no grammar's do, so the parser
+stops a version instead of asserting or reading a missing lookahead: an action
+other than a reduce with no lookahead, an accept without the end of input, an
+accepted root whose production or structural children don't fit the alias
+sequences (a childless root takes production 0, as an external token's leaf
+holds scanner bytes where a node's production is), and a parse that accepts no
+tree (returns NULL).
 
 `binding_rust/wasm_language.rs`: `with_wasm_interrupt(check, f)`, which runs
 `f` with Wasm code on this thread asking `check` once an epoch whether to stop,
