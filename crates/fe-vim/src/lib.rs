@@ -772,6 +772,10 @@ mod args;
 
 pub mod changes;
 mod cmdline;
+#[expect(
+    unreachable_pub,
+    reason = "`commands::dispatch` runs only through `dispatch`, which scopes its provenance"
+)]
 mod commands;
 mod delimiters;
 mod edit;
@@ -818,7 +822,7 @@ pub use args::{
 pub use cmdline::SEARCH_PREVIEW_LIMIT;
 #[doc(hidden)]
 pub use cmdline::set_search_preview_limit;
-pub use commands::{VimCommands, VimTarget, dispatch, registry};
+pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
     Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
     SHELL_REFUSED, ShellCommand, ShellPart,
@@ -835,6 +839,22 @@ pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
 pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc};
+
+/// Runs `invocation` through `registry`, as a host runs each of vim's
+/// commands: [`fe_command::Registry::dispatch`], then, if the command was
+/// the one `<C-o>` left insert mode for and it's done, back to insert mode
+/// ([`VimState::one_command`]), whether it worked or not. It runs as from
+/// where the key that committed it came from, a macro's say, or as the
+/// user's if no key did: a keymap binding's.
+pub fn dispatch(
+    registry: &fe_command::Registry<VimCommands>,
+    target: &mut VimTarget<'_>,
+    invocation: &fe_command::Invocation,
+) -> Result<fe_command::Dispatched<fe_buffer::TransactionId>, fe_command::DispatchError> {
+    remap::scoped(target, invocation, |target| {
+        commands::dispatch(registry, target, invocation)
+    })
+}
 
 #[cfg(test)]
 mod tests;

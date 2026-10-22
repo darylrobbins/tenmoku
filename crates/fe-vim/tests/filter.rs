@@ -5,10 +5,11 @@
 //! 0.12.4 (`nvim --headless --clean`, the filters run through `sort`,
 //! `tr`, `head`, `printf` and `true`), noted case by case.
 
-use fe_command::{Actor, Invocation};
+use fe_command::{Actor, Invocation, Source};
+use fe_editor::commands::HeadlessHost;
 use fe_vim::{
-    HeadlessVim, HostCommand, Remap, RemapCommand, RemapMode, RemapSet, SHELL_REFUSED,
-    ShellCommand, ShellPart,
+    HeadlessVim, HostCommand, Register, Remap, RemapCommand, RemapMode, RemapSet, SHELL_REFUSED,
+    ShellCommand, ShellPart, Write,
 };
 
 /// Eight rows: two paragraphs.
@@ -769,6 +770,170 @@ fn macros_never_reach_the_shell_through_remaps() {
         vim.state_mut().take_host_command(),
         filter(4..8, vec![text("sort")])
     );
+}
+
+/// Writes `text` into register `name`, as a yank does: what a macro
+/// replays, which no key of the user's recorded.
+fn write(vim: &mut HeadlessVim, name: char, text: &str) {
+    let register = Register::new(text, false);
+    (vim.registers_mut())
+        .write(Some(name), Write::Yank, register, &mut HeadlessHost::new())
+        .unwrap();
+}
+
+/// What a host does with the fastedit commands a map's `<Cmd>fe:…<CR>`
+/// left: runs each as a keymap binding's, then resumes the `:normal` that
+/// suspended at them.
+fn run_taken(vim: &mut HeadlessVim) {
+    while let Some(RemapCommand(invocation)) = vim.state_mut().take_remap_command() {
+        vim.state_mut()
+            .running_remap_command(&RemapCommand(invocation.clone()));
+        let invocation = invocation.context(fe_vim::context(vim.state()));
+        vim.dispatch(&invocation).unwrap();
+        if vim.state().has_normal_suspended() {
+            let resume = Invocation::of("vim.normal_resume")
+                .unwrap()
+                .source(Source::Keyboard)
+                .context(fe_vim::context(vim.state()));
+            vim.dispatch(&resume).unwrap();
+        }
+    }
+}
+
+/// Where a shell command came from goes with the command that runs it, not
+/// with the last key read: `!` and `:r !` from a macro's replay, a map, a
+/// `:normal` or a `:normal` inside one reach no shell, however they get
+/// there (`@:` running a line a macro left, a map to it, a fastedit command
+/// a suspended `:normal` left); the user's own keys still do.
+#[test]
+fn shell_commands_carry_their_provenance() {
+    let refused = Some(SHELL_REFUSED.to_string());
+    let host_and_message = |vim: &mut HeadlessVim| {
+        let message = vim.state().message().map(String::from);
+        (vim.state_mut().take_host_command(), message)
+    };
+    let maps = [("Q", "@:"), ("N", ":normal @c<CR>")];
+
+    // The user's own keys reach the shell.
+    let mut vim = mapped(ROWS, &maps);
+    vim.feed(":.!sort<CR>").unwrap();
+    assert_eq!(
+        vim.state_mut().take_host_command(),
+        filter(0..1, vec![text("sort")])
+    );
+    vim.feed(":r !date<CR>").unwrap();
+    assert_eq!(
+        vim.state_mut().take_host_command(),
+        read(1, vec![text("date")])
+    );
+    vim.feed("j!!sort<CR>").unwrap();
+    assert_eq!(
+        vim.state_mut().take_host_command(),
+        filter(1..2, vec![text("sort")])
+    );
+
+    for (register, line) in [('a', ":.!tac\n"), ('b', ":r !date\n")] {
+        // A macro's line: refused, and so is `@:`, which runs it again, typed
+        // or through the user's map to it; and the macro inside a `:normal`.
+        let mut vim = mapped(ROWS, &maps);
+        write(&mut vim, register, line);
+        vim.feed(&format!("@{register}")).unwrap();
+        assert_eq!(
+            host_and_message(&mut vim),
+            (None, refused.clone()),
+            "{line}"
+        );
+        for keys in ["@:", "Q", &format!(":normal @{register}<CR>")] {
+            vim.feed(keys).unwrap();
+            assert_eq!(
+                host_and_message(&mut vim),
+                (None, refused.clone()),
+                "{line} {keys}"
+            );
+        }
+        // A `:normal` inside a `:normal`, typed or through a map: `@c` runs
+        // `:normal @d`, and `@d` the line.
+        write(&mut vim, 'c', ":normal @d\n");
+        write(&mut vim, 'd', line);
+        for keys in [":normal @c<CR>", "N"] {
+            vim.feed(keys).unwrap();
+            assert_eq!(
+                host_and_message(&mut vim),
+                (None, refused.clone()),
+                "{line} {keys}"
+            );
+        }
+        // The user's own `!` after them all still runs.
+        vim.feed("!!sort<CR>").unwrap();
+        assert_eq!(
+            vim.state_mut().take_host_command(),
+            filter(0..1, vec![text("sort")]),
+            "{line}"
+        );
+    }
+
+    // A map's `<Cmd>fe:vim.repeat<CR>` a `:normal` suspends at, for a host
+    // that resumes it: the host runs it after the `:normal`'s keys stopped,
+    // typed or a macro's, and it's still the `:normal`'s.
+    let maps = [("X", "<Cmd>fe:vim.repeat<CR>")];
+    for keys in [":normal X<CR>", "@a"] {
+        let mut vim = mapped("b\na", &maps);
+        vim.state_mut().set_normal_resumes(true);
+        vim.feed("!!sort<CR>").unwrap();
+        assert_eq!(
+            vim.state_mut().take_host_command(),
+            filter(0..1, vec![text("sort")])
+        );
+        write(&mut vim, 'a', ":normal X\n");
+        vim.feed(keys).unwrap();
+        assert!(vim.state().has_normal_suspended(), "{keys}");
+        run_taken(&mut vim);
+        assert_eq!(
+            host_and_message(&mut vim),
+            (None, refused.clone()),
+            "{keys}"
+        );
+        // A key of the user's own after it runs the filter again.
+        vim.feed(".").unwrap();
+        assert_eq!(
+            vim.state_mut().take_host_command(),
+            filter(0..1, vec![text("sort")]),
+            "{keys}"
+        );
+    }
+
+    // A binding that runs `.` or an ex line itself, with no key of vim's,
+    // is the user's own, however the last key read came from a macro.
+    let mut vim = HeadlessVim::new("b\na", (0, 0));
+    vim.feed("!!sort<CR>qa.q").unwrap();
+    while vim.state_mut().take_host_command().is_some() {}
+    let direct = [
+        Invocation::of("vim.repeat").unwrap(),
+        Invocation::of("vim.ex_line")
+            .unwrap()
+            .args(serde_json::json!({ "text": ".!sort" })),
+    ];
+    for macro_keys in ["@a", "@:"] {
+        vim.feed(":.!sort<CR>").unwrap();
+        assert_eq!(
+            vim.state_mut().take_host_command(),
+            filter(0..1, vec![text("sort")])
+        );
+        vim.feed(macro_keys).unwrap();
+        assert_eq!(vim.state_mut().take_host_command(), None, "{macro_keys}");
+        for invocation in &direct {
+            let invocation = (invocation.clone())
+                .source(Source::Keyboard)
+                .context(fe_vim::context(vim.state()));
+            vim.dispatch(&invocation).unwrap();
+            assert_eq!(
+                vim.state_mut().take_host_command(),
+                filter(0..1, vec![text("sort")]),
+                "{macro_keys} {}",
+                invocation.command
+            );
+        }
+    }
 }
 
 #[test]

@@ -28,10 +28,11 @@
 //! `:normal` runs (`global.rs`, `normal.rs`), or a map's command the host
 //! runs while a `:normal` waits suspended on it, whoever asked for that,
 //! gets [`REFUSED`] and no host command; so does anything a macro's replay
-//! runs, its own keys or those of the maps they run, and a map's
-//! `<Cmd>fe:…<CR>` among them, which the host runs later
-//! (`VimState::from_macro`, through `remap::Origin`). The host command carries the actor, for
-//! the host to check again. A line that runs one becomes the last shell
+//! runs, its own keys or those of the maps they run, a map's
+//! `<Cmd>fe:…<CR>` among them, which the host runs later, and `@:`'s line.
+//! Where it came from goes with each invocation, through all it runs
+//! (`remap::Provenances`), not with the last key read. The host command
+//! carries the actor, for the host to check again. A line that runs one becomes the last shell
 //! command (nvim's for `:!!`), the rows and below line the range's, as for
 //! any command (E16 past the last line, E493 backwards).
 
@@ -45,7 +46,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::super::{Address, ExCommand, ExError, HostCommand, first_non_blank, global};
-use crate::{VimState, feature::line_undo, history, insert, marks, operator};
+use crate::{VimState, feature::line_undo, history, insert, marks, operator, remap::Provenance};
 
 /// What a shell command asked for by anyone but the user, or run by `:g`
 /// or `:normal`, says.
@@ -180,11 +181,13 @@ pub(in crate::ex) fn parse_read(text: &str) -> Result<ExCommand, ExError> {
 /// [`REFUSED`] for a shell command `actor` asks for: anyone but the user,
 /// or anyone while a `:g` or `:normal` runs, or a `:normal` waits
 /// suspended for the host to run a map's command (which may be this), or
-/// from a macro's replay, through its maps or a map's fastedit command too
-/// (`VimState::from_macro`).
+/// for what runs from a macro's replay or a `:normal`, through its maps, a
+/// map's fastedit command or `@:` too, whatever invocation it comes
+/// through (`remap::Provenances`).
 pub(crate) fn refusal(state: &VimState, actor: &Actor) -> Result<(), ExError> {
     let normal = global::running() || state.normal_suspended.is_some();
-    match *actor == Actor::User && !normal && !state.from_macro {
+    let own = state.provenance.scope() == Provenance::User;
+    match *actor == Actor::User && !normal && own {
         true => Ok(()),
         false => Err(ExError::ShellRefused),
     }

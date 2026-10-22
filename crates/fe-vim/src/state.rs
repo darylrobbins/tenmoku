@@ -12,7 +12,9 @@ use fe_editor::{
 use crate::ex::HostCommand;
 use crate::feature::replace_register;
 use crate::macros::REPLAY_CAP;
-use crate::remap::{Origin, RemapCommand, RemapSet, RemapState, Staged, TYPED};
+use crate::remap::{
+    Origin, Provenance, Provenances, RemapCommand, RemapSet, RemapState, Staged, TYPED,
+};
 use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
@@ -187,7 +189,7 @@ pub struct VimState {
     pub(crate) expanded: bool,
     /// The fastedit commands maps' `<Cmd>fe:…<CR>` ran, for the host, in
     /// order.
-    pub(crate) remap_commands: std::collections::VecDeque<RemapCommand>,
+    pub(crate) remap_commands: std::collections::VecDeque<(RemapCommand, Provenance)>,
     /// The last `:normal` to end stopped at a map's `<Cmd>fe:…<CR>`
     /// ([`crate::ex::normal`]): one it ran in stops too.
     pub(crate) normal_refused: bool,
@@ -208,10 +210,10 @@ pub struct VimState {
     pub(crate) exchange: Option<crate::feature::exchange::Marked>,
     /// `!`'s line opened and the last shell command (`feature/filter.rs`).
     pub(crate) filter: crate::feature::filter::Filters,
-    /// The key last read came from a macro's replay, itself or through
-    /// the maps it ran, or the fastedit command the host took last is one
-    /// such a key ran: what it runs, the shell refuses (`ex/filter.rs`).
-    pub(crate) from_macro: bool,
+    /// Where what runs came from: the user's keys, a macro's or a
+    /// `:normal`'s, with each invocation (shell commands run only from the
+    /// user's, `ex/filter.rs`).
+    pub(crate) provenance: Provenances,
 }
 
 impl VimState {
@@ -484,12 +486,17 @@ impl VimState {
     /// after a count or an operator, a key that fails) commits
     /// `vim.resume_insert`, which resumes the session.
     pub fn feed(&mut self, key: VimKey) -> Step {
+        self.provenance.start_read();
         let step = self.feed_key(key);
         match step {
-            Step::Commit(_) => step,
+            Step::Commit(invocation) => {
+                self.provenance.commit(&invocation);
+                Step::Commit(invocation)
+            }
             _ if self.one_command_done() => {
                 let resume =
                     Invocation::of("vim.resume_insert").expect("vim command IDs are valid");
+                self.provenance.commit(&resume);
                 Step::Commit(resume.source(Source::Keyboard))
             }
             _ => step,
@@ -510,7 +517,7 @@ impl VimState {
         let origin = tag.origin.unwrap_or_else(|| Origin::Typed {
             replayed: self.macros.count(),
         });
-        self.from_macro = origin.replayed();
+        self.provenance.read_from(origin);
         if taken.is_some() && self.remap.over_cap() {
             self.pending = Pending::new();
             self.fail(format!(
@@ -637,6 +644,7 @@ impl VimState {
     /// other than `<C-n>`, `<C-p>`, `<C-e>` and `<C-y>` ends a keyword
     /// completion ([`VimState::completion`]).
     pub fn record_key(&mut self, key: VimKey) {
+        self.provenance.start_read();
         self.failed = false;
         self.completion_key(key);
         let origin = self
@@ -647,7 +655,12 @@ impl VimState {
                 replayed: self.macros.count(),
             });
         self.expanded = origin.expansion();
-        self.from_macro = origin.replayed();
+        self.provenance.read_from(origin);
+        if matches!(self.mode, Mode::CmdLine(_))
+            && matches!(key, VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc)
+        {
+            self.provenance.commit_line();
+        }
         self.remap.read(origin);
         if origin.recorded() {
             self.macros.record(key);
@@ -696,21 +709,22 @@ impl VimState {
     /// the command that ran it is over.
     ///
     /// One a macro's replay ran (through its maps or not) has the source
-    /// [`Source::Replay`], and runs as the replay's: a shell command it
-    /// asks for is refused, as the replay's own keys' are.
+    /// [`Source::Replay`], and runs as the replay's, as one a `:normal` ran
+    /// runs as the `:normal`'s: a shell command it asks for is refused, as
+    /// the replay's own keys' are, when [`crate::dispatch`] runs it (until a
+    /// key of the user's is read, or the host says it runs it now,
+    /// [`VimState::running_remap_command`]).
     pub fn take_remap_command(&mut self) -> Option<RemapCommand> {
-        let command = self.remap_commands.pop_front()?;
-        self.from_macro = command.0.source == Source::Replay;
+        let (command, provenance) = self.remap_commands.pop_front()?;
+        self.provenance.take(&command.0, provenance);
         Some(command)
     }
 
     /// The host runs `command`, which [`VimState::take_remap_command`]
-    /// gave it, now: one a macro's replay left runs as the replay's,
-    /// whatever was read since it was taken.
+    /// gave it last, now: one a macro's replay or a `:normal` left runs as
+    /// theirs, whatever was read since it was taken.
     pub fn running_remap_command(&mut self, command: &RemapCommand) {
-        if command.0.source == Source::Replay {
-            self.from_macro = true;
-        }
+        self.provenance.running(&command.0);
     }
 
     /// Whether the host runs the fastedit command a `:normal` reaches, and
@@ -792,13 +806,7 @@ impl VimState {
     /// [`VimState::stop_replay`] then too.
     pub fn take_replay(&mut self) -> Vec<VimKey> {
         let replay = self.macros.take();
-        let keys = self.remap.take(replay);
-        // The replay is over, the maps it ran included: what's read next
-        // is the user's.
-        if keys.is_empty() && self.remap.idle() {
-            self.from_macro = false;
-        }
-        keys
+        self.remap.take(replay)
     }
 
     /// The host dropped the rest of a replay or a map's keys: it's over,
@@ -809,6 +817,7 @@ impl VimState {
         self.remap.stop();
         self.remap_commands.clear();
         self.normal_suspended = None;
+        self.provenance.stop();
     }
 
     /// Whether the last key read failed, as nvim's errors and beeps do,

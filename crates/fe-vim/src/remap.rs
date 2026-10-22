@@ -421,12 +421,6 @@ impl RemapState {
         !self.held.is_empty()
     }
 
-    /// Whether no key is held, resolved or handed out: what the host reads
-    /// next is typed.
-    pub(crate) fn idle(&self) -> bool {
-        self.held.is_empty() && self.queued.is_empty() && self.taken.is_empty()
-    }
-
     /// Whether keys were resolved that the host hasn't taken yet.
     pub(crate) fn resolved(&self) -> bool {
         !self.queued.is_empty()
@@ -747,14 +741,15 @@ pub(crate) fn run_cmd(state: &mut VimState, cmd: &Cmd) -> Step {
             Step::Commit(invocation)
         }
         Cmd::Fe(id) => {
-            // One a macro's key ran is the replay's: the host runs it later
+            // It goes with where its key came from: the host runs it later
             // (`VimState::take_remap_command`), knowing.
-            let source = match state.from_macro {
-                true => Source::Replay,
-                false => Source::Keyboard,
+            let provenance = state.provenance.read();
+            let source = match provenance {
+                Provenance::Macro => Source::Replay,
+                Provenance::User | Provenance::Nested => Source::Keyboard,
             };
             let invocation = Invocation::new(id.clone()).source(source);
-            state.remap_commands.push_back(RemapCommand(invocation));
+            (state.remap_commands).push_back((RemapCommand(invocation), provenance));
             Step::Wait(Pending::new())
         }
     }
@@ -773,4 +768,191 @@ pub(crate) fn ex_line(
     let ran = crate::ex::run(target, actor, &args.text);
     target.registers.leave_ex();
     ran
+}
+
+// Where what runs came from, for the guard on shell commands
+// (`ex/filter.rs`): the user's own keys, a macro's, or a `:normal`'s.
+//
+// It goes with each invocation, not with the last key read. The key a
+// command comes from tags the invocation it commits (`VimState::feed`),
+// and a command line's `<CR>` the submit that follows it
+// (`VimState::record_key`); a map's `<Cmd>fe:…<CR>` tags the command the
+// host takes (`VimState::take_remap_command`) until that command runs,
+// however much later (`VimState::running_remap_command`). `fe_vim::dispatch`
+// runs an invocation in its tag's scope, and all that runs inside it keeps
+// the scope: a dispatch of its own, an ex line, `@:` (a macro's, whoever
+// runs it), a `:normal` (nested, and its suspended command with it). An
+// untagged invocation, as a keymap binding dispatches, runs as the user's,
+// whatever ran before it.
+
+/// Where a key or a command came from, a later kind taking over an earlier
+/// one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Provenance {
+    /// The user's keys, or a map they ran.
+    #[default]
+    User,
+    /// A `@`'s keys, a map they ran, or `@:`'s line.
+    Macro,
+    /// What a `:normal` runs, suspended or not.
+    Nested,
+}
+
+/// An invocation left for the host to dispatch, with where it came from.
+#[derive(Clone, Debug, PartialEq)]
+struct Tagged {
+    command: CommandId,
+    /// `None`: with whatever args.
+    args: Option<serde_json::Value>,
+    provenance: Provenance,
+}
+
+impl Tagged {
+    fn matches(&self, invocation: &Invocation) -> bool {
+        self.command == invocation.command
+            && (self.args.as_ref()).is_none_or(|args| *args == invocation.args)
+    }
+}
+
+/// [`Provenance`] as `VimState` follows it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Provenances {
+    /// The dispatch running's.
+    scope: Provenance,
+    /// The key being read's.
+    read: Provenance,
+    /// What the last key read committed, for the dispatch after it.
+    committed: Option<Tagged>,
+    /// A map's `<Cmd>fe:…<CR>` command the host took, until it runs.
+    taken: Option<Tagged>,
+    /// The last such command the host took, for the host to say it runs
+    /// it now ([`Provenances::running`]).
+    handed: Option<Tagged>,
+}
+
+impl Provenances {
+    /// The dispatch running's provenance.
+    pub(crate) fn scope(&self) -> Provenance {
+        self.scope
+    }
+
+    /// The key being read's provenance.
+    pub(crate) fn read(&self) -> Provenance {
+        self.read
+    }
+
+    /// A key starts being read: it commits nothing yet, and comes from the
+    /// scope until its origin is known.
+    pub(crate) fn start_read(&mut self) {
+        self.committed = None;
+        self.read = self.scope;
+    }
+
+    /// The key being read came from `origin`. A key of the user's own ends
+    /// whatever replay a taken command was part of.
+    pub(crate) fn read_from(&mut self, origin: Origin) {
+        let own = match origin.replayed() {
+            true => Provenance::Macro,
+            false => Provenance::User,
+        };
+        self.read = self.scope.max(own);
+        if self.read == Provenance::User {
+            self.taken = None;
+        }
+    }
+
+    /// The key being read committed `invocation`.
+    pub(crate) fn commit(&mut self, invocation: &Invocation) {
+        self.committed = self.tag(invocation.command.clone(), Some(invocation.args.clone()));
+    }
+
+    /// The key being read ends a command line, which the host submits.
+    pub(crate) fn commit_line(&mut self) {
+        let submit =
+            CommandId::parse("vim.command_line_submit").expect("vim command IDs are valid");
+        self.committed = self.tag(submit, None);
+    }
+
+    fn tag(&self, command: CommandId, args: Option<serde_json::Value>) -> Option<Tagged> {
+        (self.read != Provenance::User).then_some(Tagged {
+            command,
+            args,
+            provenance: self.read,
+        })
+    }
+
+    /// The host took `invocation`, a map's `<Cmd>fe:…<CR>` command from
+    /// `provenance`, to run. It's matched by its command alone: the host
+    /// may stamp args on it.
+    pub(crate) fn take(&mut self, invocation: &Invocation, provenance: Provenance) {
+        self.taken = (provenance != Provenance::User).then(|| Tagged {
+            command: invocation.command.clone(),
+            args: None,
+            provenance,
+        });
+        self.handed = self.taken.clone();
+    }
+
+    /// The host runs `invocation` now, the command it took last: it's
+    /// tagged again, whatever keys were read since.
+    pub(crate) fn running(&mut self, invocation: &Invocation) {
+        if let Some(tag) = &self.handed
+            && tag.matches(invocation)
+        {
+            self.taken = self.handed.clone();
+        }
+    }
+
+    /// `invocation` starts running: in its tag's scope, or the running
+    /// one's if that takes over. Returns the scope to go back to. Not
+    /// inlined: a `:normal` inside a `:normal` would carry its tags on each
+    /// level's stack.
+    #[inline(never)]
+    pub(crate) fn enter(&mut self, invocation: &Invocation) -> Provenance {
+        let committed = self.committed.take().filter(|tag| tag.matches(invocation));
+        let taken = match &self.taken {
+            Some(tag) if tag.matches(invocation) => self.taken.take(),
+            _ => None,
+        };
+        let tagged = [committed, taken]
+            .into_iter()
+            .flatten()
+            .map(|tag| tag.provenance)
+            .max()
+            .unwrap_or_default();
+        self.within(tagged)
+    }
+
+    /// Runs on in `provenance` too, if it takes over the scope: returns the
+    /// scope to go back to.
+    pub(crate) fn within(&mut self, provenance: Provenance) -> Provenance {
+        let outer = self.scope;
+        self.scope = outer.max(provenance);
+        outer
+    }
+
+    /// Back to `outer` ([`Provenances::enter`], [`Provenances::within`]).
+    pub(crate) fn leave(&mut self, outer: Provenance) {
+        self.scope = outer;
+    }
+
+    /// The replay is over: no command it left keeps its tag.
+    pub(crate) fn stop(&mut self) {
+        self.committed = None;
+        self.taken = None;
+        self.handed = None;
+    }
+}
+
+/// Runs `run`, dispatching `invocation`, in the provenance its key gave it
+/// ([`Provenances::enter`]).
+pub(crate) fn scoped<R>(
+    target: &mut VimTarget<'_>,
+    invocation: &Invocation,
+    run: impl FnOnce(&mut VimTarget<'_>) -> R,
+) -> R {
+    let outer = target.state.provenance.enter(invocation);
+    let result = run(target);
+    target.state.provenance.leave(outer);
+    result
 }

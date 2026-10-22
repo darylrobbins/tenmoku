@@ -331,7 +331,10 @@ fn repeat_line(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u32>) ->
     let mut dispatched = Dispatched::new(Effect::Notify);
     for _ in 0..count.unwrap_or(1).max(1) {
         crate::commands::follow(target);
+        // A replay of the line, as a macro's keys are.
+        let outer = (target.state.provenance).within(crate::remap::Provenance::Macro);
         let ran = crate::ex::run(target, actor, &line);
+        target.state.provenance.leave(outer);
         crate::marks::settle(target);
         let ran = ran?;
         if ran.effect == Effect::Changed || dispatched.effect != Effect::Changed {

@@ -50,7 +50,7 @@ use super::{
     global::{self, Depth, Group},
     to_row_start,
 };
-use crate::remap::RemapState;
+use crate::remap::{Provenance, RemapState};
 use crate::{
     Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, RemapCommand, Step,
     SubmitArgs, VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
@@ -113,7 +113,7 @@ pub(crate) struct Suspended {
     /// handed out and the counters, while it waits.
     stream: Option<RemapState>,
     /// Fastedit commands left before it, which wait for it to end.
-    outer_commands: VecDeque<RemapCommand>,
+    outer_commands: VecDeque<(RemapCommand, Provenance)>,
 }
 
 /// `vim.normal_resume`'s id.
@@ -164,6 +164,8 @@ pub(crate) fn resume(target: &mut VimTarget<'_>) -> Handled {
 /// outermost `:normal`.
 fn drive(target: &mut VimTarget<'_>, mut job: Suspended) -> Result<Handled, ExError> {
     let _depth = Depth::enter()?;
+    // What its keys run, and the command it suspends at, is nested.
+    let provenance = target.state.provenance.within(Provenance::Nested);
     let outer = target.state.remap_save();
     if let Some(stream) = job.stream.take() {
         target.state.remap_restore(stream);
@@ -234,6 +236,7 @@ fn drive(target: &mut VimTarget<'_>, mut job: Suspended) -> Result<Handled, ExEr
             target.state.fail(FE_REFUSED);
         }
     }
+    target.state.provenance.leave(provenance);
     Ok(Ok(
         Dispatched::new(Effect::Changed).with_transactions(transactions)
     ))
@@ -418,8 +421,10 @@ impl Runner {
             state: &mut *target.state,
             registers: &mut *target.registers,
         };
+        let provenance = reborrowed.state.provenance.enter(&invocation);
         let dispatched: Result<_, DispatchError> =
             REGISTRY.with(|registry| registry.dispatch(&mut reborrowed, &invocation));
+        reborrowed.state.provenance.leave(provenance);
         if joins {
             let until = target.model.buffer().version();
             global::noted(from, until, global::Change::Joined);
