@@ -1802,6 +1802,14 @@ static bool ts_parser__advance(
       return true;
     }
 
+    // fastedit patch: a state with no lookahead and no action for the end of
+    // input (a malformed grammar, T234) has nothing to reduce or shift; the
+    // code below reads the lookahead.
+    if (!lookahead.ptr) {
+      ts_stack_halt(self->stack, version);
+      return true;
+    }
+
     // If the current lookahead token is a keyword that is not valid, but the
     // default word token *is* valid, then treat the lookahead token as the word
     // token instead.
