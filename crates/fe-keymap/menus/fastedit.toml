@@ -217,6 +217,22 @@ title = "Code Actions…"
 command = "lsp.code_actions"
 
 [[menus.items]]
+title = "Organize Imports"
+command = "lsp.organize_imports"
+
+[[menus.items]]
+title = "Fix All"
+command = "lsp.fix_all"
+
+[[menus.items]]
+title = "Refactor…"
+command = "lsp.refactor"
+
+[[menus.items]]
+title = "Source Action…"
+command = "lsp.source_action"
+
+[[menus.items]]
 title = "Format Document"
 command = "lsp.format_document"
 

@@ -147,6 +147,8 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
     ("f2", "lsp.rename", Some("editor")),
     ("cmd-.", "lsp.code_actions", Some("editor")),
+    ("shift-alt-o", "lsp.organize_imports", Some("editor")),
+    ("ctrl-shift-r", "lsp.refactor", Some("editor")),
     (
         "shift-alt-f",
         "lsp.format_document",

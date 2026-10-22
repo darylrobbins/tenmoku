@@ -316,3 +316,6 @@ fn empty_and_stale(cx: &mut TestAppContext) {
     s.cx.simulate_prompt_answer("OK");
     s.draw();
 }
+
+#[path = "lsp_code_action_kinds_tests.rs"]
+mod kinds;

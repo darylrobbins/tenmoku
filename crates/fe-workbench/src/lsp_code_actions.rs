@@ -26,7 +26,7 @@ use std::ops::Range;
 use fe_buffer::{BufferId, Version};
 use fe_editor::diagnostics::{DiagnosticTag, Severity};
 use fe_gpui::EditorView;
-use fe_lsp::{CodeAction, LspError};
+use fe_lsp::{CodeAction, LspError, code_action::CodeActionQuery};
 use fe_ui::{HighlightedLabel, UiTheme, char_ranges};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
@@ -64,9 +64,17 @@ fn reason(error: &LspError) -> String {
 }
 
 impl Workbench {
-    /// Lists the code actions for the active editor's selection and its
-    /// diagnostics, to pick one to apply.
-    pub(crate) fn show_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Lists the code actions `query` asks for at the active editor's
+    /// selection and its diagnostics, to pick one to apply. With `direct`,
+    /// the one enabled action there is, if there is exactly one, is applied
+    /// at once instead. Without a kind, `source` actions are left out.
+    pub(crate) fn show_code_actions(
+        &mut self,
+        query: CodeActionQuery,
+        direct: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // One at a time, asking or listing.
         if self.palette == Some(Palette::CodeActions) || self.lsp.code_actioning.is_some() {
             return;
@@ -109,7 +117,7 @@ impl Workbench {
         let Some(actioner) = self.lsp_code_actioner(buffer) else {
             return tell("No language server for this file", window, cx);
         };
-        let reply = actioner.ask(buffer, version, range.clone(), diagnostics);
+        let reply = actioner.ask(buffer, version, range.clone(), diagnostics, query.clone());
         self.lsp.code_actioning = Some(cx.spawn_in(window, async move |this, cx| {
             let answer = reply.await;
             let _ = this.update_in(cx, |workbench, window, cx| {
@@ -122,7 +130,7 @@ impl Workbench {
                     version,
                     range,
                 };
-                workbench.listed(at, actioner, answer, window, cx)
+                workbench.listed(at, actioner, (query, direct), answer, window, cx)
             });
         }));
     }
@@ -134,6 +142,7 @@ impl Workbench {
         &mut self,
         at: Asked,
         actioner: CodeActioner,
+        (query, direct): (CodeActionQuery, bool),
         answer: Result<Vec<CodeAction>, LspError>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -145,16 +154,28 @@ impl Workbench {
         if !current || self.palette == Some(Palette::CodeActions) {
             return;
         }
-        let actions = match answer {
-            Ok(actions) if actions.is_empty() => {
-                return tell("No code actions available", window, cx);
-            }
+        let mut actions = match answer {
             Ok(actions) => actions,
             Err(error) => return tell(&reason(&error), window, cx),
         };
+        // Quick Fix leaves the source actions to their own commands.
+        if query.only.is_none() {
+            actions.retain(|action| !action.kind_is("source"));
+        }
+        if actions.is_empty() {
+            return match kind_name(&query) {
+                Some(kind) => tell(&format!("No {kind} actions available"), window, cx),
+                None => tell("No code actions available", window, cx),
+            };
+        }
+        if direct {
+            let mut enabled = actions.iter().filter(|action| action.disabled.is_none());
+            if let (Some(action), None) = (enabled.next(), enabled.next()) {
+                return self.apply_alone(at, actioner, action.clone(), window, cx);
+            }
+        }
         // fe-lsp ranks the quick fixes for the diagnostics first: the
         // preferred one leads the list all the same. Stable.
-        let mut actions = actions;
         actions.sort_by_key(|action| {
             !(action.is_preferred && action.is_quick_fix() && action.disabled.is_none())
         });
@@ -178,6 +199,72 @@ impl Workbench {
         LAST.with(|last| *last.borrow_mut() = Some(picker.downgrade()));
         self.show_palette(Palette::CodeActions, picker, window, cx);
     }
+
+    /// Resolves `action`, applies its edits and has the server run its
+    /// command, as confirming it in the picker would, without one.
+    fn apply_alone(
+        &mut self,
+        at: Asked,
+        actioner: CodeActioner,
+        action: CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let resolving = actioner.resolve(&action);
+        self.lsp.code_actioning = Some(cx.spawn_in(window, async move |this, cx| {
+            let resolved = resolving.await;
+            let run = this
+                .update_in(cx, |workbench, window, cx| {
+                    let unchanged = at.editor.read(cx).model().buffer().version() == at.version;
+                    let applied = match resolved {
+                        Ok(_) if !unchanged => Err(STALE.to_owned()),
+                        Ok(action) => actioner
+                            .edits(&action)
+                            .map_err(|error| reason(&error))
+                            .and_then(|edits| workbench.apply_file_edits(edits, cx))
+                            .map(|_| actioner.run(&action)),
+                        Err(error) => Err(reason(&error)),
+                    };
+                    match applied {
+                        Ok(run) => Some(run),
+                        Err(message) => {
+                            if let Some(task) = workbench.lsp.code_actioning.take() {
+                                task.detach();
+                            }
+                            tell(&message, window, cx);
+                            None
+                        }
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some(run) = run else { return };
+            let ran = run.await;
+            let _ = this.update_in(cx, |workbench, window, cx| {
+                if let Some(task) = workbench.lsp.code_actioning.take() {
+                    task.detach();
+                }
+                if let Err(error) = ran {
+                    tell(&reason(&error), window, cx);
+                }
+            });
+        }));
+    }
+}
+
+/// What `query`'s kind is called in "No … actions available": `source.fixAll`
+/// is "fix all". `None` without a kind.
+fn kind_name(query: &CodeActionQuery) -> Option<String> {
+    let kind = query.only.as_ref()?.first()?;
+    let last = kind.rsplit('.').next()?;
+    let mut name = String::new();
+    for c in last.chars() {
+        if c.is_uppercase() {
+            name.push(' ');
+        }
+        name.extend(c.to_lowercase());
+    }
+    Some(name)
 }
 
 /// Whether a diagnostic's range is one `selection` is at: a caret is at

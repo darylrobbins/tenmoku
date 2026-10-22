@@ -337,6 +337,16 @@ command = "lsp.code_actions"
 context = "editor"
 
 [[bindings]]
+keys = "shift-alt-o"
+command = "lsp.organize_imports"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-r"
+command = "lsp.refactor"
+context = "editor"
+
+[[bindings]]
 keys = { macos = "shift-alt-f", default = "ctrl-shift-i" }
 command = "lsp.format_document"
 context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"

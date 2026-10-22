@@ -2071,8 +2071,9 @@ impl CodeActioner {
         version: Version,
         range: std::ops::Range<usize>,
         diagnostics: Vec<fe_lsp::Diagnostic>,
+        query: fe_lsp::code_action::CodeActionQuery,
     ) -> Answer<Vec<fe_lsp::CodeAction>> {
-        Box::pin(lock(&self.0).code_actions(buffer, version, range, diagnostics))
+        Box::pin(lock(&self.0).code_actions_for(buffer, version, range, diagnostics, query))
     }
 
     /// The actions of kind `kind` alone for `range` of `buffer` at

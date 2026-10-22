@@ -230,6 +230,8 @@ const DEDICATED: &[&str] = &[
     "cmd-/",
     "f2",
     "cmd-.",
+    "shift-alt-o",
+    "ctrl-shift-r",
     "cmd-k cmd-f",
     "cmd-shift-space",
     "alt-f3",

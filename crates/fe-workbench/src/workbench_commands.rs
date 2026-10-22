@@ -5,6 +5,7 @@
 //! name it.
 
 use fe_command::ContextPredicate;
+use fe_lsp::code_action::CodeActionQuery;
 use fe_nav::Related;
 use gpui::{App, Context, Window};
 use kiln::Cx;
@@ -711,7 +712,33 @@ impl Workbench {
     /// Code Actions…
     #[command(id = "lsp.code_actions", context = "editor")]
     fn code_actions(&mut self, cx: &mut Cx<Self>) {
-        self.in_editor(cx, |this, window, cx| this.show_code_actions(window, cx));
+        self.in_editor(cx, |this, window, cx| {
+            this.show_code_actions(CodeActionQuery::default(), false, window, cx)
+        });
+    }
+
+    /// Organize Imports
+    #[command(id = "lsp.organize_imports", context = "editor")]
+    fn organize_imports(&mut self, cx: &mut Cx<Self>) {
+        self.code_actions_of("source.organizeImports", true, cx);
+    }
+
+    /// Fix All
+    #[command(id = "lsp.fix_all", context = "editor")]
+    fn fix_all(&mut self, cx: &mut Cx<Self>) {
+        self.code_actions_of("source.fixAll", true, cx);
+    }
+
+    /// Refactor…
+    #[command(id = "lsp.refactor", context = "editor")]
+    fn refactor(&mut self, cx: &mut Cx<Self>) {
+        self.code_actions_of("refactor", false, cx);
+    }
+
+    /// Source Action…
+    #[command(id = "lsp.source_action", context = "editor")]
+    fn source_action(&mut self, cx: &mut Cx<Self>) {
+        self.code_actions_of("source", false, cx);
     }
 
     /// Run Code Lens
@@ -959,6 +986,18 @@ impl Workbench {
         run: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) {
         self.in_context(fe_editor::commands::CONTEXT, cx, run);
+    }
+
+    /// Lists the code actions of `kind` at the editor's selection: applies
+    /// the one there is, when `direct`.
+    fn code_actions_of(&mut self, kind: &str, direct: bool, cx: &mut Cx<Self>) {
+        let query = CodeActionQuery {
+            only: Some(vec![kind.to_owned()]),
+            automatic: false,
+        };
+        self.in_editor(cx, |this, window, cx| {
+            this.show_code_actions(query, direct, window, cx)
+        });
     }
 
     /// Runs `run`, a command's in `context`, if the command was invoked

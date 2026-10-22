@@ -533,6 +533,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
     assert_eq!(
         ctrl,
         [
+            "ctrl-shift-r",
             "ctrl--",
             "ctrl-shift--",
             "ctrl-`",
