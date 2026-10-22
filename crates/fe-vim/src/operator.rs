@@ -463,6 +463,26 @@ fn on_row(text: &Text, row: u32, goal: Option<usize>, tab: usize, first_non_blan
     cursor.offset()
 }
 
+/// `end`, where a motion over `span` from `start` landed, as nvim's
+/// `']` takes it once an exclusive motion ending at a row's column 0 left
+/// that row out (`:help exclusive`): on the row before, at its column 0 if
+/// the motion became linewise (`start` in its row's indentation), else on
+/// its last character.
+fn adjusted_end(text: &Text, span: &Span, start: usize, end: usize) -> usize {
+    let Span::Lines { rows, .. } = span else {
+        return end;
+    };
+    let last = *rows.end();
+    if text.offset_to_point(end).row <= last {
+        return end;
+    }
+    let row_start = text.row_start(last);
+    match at_or_before_first_non_blank(text, start) {
+        true => row_start,
+        false => Cursor::at(text, row_end(text, last).saturating_sub(1).max(row_start)).offset(),
+    }
+}
+
 /// Where a caret with nothing to act on goes: a [`Span::Move`]'s offset, or
 /// an empty range's start.
 fn moved_to(span: &Span) -> Option<usize> {
@@ -1019,7 +1039,8 @@ fn operate_unless_failing(
                     let reached = motion::motion(&mut cursor, moved, last_find, *goal, tab)
                         .ok()
                         .map(|_| cursor.offset());
-                    comment::ends(&text, span, head, reached)
+                    let (start, end) = comment::ends(&text, span, head, reached)?;
+                    Some((start, adjusted_end(&text, span, start, end)))
                 })
                 .collect(),
             _ => Vec::new(),

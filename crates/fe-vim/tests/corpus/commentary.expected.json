@@ -1213,6 +1213,82 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "gc_paragraph_end_mark_linewise",
+      "buffer": "aaa\nbbb\n\nccc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gc}`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "# aaa\n# bbb\n\nccc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gc_paragraph_end_mark_inclusive",
+      "buffer": "aaa\nbbb\n\nccc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gc}`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "# aaa\n# bbb\n\nccc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gc_paragraph_end_mark_in_indent",
+      "buffer": "  aaa\nbbb\n\nccc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gc}`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "#   aaa\n# bbb\n\nccc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gc_paragraph_end_mark_one_row",
+      "buffer": "aaa\n\nccc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gc}`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "# aaa\n\nccc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

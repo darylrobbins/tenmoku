@@ -362,3 +362,34 @@ cursor = [0, 0]
 keys = "gcc"
 mapping = ["onoremap c j"]
 set = "commentstring=#\\ %s"
+
+# `']` after an exclusive motion that ended at a row's column 0 (`:help
+# exclusive`): on the row before, at column 0 once the motion became
+# linewise, else on its last character.
+[[case]]
+name = "gc_paragraph_end_mark_linewise"
+buffer = "aaa\nbbb\n\nccc"
+cursor = [0, 0]
+keys = "gc}`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_paragraph_end_mark_inclusive"
+buffer = "aaa\nbbb\n\nccc"
+cursor = [0, 1]
+keys = "gc}`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_paragraph_end_mark_in_indent"
+buffer = "  aaa\nbbb\n\nccc"
+cursor = [0, 1]
+keys = "gc}`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_paragraph_end_mark_one_row"
+buffer = "aaa\n\nccc"
+cursor = [0, 1]
+keys = "gc}`]"
+set = "commentstring=#\\ %s"
