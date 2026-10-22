@@ -1,6 +1,8 @@
 package fastedit:editor@1.0.0;
 
-/// Items a plugin shows in the status bar.
+/// Items a plugin shows in the status bar. The editor keeps them and draws from its copy. Both
+/// imports need the `status` capability. A plugin shows at most 64 items; unloading it removes
+/// them.
 interface status {
     use kiln:extension/types@1.0.0.{command-id, error};
 
@@ -14,11 +16,16 @@ interface status {
         id: string,
         text: string,
         tooltip: option<string>,
-        /// Run when the item is clicked.
+        /// Run when the item is clicked, as the plugin: it runs only if the plugin's grants allow
+        /// that command, as they do for `kiln:extension/commands.invoke`.
         command: option<command-id>,
         alignment: alignment,
     }
 
+    /// Shows `item`, replacing the plugin's item with its id. A `command` that isn't a command id
+    /// fails with `invalid-argument`.
     set-item: func(item: item) -> result<_, error>;
+
+    /// Removes the plugin's item `id`; `not-found` if it has none.
     remove-item: func(id: string) -> result<_, error>;
 }

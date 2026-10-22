@@ -2,6 +2,10 @@ package fastedit:editor@1.0.0;
 
 /// Highlights and gutter marks a plugin draws on a buffer. A plugin draws in named sets; setting
 /// a set replaces it, and the editor maps it through later edits until the plugin sets it again.
+/// The editor keeps the sets and draws from its copy: it never calls the plugin to draw.
+/// Every import needs the `decorations` capability. A plugin keeps at most 10,000 decorations
+/// and gutter entries on one buffer, over all its sets; a set that would take it past that fails
+/// and leaves the set as it was. Unloading the plugin removes its sets.
 interface decorations {
     use kiln:extension/types@1.0.0.{buffer-id, version, range, error};
 
@@ -31,10 +35,17 @@ interface decorations {
         tooltip: option<string>,
     }
 
-    /// Replaces decoration set `set` on `buffer`, ranges against `version`.
+    /// Replaces decoration set `set` on `buffer`, ranges against `version`. Each range is as for
+    /// `buffer.edit`, in the text at `version`, else the call fails with `invalid-argument`.
+    ///
+    /// `version` may be older than the buffer's: the set is mapped through the edits since, and a
+    /// decoration whose text they deleted, or an empty one inside text they replaced, is dropped.
+    /// A version the editor can no longer map from fails with `conflict`; set it again against
+    /// the buffer's version now.
     set-decorations: func(buffer: buffer-id, version: version, set: string, decorations: list<decoration>) -> result<_, error>;
 
-    /// Replaces gutter set `set` on `buffer`, lines as of `version`.
+    /// Replaces gutter set `set` on `buffer`, lines as of `version`, which is as for
+    /// `set-decorations`. An entry follows its line through edits, and is dropped with it.
     set-gutter: func(buffer: buffer-id, version: version, set: string, entries: list<gutter-entry>) -> result<_, error>;
 
     /// Removes both kinds of set `set` from `buffer`.
