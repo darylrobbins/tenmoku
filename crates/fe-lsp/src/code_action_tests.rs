@@ -391,3 +391,6 @@ fn bare_commands_are_not_resolved_and_stale_actions_not_sent() {
 
 #[path = "code_action_kinds_tests.rs"]
 mod kinds;
+
+#[path = "code_lens_tests.rs"]
+mod code_lens;

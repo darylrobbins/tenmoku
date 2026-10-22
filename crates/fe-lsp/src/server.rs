@@ -72,15 +72,16 @@ use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
     CancelParams, ClientCapabilities, ClientInfo, CodeActionCapabilityResolveSupport,
     CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
-    CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
-    DidChangeConfigurationParams, DidChangeWatchedFilesClientCapabilities,
-    DynamicRegistrationClientCapabilities, FailureHandlingKind, GeneralClientCapabilities,
-    GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
-    InlayHintClientCapabilities, InlayHintResolveClientCapabilities,
-    InlayHintWorkspaceClientCapabilities, MarkupKind, NumberOrString, ParameterInformationSettings,
-    PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
-    RenameClientCapabilities, ResourceOperationKind, SemanticTokensClientCapabilities,
+    CodeActionLiteralSupport, CodeLensClientCapabilities, CodeLensWorkspaceClientCapabilities,
+    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
+    DiagnosticClientCapabilities, DiagnosticTag, DidChangeConfigurationParams,
+    DidChangeWatchedFilesClientCapabilities, DynamicRegistrationClientCapabilities,
+    FailureHandlingKind, GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
+    InitializeParams, InitializeResult, InitializedParams, InlayHintClientCapabilities,
+    InlayHintResolveClientCapabilities, InlayHintWorkspaceClientCapabilities, MarkupKind,
+    NumberOrString, ParameterInformationSettings, PositionEncodingKind,
+    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
+    ResourceOperationKind, SemanticTokensClientCapabilities,
     SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
     SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
@@ -2270,6 +2271,9 @@ fn client_capabilities() -> ClientCapabilities {
             inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                 refresh_support: Some(true),
             }),
+            code_lens: Some(CodeLensWorkspaceClientCapabilities {
+                refresh_support: Some(true),
+            }),
             // Reported by the refresh-events card.
             semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
                 refresh_support: Some(true),
@@ -2357,6 +2361,9 @@ fn client_capabilities() -> ClientCapabilities {
                         .map(String::from)
                         .to_vec(),
                 }),
+            }),
+            code_lens: Some(CodeLensClientCapabilities {
+                dynamic_registration: dynamic,
             }),
             // Full and delta; ranges only help with huge files.
             semantic_tokens: Some(SemanticTokensClientCapabilities {
@@ -2455,6 +2462,7 @@ fn client_capabilities() -> ClientCapabilities {
             "commands": { "commands": [
                 "editor.action.triggerParameterHints",
                 "editor.action.triggerSuggest",
+                "rust-analyzer.showReferences",
             ] },
         })),
     }

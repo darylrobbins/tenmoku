@@ -158,6 +158,7 @@ fn experimental_commands_are_advertised() {
             "commands": { "commands": [
                 "editor.action.triggerParameterHints",
                 "editor.action.triggerSuggest",
+                "rust-analyzer.showReferences",
             ] },
         })
     );

@@ -71,12 +71,16 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         "textDocument/hover"
         | "textDocument/documentHighlight"
         | "textDocument/inlayHint"
+        | "textDocument/codeLens"
         | "textDocument/semanticTokens/full"
         | "textDocument/semanticTokens/full/delta" => timeouts.hover,
         "textDocument/codeAction" => timeouts.code_action,
         "textDocument/signatureHelp" => timeouts.signature_help,
         "textDocument/completion" => timeouts.completion,
-        "completionItem/resolve" | "codeAction/resolve" | "inlayHint/resolve" => timeouts.resolve,
+        "completionItem/resolve"
+        | "codeAction/resolve"
+        | "inlayHint/resolve"
+        | "codeLens/resolve" => timeouts.resolve,
         _ => return None,
     };
     Some(Duration::from_millis(ms.max(1)))
