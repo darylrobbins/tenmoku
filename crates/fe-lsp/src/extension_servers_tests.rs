@@ -121,7 +121,9 @@ fn user_settings_apply_over_an_extension_server() {
     assert_eq!(manager.server_of(zig.id()), None);
 
     // One named like a built-in is ignored: the built-in keeps its command
-    // and languages.
+    // and languages. The zig buffer is closed first, so re-enabling zls has
+    // no waiting document to launch it for.
+    manager.close(zig.id());
     manager.update_settings(&LspSettings::default());
     manager.set_extension_specs(vec![contributed(
         "pyright",
@@ -130,7 +132,24 @@ fn user_settings_apply_over_an_extension_server() {
     assert_eq!(manager.route_for("zig"), None);
     assert_eq!(manager.route_for("python").as_deref(), Some("pyright"));
     let mut py = Buffer::new("print(1)\n");
-    open_synced(&fake, &mut manager, &mut py, "a.py", "python", 2);
+    let (server, uri) = open(&mut manager, ROOT, &mut py, "a.py", "python");
+    assert!(server.is_some(), "python has a server");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let launch = loop {
+        let at = fake
+            .launched()
+            .iter()
+            .position(|(s, _)| s.name == "pyright");
+        if let Some(at) = at {
+            break at + 1;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "pyright never launched"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    wait_synced(&fake, &uri, &py, launch);
     assert_eq!(
         launched_with(&fake, "pyright"),
         Some(("pyright-langserver".into(), vec!["--stdio".to_owned()]))
