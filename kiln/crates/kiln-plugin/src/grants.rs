@@ -309,40 +309,11 @@ pub fn resolve_program(name: &str, path_var: &OsStr) -> Result<ProgramIdentity, 
     })
 }
 
-/// `O_NONBLOCK`, which `std` doesn't name: so opening a FIFO put where a
-/// program was doesn't wait for a writer. It changes nothing for a regular
-/// file.
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-const O_NONBLOCK: i32 = 0x0004;
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    any(target_arch = "mips", target_arch = "mips64")
-))]
-const O_NONBLOCK: i32 = 0x0080;
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    any(target_arch = "sparc", target_arch = "sparc64")
-))]
-const O_NONBLOCK: i32 = 0x4000;
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    not(any(
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "sparc",
-        target_arch = "sparc64"
-    ))
-))]
-const O_NONBLOCK: i32 = 0x0800;
-
 /// `path` opened for reading without blocking, with its metadata, if it's
 /// an executable regular file. What's checked is the file opened, not
 /// the path, so nothing can be swapped in between.
 fn open_executable(path: &Path) -> io::Result<(File, fs::Metadata)> {
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(O_NONBLOCK)
-        .open(path)?;
+    let file = kiln_core::platform::open_for_reading(path)?;
     let meta = file.metadata()?;
     if !meta.is_file() || meta.mode() & 0o111 == 0 {
         return Err(io::Error::other("not an executable file"));

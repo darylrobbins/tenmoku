@@ -6,6 +6,8 @@
 //! asks [`Os`], so it can be tested "as Linux" on any host.
 
 pub(crate) mod fs;
+
+pub use fs::open_for_reading;
 pub(crate) mod keychain;
 
 use std::fmt;

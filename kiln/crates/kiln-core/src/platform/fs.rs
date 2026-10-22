@@ -14,7 +14,7 @@ use std::{
 
 /// Opens `path` for reading without blocking: a FIFO put in place of a
 /// config file would otherwise hang the open.
-pub(crate) fn open_for_reading(path: &Path) -> io::Result<File> {
+pub fn open_for_reading(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
