@@ -98,8 +98,22 @@ fn caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> usize {
     view.read_with(cx, |view, _| view.model().primary_selection().head())
 }
 
+/// Keeps the previews from giving up on a loaded machine's clock for its
+/// scope; the tests of the deadline itself don't take it.
+fn unhurried() -> impl Drop {
+    struct Unhurried;
+    impl Drop for Unhurried {
+        fn drop(&mut self) {
+            fe_vim::set_search_preview_limit(None);
+        }
+    }
+    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(60)));
+    Unhurried
+}
+
 #[gpui::test]
 fn a_preview_reveals_its_match_and_a_cancel_puts_the_view_back(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     let far = text().find("far").unwrap();
     // An earlier search's highlight.
@@ -153,6 +167,7 @@ fn a_preview_reveals_its_match_and_a_cancel_puts_the_view_back(cx: &mut TestAppC
 
 #[gpui::test]
 fn a_cancel_puts_back_a_view_scrolled_away_from_the_caret(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     view.update(cx, |view, cx| view.set_scroll_top(200., cx));
     draw(cx);
@@ -179,6 +194,7 @@ fn a_cancel_puts_back_a_view_scrolled_away_from_the_caret(cx: &mut TestAppContex
 
 #[gpui::test]
 fn a_preview_reveals_a_match_past_the_right_edge(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let wide = format!("{}far\nshort\n", "x".repeat(400));
     let (view, cx) = editor_with(cx, wide);
     let scroll_x = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
@@ -204,15 +220,7 @@ fn a_preview_reveals_a_match_past_the_right_edge(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_preview_opens_the_fold_hiding_its_match(cx: &mut TestAppContext) {
-    // The previews don't give up on a loaded machine's clock.
-    struct Unhurried;
-    impl Drop for Unhurried {
-        fn drop(&mut self) {
-            fe_vim::set_search_preview_limit(None);
-        }
-    }
-    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(60)));
-    let _unhurried = Unhurried;
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     let folded = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
         view.read_with(cx, |view, _| {
@@ -245,6 +253,7 @@ fn a_preview_opens_the_fold_hiding_its_match(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_preview_reveals_a_match_below_a_tall_block(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     let rows = view.read_with(cx, |view, _| {
         view.layout.as_ref().unwrap().frame.visible_rows()
@@ -316,6 +325,7 @@ fn a_previews_matches_paint_within_its_time_limit(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_preview_paints_over_the_find_pattern(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     view.update(cx, |view, cx| {
         view.set_find(Some(Pattern::parse("r1").unwrap()), cx)
@@ -337,6 +347,7 @@ fn a_preview_paints_over_the_find_pattern(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn turning_vim_off_ends_the_preview(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     cx.simulate_keystrokes("/");
     draw(cx);
@@ -359,6 +370,7 @@ fn incsearch_off_previews_nothing(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn incsearch_set_through_the_shared_registers_reaches_another_editor(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     cx.update(|_, cx| cx.default_global::<Vim>().registers.set_incsearch(true));
     cx.simulate_keystrokes("/");
@@ -372,6 +384,7 @@ fn incsearch_set_through_the_shared_registers_reaches_another_editor(cx: &mut Te
 
 #[gpui::test]
 fn a_preview_follows_ignorecase_and_smartcase_as_the_submit_does(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor_with(cx, "x\nHello\nhello\n".to_string());
     let (upper, lower) = (2, 8);
     cx.update(|_, cx| {
