@@ -67,9 +67,12 @@ fn reply(text: &str) -> Vec<ChatEvent> {
 }
 
 /// A folder holding `src/main.go` and `src/lib.go`: Go, which no
-/// language server starts for by default.
+/// language server starts for by default. Under the real temp folder: on
+/// macOS `/var` is a link to `/private/var`, and the workbench opens
+/// files by their real paths.
 fn project() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let dir = tempfile::tempdir_in(temp).unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();
     fs::write(dir.path().join("src/lib.go"), LIB).unwrap();
@@ -554,7 +557,8 @@ fn links_open_files_under_the_root(cx: &mut TestAppContext) {
 #[gpui::test]
 fn blocks_and_links_stay_inside_the_real_root(cx: &mut TestAppContext) {
     // `root` and `outside` side by side, so `../outside` leaves the root.
-    let base = tempfile::tempdir().unwrap();
+    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let base = tempfile::tempdir_in(temp).unwrap();
     let (root, outside) = (base.path().join("root"), base.path().join("outside"));
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/main.go"), MAIN).unwrap();
