@@ -43,7 +43,6 @@ fn every_unimplemented_import_returns_the_unimplemented_error() {
         ("try-register", "kiln:extension/commands.register"),
         ("try-invoke", "kiln:extension/commands.invoke"),
         ("try-subscribe", "kiln:extension/events.subscribe"),
-        ("try-spawn", "kiln:extension/process.spawn"),
         ("try-get", "kiln:extension/secrets.get"),
         ("try-set", "kiln:extension/secrets.set"),
         ("try-delete", "kiln:extension/secrets.delete"),
@@ -56,6 +55,20 @@ fn every_unimplemented_import_returns_the_unimplemented_error() {
             .unwrap_or_else(|trap| panic!("{export} trapped: {trap:?}"));
         assert_eq!(error, Error::Unimplemented(import.into()), "{export}");
     }
+}
+
+#[test]
+fn a_spawn_with_no_grants_is_denied() {
+    let engine = engine();
+    let component = Component::from_file(&engine, "tests/fixtures/strings.wat").unwrap();
+    let mut store = Store::new(&engine, HostState::default());
+    let instance = linker(&engine).instantiate(&mut store, &component).unwrap();
+    Extension::new(&mut store, &instance).unwrap();
+    let call = instance
+        .get_typed_func::<(), (Error,)>(&mut store, "try-spawn")
+        .unwrap();
+    let (error,) = call.call(&mut store, ()).unwrap();
+    assert!(matches!(error, Error::Denied(_)), "{error:?}");
 }
 
 #[test]

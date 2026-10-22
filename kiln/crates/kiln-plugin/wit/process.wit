@@ -5,12 +5,24 @@ interface process {
     use types.{error};
 
     record output {
-        /// The exit code; none when a signal ended the program.
+        /// The exit code; none when a signal ended the program, as when the host killed it for
+        /// writing past the cap.
         status: option<s32>,
+        /// What it wrote, cut at the host's cap (16 MiB by default) for each stream.
         stdout: list<u8>,
         stderr: list<u8>,
     }
 
     /// Runs `program` with `args` to completion, feeding it `stdin`.
+    ///
+    /// `program` is a name the plugin was granted as `process.spawn:<program>`: what runs is the
+    /// file the grant was bound to, by the absolute path recorded then, never the name looked
+    /// up again. If that file changed or went since, the grant is suspended until the user
+    /// grants it again, and nothing runs. `args` reach the program as they are, never through a
+    /// shell. The environment holds only `PATH` (the system's), `HOME`, `LANG`, `LC_*`, `TMPDIR`
+    /// and `TERM`.
+    ///
+    /// Fails with `denied` when no grant allows the program or it is suspended, and with
+    /// `failed` when it can't be started, or runs past the host's deadline (30 s) and is killed.
     spawn: func(program: string, args: list<string>, stdin: option<list<u8>>) -> result<output, error>;
 }

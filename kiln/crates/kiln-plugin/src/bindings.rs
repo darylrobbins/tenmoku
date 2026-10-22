@@ -42,7 +42,7 @@ impl HostState {
             commands: commands::State,
             events: events::State,
             fs: fs::State,
-            process: process::State,
+            process: process::State::default(),
             net: net::State::default(),
             secrets: secrets::State,
         }

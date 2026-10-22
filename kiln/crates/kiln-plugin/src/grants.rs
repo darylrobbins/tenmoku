@@ -101,6 +101,9 @@ impl GrantRecord {
             let Capability::ProcessSpawn(Target::Named(program)) = capability else {
                 continue;
             };
+            if self.suspended.contains_key(program) {
+                return Err(GrantStoreError::Suspended(program.clone()));
+            }
             let identity = match self.programs.get(program) {
                 Some(identity) => identity.clone(),
                 None => resolve_program(program, path_var).map_err(|source| {
@@ -112,14 +115,13 @@ impl GrantRecord {
             };
             programs.insert(program.clone(), identity);
         }
+        // A suspension holds while anything requested still covers the
+        // program, `process.spawn:*` included: only a grant that binds it
+        // anew lifts it.
         let suspended = self
             .suspended
             .iter()
-            .filter(|(program, _)| {
-                requested
-                    .iter()
-                    .any(|capability| names(capability, program))
-            })
+            .filter(|(program, _)| covers(requested, program))
             .map(|(program, reason)| (program.clone(), *reason))
             .collect();
         Ok(Self {
@@ -136,6 +138,11 @@ impl GrantRecord {
 /// Whether `capability` is `process.spawn:<program>`.
 fn names(capability: &Capability, program: &str) -> bool {
     matches!(capability, Capability::ProcessSpawn(Target::Named(name)) if name == program)
+}
+
+/// Whether `grants` reach `program`, by its name or `process.spawn:*`.
+fn covers(grants: &Grants, program: &str) -> bool {
+    grants.allows(&Capability::ProcessSpawn(Target::Named(program.to_owned())))
 }
 
 /// What to do with a plugin asking for a set of capabilities: [`evaluate`].
@@ -172,6 +179,8 @@ pub enum Prompt {
 /// every named host and `process.spawn:*` every named program) loads,
 /// shrinking them to it; one with a capability they don't cover is an
 /// escalation naming what it adds, unless it's the request last declined.
+/// A program whose grant is suspended is never covered, even by
+/// `process.spawn:*`: the user is asked about it again.
 pub fn evaluate(record: Option<&GrantRecord>, requested: &Grants) -> Decision {
     let Some(record) = record else {
         return Decision::Prompt(Prompt::NewPlugin);
@@ -184,7 +193,17 @@ pub fn evaluate(record: Option<&GrantRecord>, requested: &Grants) -> Decision {
             Decision::Prompt(Prompt::NewPlugin)
         };
     }
-    let added = added(&record.granted, requested);
+    let added: Grants = requested
+        .iter()
+        .filter(|capability| {
+            !record.granted.allows(capability)
+                || record
+                    .suspended
+                    .keys()
+                    .any(|program| names(capability, program))
+        })
+        .cloned()
+        .collect();
     if added.is_empty() {
         Decision::Load(requested.clone())
     } else if declined {
@@ -396,6 +415,10 @@ pub enum GrantStoreError {
     WildcardsNotAccepted(Grants),
     #[error("process.spawn:{0} has no program resolved for it")]
     ProgramNotResolved(String),
+    /// A request would bind a program whose grant is suspended without a
+    /// prompt re-recording it: nothing changes.
+    #[error("process.spawn:{0} is suspended until it is granted again")]
+    Suspended(String),
     /// A request narrowing `process.spawn:*` names a program that can't be
     /// bound: it doesn't load, and the record is left as it was.
     #[error("process.spawn:{program} can't be bound to a program: {source}")]
@@ -491,6 +514,12 @@ impl GrantStore {
     /// `programs`, or to the one recorded if it was already granted. Adding
     /// `net:*` or `process.spawn:*` needs `accept_wildcards`, the user's
     /// acceptance of their own warning; without it nothing changes.
+    ///
+    /// A suspended program stays suspended while `requested` still covers
+    /// it, unless it is named and bound anew here, to its identity in
+    /// `programs`: that, the prompt re-recording the program, is the only
+    /// thing that lifts a suspension. Naming a suspended program without
+    /// one is refused.
     pub fn grant(
         &self,
         id: &str,
@@ -510,24 +539,41 @@ impl GrantStore {
                 ));
             }
             let mut bound = BTreeMap::new();
+            let mut rebound = Vec::new();
             for capability in requested {
                 let Capability::ProcessSpawn(Target::Named(program)) = capability else {
                     continue;
                 };
-                let identity = programs
-                    .iter()
-                    .find(|identity| identity.name == *program)
-                    .or_else(|| previous.programs.get(program))
-                    .ok_or_else(|| GrantStoreError::ProgramNotResolved(program.clone()))?;
+                let fresh = programs.iter().find(|identity| identity.name == *program);
+                // A suspended program is never bound to what was recorded before.
+                let recorded = || {
+                    (!previous.suspended.contains_key(program))
+                        .then(|| previous.programs.get(program))
+                        .flatten()
+                };
+                let identity = fresh.or_else(recorded).ok_or_else(|| {
+                    if previous.suspended.contains_key(program) {
+                        GrantStoreError::Suspended(program.clone())
+                    } else {
+                        GrantStoreError::ProgramNotResolved(program.clone())
+                    }
+                })?;
+                if fresh.is_some() {
+                    rebound.push(program.clone());
+                }
                 bound.insert(program.clone(), identity.clone());
             }
             let record = GrantRecord {
                 version: Some(version),
                 granted: requested.clone(),
-                programs: bound,
                 wildcards_accepted: has_wildcard(requested),
                 declined: None,
-                suspended: BTreeMap::new(),
+                suspended: previous
+                    .suspended
+                    .into_iter()
+                    .filter(|(program, _)| covers(requested, program) && !rebound.contains(program))
+                    .collect(),
+                programs: bound,
             };
             granted = Some(record.clone());
             Ok(Some(record))

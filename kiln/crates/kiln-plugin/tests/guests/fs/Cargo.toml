@@ -1,0 +1,24 @@
+# The guest `tests/fs.rs` runs: reads, writes and looks at its WASI context through std, so the
+# test sees what a plugin's preopens and environment allow. Built by `build.zsh` into the
+# checked-in `fs.wasm`; not a member of the workspace.
+[package]
+name = "kiln-plugin-fs-guest"
+version = "0.0.0"
+edition = "2024"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.57"
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[workspace]
