@@ -312,6 +312,7 @@ fn decodes_changes_and_document_changes() {
                 (second..second + 5, "gamma".into()),
             ],
         },
+        operation: None,
     };
     let closed_sorted: Vec<TextEdit> =
         serde_json::from_value(json!([closed_edits[1], closed_edits[0]])).unwrap();
@@ -321,6 +322,7 @@ fn decodes_changes_and_document_changes() {
             edits: closed_sorted.clone(),
             encoding: PositionEncoding::Utf16,
         },
+        operation: None,
     };
 
     // `changes`: unversioned, files in path order.
@@ -553,6 +555,7 @@ fn apply_edit_round_trip() {
             version: buffer.version(),
             edits: vec![(0..5, "gamma".into())],
         },
+        operation: None,
     }];
     let next_apply = |s: &Started| {
         s.next("ApplyEdit", |event| match event {
@@ -884,6 +887,7 @@ fn edits_after_an_operation_decode_against_their_origin() {
         target: &Result<EditTarget, String>,
         ids: &[fe_buffer::BufferId],
         sent: &[fe_buffer::Version],
+        operations: &[FileEdits],
     ) -> String {
         match target {
             Ok(EditTarget::Open {
@@ -899,9 +903,15 @@ fn edits_after_an_operation_decode_against_their_origin() {
             Ok(EditTarget::Closed { .. }) => "closed".to_owned(),
             Ok(EditTarget::Depends { on, made, skipped }) => format!(
                 "on {}: made {}, skipped {}",
-                on.path.strip_prefix(path("")).unwrap().display(),
-                brief(made, ids, sent),
-                brief(skipped, ids, sent)
+                (operations.iter())
+                    .find(|file| file.operation == Some(*on))
+                    .unwrap()
+                    .path
+                    .strip_prefix(path(""))
+                    .unwrap()
+                    .display(),
+                brief(made, ids, sent, operations),
+                brief(skipped, ids, sent, operations)
             ),
             Ok(other) => panic!("{other:?}"),
             Err(why) => format!("refused: {why}"),
@@ -957,7 +967,10 @@ fn edits_after_an_operation_decode_against_their_origin() {
                 | EditTarget::Delete { .. } => {
                     format!("{path}: operation")
                 }
-                target => format!("{path}: {}", brief(&Ok(target.clone()), &ids, &sent)),
+                target => format!(
+                    "{path}: {}",
+                    brief(&Ok(target.clone()), &ids, &sent, &decoded)
+                ),
             }
         })
         .collect();

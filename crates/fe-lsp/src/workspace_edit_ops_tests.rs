@@ -155,3 +155,37 @@ fn directory_operations_cover_the_paths_under_them() {
         .unwrap();
     assert!(matches!(decoded[1].target, EditTarget::Closed { .. }));
 }
+
+/// Two equal renames `ignoreIfExists` may skip are two operations: the
+/// edit after them names the first one's outcome apart from the second's.
+#[test]
+fn repeated_skippable_renames_have_distinct_identities() {
+    let mut s = Started::new();
+    let mut a = Buffer::new("");
+    s.open(&mut a, "a.rs", "alpha beta\n");
+    let rename = json!({ "kind": "rename", "oldUri": uri("a.rs"), "newUri": uri("b.rs"),
+                         "options": { "ignoreIfExists": true } });
+    let decoded = s
+        .decode(json!({ "documentChanges": [
+            rename,
+            { "kind": "create", "uri": uri("a.rs") },
+            rename,
+            { "textDocument": { "uri": uri("b.rs"), "version": null },
+              "edits": [text_edit("alpha beta\n", 6..10, "gamma")] },
+        ]}))
+        .unwrap();
+    let (first, second) = (decoded[0].operation, decoded[2].operation);
+    assert!(first.is_some() && second.is_some());
+    assert_ne!(first, second);
+    assert!(decoded[1].operation.is_some());
+    // The rename made at the second is skipped (b.rs is there by then): the
+    // edit's chain names the second, and under it the first.
+    let EditTarget::Depends { on, made, skipped } = &decoded[3].target else {
+        panic!("{:?}", decoded[3]);
+    };
+    assert_eq!(Some(*on), second);
+    assert!(
+        matches!(&**made, Ok(EditTarget::Depends { on, .. }) if Some(*on) == first)
+            || matches!(&**skipped, Ok(EditTarget::Depends { on, .. }) if Some(*on) == first)
+    );
+}

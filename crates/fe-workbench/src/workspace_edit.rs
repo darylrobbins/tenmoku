@@ -82,7 +82,7 @@ use std::{
 
 use fe_buffer::{BufferId, Origin, ProposedChange, Version};
 use fe_editor::EditorModel;
-use fe_lsp::{EditTarget, FileEdits, decode_closed};
+use fe_lsp::{EditTarget, FileEdits, OperationId, decode_closed};
 use fe_project::fs_ops;
 use gpui::{App, Context, Entity};
 
@@ -152,15 +152,16 @@ impl Workbench {
         let mut edited = HashMap::new();
         let others = Self::other_workbenches(cx);
         // The operations made so far, and whether each was skipped.
-        let mut done: Vec<(FileEdits, bool)> = Vec::new();
+        let mut done: Vec<(Option<OperationId>, bool)> = Vec::new();
         let mut entries = edits.into_iter().peekable();
         while let Some(first) = entries.next() {
             if !is_text(&first) {
-                let made = self.apply_operation(first.clone(), &others, cx)?;
+                let operation = first.operation;
+                let made = self.apply_operation(first, &others, cx)?;
                 if made == Made::Done {
                     applied.files += 1;
                 }
-                done.push((first, made == Made::Skipped));
+                done.push((operation, made == Made::Skipped));
                 continue;
             }
             let mut run = vec![first];
@@ -562,21 +563,21 @@ fn is_text(file: &FileEdits) -> bool {
 }
 
 /// `target` with each [`EditTarget::Depends`] taken the way its operation
-/// went: the latest in `done` equal to it, made or skipped. Why the edits
+/// went: the one in `done` with its identity, made or skipped. Why the edits
 /// can't apply that way, or if it wasn't made, refuses them. A walk down
 /// one branch at a time, as deep as the operations it depends on.
 fn resolve_depends(
     mut target: EditTarget,
-    done: &[(FileEdits, bool)],
+    done: &[(Option<OperationId>, bool)],
 ) -> Result<EditTarget, String> {
     loop {
         let EditTarget::Depends { on, made, skipped } = target else {
             return Ok(target);
         };
         let was_skipped = (done.iter().rev())
-            .find(|(operation, _)| *operation == *on)
+            .find(|(operation, _)| *operation == Some(on))
             .map(|(_, skipped)| *skipped)
-            .ok_or_else(|| format!("{} isn't one of the edit's operations", on.path.display()))?;
+            .ok_or("a file the edit depends on isn't one of its operations")?;
         let branch = if was_skipped { skipped } else { made };
         target = Arc::unwrap_or_clone(branch)?;
     }

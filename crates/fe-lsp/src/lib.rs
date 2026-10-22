@@ -138,4 +138,6 @@ pub use registry::{extension_spec, server_root};
 pub use requests::{ORPHANS_MAX, Reply};
 pub use semantic_tokens::{SemanticToken, SemanticTokens};
 pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};
-pub use workspace_edit::{ApplyClaim, ApplyReply, EditTarget, FileEdits, decode_closed};
+pub use workspace_edit::{
+    ApplyClaim, ApplyReply, EditTarget, FileEdits, OperationId, decode_closed,
+};

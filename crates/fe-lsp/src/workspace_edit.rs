@@ -91,6 +91,22 @@ pub(crate) const APPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct FileEdits {
     pub path: PathBuf,
     pub target: EditTarget,
+    /// Which occurrence of an operation this is: `Some` for each file
+    /// operation, `None` for text edits. Unique across edits, so equal
+    /// operations stay apart, and kept by joining.
+    pub operation: Option<OperationId>,
+}
+
+/// The identity of one file operation in a decoded workspace edit, which
+/// an [`EditTarget::Depends`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OperationId(u64);
+
+impl OperationId {
+    fn mint() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
 }
 
 /// Where a file's edits apply, and the edits.
@@ -131,13 +147,12 @@ pub enum EditTarget {
     },
     /// Text edits whose file depends on whether `on`, a create or rename
     /// `ignoreIfExists` may skip, is made: the target if it's made, and if
-    /// it's skipped, or why the edits can't apply that way. `on` is the
-    /// latest operation before this entry equal to it (an edit joined
-    /// after another keeps its own). Each is [`Open`](Self::Open),
+    /// it's skipped, or why the edits can't apply that way. `on` is that
+    /// operation's [`FileEdits::operation`]. Each is [`Open`](Self::Open),
     /// [`Closed`](Self::Closed), or another `Depends` on an earlier
     /// operation.
     Depends {
-        on: Arc<FileEdits>,
+        on: OperationId,
         made: Arc<Result<EditTarget, String>>,
         skipped: Arc<Result<EditTarget, String>>,
     },
@@ -337,7 +352,7 @@ struct Reader {
     /// covers a path is the one that holds.
     effects: Vec<(PathBuf, Effect)>,
     /// The operations read so far.
-    operations: Vec<FileEdits>,
+    operations: Vec<OperationId>,
     graph: Graph,
 }
 
@@ -550,15 +565,19 @@ impl Reader {
                 (path, target)
             }
         };
-        let operation = FileEdits { path, target };
-        self.operations.push(operation.clone());
-        self.steps.push(Step::Operation(operation));
+        let id = OperationId::mint();
+        self.operations.push(id);
+        self.steps.push(Step::Operation(FileEdits {
+            path,
+            target,
+            operation: Some(id),
+        }));
         Ok(())
     }
 
     /// The steps, the operations, which [`Holds::Either`] numbers, and
     /// the graph.
-    fn finish(mut self) -> (Vec<Step>, Vec<FileEdits>, Graph) {
+    fn finish(mut self) -> (Vec<Step>, Vec<OperationId>, Graph) {
         if !self.files.is_empty() {
             self.steps.push(Step::Edits(self.files));
         }
@@ -603,7 +622,6 @@ pub(crate) fn decode(
     }
     let mut decoded = Vec::new();
     let (steps, operations, graph) = reader.finish();
-    let operations: Vec<_> = operations.into_iter().map(Arc::new).collect();
     for step in steps {
         match step {
             Step::Edits(files) => {
@@ -628,7 +646,7 @@ pub(crate) fn decode(
 fn decode_file(
     file: Sent,
     documents: &[SentDocument],
-    operations: &[Arc<FileEdits>],
+    operations: &[OperationId],
     graph: &Graph,
     encoding: PositionEncoding,
 ) -> Result<FileEdits, String> {
@@ -642,6 +660,7 @@ fn decode_file(
     Ok(FileEdits {
         path: file.path,
         target,
+        operation: None,
     })
 }
 
@@ -655,7 +674,7 @@ type Decoded = Arc<Result<EditTarget, String>>;
 fn decode_holds(
     file: &Sent,
     documents: &[SentDocument],
-    operations: &[Arc<FileEdits>],
+    operations: &[OperationId],
     graph: &Graph,
     encoding: PositionEncoding,
 ) -> Decoded {
@@ -704,7 +723,7 @@ fn decode_holds(
                     (depends.entry(key))
                         .or_insert_with(|| {
                             Arc::new(Ok(EditTarget::Depends {
-                                on: operations[*op].clone(),
+                                on: operations[*op],
                                 made: made.clone(),
                                 skipped: skipped.clone(),
                             }))
