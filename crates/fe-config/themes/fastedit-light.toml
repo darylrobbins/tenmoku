@@ -31,6 +31,15 @@ change_deleted = "#d6a2a7"
 # A thin line at each indent level, and the one of the caret's block.
 indent_guide = "#0000001a"
 indent_guide_active = "#00000040"
+# Sticky scroll: the band of pinned scope headers at the top of the editor,
+# the line under it when a theme shows one, the shadow fading down from it and
+# a row under the pointer. VS Code's editorStickyScroll.background (the
+# editor's), .border (none), .shadow (scrollbar.shadow) and
+# editorStickyScrollHover.background.
+sticky_scroll_background = "#ffffff"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#DDDDDD"
+sticky_scroll_hover = "#F0F0F0"
 # The vim mode's segment in the status bar.
 vim_mode_normal = "#2f6fc7"
 vim_mode_insert = "#2e7d32"

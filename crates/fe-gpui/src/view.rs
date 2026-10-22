@@ -52,6 +52,9 @@ pub struct EditorView {
     pub(crate) minimap: Option<fe_display::minimap::MinimapOptions>,
     /// Whether the pointer is over the minimap and its slider.
     pub(crate) minimap_hover: crate::element::minimap::Hover,
+    /// The scopes sticky scroll's band was last found from
+    /// ([`crate::element::sticky_scroll::scopes`]).
+    pub(crate) sticky_scopes: Option<crate::element::sticky_scroll::Scopes>,
     /// The host's column left of the line numbers
     /// ([`EditorView::set_gutter_annotations`]).
     pub(crate) annotations: Option<crate::gutter_annotations::Annotated>,
@@ -273,6 +276,9 @@ pub struct EditorView {
     /// The minimap the last frame painted.
     #[cfg(test)]
     pub(crate) painted_minimap: Option<crate::element::minimap::Painted>,
+    /// Sticky scroll's band the last frame painted.
+    #[cfg(test)]
+    pub(crate) painted_sticky_scroll: Option<crate::element::sticky_scroll::Painted>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -319,6 +325,7 @@ impl EditorView {
             gutter: true,
             minimap: None,
             minimap_hover: Default::default(),
+            sticky_scopes: None,
             annotations: None,
             scroll: Point::default(),
             autoscroll: true,
@@ -420,6 +427,8 @@ impl EditorView {
             painted_inlay_hints: Vec::new(),
             #[cfg(test)]
             painted_minimap: None,
+            #[cfg(test)]
+            painted_sticky_scroll: None,
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);

@@ -219,6 +219,13 @@
           "description": "Whether long lines wrap at the window's edge. `alt-z` toggles it per\neditor.",
           "type": "boolean"
         },
+        "sticky_scroll": {
+          "$ref": "#/$defs/StickyScrollSettings",
+          "default": {
+            "enabled": true
+          },
+          "description": "Sticky scroll: the header rows of the scopes enclosing the top of the\nview stay pinned there, VS Code's `editor.stickyScroll.*`."
+        },
         "tab_size": {
           "default": 4,
           "description": "How many columns a tab advances to the next multiple of.",
@@ -542,6 +549,17 @@
         "visible": {
           "default": true,
           "description": "Whether the status bar shows at the bottom of the window. View >\nToggle Status Bar flips it and saves it here.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "StickyScrollSettings": {
+      "description": "`[editor.sticky_scroll]`: VS Code's `editor.stickyScroll.*` settings,\nwith its defaults.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Pin the header rows of the functions, types and other scopes the top\nof the view is inside, as you scroll.",
           "type": "boolean"
         }
       },
@@ -891,6 +909,9 @@
         },
         "semantic_highlighting": true,
         "soft_wrap": false,
+        "sticky_scroll": {
+          "enabled": true
+        },
         "tab_size": 4
       },
       "description": "The text editor."

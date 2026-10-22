@@ -23,10 +23,12 @@ impl EditorTheme {
         let font_family = std::mem::take(&mut self.font_family);
         let font_features = self.font_features.clone();
         let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
+        let sticky_scroll = self.sticky_scroll;
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
         self.font_features = font_features;
         self.indent_guides = indent_guides;
         self.bracket_pair_colors = bracket_pair_colors;
+        self.sticky_scroll = sticky_scroll;
     }
 
     /// `palette`'s colours with the given metrics.
@@ -66,6 +68,11 @@ impl EditorTheme {
             change_deleted: hsla(editor.change_deleted),
             indent_guide: hsla(editor.indent_guide),
             indent_guide_active: hsla(editor.indent_guide_active),
+            sticky_scroll_background: hsla(editor.sticky_scroll_background),
+            sticky_scroll_border: hsla(editor.sticky_scroll_border),
+            sticky_scroll_shadow: hsla(editor.sticky_scroll_shadow),
+            sticky_scroll_hover: hsla(editor.sticky_scroll_hover),
+            sticky_scroll: true,
             vim_mode_normal: hsla(editor.vim_mode_normal),
             vim_mode_insert: hsla(editor.vim_mode_insert),
             vim_mode_visual: hsla(editor.vim_mode_visual),

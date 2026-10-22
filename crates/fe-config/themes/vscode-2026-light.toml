@@ -105,6 +105,15 @@ change_modified = "#005FB8"
 change_deleted = "#AD0707"
 indent_guide = "#F7F7F740"
 indent_guide_active = "#EEEEEE"
+# Sticky scroll: the band of pinned scope headers at the top of the editor,
+# the line under it when a theme shows one, the shadow fading down from it and
+# a row under the pointer. VS Code's editorStickyScroll.background (the
+# editor's), .border (none), .shadow (scrollbar.shadow) and
+# editorStickyScrollHover.background.
+sticky_scroll_background = "#FFFFFF"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#00000000"
+sticky_scroll_hover = "#F0F0F0"
 vim_mode_normal = "#0069CC"
 vim_mode_insert = "#116329"
 vim_mode_visual = "#8250DF"

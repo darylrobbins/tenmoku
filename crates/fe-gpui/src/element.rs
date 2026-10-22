@@ -47,6 +47,7 @@ pub(crate) mod minimap;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
+pub(crate) mod sticky_scroll;
 
 /// The frame's blocks: the lens rows and the host's ([`host_blocks`]), a
 /// lens before a host's block above the same row, the proposals' hunks
@@ -122,6 +123,9 @@ pub(crate) struct FrameLayout {
     inlay_hints: Vec<crate::inlay_hints::Shown>,
     /// The minimap beside the text, if it shows ([`minimap`]).
     pub(crate) minimap: Option<minimap::Placed>,
+    /// Sticky scroll's band of pinned headers, if it pins any
+    /// ([`sticky_scroll`]).
+    pub(crate) sticky_scroll: Option<sticky_scroll::Placed>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -997,7 +1001,7 @@ impl Element for EditorElement {
 
         let kept = kept_scroll.unwrap_or(frame.scroll);
         let scroll = point(px(kept.x), px(kept.y));
-        self.view.update(cx, |view, cx| {
+        let sticky_scopes = self.view.update(cx, |view, cx| {
             // Scrolled to reveal the caret, say: what the popover was found
             // under has moved, and it isn't drawn from this frame on
             // ([`crate::hover::popover_layer`]).
@@ -1009,6 +1013,7 @@ impl Element for EditorElement {
             view.reveal_hunk = None;
             view.preview_revealed();
             view.report_scroll_top(host_top, cx);
+            sticky_scroll::scopes(view, &frame)
         });
         let view = self.view.read(cx);
         let mut layout = FrameLayout {
@@ -1038,6 +1043,7 @@ impl Element for EditorElement {
             ghost,
             inlay_hints,
             minimap: None,
+            sticky_scroll: None,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -1056,9 +1062,9 @@ impl Element for EditorElement {
                 .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
         }
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
+        let syntax = (view.syntax.as_ref().map(SyntaxDriver::syntax))
+            .filter(|syntax| syntax.version() == view.model.snapshot().version());
         layout.minimap = minimap_options.and_then(|options| {
-            let syntax = (view.syntax.as_ref().map(SyntaxDriver::syntax))
-                .filter(|syntax| syntax.version() == view.model.snapshot().version());
             let unnecessary = &unnecessary;
             minimap::layout(
                 &options,
@@ -1071,8 +1077,17 @@ impl Element for EditorElement {
                 window,
             )
         });
-        // Once every highlight query of the frame, the minimap's too, has
-        // run: what they lacked loads, or another frame retries them.
+        layout.sticky_scroll = sticky_scroll::layout(
+            &mut layout,
+            view,
+            &sticky_scopes,
+            syntax,
+            &unnecessary,
+            &mut shaper,
+            em,
+        );
+        // Once every highlight query of the frame, the minimap's and the
+        // band's too, has run: what they lacked loads, or another frame retries them.
         self.view
             .update(cx, |view, cx| view.load_injected_languages(cx));
         // A hand over each change mark, across the whole change lane.
@@ -1476,10 +1491,14 @@ impl Element for EditorElement {
                 #[cfg(test)]
                 painted_chevrons.push((toggle.buffer_row, toggle.folded, chevron));
             }
+            // Over the text and the gutter, beside the minimap.
+            sticky_scroll::paint(&layout, &theme, window, cx);
             minimap::paint(&layout, &theme, minimap_hover, minimap_dragged, window);
         });
         #[cfg(test)]
         let painted_minimap = minimap::painted(&layout, &theme, minimap_hover, minimap_dragged);
+        #[cfg(test)]
+        let painted_sticky_scroll = sticky_scroll::painted(&layout, &theme);
         for hitbox in &layout.clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
@@ -1589,6 +1608,7 @@ impl Element for EditorElement {
                 view.painted_ghost = painted_ghost;
                 view.painted_inlay_hints = painted_inlay_hints;
                 view.painted_minimap = painted_minimap;
+                view.painted_sticky_scroll = painted_sticky_scroll;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;

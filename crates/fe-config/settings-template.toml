@@ -87,6 +87,11 @@
 # fit.
 # size = "proportional"
 
+[editor.sticky_scroll]
+# Pin the header rows of the functions, types and other scopes the top of the
+# view is inside, as you scroll.
+# enabled = true
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

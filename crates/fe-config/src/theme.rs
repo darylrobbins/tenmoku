@@ -103,6 +103,14 @@ colors! {
         indent_guide,
         /// The indent guide of the block the caret is in.
         indent_guide_active,
+        /// Behind sticky scroll's band of pinned scope headers.
+        sticky_scroll_background,
+        /// The line under the band, when it's visible.
+        sticky_scroll_border,
+        /// The shadow fading down from the band.
+        sticky_scroll_shadow,
+        /// Behind a band row under the pointer.
+        sticky_scroll_hover,
         /// The vim mode's segment in the status bar in normal mode, operator
         /// pending or while a jump is pending.
         vim_mode_normal,

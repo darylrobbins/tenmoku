@@ -137,6 +137,17 @@ pub struct EditorTheme {
     pub indent_guide: Hsla,
     /// The indent guide of the block the caret is in.
     pub indent_guide_active: Hsla,
+    /// Behind sticky scroll's band of pinned scope headers.
+    pub sticky_scroll_background: Hsla,
+    /// The line under the band, painted when it isn't transparent.
+    pub sticky_scroll_border: Hsla,
+    /// The shadow fading down from the band.
+    pub sticky_scroll_shadow: Hsla,
+    /// Behind a band row under the pointer.
+    pub sticky_scroll_hover: Hsla,
+    /// Whether sticky scroll's band is drawn, from
+    /// `editor.sticky_scroll.enabled`.
+    pub sticky_scroll: bool,
     /// The vim mode's status bar segment in normal mode, operator pending
     /// and while a jump is pending.
     pub vim_mode_normal: Hsla,
@@ -205,6 +216,7 @@ impl EditorTheme {
         self.line_height = settings.line_height as f32;
         self.indent_guides = settings.indent_guides;
         self.bracket_pair_colors = settings.bracket_pair_colors;
+        self.sticky_scroll = settings.sticky_scroll.enabled;
     }
 
     /// The editor's font: `font_family` with `font_features`.

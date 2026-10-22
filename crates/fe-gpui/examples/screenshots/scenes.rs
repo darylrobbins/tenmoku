@@ -30,6 +30,9 @@ struct Scene {
     minimap: Option<MinimapOptions>,
     /// The screen row scrolled to the top, if not where the caret puts it.
     top: Option<f32>,
+    /// Whether sticky scroll's band shows: only in its own scene, so the
+    /// scenes from before it keep their goldens.
+    sticky_scroll: bool,
 }
 
 type Annotations = &'static [(Range<u32>, &'static str, Option<f32>)];
@@ -43,6 +46,7 @@ fn scenes() -> Vec<Scene> {
         annotations: &[],
         minimap: None,
         top: None,
+        sticky_scroll: false,
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -86,6 +90,7 @@ fn scenes() -> Vec<Scene> {
             annotations: &[],
             minimap: None,
             top: None,
+            sticky_scroll: false,
         },
         Scene {
             name: "markdown_fence",
@@ -96,6 +101,7 @@ fn scenes() -> Vec<Scene> {
             annotations: &[],
             minimap: None,
             top: None,
+            sticky_scroll: false,
         },
         Scene {
             name: "large_c",
@@ -105,6 +111,7 @@ fn scenes() -> Vec<Scene> {
             annotations: &[],
             minimap: None,
             top: None,
+            sticky_scroll: false,
         },
         Scene {
             name: "annotated_gutter",
@@ -118,6 +125,7 @@ fn scenes() -> Vec<Scene> {
             ],
             minimap: None,
             top: None,
+            sticky_scroll: false,
         },
         Scene {
             name: "minimap",
@@ -130,6 +138,18 @@ fn scenes() -> Vec<Scene> {
                 ..MinimapOptions::default()
             }),
             top: Some(140.),
+            sticky_scroll: false,
+        },
+        Scene {
+            name: "sticky_scroll",
+            path: "scene.rs",
+            text: STICKY.to_owned(),
+            cold: &[],
+            annotations: &[],
+            minimap: None,
+            // Four rows into `count`: its impl's header and its own pinned.
+            top: Some(15.),
+            sticky_scroll: true,
         },
     ]
 }
@@ -204,6 +224,57 @@ impl<V: Clone> Cache<V> {
 }
 "#;
 
+/// An impl with a function longer than the window, for sticky scroll.
+const STICKY: &str = r#"use std::collections::HashMap;
+
+/// Word counts over a stream of lines.
+#[derive(Debug, Default)]
+pub struct Counter {
+    counts: HashMap<String, usize>,
+    lines: usize,
+    longest: Option<String>,
+}
+
+impl Counter {
+    /// Counts each word of `text`, lowercased, without its punctuation, and
+    /// returns how many it counted.
+    pub fn count(&mut self, text: &str) -> usize {
+        let mut added = 0;
+        for line in text.lines() {
+            self.lines += 1;
+            for word in line.split_whitespace() {
+                let word: String = word
+                    .chars()
+                    .filter(|ch| ch.is_alphanumeric())
+                    .flat_map(char::to_lowercase)
+                    .collect();
+                if word.is_empty() {
+                    continue;
+                }
+                let longer = match &self.longest {
+                    Some(longest) => word.len() > longest.len(),
+                    None => true,
+                };
+                if longer {
+                    self.longest = Some(word.clone());
+                }
+                *self.counts.entry(word).or_insert(0) += 1;
+                ‸added += 1;
+            }
+        }
+        added
+    }
+
+    /// The `n` most counted words, most first.
+    pub fn top(&self, n: usize) -> Vec<(&str, usize)> {
+        let mut words: Vec<_> = self.counts.iter().map(|(w, c)| (w.as_str(), *c)).collect();
+        words.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        words.truncate(n);
+        words
+    }
+}
+"#;
+
 const GO: &str = "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfor i := 0; i < 3; i++ {\n\t\tif i%2 == 0 {\n\t\t\t‸fmt.Println(\"even\", i)\n\t\t}\n\t}\n}\n";
 
 fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
@@ -256,11 +327,13 @@ fn capture(
     annotations: Annotations,
     minimap: Option<MinimapOptions>,
     top: Option<f32>,
+    sticky_scroll: bool,
     size: Size<Pixels>,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
         let theme = EditorTheme {
             font_family: FONT_FAMILY.into(),
+            sticky_scroll,
             ..EditorTheme::default_dark(cx)
         };
         let shown = (!annotations.is_empty()).then(|| gutter_annotations(&model, annotations));
@@ -308,6 +381,7 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
             scene.annotations,
             scene.minimap,
             scene.top,
+            scene.sticky_scroll,
             SCENE_SIZE,
         )?;
         if !scene.cold.is_empty() && notifications < 2 {
@@ -327,7 +401,9 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
     let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, &[], None, None, size)?.0.save(out)?;
+    capture(cx, model, &[], None, None, true, size)?
+        .0
+        .save(out)?;
     println!("wrote {out}");
     Ok(())
 }

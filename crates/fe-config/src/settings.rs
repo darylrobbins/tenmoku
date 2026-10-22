@@ -436,6 +436,9 @@ pub struct EditorSettings {
     /// The minimap: the whole file drawn small beside the text, VS Code's
     /// `editor.minimap.*`.
     pub minimap: MinimapSettings,
+    /// Sticky scroll: the header rows of the scopes enclosing the top of the
+    /// view stay pinned there, VS Code's `editor.stickyScroll.*`.
+    pub sticky_scroll: StickyScrollSettings,
     /// Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in
     /// VS Code's `editor.fontLigatures`.
     pub font_ligatures: bool,
@@ -476,6 +479,22 @@ impl Default for MinimapSettings {
             show_slider: MinimapShowSlider::default(),
             size: MinimapSize::default(),
         }
+    }
+}
+
+/// `[editor.sticky_scroll]`: VS Code's `editor.stickyScroll.*` settings,
+/// with its defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StickyScrollSettings {
+    /// Pin the header rows of the functions, types and other scopes the top
+    /// of the view is inside, as you scroll.
+    pub enabled: bool,
+}
+
+impl Default for StickyScrollSettings {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -557,6 +576,7 @@ impl Default for EditorSettings {
             inline_blame: false,
             bracket_pair_colors: true,
             minimap: MinimapSettings::default(),
+            sticky_scroll: StickyScrollSettings::default(),
             font_ligatures: false,
         }
     }
