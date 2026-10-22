@@ -1116,3 +1116,6 @@ fn host_launcher_replaces_local(cx: &mut TestAppContext) {
     assert_eq!(s.fake.launched().len(), 1);
     assert_eq!(s.fake.launched()[0].1, s.root);
 }
+
+#[path = "lsp_watched_files.rs"]
+mod watched_files;

@@ -131,6 +131,7 @@ pub use launcher::{
     ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, PullDiagnostics,
     ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
+pub use lsp_types::FileChangeType;
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
 pub use registry::{extension_spec, server_root};

@@ -51,6 +51,7 @@ impl Workbench {
                         .git
                         .update(cx, |git, cx| git.fs_changed(changes, cx));
                     workbench.disk_fs_changed(changes, window, cx);
+                    workbench.lsp_fs_changed(changes, cx);
                 }
                 PanelEvent::Opened => workbench.git.update(cx, GitState::refresh_once),
                 PanelEvent::Renamed { from, to, moves } => {

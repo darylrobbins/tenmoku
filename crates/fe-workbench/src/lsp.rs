@@ -466,6 +466,9 @@ pub(crate) struct Lsp {
     /// since it was last taken: taken around each `open`, it's the root the
     /// document routes to. Only written under the manager's lock.
     asked: Arc<Mutex<Option<PathBuf>>>,
+    /// When the manager started or the project watcher's last batch
+    /// arrived, whichever is later: a file created since is `Created`.
+    watched_at: Option<std::time::SystemTime>,
     /// Bumped with each manager, so a replaced one's events are dropped.
     generation: u64,
     sender: async_channel::Sender<(u64, LspEvent)>,
@@ -683,6 +686,7 @@ impl Lsp {
             watch: None,
             root: None,
             asked: Arc::default(),
+            watched_at: None,
             generation: 0,
             sender,
             events,
@@ -970,6 +974,7 @@ impl Workbench {
     fn start_lsp_manager(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
         lsp.root.clone_from(&root);
+        lsp.watched_at = Some(std::time::SystemTime::now());
         if let Some(root) = &root {
             let path = fe_config::project_settings_path(root);
             lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
@@ -2435,6 +2440,9 @@ mod semantic_tokens;
 
 #[path = "lsp_file_operations.rs"]
 mod file_operations;
+
+#[path = "lsp_watched_files.rs"]
+mod watched_files;
 
 #[path = "lsp_markdown.rs"]
 mod markdown;
