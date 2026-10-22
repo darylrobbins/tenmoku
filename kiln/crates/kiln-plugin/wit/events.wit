@@ -1,6 +1,12 @@
 package kiln:extension@1.0.0;
 
 /// Events the host delivers to a plugin, in order.
+///
+/// They wait in a bounded queue, so a plugin that falls behind gets fewer, later events and
+/// never holds up the host. What waits is coalesced: consecutive changes to one buffer arrive as
+/// one; focus, selection (per buffer) and config reloads only as the latest. Opens, saves and
+/// closes are never merged, and each buffer's events keep their order. Events carry ranges and
+/// versions, never text.
 interface events {
     use types.{buffer-id, version, range, error};
 
@@ -26,7 +32,9 @@ interface events {
         buffer: buffer-id,
         /// The version after the change.
         version: version,
-        /// What the change replaced, in the text after it.
+        /// What the change replaced, in the text after it, in order and apart. For changes the
+        /// host merged, what they all replaced. Empty when that was too many to list: the buffer
+        /// has to be read again rather than patched.
         ranges: list<range>,
     }
 
@@ -65,6 +73,7 @@ interface events {
 interface event-handler {
     use events.{event};
 
-    /// Delivers the next events in order. `lagged` stands in for any the host dropped.
+    /// Delivers the next events in order; the host sends one per call. `lagged` stands in for
+    /// any the host dropped.
     handle-events: func(events: list<event>);
 }
