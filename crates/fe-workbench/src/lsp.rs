@@ -1055,6 +1055,7 @@ impl Workbench {
             // Replaces the last manager's.
             self.navigation().add(Arc::new(navigation), PRECEDENCE);
         }
+        *self.lsp.hover.executor.borrow_mut() = Some(cx.background_executor().clone());
         self.lsp.manager = Some(manager);
         self.set_lsp_trust(cx);
         if self.root_trusted() {
@@ -2076,6 +2077,8 @@ impl CodeActioner {
 #[derive(Default)]
 struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
+    /// Runs the commands accepted completions have.
+    executor: RefCell<Option<gpui::BackgroundExecutor>>,
 }
 
 impl fe_gpui::HoverProvider for LspHover {
@@ -2156,6 +2159,27 @@ impl fe_gpui::CompletionProvider for LspHover {
                 }
             }
         })
+    }
+
+    fn run_command(&self, item: CompletionItem) {
+        let manager = self.manager.borrow().upgrade();
+        let lsp =
+            (item.data.as_ref()).and_then(|data| data.downcast_ref::<fe_lsp::CompletionItem>());
+        let (Some(manager), Some(lsp)) = (manager, lsp) else {
+            return;
+        };
+        // Sent under the lock; awaited without it.
+        let reply = lock(&manager).run_completion_command(lsp);
+        let Some(executor) = self.executor.borrow().clone() else {
+            return;
+        };
+        executor
+            .spawn(async move {
+                if let Err(error) = reply.await {
+                    log::debug!("completion command not run: {error}");
+                }
+            })
+            .detach();
     }
 }
 
@@ -2256,6 +2280,7 @@ fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
         additional_edits: item.additional_edits.iter().map(edit).collect(),
         snippet: item.snippet,
         commit_characters: item.commit_characters.clone(),
+        command: item.command().map(|c| c.command.clone()),
         data: Some(Rc::new(item)),
     }
 }

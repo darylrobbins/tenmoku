@@ -84,3 +84,6 @@ fn a_root_that_failed_to_resolve_starts_servers_after_a_save(cx: &mut TestAppCon
     s.draw();
     s.fake.wait_for_document(&main, "didOpen", |r| r.is_some());
 }
+
+#[path = "lsp_completion_command.rs"]
+mod completion_command;

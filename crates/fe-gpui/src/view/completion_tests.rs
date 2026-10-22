@@ -439,3 +439,6 @@ mod keyword_menu_tests;
 
 #[path = "completion_commit_tests.rs"]
 mod commit;
+
+#[path = "completion_command_tests.rs"]
+mod command;

@@ -80,7 +80,18 @@ pub trait CompletionProvider {
 
     /// `item` with its documentation and detail filled in.
     fn resolve(&self, item: CompletionItem) -> ResolveFuture;
+
+    /// Runs `item`'s command, which isn't one of the editor's, after its
+    /// edit is applied.
+    fn run_command(&self, item: CompletionItem) {
+        let _ = item;
+    }
 }
+
+/// The client command that asks for completions again.
+const TRIGGER_SUGGEST: &str = "editor.action.triggerSuggest";
+/// The client command that asks for signature help.
+const TRIGGER_PARAMETER_HINTS: &str = "editor.action.triggerParameterHints";
 
 /// The menu: its session, or one with no items while the first answer is
 /// awaited.
@@ -382,24 +393,72 @@ impl EditorView {
         true
     }
 
-    /// Closes the menu, applying its selected item.
+    /// Closes the menu, applying its selected item, then runs the item's
+    /// command.
     fn accept_completion(&mut self, cx: &mut Context<Self>) {
+        let command = self.accept_selected(cx);
+        self.run_accepted_command(command, cx);
+    }
+
+    /// Closes the menu, applying its selected item. The item, if it applied
+    /// and has a command to run: see [`Self::run_accepted_command`].
+    fn accept_selected(&mut self, cx: &mut Context<Self>) -> Option<CompletionItem> {
+        let mut command = None;
         if let Some(menu) = self.completion.take()
             && menu.keyword.is_none()
-            && let Err(error) = menu.session.accept(&mut self.model)
         {
-            log::debug!("completion not applied: {error}");
+            // An edit inside an outer transaction (vim's insert session)
+            // closes none, so what applied is read off the version.
+            let before = self.model.snapshot().version();
+            match menu.session.accept(&mut self.model) {
+                Ok(_) if self.model.snapshot().version() != before => {
+                    command = (menu.session.selected())
+                        .and_then(|ix| menu.session.items().get(ix))
+                        .filter(|item| item.command.is_some())
+                        .cloned();
+                }
+                Ok(_) => {}
+                Err(error) => log::debug!("completion not applied: {error}"),
+            }
         }
         self.changed(cx);
+        command
+    }
+
+    /// Runs the command of an accepted item.
+    pub(crate) fn run_accepted_command(
+        &mut self,
+        item: Option<CompletionItem>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = item else {
+            return;
+        };
+        match item.command.as_deref() {
+            Some(TRIGGER_SUGGEST) => self.trigger_completion(CompletionTrigger::Invoked, cx),
+            Some(TRIGGER_PARAMETER_HINTS) => {
+                self.ask_signature_help(crate::signature_help::SignatureTrigger::Invoked, cx)
+            }
+            _ => {
+                if let Some(provider) = self.completion_provider.clone() {
+                    provider.run_command(item);
+                }
+            }
+        }
     }
 
     /// Typing `text` while the menu shows: accepts the selected item, as
     /// `completion.accept` does, if `text` is one of its commit
-    /// characters. `true` if it did.
-    pub(crate) fn commit_completion(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+    /// characters. The item's command, if it did and it has one, is left
+    /// for [`Self::run_accepted_command`] once `text` is typed.
+    pub(crate) fn commit_completion(
+        &mut self,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<CompletionItem> {
         self.drop_stale_completion();
         if !self.completion_shown() {
-            return false;
+            return None;
         }
         let commits = (self.completion.as_ref()).is_some_and(|menu| {
             (menu.session.selected()).is_some_and(|ix| {
@@ -410,9 +469,9 @@ impl EditorView {
             })
         });
         if commits {
-            self.accept_completion(cx);
+            return self.accept_selected(cx);
         }
-        commits
+        None
     }
 
     /// Scrolls the rows so the selected one shows.

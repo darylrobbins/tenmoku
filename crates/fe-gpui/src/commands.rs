@@ -748,9 +748,11 @@ impl EditorView {
     pub(crate) fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
         // Replace mode overwrites: nothing to complete or commit.
         let inserting = self.typing_mode() != Some(true);
-        if inserting && text.chars().count() == 1 {
-            self.commit_completion(text, cx);
-        }
+        let accepted = if inserting && text.chars().count() == 1 {
+            self.commit_completion(text, cx)
+        } else {
+            None
+        };
         let invocation = Invocation::of("editor.insert")
             .expect("valid command ID")
             .args(Value::from_iter([("text", text)]))
@@ -760,6 +762,8 @@ impl EditorView {
             self.completion_typed(text, cx);
         }
         self.signature_help_typed(text, cx);
+        // After the character, so a new menu is asked at the final caret.
+        self.run_accepted_command(accepted, cx);
     }
 }
 

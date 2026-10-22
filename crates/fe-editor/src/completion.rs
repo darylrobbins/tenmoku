@@ -66,6 +66,11 @@ pub struct CompletionItem {
     /// Characters that, typed while the item is selected, accept it and
     /// are then typed after it, as in VS Code.
     pub commit_characters: Vec<String>,
+    /// The id of a command to run once the item is accepted. The editor
+    /// runs `editor.action.triggerSuggest` and
+    /// `editor.action.triggerParameterHints` itself; any other is handed to
+    /// the source.
+    pub command: Option<String>,
     /// The source's own, to resolve the item with.
     pub data: Option<Rc<dyn Any>>,
 }
