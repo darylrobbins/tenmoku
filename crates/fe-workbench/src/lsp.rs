@@ -562,6 +562,8 @@ pub(crate) struct Lsp {
     pub(crate) semantic_highlighting_on: std::cell::Cell<bool>,
     /// Every shown buffer's semantic tokens.
     semantic_tokens: semantic_tokens::Slots,
+    /// `editor.code_actions_on_save`, read live by the save hook.
+    pub(crate) code_actions_on_save: Rc<RefCell<Vec<String>>>,
     save_hook: Option<Rc<dyn fe_gpui::SaveHook>>,
     /// A rename's guard while one is running ([`Workbench::rename_symbol`]).
     pub(crate) rename: std::rc::Weak<()>,
@@ -728,6 +730,7 @@ impl Lsp {
             inlay_hints: Default::default(),
             semantic_highlighting_on: std::cell::Cell::new(true),
             semantic_tokens: Default::default(),
+            code_actions_on_save: Rc::default(),
             save_hook: None,
             resolving: HashSet::new(),
             retry: HashMap::new(),
@@ -1268,7 +1271,8 @@ impl Workbench {
         }
     }
 
-    /// Gives every editor the save hook while `editor.format_on_save` is on,
+    /// Gives every editor the save hook while `editor.format_on_save` is on or
+    /// `editor.code_actions_on_save` names a kind,
     /// and none otherwise, as a save with a hook starts later than one
     /// without.
     pub(crate) fn sync_save_hooks(&mut self, cx: &mut Context<Self>) {
@@ -1280,12 +1284,15 @@ impl Workbench {
                     Rc::new(crate::lsp_format::FormatOnSave::new(
                         cx.weak_entity(),
                         self.lsp.format_on_save.clone(),
+                        self.lsp.code_actions_on_save.clone(),
                     ));
                 self.lsp.save_hook = Some(hook.clone());
                 hook
             }
         };
-        let wanted = self.lsp.format_on_save.get().then(|| save_hook.clone());
+        let wanted = (self.lsp.format_on_save.get()
+            || !self.lsp.code_actions_on_save.borrow().is_empty())
+        .then(|| save_hook.clone());
         for editor in &editors {
             let set = editor.read(cx).save_hook();
             let same = match (set, &wanted) {
@@ -2050,6 +2057,22 @@ impl CodeActioner {
         diagnostics: Vec<fe_lsp::Diagnostic>,
     ) -> Answer<Vec<fe_lsp::CodeAction>> {
         Box::pin(lock(&self.0).code_actions(buffer, version, range, diagnostics))
+    }
+
+    /// The actions of kind `kind` alone for `range` of `buffer` at
+    /// `version`, asked for without the user having invoked them.
+    pub(crate) fn ask_kind(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        range: std::ops::Range<usize>,
+        kind: &str,
+    ) -> Answer<Vec<fe_lsp::CodeAction>> {
+        let query = fe_lsp::code_action::CodeActionQuery {
+            only: Some(vec![kind.to_owned()]),
+            automatic: true,
+        };
+        Box::pin(lock(&self.0).code_actions_for(buffer, version, range, Vec::new(), query))
     }
 
     /// `action` with the edit its server resolves.

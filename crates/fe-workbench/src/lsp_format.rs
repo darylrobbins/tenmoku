@@ -16,17 +16,28 @@
 //!   <language>"; a timeout or an error shows itself. Both as info toasts.
 //! - **[`Workbench::format_buffer`]** is the same for the document, for
 //!   format on save, which reports what happened instead of showing it.
+//! - **Code actions on save.** [`FormatOnSave`] first applies the actions of
+//!   each kind in `editor.code_actions_on_save`, started within 750 ms.
 
-use std::{cell::Cell, ops::Range, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use fe_buffer::{Origin, ProposedChange};
+use fe_buffer::{Origin, ProposedChange, Version};
 use fe_editor::IndentStyle;
 use fe_gpui::{EditorView, SaveHook};
-use fe_lsp::{LspError, formatting::FormatOptions};
-use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
+use fe_lsp::{CodeAction, LspError, formatting::FormatOptions};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, FutureExt as _, Task, WeakEntity, Window,
+};
 
 use crate::{
     Workbench,
+    lsp::{Answer, CodeActioner},
     status_bar::{PLAIN_TEXT, language_label},
     workbench::toast::{self, Toast},
 };
@@ -166,35 +177,164 @@ fn failure(error: LspError) -> Result<FormatOutcome, String> {
     }
 }
 
-/// Formats an editor before it's saved, when `editor.format_on_save` is on:
-/// a timeout, an error or no formatter is logged, never shown.
+/// How long into the hook code actions are still started (VS Code's
+/// `editor.codeActionsOnSaveTimeout`), leaving formatting the rest of the
+/// save's time.
+const CODE_ACTIONS_LIMIT: Duration = Duration::from_millis(750);
+
+impl Workbench {
+    /// Asks for the actions of `kind` over `editor`'s whole buffer, with
+    /// the buffer's version they were asked at.
+    fn ask_on_save(
+        &mut self,
+        editor: &Entity<EditorView>,
+        kind: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<(CodeActioner, Version, Answer<Vec<CodeAction>>)> {
+        let (buffer, version, len) = editor.update(cx, |view, _| {
+            let model = view.model_mut();
+            model.sync_display();
+            let buffer = model.buffer();
+            (buffer.id(), buffer.version(), model.text().len())
+        });
+        let actioner = self.lsp_code_actioner(buffer)?;
+        let reply = actioner.ask_kind(buffer, version, 0..len, kind);
+        Some((actioner, version, reply))
+    }
+
+    /// Applies the enabled actions of `kind` to `editor`, once each and in
+    /// the server's order, as the code actions picker applies one. Nothing
+    /// is asked, resolved, applied or run at or after `deadline` on the
+    /// executor's clock. The buffer is as the answer was asked for, but for
+    /// the save's own edits: typing meanwhile, or an action gone stale,
+    /// ends the kind.
+    async fn run_kind_on_save(
+        this: &WeakEntity<Workbench>,
+        editor: &Entity<EditorView>,
+        kind: &str,
+        deadline: Instant,
+        cx: &mut AsyncApp,
+    ) -> Result<(), String> {
+        let executor = cx.background_executor().clone();
+        let in_time = || match executor.now() < deadline {
+            true => Ok(()),
+            false => Err("out of time".to_owned()),
+        };
+        in_time()?;
+        let asked = this
+            .update(cx, |workbench, cx| workbench.ask_on_save(editor, kind, cx))
+            .map_err(|error| error.to_string())?;
+        let Some((actioner, mut version, reply)) = asked else {
+            return Err("no language server".into());
+        };
+        let actions = cx
+            .background_spawn(reply)
+            .await
+            .map_err(|error| error.to_string())?;
+        for action in actions
+            .into_iter()
+            .filter(|action| action.disabled.is_none())
+        {
+            in_time()?;
+            let current = |cx: &mut AsyncApp| {
+                Ok::<_, String>(editor.read_with(cx, |view, _| view.model().buffer().version()))
+            };
+            if current(cx)? != version {
+                return Err("the buffer changed".into());
+            }
+            let action = cx
+                .background_spawn(actioner.resolve(&action))
+                .await
+                .map_err(|error| error.to_string())?;
+            let edits = actioner.edits(&action).map_err(|error| error.to_string())?;
+            in_time()?;
+            if current(cx)? != version {
+                return Err("the buffer changed".into());
+            }
+            version = this
+                .update(cx, |workbench, cx| {
+                    if !editor.update(cx, |view, cx| view.save_edits_allowed(cx)) {
+                        return Err("the buffer changed".to_owned());
+                    }
+                    workbench.apply_file_edits(edits, cx)?;
+                    Ok(editor.read(cx).model().buffer().version())
+                })
+                .map_err(|error| error.to_string())??;
+            in_time()?;
+            cx.background_spawn(actioner.run(&action))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+/// Readies an editor to be saved: runs the code actions of the kinds in
+/// `editor.code_actions_on_save`, then formats it if `editor.format_on_save`
+/// is on. A timeout, an error or no action or formatter is logged, never
+/// shown.
 pub(crate) struct FormatOnSave {
     workbench: WeakEntity<Workbench>,
     enabled: Rc<Cell<bool>>,
+    kinds: Rc<RefCell<Vec<String>>>,
 }
 
 impl FormatOnSave {
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, enabled: Rc<Cell<bool>>) -> Self {
-        Self { workbench, enabled }
+    pub(crate) fn new(
+        workbench: WeakEntity<Workbench>,
+        enabled: Rc<Cell<bool>>,
+        kinds: Rc<RefCell<Vec<String>>>,
+    ) -> Self {
+        Self {
+            workbench,
+            enabled,
+            kinds,
+        }
     }
 }
 
 impl SaveHook for FormatOnSave {
     fn before_save(&self, editor: &Entity<EditorView>, cx: &mut App) -> Task<()> {
-        if !self.enabled.get() {
+        let kinds = self.kinds.borrow().clone();
+        let format = self.enabled.get();
+        if kinds.is_empty() && !format {
             return Task::ready(());
         }
         let editor = editor.clone();
-        let task = self
-            .workbench
-            .update(cx, |workbench, cx| workbench.format_buffer(&editor, cx));
-        let Ok(task) = task else {
-            return Task::ready(());
-        };
-        cx.spawn(async move |_| match task.await {
-            Ok(FormatOutcome::Formatted | FormatOutcome::Unchanged) => {}
-            Ok(FormatOutcome::NoFormatter) => log::debug!("format on save: no formatter"),
-            Err(error) => log::debug!("format on save: {error}"),
+        let workbench = self.workbench.clone();
+        cx.spawn(async move |cx| {
+            // The code actions get 750 ms in all: none is started after,
+            // what's pending is dropped, and formatting goes on.
+            let executor = cx.background_executor().clone();
+            let deadline = executor.now() + CODE_ACTIONS_LIMIT;
+            let phase = async {
+                for kind in &kinds {
+                    if let Err(error) =
+                        Workbench::run_kind_on_save(&workbench, &editor, kind, deadline, cx).await
+                    {
+                        log::debug!("code actions on save: {kind}: {error}");
+                    }
+                }
+            };
+            if phase
+                .with_timeout(CODE_ACTIONS_LIMIT, &executor)
+                .await
+                .is_err()
+            {
+                log::debug!("code actions on save: out of time");
+            }
+            if !format {
+                return;
+            }
+            let task = workbench.update(cx, |workbench, cx| workbench.format_buffer(&editor, cx));
+            let Ok(task) = task else {
+                return;
+            };
+            match task.await {
+                Ok(FormatOutcome::Formatted | FormatOutcome::Unchanged) => {}
+                Ok(FormatOutcome::NoFormatter) => log::debug!("format on save: no formatter"),
+                Err(error) => log::debug!("format on save: {error}"),
+            }
         })
     }
 }

@@ -302,6 +302,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Self {
         let format_on_save = settings.format_on_save;
+        let code_actions_on_save = settings.code_actions_on_save.clone();
         let inlay_hints = settings.inlay_hints;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
@@ -584,6 +585,7 @@ impl Workbench {
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench.lsp.format_on_save.set(format_on_save);
+        *workbench.lsp.code_actions_on_save.borrow_mut() = code_actions_on_save;
         workbench.lsp.inlay_hints_on.set(inlay_hints);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);

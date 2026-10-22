@@ -146,3 +146,6 @@ fn formats_when_on(cx: &mut TestAppContext) {
 
 #[path = "lsp_format_overlap_tests.rs"]
 mod overlap_tests;
+
+#[path = "lsp_code_actions_on_save_tests.rs"]
+mod code_actions_on_save;

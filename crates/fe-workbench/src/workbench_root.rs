@@ -216,6 +216,10 @@ impl Workbench {
             .format_on_save
             .set(event.settings.editor.format_on_save);
         self.lsp
+            .code_actions_on_save
+            .borrow_mut()
+            .clone_from(&event.settings.editor.code_actions_on_save);
+        self.lsp
             .inlay_hints_on
             .set(event.settings.editor.inlay_hints);
         self.lsp
