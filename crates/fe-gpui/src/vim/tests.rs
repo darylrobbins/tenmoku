@@ -501,8 +501,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
 
     // No ctrl key without cmd applies in a vim editor: they're all vim's,
     // but for the workbench's Go Back and Go Forward (ctrl-minus and
-    // ctrl-shift-minus) and Toggle Terminal (ctrl-`), which vim doesn't
-    // bind, and `ctrl-space`, which asks for completions only where text is
+    // ctrl-shift-minus), Toggle Terminal (ctrl-`) and New Terminal
+    // (ctrl-shift-`), which vim doesn't bind, and `ctrl-space`, which asks for completions only where text is
     // typed: in insert mode, and Show Changes (ctrl-shift-g), which the
     // reducer reads as `<C-g>`, a key vim leaves unbound, and `ctrl-]`, which
     // goes to the definition as nvim's tag jump does.
@@ -537,6 +537,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
             "ctrl--",
             "ctrl-shift--",
             "ctrl-`",
+            "ctrl-shift-`",
             "ctrl-space",
             "ctrl-g",
             "ctrl-shift-g",

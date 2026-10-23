@@ -615,6 +615,26 @@ keys = "ctrl-`"
 command = "terminal.toggle"
 context = "workbench"
 
+# VS Code's Terminal: Create New Terminal. The default spelling is what the
+# key types, as with ctrl-_ above.
+[[bindings]]
+keys = { macos = "ctrl-shift-`", default = "ctrl-~" }
+command = "terminal.new"
+context = "workbench"
+
+# Cycling the terminals reuses the editor-tab keys (workbench.next_tab and
+# previous_tab), so these are terminal-only: with a terminal focused they
+# outrank the workbench bindings, and elsewhere the editor tabs keep them.
+[[bindings]]
+keys = { macos = "cmd-shift-]", default = "ctrl-pagedown" }
+command = "terminal.next"
+context = "terminal"
+
+[[bindings]]
+keys = { macos = "cmd-shift-[", default = "ctrl-pageup" }
+command = "terminal.previous"
+context = "terminal"
+
 # The terminal's find row. Linux keeps ctrl-f for the shell (readline's
 # forward-char), so its key is ctrl-shift-f, which in a terminal wins over
 # project search.

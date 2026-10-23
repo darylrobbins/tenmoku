@@ -639,3 +639,7 @@ mod terminal_shell_integration_tests;
 #[cfg(test)]
 #[path = "terminal_vi_mode_tests.rs"]
 mod terminal_vi_mode_tests;
+
+#[cfg(test)]
+#[path = "terminal_keys_tests.rs"]
+mod terminal_keys_tests;
