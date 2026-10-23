@@ -29,7 +29,10 @@ fmt = 'scripts/ci-env.sh cargo fmt --all --check'
 vet = 'scripts/ci-env.sh cargo clippy --workspace --all-targets -- -D warnings'
 build = 'scripts/ci-env.sh cargo build --workspace --all-targets'
 # JUnit lands in target/nextest/ci/junit.xml (.config/nextest.toml), where the stack reads it.
-test = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci'
+# The gate and fast pipelines test only the packages the change affects and their reverse
+# dependencies (2026-10-21, user-approved); a workspace-wide change runs the workspace. test_one and
+# post_merge's test_all stay --workspace.
+test = 'scripts/ci-env.sh scripts/ci-test-affected.sh'
 # --ignore-default-filter: nextest applies the profile's default-filter to -E too, and a regression
 # test or flake rerun that names a slow test must still run it.
 test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci --ignore-default-filter -E "test(={test})"'

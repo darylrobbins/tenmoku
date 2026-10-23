@@ -41,6 +41,15 @@ the gate. The gate and `rgt ci run --fast` skip the slow set; `post_merge` runs
 it (stage `test_all`). By hand: `cargo nextest run --profile ci
 --ignore-default-filter`, or the unfiltered default profile.
 
+**Affected packages.** The gate and `rgt ci run --fast` test only the packages
+the change touches and the workspace members that depend on them
+(`scripts/ci-test-affected.sh`); a workspace-wide change (`Cargo.lock`, the root
+`Cargo.toml`, `scripts/`, `.config/`, `regatta.toml` and the like) runs the
+whole workspace, and so does `post_merge`. So a test that a task criterion or
+`--regression-test` names must be in a crate the task changes, or in one of
+that crate's reverse dependencies: Regatta refuses a criterion whose test did
+not run in the gate.
+
 ```zsh
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
@@ -49,6 +58,8 @@ scripts/lsp-real.sh               # fe-lsp against real language servers; see Re
 scripts/check-framework-standalone.sh    # kiln/ builds and tests outside this repo; see Kiln on its own
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
+scripts/ci-test-affected.sh       # the gate's test stage: changed packages and their reverse deps
+scripts/test-ci-test-affected.sh  # self-test for the affected-packages script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
