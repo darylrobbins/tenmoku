@@ -470,7 +470,7 @@ fn commands_are_in_the_palette(cx: &mut TestAppContext) {
     });
     for (id, title) in [
         ("terminal.new", "New Terminal"),
-        ("terminal.close", "Close Terminal"),
+        ("terminal.close", "Kill Terminal"),
         ("terminal.next", "Next Terminal"),
         ("terminal.previous", "Previous Terminal"),
     ] {

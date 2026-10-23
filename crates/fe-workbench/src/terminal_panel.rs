@@ -19,10 +19,11 @@
 
 use std::path::PathBuf;
 
+use fe_command::Source;
 use fe_config::TerminalSettings;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
-use fe_ui::{ActiveTheme as _, Icon, IconButton, TAB_HEIGHT};
+use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, TAB_HEIGHT, Tooltip};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -33,6 +34,7 @@ use kiln_shell::{DockItem, PanelId};
 
 use crate::{
     find_bar::FindOp,
+    pane_toolbar,
     picker::{Picker, PickerDelegate},
 };
 use terminal_find::TerminalFind;
@@ -517,6 +519,55 @@ impl TerminalPanel {
             .children(rows)
     }
 
+    /// The actions row above the sessions and their list: a `+` running
+    /// `terminal.new` and a kill button running `terminal.close`, at the
+    /// right, with one session or several. Their tooltips carry the
+    /// commands' keys.
+    fn actions(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let ui = fe_ui::ui_theme(cx);
+        let colors = &cx.theme().colors;
+        let (panel, border) = (colors.surface.panel, colors.border.default);
+        let tip = move |title: &'static str, command: &'static str| {
+            move |_: &mut Window, cx: &mut App| {
+                let key = pane_toolbar::shortcut(command, cx);
+                cx.new(|_| Tooltip::new(title, key, &ui)).into()
+            }
+        };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_end()
+            .gap_1()
+            .px_1()
+            .w_full()
+            .h(TAB_HEIGHT)
+            .bg(panel)
+            .border_b_1()
+            .border_color(border)
+            .child(
+                div()
+                    .id("terminal-new")
+                    .debug_selector(|| "terminal-new".to_owned())
+                    .tooltip(tip("New Terminal", "terminal.new"))
+                    .child(
+                        Button::new("terminal-new-button", "+")
+                            .ghost()
+                            .small()
+                            .on_click(|_, window, cx| {
+                                pane_toolbar::dispatch("terminal.new", Source::Mouse, window, cx);
+                            }),
+                    ),
+            )
+            .child(
+                IconButton::new("terminal-kill", Icon::X, &ui)
+                    .tooltip(tip("Kill Terminal", "terminal.close"))
+                    .on_click(|_, window, cx| {
+                        pane_toolbar::dispatch("terminal.close", Source::Mouse, window, cx);
+                    }),
+            )
+    }
+
     /// The shell sessions run: `terminal.shell`, else the user's login
     /// shell. Tests may override it ([`TerminalPanel::set_shell`]).
     fn shell(&self) -> Option<(String, Vec<String>)> {
@@ -613,6 +664,7 @@ impl Render for TerminalPanel {
         #[cfg(test)]
         self.drawn_tabs.clear();
         let list = (self.sessions.len() > 1).then(|| self.tab_list(cx));
+        let actions = self.actions(cx);
         let view = self.view().cloned();
         let ui = fe_ui::ui_theme(cx);
         let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
@@ -622,6 +674,7 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .bg(self.style.background)
+            .child(actions)
             .children(find)
             .child(
                 div()
@@ -790,6 +843,10 @@ mod terminal_shell_integration_tests;
 #[cfg(test)]
 #[path = "terminal_vi_mode_tests.rs"]
 mod terminal_vi_mode_tests;
+
+#[cfg(test)]
+#[path = "terminal_actions_tests.rs"]
+mod terminal_actions_tests;
 
 #[cfg(test)]
 #[path = "terminal_keys_tests.rs"]

@@ -863,7 +863,7 @@ impl Workbench {
         self.new_terminal(cx.window, cx.cx);
     }
 
-    /// Close Terminal
+    /// Kill Terminal
     #[command(id = "terminal.close")]
     fn close_terminal_command(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
