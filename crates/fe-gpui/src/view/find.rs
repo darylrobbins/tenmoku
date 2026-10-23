@@ -96,6 +96,14 @@ impl EditorView {
         self.find.pattern.as_ref()
     }
 
+    /// The matches counted, by start, the first [`MAX_COUNTED`]: `None` with
+    /// no pattern, or while the text has changed since they were counted.
+    pub(crate) fn find_counted(&self) -> Option<&[Range<usize>]> {
+        self.find.pattern.as_ref()?;
+        let counted = self.find.counted.as_ref()?;
+        (counted.version == self.model.snapshot().version()).then_some(&counted.ranges[..])
+    }
+
     /// Selects the next match after the primary selection's start, wrapping
     /// past the end, so a selected match is stepped past, and reveals it.
     /// With vim on the caret goes to its start, as `/` leaves it. Returns

@@ -3,8 +3,12 @@
 use std::{ops::Range, process::ExitCode, rc::Rc};
 
 use fe_buffer::{Buffer, ResolvedSelection};
-use fe_editor::EditorModel;
+use fe_editor::{
+    EditorModel,
+    diagnostics::{Diagnostic, Severity},
+};
 use fe_gpui::{EditorTheme, EditorView, GutterAnnotation, GutterAnnotations, MinimapOptions};
+use fe_vim::search::{FindQuery, Pattern};
 use gpui::{AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size};
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
@@ -33,6 +37,9 @@ struct Scene {
     /// Whether sticky scroll's band shows: only in its own scene, so the
     /// scenes from before it keep their goldens.
     sticky_scroll: bool,
+    /// Whether the minimap's marks have sources: a find pattern, an error and
+    /// a warning, and a diff base ([`add_marks`]). Only in their own scene.
+    marks: bool,
 }
 
 type Annotations = &'static [(Range<u32>, &'static str, Option<f32>)];
@@ -47,6 +54,7 @@ fn scenes() -> Vec<Scene> {
         minimap: None,
         top: None,
         sticky_scroll: false,
+        marks: false,
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -91,6 +99,7 @@ fn scenes() -> Vec<Scene> {
             minimap: None,
             top: None,
             sticky_scroll: false,
+            marks: false,
         },
         Scene {
             name: "markdown_fence",
@@ -102,6 +111,7 @@ fn scenes() -> Vec<Scene> {
             minimap: None,
             top: None,
             sticky_scroll: false,
+            marks: false,
         },
         Scene {
             name: "large_c",
@@ -112,6 +122,7 @@ fn scenes() -> Vec<Scene> {
             minimap: None,
             top: None,
             sticky_scroll: false,
+            marks: false,
         },
         Scene {
             name: "annotated_gutter",
@@ -126,6 +137,7 @@ fn scenes() -> Vec<Scene> {
             minimap: None,
             top: None,
             sticky_scroll: false,
+            marks: false,
         },
         Scene {
             name: "minimap",
@@ -139,6 +151,7 @@ fn scenes() -> Vec<Scene> {
             }),
             top: Some(140.),
             sticky_scroll: false,
+            marks: false,
         },
         Scene {
             name: "sticky_scroll",
@@ -150,6 +163,21 @@ fn scenes() -> Vec<Scene> {
             // Four rows into `count`: its impl's header and its own pinned.
             top: Some(15.),
             sticky_scroll: true,
+            marks: false,
+        },
+        Scene {
+            name: "minimap_marks",
+            path: "scene.rs",
+            text: marked_rust(),
+            cold: &[],
+            annotations: &[],
+            minimap: Some(MinimapOptions {
+                show_slider: fe_display::minimap::MinimapShowSlider::Always,
+                ..MinimapOptions::default()
+            }),
+            top: Some(140.),
+            sticky_scroll: false,
+            marks: true,
         },
     ]
 }
@@ -170,6 +198,58 @@ fn long_rust() -> String {
     let row_150 = text.match_indices('\n').nth(149).expect("300 rows").0 + 1;
     text.insert(row_150, '‸');
     text
+}
+
+/// A row [`marked_rust`] adds to the fifth module, which its diff base lacks.
+const ADDED_ROW: &str = "        /// The value at `key`, if any.\n";
+
+/// [`long_rust`] with [`ADDED_ROW`] above the fifth module's `get`, and its
+/// `insert` selected, from its name to its last statement.
+fn marked_rust() -> String {
+    let mut text = long_rust().replacen("‸", "", 1);
+    text.insert_str(nth(&text, "        pub fn get", 4), ADDED_ROW);
+    let end = nth(&text, "self.len += 1;", 4) + "self.len += 1;".len();
+    text.insert(end, '»');
+    text.insert(nth(&text, "insert(&mut", 4), '«');
+    text
+}
+
+/// Where `needle`'s `n`th occurrence in `text`, from 0, starts.
+fn nth(text: &str, needle: &str, n: usize) -> usize {
+    text.match_indices(needle).nth(n).expect("in the text").0
+}
+
+/// The minimap_marks scene's sources besides its selection and find
+/// pattern, all in the fifth module: an error and a warning, and a diff base
+/// with a row modified, [`ADDED_ROW`] added and one deleted.
+fn add_marks(model: &mut EditorModel) {
+    let text = model.text().to_string();
+    let at = |needle: &str| {
+        let start = nth(&text, needle, 4);
+        start..start + needle.len()
+    };
+    let items = vec![
+        (at("&oldest"), Diagnostic::new(Severity::Error, "moved")),
+        (
+            at("capacity, len: 0"),
+            Diagnostic::new(Severity::Warning, "unused"),
+        ),
+    ];
+    let version = model.snapshot().version();
+    assert!(model.apply_diagnostics(1u32, (1u64, 1u64), version, items, Some((1, 1))));
+    let mut base = text.clone();
+    // Modified since: `to_string` was `to_owned`.
+    let modified = nth(&base, "key.to_string());", 4);
+    base.replace_range(
+        modified..modified + "key.to_string()".len(),
+        "key.to_owned()",
+    );
+    // Deleted since: a row after `self.len -= 1;`.
+    let deleted = nth(&base, "self.len -= 1;\n", 4) + "self.len -= 1;\n".len();
+    base.insert_str(deleted, "                // Full: the oldest went.\n");
+    let added = nth(&base, ADDED_ROW, 0);
+    base.replace_range(added..added + ADDED_ROW.len(), "");
+    model.set_diff_base(Some(base.into()));
 }
 
 const MARKDOWN: &str = "‸# Notes\n\n\
@@ -321,6 +401,7 @@ fn gutter_annotations(model: &EditorModel, entries: Annotations) -> GutterAnnota
 /// its gutter if there are any, once the background work
 /// its frames start (loading languages, parsing) has landed. Also returns
 /// how many times the view asked to be drawn again meanwhile.
+#[allow(clippy::too_many_arguments)]
 fn capture(
     cx: &mut VisualTestAppContext,
     model: EditorModel,
@@ -328,6 +409,7 @@ fn capture(
     minimap: Option<MinimapOptions>,
     top: Option<f32>,
     sticky_scroll: bool,
+    find: Option<Pattern>,
     size: Size<Pixels>,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
@@ -341,6 +423,7 @@ fn capture(
             let mut view = EditorView::new(model, theme, cx);
             view.set_gutter_annotations(shown, cx);
             view.set_minimap(minimap, cx);
+            view.set_find(find, cx);
             if let Some(top) = top {
                 view.set_scroll_top(top, cx);
             }
@@ -375,6 +458,17 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
         let (text, selections) = parse(&scene.text);
         let mut model = EditorModel::new(Buffer::new(&text), Some(scene.path.into()));
         model.set_selections(selections);
+        if scene.marks {
+            add_marks(&mut model);
+        }
+        let find = scene.marks.then(|| {
+            Pattern::from_query(&FindQuery {
+                text: "entries".into(),
+                match_case: true,
+                ..FindQuery::default()
+            })
+            .expect("a pattern")
+        });
         let (image, notifications) = capture(
             cx,
             model,
@@ -382,6 +476,7 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
             scene.minimap,
             scene.top,
             scene.sticky_scroll,
+            find,
             SCENE_SIZE,
         )?;
         if !scene.cold.is_empty() && notifications < 2 {
@@ -401,7 +496,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
     let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, &[], None, None, true, size)?
+    capture(cx, model, &[], None, None, true, None, size)?
         .0
         .save(out)?;
     println!("wrote {out}");

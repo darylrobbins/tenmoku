@@ -15,6 +15,9 @@
 //! before is drawn as it was until it's built again. Highlights are queried on the main thread, where
 //! the syntax lives: the budget, not a background executor, keeps a jump
 //! from paying for the whole minimap at once.
+//!
+//! Selections, find matches, diagnostics and git's changes are drawn beside
+//! the tiles, never in them ([`marks`]).
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -41,6 +44,9 @@ use gpui::{
 
 use super::{FrameLayout, PointerOutside, foreground_spans, styled_highlights};
 use crate::{EditorTheme, EditorView};
+
+#[path = "minimap_marks.rs"]
+mod marks;
 
 /// How opaque a run's colour is over the minimap's background, as VS Code's
 /// blocks are faint beside the text.
@@ -91,6 +97,7 @@ pub(crate) struct Placed {
     /// The tiles built, each with its rect: the rows of those not built yet
     /// show the background.
     tiles: Vec<(Rect, Arc<RenderImage>)>,
+    marks: marks::Marks,
     /// Each run drawn on the rows shown, with its rect and colour.
     #[cfg(test)]
     runs: Vec<(Rect, Hsla)>,
@@ -198,6 +205,15 @@ pub(crate) fn layout(
         window.on_next_frame(move |window, cx| sweep_step(&entity, window, cx));
     }
     drop(cache);
+    let sampling = Sampling::new(geometry.row_height, window.scale_factor(), rows);
+    let max_column = options.max_column.max(1);
+    let marks = marks::layout(
+        &geometry,
+        sampling,
+        options.column_width(),
+        max_column,
+        view,
+    );
     let rect = Rect {
         x: geometry.x.start,
         y: 0.,
@@ -212,6 +228,7 @@ pub(crate) fn layout(
         screen_rows,
         show_slider: options.show_slider,
         tiles: drawn.tiles,
+        marks,
         #[cfg(test)]
         runs: drawn.runs,
         #[cfg(test)]
@@ -984,6 +1001,11 @@ pub(crate) struct Painted {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) background: Hsla,
     pub(crate) runs: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The selections, find matches and diagnostics under the tiles, in
+    /// paint order.
+    pub(crate) marks: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The git lane's marks, over the tiles.
+    pub(crate) lane: Vec<(Bounds<Pixels>, Hsla)>,
     /// The tiles drawn from their rows' runs as cached, by index; others
     /// may be drawn as they were.
     pub(crate) tiles: Vec<u32>,
@@ -992,8 +1014,9 @@ pub(crate) struct Painted {
     pub(crate) slider: Option<(Bounds<Pixels>, Hsla)>,
 }
 
-/// Paints the minimap `layout` placed, the slider with the pointer `hover`
-/// and the slider `dragged` or not, with an arrow over it.
+/// Paints the minimap `layout` placed: its marks under its tiles, the git
+/// lane over them, then the slider, with the pointer `hover` and the slider
+/// `dragged` or not, with an arrow over it.
 pub(crate) fn paint(
     layout: &FrameLayout,
     theme: &EditorTheme,
@@ -1007,6 +1030,9 @@ pub(crate) fn paint(
     let bounds = layout.bounds(placed.rect());
     window.paint_quad(fill(bounds, theme.minimap_background));
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        for &(rect, color) in &placed.marks.under {
+            window.paint_quad(fill(layout.bounds(rect), color));
+        }
         for (rect, image) in &placed.tiles {
             let tile = layout.bounds(*rect);
             let painted =
@@ -1014,6 +1040,9 @@ pub(crate) fn paint(
             if let Err(err) = painted {
                 log::error!("painting a minimap tile: {err}");
             }
+        }
+        for &(rect, color) in &placed.marks.lane {
+            window.paint_quad(fill(layout.bounds(rect), color));
         }
     });
     if let Some((slider, color)) = slider(layout, theme, hover, dragged) {
@@ -1056,6 +1085,12 @@ pub(crate) fn painted(
         background: theme.minimap_background,
         runs: (placed.runs.iter())
             .map(|&(run, color)| (layout.bounds(run), color))
+            .collect(),
+        marks: (placed.marks.under.iter())
+            .map(|&(mark, color)| (layout.bounds(mark), color))
+            .collect(),
+        lane: (placed.marks.lane.iter())
+            .map(|&(mark, color)| (layout.bounds(mark), color))
             .collect(),
         tiles: placed.tile_indices.clone(),
         images: placed.image_indices.clone(),
