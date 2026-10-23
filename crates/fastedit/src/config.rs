@@ -1,7 +1,7 @@
 //! What [`kiln::init`] sets up for fastedit: [`shipped`] is everything the
 //! app owns, [`config`] adds the user's files.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -87,6 +87,9 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// thread, for files opened after. Their snippets,
 /// `[[contributes.snippets]]` ([`ExtensionSnippet`]), are offered as
 /// completions in every workbench ([`fe_workbench::set_extension_snippets`]).
+/// A trusted launch root's own extensions come after the user's, with
+/// [`WORKSPACE_KINDS`] only: their servers' consent is keyed by their own
+/// directories, so a grant to a user's server doesn't cover them.
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
     // 1.1 added snippets.
     let api = ApiVersion { major: 1, minor: 1 };
@@ -99,6 +102,7 @@ pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
         .extension_kind("lsp", lsp)
         .extension_kind("grammars", grammars)
         .extension_kind("snippets", snippets)
+        .workspace_extensions(WORKSPACE_KINDS)
         .extension_files(|manifest| {
             let mut files = grammar_files(manifest);
             files.extend(server_files(manifest));
@@ -109,14 +113,17 @@ pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
             fe_workbench::set_extension_servers(cx, servers);
             fe_workbench::set_extension_snippets(cx, extension_snippets(set.extensions()));
             let grammars = extension_grammars(set.extensions());
-            // Newer than any batch still registering, which then stops.
+            // Newer than any batch still registering, which then stops. An
+            // empty one still withdraws what extensions registered before.
             let batch = GRAMMAR_BATCH.fetch_add(1, Ordering::SeqCst) + 1;
-            if !grammars.is_empty() {
-                cx.background_spawn(async move { register_grammars(batch, grammars) })
-                    .detach();
-            }
+            cx.background_spawn(async move { register_grammars(batch, grammars) })
+                .detach();
         })
 }
+
+/// The contribution kinds a trusted folder's own extensions may have
+/// (extensions record §3): never themes, keymaps or menus.
+pub(crate) const WORKSPACE_KINDS: [&str; 3] = ["grammars", "lsp", "snippets"];
 
 /// One of an extension's `[[contributes.grammars]]`: a tree-sitter grammar
 /// compiled to WebAssembly (`tree-sitter build --wasm`) and its queries,
@@ -224,12 +231,17 @@ fn extension_snippets(extensions: &[kiln::core::Manifest]) -> Vec<fe_workbench::
     snippets
 }
 
-/// The grammars `extensions` contribute, with their extension's ID, their
-/// paths resolved: a grammar naming a file outside its extension is logged
-/// and skipped.
-fn extension_grammars(
-    extensions: &[kiln::core::Manifest],
-) -> Vec<(String, fe_syntax::GrammarSpec)> {
+/// A grammar an extension contributes: its extension's ID and directory,
+/// and the grammar, its paths resolved.
+struct Grammar {
+    id: String,
+    dir: PathBuf,
+    spec: fe_syntax::GrammarSpec,
+}
+
+/// The grammars `extensions` contribute: a grammar naming a file outside
+/// its extension is logged and skipped.
+fn extension_grammars(extensions: &[kiln::core::Manifest]) -> Vec<Grammar> {
     let mut specs = Vec::new();
     for manifest in extensions {
         let Some(grammars) = manifest.app.get("grammars") else {
@@ -264,7 +276,11 @@ fn extension_grammars(
                         manifest.id,
                         grammar.language
                     );
-                    specs.push((manifest.id.clone(), spec));
+                    specs.push(Grammar {
+                        id: manifest.id.clone(),
+                        dir: manifest.dir.clone(),
+                        spec,
+                    });
                 }
                 Err(error) => log::warn!(
                     "extension {}'s grammar {}: {error}",
@@ -320,19 +336,47 @@ fn extension_file(dir: &Path, entry: &str) -> Result<PathBuf, String> {
 /// The last batch of grammars [`with_extensions`] started registering.
 static GRAMMAR_BATCH: AtomicU64 = AtomicU64::new(0);
 
-/// Registers each grammar of `batch` ([`fe_syntax::register_language`]),
-/// logging those refused with their extension's ID. Batches run one at a
-/// time, and one stops once a newer one starts, so the extensions' latest
-/// grammars are the ones kept.
-fn register_grammars(batch: u64, grammars: Vec<(String, fe_syntax::GrammarSpec)>) {
+/// Withdraws each language an extension's grammar registered unless that
+/// extension, by its directory, still has a grammar of that name in `batch`
+/// ([`fe_syntax::unregister_language`]): one of a workspace folder no
+/// longer trusted goes, even if another extension names the same language.
+/// Then registers each grammar of `batch` ([`fe_syntax::register_language`]),
+/// logging those refused with their extension's ID: one refused keeps the
+/// language its own extension registered before, if it did, and no other's.
+/// Batches run one at a time, and one stops once a newer one starts, which
+/// then withdraws what the stopped one registered and shouldn't have: the
+/// extensions' latest grammars are the ones kept.
+fn register_grammars(batch: u64, grammars: Vec<Grammar>) {
+    /// Each language extensions' grammars registered, by name, with the
+    /// directory of the extension it's from.
+    static REGISTERED: Mutex<BTreeMap<String, PathBuf>> = Mutex::new(BTreeMap::new());
     static REGISTERING: Mutex<()> = Mutex::new(());
     let _registering = REGISTERING.lock().unwrap_or_else(PoisonError::into_inner);
-    for (id, spec) in grammars {
-        if GRAMMAR_BATCH.load(Ordering::SeqCst) != batch {
+    let stale = || GRAMMAR_BATCH.load(Ordering::SeqCst) != batch;
+    if stale() {
+        return;
+    }
+    let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
+    let listed: BTreeSet<(&str, &Path)> = (grammars.iter())
+        .map(|grammar| (grammar.spec.language.as_str(), grammar.dir.as_path()))
+        .collect();
+    registered.retain(|name, dir| {
+        if listed.contains(&(name.as_str(), dir.as_path())) {
+            return true;
+        }
+        log::info!("extension grammar {name} from {} withdrawn", dir.display());
+        fe_syntax::unregister_language(name);
+        false
+    });
+    for Grammar { id, dir, spec } in grammars {
+        if stale() {
             return;
         }
-        if let Err(error) = fe_syntax::register_language(&spec) {
-            log::warn!("extension {id}'s grammar {}: {error}", spec.language);
+        match fe_syntax::register_language(&spec) {
+            Ok(_) => {
+                registered.insert(spec.language.clone(), dir);
+            }
+            Err(error) => log::warn!("extension {id}'s grammar {}: {error}", spec.language),
         }
     }
 }

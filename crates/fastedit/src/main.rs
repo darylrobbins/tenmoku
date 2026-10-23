@@ -6,6 +6,7 @@ mod config;
 mod perf;
 mod theme;
 mod vim_remaps;
+mod workspace_extensions;
 
 use std::{
     collections::HashMap,
@@ -429,6 +430,8 @@ fn main() {
         if let Some(path) = fe_config::paths::trust_path() {
             fe_workbench::set_trust_file(cx, path);
         }
+        // So may the launch root's own extensions load.
+        workspace_extensions::follow(launch.root.clone(), cx);
         log_keymap_report(cx);
         let capabilities = Capabilities::current();
         cx.on_window_closed(|cx, _| {

@@ -1,16 +1,23 @@
 //! Extensions: Show Installed (`workbench.show_extensions`): a [`Picker`]
-//! over the extensions kiln has loaded ([`kiln::extensions::loaded`]), each
-//! with its kinds, licence, source and state, and its language servers'
-//! effective invocations (extensions record §1, §6). Enter on one waiting
-//! on the user's consent, or that they declined, shows its consent prompt.
-//! An extension that failed to load isn't listed: its diagnostics are in
-//! the config problems list.
+//! over the extensions kiln has loaded ([`kiln::extensions::loaded_from`]),
+//! the user's and a trusted workspace folder's, each with its kinds,
+//! licence, source and state, and its language servers' effective
+//! invocations (extensions record §1, §3, §6), then those of a workspace
+//! folder that isn't trusted, skipped ([`kiln::extensions::skipped`]).
+//! Enter on one waiting on the user's consent, or that they declined,
+//! shows its consent prompt. An extension that failed to load isn't
+//! listed: its diagnostics are in the config problems list.
+
+use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, IntoElement as _, ParentElement as _, PromptLevel,
     SharedString, Styled as _, Window, div, px,
 };
-use kiln::core::{LicenseClass, Manifest};
+use kiln::{
+    core::{LicenseClass, Manifest, extension::ExtensionSource as Installed},
+    extensions::Skipped,
+};
 
 use crate::{
     PendingConsent, decline_extension_server, extension_servers, grant_extension_server,
@@ -21,18 +28,23 @@ use crate::{
 
 /// Where an extension is installed from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "workspace extensions come from their own card")]
 pub(crate) enum ExtensionSource {
     User,
     Workspace,
 }
 
+impl From<Installed> for ExtensionSource {
+    fn from(installed: Installed) -> Self {
+        match installed {
+            Installed::User => Self::User,
+            Installed::Workspace => Self::Workspace,
+        }
+    }
+}
+
 /// What an extension is doing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "disabling and untrusted workspaces come from their own cards"
-)]
+#[allow(dead_code, reason = "disabling comes from its own card")]
 pub(crate) enum ExtensionState {
     Active,
     /// These servers wait for the user's decision.
@@ -44,6 +56,7 @@ pub(crate) enum ExtensionState {
         servers: Vec<String>,
     },
     Disabled,
+    /// A workspace folder's, which isn't trusted: it isn't loaded.
     SkippedUntrusted,
 }
 
@@ -63,6 +76,9 @@ impl ExtensionState {
 pub(crate) struct Row {
     pub(crate) name: String,
     pub(crate) id: String,
+    /// Its directory: the row's identity, as the user's and a workspace's
+    /// extension may have one ID.
+    pub(crate) dir: PathBuf,
     pub(crate) version: String,
     /// "1 theme, 2 lsp servers": what it contributes.
     pub(crate) kinds: String,
@@ -72,12 +88,19 @@ pub(crate) struct Row {
     pub(crate) state: ExtensionState,
     /// Each language server, its effective invocation and its status.
     pub(crate) servers: Vec<String>,
+    /// Why it isn't loaded, if it isn't.
+    pub(crate) reason: Option<String>,
     /// The servers waiting or declined, for the prompt.
     pending: Vec<PendingConsent>,
 }
 
 impl Row {
-    fn of(manifest: &Manifest, pending: &[PendingConsent], granted: &[fe_lsp::ServerSpec]) -> Self {
+    fn of(
+        manifest: &Manifest,
+        source: ExtensionSource,
+        pending: &[PendingConsent],
+        granted: &[fe_lsp::ServerSpec],
+    ) -> Self {
         let (major, minor, patch) = manifest.version;
         let own: Vec<PendingConsent> = (pending.iter())
             .filter(|pending| pending.extension_id == manifest.id)
@@ -130,14 +153,26 @@ impl Row {
         Self {
             name: manifest.name.clone(),
             id: manifest.id.clone(),
+            dir: manifest.dir.clone(),
             version: format!("{major}.{minor}.{patch}"),
             kinds: kinds(manifest),
             license: manifest.license.expr.clone(),
             class: manifest.license.class,
-            source: ExtensionSource::User,
+            source,
             state,
             servers,
+            reason: None,
             pending: own,
+        }
+    }
+
+    /// A workspace extension kiln skipped, as its folder isn't trusted:
+    /// none of its servers are asked about.
+    fn skipped(skipped: &Skipped) -> Self {
+        Self {
+            state: ExtensionState::SkippedUntrusted,
+            reason: Some(skipped.reason.clone()),
+            ..Self::of(&skipped.manifest, ExtensionSource::Workspace, &[], &[])
         }
     }
 
@@ -151,7 +186,8 @@ impl Row {
         format!("{} ({class})", self.license)
     }
 
-    /// The secondary line: kinds, licence, source and servers.
+    /// The secondary line: kinds, licence, source, servers, and why it
+    /// isn't loaded.
     pub(crate) fn detail(&self) -> String {
         let source = match self.source {
             ExtensionSource::User => "User",
@@ -159,6 +195,7 @@ impl Row {
         };
         let mut parts = vec![self.kinds.clone(), self.license_text(), source.to_owned()];
         parts.extend(self.servers.iter().cloned());
+        parts.extend(self.reason.clone());
         parts.join(" · ")
     }
 }
@@ -223,10 +260,15 @@ impl ExtensionsPicker {
         self.previous_focus = previous_focus.or(self.previous_focus.take());
         let pending = pending_extension_consents(cx);
         let granted = extension_servers(cx);
-        self.rows = (kiln::extensions::loaded(cx).iter())
-            .map(|manifest| Row::of(manifest, &pending, &granted))
+        self.rows = (kiln::extensions::loaded_from(cx).iter())
+            .map(|(source, manifest)| Row::of(manifest, (*source).into(), &pending, &granted))
             .collect();
         self.rows.sort_by_key(|row| row.name.to_lowercase());
+        let mut skipped: Vec<Row> = (kiln::extensions::skipped(cx).iter())
+            .map(Row::skipped)
+            .collect();
+        skipped.sort_by_key(|row| row.name.to_lowercase());
+        self.rows.extend(skipped);
         self.matches = (0..self.rows.len()).collect();
     }
 
@@ -298,7 +340,7 @@ impl PickerDelegate for ExtensionsPicker {
     }
 
     fn match_id(&self, ix: usize) -> SharedString {
-        self.row(ix).id.clone().into()
+        self.row(ix).dir.to_string_lossy().into_owned().into()
     }
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
@@ -349,3 +391,7 @@ impl PickerDelegate for ExtensionsPicker {
 #[cfg(test)]
 #[path = "extensions_picker_tests.rs"]
 mod extensions_picker_tests;
+
+#[cfg(test)]
+#[path = "extensions_picker_workspace_tests.rs"]
+mod extensions_picker_workspace_tests;

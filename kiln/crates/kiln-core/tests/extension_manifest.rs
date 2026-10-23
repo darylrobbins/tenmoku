@@ -37,6 +37,7 @@ fn api() -> ExtensionApi {
             },
         ],
         allowed_licenses: None,
+        only_kinds: None,
     }
 }
 

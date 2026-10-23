@@ -51,6 +51,20 @@
 //! A contributed file is read only while it's inside its extension's
 //! directory, symlinks followed: one that comes to lead outside it keeps
 //! its last good version, unread.
+//!
+//! A workspace folder's own extensions, `<root>/.<app>/extensions`
+//! ([`kiln_core::AppPaths::project_extensions_dir`]), load beside the
+//! user's for the root the app sets ([`set_workspace_root`]), once
+//! [`crate::Config::workspace_extensions`] turns them on, and only while
+//! the root is trusted ([`kiln_shell::trust`]): their directory is then
+//! watched, and they're dropped when trust is withdrawn or the root
+//! changes. Until it's trusted, they're [`skipped`] and contribute nothing.
+//! They may contribute only the kinds the app allows
+//! ([`kiln_core::ExtensionApi::only_kinds`]), never themes, keymaps or
+//! menus, and give no licence notices. One with the ID of one of the
+//! user's isn't loaded, with a warning: the user's copy is.
+//! [`crate::Config::on_extensions`] gets the user's then the workspace's
+//! ([`ExtensionSet::joined`], [`ExtensionSet::sourced`]).
 
 use std::{
     cell::RefCell,
@@ -60,13 +74,17 @@ use std::{
     rc::Rc,
 };
 
-use gpui::{App, Global};
+use gpui::{App, AppContext as _, Entity, Global, Subscription, Task};
 use kiln_core::{
     ApiVersion, AppKind, CommandCatalog, Diagnostic, ExtensionApi, ExtensionSet, ItemKind,
-    KeymapLayer, LicenseNotice, Manifest, MenuBar, Os, Severity,
+    KeymapLayer, LicenseNotice, Manifest, MenuBar, Os, Severity, TreeWatcher,
+    extension::ExtensionSource as Source,
     theme::{Appearance, ThemeData, ThemeFile},
+    trust::canonical,
 };
-use kiln_platform::config::{ConfigDiagnostics, ConfigSource, log_diagnostics_as, log_target};
+use kiln_platform::config::{
+    ConfigDiagnostics, ConfigSource, batch_channel, log_diagnostics_as, log_target,
+};
 use toml::de::{DeTable, DeValue};
 
 use crate::config::{Installed, Layers};
@@ -114,15 +132,109 @@ pub(crate) struct Setup {
     pub(crate) on_extensions: Vec<OnExtensions>,
     pub(crate) on_notice: Vec<OnNotice>,
     pub(crate) files_of: Option<FilesOf>,
+    /// The kinds a workspace's extensions may contribute, if it may have
+    /// any ([`crate::Config::workspace_extensions`]).
+    pub(crate) workspace_kinds: Option<Vec<String>>,
 }
 
-/// The extensions loaded now, in ID order: none without
+/// The extensions loaded now: the user's in ID order, then the
+/// workspace's ([`set_workspace_root`]) in theirs. None without
 /// [`crate::Config::extensions`].
 pub fn loaded(cx: &App) -> Vec<Manifest> {
+    loaded_from(cx)
+        .into_iter()
+        .map(|(_, manifest)| manifest)
+        .collect()
+}
+
+/// [`loaded`], each with where it's installed.
+pub fn loaded_from(cx: &App) -> Vec<(Source, Manifest)> {
     cx.try_global::<Loaded>()
         .map(|loaded| loaded.0.clone())
         .unwrap_or_default()
 }
+
+/// A workspace extension that isn't loaded: [`skipped`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Skipped {
+    /// Its manifest, read but not loaded.
+    pub manifest: Manifest,
+    /// Why: "/work/project isn't trusted".
+    pub reason: String,
+}
+
+/// The workspace's extensions that aren't loaded because its root isn't
+/// trusted, in ID order: each whose manifest reads. None once the root is
+/// trusted, or without one.
+pub fn skipped(cx: &App) -> Vec<Skipped> {
+    cx.try_global::<SkippedGlobal>()
+        .map(|skipped| skipped.0.clone())
+        .unwrap_or_default()
+}
+
+/// Sets the workspace folder whose extensions load beside the user's, if
+/// [`crate::Config::workspace_extensions`] turned them on: they load
+/// while `root` is trusted, from then on as its trust changes, and those
+/// of the root set before are dropped. `None` drops them. Not to be called
+/// from [`crate::Config::on_extensions`]'s callback.
+pub fn set_workspace_root(cx: &mut App, root: Option<PathBuf>) {
+    let Some(source) = cx.try_global::<Running>().map(|running| running.0.clone()) else {
+        return;
+    };
+    {
+        let mut source = source.borrow_mut();
+        let Some(workspace) = source.workspace.as_mut() else {
+            return;
+        };
+        let app = workspace.api.app.clone();
+        let root = root.map(|root| {
+            let root = canonical(&root);
+            let dir = root.join(format!(".{app}")).join("extensions");
+            (root, dir)
+        });
+        if workspace.root == root {
+            return;
+        }
+        workspace.root = root;
+        workspace.trusted = None;
+    }
+    follow_trust(cx);
+    ExtensionSource::settle_workspace(&source, cx);
+}
+
+/// Has the workspace's extensions follow the trust decisions, once.
+fn follow_trust(cx: &mut App) {
+    if cx.has_global::<FollowingTrust>() {
+        return;
+    }
+    let follower = cx.new(|cx| TrustFollower {
+        _observer: kiln_shell::trust::observe(cx, |_, cx| {
+            if let Some(source) = cx.try_global::<Running>().map(|running| running.0.clone()) {
+                ExtensionSource::settle_workspace(&source, cx);
+            }
+        }),
+    });
+    cx.set_global(FollowingTrust(follower));
+}
+
+/// Holds the subscription to the trust decisions.
+struct TrustFollower {
+    _observer: Subscription,
+}
+
+struct FollowingTrust(#[allow(dead_code, reason = "held, not read")] Entity<TrustFollower>);
+
+impl Global for FollowingTrust {}
+
+/// The extension source, for [`set_workspace_root`] and the trust
+/// decisions to reach.
+pub(crate) struct Running(pub(crate) Rc<RefCell<ExtensionSource>>);
+
+impl Global for Running {}
+
+struct SkippedGlobal(Vec<Skipped>);
+
+impl Global for SkippedGlobal {}
 
 /// A theme an extension or the app installed: [`themes`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,7 +323,7 @@ pub fn select_themes_noting(
 }
 
 /// The extensions loaded, as a GPUI global.
-struct Loaded(Vec<Manifest>);
+struct Loaded(Vec<(Source, Manifest)>);
 
 impl Global for Loaded {}
 
@@ -246,6 +358,35 @@ pub(crate) struct ExtensionSource {
     on_notice: Vec<OnNotice>,
     /// The notices logged with no callback to give them to.
     logged: HashSet<LicenseNotice>,
+    /// The workspace's extensions, if the app takes them.
+    workspace: Option<Workspace>,
+}
+
+/// A workspace folder's extensions: [`set_workspace_root`].
+struct Workspace {
+    /// The user's, with only the kinds a workspace may contribute.
+    api: ExtensionApi,
+    /// Whether its directory is watched by a watcher of its own: not when
+    /// the app's batches are given ([`crate::Config::watch_with`]), which
+    /// name it instead.
+    watch: bool,
+    /// The root, canonical, and its extensions directory.
+    root: Option<(PathBuf, PathBuf)>,
+    /// Whether the root was trusted when last settled: `None` until it is.
+    trusted: Option<bool>,
+    /// Its extensions, while the root is trusted.
+    set: Option<ExtensionSet>,
+    /// The watcher on its directory, and the task applying its batches,
+    /// while it's loaded.
+    watching: Option<(TreeWatcher, Task<()>)>,
+}
+
+impl Workspace {
+    /// The directory, while its extensions are loaded.
+    fn loaded_dir(&self) -> Option<&Path> {
+        self.set.as_ref()?;
+        self.root.as_ref().map(|(_, dir)| dir.as_path())
+    }
 }
 
 impl ExtensionSource {
@@ -253,12 +394,15 @@ impl ExtensionSource {
     /// and reads their themes, which may have the app's `theme_tables`,
     /// and their keymap and menu files into `files`; IDs may not start
     /// with a namespace in `reserved`.
+    /// A workspace's extensions, if `setup` takes them, are watched with
+    /// a watcher of their own if `watch`.
     pub(crate) fn load(
         setup: Setup,
         reserved: Vec<String>,
         theme_tables: &'static [&'static str],
         layers: Layers,
         files: Files,
+        watch: bool,
     ) -> Option<Self> {
         let (dir, app, version) = setup.dir?;
         let api = ExtensionApi {
@@ -267,7 +411,19 @@ impl ExtensionSource {
             reserved,
             kinds: setup.kinds,
             allowed_licenses: setup.allowed_licenses,
+            only_kinds: None,
         };
+        let workspace = setup.workspace_kinds.map(|kinds| Workspace {
+            api: ExtensionApi {
+                only_kinds: Some(kinds),
+                ..api.clone()
+            },
+            watch,
+            root: None,
+            trusted: None,
+            set: None,
+            watching: None,
+        });
         let mut source = Self {
             set: ExtensionSet::discover(&dir, &api),
             dir,
@@ -284,6 +440,7 @@ impl ExtensionSource {
             files_of: setup.files_of,
             on_notice: setup.on_notice,
             logged: HashSet::new(),
+            workspace,
         };
         source.read_themes();
         source.read_files();
@@ -406,7 +563,7 @@ impl ExtensionSource {
             return Fingerprints::new();
         };
         let mut out = Fingerprints::new();
-        for manifest in self.set.extensions() {
+        for manifest in self.joined().extensions() {
             let root = manifest.dir.canonicalize().ok();
             let stamps = files(manifest)
                 .into_iter()
@@ -439,12 +596,13 @@ impl ExtensionSource {
     /// once each while the app runs, and stay unacknowledged, so a later
     /// launch with one shows them.
     fn apply(&mut self, cx: &mut App) {
-        cx.set_global(Loaded(self.set.extensions().to_vec()));
+        let joined = self.joined();
+        publish_loaded(&joined, cx);
         self.fingerprints = self.fingerprint();
         self.hashes = None;
         self.dirty = false;
         for on_extensions in &mut self.on_extensions {
-            on_extensions(&self.set, cx);
+            on_extensions(&joined, cx);
         }
         let Some(state_dir) = self.set.root().parent() else {
             return;
@@ -470,6 +628,171 @@ impl ExtensionSource {
 }
 
 impl ExtensionSource {
+    /// The user's extensions, with the workspace's joined after while
+    /// they're loaded.
+    fn joined(&self) -> ExtensionSet {
+        match self.workspace.as_ref().and_then(|ws| ws.set.as_ref()) {
+            Some(workspace) => self.set.joined(workspace),
+            None => self.set.clone(),
+        }
+    }
+
+    /// The extensions' problems now: the user's, the workspace's while
+    /// they're loaded, and their themes', keymaps' and menus'.
+    fn diagnostics(&self) -> Vec<Diagnostic> {
+        let mut diagnostics = self.joined().diagnostics().to_vec();
+        diagnostics.extend(self.theme_diagnostics.iter().cloned());
+        let files = self.files.0.borrow();
+        diagnostics.extend(files.read.iter().cloned());
+        diagnostics.extend(files.laid.iter().cloned());
+        diagnostics
+    }
+
+    /// Loads the workspace's extensions if its root is trusted now and
+    /// they aren't loaded, and drops them if it isn't and they are, then
+    /// applies the extensions and publishes their diagnostics, between
+    /// the config service's batches. Nothing happens if the root and its
+    /// trust are as last settled.
+    fn settle_workspace(this: &Rc<RefCell<Self>>, cx: &mut App) {
+        let previous = this.borrow().diagnostics();
+        {
+            let mut source = this.borrow_mut();
+            let Some(workspace) = source.workspace.as_mut() else {
+                return;
+            };
+            let trusted = (workspace.root.as_ref())
+                .is_some_and(|(root, _)| kiln_shell::trust::decided(root, cx) == Some(true));
+            if workspace.trusted == Some(trusted) {
+                return;
+            }
+            workspace.trusted = Some(trusted);
+            workspace.set = None;
+            workspace.watching = None;
+            let mut skipped = Vec::new();
+            if let Some((root, dir)) = &workspace.root {
+                let set = ExtensionSet::discover_from(dir, &workspace.api, Source::Workspace);
+                if trusted {
+                    log::info!(target: log_target(cx), "loading {}'s extensions", root.display());
+                    workspace.set = Some(set);
+                } else {
+                    let reason = format!("{} isn't trusted", root.display());
+                    skipped = (set.extensions().iter())
+                        .map(|manifest| Skipped {
+                            manifest: manifest.clone(),
+                            reason: reason.clone(),
+                        })
+                        .collect();
+                }
+            }
+            cx.set_global(SkippedGlobal(skipped));
+        }
+        Self::watch_workspace(this, cx);
+        let stamps = {
+            let mut source = this.borrow_mut();
+            if source.files_of.is_none() {
+                source.apply(cx);
+                None
+            } else {
+                publish_loaded(&source.joined(), cx);
+                source.dirty = true;
+                Some(source.fingerprint())
+            }
+        };
+        if let Some(stamps) = stamps {
+            Self::hash(this, stamps, cx);
+        }
+        let diagnostics = this.borrow().diagnostics();
+        replace_diagnostics(cx, &previous, diagnostics);
+    }
+
+    /// Watches the workspace's extensions directory while they're loaded,
+    /// if they're watched on their own, rescanning it after each change
+    /// under it.
+    fn watch_workspace(this: &Rc<RefCell<Self>>, cx: &mut App) {
+        let mut source = this.borrow_mut();
+        let Some(workspace) = source.workspace.as_mut().filter(|ws| ws.watch) else {
+            return;
+        };
+        let Some(dir) = workspace.loaded_dir().map(Path::to_owned) else {
+            return;
+        };
+        let (sender, mut batches) = batch_channel();
+        let watcher = match TreeWatcher::new(vec![dir.clone()], move |batch| sender.send(batch)) {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                log::warn!(
+                    target: log_target(cx),
+                    "{} won't reload when changed: {error}",
+                    dir.display()
+                );
+                return;
+            }
+        };
+        let weak = Rc::downgrade(this);
+        let task = cx.spawn(async move |cx| {
+            while let Some(batch) = batches.next().await {
+                let Some(this) = weak.upgrade() else {
+                    return;
+                };
+                cx.update(|cx| {
+                    let previous = this.borrow().diagnostics();
+                    Self::reload(&this, &batch, cx);
+                    let diagnostics = this.borrow().diagnostics();
+                    replace_diagnostics(cx, &previous, diagnostics);
+                });
+            }
+        });
+        workspace.watching = Some((watcher, task));
+    }
+
+    /// Rescans the user's extensions directory if `changed` names it, and
+    /// the workspace's if it names that and they're loaded, then applies
+    /// what changed.
+    fn reload(this: &Rc<RefCell<Self>>, changed: &[PathBuf], cx: &mut App) {
+        let mut source = this.borrow_mut();
+        let user = changed.contains(&source.dir);
+        let workspace = (source.workspace.as_mut())
+            .filter(|ws| {
+                ws.loaded_dir()
+                    .is_some_and(|dir| changed.iter().any(|c| c == dir))
+            })
+            .and_then(|ws| ws.set.as_mut());
+        let Some(mut rescanned) = workspace
+            .map(ExtensionSet::rescan)
+            .or(user.then_some(false))
+        else {
+            return;
+        };
+        if user {
+            rescanned |= source.set.rescan();
+            // A theme file may change with no manifest changing.
+            if source.read_themes() {
+                log::info!(target: log_target(cx), "extension themes reloaded");
+                source.apply_themes(cx);
+            }
+            // So may a keymap or menu file.
+            if source.read_files() {
+                log::info!(target: log_target(cx), "extension keymaps and menus reloaded");
+                crate::contributions::resolve_again(cx);
+            }
+        }
+        // A file the app reads from the manifest, as a grammar's module,
+        // may change with no manifest changing. The contents are hashed off
+        // the main thread, and the extensions applied when that's done, if
+        // anything differs.
+        if source.files_of.is_none() {
+            if rescanned {
+                log::info!(target: log_target(cx), "extensions reloaded");
+                source.apply(cx);
+            }
+            return;
+        }
+        let stamps = source.fingerprint();
+        source.dirty |= rescanned || stamps != source.fingerprints;
+        drop(source);
+        Self::hash(this, stamps, cx);
+    }
+
     /// Hashes the contents of the files in `stamps` on a background thread,
     /// then applies the extensions, with `stamps` as their fingerprint, if
     /// they were loaded or a reload found a change in the manifests or the
@@ -536,7 +859,7 @@ impl ConfigSource for Shared {
             }
             // The app is told once the files are hashed, so the hashes can't
             // be of bytes it never saw: a rewrite after it is a change.
-            cx.set_global(Loaded(source.set.extensions().to_vec()));
+            publish_loaded(&source.joined(), cx);
             source.dirty = true;
             source.fingerprint()
         };
@@ -544,47 +867,36 @@ impl ConfigSource for Shared {
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
-        let mut source = self.0.borrow_mut();
-        if !changed.contains(&source.dir) {
-            return;
-        }
-        let rescanned = source.set.rescan();
-        // A theme file may change with no manifest changing.
-        if source.read_themes() {
-            log::info!(target: log_target(cx), "extension themes reloaded");
-            source.apply_themes(cx);
-        }
-        // So may a keymap or menu file.
-        if source.read_files() {
-            log::info!(target: log_target(cx), "extension keymaps and menus reloaded");
-            crate::contributions::resolve_again(cx);
-        }
-        // A file the app reads from the manifest, as a grammar's module,
-        // may change with no manifest changing. The contents are hashed off
-        // the main thread, and the extensions applied when that's done, if
-        // anything differs.
-        if source.files_of.is_none() {
-            if rescanned {
-                log::info!(target: log_target(cx), "extensions reloaded");
-                source.apply(cx);
-            }
-            return;
-        }
-        let stamps = source.fingerprint();
-        source.dirty |= rescanned || stamps != source.fingerprints;
-        drop(source);
-        ExtensionSource::hash(&self.0, stamps, cx);
+        ExtensionSource::reload(&self.0, changed, cx);
     }
 
     fn diagnostics(&self) -> Vec<Diagnostic> {
-        let source = self.0.borrow();
-        let mut diagnostics = source.set.diagnostics().to_vec();
-        diagnostics.extend(source.theme_diagnostics.iter().cloned());
-        let files = source.files.0.borrow();
-        diagnostics.extend(files.read.iter().cloned());
-        diagnostics.extend(files.laid.iter().cloned());
-        diagnostics
+        self.0.borrow().diagnostics()
     }
+}
+
+/// Publishes `joined`'s extensions as [`loaded_from`]'s.
+fn publish_loaded(joined: &ExtensionSet, cx: &mut App) {
+    let loaded = joined.sourced();
+    let loaded = loaded.map(|(source, manifest)| (source, manifest.clone()));
+    cx.set_global(Loaded(loaded.collect()));
+}
+
+/// Logs `diagnostics` and puts them in place of `previous` in
+/// [`ConfigDiagnostics`], if they differ: for a change between the config
+/// service's batches, which publish them with the rest.
+fn replace_diagnostics(cx: &mut App, previous: &[Diagnostic], diagnostics: Vec<Diagnostic>) {
+    if previous == diagnostics {
+        return;
+    }
+    log_diagnostics_as(log_target(cx), &diagnostics);
+    let mut all = cx
+        .try_global::<ConfigDiagnostics>()
+        .map(|all| all.0.clone())
+        .unwrap_or_default();
+    all.retain(|diagnostic| !previous.contains(diagnostic));
+    all.extend(diagnostics);
+    cx.set_global(ConfigDiagnostics(all));
 }
 
 /// Why a contributed file wasn't read.
@@ -873,15 +1185,7 @@ pub(crate) fn set_laid(cx: &mut App, diagnostics: Vec<Diagnostic>, publish: bool
         return;
     };
     let previous = std::mem::replace(&mut files.0.borrow_mut().laid, diagnostics.clone());
-    if !publish || previous == diagnostics {
-        return;
+    if publish {
+        replace_diagnostics(cx, &previous, diagnostics);
     }
-    log_diagnostics_as(log_target(cx), &diagnostics);
-    let mut all = cx
-        .try_global::<ConfigDiagnostics>()
-        .map(|all| all.0.clone())
-        .unwrap_or_default();
-    all.retain(|diagnostic| !previous.contains(diagnostic));
-    all.extend(diagnostics);
-    cx.set_global(ConfigDiagnostics(all));
 }

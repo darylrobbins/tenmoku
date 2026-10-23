@@ -80,6 +80,19 @@ pub struct ExtensionApi {
     /// `extensions.allowed_licenses`: when set, only extensions whose
     /// licence these SPDX IDs satisfy load.
     pub allowed_licenses: Option<Vec<String>>,
+    /// For a workspace's extensions: when set, only these contribution
+    /// kinds load, file kinds (`themes`, `keymaps`, `menus`) and app kinds
+    /// alike. Another kind a manifest contributes is dropped with a
+    /// warning, unchecked, and the rest loads.
+    pub only_kinds: Option<Vec<String>>,
+}
+
+impl ExtensionApi {
+    /// Whether a manifest may contribute `kind`: see
+    /// [`ExtensionApi::only_kinds`].
+    pub fn allows(&self, kind: &str) -> bool {
+        (self.only_kinds.as_ref()).is_none_or(|only| only.iter().any(|allowed| allowed == kind))
+    }
 }
 
 /// An extension's licence: its SPDX expression and what kind of licence it
@@ -174,12 +187,25 @@ pub fn load_manifest(dir: &Path, api: &ExtensionApi) -> (Option<Manifest>, Vec<D
 /// value formats are checked by hand.
 fn manifest_schema(api: &ExtensionApi) -> Json {
     let files = json!({ "type": "array" });
+    // A kind that isn't allowed is dropped unchecked, with a warning of
+    // its own.
     let mut contributes: serde_json::Map<String, Json> = FILE_KINDS
         .iter()
-        .map(|kind| ((*kind).to_owned(), files.clone()))
+        .map(|kind| {
+            let schema = if api.allows(kind) {
+                files.clone()
+            } else {
+                json!({})
+            };
+            ((*kind).to_owned(), schema)
+        })
         .collect();
     let mut defs = serde_json::Map::new();
     for kind in &api.kinds {
+        if !api.allows(kind.name) {
+            contributes.insert(kind.name.to_owned(), json!({}));
+            continue;
+        }
         let mut schema = kind.schema.clone();
         // Its definitions move to the root, where `$ref`s resolve, under
         // `<kind>/` so two kinds' names can't collide.
@@ -271,7 +297,8 @@ impl<'a> Check<'a> {
             .required_str("license")
             .and_then(|expr| self.license(expr, id.as_deref(), api));
         let engine = self.engine(api);
-        let files = self.files(dir);
+        self.disallowed(api);
+        let files = self.files(dir, api);
         let app = self.app_kinds(api);
         Some(Manifest {
             dir: dir.to_owned(),
@@ -425,9 +452,30 @@ impl<'a> Check<'a> {
         Some(needed)
     }
 
+    /// A warning for each kind the manifest contributes that `api`
+    /// doesn't allow ([`ExtensionApi::only_kinds`]), which is dropped.
+    fn disallowed(&mut self, api: &ExtensionApi) {
+        let Some(Value::Table(contributes)) = self.layer.table.get("contributes") else {
+            return;
+        };
+        let known = FILE_KINDS
+            .iter()
+            .copied()
+            .chain(api.kinds.iter().map(|kind| kind.name));
+        for kind in known.filter(|kind| contributes.contains_key(*kind) && !api.allows(kind)) {
+            let path = owned(&["contributes", kind]);
+            let message = format!(
+                "workspace extensions can't contribute {kind}, so `contributes.{kind}` is ignored"
+            );
+            self.diagnostics
+                .push(self.layer.key_diagnostic(Severity::Warning, &path, message));
+        }
+    }
+
     /// The contributed files by kind, each checked to be a file under
-    /// `dir`. A kind missing from the map had errors.
-    fn files(&mut self, dir: &Path) -> BTreeMap<&'static str, Vec<PathBuf>> {
+    /// `dir`: none of a kind `api` doesn't allow. A kind missing from the
+    /// map had errors.
+    fn files(&mut self, dir: &Path, api: &ExtensionApi) -> BTreeMap<&'static str, Vec<PathBuf>> {
         let layer = self.layer;
         let contributes = match layer.table.get("contributes") {
             Some(Value::Table(contributes)) => Some(contributes),
@@ -438,6 +486,7 @@ impl<'a> Check<'a> {
             .filter_map(
                 |&kind| match contributes.and_then(|table| table.get(kind)) {
                     None => Some((kind, None)),
+                    Some(_) if !api.allows(kind) => Some((kind, None)),
                     Some(Value::Array(entries)) => Some((kind, Some(entries))),
                     // Reported by the schema.
                     Some(_) => None,
@@ -494,6 +543,7 @@ impl<'a> Check<'a> {
         };
         api.kinds
             .iter()
+            .filter(|kind| api.allows(kind.name))
             .filter_map(|kind| {
                 let value = contributes.get(kind.name)?;
                 Some((kind.name.to_owned(), value.clone()))
@@ -665,13 +715,37 @@ impl ArraySpans {
     }
 }
 
+/// Where an extension is installed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExtensionSource {
+    /// The user's extensions directory.
+    User,
+    /// A workspace folder's own extensions directory.
+    Workspace,
+}
+
+impl ExtensionSource {
+    /// "the user's", "the workspace's".
+    fn owner(self) -> &'static str {
+        match self {
+            Self::User => "the user's",
+            Self::Workspace => "the workspace's",
+        }
+    }
+}
+
 /// The extensions in one directory, a directory each, as last loaded:
-/// see [`ExtensionSet::discover`].
+/// see [`ExtensionSet::discover`]. A set may have another's joined after
+/// its own ([`ExtensionSet::joined`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExtensionSet {
     root: PathBuf,
     api: ExtensionApi,
+    /// Where the extensions under `root` are installed.
+    source: ExtensionSource,
     extensions: Vec<Manifest>,
+    /// Each extension's source, by its index in `extensions`.
+    sources: Vec<ExtensionSource>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -680,16 +754,53 @@ impl ExtensionSet {
     /// [`MANIFEST_FILE`], with [`load_manifest`], in ID order. A missing
     /// `root` is no extensions and no diagnostics. Of two directories with
     /// one ID, the first by directory name loads, and the other has an
-    /// error naming both.
+    /// error naming both. They're the user's.
     pub fn discover(root: &Path, api: &ExtensionApi) -> ExtensionSet {
+        Self::discover_from(root, api, ExtensionSource::User)
+    }
+
+    /// [`ExtensionSet::discover`], for extensions installed in `source`.
+    pub fn discover_from(root: &Path, api: &ExtensionApi, source: ExtensionSource) -> ExtensionSet {
         let mut set = ExtensionSet {
             root: std::path::absolute(root).unwrap_or_else(|_| root.to_owned()),
             api: api.clone(),
+            source,
             extensions: Vec::new(),
+            sources: Vec::new(),
             diagnostics: Vec::new(),
         };
         set.rescan();
         set
+    }
+
+    /// This set with `other`'s extensions after its own, each keeping its
+    /// source ([`ExtensionSet::sourced`]), and `other`'s diagnostics after
+    /// its own. One of `other`'s with the ID of one of this set's isn't
+    /// joined: this set's copy loads, and a warning at the other's `id`
+    /// names it. The set is for reading: rescanning it reads this set's
+    /// root again, and drops what was joined.
+    pub fn joined(&self, other: &ExtensionSet) -> ExtensionSet {
+        let mut joined = self.clone();
+        joined.diagnostics.extend(other.diagnostics.iter().cloned());
+        for (source, manifest) in other.sourced() {
+            let Some(own) = self.extensions.iter().position(|own| own.id == manifest.id) else {
+                joined.extensions.push(manifest.clone());
+                joined.sources.push(source);
+                continue;
+            };
+            let message = format!(
+                "{} {} in {} isn't loaded: {} copy in {} loads instead",
+                source.owner(),
+                manifest.id,
+                manifest.dir.display(),
+                self.sources[own].owner(),
+                self.extensions[own].dir.display()
+            );
+            let layer = load_layer(&manifest.dir.join(MANIFEST_FILE));
+            let path = owned(&["id"]);
+            (joined.diagnostics).push(layer.value_diagnostic(Severity::Warning, &path, message));
+        }
+        joined
     }
 
     /// Reads the directory again: an extension whose manifest now has
@@ -702,8 +813,9 @@ impl ExtensionSet {
             Ok(mut dirs) => {
                 // A directory that held an extension keeps it until the
                 // directory is gone: a manifest removed or unreadable is
-                // an error, and its last good version stays.
-                for last in &self.extensions {
+                // an error, and its last good version stays. What was
+                // joined isn't this set's.
+                for last in self.own() {
                     if !dirs.contains(&last.dir) && still_a_dir(&last.dir) {
                         dirs.push(last.dir.clone());
                     }
@@ -734,7 +846,7 @@ impl ExtensionSet {
             let manifest = match loaded {
                 Some(manifest) => manifest,
                 None if has_errors => {
-                    let last_good = self.extensions.iter().find(|last| last.dir == dir);
+                    let last_good = self.own().find(|last| last.dir == dir);
                     let Some(last_good) = last_good else {
                         continue;
                     };
@@ -757,9 +869,18 @@ impl ExtensionSet {
         }
         extensions.sort_by(|a, b| a.id.cmp(&b.id));
         let changed = extensions != self.extensions || diagnostics != self.diagnostics;
+        self.sources = vec![self.source; extensions.len()];
         self.extensions = extensions;
         self.diagnostics = diagnostics;
         changed
+    }
+
+    /// The extensions loaded from this set's own root.
+    fn own(&self) -> impl Iterator<Item = &Manifest> {
+        let source = self.source;
+        (self.extensions.iter().zip(&self.sources))
+            .filter(move |(_, from)| **from == source)
+            .map(|(manifest, _)| manifest)
     }
 
     /// The directory the extensions are in, made absolute.
@@ -767,9 +888,21 @@ impl ExtensionSet {
         &self.root
     }
 
-    /// The extensions loaded, in ID order.
+    /// The extensions loaded, in ID order, then those joined
+    /// ([`ExtensionSet::joined`]) in theirs.
     pub fn extensions(&self) -> &[Manifest] {
         &self.extensions
+    }
+
+    /// Where the extensions under [`ExtensionSet::root`] are installed.
+    pub fn source(&self) -> ExtensionSource {
+        self.source
+    }
+
+    /// Each extension loaded, in [`ExtensionSet::extensions`]'s order,
+    /// with where it's installed.
+    pub fn sourced(&self) -> impl Iterator<Item = (ExtensionSource, &Manifest)> {
+        (self.sources.iter().copied()).zip(&self.extensions)
     }
 
     /// Their manifests' problems, in directory order.
@@ -818,10 +951,12 @@ impl ExtensionSet {
             .collect()
     }
 
-    /// A notice for each extension loaded whose licence isn't permissive.
+    /// A notice for each extension the user installed whose licence isn't
+    /// permissive: a workspace's extensions came with the folder.
     fn unpermissive(&self) -> impl Iterator<Item = LicenseNotice> + '_ {
-        self.extensions
-            .iter()
+        self.sourced()
+            .filter(|(source, _)| *source == ExtensionSource::User)
+            .map(|(_, manifest)| manifest)
             .filter(|manifest| manifest.license.class != LicenseClass::Permissive)
             .map(|manifest| LicenseNotice {
                 id: manifest.id.clone(),

@@ -196,11 +196,7 @@ pub fn register_language(spec: &GrammarSpec) -> Result<&'static Language, Gramma
             clash,
         });
     }
-    // One registration at a time, from reading the files to publishing: two
-    // of the same files then load once, and the one called last, which read
-    // them last, is the one kept.
-    static LOADING: Mutex<()> = Mutex::new(());
-    let _loading = LOADING.lock().unwrap_or_else(PoisonError::into_inner);
+    let _loading = loading();
     let wasm = read(&spec.wasm)?;
     let highlights = spec.highlights.as_deref().map(read_text).transpose()?;
     let injections = spec.injections.as_deref().map(read_text).transpose()?;
@@ -259,6 +255,27 @@ pub fn register_language(spec: &GrammarSpec) -> Result<&'static Language, Gramma
         None => registry.push(entry),
     }
     Ok(language)
+}
+
+/// Withdraws the language registered as `name` ([`register_language`]):
+/// files opened after, and injections found after, no longer get it,
+/// while a [`Syntax`](crate::Syntax) made with it keeps it. Waits for a
+/// registration under way, so one that started before can't publish
+/// after. Returns whether it was registered.
+pub fn unregister_language(name: &str) -> bool {
+    let _loading = loading();
+    let mut registry = registry().write().unwrap_or_else(PoisonError::into_inner);
+    let before = registry.len();
+    registry.retain(|entry| entry.name != name);
+    registry.len() != before
+}
+
+/// Held from reading a grammar's files to publishing it, and while one is
+/// withdrawn: two registrations of the same files then load once, and
+/// the one called last, which read them last, is the one kept.
+fn loading() -> std::sync::MutexGuard<'static, ()> {
+    static LOADING: Mutex<()> = Mutex::new(());
+    LOADING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The grammar `wasm` holds, by its file name: see [`GrammarSpec::wasm`].

@@ -436,10 +436,28 @@ impl Config {
         self
     }
 
+    /// Loads a workspace folder's own extensions beside the user's, from
+    /// `<root>/.<app>/extensions` for the root the app sets
+    /// ([`crate::extensions::set_workspace_root`]), while it's trusted:
+    /// see [`crate::extensions`]. They may contribute only `kinds`, of the
+    /// app's own ([`Config::extension_kind`]); any other kind, themes,
+    /// keymaps and menus too, is dropped with a warning. Takes
+    /// [`Config::extensions`] too.
+    pub fn workspace_extensions<S: Into<String>>(
+        mut self,
+        kinds: impl IntoIterator<Item = S>,
+    ) -> Self {
+        self.extensions.workspace_kinds = Some(kinds.into_iter().map(Into::into).collect());
+        self
+    }
+
     /// Calls `f` with the extensions [`init`] loaded, once the service has
     /// started, and again after each reload that changes them or their
-    /// diagnostics: to apply an app kind's tables, say. Each call adds
-    /// one, called in the order added.
+    /// diagnostics: to apply an app kind's tables, say. With
+    /// [`Config::workspace_extensions`], the set has the workspace's joined
+    /// after the user's while they're loaded, each with its source
+    /// ([`ExtensionSet::sourced`]). Each call adds one, called in the
+    /// order added.
     pub fn on_extensions(mut self, f: impl FnMut(&ExtensionSet, &mut App) + 'static) -> Self {
         self.extensions.on_extensions.push(Box::new(f));
         self
@@ -652,7 +670,8 @@ impl Global for Watching {}
 /// 7. the user's extensions ([`Config::extensions`]), their directory
 ///    watched from now on, and [`Config::on_extensions`] called with them
 ///    once the service starts; their themes are installed, for
-///    [`crate::extensions::select_themes`] to choose;
+///    [`crate::extensions::select_themes`] to choose; a workspace's
+///    ([`Config::workspace_extensions`]) load once the app sets its root;
 /// 8. the app's own sources ([`Config::source`]), watched from now on.
 ///
 /// Returns the keymap's, menus', settings', theme's, extensions' and the
@@ -696,6 +715,8 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         config.theme_extensions,
         layers.clone(),
         extensions::Files::get(cx),
+        // Batches given name a workspace's directory too.
+        config.batches.is_none(),
     );
 
     let os = Capabilities::of(cx).os;
@@ -753,7 +774,9 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         service = service.source(theme);
     }
     if let Some(source) = extension_source {
-        let source = Shared(Rc::new(RefCell::new(source)));
+        let source = Rc::new(RefCell::new(source));
+        cx.set_global(extensions::Running(source.clone()));
+        let source = Shared(source);
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
     }

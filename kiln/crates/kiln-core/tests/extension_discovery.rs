@@ -17,6 +17,7 @@ fn api() -> ExtensionApi {
         reserved: vec!["app".into()],
         kinds: Vec::new(),
         allowed_licenses: None,
+        only_kinds: None,
     }
 }
 

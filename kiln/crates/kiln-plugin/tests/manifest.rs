@@ -15,6 +15,7 @@ fn api() -> ExtensionApi {
         reserved: vec![],
         kinds: vec![plugin_kind()],
         allowed_licenses: None,
+        only_kinds: None,
     }
 }
 

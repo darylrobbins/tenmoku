@@ -62,7 +62,7 @@ pub use outline::{
 pub use parse_limit::TREE_BUDGET_BYTES;
 pub use runtime::{
     Clash, GrammarDeadlines, GrammarError, GrammarSpec, MAX_GRAMMAR_BYTES, register_language,
-    set_grammar_deadlines,
+    set_grammar_deadlines, unregister_language,
 };
 pub use select::larger_syntax_node;
 pub use syntax::{ParseJob, Parsed, Syntax};
