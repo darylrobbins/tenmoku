@@ -16,6 +16,10 @@ fn editor(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContex
             row => format!("r{row}\n"),
         })
         .collect();
+    // The previews below must find `far` however loaded the machine is, so
+    // neither wall-clock limit on matching may cut them off.
+    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(600)));
+    fe_vim::search::set_time_limit(std::time::Duration::from_secs(600));
     cx.update(init);
     let (view, cx) = cx.add_window_view(move |_, cx| {
         EditorView::new(
