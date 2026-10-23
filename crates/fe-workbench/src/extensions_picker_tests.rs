@@ -63,6 +63,10 @@ fn host(cx: &mut TestAppContext) -> TempDir {
         .watch_with(batches);
     cx.update(|cx| {
         assert_eq!(kiln::init(cx, config), []);
+        // Where there are no native alerts, `kiln::init` sets up kiln-ui's
+        // in-window prompt; the test platform answers prompts
+        // (`pending_prompt`), not that one.
+        cx.reset_prompt_builder();
     });
     cx.run_until_parked();
     dir
