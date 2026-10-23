@@ -16,12 +16,26 @@ use crate::key::{VimKey, parse_keys};
 use crate::macros::REPLAY_CAP;
 use crate::{Mode, Pending, PendingKind, Step, VimState, VimTarget};
 
-/// nvim's `n`, `x` and `o` map modes.
+/// nvim's `n`, `x`, `o`, `i` and `c` map modes. `Insert` serves Replace
+/// mode too, as nvim's `i` does.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RemapMode {
     Normal,
     Visual,
     OperatorPending,
+    Insert,
+    CmdLine,
+}
+
+/// What a key typed in insert, replace or cmdline mode comes to
+/// ([`VimState::remap_insert`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemapInsert {
+    /// The key starts a longer map, or ran one: the host types nothing yet.
+    /// A map's right side comes back through [`VimState::take_replay`].
+    Wait,
+    /// Keys to type now, in order.
+    Keys(Vec<VimKey>),
 }
 
 /// One map as written, in vim notation.
@@ -174,6 +188,7 @@ fn hides(mode: RemapMode, from: &[VimKey]) -> bool {
             RemapMode::Normal => PREFIXES.contains(*c) || OPERATORS.contains(*c),
             RemapMode::Visual => PREFIXES.contains(*c),
             RemapMode::OperatorPending => "gz[]'`fFtTia".contains(*c),
+            RemapMode::Insert | RemapMode::CmdLine => false,
         },
         // A jump's trigger, alone or with its first char, in every mode:
         // `gs` and `gsa` hide `gs{c1}{c2}`.
@@ -552,7 +567,45 @@ fn map_mode(state: &VimState, key: VimKey) -> Option<RemapMode> {
         Mode::Normal if state.pending.has_operator() => Some(RemapMode::OperatorPending),
         Mode::Normal => Some(RemapMode::Normal),
         Mode::Visual(_) => Some(RemapMode::Visual),
-        _ => None,
+        Mode::Insert | Mode::Replace => Some(RemapMode::Insert),
+        Mode::CmdLine(_) => Some(RemapMode::CmdLine),
+    }
+}
+
+/// `VimState::remap_insert`: `key`, typed in insert, replace or cmdline
+/// mode, through the remap stage as `VimState::feed` takes one.
+///
+/// The host calls `record_key` for each key it types, which reads the tag
+/// of the key from the stream: the one handed out for `key` is taken here,
+/// so a key to type now gets a tag again for that call.
+pub(crate) fn insert(state: &mut VimState, key: VimKey) -> RemapInsert {
+    if state.remap.set.is_empty() && state.remap.queued.is_empty() {
+        return RemapInsert::Keys(vec![key]);
+    }
+    state.provenance.start_read();
+    let taken = state.remap.next_tag();
+    let tag = taken.clone().unwrap_or(TYPED);
+    state.expanded = tag.origin.is_some_and(Origin::expansion);
+    state.message = None;
+    state.failed = false;
+    let origin = tag.origin.unwrap_or_else(|| Origin::Typed {
+        replayed: state.macros.count(),
+    });
+    state.provenance.read_from(origin);
+    if taken.is_some() && state.remap.over_cap() {
+        state.pending = Pending::new();
+        state.fail(format!(
+            "macro stopped: it would replay more than {REPLAY_CAP} keys"
+        ));
+        return RemapInsert::Wait;
+    }
+    let remap = tag.remap && !state.remap.off;
+    match stage(state, key, origin, remap, None) {
+        Staged::Key(key, origin) => {
+            state.remap.taken.push_front(Tag::new(origin, false));
+            RemapInsert::Keys(vec![key])
+        }
+        Staged::Cmd(_) | Staged::Done(_) => RemapInsert::Wait,
     }
 }
 

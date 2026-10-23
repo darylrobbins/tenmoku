@@ -667,6 +667,20 @@ impl VimState {
         }
     }
 
+    /// Asks the remaps what `key` comes to, typed in insert, replace or
+    /// cmdline mode: the host calls this before it types or edits for the
+    /// key, then types what it returns, calling [`VimState::record_key`]
+    /// for each key as it does. [`RemapInsert::Wait`]: the key starts a
+    /// longer map or ran one, and the host types nothing yet. A map's right
+    /// side, and the keys held for it that go on as typed, are the host's
+    /// to feed ([`VimState::take_replay`]), as under [`VimState::feed`];
+    /// so are held keys after [`VimState::remap_timeout`]. A key that
+    /// breaks a held prefix returns the prefix's first key, the rest
+    /// matched again in the mode it leaves.
+    pub fn remap_insert(&mut self, key: VimKey) -> crate::RemapInsert {
+        crate::remap::insert(self, key)
+    }
+
     /// Replaces the remaps, at once: keys held for a longer match go on as
     /// typed, unmapped, before the next key read
     /// ([`VimState::take_replay`]).

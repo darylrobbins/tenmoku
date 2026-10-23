@@ -10,8 +10,9 @@ use fe_editor::{
 };
 
 use crate::{
-    CancelArgs, HistoryRecall, KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands,
-    VimKey, VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry, scroll,
+    CancelArgs, HistoryRecall, KeyError, Mode, Registers, RemapInsert, Splits, Step, SubmitArgs,
+    VimCommands, VimKey, VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry,
+    scroll,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -138,18 +139,39 @@ impl HeadlessVim {
         // A character on the command line changes neither the text nor the
         // cursor, so there is nothing to paint or scroll before or after it:
         // the next key does both. Macros push hundreds of thousands through.
-        if let VimKey::Char(ch) = key
+        if let VimKey::Char(_) = key
             && !self.state.remap_command_next()
             && matches!(self.state.mode(), Mode::CmdLine(_))
         {
-            self.state.record_key(key);
-            self.line.push(ch);
-            self.recall.edited();
-            return Ok(());
+            return match self.state.remap_insert(key) {
+                RemapInsert::Wait => Ok(()),
+                RemapInsert::Keys(keys) => {
+                    for key in keys {
+                        match key {
+                            VimKey::Char(ch) if matches!(self.state.mode(), Mode::CmdLine(_)) => {
+                                self.state.record_key(key);
+                                self.line.push(ch);
+                                self.recall.edited();
+                            }
+                            _ => self.type_unmapped(key, replayed)?,
+                        }
+                    }
+                    Ok(())
+                }
+            };
         }
         self.sync_visual();
         self.follow_cursor();
         let fed = self.feed_mode_key(key, replayed);
+        self.follow_cursor();
+        fed
+    }
+
+    /// `key` typed where the maps have been asked already.
+    fn type_unmapped(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
+        self.sync_visual();
+        self.follow_cursor();
+        let fed = self.mode_key(key, replayed);
         self.follow_cursor();
         fed
     }
@@ -160,20 +182,16 @@ impl HeadlessVim {
             true => Mode::Normal,
             false => self.state.mode(),
         };
-        match mode {
-            Mode::Insert => {
-                self.state.record_key(key);
-                return self.type_key(key);
-            }
-            Mode::Replace => {
-                self.state.record_key(key);
-                return self.replace_key(key);
-            }
-            Mode::CmdLine(_) => {
-                self.state.record_key(key);
-                return self.line_key(key, replayed);
-            }
-            _ => {}
+        if matches!(mode, Mode::Insert | Mode::Replace | Mode::CmdLine(_)) {
+            return match self.state.remap_insert(key) {
+                RemapInsert::Wait => Ok(()),
+                RemapInsert::Keys(keys) => {
+                    for key in keys {
+                        self.mode_key(key, replayed)?;
+                    }
+                    Ok(())
+                }
+            };
         }
         match self.state.feed(key) {
             Step::Wait(_) | Step::Cancel => {}
@@ -184,6 +202,16 @@ impl HeadlessVim {
             }
         }
         Ok(())
+    }
+
+    /// One key in insert, replace or cmdline mode, as the mode is now.
+    fn mode_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
+        self.state.record_key(key);
+        match self.state.mode() {
+            Mode::Replace => self.replace_key(key),
+            Mode::CmdLine(_) => self.line_key(key, replayed),
+            _ => self.type_key(key),
+        }
     }
 
     /// One key in insert mode. The keymap looks it up in the stamped

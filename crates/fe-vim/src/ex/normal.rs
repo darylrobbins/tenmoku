@@ -52,8 +52,9 @@ use super::{
 };
 use crate::remap::{Provenance, RemapState};
 use crate::{
-    Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, RemapCommand, Step,
-    SubmitArgs, VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys, registry,
+    Answer, AnswerArgs, Change, Mode, OperateArgs, Operator, Pending, RemapCommand, RemapInsert,
+    Step, SubmitArgs, VimCommands, VimKey, VimState, VimTarget, context, history, parse_keys,
+    registry,
 };
 
 /// What a `:normal` that reached a map's `<Cmd>fe:…<CR>` says.
@@ -325,15 +326,25 @@ impl Runner {
             false => state.mode(),
         };
         match mode {
-            Mode::Insert | Mode::Replace | Mode::CmdLine(_) => state.record_key(key),
-            _ => {
-                return match state.feed(key) {
-                    Step::Wait(_) | Step::Cancel => Ok(()),
-                    Step::Forward => Err(()),
-                    Step::Commit(invocation) => self.run_invocation(target, invocation),
-                };
-            }
+            Mode::Insert | Mode::Replace | Mode::CmdLine(_) => match state.remap_insert(key) {
+                RemapInsert::Wait => Ok(()),
+                RemapInsert::Keys(keys) => {
+                    keys.into_iter().try_for_each(|key| self.typed(target, key))
+                }
+            },
+            _ => match state.feed(key) {
+                Step::Wait(_) | Step::Cancel => Ok(()),
+                Step::Forward => Err(()),
+                Step::Commit(invocation) => self.run_invocation(target, invocation),
+            },
         }
+    }
+
+    /// One key typed in insert, replace or cmdline mode, the maps asked
+    /// already.
+    fn typed(&mut self, target: &mut VimTarget<'_>, key: VimKey) -> Result<(), ()> {
+        let state = &mut target.state;
+        state.record_key(key);
         let replace = state.mode() == Mode::Replace;
         match (state.mode(), key) {
             (Mode::CmdLine(_), VimKey::Char(ch)) => self.line.push(ch),

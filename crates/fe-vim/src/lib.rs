@@ -856,7 +856,9 @@ pub use marks::Mark;
 pub use motion::take_row_bytes;
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
-pub use remap::{ExLineArgs, Lookup, Remap, RemapCommand, RemapIssue, RemapMode, RemapSet};
+pub use remap::{
+    ExLineArgs, Lookup, Remap, RemapCommand, RemapInsert, RemapIssue, RemapMode, RemapSet,
+};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
