@@ -334,6 +334,11 @@ pub(crate) struct Harness {
     during_parse: bool,
     /// Resets since the last full settle, for [`Case::during_parse`].
     resets: usize,
+    /// Whether [`Harness::keystroke`] delivers the scheduled frame
+    /// callbacks first, in the same update, as the start of a frame does.
+    pub(crate) pump_frames: bool,
+    /// The last keystroke's callbacks: how many ran and how long they took.
+    pub(crate) pumped: (usize, std::time::Duration),
     pub(crate) cx: HeadlessAppContext,
 }
 
@@ -400,6 +405,8 @@ impl Harness {
             window,
             notified,
             presents,
+            pump_frames: false,
+            pumped: (0, std::time::Duration::ZERO),
             last: None,
             during_parse: case.during_parse,
             resets: 0,
@@ -454,9 +461,19 @@ impl Harness {
         }
         self.notified.set(None);
         let dispatched = Instant::now();
-        self.cx
+        let pump = self.pump_frames;
+        self.pumped = self
+            .cx
             .update_window(self.window.into(), |_, window, cx| {
+                let started = Instant::now();
+                let ran = if pump {
+                    window.simulate_next_frame(cx)
+                } else {
+                    0
+                };
+                let took = started.elapsed();
                 window.dispatch_keystroke(keystroke, cx);
+                (ran, took)
             })
             .expect("the window is open");
         let mut drawn = Instant::now();

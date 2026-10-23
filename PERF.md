@@ -1289,24 +1289,50 @@ alike. Frame is from the event to the presented scene; prepaint and paint are
 the editor's own. Budget: frame p99 at most 8.33 ms on smooth and typing with
 the minimap on, and a jump's p50 within 0.5 ms of the minimap off. Compare by
 the fastest sample and p50; the p99 and max carry scheduler noise at this load.
-The numbers are per-frame draw cost; the between-frame sweep's scheduled work
-is not in them (tracked by the follow-up card, T1088 "Include the minimap's
-between-frame sweep in the minimap benchmark").
+Each sampled frame first delivers the frame callbacks scheduled so far
+(`simulate_next_frame`, as the platform does at the start of a frame), which is
+where the build continuations and the decoration sweep run; their time is in
+the frame and reported on its own as callbacks. Settles pump callbacks until
+none is scheduled (asserted to stop), so a run starts with the tiles and sweep
+complete.
 
-Apple M3 Max, release, 2026-10-23, at `9dff175c`. Other lanes were building;
-the run started at load 8 and ended at 19.
+Apple M3 Max, release, 2026-10-23, with the sweep in the bench (T1088). Other
+lanes were building throughout, at load 11 to 24, so p99 and max are mostly
+scheduler noise; compare by the fastest sample and p50. Smooth and jumps are
+from one run, typing from a separate `-- type` run. Callbacks are timed inside
+the same update as the event (or keystroke), so they are the sweep alone, and
+the frame holds them and one draw. Continuation frames are those sampled frames
+in which callbacks ran; the count after "+" is the frames the settles and the
+drains between samples (after each typing undo, each wrap to the top) pumped,
+over the six rounds, not timed.
 
-| Case | Minimap | Frame fastest / p50 / p99 / max | Prepaint p50 / p99 | Paint p50 / p99 | Over 8.33 ms |
-|---|---|---|---|---|---|
-| `smooth/1m-plain` | off | 0.213 / 0.265 / 0.656 / 12.3 | 0.104 / 0.170 | 0.090 / 0.118 | 3 of 600 |
-| `smooth/1m-plain` | on | 0.282 / 0.334 / **0.756** / 7.00 | 0.177 / 0.339 | 0.086 / 0.146 | 0 of 600 |
-| `jump/7mb-rust` | off | 1.65 / 1.73 / 2.21 / 34.5 | 1.55 / 1.83 | 0.092 / 0.151 | 2 of 600 |
-| `jump/7mb-rust` | on | 1.85 / 1.94 (**+0.21**) / 2.33 / 2.51 | 1.76 / 2.03 | 0.092 / 0.111 | 0 of 600 |
-| `jump/1m-plain-wrapped` | off | 1.38 / 1.42 / 1.77 / 13.7 | 1.26 / 1.42 | 0.090 / 0.147 | 1 of 600 |
-| `jump/1m-plain-wrapped` | on | 1.57 / 1.62 (**+0.20**) / 1.95 / 2.29 | 1.43 / 1.66 | 0.115 / 0.150 | 0 of 600 |
-| `type/7mb-rust` | off | 0.887 / 0.956 / 1.15 / 3.68 | 0.652 / 0.749 | 0.092 / 0.103 | 0 of 150 |
-| `type/7mb-rust` | on | 1.09 / 1.19 / **1.38** / 1.40 | 0.831 / 0.943 | 0.154 / 0.214 | 0 of 150 |
+| Case | Minimap | Frame fastest / p50 / p99 / max | Callbacks p50 / p99 | Continuation frames | Prepaint p50 / p99 | Paint p50 / p99 | Over 8.33 ms |
+|---|---|---|---|---|---|---|---|
+| `smooth/1m-plain` | off | 0.208 / 0.260 / 0.585 / 32.9 | 0.000 / 0.000 | 0 of 600 | 0.101 / 0.167 | 0.088 / 0.118 | 2 of 600 |
+| `smooth/1m-plain` | on | 0.286 / 0.333 / **0.482** / 0.582 | 0.000 / 0.000 | 0 of 600 + 27 | 0.176 / 0.281 | 0.087 / 0.106 | 0 of 600 |
+| `jump/7mb-rust` | off | 1.69 / 1.86 / 2.42 / 79.7 | 0.000 / 0.000 | 0 of 600 + 5 | 1.66 / 1.98 | 0.099 / 0.175 | 1 of 600 |
+| `jump/7mb-rust` | on | 1.97 / 2.22 (**+0.36**) / 2.67 / 2.74 | 0.092 / 0.122 | 594 of 600 + 179 | 1.90 / 2.23 | 0.100 / 0.147 | 0 of 600 |
+| `jump/1m-plain-wrapped` | off | 1.26 / 1.31 / 1.72 / 21.9 | 0.000 / 0.000 | 0 of 600 + 1505 | 1.14 / 1.34 | 0.090 / 0.167 | 1 of 600 |
+| `jump/1m-plain-wrapped` | on | 1.54 / 1.60 (**+0.30**) / 1.84 / 2.06 | 0.111 / 0.135 | 594 of 600 + 1542 | 1.30 / 1.47 | 0.116 / 0.144 | 0 of 600 |
+| `type/7mb-rust` | off | 0.946 / 1.16 / 2.83 / 17.7 | 0.000 / 0.000 | 0 of 150 | 0.756 / 1.71 | 0.101 / 0.225 | 1 of 150 |
+| `type/7mb-rust` | on | 1.08 / 1.26 / **1.79** / 1.81 | 0.000 / 0.000 | 0 of 150 + 2810 | 0.889 / 1.30 | 0.113 / 0.159 | 0 of 150 |
 
+Another full run, at lower load (about 15), agreed: jump frame p50 1.95 / 2.25
+(+0.30) and 1.38 / 1.71 (+0.33), callbacks p50 0.087 and 0.106 ms, smooth p99
+1.69 ms on. A run at load 20 to 24 was too noisy to read (p50s doubled off and
+on alike).
+
+**Thresholds.** With the sweep in, a jump's p50 is over the minimap off by
+0.36 ms on `jump/7mb-rust` and 0.30 ms on `jump/1m-plain-wrapped`, within the
+0.5 ms budget; the sweep itself takes about 0.1 ms of it, in nearly every jump
+frame (594 of 600), as each jump brings rows never seen. Frame p99 with the
+minimap on is within 8.33 ms on smooth (0.48 ms) and typing (1.79 ms). No miss.
+A keystroke's frame schedules no callbacks that run before the next
+keystroke's: the minimap's rebuild after each edit runs in the drain after the
+undo (about 19 frames per keystroke), outside the sampled frame.
+
+Earlier runs without the sweep in the bench (`9dff175c`, `ded1ea86`) gave the
+per-frame draw cost alone: jump p50s +0.2 ms over off.
 Runs of `ded1ea86`, the same frame's work but the decoration sweep's steps
 between frames (below), gave the same picture. At load 10, frame p50 off / on
 was 0.259 / 0.330 smooth, 1.73 / 1.92 (+0.19) and 1.43 / 1.62 (+0.19) for the
