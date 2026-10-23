@@ -32,6 +32,7 @@ use crate::{
     config_problems::ConfigProblemsPicker,
     disk_sync::DiskSync,
     dock::{DockEvent, ProblemsPanel},
+    extensions_picker::ExtensionsPicker,
     git::GitState,
     git_panel,
     go_to_line::GoToLine,
@@ -175,6 +176,8 @@ pub struct Workbench {
     recent_picker: Entity<Picker<RecentPicker>>,
     /// The color themes, shown by `theme.select`.
     theme_picker: Entity<Picker<ThemePicker>>,
+    /// The installed extensions, shown by `workbench.show_extensions`.
+    extensions_picker: Entity<Picker<ExtensionsPicker>>,
     /// The workspace's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
@@ -419,6 +422,14 @@ impl Workbench {
         });
         let theme_picker =
             cx.new(|cx| Picker::new(ThemePicker::new(ui), "Select a color theme…", ui, cx));
+        let extensions_picker = cx.new(|cx| {
+            Picker::new(
+                ExtensionsPicker::new(ui),
+                "Filter installed extensions…",
+                ui,
+                cx,
+            )
+        });
         // A file's folder is only the root it opens in, not one opened.
         if let Some(root) = launch_root.clone().filter(|_| as_folder) {
             recent_picker::record(root, true, cx);
@@ -524,6 +535,7 @@ impl Workbench {
             go_to_line,
             recent_picker,
             theme_picker,
+            extensions_picker,
             shell,
             modals,
             palette: None,

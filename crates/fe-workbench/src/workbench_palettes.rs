@@ -20,8 +20,8 @@ use crate::{
 };
 #[cfg(test)]
 use crate::{
-    go_to_line::GoToLine, language_picker::LanguagePicker, theme_picker::ThemePicker,
-    toolbar_picker::ToolbarPicker,
+    extensions_picker::ExtensionsPicker, go_to_line::GoToLine, language_picker::LanguagePicker,
+    theme_picker::ThemePicker, toolbar_picker::ToolbarPicker,
 };
 
 impl Workbench {
@@ -141,6 +141,35 @@ impl Workbench {
             picker.show(window, cx);
         });
         self.show_palette(Palette::Theme, picker, window, cx);
+    }
+
+    /// The extensions picker, shown by `workbench.show_extensions`.
+    #[cfg(test)]
+    pub(crate) fn extensions_picker(&self) -> &Entity<Picker<ExtensionsPicker>> {
+        &self.extensions_picker
+    }
+
+    /// Whether the extensions picker shows.
+    #[cfg(test)]
+    pub(crate) fn extensions_picker_open(&self) -> bool {
+        self.palette == Some(Palette::Extensions)
+    }
+
+    /// Shows the extensions picker, focused, in place of any other
+    /// palette, or afresh if it shows.
+    pub(crate) fn show_extensions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Dismissing it would hide it again once its dismissal lands.
+        if self.palette != Some(Palette::Extensions) {
+            self.dismiss_palette(window, cx);
+        }
+        let picker = self.extensions_picker.clone();
+        let input = picker.focus_handle(cx);
+        let previous = window.focused(cx).filter(|focused| *focused != input);
+        picker.update(cx, |picker, cx| {
+            picker.delegate.opened(previous, cx);
+            picker.show(window, cx);
+        });
+        self.show_palette(Palette::Extensions, picker, window, cx);
     }
 
     /// The go-to-line picker, shown by `go_to_line.toggle`.
@@ -364,10 +393,12 @@ pub(crate) enum Palette {
     Branch,
     /// `theme.select`'s themes.
     Theme,
+    /// `workbench.show_extensions`' list.
+    Extensions,
 }
 
 impl Palette {
-    const ALL: [Palette; 12] = [
+    const ALL: [Palette; 13] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -380,6 +411,7 @@ impl Palette {
         Palette::Recent,
         Palette::Branch,
         Palette::Theme,
+        Palette::Extensions,
     ];
 
     /// Its id in the modal layer.
@@ -397,6 +429,7 @@ impl Palette {
             Palette::Recent => "recent",
             Palette::Branch => "git_branch",
             Palette::Theme => "theme",
+            Palette::Extensions => "extensions",
         })
     }
 

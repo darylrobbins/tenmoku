@@ -342,6 +342,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.previous_tab",
     "workbench.save_as",
     "workbench.show_config_problems",
+    "workbench.show_extensions",
     "workbench.trust_folder",
     "workbench.untrust_folder",
 ];

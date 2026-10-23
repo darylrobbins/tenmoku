@@ -622,6 +622,12 @@ impl Workbench {
         self.select_theme(cx.window, cx.cx);
     }
 
+    /// Extensions: Show Installed
+    #[command(id = "workbench.show_extensions")]
+    fn show_extensions_command(&mut self, cx: &mut Cx<Self>) {
+        self.show_extensions(cx.window, cx.cx);
+    }
+
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {

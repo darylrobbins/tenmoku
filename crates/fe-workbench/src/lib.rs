@@ -19,6 +19,7 @@ mod config_problems;
 mod disk_sync;
 mod dock;
 mod dock_layout;
+mod extensions_picker;
 mod find_bar;
 mod find_commands;
 mod git;
