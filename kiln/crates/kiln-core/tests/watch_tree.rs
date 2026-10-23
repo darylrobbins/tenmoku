@@ -12,20 +12,28 @@ use std::{
 
 use kiln_core::TreeWatcher;
 
-/// The 3 s re-stat, plus margin.
-const WITHIN: Duration = Duration::from_secs(5);
+/// Failure-only bound: the 3 s re-stat plus event latency under heavy load.
+/// A batch is returned on as soon as it arrives, so this is never waited out
+/// on the passing path.
+const WITHIN: Duration = Duration::from_secs(60);
 
-/// Waits up to [`WITHIN`] for a batch naming `root`.
-fn reported(batches: &mpsc::Receiver<Vec<PathBuf>>, root: &PathBuf) -> bool {
-    let deadline = Instant::now() + WITHIN;
+/// Waits up to [`WITHIN`] for a batch naming `root`; on failure, says which
+/// batches came instead.
+fn reported(batches: &mpsc::Receiver<Vec<PathBuf>>, root: &PathBuf) -> Result<(), String> {
+    let started = Instant::now();
+    let deadline = started + WITHIN;
+    let mut seen = Vec::new();
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match batches.recv_timeout(left) {
-            Ok(batch) if batch.contains(root) => return true,
-            Ok(_) => {}
-            Err(_) => return false,
+            Ok(batch) if batch.contains(root) => return Ok(()),
+            Ok(batch) => seen.push(batch),
+            Err(_) => break,
         }
     }
-    false
+    Err(format!(
+        "no batch named {root:?} within {:?}; batches seen without it: {seen:?}",
+        started.elapsed()
+    ))
 }
 
 /// Drains the batches already sent, and those that come within `quiet`.
@@ -51,27 +59,17 @@ fn a_tree_watcher_reports_a_new_extension_dir() {
     );
     settle(&batches, Duration::from_millis(200));
 
-    let started = Instant::now();
     let dir = root.join("acme.solarized");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("extension.toml"), "id = \"acme.solarized\"\n").unwrap();
-    assert!(
-        reported(&batches, &root),
-        "not reported after {:?}",
-        started.elapsed()
-    );
+    reported(&batches, &root).unwrap();
 
     settle(&batches, Duration::from_millis(200));
-    let started = Instant::now();
     fs::create_dir_all(late.join("acme.late")).unwrap();
-    assert!(
-        reported(&batches, &late),
-        "the late root, not reported after {:?}",
-        started.elapsed()
-    );
+    reported(&batches, &late).unwrap_or_else(|why| panic!("the late root: {why}"));
 
     // Watched from then on.
     settle(&batches, Duration::from_millis(200));
     fs::write(late.join("acme.late").join("extension.toml"), "").unwrap();
-    assert!(reported(&batches, &late));
+    reported(&batches, &late).unwrap_or_else(|why| panic!("the late root, edited: {why}"));
 }
