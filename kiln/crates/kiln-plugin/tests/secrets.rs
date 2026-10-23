@@ -185,10 +185,10 @@ impl log::Log for Capture {
         true
     }
     fn log(&self, record: &log::Record) {
-        self.0
-            .lock()
-            .unwrap()
-            .push_str(&format!("{}\n", record.args()));
+        // Format before locking: on aarch64 cranelift logs from inside a `Debug` impl that
+        // `record.args()` formats lazily, which would re-enter this logger with the lock held.
+        let line = format!("{}\n", record.args());
+        self.0.lock().unwrap().push_str(&line);
     }
     fn flush(&self) {}
 }
