@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use fe_vim::HeadlessVim;
+use fe_vim::{HeadlessVim, take_row_bytes};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Roughly how far the window reaches each side of the caret
@@ -24,22 +24,32 @@ fn limit() -> Duration {
     }
 }
 
+/// A bound on a key's wall time that load does not reach: a whole-row read
+/// of 100 MB takes many seconds more than this even in release.
+const GENEROUS: Duration = Duration::from_secs(30);
+
+/// The most row bytes a key may read on the huge row: a few windows, where
+/// the whole row is 100 MB.
+const READ_BUDGET: usize = 120 * REACH;
+
 /// What keys left: the cursor's column, the row's length and the unnamed
 /// register.
 type Outcome = (usize, usize, String);
 
-fn run(row: &str, caret: usize, keys: &str) -> (Outcome, Duration) {
+fn run(row: &str, caret: usize, keys: &str) -> (Outcome, Duration, usize) {
     let mut vim = HeadlessVim::new(row, (0, caret));
+    take_row_bytes();
     let started = Instant::now();
     vim.feed(keys).unwrap();
     let took = started.elapsed();
+    let read = take_row_bytes();
     let register = vim
         .registers()
         .get('"')
         .map(|register| register.text.clone())
         .unwrap_or_default();
     let col = vim.cursor().1;
-    ((col, vim.text().len(), register), took)
+    ((col, vim.text().len(), register), took, read)
 }
 
 #[test]
@@ -83,14 +93,16 @@ fn keys_from_the_middle_of_a_100_mb_row_land_as_on_a_short_row() {
         "daw",
         "ciwz<Esc>",
     ] {
-        let (want, _) = run(&short, short_at, keys);
-        let (got, took) = run(&huge, huge_at, keys);
+        let (want, _, _) = run(&short, short_at, keys);
+        let (got, took, read) = run(&huge, huge_at, keys);
         assert_eq!(
             (got.0 - shift, got.2),
             (want.0, want.2),
             "{keys:?} from the middle of a huge row"
         );
-        assert!(took < limit(), "{keys:?} took {took:?}");
+        // The work done, which load does not change: the window, not the row.
+        assert!(read <= READ_BUDGET, "{keys:?} read {read} row bytes");
+        assert!(took < GENEROUS, "{keys:?} took {took:?}");
     }
 }
 
@@ -139,8 +151,8 @@ fn graphemes_joining_across_the_windows_edge_stay_whole() {
                 format!("{}e", words + 1),
             ];
             for keys in keys {
-                let (want, _) = run(&short, 0, &keys);
-                let (got, _) = run(&long, 0, &keys);
+                let (want, _, _) = run(&short, 0, &keys);
+                let (got, _, _) = run(&long, 0, &keys);
                 assert_eq!(
                     (got.0, got.2),
                     (want.0, want.2),
@@ -180,8 +192,8 @@ fn graphemes_joining_across_the_windows_left_edge_stay_whole() {
                 format!("{words}ge"),
             ];
             for keys in keys {
-                let (want, _) = run(&short, short.len() - 1, &keys);
-                let (got, _) = run(&long, long.len() - 1, &keys);
+                let (want, _, _) = run(&short, short.len() - 1, &keys);
+                let (got, _, _) = run(&long, long.len() - 1, &keys);
                 // Columns count from the end, which both rows share.
                 let (want_col, got_col) = (want.1 - want.0, got.1 - got.0);
                 assert_eq!(

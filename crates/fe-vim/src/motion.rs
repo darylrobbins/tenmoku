@@ -581,10 +581,25 @@ const CLASS_MARGIN: usize = 3;
 /// at, so that a WORD isn't cut, before it settles for the end of a word.
 const BLANK_REACH: usize = 8 * CARET_WINDOW;
 
-#[cfg(test)]
 thread_local! {
-    /// The bytes of rows [`Line`]s on this thread have been made of.
+    /// The bytes copied out of rows on this thread: [`Line`]s' rows, the
+    /// windows they are cut from (and discarded ones), and the buffers the
+    /// bracket and comment scans read. Scans over the text's chunks without
+    /// a copy (a huge row's search for a double quote) are not counted.
     static ROW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `text`, counted among the bytes copied out of a row.
+fn copied(text: String) -> String {
+    ROW_BYTES.set(ROW_BYTES.get() + text.len());
+    text
+}
+
+/// Takes the bytes copied out of rows on this thread since the last call, for
+/// tests that a caret reads a bounded window.
+#[doc(hidden)]
+pub fn take_row_bytes() -> usize {
+    ROW_BYTES.replace(0)
 }
 
 /// Whether a row of `len` bytes is read in windows, not whole.
@@ -741,7 +756,7 @@ fn edge_by(bytes: &[u8], from: usize, forward: bool, change: fn(u8, u8) -> bool)
 
 impl Line {
     pub(crate) fn new(text: &Text, row: u32) -> Self {
-        Self::of(text.row_start(row), text.row_to_string(row))
+        Self::of(text.row_start(row), copied(text.row_to_string(row)))
     }
 
     /// `row` as far as a caret at `offset` needs it: all of it, or for a
@@ -760,7 +775,7 @@ impl Line {
         loop {
             let lo = text.clip_offset(at.saturating_sub(back).max(start), Bias::Left);
             let hi = text.clip_offset((at + ahead).min(end), Bias::Right);
-            let window = text.slice_to_string(lo..hi);
+            let window = copied(text.slice_to_string(lo..hi));
             let bytes = window.as_bytes();
             let caret = at - lo;
             // From the reach inward, the nearest edges there.
@@ -781,6 +796,7 @@ impl Line {
                 }
                 continue;
             };
+            // Cut from the window, already counted.
             let mut line = Self::of(lo + first, window[first..last].to_string());
             if lo + first > start {
                 line.lead = Some((text.clone(), start));
@@ -791,8 +807,6 @@ impl Line {
 
     /// `text` as a row starting at byte `start`.
     pub(crate) fn of(start: usize, text: String) -> Self {
-        #[cfg(test)]
-        ROW_BYTES.set(ROW_BYTES.get() + text.len());
         let starts = text.grapheme_indices(true).map(|(ix, _)| ix).collect();
         Self {
             start,
@@ -820,8 +834,10 @@ impl Line {
                 let columns = match all_plain {
                     true => plain,
                     false => {
-                        let before =
-                            Line::of(*row_start, text.slice_to_string(*row_start..self.start));
+                        let before = Line::of(
+                            *row_start,
+                            copied(text.slice_to_string(*row_start..self.start)),
+                        );
                         (0..before.len()).fold(0, |at, ix| at + before.width(ix, at, tab))
                     }
                 };
@@ -1356,7 +1372,10 @@ pub(crate) struct Scan {
 
 impl Scan {
     pub(crate) fn new(text: &Text, row: u32) -> Self {
-        Self::of(text.row_start(row), text.row_to_string(row).into_bytes())
+        Self::of(
+            text.row_start(row),
+            copied(text.row_to_string(row)).into_bytes(),
+        )
     }
 
     /// The bytes at `start` as a row.
@@ -1397,7 +1416,7 @@ impl Scan {
         let mut back = 256;
         let from = loop {
             let from = text.clip_offset(lo.saturating_sub(back).max(start), Bias::Left);
-            let before = text.slice_to_string(from..lo);
+            let before = copied(text.slice_to_string(from..lo));
             let slashes = before
                 .bytes()
                 .rev()
@@ -1410,7 +1429,7 @@ impl Scan {
             back *= 2;
         };
         let hi = text.clip_offset((hi + 1).min(end), Bias::Right);
-        Self::of(from, text.slice_to_string(from..hi).into_bytes())
+        Self::of(from, copied(text.slice_to_string(from..hi)).into_bytes())
     }
 
     /// Whether byte `ix` is a bracket quoted as a char, `'('`.
@@ -1587,12 +1606,12 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
         && (at(col, b'*') && at(col + 1, b'/') || at(col, b'/') && col > 0 && at(col - 1, b'*'));
     if opens {
         let from = scan.start + col + if at(col, b'/') { 2 } else { 1 };
-        let rest = text.slice_to_string(from..text.len());
+        let rest = copied(text.slice_to_string(from..text.len()));
         return rest.find("*/").map(|ix| chars(from + ix + 1));
     }
     if closes {
         let close = scan.start + col - usize::from(at(col, b'/'));
-        let before = text.slice_to_string(0..close + 2).into_bytes();
+        let before = copied(text.slice_to_string(0..close + 2)).into_bytes();
         return comment_open(&before, close).map(chars);
     }
     let directive = match spanned {
@@ -1904,7 +1923,7 @@ mod caret_window_tests {
         let cursor = Cursor::at(&text, middle);
         assert_eq!(cursor.offset(), middle);
         assert!(
-            ROW_BYTES.get() <= 40 * CARET_WINDOW,
+            ROW_BYTES.get() <= 80 * CARET_WINDOW,
             "{} bytes",
             ROW_BYTES.get()
         );
@@ -1945,7 +1964,7 @@ mod caret_window_tests {
             let cursor = Cursor::at(&text, middle);
             assert_eq!(cursor.offset(), middle, "{kind}");
             assert!(
-                ROW_BYTES.get() <= 40 * CARET_WINDOW,
+                ROW_BYTES.get() <= 80 * CARET_WINDOW,
                 "{kind}: {} bytes",
                 ROW_BYTES.get()
             );

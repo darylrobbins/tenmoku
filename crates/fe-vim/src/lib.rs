@@ -843,6 +843,8 @@ pub use headless::{FeedError, HeadlessVim};
 pub use insert::{KeywordCompletion, Splits};
 pub use key::{KeyError, VimKey, parse_keys};
 pub use marks::Mark;
+#[doc(hidden)]
+pub use motion::take_row_bytes;
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
 pub use remap::{ExLineArgs, Lookup, Remap, RemapCommand, RemapIssue, RemapMode, RemapSet};
