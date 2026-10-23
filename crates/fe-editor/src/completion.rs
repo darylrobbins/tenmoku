@@ -7,8 +7,9 @@
 //!   and `_`) before the caret when completions were asked for, to the
 //!   caret now. The items are matched against it fuzzily: its chars in
 //!   order, anywhere in the item's filter text, case aside. An empty word
-//!   matches every item. They're ranked by how well they match, then by
-//!   their sort text, as the source ordered them.
+//!   matches every item. They're ranked by their group first (a language
+//!   server's items before an extension's snippets, say), then by how well
+//!   they match, then by their sort text, as the source ordered them.
 //! - **Accept** applies the item's edit and its additional edits, both in
 //!   the request's version, as one [`Origin::User`] transaction through
 //!   [`Buffer::edit_from`](fe_buffer::Buffer::edit_from) on the request's
@@ -56,6 +57,9 @@ pub struct CompletionItem {
     pub filter_text: Option<String>,
     /// What the items are ordered by, if not their labels.
     pub sort_text: Option<String>,
+    /// Which of a host's sources it's from, ranked before matching: a
+    /// lower group's items come first, however well a higher one's match.
+    pub group: u8,
     /// What accepting it does, in bytes of the request's version.
     pub edit: (Range<usize>, String),
     /// What else it does elsewhere, such as adding an import.
@@ -302,14 +306,14 @@ impl CompletionSession {
     }
 
     fn filter(&mut self) {
-        let mut scored: Vec<(i32, usize)> = (self.items.iter().enumerate())
+        let mut scored: Vec<((u8, i32), usize)> = (self.items.iter().enumerate())
             .filter_map(|(ix, item)| {
                 let target = item.filter_text.as_deref().unwrap_or(&item.label);
-                Some((-fuzzy_score(&self.word, target)?, ix))
+                Some(((item.group, -fuzzy_score(&self.word, target)?), ix))
             })
             .collect();
         // Stable: equal scores keep the sort text's order.
-        scored.sort_by_key(|&(score, _)| score);
+        scored.sort_by_key(|&(key, _)| key);
         self.matches = scored.into_iter().map(|(_, ix)| ix).collect();
         if !self.selected.is_some_and(|ix| self.matches.contains(&ix)) {
             self.selected = self.matches.first().copied();

@@ -75,7 +75,7 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 
 /// `config` with the user's extensions, a directory each under `dir`,
 /// loaded and reloaded by kiln: their manifests name
-/// `[engine] fastedit = "1.0"`. Their themes are chosen by the settings'
+/// `[engine] fastedit = "1.0"`, or `"1.1"` for snippets. Their themes are chosen by the settings'
 /// `theme.dark` and `theme.light` ([`theme::init`]). Their language
 /// servers, `[contributes.lsp.<name>]` tables of the keys
 /// `[lsp.servers.<name>]` takes, go to every workbench
@@ -84,16 +84,21 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// arguments name loads them again, so the change is asked about. Their
 /// tree-sitter grammars, `[[contributes.grammars]]`
 /// ([`ExtensionGrammar`]), are registered with fe-syntax on a background
-/// thread, for files opened after.
+/// thread, for files opened after. Their snippets,
+/// `[[contributes.snippets]]` ([`ExtensionSnippet`]), are offered as
+/// completions in every workbench ([`fe_workbench::set_extension_snippets`]).
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
-    let api = ApiVersion { major: 1, minor: 0 };
+    // 1.1 added snippets.
+    let api = ApiVersion { major: 1, minor: 1 };
     let lsp = schemars::schema_for!(BTreeMap<String, LspServerSettings>).to_value();
     let grammars = schemars::schema_for!(Vec<ExtensionGrammar>).to_value();
+    let snippets = schemars::schema_for!(Vec<ExtensionSnippet>).to_value();
     let mut last_good = LastGoodServers::new();
     config
         .extensions(dir, &fe_config::paths::app_id().short, api)
         .extension_kind("lsp", lsp)
         .extension_kind("grammars", grammars)
+        .extension_kind("snippets", snippets)
         .extension_files(|manifest| {
             let mut files = grammar_files(manifest);
             files.extend(server_files(manifest));
@@ -102,6 +107,7 @@ pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
         .on_extensions(move |set, cx| {
             let servers = extension_servers(set.extensions(), &mut last_good);
             fe_workbench::set_extension_servers(cx, servers);
+            fe_workbench::set_extension_snippets(cx, extension_snippets(set.extensions()));
             let grammars = extension_grammars(set.extensions());
             // Newer than any batch still registering, which then stops.
             let batch = GRAMMAR_BATCH.fetch_add(1, Ordering::SeqCst) + 1;
@@ -139,6 +145,83 @@ struct ExtensionGrammar {
     earlier_patterns_win: bool,
     /// The grammar's SPDX licence, when it isn't the extension's.
     license: Option<String>,
+}
+
+/// One of an extension's `[[contributes.snippets]]`, in the LSP snippet
+/// grammar, as VS Code's snippet files have them.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExtensionSnippet {
+    /// What's typed to offer it; an empty one drops it.
+    prefix: String,
+    /// What it inserts; an empty one drops it.
+    body: SnippetBody,
+    /// Shown beside its prefix.
+    description: Option<String>,
+    /// fastedit's names of the languages it's offered in: every one if
+    /// none.
+    #[serde(default)]
+    languages: Vec<String>,
+}
+
+/// A snippet's body: its text, or its lines.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum SnippetBody {
+    Text(String),
+    Lines(Vec<String>),
+}
+
+/// The snippets `extensions` contribute, with their extension's ID and
+/// name: one with an empty prefix or body, or a body that doesn't parse
+/// ([`fe_workbench::snippet_body_error`]), is logged and skipped.
+fn extension_snippets(extensions: &[kiln::core::Manifest]) -> Vec<fe_workbench::ExtensionSnippet> {
+    let mut snippets = Vec::new();
+    for manifest in extensions {
+        let Some(table) = manifest.app.get("snippets") else {
+            continue;
+        };
+        // The schema has checked it.
+        let table: Vec<ExtensionSnippet> = match table.clone().try_into() {
+            Ok(table) => table,
+            Err(error) => {
+                log::warn!("extension {}'s snippets: {error}", manifest.id);
+                continue;
+            }
+        };
+        for snippet in table {
+            let body = match snippet.body {
+                SnippetBody::Text(text) => text,
+                SnippetBody::Lines(lines) => lines.join("\n"),
+            };
+            if snippet.prefix.is_empty() || body.is_empty() {
+                log::warn!(
+                    "extension {}'s snippet {:?} has an empty {}, so it's skipped",
+                    manifest.id,
+                    snippet.prefix,
+                    if body.is_empty() { "body" } else { "prefix" }
+                );
+                continue;
+            }
+            if let Some(error) = fe_workbench::snippet_body_error(&body) {
+                log::warn!(
+                    "extension {}'s snippet {:?} is skipped: {error}",
+                    manifest.id,
+                    snippet.prefix
+                );
+                continue;
+            }
+            snippets.push(fe_workbench::ExtensionSnippet {
+                extension_id: manifest.id.clone(),
+                extension_name: manifest.name.clone(),
+                prefix: snippet.prefix,
+                body,
+                description: snippet.description,
+                languages: snippet.languages,
+            });
+        }
+    }
+    snippets
 }
 
 /// The grammars `extensions` contribute, with their extension's ID, their

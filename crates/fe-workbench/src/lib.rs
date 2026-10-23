@@ -19,6 +19,7 @@ mod config_problems;
 mod disk_sync;
 mod dock;
 mod dock_layout;
+mod extension_snippets;
 mod extensions_picker;
 mod find_bar;
 mod find_commands;
@@ -64,6 +65,9 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::App;
 
 pub use dock::{Dock, DockPanel};
+pub use extension_snippets::{
+    ExtensionSnippet, extension_snippets, set_extension_snippets, snippet_body_error,
+};
 pub use git_panel::{GitPanel, GitPanelEvent};
 pub use kiln_shell::MenuBarView;
 pub use lsp::{extension_servers, set_lsp_settings, set_server_launcher};
@@ -223,6 +227,8 @@ impl CommandCatalog for Catalog {
 
 #[cfg(test)]
 mod command_catalog_tests;
+#[cfg(test)]
+mod extension_snippets_tests;
 #[cfg(test)]
 mod lsp_consent_relaunch_tests;
 #[cfg(test)]

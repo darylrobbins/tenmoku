@@ -84,7 +84,9 @@
 //!   timeout or an error, shows nothing.
 //! - **Completion.** The same provider asks for an editor's completions
 //!   ([`LspManager::completion`]), resolves the selected one, and reports
-//!   the server's trigger characters for the buffer.
+//!   the server's trigger characters for the buffer. It adds extensions'
+//!   snippets after them, server or none, unless a punctuation trigger
+//!   character asked ([`crate::extension_snippets`]).
 //! - **Signature help.** So does it for an editor's signature help
 //!   ([`LspManager::signature_help`]) and its trigger characters
 //!   ([`LspManager::signature_help_triggers`]). fe-lsp keeps no parameter's
@@ -841,6 +843,7 @@ fn untrusted_status(name: &str, root: &Path) -> (String, StatusTone, Option<Stri
 impl Workbench {
     /// Starts following the language servers; call once, from `new`.
     pub(crate) fn start_lsp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        *self.lsp.hover.workbench.borrow_mut() = Some((cx.weak_entity(), cx.to_async()));
         let events = self.lsp.events.clone();
         let applied = cx.spawn(async move |workbench, cx| {
             while let Ok(event) = events.recv().await {
@@ -2120,10 +2123,14 @@ impl CodeActioner {
 
 /// Hover text, completions and signature help for an editor, from the
 /// server its buffer is open on, through whichever manager the workbench has
-/// now: none (no root, or a closed window) answers nothing.
+/// now: none (no root, or a closed window) answers nothing. Completions
+/// add extensions' snippets ([`crate::extension_snippets`]), server or
+/// none, unless a punctuation trigger character asked.
 #[derive(Default)]
 struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
+    /// The workbench, to read the editor asking for completions in.
+    workbench: RefCell<Option<(WeakEntity<Workbench>, gpui::AsyncApp)>>,
     /// Runs the commands accepted completions have.
     executor: RefCell<Option<gpui::BackgroundExecutor>>,
 }
@@ -2165,27 +2172,45 @@ impl fe_gpui::CompletionProvider for LspHover {
         offset: usize,
         trigger: CompletionTrigger,
     ) -> fe_gpui::CompletionFuture {
-        let Some(manager) = self.manager.borrow().upgrade() else {
-            return Box::pin(async { None });
-        };
+        let host = crate::extension_snippets::offers_snippets(&trigger)
+            .then(|| self.workbench.borrow().clone())
+            .flatten();
         let trigger = match trigger {
             CompletionTrigger::Invoked => fe_lsp::CompletionTrigger::Invoked,
             CompletionTrigger::Character(c) => fe_lsp::CompletionTrigger::Character(c),
             CompletionTrigger::Incomplete => fe_lsp::CompletionTrigger::Incomplete,
         };
         // Sent under the lock; awaited without it.
-        let reply = lock(&manager).completion(buffer, version, offset, trigger);
+        let reply = (self.manager.borrow().upgrade())
+            .map(|manager| lock(&manager).completion(buffer, version, offset, trigger));
         Box::pin(async move {
-            match reply.await {
-                Ok(completions) => completions.map(|completions| CompletionList {
-                    items: completions.items.into_iter().map(completion_item).collect(),
-                    is_incomplete: completions.is_incomplete,
-                }),
-                Err(error) => {
-                    log::debug!("no completions: {error}");
-                    None
-                }
+            // Read on the first poll, before the server answers.
+            let snippets = host.map_or_else(Vec::new, |(workbench, cx)| {
+                cx.update(|cx| {
+                    crate::extension_snippets::snippet_completions(
+                        cx, &workbench, buffer, version, offset,
+                    )
+                })
+            });
+            let list = match reply {
+                Some(reply) => match reply.await {
+                    Ok(completions) => completions.map(|completions| CompletionList {
+                        items: completions.items.into_iter().map(completion_item).collect(),
+                        is_incomplete: completions.is_incomplete,
+                    }),
+                    Err(error) => {
+                        log::debug!("no completions: {error}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            if snippets.is_empty() {
+                return list;
             }
+            let mut list = list.unwrap_or_default();
+            list.items.extend(snippets);
+            Some(list)
         })
     }
 
@@ -2323,6 +2348,7 @@ fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
         documentation: item.documentation.clone(),
         filter_text: item.filter_text.clone(),
         sort_text: item.sort_text.clone(),
+        group: 0,
         edit: edit(&item.edit),
         additional_edits: item.additional_edits.iter().map(edit).collect(),
         snippet: item.snippet,
