@@ -118,6 +118,13 @@ icons! {
     Variable => "variable",
     // The AI chat panel's; not mapped from names.
     MessageSquare => "message-square",
+    // The search view's results toolbar and file groups; not mapped from
+    // names.
+    ChevronDown => "chevron-down",
+    RefreshCw => "refresh-cw",
+    ListX => "list-x",
+    FoldVertical => "fold-vertical",
+    UnfoldVertical => "unfold-vertical",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

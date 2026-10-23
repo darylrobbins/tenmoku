@@ -18,11 +18,22 @@
 //! replaced, and the search runs again.
 //!
 //! The results list takes focus (`search.focus_results`, or down from the
-//! query) and moves through the match rows with `search.select_next` and
-//! `search.select_previous`; `search.open_selected` opens the selected
-//! match. Its element's key context is [`RESULTS_KEY_CONTEXT`], with `vim`
-//! too while vim is on. The fields are `text_input`s, so vim never sees the
-//! keys typed in them.
+//! query) and moves through the file and match rows with
+//! `search.select_next` and `search.select_previous`;
+//! `search.open_selected` opens the selected match, or a file's first.
+//! Clicking a file's row collapses its group, or expands it, as
+//! `search.collapse_or_parent` and `search.expand_or_first_child` do, which
+//! otherwise move to the parent file or to its first line, as VS Code's tree
+//! does. A collapsed file's lines are hidden but still in the results, so
+//! Replace All and the counts include them. Its element's key context is
+//! [`RESULTS_KEY_CONTEXT`], with `vim` too while vim is on. The fields are
+//! `text_input`s, so vim never sees the keys typed in them.
+//!
+//! A toolbar above the query, as VS Code's Search view has, reruns the query
+//! (`search.refresh`), clears it and the results (`search.clear_results`),
+//! and collapses every group, or expands them all once all are collapsed
+//! (`search.collapse_all`, `search.expand_all`). A new run's groups are
+//! expanded.
 //!
 //! The panel keeps each line's ranges and preview start as offsets in the
 //! line's lossy decoding, which is what the preview and the editor's text
@@ -30,6 +41,7 @@
 //! see [`decode_offsets`].
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     io,
     ops::Range,
@@ -49,13 +61,16 @@ use fe_project::{
     FileMatches, LineMatch, PathFilter, Replacer, SearchError, SearchOptions, SearchQuery,
     SearchSummary,
 };
-use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
+use fe_ui::{
+    HighlightedLabel, Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton,
+    Tooltip, UiTheme,
+};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, PromptButton,
     PromptLevel, Render, ScrollHandle, ScrollStrategy, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, svg, uniform_list,
 };
 
 use crate::{
@@ -131,9 +146,9 @@ pub struct SearchPanel {
     /// Whether the include and exclude fields are shown. Hidden globs still
     /// filter every search.
     details_shown: bool,
-    /// The results list's, which moves through the match rows.
+    /// The results list's, which moves through the rows.
     results_focus: FocusHandle,
-    /// The selected line row, in `rows`.
+    /// The selected row, in `rows`.
     selected: Option<usize>,
     regex: bool,
     match_case: bool,
@@ -154,11 +169,20 @@ pub struct SearchPanel {
     status: Status,
     /// In arrival order.
     files: Vec<FileMatches>,
+    /// The files, by index in `files`, whose line rows are hidden. Each run
+    /// starts with none.
+    collapsed: BTreeSet<usize>,
+    /// Each file's row, then its lines' unless it's collapsed: see
+    /// [`SearchPanel::rebuild_rows`].
     rows: Vec<ResultRow>,
     /// The last replacement's outcome, and whether it's an error: the
     /// status line until the next search the user runs.
     notice: Option<(String, bool)>,
     replacing: Option<Task<()>>,
+    /// Moves on with each Clear Search Results, after which a replacement
+    /// already running finishes its writes but neither searches again nor
+    /// says what it did.
+    clears: u64,
     scroll: UniformListScrollHandle,
     toggles: ScrollHandle,
     ui: UiTheme,
@@ -219,9 +243,11 @@ impl SearchPanel {
             running: None,
             status: Status::Idle,
             files: Vec::new(),
+            collapsed: BTreeSet::new(),
             rows: Vec::new(),
             notice: None,
             replacing: None,
+            clears: 0,
             scroll: UniformListScrollHandle::new(),
             toggles: ScrollHandle::new(),
             ui,
@@ -343,13 +369,13 @@ impl SearchPanel {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::default();
         self.generation += 1;
-        self.layout += 1;
         self.running = None;
         self.searched = None;
         self.boundary = None;
         self.files.clear();
-        self.rows.clear();
+        self.collapsed.clear();
         self.selected = None;
+        self.rebuild_rows();
         self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
         cx.notify();
         self.generation
@@ -359,13 +385,105 @@ impl SearchPanel {
         if generation != self.generation {
             return;
         }
-        for file in batch {
-            let ix = self.files.len();
+        let from = self.files.len();
+        self.files.extend(batch);
+        self.push_rows(from);
+        cx.notify();
+    }
+
+    /// Adds the rows of the files from the `from`th on: each file's, then
+    /// its lines' unless it's collapsed.
+    fn push_rows(&mut self, from: usize) {
+        for ix in from..self.files.len() {
             self.rows.push(ResultRow::File(ix));
-            self.rows
-                .extend((0..file.lines.len()).map(|line| ResultRow::Line(ix, line)));
-            self.files.push(file);
+            if !self.collapsed.contains(&ix) {
+                let lines = self.files[ix].lines.len();
+                (self.rows).extend((0..lines).map(|line| ResultRow::Line(ix, line)));
+            }
         }
+    }
+
+    /// Builds the rows again, as a new layout, with the selected row still
+    /// selected, or its file's if a collapse hid it.
+    fn rebuild_rows(&mut self) {
+        let selected = self.selected.and_then(|ix| self.rows.get(ix).copied());
+        self.rows.clear();
+        self.push_rows(0);
+        self.layout += 1;
+        self.selected = selected.and_then(|row| {
+            let file = match row {
+                ResultRow::File(file) | ResultRow::Line(file, _) => ResultRow::File(file),
+            };
+            (self.rows.iter().position(|&shown| shown == row))
+                .or_else(|| self.rows.iter().position(|&shown| shown == file))
+        });
+    }
+
+    /// Hides the `file`th file's line rows, or shows them if not `collapse`.
+    fn set_collapsed(&mut self, file: usize, collapse: bool, cx: &mut Context<Self>) {
+        let changed = if collapse {
+            self.collapsed.insert(file)
+        } else {
+            self.collapsed.remove(&file)
+        };
+        if changed {
+            self.rebuild_rows();
+            cx.notify();
+        }
+    }
+
+    /// Whether there are results and every file is collapsed: the toolbar
+    /// then offers Expand All rather than Collapse All.
+    fn all_collapsed(&self) -> bool {
+        !self.files.is_empty() && self.collapsed.len() == self.files.len()
+    }
+
+    /// Collapses every file, or expands them all if not `collapse`.
+    fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
+        let all = if collapse {
+            (0..self.files.len()).collect()
+        } else {
+            BTreeSet::new()
+        };
+        if all != self.collapsed {
+            self.collapsed = all;
+            self.rebuild_rows();
+            cx.notify();
+        }
+    }
+
+    /// Whether Refresh applies: unless the query is empty.
+    fn can_refresh(&self, cx: &App) -> bool {
+        !self.input.read(cx).text().is_empty()
+    }
+
+    /// Reruns the query, with the options and filters as they are, unless
+    /// it's empty.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.can_refresh(cx) {
+            self.run(cx);
+        }
+    }
+
+    /// Whether Clear Search Results applies: unless the fields are all
+    /// empty and there are no results.
+    fn can_clear(&self, cx: &App) -> bool {
+        let fields = [&self.input, &self.replace, &self.include, &self.exclude];
+        !self.files.is_empty() || fields.iter().any(|input| !input.read(cx).text().is_empty())
+    }
+
+    /// Cancels the running search and empties the query, the replacement,
+    /// the filters, the results and the status, then focuses the query. The
+    /// options stay, as do whether replace and the filters are shown.
+    fn clear_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restart(cx);
+        self.clears += 1;
+        self.notice = None;
+        self.status = Status::Idle;
+        for input in [&self.input, &self.replace, &self.include, &self.exclude] {
+            input.update(cx, |input, cx| input.set_text("", cx));
+        }
+        window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
         cx.notify();
     }
 
@@ -388,8 +506,9 @@ impl SearchPanel {
             }
             Err(error) => {
                 self.files.clear();
-                self.rows.clear();
+                self.collapsed.clear();
                 self.selected = None;
+                self.rebuild_rows();
                 Status::Failed(error)
             }
         };
@@ -434,17 +553,21 @@ impl SearchPanel {
         Some((text.into(), false))
     }
 
-    /// Opens the file of line row `ix`, if the rows are still `layout`'s,
-    /// with its first match selected.
+    /// Opens the file of row `ix`, if the rows are still `layout`'s, with
+    /// its line's first match selected, or the file's first for a file row.
     fn open(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(&ResultRow::Line(file, line)) = self.rows.get(ix) else {
-            return;
+        let (file, line) = match self.rows.get(ix) {
+            Some(&ResultRow::Line(file, line)) => (file, line),
+            Some(&ResultRow::File(file)) => (file, 0),
+            None => return,
         };
         if layout != self.layout {
             return;
         }
         let file = &self.files[file];
-        let line = &file.lines[line];
+        let Some(line) = file.lines.get(line) else {
+            return;
+        };
         let reveal = Reveal {
             row: line
                 .line_number
@@ -469,8 +592,23 @@ impl SearchPanel {
         }
     }
 
-    /// Runs a search option, a replace or results command, Enter or an
-    /// input edit; others go on to the workbench.
+    /// Selects file row `ix` and collapses its file, or expands it if it's
+    /// collapsed, if the rows are still `layout`'s.
+    fn click_file(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if layout != self.layout {
+            return;
+        }
+        let Some(&ResultRow::File(file)) = self.rows.get(ix) else {
+            return;
+        };
+        self.selected = Some(ix);
+        window.focus(&self.results_focus, cx);
+        self.set_collapsed(file, !self.collapsed.contains(&file), cx);
+        cx.notify();
+    }
+
+    /// Runs a search option, a replace, toolbar or results command, Enter
+    /// or an input edit; others go on to the workbench.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let option = match op(run, cx) {
             Some(SearchOp::ToggleRegex) => Some(SearchOption::Regex),
@@ -493,6 +631,12 @@ impl SearchPanel {
                 }
                 return;
             }
+            Some(SearchOp::CollapseOrParent) => return self.collapse_or_parent(cx),
+            Some(SearchOp::ExpandOrFirstChild) => return self.expand_or_first_child(cx),
+            Some(SearchOp::Refresh) => return self.refresh(cx),
+            Some(SearchOp::ClearResults) => return self.clear_results(window, cx),
+            Some(SearchOp::CollapseAll) => return self.collapse_all(true, cx),
+            Some(SearchOp::ExpandAll) => return self.collapse_all(false, cx),
             None => None,
         };
         if let Some(option) = option {
@@ -689,13 +833,16 @@ impl SearchPanel {
             }
         };
         self.notice = Some(("Replacing…".into(), false));
+        let clears = self.clears;
         self.replacing = Some(cx.spawn(async move |panel, cx| {
             let outcome = search_replace::replace(boundary, targets, replacer, cx).await;
             panel
                 .update(cx, |panel, cx| {
                     panel.replacing = None;
-                    panel.run(cx);
-                    panel.notice = Some(outcome.message());
+                    if panel.clears == clears {
+                        panel.run(cx);
+                        panel.notice = Some(outcome.message());
+                    }
                     cx.notify();
                 })
                 .ok();
@@ -710,39 +857,82 @@ impl SearchPanel {
             return;
         }
         self.files.remove(file);
-        self.layout += 1;
+        // The files after it move down one, collapsed or not.
+        self.collapsed = (self.collapsed.iter())
+            .filter(|&&ix| ix != file)
+            .map(|&ix| if ix > file { ix - 1 } else { ix })
+            .collect();
         self.selected = None;
-        self.rows.clear();
-        for (ix, file) in self.files.iter().enumerate() {
-            self.rows.push(ResultRow::File(ix));
-            (self.rows).extend((0..file.lines.len()).map(|line| ResultRow::Line(ix, line)));
-        }
+        self.rebuild_rows();
         cx.notify();
     }
 
-    /// Focuses the results list, selecting its first match row if none is.
+    /// Focuses the results list, selecting its first match row, or its
+    /// first row if every file is collapsed, if none is selected.
     fn focus_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected.is_none() {
-            self.select_next(true, cx);
+            let line = (self.rows.iter()).position(|row| matches!(row, ResultRow::Line(..)));
+            if let Some(ix) = line.or((!self.rows.is_empty()).then_some(0)) {
+                self.select(ix, cx);
+            }
         }
         window.focus(&self.results_focus, cx);
         cx.notify();
     }
 
-    /// Selects the next match row after the selected one, or the one
+    /// Selects row `ix`, scrolled into view.
+    fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.selected = Some(ix);
+        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
+    /// The selected row, and where it is, if it's one of the rows.
+    fn selected_row(&self) -> Option<(usize, ResultRow)> {
+        let ix = self.selected?;
+        Some((ix, *self.rows.get(ix)?))
+    }
+
+    /// Selects the row after the selected one, file or line, or the one
     /// before it if not `forward`; the first with none selected.
     fn select_next(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let is_line = |ix: &usize| matches!(self.rows[*ix], ResultRow::Line(..));
-        let selected = self.selected.filter(|&ix| ix < self.rows.len());
-        let next = match selected {
-            None => (0..self.rows.len()).find(is_line),
-            Some(at) if forward => (at + 1..self.rows.len()).find(is_line),
-            Some(at) => (0..at).rev().find(is_line),
+        let next = match self.selected_row() {
+            None => (!self.rows.is_empty()).then_some(0),
+            Some((at, _)) if forward => (at + 1 < self.rows.len()).then_some(at + 1),
+            Some((at, _)) => at.checked_sub(1),
         };
         if let Some(ix) = next {
-            self.selected = Some(ix);
-            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
-            cx.notify();
+            self.select(ix, cx);
+        }
+    }
+
+    /// Left: collapses the selected file if it's expanded, or else selects
+    /// the selected line's file.
+    fn collapse_or_parent(&mut self, cx: &mut Context<Self>) {
+        match self.selected_row() {
+            Some((_, ResultRow::File(file))) => self.set_collapsed(file, true, cx),
+            Some((at, ResultRow::Line(file, _))) => {
+                let parent = self.rows[..at]
+                    .iter()
+                    .rposition(|&row| row == ResultRow::File(file));
+                if let Some(ix) = parent {
+                    self.select(ix, cx);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Right: expands the selected file if it's collapsed, or else selects
+    /// its first line.
+    fn expand_or_first_child(&mut self, cx: &mut Context<Self>) {
+        let Some((at, ResultRow::File(file))) = self.selected_row() else {
+            return;
+        };
+        if self.collapsed.contains(&file) {
+            self.set_collapsed(file, false, cx);
+        } else if let Some(ResultRow::Line(..)) = self.rows.get(at + 1) {
+            self.select(at + 1, cx);
         }
     }
 
@@ -797,6 +987,7 @@ impl SearchPanel {
                                 .child(
                                     ToggleButton::new(("search-replace-file", ix), "Replace", &ui)
                                         .on_click(cx.listener(move |panel, _, _, cx| {
+                                            cx.stop_propagation();
                                             panel.replace_in_file(layout, file_ix, cx)
                                         })),
                                 )
@@ -807,11 +998,33 @@ impl SearchPanel {
                             .child(
                                 ToggleButton::new(("search-dismiss", ix), "×", &ui).on_click(
                                     cx.listener(move |panel, _, _, cx| {
+                                        cx.stop_propagation();
                                         panel.dismiss(layout, file_ix, cx)
                                     }),
                                 ),
                             );
-                        row.text_color(ui.tab_active_text)
+                        let expanded = !self.collapsed.contains(&file_ix);
+                        let chevron = svg()
+                            .path(if expanded {
+                                Icon::ChevronDown.path()
+                            } else {
+                                Icon::ChevronRight.path()
+                            })
+                            .size(px(14.))
+                            .flex_none()
+                            .text_color(ui.muted_text)
+                            .debug_selector(move || {
+                                let state = if expanded { "open" } else { "closed" };
+                                format!("search-chevron:{ix}:{state}")
+                            });
+                        row.pl_1()
+                            .gap_1()
+                            .text_color(ui.tab_active_text)
+                            .hover(move |row| row.bg(ui.row_hover))
+                            .on_click(cx.listener(move |panel, _, window, cx| {
+                                panel.click_file(layout, ix, window, cx)
+                            }))
+                            .child(chevron)
                             .child(
                                 div()
                                     .flex_1()
@@ -830,7 +1043,7 @@ impl SearchPanel {
                     }
                     ResultRow::Line(file, line) => {
                         let line = &self.files[file].lines[line];
-                        row.pl_5()
+                        row.pl_6()
                             .hover(move |row| row.bg(ui.row_hover))
                             .on_click(cx.listener(move |panel, _, window, cx| {
                                 panel.click_line(layout, ix, window, cx)
@@ -1303,6 +1516,79 @@ impl Drop for SearchPanel {
     }
 }
 
+/// What a results toolbar button does.
+type ToolbarAction = fn(&mut SearchPanel, &mut Window, &mut Context<SearchPanel>);
+
+impl SearchPanel {
+    /// The results toolbar's buttons: each one's debug selector and ID,
+    /// icon, tooltip, whether it's enabled, and what it does. Collapse All
+    /// is Expand All once every file is collapsed.
+    fn toolbar_buttons(
+        &self,
+        cx: &App,
+    ) -> [(&'static str, Icon, &'static str, bool, ToolbarAction); 3] {
+        let collapse: (Icon, &str, ToolbarAction) = if self.all_collapsed() {
+            (Icon::UnfoldVertical, "Expand All", |panel, _, cx| {
+                panel.collapse_all(false, cx)
+            })
+        } else {
+            (Icon::FoldVertical, "Collapse All", |panel, _, cx| {
+                panel.collapse_all(true, cx)
+            })
+        };
+        [
+            (
+                "search-toolbar-refresh",
+                Icon::RefreshCw,
+                "Refresh",
+                self.can_refresh(cx),
+                |panel, _, cx| panel.refresh(cx),
+            ),
+            (
+                "search-toolbar-clear",
+                Icon::ListX,
+                "Clear Search Results",
+                self.can_clear(cx),
+                Self::clear_results,
+            ),
+            (
+                "search-toolbar-collapse",
+                collapse.0,
+                collapse.1,
+                !self.files.is_empty(),
+                collapse.2,
+            ),
+        ]
+    }
+
+    /// The results toolbar, right-aligned above the query, as
+    /// [`crate::git_panel`] draws its buttons.
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let ui = self.ui;
+        let buttons = self
+            .toolbar_buttons(cx)
+            .map(|(id, icon, tooltip, enabled, act)| {
+                div().flex_none().debug_selector(move || id.into()).child(
+                    IconButton::new(id, icon, &ui)
+                        .disabled(!enabled)
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| Tooltip::new(tooltip, None::<&str>, &ui)).into()
+                        })
+                        .on_click(cx.listener(move |panel, _, window, cx| act(panel, window, cx))),
+                )
+            });
+        div()
+            .flex_none()
+            .flex()
+            .justify_end()
+            .items_center()
+            .gap_0p5()
+            .px_2()
+            .pt_1()
+            .children(buttons)
+    }
+}
+
 impl Render for SearchPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
@@ -1382,6 +1668,7 @@ impl Render for SearchPanel {
                         ),
                 )
         });
+        let toolbar = self.render_toolbar(cx);
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -1410,6 +1697,7 @@ impl Render for SearchPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
+            .child(toolbar)
             .child(
                 div()
                     .flex_none()
@@ -1475,6 +1763,14 @@ pub(crate) enum SearchOp {
     SelectNext,
     SelectPrevious,
     OpenSelected,
+    /// Left in the results.
+    CollapseOrParent,
+    /// Right in the results.
+    ExpandOrFirstChild,
+    Refresh,
+    ClearResults,
+    CollapseAll,
+    ExpandAll,
 }
 
 /// The [`CommandTarget`] of search panel commands: the op to do.
@@ -1548,6 +1844,27 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
             results,
             OpenSelected,
         ),
+        (
+            "search.collapse_or_parent",
+            "Collapse Result or Select Its File",
+            results,
+            CollapseOrParent,
+        ),
+        (
+            "search.expand_or_first_child",
+            "Expand Result or Select Its First Match",
+            results,
+            ExpandOrFirstChild,
+        ),
+        ("search.refresh", "Refresh", search, Refresh),
+        (
+            "search.clear_results",
+            "Clear Search Results",
+            search,
+            ClearResults,
+        ),
+        ("search.collapse_all", "Collapse All", search, CollapseAll),
+        ("search.expand_all", "Expand All", search, ExpandAll),
         (
             "text_input.submit",
             "Submit",
@@ -1698,6 +2015,10 @@ mod search_replace;
 #[cfg(test)]
 #[path = "search_panel_filter_tests.rs"]
 mod filter_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "search_results_toolbar_tests.rs"]
+mod results_toolbar_tests;
 
 #[cfg(test)]
 #[path = "search_panel_details_tests.rs"]

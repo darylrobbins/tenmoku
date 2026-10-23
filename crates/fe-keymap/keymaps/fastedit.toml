@@ -677,6 +677,18 @@ keys = "enter"
 command = "search.open_selected"
 context = "search_results"
 
+# A file's group: left collapses it, or goes from a line to its file; right
+# expands it, or goes to its first line. Not h and l, with vim on.
+[[bindings]]
+keys = "left"
+command = "search.collapse_or_parent"
+context = "search_results"
+
+[[bindings]]
+keys = "right"
+command = "search.expand_or_first_child"
+context = "search_results"
+
 [[bindings]]
 keys = "k"
 command = "search.select_previous"

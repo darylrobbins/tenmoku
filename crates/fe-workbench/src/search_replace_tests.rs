@@ -476,6 +476,9 @@ fn results_keys(cx: &mut TestAppContext) {
     assert!(context_has("search_results", cx));
     assert!(!context_has("vim", cx));
     assert_eq!(selected(cx), Some(1));
+    // The file rows are stops too, as in VS Code's tree.
+    run("search.select_next", cx);
+    assert_eq!(selected(cx), Some(2));
     run("search.select_next", cx);
     assert_eq!(selected(cx), Some(3));
     run("search.select_next", cx);
@@ -485,10 +488,16 @@ fn results_keys(cx: &mut TestAppContext) {
     run("search.select_previous", cx);
     assert_eq!(selected(cx), Some(3));
     run("search.select_previous", cx);
+    assert_eq!(selected(cx), Some(2));
+    run("search.select_previous", cx);
     assert_eq!(selected(cx), Some(1));
     run("search.select_previous", cx);
-    assert_eq!(selected(cx), Some(1), "the first stays");
+    assert_eq!(selected(cx), Some(0));
+    run("search.select_previous", cx);
+    assert_eq!(selected(cx), Some(0), "the first stays");
 
+    run("search.select_next", cx);
+    run("search.select_next", cx);
     run("search.select_next", cx);
     run("search.open_selected", cx);
     let editor = active_editor(&workbench, cx);
