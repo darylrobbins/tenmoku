@@ -943,6 +943,9 @@ pub(crate) struct Asked {
 #[derive(Default)]
 pub(crate) struct Edits {
     queue: RefCell<VecDeque<Asked>>,
+    /// Why no more are taken: the session is over, and the router, still
+    /// reading while the server shuts down, answers them at once.
+    closed: Cell<Option<&'static str>>,
     /// The actor, waiting for one.
     waiting: Cell<Option<Waker>>,
 }
@@ -961,12 +964,14 @@ impl Edits {
         let slot = Arc::new(Mutex::new(Some(sender)));
         // Weak, so the replies' drop drops the sender.
         let timed_out = Arc::downgrade(&slot);
-        self.queue.borrow_mut().push_back(Asked {
-            params,
-            reply: ApplyReply(slot),
-        });
-        if let Some(actor) = self.waiting.take() {
-            actor.wake();
+        let reply = ApplyReply(slot);
+        if let Some(why) = self.closed.get() {
+            reply.failed(why);
+        } else {
+            self.queue.borrow_mut().push_back(Asked { params, reply });
+            if let Some(actor) = self.waiting.take() {
+                actor.wake();
+            }
         }
         let timeout = clock.sleep(APPLY_TIMEOUT);
         async move {
@@ -998,6 +1003,15 @@ impl Edits {
             return Poll::Pending;
         }
         Poll::Ready(queue.drain(..).collect())
+    }
+
+    /// Answers every request still queued failed, for `reason`: the actor
+    /// won't take them, its session is over.
+    pub(crate) fn fail_all(&self, reason: &'static str) {
+        self.closed.set(Some(reason));
+        for asked in self.queue.borrow_mut().drain(..) {
+            asked.reply.failed(reason);
+        }
     }
 }
 

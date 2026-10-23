@@ -1276,6 +1276,9 @@ impl Actor {
         for reply in self.asked.drain(..) {
             reply.fail("the server's session ended");
         }
+        // Read by the router but not yet taken by `serve`, whose stop
+        // outranks them: nobody else would answer them before their timeout.
+        self.edits.fail_all("the server's session ended");
         let mut ended: Vec<_> = (self.documents.iter_mut())
             .filter_map(|(&buffer, document)| Some((buffer, document.end_session()?)))
             .collect();

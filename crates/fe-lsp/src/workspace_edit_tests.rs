@@ -698,6 +698,28 @@ fn apply_edit_timed_out_before_the_actor_is_dropped() {
     assert!(edits.poll_take(&Context::from_waker(&waker)).is_pending());
 }
 
+/// Requests queued when the session ends, and those asked after, are
+/// answered failed at once, never reaching the actor; closing twice is
+/// harmless.
+#[test]
+fn apply_edits_queued_or_asked_after_the_session_ended_are_failed() {
+    let edits = Edits::default();
+    let clock = ManualClock::new();
+    let params = || ApplyWorkspaceEditParams {
+        label: None,
+        edit: WorkspaceEdit::default(),
+    };
+    let queued = edits.ask(params(), &clock);
+    edits.fail_all("the server's session ended");
+    let ended = not_applied("the server's session ended");
+    assert_eq!(answer(queued), ended);
+    let late = edits.ask(params(), &clock);
+    assert_eq!(answer(late), ended);
+    edits.fail_all("the server's session ended");
+    let waker = futures::task::noop_waker();
+    assert!(edits.poll_take(&Context::from_waker(&waker)).is_pending());
+}
+
 /// The documents as `s`'s actor has them, each at its newest version.
 fn documents(s: &Started) -> Vec<SentDocument> {
     answer(
