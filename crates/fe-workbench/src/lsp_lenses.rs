@@ -8,7 +8,9 @@
 //! current version; until one lands the old lenses stay, their rows
 //! following the edits. A buffer has one [`LensProvider`], added to each of
 //! its editors. A click runs `lsp.run_lens`: the lens's command goes to its
-//! server, and one the server doesn't list is said in an info toast.
+//! server, and one the server doesn't list is said in an info toast; the
+//! client commands that list references (`editor.action.showReferences`,
+//! `rust-analyzer.showReferences`) open the References panel with them.
 //! `editor.code_lens` off removes the providers and asks for nothing.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
@@ -16,7 +18,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 use fe_buffer::{Anchor, BufferId, BufferSnapshot, Version};
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, Lens, LensItem, LensProvider};
-use fe_lsp::{CodeLens, LspError, ServerId};
+use fe_lsp::{CodeLens, IncarnationId, LspError, LspNavigation, ServerId, SessionId};
 use gpui::{AppContext as _, Context, Entity, EntityId, SharedString, Task};
 
 use crate::{
@@ -26,6 +28,9 @@ use crate::{
 
 /// How long a buffer holds still before its lenses are asked for again.
 const REST: Duration = Duration::from_millis(250);
+
+/// The opening of a document a server has: its session and incarnation.
+type Identity = (SessionId, IncarnationId);
 
 /// What a request answers.
 type Answer = Result<Option<Vec<CodeLens>>, LspError>;
@@ -69,6 +74,10 @@ struct Slot {
     editors: HashMap<EntityId, Entity<EditorView>>,
     /// The server the buffer is on while lenses are wanted.
     server: Option<ServerId>,
+    /// The opening the server had when lenses were last asked for. A new one
+    /// (a restarted server, a document reopened) retires the lenses and
+    /// requests of the old.
+    identity: Option<Identity>,
     /// The version last seen, to ask again when it changes.
     key: Option<Version>,
     /// The version of the latest request.
@@ -89,6 +98,7 @@ impl Slot {
         Self {
             editors: HashMap::new(),
             server: None,
+            identity: None,
             key: None,
             asked: None,
             no_provider: None,
@@ -106,6 +116,9 @@ pub(super) struct Lenses {
     slots: HashMap<BufferId, Slot>,
     /// The lenses shown, by id: what a click runs.
     table: HashMap<u64, CodeLens>,
+    /// The symbol of each references lens in `table`, read from the text it
+    /// was asked on.
+    origins: HashMap<u64, String>,
     next: u64,
 }
 
@@ -143,13 +156,27 @@ impl Workbench {
                 self.drop_lenses(buffer, cx);
                 continue;
             };
-            let slot = self
-                .lsp
+            self.lsp
                 .lenses
                 .slots
                 .entry(buffer)
                 .or_insert_with(Slot::new);
-            let moved = slot.server.is_some_and(|was| was != server);
+            let identity = self
+                .lsp
+                .manager
+                .as_ref()
+                .and_then(|manager| super::lock(manager).active_identity(buffer, server));
+            let slot = self.lsp.lenses.slots.get_mut(&buffer).expect("just added");
+            // Another opening of the document on the same server, or none,
+            // retires the old lenses as a move to another server does.
+            let changed = slot.identity != identity;
+            let reopened = changed && slot.identity.is_some();
+            slot.identity = identity;
+            if changed {
+                slot.key = None;
+                slot.no_provider = None;
+            }
+            let moved = slot.server.is_some_and(|was| was != server) || reopened;
             if slot.server != Some(server) {
                 slot.server = Some(server);
                 slot.key = None;
@@ -225,6 +252,7 @@ impl Workbench {
             slot.shown.borrow_mut().0.clear();
             for id in slot.ids.drain(..) {
                 lenses.table.remove(&id);
+                lenses.origins.remove(&id);
             }
         }
     }
@@ -236,13 +264,23 @@ impl Workbench {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
             }
-            let Ok(Some((version, reply))) =
+            let Ok(Some((version, identity, reply))) =
                 workbench.update(cx, |workbench, cx| workbench.send_lenses(buffer, cx))
             else {
                 return;
             };
             let answer = match reply.await {
                 Ok(Some(lenses)) => {
+                    // Lenses asked on text the buffer has moved on from are
+                    // neither resolved nor shown: the next ask replaces them.
+                    let current = workbench
+                        .update(cx, |workbench, cx| {
+                            workbench.lens_request_current(buffer, version, identity, cx)
+                        })
+                        .unwrap_or(false);
+                    if !current {
+                        return;
+                    }
                     // The ones without a command resolve together.
                     let resolving: Vec<_> = workbench
                         .update(cx, |workbench, cx| {
@@ -274,13 +312,37 @@ impl Workbench {
             };
             workbench
                 .update(cx, |workbench, cx| {
-                    workbench.lenses_landed(buffer, version, answer, cx)
+                    workbench.lenses_landed(buffer, version, identity, answer, cx)
                 })
                 .ok();
         });
         if let Some(slot) = self.lsp.lenses.slots.get_mut(&buffer) {
             slot.task = Some(task);
         }
+    }
+
+    /// Whether the request for `buffer`'s lenses at `version`, made on
+    /// the opening `identity`, is still the latest and the text and the
+    /// server's opening are as it was asked on.
+    fn lens_request_current(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        identity: Option<Identity>,
+        cx: &Context<Self>,
+    ) -> bool {
+        let Some(slot) = self.lsp.lenses.slots.get(&buffer) else {
+            return false;
+        };
+        let current = (self.lsp.manager.as_ref())
+            .zip(slot.server)
+            .and_then(|(manager, server)| super::lock(manager).active_identity(buffer, server));
+        let text_is = slot
+            .editors
+            .values()
+            .next()
+            .is_some_and(|editor| editor.read(cx).model().snapshot().version() == version);
+        slot.asked == Some(version) && identity.is_some() && identity == current && text_is
     }
 
     /// The request for `buffer`'s lenses at its version now, sent.
@@ -291,6 +353,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Option<(
         Version,
+        Option<Identity>,
         std::pin::Pin<Box<dyn std::future::Future<Output = Answer> + Send>>,
     )> {
         let manager = self.lsp.manager.clone()?;
@@ -298,16 +361,22 @@ impl Workbench {
         let editor = slot.editors.values().next()?;
         let version = editor.read(cx).model().snapshot().version();
         slot.asked = Some(version);
-        let reply = super::lock(&manager).code_lenses(buffer, version);
-        Some((version, Box::pin(reply)))
+        let manager = super::lock(&manager);
+        let identity = slot
+            .server
+            .and_then(|server| manager.active_identity(buffer, server));
+        let reply = manager.code_lenses(buffer, version);
+        Some((version, identity, Box::pin(reply)))
     }
 
     /// Shows `answer`, the reply to the request for `buffer` at `version`,
-    /// if it is still the latest and the text hasn't moved on.
+    /// if it is still the latest, from the opening the server still has, and the
+    /// text hasn't moved on.
     fn lenses_landed(
         &mut self,
         buffer: BufferId,
         version: Version,
+        identity: Option<Identity>,
         answer: Answer,
         cx: &mut Context<Self>,
     ) {
@@ -317,7 +386,11 @@ impl Workbench {
         let Some(slot) = self.lsp.lenses.slots.get_mut(&buffer) else {
             return;
         };
-        if slot.asked != Some(version) {
+        // From the opening the server has now.
+        let current = (self.lsp.manager.as_ref())
+            .zip(slot.server)
+            .and_then(|(manager, server)| super::lock(manager).active_identity(buffer, server));
+        if slot.asked != Some(version) || identity.is_none() || identity != current {
             return;
         }
         let snapshot = slot
@@ -338,11 +411,23 @@ impl Workbench {
         };
         // A lens that resolved to no command is dropped.
         let text = snapshot.text();
-        let Lenses { slots, table, next } = &mut self.lsp.lenses;
+        let Lenses {
+            slots,
+            table,
+            origins,
+            next,
+        } = &mut self.lsp.lenses;
         let slot = slots.get_mut(&buffer).expect("looked up above");
         for id in slot.ids.drain(..) {
             table.remove(&id);
+            origins.remove(&id);
         }
+        let language = slot.editors.values().next().and_then(|editor| {
+            editor
+                .read(cx)
+                .syntax()
+                .map(|syntax| syntax.language().name())
+        });
         let mut rows: Vec<(u32, Row)> = Vec::new();
         for lens in lenses {
             let Some(title) = lens
@@ -356,6 +441,11 @@ impl Workbench {
             let id = *next;
             *next += 1;
             slot.ids.push(id);
+            if (lens.command.as_ref()).is_some_and(LspNavigation::is_references_command) {
+                let word = crate::references_panel::word_at(text, lens.range.start, language)
+                    .unwrap_or_default();
+                origins.insert(id, word);
+            }
             table.insert(id, lens);
             match rows.last_mut() {
                 Some((last, (_, items))) if *last == row => items.push((title, id)),
@@ -383,6 +473,43 @@ impl Workbench {
         let Some(title) = lens.command.as_ref().map(|c| c.title.clone()) else {
             return;
         };
+        // The client commands that list references open the References
+        // panel; nothing goes to the server.
+        if (lens.command.as_ref()).is_some_and(LspNavigation::is_references_command) {
+            let origin = self.lsp.lenses.origins.get(&id).cloned();
+            let context = lens.context().clone();
+            let locations = lens
+                .command
+                .as_ref()
+                .and_then(LspNavigation::lens_locations);
+            let (Some(word), Some(locations)) = (origin, locations) else {
+                log::debug!("lens {title:?}: unusable arguments");
+                toast::show(
+                    cx,
+                    Toast::info(format!("{title}: this command isn't supported")),
+                );
+                return;
+            };
+            // The panel takes focus in the window the click was in, once this
+            // update is over.
+            cx.spawn(async move |this, cx| {
+                let Some(window) =
+                    cx.update(|cx| cx.active_window().or_else(|| cx.windows().last().copied()))
+                else {
+                    return;
+                };
+                cx.update_window(window, |_, window, cx| {
+                    this.update(cx, |this, cx| {
+                        let decode = LspNavigation::decode_references;
+                        this.show_references(word, context, locations, decode, window, cx)
+                    })
+                    .ok();
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
         let reply = super::lock(&manager).run_lens_command(&lens);
         cx.spawn(async move |_, cx| match reply.await {
             Ok(()) => {}

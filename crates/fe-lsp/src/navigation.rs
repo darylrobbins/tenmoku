@@ -178,6 +178,61 @@ impl LspNavigation {
     }
 }
 
+impl LspNavigation {
+    /// The locations a lens's `editor.action.showReferences` or
+    /// `rust-analyzer.showReferences` command lists, its third argument
+    /// (after the lens's document and position); `None` for any other
+    /// command, or arguments that aren't those.
+    pub fn lens_locations(command: &lsp_types::Command) -> Option<Vec<lsp_types::Location>> {
+        if !Self::is_references_command(command) {
+            return None;
+        }
+        let locations = command.arguments.as_ref()?.get(2)?.clone();
+        serde_json::from_value(locations).ok()
+    }
+
+    /// Whether `command` is one of the client commands that list references
+    /// (`lens_locations` parses their arguments).
+    pub fn is_references_command(command: &lsp_types::Command) -> bool {
+        matches!(
+            command.command.as_str(),
+            "editor.action.showReferences" | "rust-analyzer.showReferences"
+        )
+    }
+
+    /// `locations`, a server's, decoded and grouped as [`references`]
+    /// does its reply, for an answer the host already has (a code lens's):
+    /// the files in path order, with previews and no definition marks.
+    ///
+    /// `origin` is the lens's [`context`](crate::CodeLens::context): the
+    /// server's text of the lens's file and of its other open documents as
+    /// they were when it was asked for, and its position encoding, decode
+    /// the locations, and the lens's file is placed first; files the server
+    /// doesn't have open are read from disk.
+    ///
+    /// [`references`]: NavigationProvider::references
+    pub fn decode_references(
+        &self,
+        root: &Path,
+        origin: &Admitted,
+        locations: Vec<lsp_types::Location>,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<FileReferences>, NavError> {
+        let max_bytes = self
+            .with_manager(|manager| manager.max_file_bytes())
+            .ok_or_else(gone)?;
+        let mut decoder = Decoder::new(root, origin.encoding, max_bytes, cancel)
+            .with_origin(origin)
+            .with_open(&origin.others);
+        let files = group_references(&mut decoder, &locations, &[]);
+        check(cancel)?;
+        if files.is_empty() && !decoder.dropped.is_empty() {
+            return Err(NavError::Unavailable(decoder.dropped_why()));
+        }
+        Ok(sorted(files))
+    }
+}
+
 impl NavigationProvider for LspNavigation {
     fn name(&self) -> &str {
         Self::NAME
@@ -316,44 +371,12 @@ impl NavigationProvider for LspNavigation {
         // A definition that can't be read only goes unmarked: it doesn't
         // make the references unavailable.
         decoder.dropped.clear();
-        let mut files: Vec<(Tier, FileReferences)> = Vec::new();
-        for target in &found {
-            let Some(found) = decoder.decode(&target.uri, target.range) else {
-                continue;
-            };
-            let at = &found.location;
-            let is_definition =
-                (defined.iter()).any(|(rel, range)| *rel == at.rel && *range == at.range);
-            let (preview, preview_ranges) = preview(&found.text, at.range.clone());
-            let reference = Reference {
-                line_number: u64::from(at.row) + 1,
-                preview,
-                preview_ranges,
-                verified: true,
-                is_definition,
-                location: found.location,
-            };
-            match files
-                .iter_mut()
-                .find(|(_, file)| file.rel == reference.location.rel)
-            {
-                Some((_, file)) => file.refs.push(reference),
-                None => files.push((
-                    found.tier,
-                    FileReferences {
-                        rel: reference.location.rel.clone(),
-                        refs: vec![reference],
-                    },
-                )),
-            }
-        }
+        let files = group_references(&mut decoder, &found, &defined);
         check(cancel)?;
         if files.is_empty() && !decoder.dropped.is_empty() {
             return Err(NavError::Unavailable(decoder.dropped_why()));
         }
-        files.sort_by(|(a, a_file), (b, b_file)| {
-            (a != &Tier::SameFile, &a_file.rel).cmp(&(b != &Tier::SameFile, &b_file.rel))
-        });
+        let files = sorted(files);
         let mut summary = ReferencesSummary {
             word,
             files_searched: files.len(),
@@ -361,7 +384,7 @@ impl NavigationProvider for LspNavigation {
             ..ReferencesSummary::default()
         };
         let mut delivered = false;
-        for (_, mut file) in files {
+        for file in files {
             if cancel.load(Ordering::Relaxed) {
                 if !delivered {
                     return Err(NavError::Cancelled);
@@ -369,10 +392,6 @@ impl NavigationProvider for LspNavigation {
                 summary.cancelled = true;
                 break;
             }
-            file.refs
-                .sort_by_key(|reference| reference.location.range.start);
-            file.refs
-                .dedup_by(|a, b| a.location.range == b.location.range);
             sink(vec![file]);
             delivered = true;
         }
@@ -609,6 +628,65 @@ fn preview(text: &Text, range: std::ops::Range<usize>) -> (String, Vec<std::ops:
     Reference::preview(&line, range.start - from..end - from)
 }
 
+/// `found` decoded and grouped by file, each reference marked a definition
+/// if it is one of `defined`.
+fn group_references(
+    decoder: &mut Decoder<'_>,
+    found: &[lsp_types::Location],
+    defined: &[(PathBuf, std::ops::Range<usize>)],
+) -> Vec<(Tier, FileReferences)> {
+    let mut files: Vec<(Tier, FileReferences)> = Vec::new();
+    for target in found {
+        let Some(found) = decoder.decode(&target.uri, target.range) else {
+            continue;
+        };
+        let at = &found.location;
+        let is_definition =
+            (defined.iter()).any(|(rel, range)| *rel == at.rel && *range == at.range);
+        let (preview, preview_ranges) = preview(&found.text, at.range.clone());
+        let reference = Reference {
+            line_number: u64::from(at.row) + 1,
+            preview,
+            preview_ranges,
+            verified: true,
+            is_definition,
+            location: found.location,
+        };
+        match files
+            .iter_mut()
+            .find(|(_, file)| file.rel == reference.location.rel)
+        {
+            Some((_, file)) => file.refs.push(reference),
+            None => files.push((
+                found.tier,
+                FileReferences {
+                    rel: reference.location.rel.clone(),
+                    refs: vec![reference],
+                },
+            )),
+        }
+    }
+    files
+}
+
+/// `files` in the order references hands them over (the request's own file
+/// first, then by path), each file's references in order and without
+/// repeats.
+fn sorted(mut files: Vec<(Tier, FileReferences)>) -> Vec<FileReferences> {
+    files.sort_by(|(a, a_file), (b, b_file)| {
+        (a != &Tier::SameFile, &a_file.rel).cmp(&(b != &Tier::SameFile, &b_file.rel))
+    });
+    (files.into_iter())
+        .map(|(_, mut file)| {
+            file.refs
+                .sort_by_key(|reference| reference.location.range.start);
+            file.refs
+                .dedup_by(|a, b| a.location.range == b.location.range);
+            file
+        })
+        .collect()
+}
+
 /// A location decoded, with the text it's in.
 struct Decoded {
     location: Location,
@@ -635,7 +713,7 @@ struct Decoder<'a> {
     max_bytes: usize,
     /// The request's own document: where the server has it, where the
     /// workbench has it, its text and its snapshot.
-    own: Option<(&'a Url, &'a Path, &'a Text, (BufferId, Version))>,
+    own: Option<(&'a Url, PathBuf, &'a Text, (BufferId, Version))>,
     /// The other documents the server had open.
     open: &'a [SentDocument],
     /// Unopened files read for this answer: `None` for one that couldn't
@@ -670,7 +748,21 @@ impl<'a> Decoder<'a> {
     /// server had (it was admitted at that version).
     fn with_request(mut self, req: &'a NavRequest, admitted: &'a Admitted) -> Self {
         let snapshot = (admitted.document.buffer, admitted.document.sent.version);
-        self.own = Some((&admitted.document.uri, &req.rel, &req.text, snapshot));
+        self.own = Some((&admitted.document.uri, req.rel.clone(), &req.text, snapshot));
+        self
+    }
+
+    /// As [`with_request`](Self::with_request), for a document the host
+    /// has no request of: its file is the uri's, relative to the root.
+    fn with_origin(mut self, admitted: &'a Admitted) -> Self {
+        let snapshot = (admitted.document.buffer, admitted.document.sent.version);
+        let document = &admitted.document;
+        if let Ok(path) = file_path(&document.uri) {
+            let rel = path
+                .strip_prefix(self.root)
+                .map_or_else(|_| path.clone(), Path::to_owned);
+            self.own = Some((&document.uri, rel, &document.sent.text, snapshot));
+        }
         self
     }
 
@@ -697,8 +789,8 @@ impl<'a> Decoder<'a> {
         let decoded = file_path(uri);
         let same_path = |other: &Url| matches!((&decoded, file_path(other)), (Ok(path), Ok(other)) if *path == other);
         let (rel, text, snapshot, tier) = match self.own {
-            Some((own, rel, text, snapshot)) if own == uri || same_path(own) => {
-                (rel.to_owned(), text.clone(), Some(snapshot), Tier::SameFile)
+            Some((own, ref rel, text, snapshot)) if own == uri || same_path(own) => {
+                (rel.clone(), text.clone(), Some(snapshot), Tier::SameFile)
             }
             _ => {
                 let path = match decoded.clone() {

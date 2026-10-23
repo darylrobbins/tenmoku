@@ -19,7 +19,7 @@ mod landing;
 
 use std::{
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -58,6 +58,15 @@ pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel 
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "ReferencesPanel";
+
+/// A function that decodes a host's locations of type `L`.
+type Decode<L> = fn(
+    &fe_lsp::LspNavigation,
+    &Path,
+    &fe_lsp::Admitted,
+    L,
+    &AtomicBool,
+) -> Result<Vec<FileReferences>, NavError>;
 
 enum Status {
     /// Nothing has run.
@@ -207,6 +216,29 @@ impl ReferencesPanel {
                 .update(cx, |panel, cx| panel.finished(generation, answer, cx))
                 .ok();
         }));
+    }
+
+    /// Replaces the results with `files`, an answer the host already has,
+    /// as a finished search would, with `word` in the header.
+    pub(crate) fn show_locations(
+        &mut self,
+        word: String,
+        files: Vec<FileReferences>,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.restart(cx);
+        self.word = Some(word.clone());
+        self.append(generation, files, cx);
+        self.status = Status::Done(
+            ReferencesSummary {
+                word: Some(word),
+                files_searched: self.files.len(),
+                files_verified: self.files.len(),
+                ..ReferencesSummary::default()
+            },
+            String::new(),
+        );
+        cx.notify();
     }
 
     /// Appends `batch`'s files, if it's of the current generation, and
@@ -466,7 +498,7 @@ fn count(n: usize, noun: &str) -> String {
 /// The word at `offset` in `text`: the longest run of word chars touching
 /// it, as the search provider takes it (fe-nav's `word_at`), for the status
 /// to name while the run goes.
-fn word_at(text: &Text, offset: usize, language: Option<&str>) -> Option<String> {
+pub(crate) fn word_at(text: &Text, offset: usize, language: Option<&str>) -> Option<String> {
     let dollar = matches!(language, Some("javascript" | "typescript" | "tsx"));
     let is_word = |ch: char| fe_project::is_word_char(ch) || (dollar && ch == '$');
     let offset = text.clip_offset(offset, Bias::Left);
@@ -585,6 +617,65 @@ impl Workbench {
         panel.update(cx, |panel, cx| {
             panel.run(request, word, ready, navigation, cx)
         });
+    }
+
+    /// Shows the dock with References, focused, listing `locations`, a
+    /// server's, in place of the last results: decoded off the UI thread.
+    ///
+    /// `locations` stay as the server's type, which this crate doesn't
+    /// name: `decode` is the function that takes them.
+    pub(crate) fn show_references<L: Send + 'static>(
+        &mut self,
+        word: String,
+        origin: fe_lsp::Admitted,
+        locations: L,
+        decode: Decode<L>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A go-to-definition still running would take focus from the panel.
+        self.nav_state.goto.next();
+        let dock = self.dock().clone();
+        let panel = dock.update(cx, |dock, cx| {
+            dock.show(DockPanel::References, window, cx);
+            dock.references().clone()
+        });
+        window.focus(&panel.focus_handle(cx), cx);
+        let (Some(root), Some(manager)) = (self.lsp.root.clone(), self.lsp.manager().clone())
+        else {
+            return panel.update(cx, |panel, cx| panel.reset(Status::NoFolder, cx));
+        };
+        let navigation = fe_lsp::LspNavigation::new(Arc::downgrade(&manager), &root);
+        let (cancel, generation) = panel.update(cx, |panel, cx| {
+            let generation = panel.restart(cx);
+            panel.word = Some(word.clone());
+            panel.status = Status::Running;
+            (panel.cancel.clone(), generation)
+        });
+        let decoding =
+            cx.background_spawn(
+                async move { decode(&navigation, &root, &origin, locations, &cancel) },
+            );
+        let panel = panel.downgrade();
+        let task = cx.spawn(async move |_, cx| {
+            let answer = decoding.await;
+            panel
+                .update(cx, |panel, cx| {
+                    if generation != panel.generation {
+                        return;
+                    }
+                    match answer {
+                        Ok(files) => panel.show_locations(word, files, cx),
+                        Err(error) => {
+                            panel.running = None;
+                            panel.status = Status::Failed(error);
+                            cx.notify();
+                        }
+                    }
+                })
+                .ok();
+        });
+        task.detach();
     }
 
     /// Runs `run` on the References panel, once the workbench's update is

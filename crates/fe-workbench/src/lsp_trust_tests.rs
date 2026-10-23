@@ -48,3 +48,6 @@ mod caret_highlights;
 
 #[path = "lsp_lenses_tests.rs"]
 mod lenses;
+
+#[path = "lsp_lens_references_tests.rs"]
+mod lens_references;

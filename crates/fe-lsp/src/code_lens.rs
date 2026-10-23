@@ -49,6 +49,30 @@ pub struct CodeLens {
     from: (BufferId, (SessionId, IncarnationId)),
     /// What the resolved range is decoded against.
     decoded: Decoded,
+    /// The request's admitted context: the document at the version asked
+    /// about and the server's other open documents as they were then.
+    context: Context,
+}
+
+impl CodeLens {
+    /// What the server had of the document and of its other open
+    /// documents when this lens was asked for, to decode the locations in
+    /// its command against ([`LspNavigation::decode_references`]
+    /// (crate::LspNavigation::decode_references)); it doesn't change as the
+    /// buffers do.
+    pub fn context(&self) -> &Admitted {
+        &self.context.0
+    }
+}
+
+/// A request's [`Admitted`], shared by the lenses it answered.
+#[derive(Clone, Debug)]
+struct Context(Arc<Admitted>);
+
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 #[derive(Clone)]
@@ -117,6 +141,7 @@ impl LspManager {
             .boxed()
             .map(move |answer| match (answer, server) {
                 (Ok((reply, admitted)), Some(server)) => {
+                    let admitted = Arc::new(admitted);
                     let mut lenses: Vec<_> = (reply.result.unwrap_or_default().into_iter())
                         .map(|lens| convert(lens, &admitted, server))
                         .collect();
@@ -145,12 +170,17 @@ impl LspManager {
                     .is_some_and(|provider| provider.resolve_provider == Some(true))
             });
         // Sent only while the session that gave the lens has its document
-        // open as it was then.
+        // open as it was then: the same version, as edits drained by the
+        // server since the lens was queued count.
         let (buffer, identity) = lens.from;
+        let version = lens.context.0.document.sent.version;
         let reply = resolves.then(|| {
             self.request_if::<CodeLensResolve>(lens.server, (*lens.raw).clone(), move |opened| {
-                (opened.documents.iter())
-                    .any(|document| document.buffer == buffer && document.identity == identity)
+                (opened.documents.iter()).any(|document| {
+                    document.buffer == buffer
+                        && document.identity == identity
+                        && document.sent.version == version
+                })
             })
             .boxed()
         });
@@ -202,7 +232,7 @@ impl LspManager {
 }
 
 /// A reply's lens, in bytes of the version asked about.
-fn convert(lens: lsp_types::CodeLens, at: &Admitted, server: ServerId) -> CodeLens {
+fn convert(lens: lsp_types::CodeLens, at: &Arc<Admitted>, server: ServerId) -> CodeLens {
     let decoded = Decoded {
         text: at.document.sent.text.clone(),
         encoding: at.encoding,
@@ -214,6 +244,7 @@ fn convert(lens: lsp_types::CodeLens, at: &Admitted, server: ServerId) -> CodeLe
         server,
         from: (at.document.buffer, at.document.identity),
         decoded,
+        context: Context(at.clone()),
     }
 }
 
