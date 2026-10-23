@@ -32,8 +32,27 @@ fn shown(
     })
 }
 
+/// Takes the wall clock out of the previews and the searches for its scope,
+/// so a loaded machine can't make a preview find no match; the earlier
+/// limits come back when it drops.
+fn unlimited_search() -> impl Drop {
+    struct Restore(std::time::Duration);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            fe_vim::set_search_preview_limit(None);
+            fe_vim::search::set_time_limit(self.0);
+        }
+    }
+    let restore = Restore(fe_vim::search::time_limit());
+    let hour = std::time::Duration::from_secs(3600);
+    fe_vim::set_search_preview_limit(Some(hour));
+    fe_vim::search::set_time_limit(hour);
+    restore
+}
+
 #[gpui::test]
 fn typing_a_search_reveals_and_escape_restores(cx: &mut TestAppContext) {
+    let _unlimited = unlimited_search();
     let text = rows();
     let world = text.find("world").unwrap();
     let (_dir, workbench, editor, cx) = opened_files(cx, &[("a.txt", &text)]);
@@ -104,6 +123,7 @@ fn typing_a_search_reveals_and_escape_restores(cx: &mut TestAppContext) {
 /// its query's until the line closes.
 #[gpui::test]
 fn a_typed_search_paints_over_an_open_find_bar(cx: &mut TestAppContext) {
+    let _unlimited = unlimited_search();
     let text = rows();
     let world = text.find("world").unwrap();
     let (_dir, workbench, editor, cx) = opened_files(cx, &[("a.txt", &text)]);
