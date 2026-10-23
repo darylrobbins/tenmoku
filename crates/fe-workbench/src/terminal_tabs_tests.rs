@@ -1,6 +1,6 @@
 //! Several terminals on the bottom dock: `terminal.new`, `terminal.close`,
 //! `terminal.next` and `terminal.previous`, shells exiting, and the tab
-//! strip shown once there are two.
+//! list shown once there are two.
 
 use std::{
     fs, thread,
@@ -21,7 +21,7 @@ use crate::{Launch, TerminalPanel, Workbench, tests::open};
 
 /// A workbench showing `a.rs` from a temporary project, focused as the app
 /// focuses it, whose terminals run `/bin/sh`.
-fn opened(
+pub(crate) fn opened(
     cx: &mut TestAppContext,
 ) -> (Entity<Workbench>, &mut VisualTestContext, tempfile::TempDir) {
     // The pty's threads wake the terminal's event task.
@@ -40,13 +40,13 @@ fn opened(
     (workbench, cx, dir)
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(crate) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 /// Draws until `done` holds. Panics after 5 s, naming `what`.
-fn until(
+pub(crate) fn until(
     cx: &mut VisualTestContext,
     what: &str,
     mut done: impl FnMut(&mut VisualTestContext) -> bool,
@@ -63,29 +63,32 @@ fn until(
 }
 
 /// Runs workbench command `id` as an unbound key or the palette would.
-fn run(id: &str, cx: &mut VisualTestContext) {
+pub(crate) fn run(id: &str, cx: &mut VisualTestContext) {
     let context = ContextStack::new().with(ContextFrame::new("workbench"));
     let run = RunCommand(Invocation::of(id).unwrap().context(context));
     cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
     draw(cx);
 }
 
-fn toggle(cx: &mut VisualTestContext) {
+pub(crate) fn toggle(cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("ctrl-`");
     draw(cx);
 }
 
-fn terminal(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<TerminalPanel> {
+pub(crate) fn terminal(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<TerminalPanel> {
     workbench.read_with(cx, |workbench, _| workbench.terminal().clone())
 }
 
-fn dock_shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn dock_shown(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
     let dock = workbench.read_with(cx, |workbench, _| workbench.terminal_dock().clone());
     dock.read_with(cx, |dock, _| dock.is_visible())
 }
 
 /// The sessions, in start order.
-fn sessions(
+pub(crate) fn sessions(
     workbench: &Entity<Workbench>,
     cx: &mut VisualTestContext,
 ) -> Vec<Entity<TerminalView>> {
@@ -93,21 +96,21 @@ fn sessions(
     terminal.read_with(cx, |terminal, _| terminal.views().cloned().collect())
 }
 
-fn ids(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<EntityId> {
+pub(crate) fn ids(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<EntityId> {
     let sessions = sessions(workbench, cx);
     sessions.iter().map(Entity::entity_id).collect()
 }
 
-fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+pub(crate) fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
     terminal(workbench, cx).read_with(cx, |terminal, _| terminal.active())
 }
 
-fn focused(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn focused(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| view.focus_handle(cx).is_focused(window))
 }
 
 /// Whether session `ix` is active and has focus.
-fn active_and_focused(
+pub(crate) fn active_and_focused(
     workbench: &Entity<Workbench>,
     ix: usize,
     cx: &mut VisualTestContext,
@@ -116,7 +119,7 @@ fn active_and_focused(
     active(workbench, cx) == ix && focused(&view, cx)
 }
 
-fn editor_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn editor_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
     let editor = workbench
         .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
         .expect("an editor shows");
@@ -124,14 +127,17 @@ fn editor_focused(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> 
 }
 
 /// Waits for `view`'s shell, which starts once the view is drawn.
-fn started(view: &Entity<TerminalView>, cx: &mut VisualTestContext) {
+pub(crate) fn started(view: &Entity<TerminalView>, cx: &mut VisualTestContext) {
     until(cx, "the shell to start", |cx| {
         view.read_with(cx, |view, _| view.terminal().is_some())
     });
 }
 
 /// Starts a session with `terminal.new` and waits for its shell.
-fn new_session(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<TerminalView> {
+pub(crate) fn new_session(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<TerminalView> {
     run("terminal.new", cx);
     let view = sessions(workbench, cx).last().unwrap().clone();
     started(&view, cx);
@@ -140,7 +146,7 @@ fn new_session(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Ent
 
 /// Shows the terminal with `terminal.toggle`, then starts `more` sessions
 /// with `terminal.new`.
-fn with_sessions(
+pub(crate) fn with_sessions(
     workbench: &Entity<Workbench>,
     more: usize,
     cx: &mut VisualTestContext,
@@ -153,13 +159,16 @@ fn with_sessions(
     sessions(workbench, cx)
 }
 
-fn type_line(view: &Entity<TerminalView>, line: &str, cx: &mut VisualTestContext) {
+pub(crate) fn type_line(view: &Entity<TerminalView>, line: &str, cx: &mut VisualTestContext) {
     let bytes = format!("{line}\n").into_bytes();
     view.read_with(cx, |view, _| view.terminal().unwrap().input(bytes));
 }
 
 /// The labels of the tabs the last frame drew.
-fn drawn_tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<SharedString> {
+pub(crate) fn drawn_tabs(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Vec<SharedString> {
     let terminal = terminal(workbench, cx);
     terminal.read_with(cx, |terminal, _| {
         terminal
@@ -171,14 +180,17 @@ fn drawn_tabs(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<
 }
 
 /// The backgrounds of the tabs the last frame drew.
-fn tab_backgrounds(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Hsla> {
+pub(crate) fn tab_backgrounds(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Vec<Hsla> {
     let terminal = terminal(workbench, cx);
     terminal.read_with(cx, |terminal, _| {
         terminal.drawn_tabs().iter().map(|(_, bg)| *bg).collect()
     })
 }
 
-fn tab_bounds(
+pub(crate) fn tab_bounds(
     workbench: &Entity<Workbench>,
     ix: usize,
     cx: &mut VisualTestContext,
@@ -189,12 +201,16 @@ fn tab_bounds(
         .expect("the tab was drawn")
 }
 
-/// Whether tab `ix` shows whole in the strip.
-fn tab_shown(workbench: &Entity<Workbench>, ix: usize, cx: &mut VisualTestContext) -> bool {
+/// Whether tab `ix` shows whole in the list.
+pub(crate) fn tab_shown(
+    workbench: &Entity<Workbench>,
+    ix: usize,
+    cx: &mut VisualTestContext,
+) -> bool {
     let tab = tab_bounds(workbench, ix, cx);
     let strip = terminal(workbench, cx).read_with(cx, |terminal, _| terminal.strip_bounds());
     let slack = px(0.5);
-    tab.left() >= strip.left() - slack && tab.right() <= strip.right() + slack
+    tab.top() >= strip.top() - slack && tab.bottom() <= strip.bottom() + slack
 }
 
 #[gpui::test]
@@ -319,7 +335,7 @@ fn exit_drops_only_its_session(cx: &mut TestAppContext) {
 fn tab_strip(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
 
-    // One session: no strip.
+    // One session: no list.
     toggle(cx);
     let first = sessions(&workbench, cx)[0].clone();
     started(&first, cx);
@@ -367,7 +383,7 @@ fn tab_strip(cx: &mut TestAppContext) {
     assert!(dock_shown(&workbench, cx));
     assert!(active_and_focused(&workbench, 0, cx));
 
-    // Back to one: the strip goes.
+    // Back to one: the list goes.
     run("terminal.next", cx);
     run("terminal.close", cx);
     assert_eq!(sessions(&workbench, cx).len(), 1);
@@ -382,7 +398,7 @@ fn clicks_follow_sessions(cx: &mut TestAppContext) {
 
     // Pressed on the second's tab, which goes as its shell exits, and
     // released on the third's, drawn there now: no click, as a tab and its
-    // handlers name their session, not a place in the strip.
+    // handlers name their session, not a place in the list.
     run("terminal.next", cx);
     assert!(active_and_focused(&workbench, 0, cx));
     let second_tab = tab_bounds(&workbench, 1, cx).center();
@@ -398,6 +414,12 @@ fn clicks_follow_sessions(cx: &mut TestAppContext) {
 
     // A tab's close button closes its own session, the active one staying.
     let fourth = new_session(&workbench, cx).entity_id();
+    // Its button shows under the pointer.
+    let row = cx
+        .debug_bounds(format!("terminal-tab-icon-{third}").leak())
+        .expect("the third's icon is drawn");
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(cx);
     let selector = format!("icon-button:terminal-tab-close-{third}");
     let close = cx
         .debug_bounds(selector.leak())
@@ -412,7 +434,7 @@ fn clicks_follow_sessions(cx: &mut TestAppContext) {
 fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = opened(cx);
     with_sessions(&workbench, 1, cx);
-    // New tabs until the first has scrolled out of the strip, the newest
+    // New tabs until the first has scrolled out of the list, the newest
     // shown each time.
     for _ in 0..60 {
         if !tab_shown(&workbench, 0, cx) {
@@ -423,7 +445,7 @@ fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
         assert!(active_and_focused(&workbench, last, cx));
         assert!(tab_shown(&workbench, last, cx), "tab {last} shows");
     }
-    assert!(!tab_shown(&workbench, 0, cx), "the tabs overflow the strip");
+    assert!(!tab_shown(&workbench, 0, cx), "the tabs overflow the list");
     let last = sessions(&workbench, cx).len() - 1;
 
     // Cycling past the end brings the first back, and back again the last.

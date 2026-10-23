@@ -5,7 +5,7 @@
 //! ([`TerminalPanel::start`]) and keeps its sessions while the dock hides.
 //! `terminal.new` starts another after the last, `terminal.close` drops the
 //! active one, and `terminal.next` and `terminal.previous` cycle through
-//! them; with two or more a strip of tabs shows above the active one. A
+//! them; with two or more a list of them shows on its right. A
 //! new session starts where the active one's shell last said it was (OSC 7;
 //! docs/terminal-shell-integration.md), and `terminal.previous_prompt` and
 //! `terminal.next_prompt` scroll the active one between the prompts its
@@ -19,16 +19,15 @@
 
 use std::path::PathBuf;
 
-use fe_command::Source;
 use fe_config::TerminalSettings;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
-use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, TAB_HEIGHT};
+use fe_ui::{ActiveTheme as _, Icon, IconButton, TAB_HEIGHT};
 use gpui::{
     App, AppContext as _, Context, ElementId, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, svg,
 };
 use kiln_shell::{DockItem, PanelId};
 
@@ -37,6 +36,9 @@ use terminal_find::TerminalFind;
 
 #[path = "terminal_find.rs"]
 mod terminal_find;
+
+/// The session list's width.
+const TAB_LIST_WIDTH: gpui::Pixels = px(160.);
 
 /// The panel's id in the bottom dock.
 pub(crate) const TERMINAL: PanelId = PanelId("terminal");
@@ -66,9 +68,9 @@ pub struct TerminalPanel {
     /// The number the next session's tab gets, from 1 again once none is
     /// left.
     next_number: usize,
-    /// The tab strip's scroll offset and its tabs' bounds.
+    /// The session list's scroll offset and its tabs' bounds.
     tabs: ScrollHandle,
-    /// Whether the strip scrolls the active tab into view as it next draws.
+    /// Whether the list scrolls the active tab into view as it next draws.
     reveal: bool,
     /// Where a session starts.
     cwd: PathBuf,
@@ -90,7 +92,7 @@ pub struct TerminalPanel {
     /// Sessions started.
     #[cfg(test)]
     pub(crate) started: usize,
-    /// The tabs the last frame drew, none without a strip: label and
+    /// The tabs the last frame drew, none without a list: label and
     /// background.
     #[cfg(test)]
     drawn_tabs: Vec<(SharedString, gpui::Hsla)>,
@@ -365,13 +367,14 @@ impl TerminalPanel {
         }
     }
 
-    /// One tab per session, the active one in the theme's selection
-    /// colour, each with a close button, then a `+` that runs
-    /// `terminal.new`. The tabs scroll sideways when they don't fit, the
-    /// active one into view as it changes. A tab and its handlers name its
-    /// session by its view's id, so a click lands on the session that was
-    /// drawn there or, if that's gone, on nothing.
-    fn tab_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// One row per session in a list on the panel's right, the active one
+    /// in the theme's selection colour: a terminal icon, the label and a
+    /// kill button, shown on the active row and under the pointer. The rows
+    /// scroll when they don't fit, the active one into view as it changes.
+    /// A row and its handlers name its session by its view's id, so a click
+    /// lands on the session that was drawn there or, if that's gone, on
+    /// nothing.
+    fn tab_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = fe_ui::ui_theme(cx);
         let colors = &cx.theme().colors;
         let (panel, border, hover) = (
@@ -380,8 +383,12 @@ impl TerminalPanel {
             colors.list.row_hover,
         );
         let (inactive, selected) = (colors.tab.inactive, colors.list.row_selected);
-        let (text, active_text) = (colors.text.primary, colors.tab.active_text);
-        let tabs: Vec<_> = (0..self.sessions.len())
+        let (text, active_text, icon) = (
+            colors.text.primary,
+            colors.tab.active_text,
+            colors.list.icon,
+        );
+        let rows: Vec<_> = (0..self.sessions.len())
             .map(|ix| {
                 let id = self.sessions[ix].view.entity_id();
                 let label = self.label(ix, cx);
@@ -393,7 +400,8 @@ impl TerminalPanel {
                 };
                 #[cfg(test)]
                 self.drawn_tabs.push((label.clone(), bg));
-                let close = IconButton::new(format!("terminal-tab-close-{id}"), Icon::X, &ui)
+                let group = SharedString::from(format!("terminal-tab-{id}"));
+                let kill = IconButton::new(format!("terminal-tab-close-{id}"), Icon::X, &ui)
                     .on_click(cx.listener(move |panel, _, window, cx| {
                         cx.stop_propagation();
                         if let Some(ix) = panel.position(id) {
@@ -402,20 +410,45 @@ impl TerminalPanel {
                     }));
                 div()
                     .id(ElementId::NamedInteger("terminal-tab".into(), id.as_u64()))
+                    .group(group.clone())
                     .flex()
                     .flex_none()
-                    .h_full()
+                    .w_full()
+                    .h(TAB_HEIGHT)
                     .items_center()
                     .gap_1()
-                    .pl_3()
+                    .pl_2()
                     .pr_1()
-                    .border_r_1()
-                    .border_color(border)
                     .bg(bg)
                     .text_color(color)
-                    .when(!active, |tab| tab.hover(move |style| style.bg(hover)))
-                    .child(div().whitespace_nowrap().child(label))
-                    .child(close)
+                    .when(!active, |row| row.hover(move |style| style.bg(hover)))
+                    .child(
+                        svg()
+                            .path(Icon::FileTerminal.path())
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(icon)
+                            .debug_selector(|| format!("terminal-tab-icon-{id}")),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .when(!active, |kill_box| {
+                                kill_box
+                                    .invisible()
+                                    .group_hover(group, |style| style.visible())
+                            })
+                            .child(kill),
+                    )
                     .on_click(cx.listener(move |panel, _, window, cx| {
                         if let Some(ix) = panel.position(id) {
                             panel.activate(ix, window, cx);
@@ -426,42 +459,19 @@ impl TerminalPanel {
         if std::mem::take(&mut self.reveal) {
             self.tabs.scroll_to_item(self.active);
         }
-        let new = Button::new("terminal-new", "+")
-            .ghost()
-            .small()
-            .on_click(|_, window, cx| {
-                crate::pane_toolbar::dispatch("terminal.new", Source::Mouse, window, cx);
-            });
         div()
+            .id("terminal-tabs")
             .flex()
+            .flex_col()
             .flex_none()
-            .w_full()
-            .h(TAB_HEIGHT)
+            .w(TAB_LIST_WIDTH)
+            .h_full()
             .bg(panel)
-            .border_b_1()
+            .border_l_1()
             .border_color(border)
-            .child(
-                div()
-                    .id("terminal-tabs")
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_x_scroll()
-                    .track_scroll(&self.tabs)
-                    .children(tabs),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .px_1()
-                    .h_full()
-                    .border_l_1()
-                    .border_color(border)
-                    .child(new),
-            )
+            .overflow_y_scroll()
+            .track_scroll(&self.tabs)
+            .children(rows)
     }
 
     /// The shell sessions run: `terminal.shell`, else the user's login
@@ -559,7 +569,7 @@ impl Render for TerminalPanel {
         self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
         self.drawn_tabs.clear();
-        let strip = (self.sessions.len() > 1).then(|| self.tab_strip(cx));
+        let list = (self.sessions.len() > 1).then(|| self.tab_list(cx));
         let view = self.view().cloned();
         let ui = fe_ui::ui_theme(cx);
         let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
@@ -569,7 +579,6 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .bg(self.style.background)
-            .children(strip)
             .children(find)
             .child(
                 div()
@@ -577,7 +586,15 @@ impl Render for TerminalPanel {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .children(self.view().cloned()),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .children(self.view().cloned()),
+                    )
+                    .children(list),
             )
     }
 }
@@ -591,13 +608,13 @@ impl TerminalPanel {
         self.shell = Some((shell.to_owned(), args));
     }
 
-    /// The tabs the last frame drew, none without a strip: label and
+    /// The tabs the last frame drew, none without a list: label and
     /// background.
     pub(crate) fn drawn_tabs(&self) -> &[(SharedString, gpui::Hsla)] {
         &self.drawn_tabs
     }
 
-    /// Where tab `ix` was drawn in the last frame, as the strip scrolled.
+    /// Where tab `ix` was drawn in the last frame, as the list scrolled.
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
         let bounds = self.tabs.bounds_for_item(ix)?;
         Some(gpui::Bounds::new(
@@ -627,6 +644,10 @@ mod terminal_panel_tests;
 #[cfg(test)]
 #[path = "terminal_tabs_tests.rs"]
 mod terminal_tabs_tests;
+
+#[cfg(test)]
+#[path = "terminal_tab_list_tests.rs"]
+mod terminal_tab_list_tests;
 
 #[cfg(test)]
 #[path = "terminal_find_tests.rs"]
