@@ -830,6 +830,8 @@ pub use args::{
 };
 pub use cmdline::SEARCH_PREVIEW_LIMIT;
 #[doc(hidden)]
+pub use cmdline::search_preview_limit;
+#[doc(hidden)]
 pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{

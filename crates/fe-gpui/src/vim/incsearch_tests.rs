@@ -310,6 +310,18 @@ fn a_previews_matches_paint_within_its_time_limit(cx: &mut TestAppContext) {
     let (view, cx) = editor_with(cx, text);
     cx.simulate_keystrokes("/");
     draw(cx);
+    // The wall-time limits (the preview's and the command's) are out of play:
+    // the call budget does the cutting.
+    struct Unclocked;
+    impl Drop for Unclocked {
+        fn drop(&mut self) {
+            fe_vim::set_search_preview_limit(None);
+            fe_vim::search::set_time_limit(fe_vim::search::DEFAULT_TIME_LIMIT);
+        }
+    }
+    let _unclocked = Unclocked;
+    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(3600)));
+    fe_vim::search::set_time_limit(std::time::Duration::from_secs(3600));
     let limit = CallLimited::of(500);
     let before = regex_calls();
     preview(&view, r"a.*z\|a", cx);

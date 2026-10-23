@@ -52,6 +52,16 @@ pub fn set_search_preview_limit(limit: Option<Duration>) {
     PREVIEW_LIMIT_OVERRIDE.store(nanos, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The time a preview search gets: [`SEARCH_PREVIEW_LIMIT`], or what
+/// [`set_search_preview_limit`] set.
+#[doc(hidden)]
+pub fn search_preview_limit() -> Duration {
+    match PREVIEW_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        u64::MAX => SEARCH_PREVIEW_LIMIT,
+        nanos => Duration::from_nanos(nanos),
+    }
+}
+
 /// An open command line: what it's for and carries, the mode it came from,
 /// which submitting or cancelling it returns to, and the text it starts
 /// with.
@@ -118,10 +128,7 @@ impl VimState {
             ignore_case: false,
         };
         let count = args.count.unwrap_or(1).max(1) as usize;
-        let limit = match PREVIEW_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-            u64::MAX => SEARCH_PREVIEW_LIMIT,
-            nanos => Duration::from_nanos(nanos),
-        };
+        let limit = search_preview_limit();
         let deadline = Deadline::after(limit.min(search::time_limit()));
         let (found, _) = offset::nth_match(model.text(), &parsed, from, search, count, &deadline)?;
         Some(found)

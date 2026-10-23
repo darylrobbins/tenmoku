@@ -2436,7 +2436,7 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     // A preview's, which changes as the line is typed, as quickly as its
     // match is found.
     let limit = match previewed {
-        Some(_) => limit.min(fe_vim::SEARCH_PREVIEW_LIMIT),
+        Some(_) => limit.min(fe_vim::search_preview_limit()),
         None => limit,
     };
     let mut deadline = fe_vim::search::Deadline::after(limit);
