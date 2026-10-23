@@ -59,7 +59,7 @@ use fe_editor::diagnostics::{
 use fe_gpui::{EditorTheme, EditorView, commands::RunCommand};
 use fe_lsp::{FileDiagnostic, PositionEncoding, decode_file_diagnostics};
 use fe_text::Text;
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::ROW_HEIGHT;
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollStrategy,
@@ -258,7 +258,6 @@ pub struct ProblemsPanel {
     /// The counts the status item shows, once it's set.
     item: Option<DiagnosticCounts>,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     /// Each severity's colour, as the editor marks it.
     colors: [Hsla; 4],
 }
@@ -266,12 +265,7 @@ pub struct ProblemsPanel {
 impl ProblemsPanel {
     /// An empty panel, opening problems through `workbench`, its severities
     /// in `theme`'s colours.
-    pub(crate) fn new(
-        workbench: WeakEntity<Workbench>,
-        theme: &EditorTheme,
-        ui: UiTheme,
-        cx: &mut App,
-    ) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>, theme: &EditorTheme, cx: &mut App) -> Self {
         let colors = [
             Severity::Hint,
             Severity::Information,
@@ -290,7 +284,6 @@ impl ProblemsPanel {
             generation: 0,
             item: None,
             scroll: UniformListScrollHandle::new(),
-            ui,
             colors,
         }
     }
@@ -493,7 +486,7 @@ impl ProblemsPanel {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let generation = self.generation;
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
@@ -699,7 +692,7 @@ impl Focusable for ProblemsPanel {
 
 impl Render for ProblemsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
             "problem-rows",
             self.rows.len(),

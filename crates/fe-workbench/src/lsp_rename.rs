@@ -19,7 +19,7 @@ use std::{ops::Range, rc::Rc};
 use fe_buffer::{BufferId, Version};
 use fe_gpui::EditorView;
 use fe_lsp::{LspError, rename::RenameTarget};
-use fe_ui::{TextInput, UiTheme};
+use fe_ui::TextInput;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window, div,
@@ -103,7 +103,7 @@ impl Workbench {
         let request = request(&target);
         let workbench = cx.entity().downgrade();
         let delegate = RenamePicker::new(workbench, request, target.placeholder.clone());
-        let picker = cx.new(|cx| Picker::new(delegate, "New name…", UiTheme::default_dark(), cx));
+        let picker = cx.new(|cx| Picker::new(delegate, "New name…", fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| {
             picker.show(window, cx);
             let input = picker.input().clone();

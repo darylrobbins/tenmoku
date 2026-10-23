@@ -7,7 +7,6 @@
 //! editor.
 
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_ui::UiTheme;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div, px,
@@ -34,11 +33,10 @@ pub(crate) struct VimPicker {
     matches: Vec<usize>,
     /// The width of each column, in characters.
     widths: Vec<usize>,
-    ui: UiTheme,
 }
 
 impl VimPicker {
-    fn new(pick: fe_vim::Pick, editor: WeakEntity<EditorView>, ui: UiTheme) -> Self {
+    fn new(pick: fe_vim::Pick, editor: WeakEntity<EditorView>) -> Self {
         let columns = pick.rows.iter().map(|row| row.cells.len()).max();
         let widths = (0..columns.unwrap_or(0))
             .map(|column| {
@@ -51,7 +49,6 @@ impl VimPicker {
             pick,
             editor,
             widths,
-            ui,
         }
     }
 
@@ -85,7 +82,7 @@ impl PickerDelegate for VimPicker {
         self.matches[ix].to_string().into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let row = &self.pick.rows[self.matches[ix]];
         let last = row.cells.len().saturating_sub(1);
         let cells = row.cells.iter().enumerate().map(|(column, cell)| {
@@ -101,7 +98,7 @@ impl PickerDelegate for VimPicker {
             .flex()
             .flex_1()
             .gap_2()
-            .text_color(self.ui.text)
+            .text_color(fe_ui::ui_theme(cx).text)
             .children(cells)
             .into_any_element()
     }
@@ -137,9 +134,9 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.dismiss_palette(window, cx);
-        let (title, ui) = (pick.title, self.ui);
-        let delegate = VimPicker::new(pick, editor.downgrade(), ui);
-        let picker = cx.new(|cx| Picker::new(delegate, title, ui, cx));
+        let title = pick.title;
+        let delegate = VimPicker::new(pick, editor.downgrade());
+        let picker = cx.new(|cx| Picker::new(delegate, title, fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         self.modals.update(cx, |layer, cx| {
             layer.show_modal(VIM_PICK, picker, window, cx)

@@ -3,7 +3,7 @@
 
 use std::fs;
 
-use fe_ui::{ActiveTheme as _, TreeRow, UiTheme};
+use fe_ui::{ActiveTheme as _, TreeRow};
 use gpui::{
     Context, Focusable as _, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext,
     VisualTestContext, Window, div, hsla, px,
@@ -89,8 +89,8 @@ const DETAIL: &str = "(first: u32, second: u32, third: u32) -> Result<(), Error>
 struct Rows;
 
 impl Render for Rows {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let theme = UiTheme::default_dark();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = fe_ui::ui_theme(cx);
         let (dim, badge) = (hsla(0., 0., 0.5, 1.), hsla(0.3, 0.7, 0.5, 1.));
         div()
             .w(px(WIDTH))

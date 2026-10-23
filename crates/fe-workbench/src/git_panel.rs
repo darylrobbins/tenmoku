@@ -476,7 +476,6 @@ pub struct GitPanel {
     /// The sequence number of the run started and not landed, if any.
     running: Option<u64>,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     focus: FocusHandle,
     /// The commit message box, once the workbench has given it.
     commit: Option<CommitBox>,
@@ -496,7 +495,7 @@ impl GitPanel {
     /// A panel for the repository containing `root`, if any. Nothing runs
     /// until it's drawn or refreshed, and nothing is read until the
     /// workbench connects its git state.
-    pub fn new(root: Option<PathBuf>, ui: UiTheme, cx: &mut App) -> Self {
+    pub fn new(root: Option<PathBuf>, cx: &mut App) -> Self {
         let status = match root {
             Some(_) => Status::Reading,
             None => Status::NotARepository,
@@ -517,7 +516,6 @@ impl GitPanel {
             shown: 0,
             running: None,
             scroll: UniformListScrollHandle::new(),
-            ui,
             focus: cx.focus_handle(),
             commit: None,
             box_asked: false,
@@ -1010,7 +1008,7 @@ impl GitPanel {
         actions: &[Action],
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let header = matches!(target, Row::Header(_));
         let panel = cx.weak_entity();
         div()
@@ -1044,7 +1042,7 @@ impl GitPanel {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
         } else {
@@ -1566,7 +1564,7 @@ impl GitPanel {
                 let input = match &commit.line {
                     Some(input) => input.clone(),
                     None => {
-                        let input = cx.new(|cx| TextInput::new("", &self.ui, cx));
+                        let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx));
                         let focus = input.focus_handle(cx);
                         (commit._subscriptions).push(cx.on_blur(
                             &focus,
@@ -1689,7 +1687,7 @@ impl GitPanel {
             return None;
         }
         let commit = self.commit.as_ref()?;
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let editor = commit.editor.read(cx);
         let theme = editor.theme();
         let warning = theme.warning;
@@ -1907,7 +1905,7 @@ impl Render for GitPanel {
         }
         self.ask_for_box(window, cx);
         let commit_box = self.render_commit_box(cx);
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
             "change-rows",
             self.row_count(),

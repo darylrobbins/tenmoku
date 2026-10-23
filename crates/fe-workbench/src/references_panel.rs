@@ -100,14 +100,13 @@ pub struct ReferencesPanel {
     /// A `Row::Ref`'s index in `rows`.
     selected: Option<usize>,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     #[cfg(test)]
     pub(crate) test: TestHooks,
 }
 
 impl ReferencesPanel {
     /// A panel with no results, opening them through `workbench`.
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, ui: UiTheme, cx: &mut App) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>, cx: &mut App) -> Self {
         Self {
             workbench,
             focus: cx.focus_handle(),
@@ -123,7 +122,6 @@ impl ReferencesPanel {
             references: 0,
             selected: None,
             scroll: UniformListScrollHandle::new(),
-            ui,
             #[cfg(test)]
             test: TestHooks::default(),
         }
@@ -360,7 +358,7 @@ impl ReferencesPanel {
     ) -> Vec<AnyElement> {
         #[cfg(test)]
         self.test.built.push(range.clone());
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let generation = self.generation;
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
@@ -443,16 +441,20 @@ impl ReferencesPanel {
 
 /// A reference's preview, its word highlighted.
 fn label(reference: &Reference, ui: &UiTheme) -> HighlightedLabel {
+    HighlightedLabel::new(reference.preview.clone(), highlights(reference), ui)
+}
+
+/// A reference's word in its preview.
+fn highlights(reference: &Reference) -> Vec<Range<usize>> {
     let preview = &reference.preview;
     // On char boundaries, as the label wants them.
-    let highlights = (reference.preview_ranges.iter())
+    (reference.preview_ranges.iter())
         .map(|range| {
             let end = preview.ceil_char_boundary(range.end.min(preview.len()));
             preview.floor_char_boundary(range.start.min(end))..end
         })
         .filter(|range| !range.is_empty())
-        .collect();
-    HighlightedLabel::new(preview.clone(), highlights, ui)
+        .collect()
 }
 
 /// `n` and `noun`, plural unless `n` is 1.
@@ -500,7 +502,7 @@ impl Render for ReferencesPanel {
             self.test.built.clear();
             self.test.drawn.clear();
         }
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
             "reference-rows",
             self.rows.len(),
@@ -638,7 +640,6 @@ pub(crate) enum ShownRow {
 #[cfg(test)]
 impl ReferencesPanel {
     pub(crate) fn shown_rows(&self) -> Vec<ShownRow> {
-        let ui = self.ui;
         (self.rows.iter())
             .map(|row| match *row {
                 Row::File(file) => {
@@ -647,11 +648,10 @@ impl ReferencesPanel {
                 }
                 Row::Ref(file, reference) => {
                     let reference = &self.files[file].refs[reference];
-                    let label = label(reference, &ui);
                     ShownRow::Ref {
                         line: reference.line_number,
-                        preview: label.text.to_string(),
-                        highlights: label.highlights,
+                        preview: reference.preview.to_string(),
+                        highlights: highlights(reference),
                         dimmed: !reference.verified,
                         definition: reference.is_definition,
                     }

@@ -29,7 +29,6 @@ use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_gpui::{EditorView, commands::RunCommand, pane_item::status as built_in};
-use fe_ui::UiTheme;
 use gpui::{
     App, Context, Entity, Global, IntoElement, Render, SharedString, Subscription, WeakEntity,
     Window,
@@ -107,6 +106,7 @@ impl StatusItem {
     pub const LANGUAGE: &str = built_in::LANGUAGE;
 }
 
+#[derive(Default)]
 pub struct StatusBar {
     /// The item followed: the active pane's active tab's.
     item: Option<Box<dyn ItemHandle>>,
@@ -114,7 +114,6 @@ pub struct StatusBar {
     editor: Option<WeakEntity<EditorView>>,
     /// The host's items.
     items: StatusItems,
-    ui: UiTheme,
     line: vim_line::VimLine,
     _observe: Option<Subscription>,
     /// Each item drawn by the last render, in order: its side, id and text.
@@ -125,19 +124,8 @@ pub struct StatusBar {
 }
 
 impl StatusBar {
-    pub fn new(ui: UiTheme) -> Self {
-        Self {
-            item: None,
-            editor: None,
-            items: StatusItems::default(),
-            ui,
-            line: vim_line::VimLine::default(),
-            _observe: None,
-            #[cfg(test)]
-            drawn: Vec::new(),
-            #[cfg(test)]
-            renders: 0,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Adds `item`, or replaces the item with its id where it was. An item

@@ -21,7 +21,7 @@ use std::ops::Range;
 
 use fe_gpui::EditorView;
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineKind, Syntax};
-use fe_ui::{ActiveTheme as _, TreeRow, UiTheme};
+use fe_ui::{ActiveTheme as _, TreeRow};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, Focusable as _, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, Styled as _, Subscription, Task,
@@ -60,7 +60,6 @@ pub struct OutlinePanel {
     /// reparsed: the editor catches up as it renders.
     behind: bool,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     /// Never focused: the panel takes no keys, but a dock's panel is
     /// focusable.
     focus: gpui::FocusHandle,
@@ -77,7 +76,7 @@ impl gpui::Focusable for OutlinePanel {
 
 impl OutlinePanel {
     /// A panel following no editor.
-    pub fn new(ui: UiTheme, cx: &mut gpui::App) -> Self {
+    pub fn new(cx: &mut gpui::App) -> Self {
         Self {
             editor: None,
             status: Status::NoFile,
@@ -86,7 +85,6 @@ impl OutlinePanel {
             job: None,
             behind: false,
             scroll: UniformListScrollHandle::new(),
-            ui,
             focus: cx.focus_handle(),
             #[cfg(test)]
             counters: TestCounters::default(),
@@ -299,12 +297,13 @@ impl OutlinePanel {
         let generation = self.generation;
         // A symbol's signature or type, dimmed after its name.
         let dim = cx.theme().colors.text.muted;
+        let ui = fe_ui::ui_theme(cx);
         let items = self.items();
         range
             .filter_map(|ix| {
                 let item = items.get(ix)?;
                 Some(
-                    TreeRow::new(("outline-row", ix), item.name.clone(), &self.ui)
+                    TreeRow::new(("outline-row", ix), item.name.clone(), &ui)
                         .depth(item.depth as usize)
                         .icon(symbol_icon(item.kind))
                         .detail(item.detail.clone(), dim)
@@ -358,7 +357,7 @@ impl Render for OutlinePanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.counters.built.clear();
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let count = self.items().len();
         // Each outline's rows have their own IDs, so a click pressed on a
         // row of the last one doesn't land on this one's.

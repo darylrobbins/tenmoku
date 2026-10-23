@@ -26,9 +26,7 @@ use std::path::{Path, PathBuf};
 
 use fe_config::recent::{self, Entry, RecentList};
 use fe_gpui::EditorView;
-use fe_ui::{
-    HighlightedLabel, Icon, IconButton, Tooltip, UiTheme, char_ranges, file_icon, folder_icon,
-};
+use fe_ui::{HighlightedLabel, Icon, IconButton, Tooltip, char_ranges, file_icon, folder_icon};
 use gpui::{
     AnyElement, App, AppContext as _, Context, DismissEvent, Entity, FocusHandle, Focusable as _,
     IntoElement as _, Keystroke, ParentElement as _, SharedString, Styled as _, Task, WeakEntity,
@@ -201,11 +199,10 @@ pub(crate) struct RecentPicker {
     _load: Option<Task<()>>,
     /// Whether this opening's list is read.
     loaded: bool,
-    ui: UiTheme,
 }
 
 impl RecentPicker {
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, ui: UiTheme) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>) -> Self {
         Self {
             rows: Vec::new(),
             matches: Vec::new(),
@@ -215,7 +212,6 @@ impl RecentPicker {
             picker: None,
             _load: None,
             loaded: false,
-            ui,
         }
     }
 
@@ -350,7 +346,8 @@ impl PickerDelegate for RecentPicker {
         format!("{kind}:{}", row.path.display()).into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
+        let ui = fe_ui::ui_theme(cx);
         let row = self.row(ix);
         let icon = match row.folder {
             true => folder_icon(false),
@@ -360,15 +357,19 @@ impl PickerDelegate for RecentPicker {
             .path(icon.path())
             .size(px(14.))
             .flex_none()
-            .text_color(self.ui.icon);
+            .text_color(ui.icon);
         let highlights = self.matches[ix].1.clone();
-        let label = HighlightedLabel::new(row.label.clone(), highlights, &self.ui);
+        let label = HighlightedLabel::new(row.label.clone(), highlights, &ui);
         let new_window = (row.folder).then(|| {
-            let (picker, ui) = (self.picker.clone(), self.ui);
+            let picker = self.picker.clone();
             let id = SharedString::from(format!("recent-new-window-{ix}"));
-            let button = IconButton::new(id, Icon::Copy, &self.ui)
+            let button = IconButton::new(id, Icon::Copy, &ui)
                 .tooltip(move |_, cx| {
-                    let tooltip = Tooltip::new("Open in New Window", None::<SharedString>, &ui);
+                    let tooltip = Tooltip::new(
+                        "Open in New Window",
+                        None::<SharedString>,
+                        &fe_ui::ui_theme(cx),
+                    );
                     cx.new(|_| tooltip).into()
                 })
                 .on_click(move |_, window, cx| {

@@ -34,17 +34,15 @@ pub(crate) struct DefinitionsPicker {
     status: SharedString,
     /// Focused before the picker opened, and again once it's dismissed.
     previous_focus: Option<FocusHandle>,
-    ui: UiTheme,
 }
 
 impl DefinitionsPicker {
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, ui: UiTheme) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>) -> Self {
         Self {
             workbench,
             items: Vec::new(),
             status: SharedString::default(),
             previous_focus: None,
-            ui,
         }
     }
 
@@ -84,11 +82,12 @@ impl PickerDelegate for DefinitionsPicker {
         row_id(&self.items[ix].location)
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
+        let ui = fe_ui::ui_theme(cx);
         let item = &self.items[ix];
-        let label = HighlightedLabel::new(item.name.clone(), Vec::new(), &self.ui);
+        let label = HighlightedLabel::new(item.name.clone(), Vec::new(), &ui);
         let container = item.container.clone().unwrap_or_default();
-        row(label, place(&item.location), container, &self.ui)
+        row(label, place(&item.location), container, &ui)
     }
 
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
@@ -135,7 +134,6 @@ pub(crate) struct SymbolsPicker {
     /// The running query's.
     cancel: Arc<AtomicBool>,
     previous_focus: Option<FocusHandle>,
-    ui: UiTheme,
     #[cfg(test)]
     pub(crate) queries: usize,
     /// Awaited before the next query's answer lands.
@@ -144,11 +142,7 @@ pub(crate) struct SymbolsPicker {
 }
 
 impl SymbolsPicker {
-    pub(crate) fn new(
-        workbench: WeakEntity<Workbench>,
-        navigation: Arc<Navigation>,
-        ui: UiTheme,
-    ) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>, navigation: Arc<Navigation>) -> Self {
         Self {
             workbench,
             navigation,
@@ -163,7 +157,6 @@ impl SymbolsPicker {
             opening: 0,
             cancel: Arc::default(),
             previous_focus: None,
-            ui,
             #[cfg(test)]
             queries: 0,
             #[cfg(test)]
@@ -219,11 +212,11 @@ impl SymbolsPicker {
     pub(crate) fn label(&self, ix: usize) -> Option<HighlightedLabel> {
         let found = self.matches.get(ix)?;
         let highlights = char_ranges(&found.name, &found.indices);
-        Some(HighlightedLabel::new(
-            found.name.clone(),
+        // Coloured by the active theme as it draws.
+        Some(HighlightedLabel {
+            text: found.name.clone().into(),
             highlights,
-            &self.ui,
-        ))
+        })
     }
 
     /// Runs the waiting query in the background, once the provider is in.
@@ -306,7 +299,7 @@ impl PickerDelegate for SymbolsPicker {
         row_id(&self.matches[ix].location)
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let (Some(label), Some(found)) = (self.label(ix), self.matches.get(ix)) else {
             return gpui::Empty.into_any_element();
         };
@@ -314,7 +307,7 @@ impl PickerDelegate for SymbolsPicker {
             label,
             kind_word(found.kind).into(),
             place(&found.location),
-            &self.ui,
+            &fe_ui::ui_theme(cx),
         )
     }
 

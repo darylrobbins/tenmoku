@@ -22,7 +22,6 @@ use fe_buffer::Buffer;
 use fe_command::Invocation;
 use fe_config::{Diagnostic, Severity};
 use fe_gpui::EditorView;
-use fe_ui::UiTheme;
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, Focusable as _, IntoElement as _,
     ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _, Subscription,
@@ -136,11 +135,10 @@ pub(crate) struct ConfigProblemsPicker {
     previous_focus: Option<FocusHandle>,
     /// Bumped by each pick, so only the last one's open goes ahead.
     picks: u64,
-    ui: UiTheme,
 }
 
 impl ConfigProblemsPicker {
-    pub(crate) fn new(workbench: WeakEntity<Workbench>, ui: UiTheme) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>) -> Self {
         Self {
             workbench,
             rows: Vec::new(),
@@ -148,7 +146,6 @@ impl ConfigProblemsPicker {
             matches: Vec::new(),
             previous_focus: None,
             picks: 0,
-            ui,
         }
     }
 
@@ -302,7 +299,7 @@ impl PickerDelegate for ConfigProblemsPicker {
         format!("{}:{}", self.version, self.matches[ix]).into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let problem = self.row(ix);
         // Two lines in the picker's row height.
         div()
@@ -319,7 +316,7 @@ impl PickerDelegate for ConfigProblemsPicker {
                 div()
                     .text_size(px(10.))
                     .line_height(px(11.))
-                    .text_color(self.ui.muted_text)
+                    .text_color(fe_ui::ui_theme(cx).muted_text)
                     .child(detail(problem)),
             )
             .into_any_element()

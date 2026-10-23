@@ -29,7 +29,7 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
-use fe_ui::{Icon, ROW_HEIGHT, TreeRow, UiTheme, file_icon, folder_icon};
+use fe_ui::{Icon, ROW_HEIGHT, TreeRow, file_icon, folder_icon};
 use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
@@ -141,7 +141,6 @@ pub struct ProjectPanel {
     revealing: Option<NodeId>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
-    theme: UiTheme,
     /// Changed files' statuses, by path from the root.
     git_files: HashMap<PathBuf, ChangeKind>,
     /// Each folder holding changed files, by path from the root (the root
@@ -177,12 +176,7 @@ impl ProjectPanel {
     /// A panel for `root`, or saying no folder is open. The root is opened,
     /// listed and watched in the background; nothing touches the file system
     /// on this thread.
-    pub fn new(
-        root: Option<PathBuf>,
-        theme: UiTheme,
-        show_ignored: bool,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(root: Option<PathBuf>, show_ignored: bool, cx: &mut Context<Self>) -> Self {
         let mut panel = Self {
             state: if root.is_some() {
                 State::Opening
@@ -202,7 +196,6 @@ impl ProjectPanel {
             revealing: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
-            theme,
             git_files: HashMap::new(),
             git_dirs: HashMap::new(),
             edit: None,
@@ -789,6 +782,7 @@ impl ProjectPanel {
         #[cfg(test)]
         let mut drawn = Vec::new();
         let mut seen = None;
+        let theme = fe_ui::ui_theme(cx);
         let mut rows: Vec<gpui::AnyElement> = tree
             .rows(shown.clone())
             .zip(shown)
@@ -807,7 +801,7 @@ impl ProjectPanel {
                 if renaming == Some(id) {
                     return self.render_field(row.depth, icon, cx);
                 }
-                let mut element = TreeRow::new(("row", ix), name.into_owned(), &self.theme)
+                let mut element = TreeRow::new(("row", ix), name.into_owned(), &theme)
                     .depth(row.depth)
                     .icon(icon)
                     .focused(focused)
@@ -823,7 +817,7 @@ impl ProjectPanel {
                     .then(|| self.git_status(tree, id, row.kind))
                     .flatten();
                 if let Some((kind, badge)) = status {
-                    let color = git_panel::letter_color(kind, &self.theme);
+                    let color = git_panel::letter_color(kind, &theme);
                     element = element.label_color(color).badge(badge, color);
                 }
                 #[cfg(test)]
@@ -873,11 +867,11 @@ impl ProjectPanel {
         }
     }
 
-    fn message(&self, text: String) -> gpui::AnyElement {
+    fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
         div()
             .px_3()
             .py_2()
-            .text_color(self.theme.muted_text)
+            .text_color(fe_ui::ui_theme(cx).muted_text)
             .child(text)
             .into_any_element()
     }
@@ -899,9 +893,9 @@ impl Render for ProjectPanel {
             name.to_string_lossy().to_uppercase()
         });
         let body = match &self.state {
-            State::NoFolder => self.message("No folder open".into()),
+            State::NoFolder => self.message("No folder open".into(), cx),
             State::Opening => div().into_any_element(),
-            State::Failed(message) => self.message(message.clone()),
+            State::Failed(message) => self.message(message.clone(), cx),
             State::Open(tree) => uniform_list(
                 "project-rows",
                 tree.row_count() + usize::from(self.field_row().is_some()),
@@ -917,6 +911,7 @@ impl Render for ProjectPanel {
         } else {
             KEY_CONTEXT
         };
+        let theme = fe_ui::ui_theme(cx);
         div()
             .track_focus(&self.focus)
             .key_context(context)
@@ -928,9 +923,9 @@ impl Render for ProjectPanel {
             .flex()
             .flex_col()
             .border_l_1()
-            .border_color(self.theme.border)
-            .bg(self.theme.panel_background)
-            .text_color(self.theme.text)
+            .border_color(theme.border)
+            .bg(theme.panel_background)
+            .text_color(theme.text)
             .text_size(px(12.))
             .child(div().flex_none().px_3().py_2().child(title))
             .child(body)

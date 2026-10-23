@@ -1341,8 +1341,15 @@ impl Workbench {
             }))
             .ok();
         });
-        let (root, pane, ui) = (self.root.clone(), self.active.downgrade(), self.ui);
-        let picker = cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), COMPARE_WITH, ui, cx));
+        let (root, pane) = (self.root.clone(), self.active.downgrade());
+        let picker = cx.new(|cx| {
+            Picker::new(
+                QuickOpen::new(root, pane),
+                COMPARE_WITH,
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         self.dismiss_palette(window, cx);
         let previous = window.focused(cx);
         picker.update(cx, |picker, cx| {

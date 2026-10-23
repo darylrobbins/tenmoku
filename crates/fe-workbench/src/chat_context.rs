@@ -619,9 +619,15 @@ impl ChatPanel {
         });
         workbench.update(cx, |workbench, cx| {
             let root = workbench.root().map(Path::to_owned);
-            let (pane, ui) = (workbench.pane().downgrade(), kiln::ui::ui_theme(cx));
-            let picker =
-                cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), ATTACH_FILE, ui, cx));
+            let pane = workbench.pane().downgrade();
+            let picker = cx.new(|cx| {
+                Picker::new(
+                    QuickOpen::new(root, pane),
+                    ATTACH_FILE,
+                    kiln::ui::ui_theme(cx),
+                    cx,
+                )
+            });
             workbench.dismiss_palette(window, cx);
             let previous = window.focused(cx);
             picker.update(cx, |picker, cx| {

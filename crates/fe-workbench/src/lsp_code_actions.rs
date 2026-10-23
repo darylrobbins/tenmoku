@@ -27,7 +27,7 @@ use fe_buffer::{BufferId, Version};
 use fe_editor::diagnostics::{DiagnosticTag, Severity};
 use fe_gpui::EditorView;
 use fe_lsp::{CodeAction, LspError, code_action::CodeActionQuery};
-use fe_ui::{HighlightedLabel, UiTheme, char_ranges};
+use fe_ui::{HighlightedLabel, char_ranges};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, IntoElement as _,
     ParentElement as _, PromptButton, PromptLevel, SharedString, Styled as _, Task, WeakEntity,
@@ -180,7 +180,6 @@ impl Workbench {
             !(action.is_preferred && action.is_quick_fix() && action.disabled.is_none())
         });
         self.dismiss_palette(window, cx);
-        let ui = fe_ui::ui_theme(cx);
         let delegate = CodeActionsPicker {
             workbench: cx.weak_entity(),
             editor: at.editor.downgrade(),
@@ -191,9 +190,9 @@ impl Workbench {
             matches: Vec::new(),
             refused: None,
             running: None,
-            ui,
         };
-        let picker = cx.new(|cx| Picker::new(delegate, "Filter code actions…", ui, cx));
+        let picker =
+            cx.new(|cx| Picker::new(delegate, "Filter code actions…", fe_ui::ui_theme(cx), cx));
         picker.update(cx, |picker, cx| picker.show(window, cx));
         #[cfg(test)]
         LAST.with(|last| *last.borrow_mut() = Some(picker.downgrade()));
@@ -308,7 +307,6 @@ pub(crate) struct CodeActionsPicker {
     refused: Option<String>,
     /// The action being applied.
     running: Option<Task<()>>,
-    ui: UiTheme,
 }
 
 impl CodeActionsPicker {
@@ -401,16 +399,17 @@ impl PickerDelegate for CodeActionsPicker {
         self.matches[ix].0.to_string().into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
+        let ui = fe_ui::ui_theme(cx);
         let (row, highlights) = &self.matches[ix];
         let action = &self.actions[*row];
         let label = match action.disabled {
             // Highlighted labels take their colour from the theme.
             Some(_) => div()
-                .text_color(self.ui.muted_text)
+                .text_color(ui.muted_text)
                 .child(action.title.clone())
                 .into_any_element(),
-            None => HighlightedLabel::new(action.title.clone(), highlights.clone(), &self.ui)
+            None => HighlightedLabel::new(action.title.clone(), highlights.clone(), &ui)
                 .into_any_element(),
         };
         let detail = match (&action.kind, &action.disabled) {
@@ -423,12 +422,10 @@ impl PickerDelegate for CodeActionsPicker {
             .items_center()
             .gap_2()
             .when(action.disabled.is_some(), |row| {
-                row.text_color(self.ui.muted_text)
+                row.text_color(ui.muted_text)
             })
             .child(label)
-            .children(
-                detail.map(|detail| div().ml_auto().text_color(self.ui.muted_text).child(detail)),
-            )
+            .children(detail.map(|detail| div().ml_auto().text_color(ui.muted_text).child(detail)))
             .into_any_element()
     }
 

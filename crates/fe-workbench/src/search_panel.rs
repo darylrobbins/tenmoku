@@ -236,7 +236,6 @@ pub struct SearchPanel {
     clears: u64,
     scroll: UniformListScrollHandle,
     toggles: ScrollHandle,
-    ui: UiTheme,
     /// The row ranges the last frame built.
     #[cfg(test)]
     built: Vec<Range<usize>>,
@@ -246,12 +245,8 @@ pub struct SearchPanel {
 impl SearchPanel {
     /// Searches under `root`, opening matches in `pane`. Touches nothing
     /// until a query runs.
-    pub fn new(
-        root: Option<PathBuf>,
-        pane: WeakEntity<Pane>,
-        ui: UiTheme,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(root: Option<PathBuf>, pane: WeakEntity<Pane>, cx: &mut Context<Self>) -> Self {
+        let ui = fe_ui::ui_theme(cx);
         let input = cx.new(|cx| TextInput::new("Search", &ui, cx));
         let include = cx.new(|cx| TextInput::new("files to include", &ui, cx));
         let exclude = cx.new(|cx| TextInput::new("files to exclude", &ui, cx));
@@ -305,7 +300,6 @@ impl SearchPanel {
             clears: 0,
             scroll: UniformListScrollHandle::new(),
             toggles: ScrollHandle::new(),
-            ui,
             #[cfg(test)]
             built: Vec::new(),
             _inputs: submitted,
@@ -1212,7 +1206,7 @@ impl SearchPanel {
     ) -> Vec<AnyElement> {
         #[cfg(test)]
         self.built.push(range.clone());
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let layout = self.layout;
         let selected_bg = if self.results_focus.is_focused(window) {
             ui.row_selected
@@ -1363,10 +1357,15 @@ impl SearchPanel {
     }
 }
 
-/// A line's preview, its matches highlighted: shifted by `preview_start`,
-/// clipped to the preview and widened to its char boundaries, and then
-/// merged where they overlap, as two byte matches in one char do.
+/// A line's preview, its matches highlighted ([`line_highlights`]).
 fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
+    HighlightedLabel::new(line.preview.clone(), line_highlights(line), ui)
+}
+
+/// A line's matches in its preview: shifted by `preview_start`, clipped to
+/// the preview and widened to its char boundaries, and then merged where
+/// they overlap, as two byte matches in one char do.
+fn line_highlights(line: &LineMatch) -> Vec<Range<usize>> {
     let preview = &line.preview;
     let shift = |offset: usize| offset.saturating_sub(line.preview_start).min(preview.len());
     let mut highlights: Vec<Range<usize>> = Vec::new();
@@ -1382,7 +1381,7 @@ fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
             _ => highlights.push(start..end),
         }
     }
-    HighlightedLabel::new(preview.clone(), highlights, ui)
+    highlights
 }
 
 /// The results' folders, as a tree from the search root, for the tree's
@@ -1960,7 +1959,7 @@ impl SearchPanel {
     /// The results toolbar, right-aligned above the query, as
     /// [`crate::git_panel`] draws its buttons.
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let buttons = self
             .toolbar_buttons(cx)
             .map(|(id, icon, tooltip, enabled, act)| {
@@ -1993,7 +1992,7 @@ impl Render for SearchPanel {
         if self.focus.is_focused(window) {
             window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
         }
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let toggles = [
             (SearchOption::Regex, ".*", self.regex),
             (SearchOption::MatchCase, "Aa", self.match_case),
@@ -2334,7 +2333,6 @@ impl SearchPanel {
     }
 
     pub(crate) fn shown_rows(&self) -> Vec<ShownRow> {
-        let ui = self.ui;
         self.rows
             .iter()
             .map(|row| match *row {
@@ -2350,8 +2348,8 @@ impl SearchPanel {
                 }
                 ResultRow::Line(file, line) => {
                     let line = &self.files[file].lines[line];
-                    let label = line_label(line, &ui);
-                    ShownRow::Line(line.line_number, label.text.to_string(), label.highlights)
+                    let preview = line.preview.clone();
+                    ShownRow::Line(line.line_number, preview, line_highlights(line))
                 }
             })
             .collect()

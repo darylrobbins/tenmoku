@@ -148,7 +148,9 @@ pub struct Pane {
     theme: EditorTheme,
     /// For editors yet to open.
     settings: EditorSettings,
-    ui: UiTheme,
+    /// To [`fe_gpui::ActivePalette`]: recolours the open editors and the
+    /// theme later ones open with.
+    _palette: Subscription,
     toolbar: Toolbar,
     /// Made by the first `find.show`.
     find: Option<FindBar>,
@@ -246,12 +248,7 @@ enum Intent {
 }
 
 impl Pane {
-    pub fn new(
-        theme: EditorTheme,
-        settings: EditorSettings,
-        ui: UiTheme,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(theme: EditorTheme, settings: EditorSettings, cx: &mut Context<Self>) -> Self {
         Self {
             state: PaneState::new(cx),
             tabs: Vec::new(),
@@ -268,7 +265,7 @@ impl Pane {
             revealed: None,
             theme,
             settings,
-            ui,
+            _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             toolbar: Toolbar::default(),
             find: None,
             window: None,
@@ -289,9 +286,20 @@ impl Pane {
 
     /// A pane like this one, empty, opening editors as it does.
     pub(crate) fn new_peer(&self, cx: &mut Context<Self>) -> Self {
-        let mut pane = Self::new(self.theme.clone(), self.settings.clone(), self.ui, cx);
+        let mut pane = Self::new(self.theme.clone(), self.settings.clone(), cx);
         pane.state.set_peers(self.state.peers().clone());
         pane
+    }
+
+    /// Recolours the pane's editors, and those it opens later, with the
+    /// active palette.
+    fn follow_palette(&mut self, cx: &mut Context<Self>) {
+        let palette = fe_gpui::editor_palette(cx);
+        self.theme.set_colors(&palette);
+        for editor in self.tabs.iter().filter_map(Tab::editor) {
+            editor.update(cx, |editor, cx| editor.set_colors(&palette, cx));
+        }
+        cx.notify();
     }
 
     pub(crate) fn toolbar(&self) -> &Toolbar {
@@ -1155,12 +1163,12 @@ impl Pane {
         cx.new(|cx| FileViewer::new(view, index, banner.into(), theme, cx))
     }
 
-    fn message(&self, text: String) -> gpui::AnyElement {
+    fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
         div()
             .size_full()
             .px_3()
             .py_2()
-            .text_color(self.ui.muted_text)
+            .text_color(fe_ui::ui_theme(cx).muted_text)
             .child(text)
             .into_any_element()
     }
@@ -1533,9 +1541,9 @@ impl Render for Pane {
         self.state.end_hover(cx);
         let tab_bar = self.state.tab_bar(cx);
         let body = if let Some(path) = &self.opening {
-            self.message(format!("Loading {}…", file_name(Some(path))))
+            self.message(format!("Loading {}…", file_name(Some(path))), cx)
         } else if let Some((_, error)) = &self.error {
-            self.message(error.clone())
+            self.message(error.clone(), cx)
         } else if let Some((tab, preview)) =
             (self.active_tab()).and_then(|tab| Some((tab, tab.preview()?)))
         {
@@ -1565,7 +1573,7 @@ impl Render for Pane {
         } else if let Some(tab) = self.active_tab() {
             tab.item().to_any_view().into_any_element()
         } else {
-            self.message("No open files".into())
+            self.message("No open files".into(), cx)
         };
         let drop_layer = self.state.drop_layer(cx);
         Self::attach(div(), cx)
@@ -1584,7 +1592,7 @@ impl Render for Pane {
             .h_full()
             .flex()
             .flex_col()
-            .bg(self.ui.background)
+            .bg(fe_ui::ui_theme(cx).background)
             .child(self.state.record_bounds())
             .child(self.tab_row(tab_bar, cx))
             .children(self.toolbar_row(cx))
@@ -1609,7 +1617,7 @@ impl Pane {
     /// Closing it focuses the active editor.
     pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(op, FindOp::Show | FindOp::ShowReplace) && self.find.is_none() {
-            self.find = Some(FindBar::new(&self.ui, cx));
+            self.find = Some(FindBar::new(&fe_ui::ui_theme(cx), cx));
         }
         self.update_find(|find, editor, cx| find.run(op, editor, window, cx), cx);
         if op == FindOp::Close {
@@ -1632,7 +1640,9 @@ impl Pane {
 
     fn find_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let editor = self.active_editor().cloned();
-        self.find.as_ref()?.render(editor.as_ref(), &self.ui, cx)
+        self.find
+            .as_ref()?
+            .render(editor.as_ref(), &fe_ui::ui_theme(cx), cx)
     }
 
     /// What the find bar shows beside its query, and whether it's an
@@ -1667,11 +1677,12 @@ impl Pane {
     /// The tab bar, then a Markdown tab's preview buttons, the split and
     /// "…" buttons, which stay put as the tabs scroll, drawn as one bar.
     fn tab_row(&mut self, tab_bar: TabBar, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui = fe_ui::ui_theme(cx);
         let markdown = self.markdown_shown(cx);
         // Invoked in the editor, or in the preview shown in its place,
         // which their handlers check.
         let markdown_button = |id, icon, title, command: &'static str, frame: &'static str| {
-            self.button(id, icon, title, Some(command))
+            self.button(id, icon, title, Some(command), &ui)
                 .on_click(move |_, window, cx| dispatch_in(command, frame, window, cx))
         };
         let toggle = markdown.map(|shown| {
@@ -1709,7 +1720,7 @@ impl Pane {
             ]);
         }
         let split = |id, icon, title, command: &'static str| {
-            self.button(id, icon, title, Some(command))
+            self.button(id, icon, title, Some(command), &ui)
                 .on_click(move |_, window, cx| {
                     pane_toolbar::dispatch(command, Source::Mouse, window, cx)
                 })
@@ -1722,7 +1733,7 @@ impl Pane {
         );
         let split_down = split("split-down", Icon::Rows2, "Split Down", "pane.split_down");
         let more = self
-            .button("pane-menu", Icon::Ellipsis, "More Actions", None)
+            .button("pane-menu", Icon::Ellipsis, "More Actions", None, &ui)
             .on_click(cx.listener(|pane, _, window, cx| {
                 pane.request(ToolbarRequest::PaneCommands, window, cx)
             }));
@@ -1734,9 +1745,9 @@ impl Pane {
             .gap(gpui::px(2.))
             .px_1()
             .h(TAB_HEIGHT)
-            .bg(self.ui.panel_background)
+            .bg(ui.panel_background)
             .border_b_1()
-            .border_color(self.ui.border)
+            .border_color(ui.border)
             .children(toggle)
             .children(side)
             .child(split_right)
@@ -1768,18 +1779,20 @@ impl Pane {
         if !self.toolbar.visible {
             return None;
         }
+        let ui = fe_ui::ui_theme(cx);
         let nav = |button: IconButton, enabled: bool, command: &'static str| {
             button.disabled(!enabled).on_click(move |_, window, cx| {
                 pane_toolbar::dispatch(command, Source::Mouse, window, cx)
             })
         };
         let NavButtons { back, forward } = self.toolbar.nav;
-        let back_button = self.button("back", Icon::ArrowLeft, "Go Back", Some("nav.back"));
+        let back_button = self.button("back", Icon::ArrowLeft, "Go Back", Some("nav.back"), &ui);
         let forward_button = self.button(
             "forward",
             Icon::ArrowRight,
             "Go Forward",
             Some("nav.forward"),
+            &ui,
         );
         let crumbs = self.crumbs(cx);
         #[cfg(test)]
@@ -1798,15 +1811,15 @@ impl Pane {
             .w_full()
             .h(TOOLBAR_HEIGHT)
             .overflow_hidden()
-            .bg(self.ui.panel_background)
+            .bg(ui.panel_background)
             .border_b_1()
-            .border_color(self.ui.border)
+            .border_color(ui.border)
             .debug_selector(|| "pane-toolbar".into())
             // A tab dropped here goes where the marker in the tab bar says.
             .on_drop(self.state.on_drop(cx))
             .child(nav(back_button, back, "nav.back"))
             .child(nav(forward_button, forward, "nav.forward"))
-            .child(Breadcrumbs::new(crumbs, &self.ui));
+            .child(Breadcrumbs::new(crumbs, &ui));
         Some(toolbar)
     }
 
@@ -1817,13 +1830,13 @@ impl Pane {
         icon: Icon,
         title: &'static str,
         command: Option<&'static str>,
+        ui: &UiTheme,
     ) -> IconButton {
-        let ui = self.ui;
         #[cfg(test)]
         let last_tooltip = self.last_tooltip.clone();
-        IconButton::new(id, icon, &self.ui).tooltip(move |_, cx| {
+        IconButton::new(id, icon, ui).tooltip(move |_, cx| {
             let shortcut = command.and_then(|command| pane_toolbar::shortcut(command, cx));
-            let tooltip = Tooltip::new(title, shortcut, &ui);
+            let tooltip = Tooltip::new(title, shortcut, &fe_ui::ui_theme(cx));
             #[cfg(test)]
             last_tooltip.replace(Some(tooltip.text()));
             cx.new(|_| tooltip).into()

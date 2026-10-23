@@ -814,11 +814,12 @@ impl ProjectPanel {
         let Some(edit) = &self.edit else {
             return div().into_any_element();
         };
+        let theme = fe_ui::ui_theme(cx);
         // The field draws its own border; an error's is red.
-        let border = edit.error.is_some().then_some(self.theme.error_text);
-        let note = (edit.waiting.as_ref()).map(|_| (RENAMING.to_owned(), self.theme.text));
+        let border = edit.error.is_some().then_some(theme.error_text);
+        let note = (edit.waiting.as_ref()).map(|_| (RENAMING.to_owned(), theme.text));
         let error = (edit.error.clone())
-            .map(|error| (error, self.theme.error_text))
+            .map(|error| (error, theme.error_text))
             .or(note);
         let error = error.map(|(error, color)| {
             deferred(
@@ -831,7 +832,7 @@ impl ProjectPanel {
                     .py_1()
                     .border_1()
                     .border_color(color)
-                    .bg(self.theme.panel_background)
+                    .bg(theme.panel_background)
                     .text_color(color)
                     .child(error),
             )
@@ -853,7 +854,7 @@ impl ProjectPanel {
                     .size(ICON_SIZE)
                     .flex_none()
                     .mr(px(6.))
-                    .text_color(self.theme.icon),
+                    .text_color(theme.icon),
             )
             .child(
                 div()

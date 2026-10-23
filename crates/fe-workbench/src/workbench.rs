@@ -13,7 +13,7 @@ use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_git::ChangeKind;
 use fe_gpui::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunCommand};
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::ROW_HEIGHT;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
@@ -213,7 +213,6 @@ pub struct Workbench {
     pub(crate) trust: kiln_shell::trust::RootTrust,
     /// The root's language servers.
     pub(crate) lsp: Lsp,
-    ui: UiTheme,
     /// To the project panel's events: replaced with it on a new root.
     root_subscription: Subscription,
     /// To the Changes panel's events: replaced with it on a new root.
@@ -313,7 +312,6 @@ impl Workbench {
         let lightbulb = settings.lightbulb;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
-        let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
@@ -336,11 +334,11 @@ impl Workbench {
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
         let panel =
-            cx.new(|cx| ProjectPanel::new(launch.root, ui, project_panel::show_ignored(cx), cx));
+            cx.new(|cx| ProjectPanel::new(launch.root, project_panel::show_ignored(cx), cx));
         let problems = cx.weak_entity();
-        let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, ui, cx));
+        let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, cx));
         let pane = cx.new(|cx| {
-            let mut pane = Pane::new(theme, settings, ui, cx);
+            let mut pane = Pane::new(theme, settings, cx);
             match launch.file {
                 None if welcome => pane.add(EditorModel::new(Buffer::new(WELCOME), None), cx),
                 None => {}
@@ -353,16 +351,16 @@ impl Workbench {
             }
             pane
         });
-        let outline = cx.new(|cx| OutlinePanel::new(ui, cx));
-        let changes = cx.new(|cx| GitPanel::new(root.clone(), ui, cx));
+        let outline = cx.new(|cx| OutlinePanel::new(cx));
+        let changes = cx.new(|cx| GitPanel::new(root.clone(), cx));
         let references = cx.weak_entity();
-        let references = cx.new(|cx| ReferencesPanel::new(references, ui, cx));
+        let references = cx.new(|cx| ReferencesPanel::new(references, cx));
         let workbench = cx.weak_entity();
-        let git_log = cx.new(|cx| GitLogPanel::new(workbench, ui, cx));
+        let git_log = cx.new(|cx| GitLogPanel::new(workbench, cx));
         // Its key is read when it first draws, not now.
         let chat = cx.new(|cx| ChatPanel::new(window, cx));
         let dock = cx.new(|cx| {
-            let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
+            let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), cx));
             Dock::new(
                 panel.clone(),
                 search,
@@ -389,7 +387,7 @@ impl Workbench {
             )
         });
         let git = Self::new_git(root.clone(), &changes, cx);
-        let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
+        let quick_open = Self::new_quick_open(root, pane.downgrade(), cx);
         // A rail click runs the op its panel's key would, or hides the dock.
         let rail = cx.subscribe_in(
             &dock,
@@ -401,33 +399,50 @@ impl Workbench {
         );
         let root_subscription = Self::follow_root(&panel, window, cx);
         let changes_subscription = Self::follow_changes(&changes, window, cx);
-        let language_picker =
-            cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
+        let language_picker = cx.new(|cx| {
+            Picker::new(
+                LanguagePicker::new(),
+                "Select a language…",
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         let config_problems = cx.weak_entity();
         let config_problems = cx.new(|cx| {
-            let delegate = ConfigProblemsPicker::new(config_problems, ui);
-            Picker::new(delegate, "Filter config problems…", ui, cx)
+            let delegate = ConfigProblemsPicker::new(config_problems);
+            Picker::new(delegate, "Filter config problems…", fe_ui::ui_theme(cx), cx)
         });
         let go_to_line = cx.new(|cx| {
             let delegate = GoToLine::new();
-            Picker::new(delegate, "Line or line:column…", ui, cx)
+            Picker::new(delegate, "Line or line:column…", fe_ui::ui_theme(cx), cx)
         });
         let toolbar_picker = cx.new(|cx| {
-            let delegate = ToolbarPicker::new(outline.downgrade(), ui);
-            Picker::new(delegate, "Filter…", ui, cx)
+            let delegate = ToolbarPicker::new(outline.downgrade());
+            Picker::new(delegate, "Filter…", fe_ui::ui_theme(cx), cx)
         });
         let recent = cx.weak_entity();
         let recent_picker = cx.new(|cx| {
-            let delegate = RecentPicker::new(recent, ui);
-            Picker::new(delegate, "Open recent folder or file…", ui, cx)
+            let delegate = RecentPicker::new(recent);
+            Picker::new(
+                delegate,
+                "Open recent folder or file…",
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         });
-        let theme_picker =
-            cx.new(|cx| Picker::new(ThemePicker::new(ui), "Select a color theme…", ui, cx));
+        let theme_picker = cx.new(|cx| {
+            Picker::new(
+                ThemePicker::new(),
+                "Select a color theme…",
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
         let extensions_picker = cx.new(|cx| {
             Picker::new(
-                ExtensionsPicker::new(ui),
+                ExtensionsPicker::new(),
                 "Filter installed extensions…",
-                ui,
+                fe_ui::ui_theme(cx),
                 cx,
             )
         });
@@ -435,9 +450,9 @@ impl Workbench {
         if let Some(root) = launch_root.clone().filter(|_| as_folder) {
             recent_picker::record(root, true, cx);
         }
-        let nav_state = Nav::new(launch_root.clone(), ui, cx);
-        let status_bar = cx.new(|_| StatusBar::new(ui));
-        let toasts = cx.new(|cx| toast::ToastLayer::new(ui, window, cx));
+        let nav_state = Nav::new(launch_root.clone(), cx);
+        let status_bar = cx.new(|_| StatusBar::new());
+        let toasts = cx.new(|cx| toast::ToastLayer::new(window, cx));
         // A restored layout's panes are made like a pane of the workbench's.
         let template = Rc::new(RefCell::new(pane.downgrade()));
         let workspace = cx.new(|cx| {
@@ -553,7 +568,6 @@ impl Workbench {
             consent_prompt: crate::lsp_consent_prompt::ConsentPrompt::new(window, cx),
             trust: kiln_shell::trust::RootTrust::new(trust::prompt()),
             lsp: Lsp::new(),
-            ui,
             root_subscription,
             changes_subscription,
             git,
@@ -650,7 +664,7 @@ impl Workbench {
         let tints: HashMap<PathBuf, ChangeKind> = (changes.read(cx).changed_paths())
             .map(|(path, kind)| (resolved(path), kind))
             .collect();
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         for editor in self.open_editors(cx) {
             let tint = editor.read(cx).model().path().and_then(|path| {
                 let kind = tints.get(&resolved(path))?;
@@ -767,7 +781,7 @@ impl Render for Workbench {
         });
         // Above the status bar, or where it would be.
         let status_bar = self.status_bar_visible || self.status_bar.read(cx).line_open();
-        let drop_border = self.ui.accent;
+        let drop_border = fe_ui::ui_theme(cx).accent;
         let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
         // The typed commands' handlers, in the workbench's key context.

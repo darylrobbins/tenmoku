@@ -207,7 +207,6 @@ struct CommitPopover {
     author: String,
     date: String,
     id: String,
-    ui: UiTheme,
     /// The summary and body's scroll.
     scroll: ScrollHandle,
     #[cfg(test)]
@@ -228,7 +227,7 @@ pub(crate) struct PopoverProbe {
 }
 
 impl CommitPopover {
-    fn new(commit: &CommitInfo, now: i64, ui: UiTheme) -> Self {
+    fn new(commit: &CommitInfo, now: i64) -> Self {
         let body = body_lines(&commit.message);
         Self {
             summary: commit.summary.clone(),
@@ -236,7 +235,6 @@ impl CommitPopover {
             author: format!("{} {}", commit.author, commit.email),
             date: format!("{} ({})", git_blame::date(commit), age(commit, now)),
             id: commit.id.clone(),
-            ui,
             scroll: ScrollHandle::new(),
             #[cfg(test)]
             probe: Rc::default(),
@@ -291,8 +289,8 @@ impl CommitPopover {
 }
 
 impl Render for CommitPopover {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let ui = self.ui;
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui = fe_ui::ui_theme(cx);
         let message = div()
             .id("commit-popover-message")
             .flex()
@@ -491,7 +489,6 @@ pub(crate) struct GitLogPanel {
     /// was drawn.
     first_asked: bool,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     focus: FocusHandle,
     /// What the tests see of the last commit popover built.
     #[cfg(test)]
@@ -501,11 +498,7 @@ pub(crate) struct GitLogPanel {
 }
 
 impl GitLogPanel {
-    pub(crate) fn new(
-        workbench: WeakEntity<Workbench>,
-        ui: UiTheme,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>, cx: &mut Context<Self>) -> Self {
         Self {
             workbench,
             scope: LogScope::Head,
@@ -530,7 +523,6 @@ impl GitLogPanel {
             read: 0,
             first_asked: false,
             scroll: UniformListScrollHandle::new(),
-            ui,
             focus: cx.focus_handle(),
             #[cfg(test)]
             popover: Rc::default(),
@@ -999,7 +991,11 @@ impl GitLogPanel {
             cx.spawn(async move |panel, cx| panel.update(cx, |panel, cx| panel.load_more(cx)).ok())
                 .detach();
         }
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
+        #[cfg(test)]
+        {
+            self.rows_seen.0.borrow_mut().muted = ui.muted_text;
+        }
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
         } else {
@@ -1059,7 +1055,7 @@ impl GitLogPanel {
                                     panel.click(line, true, window, cx)
                                 }))
                                 .child(rail(commit))
-                                .child(file_cell(parts, ui, ix, seen.clone()))
+                                .child(file_cell(parts, &ui, ix, seen.clone()))
                                 .into_any_element(),
                         );
                     }
@@ -1104,13 +1100,13 @@ impl GitLogPanel {
                             panel.click(line, true, window, cx)
                         }))
                         .hoverable_tooltip(move |_, cx| {
-                            let popover = CommitPopover::new(&commit, now, ui);
+                            let popover = CommitPopover::new(&commit, now);
                             #[cfg(test)]
                             let popover = popover.probed(&probe);
                             cx.new(|_| popover).into()
                         })
                         .child(graph)
-                        .children(entry.refs.iter().map(|label| ref_label(label, ui)))
+                        .children(entry.refs.iter().map(|label| ref_label(label, &ui)))
                         .child(ellipsized(summary))
                         .child(div().flex_none().text_color(ui.muted_text).child(when))
                         .into_any_element(),
@@ -1140,7 +1136,7 @@ fn label_text(label: &RefLabel) -> String {
 
 /// A ref pointing at a commit, as a small label: HEAD's bold, a remote's
 /// muted.
-fn ref_label(label: &RefLabel, ui: UiTheme) -> impl IntoElement {
+fn ref_label(label: &RefLabel, ui: &UiTheme) -> impl IntoElement {
     div()
         .flex_none()
         .px_1()
@@ -1157,7 +1153,7 @@ fn ref_label(label: &RefLabel, ui: UiTheme) -> impl IntoElement {
 
 /// A file row's text: the change's letter, the file's name, then its
 /// directory dimmed, the name shrinking only after the directory has.
-fn file_cell(parts: FileParts, ui: UiTheme, ix: usize, probe: RowsProbe) -> impl IntoElement {
+fn file_cell(parts: FileParts, ui: &UiTheme, ix: usize, probe: RowsProbe) -> impl IntoElement {
     let kind = div().flex_none();
     let name = div().min_w_0().overflow_hidden().text_ellipsis();
     let dir = (div().flex_shrink(100.).min_w_0().overflow_hidden())
@@ -1209,6 +1205,8 @@ pub(crate) struct RowsSeen {
     pub(crate) segments: BTreeMap<usize, Vec<Segment>>,
     /// A file row's cells in order: text, text colour set on it and bounds.
     pub(crate) cells: BTreeMap<usize, Vec<CellSeen>>,
+    /// The muted text colour the rows were drawn with.
+    pub(crate) muted: Hsla,
 }
 
 /// A painted segment: from, to and colour.
@@ -1400,7 +1398,7 @@ impl Focusable for GitLogPanel {
 
 impl Render for GitLogPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         self.ask_for_first_list(window, cx);
         let list = uniform_list(
             "git-log-rows",
@@ -1497,9 +1495,9 @@ impl GitLogPanel {
         self.popover.borrow().text.clone()
     }
 
-    /// The muted text colour rows use.
+    /// The muted text colour the last rows drawn used.
     pub(crate) fn muted_text(&self) -> Hsla {
-        self.ui.muted_text
+        self.rows_seen.0.borrow().muted
     }
 
     /// What the tests see of the rows drawn.

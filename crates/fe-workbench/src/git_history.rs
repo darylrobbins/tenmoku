@@ -38,7 +38,7 @@ use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_git::{FileCommit, Repo};
 use fe_gpui::{DiffSide, DiffView};
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::ROW_HEIGHT;
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
@@ -213,8 +213,8 @@ impl Workbench {
         let panel = match self.dock.read(cx).history().cloned() {
             Some(panel) => panel,
             None => {
-                let (workbench, ui) = (cx.weak_entity(), self.ui);
-                let panel = cx.new(|cx| HistoryPanel::new(workbench, ui, cx));
+                let workbench = cx.weak_entity();
+                let panel = cx.new(|cx| HistoryPanel::new(workbench, cx));
                 self.dock
                     .update(cx, |dock, cx| dock.set_history(panel.clone(), cx));
                 panel
@@ -404,12 +404,11 @@ pub(crate) struct HistoryPanel {
     /// The last read started's number: only it lands.
     read: u64,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     focus: FocusHandle,
 }
 
 impl HistoryPanel {
-    fn new(workbench: WeakEntity<Workbench>, ui: UiTheme, cx: &mut Context<Self>) -> Self {
+    fn new(workbench: WeakEntity<Workbench>, cx: &mut Context<Self>) -> Self {
         Self {
             workbench,
             name: None,
@@ -422,7 +421,6 @@ impl HistoryPanel {
             keys: ListKeys::default(),
             read: 0,
             scroll: UniformListScrollHandle::new(),
-            ui,
             focus: cx.focus_handle(),
         }
     }
@@ -574,7 +572,7 @@ impl HistoryPanel {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let selected_bg = if self.focus.contains_focused(window, cx) {
             ui.row_selected
         } else {
@@ -634,7 +632,7 @@ impl Focusable for HistoryPanel {
 
 impl Render for HistoryPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = self.ui;
+        let ui = fe_ui::ui_theme(cx);
         let rows = self.commits.len() + usize::from(self.limited());
         let list = uniform_list(
             "history-rows",

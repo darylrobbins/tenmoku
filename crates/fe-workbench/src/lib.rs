@@ -232,6 +232,8 @@ mod panel_width_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod theme_tests;
+#[cfg(test)]
 mod typed_command_ids_tests;
 #[cfg(test)]
 mod workbench_commands_tests;

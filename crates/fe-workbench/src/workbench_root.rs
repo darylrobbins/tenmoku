@@ -124,11 +124,10 @@ impl Workbench {
         let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
         let changes_focused =
             (self.dock.read(cx).changes().focus_handle(cx)).contains_focused(window, cx);
-        let ui = self.ui;
         let show_ignored = self.panel.read(cx).lists_ignored();
-        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, show_ignored, cx));
-        let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), ui, cx));
-        let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
+        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), show_ignored, cx));
+        let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), cx));
+        let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), cx);
         // The next session starts in the new root; one running stays.
         (self.terminal).update(cx, |terminal, _| terminal.set_cwd(root.clone()));
         self.root_subscription = Self::follow_root(&panel, window, cx);

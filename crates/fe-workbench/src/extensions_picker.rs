@@ -18,7 +18,6 @@ use crate::{
     pending_extension_consents,
     picker::{Picker, PickerDelegate},
 };
-use fe_ui::UiTheme;
 
 /// Where an extension is installed from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,16 +206,14 @@ pub(crate) struct ExtensionsPicker {
     matches: Vec<usize>,
     /// What was focused before it opened, focused again once it closes.
     previous_focus: Option<FocusHandle>,
-    ui: UiTheme,
 }
 
 impl ExtensionsPicker {
-    pub(crate) fn new(ui: UiTheme) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
             matches: Vec::new(),
             previous_focus: None,
-            ui,
         }
     }
 
@@ -304,7 +301,7 @@ impl PickerDelegate for ExtensionsPicker {
         self.row(ix).id.clone().into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let row = self.row(ix);
         // Two lines in the picker's row height.
         div()
@@ -322,7 +319,7 @@ impl PickerDelegate for ExtensionsPicker {
                 div()
                     .text_size(px(10.))
                     .line_height(px(11.))
-                    .text_color(self.ui.muted_text)
+                    .text_color(fe_ui::ui_theme(cx).muted_text)
                     .child(row.detail()),
             )
             .into_any_element()

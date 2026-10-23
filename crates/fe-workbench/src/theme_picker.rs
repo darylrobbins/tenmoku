@@ -17,7 +17,6 @@ use fe_config::{
     SettingValue, Settings, ThemeSettings,
     themes::{self, BundledTheme},
 };
-use fe_ui::UiTheme;
 use gpui::{
     AnyElement, App, Context, FocusHandle, IntoElement as _, ParentElement as _, SharedString,
     Styled as _, Window, div,
@@ -70,18 +69,16 @@ pub(crate) struct ThemePicker {
     settings_path: Option<PathBuf>,
     /// What was focused before it opened, focused again once it closes.
     previous_focus: Option<FocusHandle>,
-    ui: UiTheme,
 }
 
 impl ThemePicker {
-    pub(crate) fn new(ui: UiTheme) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
             matches: Vec::new(),
             current: None,
             settings_path: None,
             previous_focus: None,
-            ui,
         }
     }
 
@@ -266,13 +263,14 @@ impl PickerDelegate for ThemePicker {
         self.row(ix).id().into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let row = self.row(ix);
         let appearance = match row.appearance {
             Appearance::Dark => "dark",
             Appearance::Light => "light",
         };
-        let muted = |text: &'static str| div().ml_2().text_color(self.ui.muted_text).child(text);
+        let muted_text = fe_ui::ui_theme(cx).muted_text;
+        let muted = |text: &'static str| div().ml_2().text_color(muted_text).child(text);
         let current = self.is_current(ix).then(|| muted("current"));
         div()
             .flex()

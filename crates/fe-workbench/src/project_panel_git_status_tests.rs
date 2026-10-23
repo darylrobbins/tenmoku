@@ -111,7 +111,9 @@ fn shown(
     panel: &Entity<ProjectPanel>,
     cx: &mut VisualTestContext,
 ) -> DrawnStatus {
-    let color: Hsla = panel.read_with(cx, |panel, _| git_panel::letter_color(kind, &panel.theme));
+    let color: Hsla = panel.read_with(cx, |_, cx| {
+        git_panel::letter_color(kind, &fe_ui::ui_theme(cx))
+    });
     (Some(color), Some((badge.to_owned(), color)))
 }
 

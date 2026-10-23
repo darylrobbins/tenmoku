@@ -36,7 +36,7 @@ use std::{
 };
 
 use fe_command::{CommandId, Invocation, Source};
-use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, UiTheme};
+use fe_ui::{ActiveTheme as _, Button, Icon, IconButton};
 use gpui::{
     App, Context, Entity, HoverListenerMode, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
@@ -395,13 +395,12 @@ pub(crate) struct ToastLayer {
     timer: Option<Task<()>>,
     /// The column's scroll, when the toasts are taller than the window.
     scroll: ScrollHandle,
-    ui: UiTheme,
 }
 
 impl ToastLayer {
     /// The layer for `window`, which [`show`] sends its toasts to while it's
     /// the active window, or the first one open.
-    pub(crate) fn new(ui: UiTheme, window: &Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(window: &Window, cx: &mut Context<Self>) -> Self {
         let id = window.window_handle().window_id();
         let layer = cx.weak_entity();
         cx.default_global::<Layers>().0.push((id, layer));
@@ -409,7 +408,6 @@ impl ToastLayer {
             queue: ToastQueue::default(),
             timer: None,
             scroll: ScrollHandle::new(),
-            ui,
         }
     }
 
@@ -481,7 +479,7 @@ impl ToastLayer {
         let close = IconButton::new(
             SharedString::from(format!("toast-close-{ix}")),
             Icon::X,
-            &self.ui,
+            &fe_ui::ui_theme(cx),
         )
         .on_click({
             let layer = layer.clone();

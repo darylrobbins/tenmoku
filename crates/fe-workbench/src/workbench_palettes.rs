@@ -6,7 +6,6 @@
 use std::path::PathBuf;
 
 use fe_gpui::EditorView;
-use fe_ui::UiTheme;
 use gpui::{AppContext as _, Context, Entity, Focusable, WeakEntity, Window};
 use kiln_shell::ModalId;
 
@@ -45,10 +44,12 @@ impl Workbench {
     pub(super) fn new_quick_open(
         root: Option<PathBuf>,
         pane: WeakEntity<Pane>,
-        ui: UiTheme,
         cx: &mut Context<Self>,
     ) -> Entity<Picker<QuickOpen>> {
-        cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), "Go to file…", ui, cx))
+        cx.new(|cx| {
+            let delegate = QuickOpen::new(root, pane);
+            Picker::new(delegate, "Go to file…", fe_ui::ui_theme(cx), cx)
+        })
     }
 
     /// The quick-open palette, shown while [`Workbench::palette_open`].

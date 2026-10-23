@@ -2,7 +2,6 @@
 //! and every language compiled in, which sets an editor's language.
 
 use fe_gpui::EditorView;
-use fe_ui::UiTheme;
 use gpui::{
     AnyElement, App, Context, Focusable as _, IntoElement as _, ParentElement as _, SharedString,
     Styled as _, WeakEntity, Window, div,
@@ -26,11 +25,10 @@ pub(crate) struct LanguagePicker {
     /// That editor's language when it opened, `Some(None)` for Plain Text;
     /// `None` while a language loads, which marks no row.
     current: Option<Option<&'static str>>,
-    ui: UiTheme,
 }
 
 impl LanguagePicker {
-    pub(crate) fn new(ui: UiTheme) -> Self {
+    pub(crate) fn new() -> Self {
         let mut languages: Vec<Row> = fe_syntax::language_names()
             .map(|id| (Some(id), language_label(id)))
             .collect();
@@ -44,7 +42,6 @@ impl LanguagePicker {
             rows,
             editor: None,
             current: None,
-            ui,
         }
     }
 
@@ -116,11 +113,14 @@ impl PickerDelegate for LanguagePicker {
         self.row(ix).0.unwrap_or_default().into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let label = self.row(ix).1.clone();
-        let current = self
-            .is_current(ix)
-            .then(|| div().ml_2().text_color(self.ui.muted_text).child("current"));
+        let current = self.is_current(ix).then(|| {
+            div()
+                .ml_2()
+                .text_color(fe_ui::ui_theme(cx).muted_text)
+                .child("current")
+        });
         div()
             .flex()
             .items_center()

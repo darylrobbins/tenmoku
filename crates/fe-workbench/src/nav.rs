@@ -39,7 +39,6 @@ use fe_nav::{
     Precision, Related, SearchNavigation, SymbolIndex,
 };
 use fe_project::FsChange;
-use fe_ui::UiTheme;
 use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Task, Window};
 
 use crate::{
@@ -175,16 +174,21 @@ pub(crate) struct Nav {
 
 impl Nav {
     /// Navigation in `root`, built on the first nav command.
-    pub(crate) fn new(root: Option<PathBuf>, ui: UiTheme, cx: &mut Context<Workbench>) -> Self {
+    pub(crate) fn new(root: Option<PathBuf>, cx: &mut Context<Workbench>) -> Self {
         let navigation = Arc::new(Navigation::new());
         let workbench = cx.weak_entity();
         let definitions = cx.new(|cx| {
-            let delegate = DefinitionsPicker::new(workbench.clone(), ui);
-            Picker::new(delegate, "Definitions", ui, cx)
+            let delegate = DefinitionsPicker::new(workbench.clone());
+            Picker::new(delegate, "Definitions", fe_ui::ui_theme(cx), cx)
         });
         let symbols = cx.new(|cx| {
-            let delegate = SymbolsPicker::new(workbench, navigation.clone(), ui);
-            Picker::new(delegate, "Go to symbol in workspace…", ui, cx)
+            let delegate = SymbolsPicker::new(workbench, navigation.clone());
+            Picker::new(
+                delegate,
+                "Go to symbol in workspace…",
+                fe_ui::ui_theme(cx),
+                cx,
+            )
         });
         let (ready_tx, ready) = async_channel::bounded(1);
         Self {

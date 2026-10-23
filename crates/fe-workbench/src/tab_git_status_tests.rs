@@ -59,8 +59,8 @@ fn tint(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<Hsla>
 }
 
 fn color(kind: ChangeKind, workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Hsla {
-    workbench.read_with(cx, |workbench, _| {
-        git_panel::letter_color(kind, &workbench.ui)
+    workbench.read_with(cx, |_, cx| {
+        git_panel::letter_color(kind, &fe_ui::ui_theme(cx))
     })
 }
 

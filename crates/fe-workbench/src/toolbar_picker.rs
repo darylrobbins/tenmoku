@@ -23,7 +23,7 @@ use std::{
 use fe_command::Source;
 use fe_gpui::EditorView;
 use fe_syntax::Outline;
-use fe_ui::{HighlightedLabel, Icon, UiTheme, char_ranges, file_icon, folder_icon};
+use fe_ui::{HighlightedLabel, Icon, char_ranges, file_icon, folder_icon};
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, Focusable as _, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, Task, WeakEntity, Window, div, px, svg,
@@ -95,14 +95,13 @@ pub(crate) struct ToolbarPicker {
     read: Option<Task<()>>,
     /// Focused before it opened, and again once it's dismissed.
     previous_focus: Option<FocusHandle>,
-    ui: UiTheme,
     /// Directory reads, and those of them that ran off the main thread.
     #[cfg(test)]
     reads: std::sync::Arc<std::sync::Mutex<(usize, usize)>>,
 }
 
 impl ToolbarPicker {
-    pub(crate) fn new(outline: WeakEntity<OutlinePanel>, ui: UiTheme) -> Self {
+    pub(crate) fn new(outline: WeakEntity<OutlinePanel>) -> Self {
         Self {
             pane: WeakEntity::new_invalid(),
             workbench: WeakEntity::new_invalid(),
@@ -115,7 +114,6 @@ impl ToolbarPicker {
             listing: 0,
             read: None,
             previous_focus: None,
-            ui,
             #[cfg(test)]
             reads: Default::default(),
         }
@@ -556,10 +554,10 @@ impl PickerDelegate for ToolbarPicker {
         format!("{}:{}", self.listing, self.matches[ix].0).into()
     }
 
-    fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
+        let ui = fe_ui::ui_theme(cx);
         let (row, highlights) = &self.matches[ix];
-        let label =
-            HighlightedLabel::new(self.label(*row).to_owned(), highlights.clone(), &self.ui);
+        let label = HighlightedLabel::new(self.label(*row).to_owned(), highlights.clone(), &ui);
         let icon = match &self.list {
             List::Entries {
                 entries: Some(Ok(entries)),
@@ -579,14 +577,10 @@ impl PickerDelegate for ToolbarPicker {
                 .path(icon.path())
                 .size(px(14.))
                 .flex_none()
-                .text_color(self.ui.icon)
+                .text_color(ui.icon)
         });
-        let shortcut = shortcut.map(|shortcut| {
-            div()
-                .ml_auto()
-                .text_color(self.ui.muted_text)
-                .child(shortcut)
-        });
+        let shortcut =
+            shortcut.map(|shortcut| div().ml_auto().text_color(ui.muted_text).child(shortcut));
         div()
             .flex()
             .flex_1()

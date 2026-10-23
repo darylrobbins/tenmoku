@@ -26,7 +26,7 @@ use std::{
 };
 
 use fe_project::{FinderIndex, FinderMatch, FsChange};
-use fe_ui::{HighlightedLabel, UiTheme, char_ranges};
+use fe_ui::{HighlightedLabel, char_ranges};
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, IntoElement as _, SharedString, Task,
     WeakEntity, Window,
@@ -60,7 +60,6 @@ enum Build {
 pub struct QuickOpen {
     root: Option<PathBuf>,
     pane: WeakEntity<Pane>,
-    ui: UiTheme,
     index: SharedIndex,
     build: Build,
     /// Files indexed so far, from the walk's batches.
@@ -91,11 +90,10 @@ pub struct QuickOpen {
 
 impl QuickOpen {
     /// Opens paths under `root` in `pane`. Touches nothing until opened.
-    pub fn new(root: Option<PathBuf>, pane: WeakEntity<Pane>, ui: UiTheme) -> Self {
+    pub fn new(root: Option<PathBuf>, pane: WeakEntity<Pane>) -> Self {
         Self {
             root,
             pane,
-            ui,
             index: SharedIndex::default(),
             build: Build::NotStarted,
             indexed: 0,
@@ -142,11 +140,11 @@ impl QuickOpen {
     pub fn label(&self, ix: usize) -> Option<HighlightedLabel> {
         let found = self.matches.get(ix)?;
         let highlights = char_ranges(&found.path, &found.indices);
-        Some(HighlightedLabel::new(
-            found.path.clone(),
+        // Coloured by the active theme as it draws.
+        Some(HighlightedLabel {
+            text: found.path.clone().into(),
             highlights,
-            &self.ui,
-        ))
+        })
     }
 
     pub fn matches(&self) -> &[FinderMatch] {

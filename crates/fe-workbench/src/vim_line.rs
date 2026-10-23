@@ -198,7 +198,7 @@ impl StatusBar {
         let input = match &self.line.input {
             Some(input) => input.clone(),
             None => {
-                let input = cx.new(|cx| TextInput::new("", &self.ui, cx));
+                let input = cx.new(|cx| TextInput::new("", &fe_ui::ui_theme(cx), cx));
                 let focus = input.focus_handle(cx);
                 self.line._blur = Some(cx.on_blur(&focus, window, Self::line_blurred));
                 // An edit makes what the line then holds the prefix the
@@ -464,10 +464,11 @@ impl StatusBar {
         let (editor, prefix) = self.line.open.as_ref()?;
         let prefix = *prefix;
         let input = self.line.input.clone()?;
+        let ui = fe_ui::ui_theme(cx);
         let (background, foreground) =
             editor
                 .upgrade()
-                .map_or((self.ui.panel_background, self.ui.text), |editor| {
+                .map_or((ui.panel_background, ui.text), |editor| {
                     let theme = editor.read(cx).theme();
                     (theme.vim_mode_command, theme.vim_mode_foreground)
                 });
@@ -499,10 +500,10 @@ impl StatusBar {
             .w_full()
             .h(ROW_HEIGHT)
             .overflow_hidden()
-            .bg(self.ui.panel_background)
+            .bg(ui.panel_background)
             .border_t_1()
-            .border_color(self.ui.border)
-            .text_color(self.ui.text)
+            .border_color(ui.border)
+            .text_color(ui.text)
             .child(mode)
             .child(
                 div()
