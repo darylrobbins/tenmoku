@@ -102,7 +102,7 @@ fn files(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String
             .into_iter()
             .filter_map(|row| match row {
                 ShownRow::File(rel, _) => Some(rel),
-                ShownRow::Line(..) => None,
+                ShownRow::Folder(..) | ShownRow::Line(..) => None,
             })
             .collect()
     })

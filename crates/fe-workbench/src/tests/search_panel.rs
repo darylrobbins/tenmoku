@@ -80,7 +80,7 @@ fn files(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String
     rows.into_iter()
         .filter_map(|row| match row {
             ShownRow::File(rel, _) => Some(rel),
-            ShownRow::Line(..) => None,
+            ShownRow::Folder(..) | ShownRow::Line(..) => None,
         })
         .collect()
 }
@@ -200,7 +200,7 @@ fn results_stream_grouped_by_file(cx: &mut TestAppContext) {
         .into_iter()
         .filter_map(|row| match row {
             ShownRow::Line(_, _, ranges) => Some(ranges),
-            ShownRow::File(..) => None,
+            ShownRow::Folder(..) | ShownRow::File(..) => None,
         })
         .collect();
     let ranges: Vec<_> = expected

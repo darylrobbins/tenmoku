@@ -99,7 +99,7 @@ fn click_row(search: &Entity<SearchPanel>, ix: usize, cx: &mut VisualTestContext
 }
 
 /// Each toolbar button's tooltip and whether it's enabled.
-fn toolbar(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> [(&'static str, bool); 3] {
+fn toolbar(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> [(&'static str, bool); 4] {
     search.read_with(cx, |search, cx| {
         search
             .toolbar_buttons(cx)
@@ -112,7 +112,7 @@ fn rows(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> Vec<String>
     let rows = search.read_with(cx, |search, _| search.shown_rows());
     (rows.into_iter())
         .map(|row| match row {
-            ShownRow::File(rel, _) => rel,
+            ShownRow::Folder(label, _) | ShownRow::File(label, _) => label,
             ShownRow::Line(number, ..) => number.to_string(),
         })
         .collect()
@@ -440,32 +440,32 @@ fn left_on_line_selects_parent(cx: &mut TestAppContext) {
 fn collapse_all_flips_to_expand_all(cx: &mut TestAppContext) {
     let dir = project();
     let (_workbench, search, cx) = panel(cx, dir.path());
-    assert_eq!(toolbar(&search, cx)[2], ("Collapse All", false));
+    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", false));
     cx.simulate_input("foo");
     cx.simulate_keystrokes("enter");
     draw(cx);
     let icon = |cx: &mut VisualTestContext| {
-        search.read_with(cx, |search, cx| search.toolbar_buttons(cx)[2].1)
+        search.read_with(cx, |search, cx| search.toolbar_buttons(cx)[3].1)
     };
-    assert_eq!(toolbar(&search, cx)[2], ("Collapse All", true));
+    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", true));
     assert_eq!(icon(cx), Icon::FoldVertical);
 
     click("search-toolbar-collapse", cx);
     assert_eq!(rows(&search, cx), ["a.rs", "b.rs"]);
-    assert_eq!(toolbar(&search, cx)[2], ("Expand All", true));
+    assert_eq!(toolbar(&search, cx)[3], ("Expand All", true));
     assert_eq!(icon(cx), Icon::UnfoldVertical);
     click("search-toolbar-collapse", cx);
     assert_eq!(rows(&search, cx), ["a.rs", "1", "3", "b.rs", "1"]);
-    assert_eq!(toolbar(&search, cx)[2], ("Collapse All", true));
+    assert_eq!(toolbar(&search, cx)[3], ("Collapse All", true));
 
     // It flips once the last group is collapsed by hand, and back once one
     // is expanded.
     click_row(&search, 0, cx);
-    assert_eq!(toolbar(&search, cx)[2].0, "Collapse All");
+    assert_eq!(toolbar(&search, cx)[3].0, "Collapse All");
     click_row(&search, 1, cx);
-    assert_eq!(toolbar(&search, cx)[2].0, "Expand All");
+    assert_eq!(toolbar(&search, cx)[3].0, "Expand All");
     click_row(&search, 1, cx);
-    assert_eq!(toolbar(&search, cx)[2].0, "Collapse All");
+    assert_eq!(toolbar(&search, cx)[3].0, "Collapse All");
 
     // The commands, which the palette lists.
     run("search.collapse_all", cx);

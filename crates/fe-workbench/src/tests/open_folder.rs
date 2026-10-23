@@ -100,7 +100,7 @@ fn result_files(search: &Entity<SearchPanel>, cx: &mut VisualTestContext) -> BTr
     rows.into_iter()
         .filter_map(|row| match row {
             ShownRow::File(rel, _) => Some(rel),
-            ShownRow::Line(..) => None,
+            ShownRow::Folder(..) | ShownRow::Line(..) => None,
         })
         .collect()
 }

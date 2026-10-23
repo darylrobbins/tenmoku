@@ -35,13 +35,22 @@
 //! (`search.collapse_all`, `search.expand_all`). A new run's groups are
 //! expanded.
 //!
+//! View as Tree (`search.view_as_tree`, or the toolbar's button, which is
+//! View as List in the tree) groups the files under folder rows by their
+//! paths from the search root, as VS Code's tree does: a chain of folders
+//! that each hold only one folder is one row, `a/b/c`, and each folder's
+//! row counts the matches under it, collapses like a file's, and replaces
+//! in or dismisses every file under it. A folder's collapse is kept by its
+//! path, across switches back to the list, which shows every file.
+//!
 //! The panel keeps each line's ranges and preview start as offsets in the
 //! line's lossy decoding, which is what the preview and the editor's text
 //! are made of, rather than in its bytes on disk as the search gives them:
 //! see [`decode_offsets`].
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     fs::{self, File},
     io,
     ops::Range,
@@ -62,8 +71,8 @@ use fe_project::{
     SearchSummary,
 };
 use fe_ui::{
-    HighlightedLabel, Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton,
-    Tooltip, UiTheme,
+    HighlightedLabel, Icon, IconButton, ROW_HEIGHT, TREE_INDENT, TextInput, TextInputEvent,
+    ToggleButton, Tooltip, UiTheme,
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Global,
@@ -124,9 +133,41 @@ enum Status {
     BadGlob(String),
 }
 
-/// A result row: a file's header, or one of its matching lines.
+/// What a folder or file row's Replace or dismiss button does.
+type RowAction = Box<dyn Fn(&mut SearchPanel, &mut Context<SearchPanel>)>;
+
+/// A result row: a folder's, in the tree, by index in the build's
+/// folders; a file's header; or one of its matching lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResultRow {
+    Folder(usize),
+    File(usize),
+    Line(usize, usize),
+}
+
+/// A folder row of the tree.
+struct Folder {
+    /// From the search root, the first and the last of the folders
+    /// compacted into the row.
+    top: PathBuf,
+    path: PathBuf,
+    /// Their names joined: `a/b/c`.
+    label: String,
+    /// The matches in the files under it, at any depth.
+    matches: usize,
+}
+
+impl Folder {
+    /// The folders compacted into the row, from the last.
+    fn chain(&self) -> impl Iterator<Item = &Path> {
+        (self.path.ancestors()).take_while(|dir| dir.starts_with(&self.top))
+    }
+}
+
+/// A row as a rebuild keeps it selected: a folder by its path, as the
+/// folders' indices are the build's.
+enum Kept {
+    Folder(PathBuf),
     File(usize),
     Line(usize, usize),
 }
@@ -172,9 +213,19 @@ pub struct SearchPanel {
     /// The files, by index in `files`, whose line rows are hidden. Each run
     /// starts with none.
     collapsed: BTreeSet<usize>,
-    /// Each file's row, then its lines' unless it's collapsed: see
-    /// [`SearchPanel::rebuild_rows`].
+    /// The folders, by path from the search root, whose rows' descendants
+    /// the tree hides: a row of compacted folders is collapsed if any of
+    /// them is. Each run starts with none.
+    collapsed_folders: BTreeSet<PathBuf>,
+    /// Whether the results are a tree of folders rather than a list.
+    view_as_tree: bool,
+    /// Each file's row, then its lines' unless it's collapsed, under their
+    /// folders' in the tree: see [`SearchPanel::rebuild_rows`].
     rows: Vec<ResultRow>,
+    /// Each row's depth: a list's files are at 0 and their lines at 1.
+    depths: Vec<usize>,
+    /// The tree's folder rows', in the order built.
+    folders: Vec<Folder>,
     /// The last replacement's outcome, and whether it's an error: the
     /// status line until the next search the user runs.
     notice: Option<(String, bool)>,
@@ -244,7 +295,11 @@ impl SearchPanel {
             status: Status::Idle,
             files: Vec::new(),
             collapsed: BTreeSet::new(),
+            collapsed_folders: BTreeSet::new(),
+            view_as_tree: false,
             rows: Vec::new(),
+            depths: Vec::new(),
+            folders: Vec::new(),
             notice: None,
             replacing: None,
             clears: 0,
@@ -374,6 +429,7 @@ impl SearchPanel {
         self.boundary = None;
         self.files.clear();
         self.collapsed.clear();
+        self.collapsed_folders.clear();
         self.selected = None;
         self.rebuild_rows();
         self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
@@ -387,69 +443,216 @@ impl SearchPanel {
         }
         let from = self.files.len();
         self.files.extend(batch);
-        self.push_rows(from);
+        // The tree's rows move as files come in under its folders.
+        if self.view_as_tree {
+            self.rebuild_rows();
+        } else {
+            self.push_rows(from);
+        }
         cx.notify();
     }
 
-    /// Adds the rows of the files from the `from`th on: each file's, then
-    /// its lines' unless it's collapsed.
+    /// Adds the list's rows of the files from the `from`th on: each file's,
+    /// then its lines' unless it's collapsed.
     fn push_rows(&mut self, from: usize) {
         for ix in from..self.files.len() {
-            self.rows.push(ResultRow::File(ix));
-            if !self.collapsed.contains(&ix) {
-                let lines = self.files[ix].lines.len();
-                (self.rows).extend((0..lines).map(|line| ResultRow::Line(ix, line)));
+            self.push_file(ix, self.files[ix].lines.len(), 0);
+        }
+    }
+
+    /// Adds the `file`th file's row at `depth`, then its `lines` lines'
+    /// unless it's collapsed.
+    fn push_file(&mut self, file: usize, lines: usize, depth: usize) {
+        self.rows.push(ResultRow::File(file));
+        self.depths.push(depth);
+        if !self.collapsed.contains(&file) {
+            (self.rows).extend((0..lines).map(|line| ResultRow::Line(file, line)));
+            (self.depths).extend(std::iter::repeat_n(depth + 1, lines));
+        }
+    }
+
+    /// Adds the tree's rows of `files`: [`Dir`]'s folders, compacted, before
+    /// its files, each by name, and a folder's descendants after it unless
+    /// it's collapsed.
+    fn push_tree(&mut self, files: &[FileMatches], dir: &Dir, path: &Path, depth: usize) {
+        for (folder, child) in dir.folders(path) {
+            self.rows.push(ResultRow::Folder(self.folders.len()));
+            self.depths.push(depth);
+            let collapsed = (folder.chain()).any(|dir| self.collapsed_folders.contains(dir));
+            let path = folder.path.clone();
+            self.folders.push(folder);
+            if !collapsed {
+                self.push_tree(files, child, &path, depth + 1);
             }
+        }
+        for &(_, file) in &dir.files {
+            self.push_file(file, files[file].lines.len(), depth);
         }
     }
 
     /// Builds the rows again, as a new layout, with the selected row still
-    /// selected, or its file's if a collapse hid it.
+    /// selected, or the nearest shown row that holds it if a collapse or a
+    /// switch of view hid it.
     fn rebuild_rows(&mut self) {
-        let selected = self.selected.and_then(|ix| self.rows.get(ix).copied());
-        self.rows.clear();
-        self.push_rows(0);
-        self.layout += 1;
-        self.selected = selected.and_then(|row| {
-            let file = match row {
-                ResultRow::File(file) | ResultRow::Line(file, _) => ResultRow::File(file),
-            };
-            (self.rows.iter().position(|&shown| shown == row))
-                .or_else(|| self.rows.iter().position(|&shown| shown == file))
+        let kept = self.selected_row().map(|(_, row)| match row {
+            ResultRow::Folder(folder) => Kept::Folder(self.folders[folder].path.clone()),
+            ResultRow::File(file) => Kept::File(file),
+            ResultRow::Line(file, line) => Kept::Line(file, line),
         });
+        self.rows.clear();
+        self.depths.clear();
+        self.folders.clear();
+        if self.view_as_tree {
+            // Out of the panel while the tree, which borrows them, is read.
+            let files = std::mem::take(&mut self.files);
+            let root = self.root.clone();
+            self.push_tree(&files, &Dir::of(&files, root.as_deref()), Path::new(""), 0);
+            self.files = files;
+        } else {
+            self.push_rows(0);
+        }
+        self.layout += 1;
+        self.selected = kept.and_then(|kept| self.position_of(&kept));
     }
 
-    /// Hides the `file`th file's line rows, or shows them if not `collapse`.
-    fn set_collapsed(&mut self, file: usize, collapse: bool, cx: &mut Context<Self>) {
-        let changed = if collapse {
-            self.collapsed.insert(file)
-        } else {
-            self.collapsed.remove(&file)
+    /// Where `kept` is in the rows: its own row, or else its line's file's,
+    /// or else the deepest shown folder holding it, or else, for a folder
+    /// in the list, its first file's.
+    fn position_of(&self, kept: &Kept) -> Option<usize> {
+        let shown = |row| self.rows.iter().position(|&shown| shown == row);
+        let (own, path) = match *kept {
+            Kept::Folder(ref path) => {
+                let own = self.rows.iter().position(|&row| {
+                    matches!(row, ResultRow::Folder(folder) if self.folders[folder].path == *path)
+                });
+                (own, path.as_path())
+            }
+            Kept::File(file) => (
+                shown(ResultRow::File(file)),
+                self.rel_path(self.files.get(file)?),
+            ),
+            Kept::Line(file, line) => (
+                shown(ResultRow::Line(file, line)).or_else(|| shown(ResultRow::File(file))),
+                self.rel_path(self.files.get(file)?),
+            ),
         };
-        if changed {
-            self.rebuild_rows();
-            cx.notify();
+        let folder = || {
+            (self.rows.iter().enumerate())
+                .filter_map(|(ix, &row)| match row {
+                    ResultRow::Folder(folder) => Some((ix, &self.folders[folder].path)),
+                    _ => None,
+                })
+                .filter(|(_, folder)| under(path, folder))
+                .max_by_key(|(_, folder)| folder.components().count())
+                .map(|(ix, _)| ix)
+        };
+        let file = || {
+            self.rows.iter().position(|&row| {
+                matches!(row, ResultRow::File(file) if under(self.rel_path(&self.files[file]), path))
+            })
+        };
+        own.or_else(folder).or_else(file)
+    }
+
+    /// `file`'s path from the search root, as its folder rows group it.
+    fn rel_path<'a>(&self, file: &'a FileMatches) -> &'a Path {
+        (self.root.as_deref())
+            .and_then(|root| file.path.strip_prefix(root).ok())
+            .unwrap_or(Path::new(&file.rel))
+    }
+
+    /// Whether `row`'s descendants are hidden, unless it's a line's.
+    fn is_collapsed(&self, row: ResultRow) -> Option<bool> {
+        match row {
+            ResultRow::Folder(folder) => {
+                Some((self.folders[folder].chain()).any(|dir| self.collapsed_folders.contains(dir)))
+            }
+            ResultRow::File(file) => Some(self.collapsed.contains(&file)),
+            ResultRow::Line(..) => None,
         }
     }
 
-    /// Whether there are results and every file is collapsed: the toolbar
-    /// then offers Expand All rather than Collapse All.
+    /// Hides `row`'s descendants, or shows them if not `collapse`: a
+    /// file's lines, or a folder's folders and files.
+    /// A folder row expands by expanding every folder compacted into it.
+    fn set_collapsed(&mut self, row: ResultRow, collapse: bool, cx: &mut Context<Self>) {
+        if self.is_collapsed(row) != Some(!collapse) {
+            return;
+        }
+        match row {
+            ResultRow::Folder(folder) if collapse => {
+                (self.collapsed_folders).insert(self.folders[folder].path.clone());
+            }
+            ResultRow::Folder(folder) => {
+                for dir in self.folders[folder].chain() {
+                    self.collapsed_folders.remove(dir);
+                }
+            }
+            ResultRow::File(file) if collapse => {
+                self.collapsed.insert(file);
+            }
+            ResultRow::File(file) => {
+                self.collapsed.remove(&file);
+            }
+            ResultRow::Line(..) => {}
+        }
+        self.rebuild_rows();
+        cx.notify();
+    }
+
+    /// Whether there are results and every folder and file shown is
+    /// collapsed: the toolbar then offers Expand All rather than Collapse
+    /// All.
     fn all_collapsed(&self) -> bool {
-        !self.files.is_empty() && self.collapsed.len() == self.files.len()
+        !self.files.is_empty()
+            && (self.rows.iter()).all(|&row| self.is_collapsed(row).is_some_and(|shut| shut))
     }
 
-    /// Collapses every file, or expands them all if not `collapse`.
+    /// Collapses every file, and in the tree every folder, or expands them
+    /// all if not `collapse`.
     fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
-        let all = if collapse {
-            (0..self.files.len()).collect()
+        let (files, folders) = if collapse {
+            let folders = if self.view_as_tree {
+                let mut all = BTreeSet::new();
+                let tree = Dir::of(&self.files, self.root.as_deref());
+                tree.all_folders(Path::new(""), &mut all);
+                all
+            } else {
+                self.collapsed_folders.clone()
+            };
+            ((0..self.files.len()).collect(), folders)
+        } else if self.view_as_tree {
+            (BTreeSet::new(), BTreeSet::new())
         } else {
-            BTreeSet::new()
+            (BTreeSet::new(), self.collapsed_folders.clone())
         };
-        if all != self.collapsed {
-            self.collapsed = all;
+        if files != self.collapsed || folders != self.collapsed_folders {
+            self.collapsed = files;
+            self.collapsed_folders = folders;
             self.rebuild_rows();
             cx.notify();
         }
+    }
+
+    /// Shows the results as a tree of folders, or as a list if not
+    /// `tree`, with the same results, collapses and selected row: the tree
+    /// expands the folders a selected file or match is in, to show it.
+    fn set_view_as_tree(&mut self, tree: bool, cx: &mut Context<Self>) {
+        if self.view_as_tree == tree {
+            return;
+        }
+        self.view_as_tree = tree;
+        if let Some((_, ResultRow::File(file) | ResultRow::Line(file, _))) = self.selected_row()
+            && tree
+        {
+            let rel = self.rel_path(&self.files[file]).to_owned();
+            self.collapsed_folders.retain(|dir| !under(&rel, dir));
+        }
+        self.rebuild_rows();
+        if let Some(ix) = self.selected {
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
+        cx.notify();
     }
 
     /// Whether Refresh applies: unless the query is empty.
@@ -507,6 +710,7 @@ impl SearchPanel {
             Err(error) => {
                 self.files.clear();
                 self.collapsed.clear();
+                self.collapsed_folders.clear();
                 self.selected = None;
                 self.rebuild_rows();
                 Status::Failed(error)
@@ -555,10 +759,18 @@ impl SearchPanel {
 
     /// Opens the file of row `ix`, if the rows are still `layout`'s, with
     /// its line's first match selected, or the file's first for a file row.
+    /// A folder's row collapses, or expands.
     fn open(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let (file, line) = match self.rows.get(ix) {
             Some(&ResultRow::Line(file, line)) => (file, line),
             Some(&ResultRow::File(file)) => (file, 0),
+            Some(&row @ ResultRow::Folder(_)) => {
+                if layout == self.layout {
+                    let collapsed = self.is_collapsed(row) == Some(true);
+                    self.set_collapsed(row, !collapsed, cx);
+                }
+                return;
+            }
             None => return,
         };
         if layout != self.layout {
@@ -592,18 +804,21 @@ impl SearchPanel {
         }
     }
 
-    /// Selects file row `ix` and collapses its file, or expands it if it's
-    /// collapsed, if the rows are still `layout`'s.
-    fn click_file(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Selects folder or file row `ix` and collapses it, or expands it if
+    /// it's collapsed, if the rows are still `layout`'s.
+    fn click_node(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if layout != self.layout {
             return;
         }
-        let Some(&ResultRow::File(file)) = self.rows.get(ix) else {
+        let Some(&row) = self.rows.get(ix) else {
+            return;
+        };
+        let Some(collapsed) = self.is_collapsed(row) else {
             return;
         };
         self.selected = Some(ix);
         window.focus(&self.results_focus, cx);
-        self.set_collapsed(file, !self.collapsed.contains(&file), cx);
+        self.set_collapsed(row, !collapsed, cx);
         cx.notify();
     }
 
@@ -637,6 +852,8 @@ impl SearchPanel {
             Some(SearchOp::ClearResults) => return self.clear_results(window, cx),
             Some(SearchOp::CollapseAll) => return self.collapse_all(true, cx),
             Some(SearchOp::ExpandAll) => return self.collapse_all(false, cx),
+            Some(SearchOp::ViewAsTree) => return self.set_view_as_tree(true, cx),
+            Some(SearchOp::ViewAsList) => return self.set_view_as_tree(false, cx),
             None => None,
         };
         if let Some(option) = option {
@@ -725,14 +942,23 @@ impl SearchPanel {
         (matches, self.files.len())
     }
 
-    /// The results' files, or only the `only`th's.
-    fn targets(&self, only: Option<usize>) -> Vec<Target> {
-        (self.files.iter().enumerate())
-            .filter(|&(ix, _)| only.is_none_or(|only| only == ix))
-            .map(|(_, file)| Target {
+    /// The results' `files`, by index.
+    fn targets(&self, files: impl IntoIterator<Item = usize>) -> Vec<Target> {
+        (files.into_iter())
+            .map(|ix| &self.files[ix])
+            .map(|file| Target {
                 path: file.path.clone(),
                 rel: file.rel.clone(),
             })
+            .collect()
+    }
+
+    /// The results' files under the `folder`th folder row, by index.
+    fn files_under(&self, folder: usize) -> Vec<usize> {
+        let path = &self.folders[folder].path;
+        (self.files.iter().enumerate())
+            .filter(|(_, file)| under(self.rel_path(file), path))
+            .map(|(ix, _)| ix)
             .collect()
     }
 
@@ -762,7 +988,7 @@ impl SearchPanel {
             &REPLACE_BUTTONS,
             cx,
         );
-        let targets = self.targets(None);
+        let targets = self.targets(0..self.files.len());
         let boundary = self.boundary.clone();
         cx.spawn(async move |panel, cx| {
             if answer.await != Ok(0) {
@@ -798,14 +1024,30 @@ impl SearchPanel {
     /// Replaces the matches in the `file`th file of the results, if the
     /// rows are still `layout`'s, without asking.
     fn replace_in_file(&mut self, layout: u64, file: usize, cx: &mut Context<Self>) {
-        if layout != self.layout || self.replacing.is_some() || file >= self.files.len() {
+        if layout == self.layout && file < self.files.len() {
+            self.replace_in(vec![file], cx);
+        }
+    }
+
+    /// Replaces the matches in every file under the `folder`th folder row,
+    /// if the rows are still `layout`'s, without asking.
+    fn replace_in_folder(&mut self, layout: u64, folder: usize, cx: &mut Context<Self>) {
+        if layout == self.layout && folder < self.folders.len() {
+            self.replace_in(self.files_under(folder), cx);
+        }
+    }
+
+    /// Replaces the matches in the results' `files`, by index, without
+    /// asking. Nothing while a replacement runs.
+    fn replace_in(&mut self, files: Vec<usize>, cx: &mut Context<Self>) {
+        if self.replacing.is_some() {
             return;
         }
         let Some(query) = self.searched.clone() else {
             return;
         };
         let template = self.replace.read(cx).text().to_owned();
-        let targets = self.targets(Some(file));
+        let targets = self.targets(files);
         self.replace(self.boundary.clone(), targets, query, template, cx);
     }
 
@@ -853,14 +1095,31 @@ impl SearchPanel {
     /// Drops the `file`th file from the results, if the rows are still
     /// `layout`'s, so Replace All skips it.
     fn dismiss(&mut self, layout: u64, file: usize, cx: &mut Context<Self>) {
-        if layout != self.layout || file >= self.files.len() {
-            return;
+        if layout == self.layout && file < self.files.len() {
+            self.drop_files(BTreeSet::from([file]), cx);
         }
-        self.files.remove(file);
-        // The files after it move down one, collapsed or not.
+    }
+
+    /// Drops every file under the `folder`th folder row from the results,
+    /// if the rows are still `layout`'s, so Replace All skips them.
+    fn dismiss_folder(&mut self, layout: u64, folder: usize, cx: &mut Context<Self>) {
+        if layout == self.layout && folder < self.folders.len() {
+            let files = self.files_under(folder).into_iter().collect();
+            self.drop_files(files, cx);
+        }
+    }
+
+    /// Drops the results' `files`, by index.
+    fn drop_files(&mut self, files: BTreeSet<usize>, cx: &mut Context<Self>) {
+        let mut ix = 0;
+        self.files.retain(|_| {
+            ix += 1;
+            !files.contains(&(ix - 1))
+        });
+        // The files after them move down, collapsed or not.
         self.collapsed = (self.collapsed.iter())
-            .filter(|&&ix| ix != file)
-            .map(|&ix| if ix > file { ix - 1 } else { ix })
+            .filter(|ix| !files.contains(ix))
+            .map(|&ix| ix - files.range(..ix).count())
             .collect();
         self.selected = None;
         self.rebuild_rows();
@@ -906,33 +1165,33 @@ impl SearchPanel {
         }
     }
 
-    /// Left: collapses the selected file if it's expanded, or else selects
-    /// the selected line's file.
+    /// Left: collapses the selected folder or file if it's expanded, or
+    /// else selects the row it's in: a line's file, or a folder.
     fn collapse_or_parent(&mut self, cx: &mut Context<Self>) {
-        match self.selected_row() {
-            Some((_, ResultRow::File(file))) => self.set_collapsed(file, true, cx),
-            Some((at, ResultRow::Line(file, _))) => {
-                let parent = self.rows[..at]
-                    .iter()
-                    .rposition(|&row| row == ResultRow::File(file));
-                if let Some(ix) = parent {
-                    self.select(ix, cx);
-                }
-            }
-            None => {}
+        let Some((at, row)) = self.selected_row() else {
+            return;
+        };
+        if self.is_collapsed(row) == Some(false) {
+            return self.set_collapsed(row, true, cx);
+        }
+        let depth = self.depths[at];
+        if let Some(ix) = self.depths[..at].iter().rposition(|&above| above < depth) {
+            self.select(ix, cx);
         }
     }
 
-    /// Right: expands the selected file if it's collapsed, or else selects
-    /// its first line.
+    /// Right: expands the selected folder or file if it's collapsed, or
+    /// else selects its first child.
     fn expand_or_first_child(&mut self, cx: &mut Context<Self>) {
-        let Some((at, ResultRow::File(file))) = self.selected_row() else {
+        let Some((at, row)) = self.selected_row() else {
             return;
         };
-        if self.collapsed.contains(&file) {
-            self.set_collapsed(file, false, cx);
-        } else if let Some(ResultRow::Line(..)) = self.rows.get(at + 1) {
-            self.select(at + 1, cx);
+        match self.is_collapsed(row) {
+            Some(true) => self.set_collapsed(row, false, cx),
+            Some(false) if self.depths.get(at + 1) > Some(&self.depths[at]) => {
+                self.select(at + 1, cx)
+            }
+            _ => {}
         }
     }
 
@@ -976,74 +1235,105 @@ impl SearchPanel {
                     .overflow_hidden()
                     .whitespace_nowrap();
                 let row = row.when(self.selected == Some(ix), |row| row.bg(selected_bg));
-                match self.rows[ix] {
-                    ResultRow::File(file_ix) => {
-                        let file = &self.files[file_ix];
-                        let matches: usize = file.lines.iter().map(|line| line.ranges.len()).sum();
-                        let replace = self.replace_shown.then(|| {
+                let depth = self.depths[ix];
+                // The list's rows keep their padding; the tree's are indented
+                // one step per depth.
+                let tree = self.view_as_tree;
+                let node = |row: gpui::Stateful<gpui::Div>,
+                            label: SharedString,
+                            matches: usize,
+                            expanded: bool,
+                            on_replace: RowAction,
+                            on_dismiss: RowAction,
+                            cx: &mut Context<Self>| {
+                    let replace = self.replace_shown.then(|| {
+                        div()
+                            .flex_none()
+                            .debug_selector(move || format!("search-replace-file:{ix}"))
+                            .child(
+                                ToggleButton::new(("search-replace-file", ix), "Replace", &ui)
+                                    .on_click(cx.listener(move |panel, _, _, cx| {
+                                        cx.stop_propagation();
+                                        on_replace(panel, cx)
+                                    })),
+                            )
+                    });
+                    let dismiss = div()
+                        .flex_none()
+                        .debug_selector(move || format!("search-dismiss:{ix}"))
+                        .child(
+                            ToggleButton::new(("search-dismiss", ix), "×", &ui).on_click(
+                                cx.listener(move |panel, _, _, cx| {
+                                    cx.stop_propagation();
+                                    on_dismiss(panel, cx)
+                                }),
+                            ),
+                        );
+                    let chevron = svg()
+                        .path(if expanded {
+                            Icon::ChevronDown.path()
+                        } else {
+                            Icon::ChevronRight.path()
+                        })
+                        .size(px(14.))
+                        .flex_none()
+                        .text_color(ui.muted_text)
+                        .debug_selector(move || {
+                            let state = if expanded { "open" } else { "closed" };
+                            format!("search-chevron:{ix}:{state}")
+                        });
+                    row.pl_1()
+                        .when(tree, |row| row.pl(px(4.) + TREE_INDENT * depth as f32))
+                        .gap_1()
+                        .text_color(ui.tab_active_text)
+                        .hover(move |row| row.bg(ui.row_hover))
+                        .on_click(cx.listener(move |panel, _, window, cx| {
+                            panel.click_node(layout, ix, window, cx)
+                        }))
+                        .child(chevron)
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(label))
+                        .child(
                             div()
                                 .flex_none()
-                                .debug_selector(move || format!("search-replace-file:{ix}"))
-                                .child(
-                                    ToggleButton::new(("search-replace-file", ix), "Replace", &ui)
-                                        .on_click(cx.listener(move |panel, _, _, cx| {
-                                            cx.stop_propagation();
-                                            panel.replace_in_file(layout, file_ix, cx)
-                                        })),
-                                )
-                        });
-                        let dismiss = div()
-                            .flex_none()
-                            .debug_selector(move || format!("search-dismiss:{ix}"))
-                            .child(
-                                ToggleButton::new(("search-dismiss", ix), "×", &ui).on_click(
-                                    cx.listener(move |panel, _, _, cx| {
-                                        cx.stop_propagation();
-                                        panel.dismiss(layout, file_ix, cx)
-                                    }),
-                                ),
-                            );
-                        let expanded = !self.collapsed.contains(&file_ix);
-                        let chevron = svg()
-                            .path(if expanded {
-                                Icon::ChevronDown.path()
-                            } else {
-                                Icon::ChevronRight.path()
-                            })
-                            .size(px(14.))
-                            .flex_none()
-                            .text_color(ui.muted_text)
-                            .debug_selector(move || {
-                                let state = if expanded { "open" } else { "closed" };
-                                format!("search-chevron:{ix}:{state}")
-                            });
-                        row.pl_1()
-                            .gap_1()
-                            .text_color(ui.tab_active_text)
-                            .hover(move |row| row.bg(ui.row_hover))
-                            .on_click(cx.listener(move |panel, _, window, cx| {
-                                panel.click_file(layout, ix, window, cx)
-                            }))
-                            .child(chevron)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .child(file.rel.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(ui.muted_text)
-                                    .child(matches.to_string()),
-                            )
-                            .children(replace)
-                            .child(dismiss)
+                                .text_color(ui.muted_text)
+                                .child(matches.to_string()),
+                        )
+                        .children(replace)
+                        .child(dismiss)
+                };
+                match self.rows[ix] {
+                    ResultRow::Folder(folder_ix) => {
+                        let folder = &self.folders[folder_ix];
+                        node(
+                            row,
+                            folder.label.clone().into(),
+                            folder.matches,
+                            self.is_collapsed(ResultRow::Folder(folder_ix)) == Some(false),
+                            Box::new(move |panel, cx| {
+                                panel.replace_in_folder(layout, folder_ix, cx)
+                            }),
+                            Box::new(move |panel, cx| panel.dismiss_folder(layout, folder_ix, cx)),
+                            cx,
+                        )
+                    }
+                    ResultRow::File(file_ix) => {
+                        let file = &self.files[file_ix];
+                        let matches = file.lines.iter().map(|line| line.ranges.len()).sum();
+                        node(
+                            row,
+                            self.file_label(file_ix),
+                            matches,
+                            self.is_collapsed(ResultRow::File(file_ix)) == Some(false),
+                            Box::new(move |panel, cx| panel.replace_in_file(layout, file_ix, cx)),
+                            Box::new(move |panel, cx| panel.dismiss(layout, file_ix, cx)),
+                            cx,
+                        )
                     }
                     ResultRow::Line(file, line) => {
                         let line = &self.files[file].lines[line];
+                        let indent = TREE_INDENT * depth.saturating_sub(1) as f32;
                         row.pl_6()
+                            .when(tree, |row| row.pl(px(24.) + indent))
                             .hover(move |row| row.bg(ui.row_hover))
                             .on_click(cx.listener(move |panel, _, window, cx| {
                                 panel.click_line(layout, ix, window, cx)
@@ -1060,6 +1350,16 @@ impl SearchPanel {
                 .into_any_element()
             })
             .collect()
+    }
+}
+
+impl SearchPanel {
+    /// What the `file`th file's row shows: its name in the tree, or else its
+    /// path from the search root.
+    fn file_label(&self, file: usize) -> SharedString {
+        let rel = &self.files[file].rel;
+        let name = rel.rsplit_once('/').map_or(rel.as_str(), |(_, name)| name);
+        if self.view_as_tree { name } else { rel }.to_owned().into()
     }
 }
 
@@ -1083,6 +1383,91 @@ fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
         }
     }
     HighlightedLabel::new(preview.clone(), highlights, ui)
+}
+
+/// The results' folders, as a tree from the search root, for the tree's
+/// rows: by their names as they are, not as they're shown, so two that
+/// aren't UTF-8 are two folders though they read the same.
+#[derive(Default)]
+struct Dir<'a> {
+    /// By name.
+    dirs: BTreeMap<&'a OsStr, Dir<'a>>,
+    /// Each file's name and index in the results, by name.
+    files: Vec<(&'a OsStr, usize)>,
+    /// The matches in the files under it, at any depth.
+    matches: usize,
+}
+
+impl<'a> Dir<'a> {
+    /// The root of `files`' folders, by their paths from `root`.
+    fn of(files: &'a [FileMatches], root: Option<&Path>) -> Self {
+        let mut tree = Dir::default();
+        for (ix, file) in files.iter().enumerate() {
+            let matches: usize = file.lines.iter().map(|line| line.ranges.len()).sum();
+            let rel = (root.and_then(|root| file.path.strip_prefix(root).ok()))
+                .unwrap_or(Path::new(&file.rel));
+            let mut names = rel.iter();
+            let name = names.next_back().unwrap_or_default();
+            let mut dir = &mut tree;
+            dir.matches += matches;
+            for folder in names {
+                dir = dir.dirs.entry(folder).or_default();
+                dir.matches += matches;
+            }
+            dir.files.push((name, ix));
+        }
+        tree.sort_files();
+        tree
+    }
+
+    fn sort_files(&mut self) {
+        self.files.sort_unstable();
+        self.dirs.values_mut().for_each(Dir::sort_files);
+    }
+
+    /// The folder rows under this folder, at `path`, by name, each with the
+    /// folder whose contents it shows. A chain of folders that each hold
+    /// only one folder, and no files, is one row, labelled with their names
+    /// joined.
+    fn folders(&self, path: &Path) -> Vec<(Folder, &Dir<'a>)> {
+        (self.dirs.iter())
+            .map(|(&name, mut dir)| {
+                let top = path.join(name);
+                let (mut path, mut label) = (top.clone(), name.to_string_lossy().into_owned());
+                while dir.files.is_empty()
+                    && dir.dirs.len() == 1
+                    && let Some((&name, only)) = dir.dirs.first_key_value()
+                {
+                    path.push(name);
+                    label = format!("{label}/{}", name.to_string_lossy());
+                    dir = only;
+                }
+                let matches = dir.matches;
+                (
+                    Folder {
+                        top,
+                        path,
+                        label,
+                        matches,
+                    },
+                    dir,
+                )
+            })
+            .collect()
+    }
+
+    /// Every folder row's path under this folder, at `path`, at any depth.
+    fn all_folders(&self, path: &Path, all: &mut BTreeSet<PathBuf>) {
+        for (folder, dir) in self.folders(path) {
+            dir.all_folders(&folder.path, all);
+            all.insert(folder.path);
+        }
+    }
+}
+
+/// Whether `path` is in the folder at `folder`, at any depth.
+fn under(path: &Path, folder: &Path) -> bool {
+    path != folder && path.starts_with(folder)
 }
 
 /// How many bytes of a line are read, or decoded, between checks of a run's
@@ -1521,12 +1906,22 @@ type ToolbarAction = fn(&mut SearchPanel, &mut Window, &mut Context<SearchPanel>
 
 impl SearchPanel {
     /// The results toolbar's buttons: each one's debug selector and ID,
-    /// icon, tooltip, whether it's enabled, and what it does. Collapse All
-    /// is Expand All once every file is collapsed.
+    /// icon, tooltip, whether it's enabled, and what it does. View as Tree
+    /// is View as List in the tree, and Collapse All is Expand All once
+    /// every folder and file shown is collapsed.
     fn toolbar_buttons(
         &self,
         cx: &App,
-    ) -> [(&'static str, Icon, &'static str, bool, ToolbarAction); 3] {
+    ) -> [(&'static str, Icon, &'static str, bool, ToolbarAction); 4] {
+        let view: (Icon, &str, ToolbarAction) = if self.view_as_tree {
+            (Icon::List, "View as List", |panel, _, cx| {
+                panel.set_view_as_tree(false, cx)
+            })
+        } else {
+            (Icon::ListTree, "View as Tree", |panel, _, cx| {
+                panel.set_view_as_tree(true, cx)
+            })
+        };
         let collapse: (Icon, &str, ToolbarAction) = if self.all_collapsed() {
             (Icon::UnfoldVertical, "Expand All", |panel, _, cx| {
                 panel.collapse_all(false, cx)
@@ -1551,6 +1946,7 @@ impl SearchPanel {
                 self.can_clear(cx),
                 Self::clear_results,
             ),
+            ("search-toolbar-view-mode", view.0, view.1, true, view.2),
             (
                 "search-toolbar-collapse",
                 collapse.0,
@@ -1771,6 +2167,8 @@ pub(crate) enum SearchOp {
     ClearResults,
     CollapseAll,
     ExpandAll,
+    ViewAsTree,
+    ViewAsList,
 }
 
 /// The [`CommandTarget`] of search panel commands: the op to do.
@@ -1865,6 +2263,8 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
         ),
         ("search.collapse_all", "Collapse All", search, CollapseAll),
         ("search.expand_all", "Expand All", search, ExpandAll),
+        ("search.view_as_tree", "View as Tree", search, ViewAsTree),
+        ("search.view_as_list", "View as List", search, ViewAsList),
         (
             "text_input.submit",
             "Submit",
@@ -1904,7 +2304,10 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<SearchOp> {
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ShownRow {
-    /// A file's relative path and match count.
+    /// A folder's label and the matches under it.
+    Folder(String, usize),
+    /// A file's label (its relative path, or its name in the tree) and
+    /// match count.
     File(String, usize),
     /// A line's number, preview and highlighted ranges in it.
     Line(u64, String, Vec<Range<usize>>),
@@ -1935,10 +2338,15 @@ impl SearchPanel {
         self.rows
             .iter()
             .map(|row| match *row {
+                ResultRow::Folder(folder) => {
+                    let folder = &self.folders[folder];
+                    ShownRow::Folder(folder.label.clone(), folder.matches)
+                }
                 ResultRow::File(file) => {
-                    let file = &self.files[file];
-                    let matches = file.lines.iter().map(|line| line.ranges.len()).sum();
-                    ShownRow::File(file.rel.clone(), matches)
+                    let matches = (self.files[file].lines.iter())
+                        .map(|line| line.ranges.len())
+                        .sum();
+                    ShownRow::File(self.file_label(file).to_string(), matches)
                 }
                 ResultRow::Line(file, line) => {
                     let line = &self.files[file].lines[line];
@@ -1947,6 +2355,11 @@ impl SearchPanel {
                 }
             })
             .collect()
+    }
+
+    /// Each row's depth, in [`SearchPanel::shown_rows`].
+    pub(crate) fn depths(&self) -> Vec<usize> {
+        self.depths.clone()
     }
 
     pub(crate) fn details_shown(&self) -> bool {
@@ -2019,6 +2432,10 @@ mod filter_tests;
 #[cfg(all(test, target_os = "macos"))]
 #[path = "search_results_toolbar_tests.rs"]
 mod results_toolbar_tests;
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "search_results_tree_tests.rs"]
+mod results_tree_tests;
 
 #[cfg(test)]
 #[path = "search_panel_details_tests.rs"]
