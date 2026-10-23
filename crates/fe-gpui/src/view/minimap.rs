@@ -233,3 +233,7 @@ impl EditorView {
 #[cfg(test)]
 #[path = "minimap_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "minimap_left_tests.rs"]
+mod left_tests;

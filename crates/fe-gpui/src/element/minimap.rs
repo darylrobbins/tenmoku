@@ -18,6 +18,11 @@
 //!
 //! Selections, find matches, diagnostics and git's changes are drawn beside
 //! the tiles, never in them ([`marks`]).
+//!
+//! With `render_characters` on, as by default, a run's columns are its
+//! chars' masks ([`glyphs`]), each char a run of its own; off, they're
+//! blocks. On the left, the minimap is left of the frame, whose coordinates
+//! start after it.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -45,12 +50,27 @@ use gpui::{
 use super::{FrameLayout, PointerOutside, foreground_spans, styled_highlights};
 use crate::{EditorTheme, EditorView};
 
+#[path = "minimap_glyphs.rs"]
+pub(crate) mod glyphs;
 #[path = "minimap_marks.rs"]
 mod marks;
+
+use glyphs::Glyph;
 
 /// How opaque a run's colour is over the minimap's background, as VS Code's
 /// blocks are faint beside the text.
 const RUN_ALPHA: f32 = 0.6;
+
+/// How opaque a char without a mask is drawn, as a block, with characters
+/// on: VS Code's half weight.
+const OTHER_ALPHA: f32 = 0.5;
+
+/// A run's colour, and what its columns are drawn as.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ink {
+    pub(crate) color: Hsla,
+    pub(crate) glyph: Glyph,
+}
 
 /// The most text, in bytes, between two rows the minimap draws (hidden by a
 /// fold, or the rest of a long row) that their spans are queried across.
@@ -98,7 +118,8 @@ pub(crate) struct Placed {
     /// show the background.
     tiles: Vec<(Rect, Arc<RenderImage>)>,
     marks: marks::Marks,
-    /// Each run drawn on the rows shown, with its rect and colour.
+    /// Each run of one colour drawn on the rows shown, with its rect and
+    /// colour.
     #[cfg(test)]
     runs: Vec<(Rect, Hsla)>,
     /// The tiles drawn from their rows' runs as cached, by index.
@@ -133,23 +154,25 @@ impl Placed {
     }
 }
 
-/// The options as this card draws them: on the right, whatever `side` says.
-fn drawn(options: &MinimapOptions) -> MinimapOptions {
-    MinimapOptions {
-        side: MinimapSide::Right,
-        ..*options
+/// The width the minimap takes off `width`, which it shares with the
+/// text, whose columns are `em` wide: none when it's off or the editor is
+/// too narrow for it.
+pub(crate) fn width(options: Option<&MinimapOptions>, width: f32, em: f32) -> f32 {
+    options.map_or(0., |options| options.width(width, em))
+}
+
+/// How far right of the editor's left edge the frame starts: past the
+/// minimap's `width` when it's on the left.
+pub(crate) fn frame_left(options: Option<&MinimapOptions>, width: f32) -> f32 {
+    match options.map(|options| options.side) {
+        Some(MinimapSide::Left) => width,
+        _ => 0.,
     }
 }
 
-/// The width the minimap takes off the right of `width`, which it shares
-/// with the text, whose columns are `em` wide: none when it's off or the
-/// editor is too narrow for it.
-pub(crate) fn width(options: Option<&MinimapOptions>, width: f32, em: f32) -> f32 {
-    options.map_or(0., |options| drawn(options).width(width, em))
-}
-
 /// Lays out the minimap beside `layout`'s frame, `width` the editor's whole
-/// width, and its hitbox: `None` when it's hidden.
+/// width, and its hitbox: `None` when it's hidden. On the left, it's left of
+/// the frame's 0.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn layout(
     options: &MinimapOptions,
@@ -162,7 +185,6 @@ pub(crate) fn layout(
     entity: &WeakEntity<EditorView>,
     window: &mut Window,
 ) -> Option<Placed> {
-    let options = drawn(options);
     let frame = &layout.frame;
     let display = view.model.display();
     let rows = display.row_count();
@@ -172,8 +194,8 @@ pub(crate) fn layout(
     let (top, screen_rows) = (frame.scroll.y / line_height, frame.height / line_height);
     let first_visible_row = frame.block_map.to_display_top(top);
     let visible_rows = frame.block_map.to_display_top(top + screen_rows) - first_visible_row;
-    let geometry = MinimapLayout::new(
-        &options,
+    let mut geometry = MinimapLayout::new(
+        options,
         &MinimapViewport {
             width,
             height: frame.height,
@@ -187,8 +209,14 @@ pub(crate) fn layout(
         view.minimap_cache.borrow_mut().release(window);
         return None;
     }
+    if options.side == MinimapSide::Left {
+        // The frame starts at the minimap's right edge.
+        let left = geometry.x.end;
+        geometry.x = -left..0.;
+        geometry.text_x = 0.0..geometry.text_x.end - left;
+    }
     let drawn = view.minimap_cache.borrow_mut().update(
-        &options,
+        options,
         &geometry,
         view,
         syntax,
@@ -207,13 +235,19 @@ pub(crate) fn layout(
     drop(cache);
     let sampling = Sampling::new(geometry.row_height, window.scale_factor(), rows);
     let max_column = options.max_column.max(1);
-    let marks = marks::layout(
+    let mut marks = marks::layout(
         &geometry,
         sampling,
         options.column_width(),
         max_column,
         view,
     );
+    if options.side == MinimapSide::Left {
+        // The git lane at the inner edge, the text's side.
+        for (rect, _) in &mut marks.lane {
+            rect.x = geometry.x.end - rect.width;
+        }
+    }
     let rect = Rect {
         x: geometry.x.start,
         y: 0.,
@@ -273,6 +307,8 @@ struct RunsKey {
     theme: EditorTheme,
     tab_size: usize,
     max_column: u32,
+    /// Whether chars are drawn as their masks.
+    characters: bool,
 }
 
 /// The state of the syntax the runs were highlighted with: the language,
@@ -362,7 +398,7 @@ impl Sampling {
 
 /// The minimap's rows' runs and its tiles, kept across frames.
 pub(crate) struct Cache {
-    rows: RowRunsCache<Hsla>,
+    rows: RowRunsCache<Ink>,
     runs_key: Option<RunsKey>,
     highlights: Option<HighlightsKey>,
     tiles: HashMap<u32, Tile>,
@@ -486,16 +522,21 @@ impl Cache {
         self.frame += 1;
         let display = view.model.display();
         let (tab_size, max_column) = (view.model.tab_size(), options.max_column.max(1));
+        let characters = options.render_characters;
         let same_runs = self.runs_key.as_ref().is_some_and(|key| {
-            key.theme == view.theme && key.tab_size == tab_size && key.max_column == max_column
+            key.theme == view.theme
+                && key.tab_size == tab_size
+                && key.max_column == max_column
+                && key.characters == characters
         });
         if !same_runs {
-            // Every run's colours or columns may change.
+            // Every run's colours, columns or glyphs may change.
             self.rows.clear();
             self.runs_key = Some(RunsKey {
                 theme: view.theme.clone(),
                 tab_size,
                 max_column,
+                characters,
             });
         }
         self.rows.sync(display);
@@ -524,6 +565,7 @@ impl Cache {
             syntax,
             unnecessary,
             max_column,
+            characters,
         };
 
         // The tiles nearest the rows the editor shows first: those that
@@ -629,7 +671,23 @@ impl Cache {
                 let visible = geometry.first_row..geometry.end_row;
                 for &row in rows_of.iter().filter(|row| visible.contains(row)) {
                     let runs = &self.rows.row(row).expect("drawable").runs;
-                    drawn.runs.extend(runs.iter().map(|run| {
+                    // Runs of one colour, whatever their chars.
+                    let mut colored: Vec<MinimapRun<Hsla>> = Vec::new();
+                    for run in runs {
+                        match colored.last_mut() {
+                            Some(last)
+                                if last.color == run.color.color
+                                    && last.columns.end == run.columns.start =>
+                            {
+                                last.columns.end = run.columns.end;
+                            }
+                            _ => colored.push(MinimapRun {
+                                columns: run.columns.clone(),
+                                color: run.color.color,
+                            }),
+                        }
+                    }
+                    drawn.runs.extend(colored.into_iter().map(|run| {
                         let rect = Rect {
                             x: geometry.x.start + run.columns.start as f32 * key.column_width,
                             y: geometry.row_y(row),
@@ -666,6 +724,7 @@ impl Cache {
             syntax: None,
             unnecessary,
             max_column: key.max_column,
+            characters: key.characters,
         };
         let started = Instant::now();
         let mut changed = false;
@@ -788,7 +847,7 @@ fn sweep_step(entity: &WeakEntity<EditorView>, window: &mut Window, cx: &mut App
 /// A tile's image: rows `rows`' runs as cached, each `sampling.stride` rows
 /// tall, at device pixels, on a transparent background.
 fn rasterize(
-    cache: &RowRunsCache<Hsla>,
+    cache: &RowRunsCache<Ink>,
     rows: &[u32],
     key: TileKey,
     sampling: Sampling,
@@ -805,21 +864,71 @@ fn rasterize(
         };
         let top = device(n as f32 * height_of).min(height);
         let bottom = device((n + 1) as f32 * height_of).min(height);
-        for run in &cached.runs {
-            let left = device(run.columns.start as f32 * key.column_width).min(width);
-            let right = device(run.columns.end as f32 * key.column_width).min(width);
-            let color = bgra(run.color.opacity(RUN_ALPHA));
-            for y in top..bottom {
-                let line = &mut pixels[(y * width + left) * 4..(y * width + right) * 4];
-                for pixel in line.as_chunks_mut::<4>().0 {
-                    *pixel = color;
-                }
-            }
-        }
+        draw_runs(&mut pixels, width, top..bottom, &cached.runs, key);
     }
     let buffer = image::RgbaImage::from_raw(width as u32, height as u32, pixels)
         .expect("sized to the image");
     Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
+}
+
+/// Draws a row's `runs` into a tile's `pixels`, `width` device pixels a
+/// line, over its device pixel lines `lines`: blocks, or each column its
+/// char's mask stretched over it, in the run's colour.
+fn draw_runs(
+    pixels: &mut [u8],
+    width: usize,
+    lines: Range<usize>,
+    runs: &[MinimapRun<Ink>],
+    key: TileKey,
+) {
+    let device = |logical: f32| ((logical * key.scale_factor).round().max(0.) as usize).min(width);
+    let scale = glyphs::device_scale(key.column_width, key.scale_factor);
+    for run in runs {
+        let Ink { color, glyph } = run.color;
+        let ch = match glyph {
+            Glyph::Block | Glyph::Other => {
+                let alpha = match glyph {
+                    Glyph::Block => RUN_ALPHA,
+                    _ => OTHER_ALPHA,
+                };
+                let (left, right) = (
+                    device(run.columns.start as f32 * key.column_width),
+                    device(run.columns.end as f32 * key.column_width),
+                );
+                let color = bgra(color.opacity(alpha));
+                for y in lines.clone() {
+                    let line = &mut pixels[(y * width + left) * 4..(y * width + right) * 4];
+                    for pixel in line.as_chunks_mut::<4>().0 {
+                        *pixel = color;
+                    }
+                }
+                continue;
+            }
+            Glyph::Char(ch) => ch,
+        };
+        let Some(mask) = glyphs::mask(ch, scale) else {
+            continue;
+        };
+        let [b, g, r, a] = bgra(color);
+        for column in run.columns.clone() {
+            let left = device(column as f32 * key.column_width);
+            let right = device((column + 1) as f32 * key.column_width);
+            let (cell_width, cell_height) = (right - left, lines.len());
+            for y in lines.clone() {
+                let mask_y = (y - lines.start) * mask.height / cell_height;
+                for x in left..right {
+                    let mask_x = (x - left) * mask.width / cell_width;
+                    let weight = mask.alpha[mask_y * mask.width + mask_x] as u32;
+                    if weight == 0 {
+                        continue;
+                    }
+                    let alpha = (a as u32 * weight + 127) / 255;
+                    let at = (y * width + x) * 4;
+                    pixels[at..at + 4].copy_from_slice(&[b, g, r, alpha as u8]);
+                }
+            }
+        }
+    }
 }
 
 /// `color`'s bytes as a [`RenderImage`] holds them: blue, green, red and
@@ -836,6 +945,8 @@ struct Builder<'a> {
     syntax: Option<&'a Syntax>,
     unnecessary: &'a [Range<usize>],
     max_column: u32,
+    /// Whether chars are drawn as their masks.
+    characters: bool,
 }
 
 /// The decorations colouring some rows, and each row's stamp from them and
@@ -928,7 +1039,7 @@ impl Builder<'_> {
 
     /// Looks at the decorations over display rows `rows`, ascending, and
     /// marks the rows whose stamps changed stale; returns whether any did.
-    fn sweep(&self, rows: &[u32], cache: &mut RowRunsCache<Hsla>) -> bool {
+    fn sweep(&self, rows: &[u32], cache: &mut RowRunsCache<Ink>) -> bool {
         let ranges = self.ranges(rows);
         let extras = self.extras(&ranges);
         let mut changed = false;
@@ -943,8 +1054,9 @@ impl Builder<'_> {
     }
 
     /// Builds the runs of display rows `rows`, ascending, in the colours the
-    /// text's spans give them, or the text colour, into `cache`.
-    fn build(&self, rows: &[u32], cache: &mut RowRunsCache<Hsla>) {
+    /// text's spans give them, or the text colour, into `cache`: with
+    /// characters on, a run of each char.
+    fn build(&self, rows: &[u32], cache: &mut RowRunsCache<Ink>) {
         let view = self.view;
         let theme = &view.theme;
         let (display, text) = (view.model.display(), view.model.text());
@@ -967,11 +1079,16 @@ impl Builder<'_> {
                 next += spans[next..].partition_point(|span| span.range.end <= range.start);
                 let row_spans = row_spans(&spans[next..], range);
                 let row_text = text.slice_to_string(range.clone());
-                let runs: Vec<MinimapRun<Hsla>> = fe_display::minimap::row_runs(
+                let inks = inks(&row_text, &row_spans, theme.foreground, self.characters);
+                let block = Ink {
+                    color: theme.foreground,
+                    glyph: Glyph::Block,
+                };
+                let runs: Vec<MinimapRun<Ink>> = fe_display::minimap::row_runs(
                     &row_text,
                     view.model.tab_size(),
-                    &row_spans,
-                    theme.foreground,
+                    &inks,
+                    block,
                     self.max_column,
                 );
                 cache.insert(display, *row, runs, extras.stamp(*row));
@@ -990,6 +1107,47 @@ fn row_spans(spans: &[StyledSpan<Hsla>], range: &Range<usize>) -> Vec<(Range<usi
             let start = span.range.start.max(range.start) - range.start;
             let end = span.range.end.min(range.end) - range.start;
             (start..end, span.style)
+        })
+        .collect()
+}
+
+/// `spans`, byte ranges of `row` in their colours, as inks: with
+/// `characters` on, one for each char that isn't whitespace, in the colour
+/// of the first span over it or `default`, so its run is its own unless the
+/// char beside it is the same; off, blocks.
+fn inks(
+    row: &str,
+    spans: &[(Range<usize>, Hsla)],
+    default: Hsla,
+    characters: bool,
+) -> Vec<(Range<usize>, Ink)> {
+    if !characters {
+        return (spans.iter())
+            .map(|(range, color)| {
+                let ink = Ink {
+                    color: *color,
+                    glyph: Glyph::Block,
+                };
+                (range.clone(), ink)
+            })
+            .collect();
+    }
+    let mut span = 0;
+    (row.char_indices())
+        .filter(|(_, ch)| !ch.is_whitespace())
+        .map(|(byte, ch)| {
+            while spans.get(span).is_some_and(|(range, _)| range.end <= byte) {
+                span += 1;
+            }
+            let color = match spans.get(span) {
+                Some((range, color)) if range.start <= byte => *color,
+                _ => default,
+            };
+            let ink = Ink {
+                color,
+                glyph: Glyph::of(ch),
+            };
+            (byte..byte + ch.len_utf8(), ink)
         })
         .collect()
 }

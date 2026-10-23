@@ -24,6 +24,12 @@ VS Code (colour values, adapted in crates/fe-config/themes/vscode-2026-light.tom
 Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 
+VS Code (the minimap's prebaked character samples, from
+src/vs/editor/browser/viewParts/minimap/minimapPreBaked.ts, adapted in
+crates/fe-gpui/src/element/minimap_glyphs.rs)
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT License.
+
 nvim-treesitter (highlight queries, adapted in crates/fe-syntax/queries: toml.scm, kotlin.scm)
 Copyright The nvim-treesitter contributors. Its LICENSE names no holder.
 Licensed under the Apache License, Version 2.0.

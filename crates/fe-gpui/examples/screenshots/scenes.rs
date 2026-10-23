@@ -145,8 +145,10 @@ fn scenes() -> Vec<Scene> {
             text: long_rust(),
             cold: &[],
             annotations: &[],
+            // Blocks: `minimap_characters` is the default look.
             minimap: Some(MinimapOptions {
                 show_slider: fe_display::minimap::MinimapShowSlider::Always,
+                render_characters: false,
                 ..MinimapOptions::default()
             }),
             top: Some(140.),
@@ -172,6 +174,35 @@ fn scenes() -> Vec<Scene> {
             cold: &[],
             annotations: &[],
             minimap: Some(MinimapOptions {
+                show_slider: fe_display::minimap::MinimapShowSlider::Always,
+                ..MinimapOptions::default()
+            }),
+            top: Some(140.),
+            sticky_scroll: false,
+            marks: true,
+        },
+        Scene {
+            name: "minimap_characters",
+            path: "scene.rs",
+            text: long_rust(),
+            cold: &[],
+            annotations: &[],
+            minimap: Some(MinimapOptions {
+                show_slider: fe_display::minimap::MinimapShowSlider::Always,
+                ..MinimapOptions::default()
+            }),
+            top: Some(140.),
+            sticky_scroll: false,
+            marks: false,
+        },
+        Scene {
+            name: "minimap_left",
+            path: "scene.rs",
+            text: marked_rust(),
+            cold: &[],
+            annotations: &[],
+            minimap: Some(MinimapOptions {
+                side: fe_display::minimap::MinimapSide::Left,
                 show_slider: fe_display::minimap::MinimapShowSlider::Always,
                 ..MinimapOptions::default()
             }),

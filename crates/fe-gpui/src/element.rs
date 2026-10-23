@@ -69,6 +69,9 @@ pub(crate) struct FrameLayout {
     /// Window position of the editor's top-left corner, which the frame's
     /// coordinates are relative to.
     pub(crate) origin: Point<Pixels>,
+    /// How far right of the editor's left edge the frame starts: past a
+    /// minimap on the left.
+    frame_left: f32,
     pub(crate) frame: Frame<Line>,
     /// The indexes of long rows, kept from frame to frame, and the char
     /// widths they're measured with, for the tab size they're laid out
@@ -660,10 +663,23 @@ impl Element for EditorElement {
             .into();
 
         // Soft wrap fills the text area, less the minimap's room at the
-        // right; catch the rows up with any edits.
+        // right or the left, where the frame starts after it; catch the rows
+        // up with any edits.
         let minimap_options = self.view.read(cx).minimap;
         let shared: f32 = bounds.size.width.into();
-        let width = shared - minimap::width(minimap_options.as_ref(), shared, em);
+        let minimap_width = minimap::width(minimap_options.as_ref(), shared, em);
+        let width = shared - minimap_width;
+        let frame_left = minimap::frame_left(minimap_options.as_ref(), minimap_width);
+        let origin = bounds.origin + point(px(frame_left), px(0.));
+        self.view.update(cx, |view, cx| {
+            // The text moves out from under a popover, shown or waiting,
+            // at the caret or the pointer, as a scroll moves it: it goes.
+            let last = view.layout.as_ref().map(|layout| layout.frame_left);
+            if last.is_some_and(|last| last != frame_left) {
+                view.set_hover(None, cx);
+                view.hide_popover(cx);
+            }
+        });
         let annotation_width = self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
             let annotation_width =
@@ -985,7 +1001,7 @@ impl Element for EditorElement {
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
-                bounds.origin + point(px(rect.x), px(rect.y)),
+                origin + point(px(rect.x), px(rect.y)),
                 size(px(rect.width), px(rect.height)),
             )
         };
@@ -1017,7 +1033,8 @@ impl Element for EditorElement {
         });
         let view = self.view.read(cx);
         let mut layout = FrameLayout {
-            origin: bounds.origin,
+            origin,
+            frame_left,
             frame,
             long_rows,
             glyph_widths,
