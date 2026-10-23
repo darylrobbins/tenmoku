@@ -2,9 +2,10 @@
 //! `cmd-shift-left`, layering keymap files (built-in defaults, then the
 //! user's `keymap.toml`), matching keystrokes as they're pressed against the
 //! bindings whose context holds, and reporting bindings that hide or delay
-//! each other; and the menu bar's table ([`menu`]). Headless: the host
-//! feeds it keystrokes and context stacks and runs its chord timer. Must
-//! never depend on GPUI.
+//! each other; the menu bar's table ([`menu`]); and the Keyboard Shortcuts
+//! editor's rows ([`ShortcutsModel`]). Headless: the host feeds it
+//! keystrokes and context stacks and runs its chord timer. Must never
+//! depend on GPUI.
 
 // The keymap and menu machinery is kiln's (docs/decisions/app-framework.md);
 // fastedit keeps its names for it, and its own keymaps and menus here.
@@ -15,6 +16,12 @@ pub use kiln_core::{
     KeymapLayer, KeymapStore, Keystroke, KeystrokeError, Location, Matcher, Menu, MenuBar,
     MenuItem, Modifiers, OsAction, Place, SystemItem, SystemMenu, load_keymap, load_keymap_layer,
     macos_label, pc_label, shortcut_label, shortcuts,
+};
+
+mod shortcuts_model;
+
+pub use shortcuts_model::{
+    CommandInfo, ShortcutBinding, ShortcutIssue, ShortcutRow, ShortcutSource, ShortcutsModel,
 };
 
 use std::path::{Path, PathBuf};
