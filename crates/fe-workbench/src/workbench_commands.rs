@@ -870,6 +870,13 @@ impl Workbench {
         self.close_terminal(cx.window, cx.cx);
     }
 
+    /// Rename Terminal
+    #[command(id = "terminal.rename")]
+    fn rename_terminal_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.rename_terminal(cx.window, cx.cx);
+    }
+
     /// Next Terminal
     #[command(id = "terminal.next")]
     fn next_terminal(&mut self, cx: &mut Cx<Self>) {

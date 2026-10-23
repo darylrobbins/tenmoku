@@ -317,6 +317,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "terminal.new",
     "terminal.next",
     "terminal.previous",
+    "terminal.rename",
     "terminal.toggle",
     "theme.select",
     "toast.dismiss_all",

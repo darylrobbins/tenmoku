@@ -24,14 +24,17 @@ use fe_gpui::EditorTheme;
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
 use fe_ui::{ActiveTheme as _, Icon, IconButton, TAB_HEIGHT};
 use gpui::{
-    App, AppContext as _, Context, ElementId, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    prelude::FluentBuilder as _, px, svg,
+    App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    div, prelude::FluentBuilder as _, px, svg,
 };
 use kiln_shell::{DockItem, PanelId};
 
-use crate::find_bar::FindOp;
+use crate::{
+    find_bar::FindOp,
+    picker::{Picker, PickerDelegate},
+};
 use terminal_find::TerminalFind;
 
 #[path = "terminal_find.rs"]
@@ -49,6 +52,9 @@ pub(crate) enum TerminalPanelEvent {
     /// The last session's shell exited, or it was closed, and the panel
     /// dropped it: none is left.
     Exited,
+    /// The user double-clicked the list row of the session with this view
+    /// id: the workbench asks for its new name.
+    RenameRequested(EntityId),
 }
 
 /// One terminal in the panel.
@@ -56,6 +62,9 @@ struct Session {
     view: Entity<TerminalView>,
     /// Its tab's label until the shell sets a title: `Terminal <number>`.
     number: usize,
+    /// The name the user gave it (`terminal.rename`), which its label shows
+    /// in place of the shell's title until it closes.
+    name: Option<SharedString>,
     /// To its shell exiting.
     _exited: Subscription,
 }
@@ -221,6 +230,7 @@ impl TerminalPanel {
         self.sessions.push(Session {
             view,
             number: self.next_number,
+            name: None,
             _exited: exited,
         });
         self.next_number += 1;
@@ -357,10 +367,41 @@ impl TerminalPanel {
         self.find.as_ref()
     }
 
-    /// Session `ix`'s tab label: the title its shell set, else
-    /// `Terminal <n>`.
+    /// The active session's view id and label, if there is one.
+    pub(crate) fn active_label(&self, cx: &App) -> Option<(EntityId, SharedString)> {
+        let session = self.sessions.get(self.active)?;
+        Some((session.view.entity_id(), self.label(self.active, cx)))
+    }
+
+    /// The label of the session with view id `id`, if it's still open.
+    pub(crate) fn label_of(&self, id: EntityId, cx: &App) -> Option<SharedString> {
+        Some(self.label(self.position(id)?, cx))
+    }
+
+    /// Names session `id` `name`, trimmed; an empty name clears it, so the
+    /// label is the shell's title again. Nothing if it has closed.
+    pub(crate) fn set_name(&mut self, id: EntityId, name: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.position(id) {
+            let name = name.trim();
+            self.sessions[ix].name = (!name.is_empty()).then(|| name.to_owned().into());
+            cx.notify();
+        }
+    }
+
+    /// Focuses session `id`, if it's still open.
+    pub(crate) fn focus_session(&self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.position(id) {
+            window.focus(&self.sessions[ix].view.focus_handle(cx), cx);
+        }
+    }
+
+    /// Session `ix`'s tab label: the name the user gave it, else the title
+    /// its shell set, else `Terminal <n>`.
     fn label(&self, ix: usize, cx: &App) -> SharedString {
         let session = &self.sessions[ix];
+        if let Some(name) = &session.name {
+            return name.clone();
+        }
         match session.view.read(cx).title() {
             Some(title) => title.to_owned().into(),
             None => format!("Terminal {}", session.number).into(),
@@ -449,8 +490,10 @@ impl TerminalPanel {
                             })
                             .child(kill),
                     )
-                    .on_click(cx.listener(move |panel, _, window, cx| {
-                        if let Some(ix) = panel.position(id) {
+                    .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                        if event.click_count() >= 2 {
+                            cx.emit(TerminalPanelEvent::RenameRequested(id));
+                        } else if let Some(ix) = panel.position(id) {
                             panel.activate(ix, window, cx);
                         }
                     }))
@@ -641,6 +684,93 @@ mod terminal_font_fallbacks_tests;
 #[path = "terminal_panel_tests.rs"]
 mod terminal_panel_tests;
 
+/// `terminal.rename`'s picker: the name as typed, and one row that applies
+/// it, or clears the custom name when it's empty.
+pub(crate) struct RenameTerminal {
+    terminal: gpui::WeakEntity<TerminalPanel>,
+    /// The view id of the session it names.
+    id: gpui::EntityId,
+    /// The query, trimmed.
+    name: String,
+}
+
+impl RenameTerminal {
+    /// Names session `id` of `terminal`, whose label is `label` now.
+    pub(crate) fn new(
+        terminal: gpui::WeakEntity<TerminalPanel>,
+        id: EntityId,
+        label: &str,
+    ) -> Self {
+        Self {
+            terminal,
+            id,
+            name: label.to_owned(),
+        }
+    }
+
+    /// Holds `label`, trimmed, as the name typed.
+    pub(crate) fn typed(&mut self, label: &str) {
+        self.name = label.trim().to_owned();
+    }
+
+    fn label(&self) -> String {
+        if self.name.is_empty() {
+            "Use the shell's title".to_owned()
+        } else {
+            format!("Rename to {}", self.name)
+        }
+    }
+}
+
+impl PickerDelegate for RenameTerminal {
+    fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
+        self.name = query.trim().to_owned();
+        cx.notify();
+        let picker = cx.entity();
+        // `Picker::matches_updated` borrows the picker, which is being
+        // updated now.
+        cx.defer(move |cx| picker.update(cx, |picker, cx| picker.matches_updated(true, cx)));
+    }
+
+    fn match_count(&self) -> usize {
+        1
+    }
+
+    fn match_id(&self, _: usize) -> gpui::SharedString {
+        "rename".into()
+    }
+
+    fn render_match(&self, _: usize, _: bool, _: &App) -> gpui::AnyElement {
+        use gpui::{IntoElement as _, ParentElement as _};
+        gpui::div().child(self.label()).into_any_element()
+    }
+
+    fn confirm(&mut self, _: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
+        if let Some(terminal) = self.terminal.upgrade() {
+            let (id, name) = (self.id, self.name.clone());
+            terminal.update(cx, |terminal, cx| {
+                terminal.set_name(id, &name, cx);
+                terminal.focus_session(id, window, cx);
+            });
+        }
+        true
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(terminal) = self.terminal.upgrade() {
+            let id = self.id;
+            terminal.update(cx, |terminal, cx| terminal.focus_session(id, window, cx));
+        }
+    }
+
+    fn status(&self) -> Option<gpui::SharedString> {
+        Some("Enter to rename, Escape to cancel".into())
+    }
+}
+
+#[cfg(test)]
+#[path = "terminal_rename_tests.rs"]
+mod terminal_rename_tests;
 #[cfg(test)]
 #[path = "terminal_tabs_tests.rs"]
 mod terminal_tabs_tests;

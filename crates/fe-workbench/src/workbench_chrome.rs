@@ -24,7 +24,9 @@ use crate::{
     find_bar::FindOp,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::ToolbarRequest,
-    terminal_panel::{TERMINAL, TerminalPanel, TerminalPanelEvent},
+    picker::Picker,
+    terminal_panel::{RenameTerminal, TERMINAL, TerminalPanel, TerminalPanelEvent},
+    workbench::Palette,
 };
 use fe_command::Value;
 use kiln_shell::{
@@ -126,17 +128,23 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> [Subscription; 3] {
-        let exited = cx.subscribe_in(
-            terminal,
-            window,
-            |workbench, _, TerminalPanelEvent::Exited, window, cx| {
-                workbench.terminal_dock.update(cx, |dock, cx| {
-                    dock.dock_mut().set_visible(false);
-                    cx.notify();
-                });
-                window.focus(&workbench.focus_handle(cx), cx);
-            },
-        );
+        let exited =
+            cx.subscribe_in(
+                terminal,
+                window,
+                |workbench, _, event, window, cx| match *event {
+                    TerminalPanelEvent::Exited => {
+                        workbench.terminal_dock.update(cx, |dock, cx| {
+                            dock.dock_mut().set_visible(false);
+                            cx.notify();
+                        });
+                        window.focus(&workbench.focus_handle(cx), cx);
+                    }
+                    TerminalPanelEvent::RenameRequested(id) => {
+                        workbench.ask_terminal_name(Some(id), window, cx)
+                    }
+                },
+            );
         let hid = cx.subscribe_in(
             dock,
             window,
@@ -184,6 +192,40 @@ impl Workbench {
     pub(crate) fn close_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal
             .update(cx, |terminal, cx| terminal.close_active(window, cx));
+    }
+
+    /// `terminal.rename`: asks for a name for the active session.
+    pub(crate) fn rename_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ask_terminal_name(None, window, cx);
+    }
+
+    /// Asks for a name for session `id`, the active one if `None`, with its
+    /// label to edit. Enter names it, Escape leaves it, and an empty name
+    /// clears the custom one.
+    pub(crate) fn ask_terminal_name(
+        &mut self,
+        id: Option<gpui::EntityId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.terminal.read_with(cx, |terminal, cx| match id {
+            Some(id) => terminal.label_of(id, cx).map(|label| (id, label)),
+            None => terminal.active_label(cx),
+        });
+        let Some((id, label)) = current else {
+            return;
+        };
+        self.dismiss_palette(window, cx);
+        let delegate = RenameTerminal::new(self.terminal.downgrade(), id, &label);
+        let picker = cx.new(|cx| Picker::new(delegate, "Terminal name…", fe_ui::ui_theme(cx), cx));
+        picker.update(cx, |picker, cx| {
+            picker.show(window, cx);
+            let input = picker.input().clone();
+            input.update(cx, |input, cx| input.set_text(label.to_string(), cx));
+            // `show` reset the name with the empty query.
+            picker.delegate.typed(&label);
+        });
+        self.show_palette(Palette::Rename, picker, window, cx);
     }
 
     /// `terminal.next` and `terminal.previous`: shows and focuses the next
