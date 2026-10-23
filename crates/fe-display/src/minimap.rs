@@ -9,7 +9,11 @@
 //! screen less a row, as VS Code's do with `scrollBeyondLastLine`. That keeps
 //! the slider over exactly the rows the editor shows.
 
-use std::ops::Range;
+use std::{collections::BTreeMap, ops::Range};
+
+use fe_buffer::BufferSnapshot;
+
+use crate::{DisplayMap, Fold, SourceKey};
 
 /// Which side of the text the minimap is on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -314,6 +318,413 @@ fn is_wide(ch: char) -> bool {
     )
 }
 
+/// A display row's runs as [`RowRunsCache`] holds them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CachedRow<C> {
+    pub runs: Vec<MinimapRun<C>>,
+    /// What the caller built the runs from besides the row's text, such as
+    /// decorations over it, which it compares to tell whether they're stale.
+    pub stamp: u64,
+    /// The runs may no longer be the row's ([`RowRunsCache::invalidate`]):
+    /// they're kept, to draw until rebuilt and to compare with then.
+    pub stale: bool,
+    /// Changes only when the runs do: rows drawn with the same ids look
+    /// the same.
+    pub id: u64,
+    /// Where the row's text starts, and its buffer row's bytes, in the text
+    /// as of the last sync: an edit touching the buffer row drops it, as
+    /// soft wrap lays the whole row out again.
+    start: usize,
+    source: Range<usize>,
+}
+
+/// How [`RowRunsCache::sync`] followed the display rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Synced {
+    /// Nothing changed.
+    Unchanged,
+    /// Rows were edited, folded or unfolded: their runs dropped, and the
+    /// rows after them moved.
+    Spliced,
+    /// The rows changed in ways that can't be followed, such as a soft wrap
+    /// catching up: every row's runs are stale.
+    Invalidated,
+    /// Another text, or history that can't be followed: every row's runs
+    /// dropped.
+    Cleared,
+}
+
+/// What a [`DisplayMap`]'s rows were, to tell how they changed since.
+struct Shape {
+    source: SourceKey,
+    snapshot: Option<BufferSnapshot>,
+    rows: u32,
+    wrap_width: Option<f32>,
+    wrap_pending: bool,
+    folds: Vec<Fold>,
+}
+
+impl Shape {
+    fn of(display: &DisplayMap) -> Self {
+        Self {
+            source: display.source_key(),
+            snapshot: display.snapshot().cloned(),
+            rows: display.row_count(),
+            wrap_width: display.wrap_width(),
+            wrap_pending: display.wrap_is_pending(),
+            folds: display.folds().to_vec(),
+        }
+    }
+}
+
+/// The runs of display rows near those the minimap last showed, kept across
+/// frames and edits: the rows an edit touched lose their runs, and the rest
+/// move to wherever their text is now. Holds at most its capacity of rows,
+/// around those last shown ([`RowRunsCache::retain_around`]); they needn't
+/// be next to one another, as when the minimap shows every so many rows.
+pub struct RowRunsCache<C> {
+    shape: Option<Shape>,
+    rows: BTreeMap<u32, CachedRow<C>>,
+    capacity: usize,
+    next_id: u64,
+}
+
+impl<C: Clone + PartialEq> RowRunsCache<C> {
+    /// A cache of at most `capacity` rows.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            shape: None,
+            rows: BTreeMap::new(),
+            capacity: capacity.max(1),
+            next_id: 0,
+        }
+    }
+
+    /// Holds at most `capacity` rows from now on, dropping the last rows
+    /// beyond it.
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity.max(1);
+        while self.rows.len() > self.capacity {
+            self.rows.pop_last();
+        }
+    }
+
+    /// Whether the cache was last synced with `display` as it is.
+    pub fn is_synced(&self, display: &DisplayMap) -> bool {
+        self.shape.as_ref().is_some_and(|shape| {
+            shape.source == display.source_key()
+                && shape.rows == display.row_count()
+                && shape.folds == display.folds()
+                && shape.wrap_width == display.wrap_width()
+        })
+    }
+
+    /// How many rows have runs.
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Display row `row`'s runs, if they're cached.
+    pub fn row(&self, row: u32) -> Option<&CachedRow<C>> {
+        self.rows.get(&row)
+    }
+
+    /// Caches `runs` for display row `row` of `display`, which the cache
+    /// was last synced with, built with `stamp`, and returns their id: the
+    /// id the row had if its runs are the same. Past the capacity, the row
+    /// furthest from it goes.
+    pub fn insert(
+        &mut self,
+        display: &DisplayMap,
+        row: u32,
+        runs: Vec<MinimapRun<C>>,
+        stamp: u64,
+    ) -> u64 {
+        let id = match self.row(row) {
+            Some(cached) if cached.runs == runs => cached.id,
+            _ => {
+                self.next_id += 1;
+                self.next_id
+            }
+        };
+        let shown = display.row(row);
+        let text = display.text();
+        let start = text.row_start(shown.buffer_row);
+        let source = start..start + text.row_len(shown.buffer_row) as usize;
+        self.rows.insert(
+            row,
+            CachedRow {
+                runs,
+                stamp,
+                stale: false,
+                id,
+                start: shown.range.start,
+                source,
+            },
+        );
+        while self.rows.len() > self.capacity {
+            let (first, last) = (self.rows.keys().next(), self.rows.keys().next_back());
+            let (Some(&first), Some(&last)) = (first, last) else {
+                break;
+            };
+            match row - first >= last - row {
+                true => self.rows.pop_first(),
+                false => self.rows.pop_last(),
+            };
+        }
+        id
+    }
+
+    /// Rows `rows` were replaced by `new_rows` rows: their runs are dropped,
+    /// and the rows after them move by the difference.
+    pub fn splice(&mut self, rows: Range<u32>, new_rows: u32) {
+        let mut after = self.rows.split_off(&rows.start);
+        let moved = after.split_off(&rows.end);
+        let old_rows = rows.end.saturating_sub(rows.start);
+        self.rows.extend(
+            (moved.into_iter())
+                .map(|(row, cached)| ((row + new_rows).saturating_sub(old_rows), cached)),
+        );
+    }
+
+    /// Marks rows `rows`' runs stale: kept, but to be rebuilt before
+    /// they're trusted.
+    pub fn invalidate(&mut self, rows: Range<u32>) {
+        for cached in self.rows.range_mut(rows).map(|(_, cached)| cached) {
+            cached.stale = true;
+        }
+    }
+
+    /// Drops every row's runs.
+    pub fn clear(&mut self) {
+        self.rows.clear();
+    }
+
+    /// Keeps only rows within the capacity's reach around `shown`, the rows
+    /// the minimap shows, and at most the capacity of them.
+    pub fn retain_around(&mut self, shown: Range<u32>) {
+        let reach =
+            (self.capacity as u32).saturating_sub(shown.end.saturating_sub(shown.start)) / 2;
+        let first = shown.start.saturating_sub(reach);
+        let end = shown.end.saturating_add(reach);
+        self.rows.retain(|&row, _| (first..end).contains(&row));
+        let middle = shown.start / 2 + shown.end / 2;
+        while self.rows.len() > self.capacity {
+            let (Some(&first), Some(&last)) =
+                (self.rows.keys().next(), self.rows.keys().next_back())
+            else {
+                break;
+            };
+            match middle.abs_diff(first) >= middle.abs_diff(last) {
+                true => self.rows.pop_first(),
+                false => self.rows.pop_last(),
+            };
+        }
+    }
+
+    /// Follows `display` since the last sync: rows whose buffer rows were
+    /// edited since lose their runs, and the rest move to the rows showing
+    /// their text now; a fold made or undone moves the rows after it. When
+    /// the rows changed in a way that can't be followed row by row, every
+    /// row's runs go stale, or for another text, are dropped.
+    pub fn sync(&mut self, display: &DisplayMap) -> Synced {
+        let new = Shape::of(display);
+        let Some(old) = self.shape.replace(new) else {
+            self.clear();
+            return Synced::Cleared;
+        };
+        let new = self.shape.as_ref().expect("just set");
+        let (followed, snapshot) = (follow(&old, new, display), new.snapshot.clone());
+        match followed {
+            Followed::Unchanged => Synced::Unchanged,
+            Followed::Folded(splice) => {
+                self.splice(
+                    splice.start..splice.start + splice.old_rows,
+                    splice.new_rows,
+                );
+                Synced::Spliced
+            }
+            Followed::Edited => {
+                let (Some(old), Some(new)) = (&old.snapshot, &snapshot) else {
+                    unreachable!("edits are of a buffer");
+                };
+                match self.follow_edits(old, new, display) {
+                    true => Synced::Spliced,
+                    false => {
+                        self.invalidate(0..u32::MAX);
+                        Synced::Invalidated
+                    }
+                }
+            }
+            Followed::Lost => {
+                self.invalidate(0..u32::MAX);
+                Synced::Invalidated
+            }
+            Followed::Other => {
+                self.clear();
+                Synced::Cleared
+            }
+        }
+    }
+
+    /// Drops the rows whose buffer rows the edits from `old` to `new`
+    /// touched, and moves each run of the rest that were next to one
+    /// another to the rows `display` shows their text at. Returns false if
+    /// a run doesn't land on rows showing its text, as after a fold the
+    /// edits didn't make.
+    fn follow_edits(
+        &mut self,
+        old: &BufferSnapshot,
+        new: &BufferSnapshot,
+        display: &DisplayMap,
+    ) -> bool {
+        let mut rows: Vec<(u32, CachedRow<C>)> =
+            std::mem::take(&mut self.rows).into_iter().collect();
+        for batch in new.edits_since(old.version()) {
+            let mut edits = batch.iter().peekable();
+            let mut moved: isize = 0;
+            rows.retain_mut(|(_, cached)| {
+                // The edits wholly before the row move it.
+                while let Some(edit) = edits.next_if(|edit| edit.old.end < cached.source.start) {
+                    moved += edit.new.len() as isize - edit.old.len() as isize;
+                }
+                if edits
+                    .peek()
+                    .is_some_and(|edit| edit.old.start <= cached.source.end)
+                {
+                    return false;
+                }
+                let shift = |offset: usize| offset.saturating_add_signed(moved);
+                cached.start = shift(cached.start);
+                cached.source = shift(cached.source.start)..shift(cached.source.end);
+                true
+            });
+        }
+        for run in rows.chunk_by(|(above, _), (below, _)| *below == above + 1) {
+            let first = display.row_for_offset(run[0].1.start);
+            let last = first + run.len() as u32 - 1;
+            let lands = |row: u32, cached: &CachedRow<C>| {
+                row < display.row_count() && display.row(row).range.start == cached.start
+            };
+            if !lands(first, &run[0].1) || !lands(last, &run[run.len() - 1].1) {
+                return false;
+            }
+            self.rows.extend(
+                (run.iter().cloned())
+                    .enumerate()
+                    .map(|(n, (_, cached))| (first + n as u32, cached)),
+            );
+        }
+        true
+    }
+}
+
+/// How the display rows changed between two shapes.
+enum Followed {
+    Unchanged,
+    /// The text was edited, and folds the edits didn't touch moved with it.
+    Edited,
+    /// One fold was made or undone.
+    Folded(RowSplice),
+    /// The same text, but the rows can't be followed one by one.
+    Lost,
+    /// Another text, or an earlier or forgotten version of it.
+    Other,
+}
+
+/// Rows `start..start + old_rows` replaced by `new_rows` rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RowSplice {
+    start: u32,
+    old_rows: u32,
+    new_rows: u32,
+}
+
+fn follow(old: &Shape, new: &Shape, display: &DisplayMap) -> Followed {
+    let same_wrap = old.wrap_width == new.wrap_width && !old.wrap_pending && !new.wrap_pending;
+    if old.source == new.source {
+        if !same_wrap {
+            return Followed::Lost;
+        }
+        if old.folds == new.folds {
+            return match old.rows == new.rows {
+                true => Followed::Unchanged,
+                false => Followed::Lost,
+            };
+        }
+        return fold_splice(old, new, display).map_or(Followed::Lost, Followed::Folded);
+    }
+    let (Some(old_snapshot), Some(new_snapshot)) = (&old.snapshot, &new.snapshot) else {
+        return Followed::Other;
+    };
+    let from = old_snapshot.version();
+    if old_snapshot.id() != new_snapshot.id()
+        || new_snapshot.version() < from
+        || new_snapshot.oldest_version() > from
+    {
+        return Followed::Other;
+    }
+    // Folds an edit touched are dropped, and the rest move with their
+    // header rows: any other change of folds isn't the edits'.
+    let moved_folds = (old.folds.iter()).map(|fold| {
+        let header = old_snapshot.text().row_start(fold.start);
+        let offset = new_snapshot.map_offset(header, fe_buffer::Bias::Right, from);
+        let start = new_snapshot.text().offset_to_point(offset).row;
+        Fold {
+            start,
+            end: start + (fold.end - fold.start),
+        }
+    });
+    match same_wrap && moved_folds.eq(new.folds.iter().copied()) {
+        true => Followed::Edited,
+        false => Followed::Lost,
+    }
+}
+
+/// The rows one fold made or undone hid or showed, the text the same: those
+/// after its header's last display row. `None` for any other change of
+/// folds.
+fn fold_splice(old: &Shape, new: &Shape, display: &DisplayMap) -> Option<RowSplice> {
+    let (fewer, more) = match old.folds.len() + 1 {
+        n if n == new.folds.len() => (&old.folds, &new.folds),
+        n if n == new.folds.len() + 2 => (&new.folds, &old.folds),
+        _ => return None,
+    };
+    // The one fold in `more` that `fewer` lacks.
+    let at = (more.iter().zip(fewer))
+        .position(|(a, b)| a != b)
+        .unwrap_or(fewer.len());
+    if more[..at] != fewer[..at] || more[at + 1..] != fewer[at..] {
+        return None;
+    }
+    let header = more[at].start;
+    let text = display.text();
+    let header_end = text.row_start(header) + text.row_len(header) as usize;
+    let start = display.row_for_offset(header_end) + 1;
+    let shown = new.rows as i64 - old.rows as i64;
+    let rows = u32::try_from(shown.unsigned_abs()).ok()?;
+    Some(match shown > 0 {
+        true => RowSplice {
+            start,
+            old_rows: 0,
+            new_rows: rows,
+        },
+        false => RowSplice {
+            start,
+            old_rows: rows,
+            new_rows: 0,
+        },
+    })
+}
+
 #[cfg(test)]
 #[path = "minimap_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "minimap_cache_tests.rs"]
+mod cache_tests;

@@ -52,6 +52,11 @@ pub struct EditorView {
     pub(crate) minimap: Option<fe_display::minimap::MinimapOptions>,
     /// Whether the pointer is over the minimap and its slider.
     pub(crate) minimap_hover: crate::element::minimap::Hover,
+    /// The minimap's rows' runs and its tiles, kept across frames.
+    pub(crate) minimap_cache: std::cell::RefCell<crate::element::minimap::Cache>,
+    /// Counts the parses and language loads that landed, which change
+    /// highlights beyond the rows edited.
+    pub(crate) highlight_epoch: u64,
     /// The scopes sticky scroll's band was last found from
     /// ([`crate::element::sticky_scroll::scopes`]).
     pub(crate) sticky_scopes: Option<crate::element::sticky_scroll::Scopes>,
@@ -325,6 +330,8 @@ impl EditorView {
             gutter: true,
             minimap: None,
             minimap_hover: Default::default(),
+            minimap_cache: Default::default(),
+            highlight_epoch: 0,
             sticky_scopes: None,
             annotations: None,
             scroll: Point::default(),
@@ -432,6 +439,13 @@ impl EditorView {
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
+        // The minimap's tiles stay in the windows' atlases until dropped.
+        cx.on_release(|view, cx| {
+            for image in view.minimap_cache.get_mut().take_images() {
+                cx.drop_image(image, None);
+            }
+        })
+        .detach();
         view.sync_vim(cx);
         view.detect_language(cx);
         view
@@ -568,6 +582,7 @@ impl EditorView {
         // install anything for the old language.
         self.syntax = None;
         self.language_task = None;
+        self.highlight_epoch += 1;
         cx.notify();
         let Some(name) = name.and_then(|name| fe_syntax::language_names().find(|&n| n == name))
         else {
@@ -586,6 +601,7 @@ impl EditorView {
                 view.language_task = None;
                 view.syntax =
                     language.map(|language| syntax_driver(language, view.model.snapshot()));
+                view.highlight_epoch += 1;
                 cx.notify();
             })
             .ok();
@@ -1500,6 +1516,7 @@ impl EditorView {
             .await;
             this.update(cx, |view, cx| {
                 view.injected_task = None;
+                view.highlight_epoch += 1;
                 cx.notify();
             })
             .ok();
@@ -1580,6 +1597,7 @@ impl Spawner for ParseSpawner<'_, '_> {
                     && std::ptr::eq(syntax.syntax().language(), language)
                 {
                     syntax.finish(parsed, &mut ParseSpawner { cx, language });
+                    view.highlight_epoch += 1;
                 }
                 // Repaint, and reparse whatever changed or scrolled into
                 // view meanwhile.

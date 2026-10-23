@@ -525,6 +525,14 @@ impl Harness {
         }
     }
 
+    /// Turns the minimap on with its default options, or off, and settles.
+    pub(crate) fn set_minimap(&mut self, on: bool) {
+        self.cx.update_entity(&self.view, |view, cx| {
+            view.set_minimap(on.then(fe_gpui::MinimapOptions::default), cx)
+        });
+        self.settle();
+    }
+
     /// Runs background work (language loads, parses moved off the frame)
     /// and draws until the view stops notifying.
     fn settle(&mut self) {

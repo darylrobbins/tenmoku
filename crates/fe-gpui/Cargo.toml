@@ -24,6 +24,8 @@ kiln-shell.workspace = true
 gpui.workspace = true
 # Saves report back and wait for each other (pane_item.rs).
 futures.workspace = true
+# The minimap's tiles are images (element/minimap.rs).
+image.workspace = true
 log.workspace = true
 unicode-segmentation.workspace = true
 
@@ -51,6 +53,11 @@ harness = false
 # Scrolling frame time on big files, headless (PERF.md, "Scrolling, headless").
 [[bench]]
 name = "scroll"
+harness = false
+
+# Frame time with the minimap off and on, headless (PERF.md, "Minimap").
+[[bench]]
+name = "minimap"
 harness = false
 
 # Hand-checking proposed changes: diff blocks, buttons, undo and commands.

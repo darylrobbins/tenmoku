@@ -1064,19 +1064,24 @@ impl Element for EditorElement {
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
         let syntax = (view.syntax.as_ref().map(SyntaxDriver::syntax))
             .filter(|syntax| syntax.version() == view.model.snapshot().version());
-        layout.minimap = minimap_options.and_then(|options| {
-            let unnecessary = &unnecessary;
-            minimap::layout(
+        layout.minimap = match minimap_options {
+            Some(options) => minimap::layout(
                 &options,
                 &layout,
                 view,
                 syntax,
-                unnecessary,
+                &unnecessary,
                 shared,
                 em,
+                &self.view.downgrade(),
                 window,
-            )
-        });
+            ),
+            None => {
+                // Off, it drops its tiles from the atlas.
+                view.minimap_cache.borrow_mut().release(window);
+                None
+            }
+        };
         layout.sticky_scroll = sticky_scroll::layout(
             &mut layout,
             view,
@@ -1963,7 +1968,7 @@ fn is_unnecessary(entry: &fe_editor::diagnostics::DiagnosticEntry<'_>) -> bool {
 
 /// The ranges Unnecessary diagnostics cover, sorted and merged so
 /// overlapping ones fade once.
-fn unnecessary_ranges(
+pub(crate) fn unnecessary_ranges(
     diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
 ) -> Vec<Range<usize>> {
     let mut ranges: Vec<Range<usize>> = (diagnostics.iter())

@@ -16,6 +16,7 @@ cargo bench -p fe-project --bench tree            # project tree open, expand, a
 cargo bench -p fe-project --bench finder          # Cmd-P walk and queries over 100k paths (~1 min)
 cargo bench -p fe-project --bench search          # project search over 10k files, 40 MB (~1 min)
 cargo bench -p fe-gpui --bench keystroke          # keystroke to presented frame, by stage (~20 s)
+cargo bench -p fe-gpui --bench minimap            # scroll and typing frames, minimap off and on (~5 min)
 cargo build --release -p fastedit
 target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
@@ -1266,6 +1267,76 @@ minus `present`, at most 2 ms at p99):
 - The earlier run at load 12 to 37 gave `type/diff-base` an editor p99 of
   13.9 ms and `type/100-carets` 6.4 ms, so the `100-carets` verdict is
   sensitive to load; the budgets should be re-checked on a quiet host.
+
+## Minimap (`cargo bench -p fe-gpui --bench minimap`)
+
+The minimap draws from 64-row tile images at device pixels, built from row
+runs cached per display row (`fe_display::minimap::RowRunsCache`): an edit
+drops only the rows it touched and moves the rest, scrolling only moves the
+tiles, and a tile is rebuilt only when its rows' runs changed. A frame spends
+at most 0.15 ms past its first 16-row chunk building runs and tiles, nearest
+the slider first, and asks for another frame for the rest; tiles never built
+show the background, and others are drawn as they were until rebuilt. Highlights are queried on the main thread, where the
+syntax tree lives, so the budget, not a background executor, keeps the cost
+off a jump frame.
+
+The bench runs the scroll bench's `smooth/1m-plain`, `jump/7mb-rust` and
+`jump/1m-plain-wrapped` (600 frames each, as `--bench scroll` scrolls them)
+and typing `x` in the middle of the 7 MB Rust file (150 keystrokes, each undone
+and settled, as `--bench keystroke` times them), each with the minimap off and
+on in one window, alternating off and on in six rounds so load falls on both
+alike. Frame is from the event to the presented scene; prepaint and paint are
+the editor's own. Budget: frame p99 at most 8.33 ms on smooth and typing with
+the minimap on, and a jump's p50 within 0.5 ms of the minimap off. Compare by
+the fastest sample and p50; the p99 and max carry scheduler noise at this load.
+The numbers are per-frame draw cost; the between-frame sweep's scheduled work
+is not in them (tracked by the follow-up card, T1088 "Include the minimap's
+between-frame sweep in the minimap benchmark").
+
+Apple M3 Max, release, 2026-10-23, at `9dff175c`. Other lanes were building;
+the run started at load 8 and ended at 19.
+
+| Case | Minimap | Frame fastest / p50 / p99 / max | Prepaint p50 / p99 | Paint p50 / p99 | Over 8.33 ms |
+|---|---|---|---|---|---|
+| `smooth/1m-plain` | off | 0.213 / 0.265 / 0.656 / 12.3 | 0.104 / 0.170 | 0.090 / 0.118 | 3 of 600 |
+| `smooth/1m-plain` | on | 0.282 / 0.334 / **0.756** / 7.00 | 0.177 / 0.339 | 0.086 / 0.146 | 0 of 600 |
+| `jump/7mb-rust` | off | 1.65 / 1.73 / 2.21 / 34.5 | 1.55 / 1.83 | 0.092 / 0.151 | 2 of 600 |
+| `jump/7mb-rust` | on | 1.85 / 1.94 (**+0.21**) / 2.33 / 2.51 | 1.76 / 2.03 | 0.092 / 0.111 | 0 of 600 |
+| `jump/1m-plain-wrapped` | off | 1.38 / 1.42 / 1.77 / 13.7 | 1.26 / 1.42 | 0.090 / 0.147 | 1 of 600 |
+| `jump/1m-plain-wrapped` | on | 1.57 / 1.62 (**+0.20**) / 1.95 / 2.29 | 1.43 / 1.66 | 0.115 / 0.150 | 0 of 600 |
+| `type/7mb-rust` | off | 0.887 / 0.956 / 1.15 / 3.68 | 0.652 / 0.749 | 0.092 / 0.103 | 0 of 150 |
+| `type/7mb-rust` | on | 1.09 / 1.19 / **1.38** / 1.40 | 0.831 / 0.943 | 0.154 / 0.214 | 0 of 150 |
+
+Runs of `ded1ea86`, the same frame's work but the decoration sweep's steps
+between frames (below), gave the same picture. At load 10, frame p50 off / on
+was 0.259 / 0.330 smooth, 1.73 / 1.92 (+0.19) and 1.43 / 1.62 (+0.19) for the
+jumps and 0.966 / 1.19 typing, with p99 0.511 smooth and 1.42 typing with the
+minimap on. At load 8: 0.260 / 0.336, 1.74 / 1.92 (+0.18), 1.42 / 1.63
+(+0.21) and 0.969 / 1.18, with p99 0.669 smooth and 1.45 typing on. One as
+the load rose from 13 to 27 had jump p50s 2.35 / 2.65
+(+0.30) and 1.76 / 2.00 (+0.24), and p99 tails of 3 to 50 ms off and on alike.
+Smooth frames pay about 0.07 ms at p50 for the look at decorations each frame
+begins (below).
+
+What the budget is for: the first version built a whole tile at a time with a
+0.3 ms budget past the first tile. Highlighting 64 rows of the Rust corpus
+takes about 0.6 ms, and bracket colours 0.15 ms more (its doc comments are
+injected layers), so every jump frame paid at least one tile: jump p50 was
++0.84 ms on `jump/7mb-rust` and +0.77 ms wrapped, and typing p99 13.8 ms (off:
+3.4 ms, at load 18 to 22), as a keystroke's frame re-checked a whole tile
+after the edit. Building rows 16 at a time within 0.15 ms brought both under
+budget; a jump's minimap fills in over the frames after it, about a tile every
+four frames in the Rust file. A tile built before is drawn as it was until
+it's built again, so an edit's re-check, a new row moving the tiles below, or
+`Fill` resizing every row never blanks the minimap meanwhile.
+
+Decorations (semantic tokens, faded unnecessary code) say nothing when they
+change, so each frame also begins a sweep of the decorations over the rows
+shown, a tile at a time within the same budget, which goes on between frames
+in steps that draw nothing unless a row's stamp changed, and rebuilds those
+rows. Rows less than a device pixel tall, as `Fill` and `Fit` give a long
+file, are drawn every so many, a pixel each, so the rows cached and the tiles
+held stay as many as the minimap has pixels.
 
 ## Large-file view (`cargo run --release -p fe-fileview --example first_screen` and `--example line_index`)
 
