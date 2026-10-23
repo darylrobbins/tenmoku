@@ -2355,7 +2355,8 @@ impl SearchPanel {
             .collect()
     }
 
-    /// Each row's depth, in [`SearchPanel::shown_rows`].
+    /// Each row's depth, in [`SearchPanel::shown_rows`]. Only the macOS-only tree tests read it.
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn depths(&self) -> Vec<usize> {
         self.depths.clone()
     }
