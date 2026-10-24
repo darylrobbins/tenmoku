@@ -1315,3 +1315,55 @@ fn changes_to_a_key_in_two_user_files_stay_apart(cx: &mut TestAppContext) {
     assert!(read(&dirs.user()).contains("soft_wrap = false"));
     assert!(read(&other.user()).contains("soft_wrap = true"));
 }
+
+#[gpui::test]
+fn typed_text_survives_a_render_after_its_focus_is_gone(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    fs::write(dirs.workspace(), "[editor]\ntab_size = 2\n").unwrap();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "editor.tab_size";
+    let editor = open_settings(&workbench, Scope::Workspace, key, cx);
+    let held = hold_writes(&editor, cx);
+
+    // Typed, then the focus moves off without the blur having committed:
+    // a render, or the file read again, leaves the text.
+    type_into(&format!("setting-input-{key}"), "7", cx);
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    editor.update(cx, |editor, cx| {
+        let read = editor.next_read();
+        let model = fe_config::SettingsModel::new(Some("[editor]\ntab_size = 9\n"), None);
+        editor.show_read(read, model, cx);
+    });
+    draw(cx);
+    assert_eq!(field(&editor, key, cx).0, "7");
+    drop(held);
+}
+
+#[gpui::test]
+fn a_lists_typed_text_survives_a_render_after_its_focus_is_gone(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    fs::write(
+        dirs.workspace(),
+        "[editor]\ncode_actions_on_save = [\"a\"]\n",
+    )
+    .unwrap();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "editor.code_actions_on_save";
+    let editor = open_settings(&workbench, Scope::Workspace, key, cx);
+    let held = hold_writes(&editor, cx);
+
+    click(&format!("setting-add-{key}"), cx);
+    cx.simulate_input("b");
+    draw(cx);
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    editor.update(cx, |editor, cx| {
+        let read = editor.next_read();
+        let model =
+            fe_config::SettingsModel::new(Some("[editor]\ncode_actions_on_save = [\"z\"]\n"), None);
+        editor.show_read(read, model, cx);
+    });
+    draw(cx);
+    let texts = editor.read_with(cx, |editor, cx| editor.list_texts(key, cx));
+    assert_eq!(texts, ["a", "b"]);
+    drop(held);
+}

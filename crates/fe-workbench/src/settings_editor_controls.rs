@@ -418,7 +418,7 @@ impl SettingsEditor {
         };
         if let Some(field) = self.fields.get_mut(&path) {
             field.forget_shown();
-            Self::sync_field(field, &input_text(&value), window, cx);
+            Self::sync_field(field, &input_text(&value), cx);
         }
         if self.lists.contains_key(&path) {
             let list = self.lists.get_mut(&path).expect("checked above");
@@ -651,14 +651,13 @@ impl SettingsEditor {
         }
     }
 
-    /// Gives `field` the file's value, `text`, unless it has focus and
-    /// something typed.
-    fn sync_field(field: &mut Field, text: &str, window: &Window, cx: &mut App) {
+    /// Gives `field` the file's value, `text`, unless something is typed
+    /// that its blur hasn't committed; `forget_shown` forces it.
+    fn sync_field(field: &mut Field, text: &str, cx: &mut App) {
         if field.shown.as_deref() == Some(text) {
             return;
         }
-        let focused = field.input.focus_handle(cx).is_focused(window);
-        if field.shown.is_some() && focused && field.typed(cx) {
+        if field.shown.is_some() && field.typed(cx) {
             return;
         }
         (field.input).update(cx, |input, cx| input.set_text(text.to_owned(), cx));
@@ -695,7 +694,7 @@ impl SettingsEditor {
             self.fields.insert(path.clone(), field);
         }
         let field = self.fields.get_mut(&path).expect("the field was just made");
-        Self::sync_field(field, &text, window, cx);
+        Self::sync_field(field, &text, cx);
         let input = field.input.clone();
         input.update(cx, |input, cx| input.set_typing(!disabled, cx));
         let width = match entry.kind {
@@ -831,8 +830,8 @@ impl SettingsEditor {
     }
 
     /// Gives the list editor of the setting at dotted `path`, made if it
-    /// isn't yet, the file's `items`, unless an item has focus and the
-    /// items have something typed.
+    /// isn't yet, the file's `items`, unless the items have something typed
+    /// that no blur has committed; `forget_shown` forces it.
     fn sync_list(
         &mut self,
         path: &str,
@@ -847,10 +846,8 @@ impl SettingsEditor {
         if list.shown.as_ref() == Some(&items) {
             return;
         }
-        let focused =
-            (list.items.iter()).any(|item| item.input.focus_handle(cx).is_focused(window));
         let typed = list.shown.as_ref() != Some(&list.texts(cx));
-        if list.shown.is_some() && focused && typed {
+        if list.shown.is_some() && typed {
             return;
         }
         // The inputs there are take the items in place, keeping focus.
@@ -859,7 +856,7 @@ impl SettingsEditor {
         for (item, text) in list.items.iter_mut().zip(&items) {
             item.shown = None;
             item.added = false;
-            Self::sync_field(item, text, window, cx);
+            Self::sync_field(item, text, cx);
         }
         list.shown = Some(items.clone());
         for text in items.into_iter().skip(have) {
