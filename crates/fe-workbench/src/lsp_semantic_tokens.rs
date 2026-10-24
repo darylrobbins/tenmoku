@@ -75,6 +75,8 @@ pub(super) fn highlight_name<M: AsRef<str>>(
             }
         }
         "string" => "string",
+        "formatSpecifier" => "string.placeholder",
+        "escapeSequence" => "escape",
         "number" => "number",
         "operator" => "operator",
         _ => return None,

@@ -219,3 +219,6 @@ mod timeout;
 
 #[path = "lsp_semantic_underline_colour.rs"]
 mod underline_colour;
+
+#[path = "lsp_semantic_format_specifier.rs"]
+mod format_specifier;

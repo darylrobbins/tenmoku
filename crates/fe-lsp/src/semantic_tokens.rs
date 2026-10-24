@@ -80,7 +80,7 @@ struct Legend {
 }
 
 /// The token types fastedit names (all the standard ones).
-pub(crate) const TOKEN_TYPES: [SemanticTokenType; 23] = [
+pub(crate) const TOKEN_TYPES: [SemanticTokenType; 25] = [
     SemanticTokenType::NAMESPACE,
     SemanticTokenType::TYPE,
     SemanticTokenType::CLASS,
@@ -104,6 +104,8 @@ pub(crate) const TOKEN_TYPES: [SemanticTokenType; 23] = [
     SemanticTokenType::REGEXP,
     SemanticTokenType::OPERATOR,
     SemanticTokenType::DECORATOR,
+    SemanticTokenType::new("formatSpecifier"),
+    SemanticTokenType::new("escapeSequence"),
 ];
 
 /// The token modifiers fastedit names (all the standard ones).

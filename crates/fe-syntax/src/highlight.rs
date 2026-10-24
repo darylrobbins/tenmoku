@@ -32,6 +32,7 @@ const NAMES: &[&str] = &[
     "punctuation.delimiter",
     "punctuation.special",
     "string",
+    "string.placeholder",
     "string.special",
     "string.special.key",
     "tag",

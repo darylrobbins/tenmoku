@@ -405,7 +405,7 @@ fn semantic_token_capabilities_are_advertised() {
                 "namespace", "type", "class", "enum", "interface", "struct",
                 "typeParameter", "parameter", "variable", "property", "enumMember",
                 "event", "function", "method", "macro", "keyword", "modifier",
-                "comment", "string", "number", "regexp", "operator", "decorator",
+                "comment", "string", "number", "regexp", "operator", "decorator", "formatSpecifier", "escapeSequence",
             ],
             "tokenModifiers": [
                 "declaration", "definition", "readonly", "static", "deprecated",

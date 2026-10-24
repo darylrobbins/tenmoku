@@ -3019,7 +3019,8 @@ fn styled_highlights(
 
 /// The colours of the `Foreground` decorations among `decorations`, in paint
 /// order, sorted and non-overlapping, later decorations winning where they
-/// overlap. A name the theme doesn't colour is left out.
+/// overlap. A name the theme doesn't colour is the foreground; one outside
+/// our vocabulary is left out.
 fn foreground_spans(
     decorations: &[fe_editor::decorations::Decoration],
     theme: &EditorTheme,
@@ -3032,8 +3033,10 @@ fn foreground_spans(
         if decoration.range.is_empty() {
             continue;
         }
+        // A name the theme leaves to the foreground (`variable`) still
+        // overrides the colour under it, as the string around `{error}`.
         let Some(style) = fe_syntax::Highlight::from_capture(name)
-            .and_then(|highlight| theme.syntax_color(highlight))
+            .map(|highlight| theme.syntax_color(highlight).unwrap_or(theme.foreground))
         else {
             continue;
         };
@@ -3123,6 +3126,8 @@ fn visible_columns(scroll_x: f32, text_width: f32, space: f32) -> Option<Range<u
     Some(left..left + width)
 }
 
+#[cfg(test)]
+mod foreground_spans_tests;
 #[cfg(test)]
 mod highlight_limit_tests;
 #[cfg(test)]
