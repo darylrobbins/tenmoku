@@ -71,7 +71,7 @@ notify = "8"
 # (gix-blame, MIT OR Apache-2.0), `sha1`, and `parallel` (without it
 # ThreadSafeRepository holds `Rc`s and isn't Send): no network, HTTP, TLS or
 # credential features.
-gix = { version = "0.89", default-features = false, features = ["status", "blame", "sha1", "parallel"] }
+gix = { version = "0.90", default-features = false, features = ["status", "blame", "sha1", "parallel"] }
 # Cmd-P fuzzy matching of project paths (MIT; no runtime dependencies by default).
 frizbee = "0.13"
 # Project search: ripgrep's searcher and regex matcher, without the `grep`
