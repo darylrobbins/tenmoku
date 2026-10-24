@@ -282,6 +282,7 @@ impl Runs {
     /// while hovered.
     pub(crate) fn render(self, cx: &mut RenderCx) -> AnyElement {
         let id = cx.next_text();
+        crate::PaintedRuns::record(cx.app, &self.text, &self.runs);
         let text = StyledText::new(self.text).with_runs(self.runs);
         if self.links.is_empty() {
             return text.into_any_element();

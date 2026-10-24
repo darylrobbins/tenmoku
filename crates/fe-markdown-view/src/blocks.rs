@@ -317,6 +317,7 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 });
             let code = code.strip_suffix('\n').unwrap_or(code);
             let runs = style.code_runs(code, highlights);
+            crate::PaintedRuns::record(cx.app, code, &runs);
             let block = div()
                 .id(("md-code", id))
                 .debug_selector(|| format!("md-code-{id}"))

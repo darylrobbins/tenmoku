@@ -34,8 +34,55 @@ mod style;
 mod table;
 mod view;
 
+use gpui::{App, Global, TextRun};
+
 pub use blocks::{CodeHeader, CodeHeaderFn, ElementOptions, Images, document_element};
 pub use compact::markdown_element;
 pub use style::MarkdownStyle;
 pub use view::LinkHandler;
 pub use view::{MarkdownView, MarkdownViewEvent};
+
+/// A test seam: the text and [`TextRun`]s of each `StyledText` the renderer
+/// builds, for asserting the colours that are painted, which a headless
+/// GPUI test cannot read back.
+///
+/// Nothing is recorded, and the renderer does nothing extra, unless the
+/// Global is installed with [`PaintedRuns::set`]. A frame records every
+/// styled text it builds, so [`PaintedRuns::take`] after the draw you mean.
+#[derive(Default)]
+pub struct PaintedRuns(Vec<(String, Vec<TextRun>)>);
+
+impl Global for PaintedRuns {}
+
+impl PaintedRuns {
+    /// Starts recording, dropping anything recorded before.
+    pub fn set(cx: &mut App) {
+        cx.set_global(Self::default());
+    }
+
+    /// What has been recorded since the last take, in build order; empty
+    /// if not recording.
+    pub fn take(cx: &mut App) -> Vec<(String, Vec<TextRun>)> {
+        if cx.has_global::<Self>() {
+            std::mem::take(&mut cx.global_mut::<Self>().0)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Stops recording.
+    pub fn clear(cx: &mut App) {
+        if cx.has_global::<Self>() {
+            cx.remove_global::<Self>();
+        }
+    }
+
+    /// Records `text` with `runs` if recording.
+    pub(crate) fn record(cx: &mut App, text: &str, runs: &[TextRun]) {
+        if cx.has_global::<Self>() {
+            cx.global_mut::<Self>()
+                .0
+                .push((text.to_owned(), runs.to_vec()));
+        }
+    }
+}
