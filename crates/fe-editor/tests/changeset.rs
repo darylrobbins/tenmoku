@@ -1,0 +1,486 @@
+//! `Changeset`: one turn's proposals for several files, reviewed together.
+
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
+
+use fe_buffer::{Buffer, BufferId, Origin, ProposedChange};
+use fe_editor::{BufferSet, Changeset, ChangesetError, RevertOutcome};
+
+const TWO_FNS: &str = "fn one() {\n    1\n}\n\nfn two() {\n    2\n}\n";
+
+#[derive(Default)]
+struct Set {
+    buffers: HashMap<BufferId, Buffer>,
+}
+
+impl BufferSet for Set {
+    fn buffer_mut(&mut self, id: BufferId) -> Option<&mut Buffer> {
+        self.buffers.get_mut(&id)
+    }
+    fn create(&mut self, _path: &Path, text: &str) -> Option<BufferId> {
+        let buffer = Buffer::new(text);
+        let id = buffer.id();
+        self.buffers.insert(id, buffer);
+        Some(id)
+    }
+    fn remove(&mut self, id: BufferId) -> bool {
+        self.buffers.remove(&id).is_some()
+    }
+}
+
+impl Set {
+    fn text(&self, id: BufferId) -> String {
+        self.buffers[&id].text().to_string()
+    }
+}
+
+fn ai() -> Origin {
+    Origin::Ai {
+        agent: "claude".into(),
+        session: "s".into(),
+    }
+}
+
+/// A buffer of `TWO_FNS` with both bodies proposed to change.
+fn file(set: &mut Set, cs: &mut Changeset, path: &str) -> (BufferId, Rc<RefCell<ProposedChange>>) {
+    let buffer = Buffer::new(TWO_FNS);
+    let id = buffer.id();
+    let base = buffer.snapshot();
+    let new = TWO_FNS
+        .replace("    1\n", "    10\n")
+        .replace("    2\n", "    20\n");
+    let proposal = Rc::new(RefCell::new(ProposedChange::from_text(
+        &base,
+        0..base.len(),
+        &new,
+        ai(),
+    )));
+    set.buffers.insert(id, buffer);
+    cs.add_file(path, id, proposal.clone());
+    (id, proposal)
+}
+
+fn hunk_ids(set: &Set, id: BufferId, p: &Rc<RefCell<ProposedChange>>) -> Vec<fe_buffer::HunkId> {
+    p.borrow()
+        .hunks(set.buffers[&id].current())
+        .iter()
+        .map(|h| h.id)
+        .collect()
+}
+
+type Proposed = (BufferId, Rc<RefCell<ProposedChange>>);
+
+fn fixture() -> (Set, Changeset, [Proposed; 2]) {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("turn-1", ai());
+    let a = file(&mut set, &mut cs, "a.rs");
+    let b = file(&mut set, &mut cs, "b.rs");
+    (set, cs, [a, b])
+}
+
+#[test]
+fn files_listed_in_order_with_counts() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    let files = cs.files(&mut set);
+    let paths: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(paths, [PathBuf::from("a.rs"), PathBuf::from("b.rs")]);
+    let c = files[0].counts;
+    assert_eq!((c.hunks, c.pending, c.accepted, c.rejected), (2, 0, 1, 1));
+    let c = files[1].counts;
+    assert_eq!((c.hunks, c.pending, c.accepted, c.rejected), (2, 2, 0, 0));
+}
+
+#[test]
+fn summary_totals() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    let s = cs.summary(&mut set);
+    assert_eq!(s.files, 2);
+    let c = s.counts;
+    assert_eq!((c.hunks, c.pending, c.accepted, c.rejected), (4, 3, 1, 0));
+}
+
+#[test]
+fn accept_one_hunk() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    assert_eq!(set.text(ida), TWO_FNS.replace("    2\n", "    20\n"));
+    assert_eq!(
+        cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]),
+        Err(ChangesetError::NotPending {
+            path: "a.rs".into()
+        })
+    );
+}
+
+#[test]
+fn accept_file() {
+    let (mut set, mut cs, [(ida, _), (idb, _)]) = fixture();
+    let ids = cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        set.text(ida),
+        TWO_FNS
+            .replace("    1\n", "    10\n")
+            .replace("    2\n", "    20\n")
+    );
+    assert_eq!(set.text(idb), TWO_FNS);
+}
+
+#[test]
+fn accept_all_skips_conflicting_file_and_reports_it() {
+    let (mut set, mut cs, [(ida, _), (idb, _)]) = fixture();
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(15..16, "9")], Origin::User);
+    let results = cs.accept_all(&mut set);
+    assert_eq!(
+        results[0].1,
+        Err(ChangesetError::Conflict {
+            path: "a.rs".into()
+        })
+    );
+    assert!(results[1].1.is_ok());
+    assert_eq!(
+        set.text(idb),
+        TWO_FNS
+            .replace("    1\n", "    10\n")
+            .replace("    2\n", "    20\n")
+    );
+    assert!(set.text(ida).contains("    9\n"));
+    // A missing buffer conflicts too.
+    set.buffers.remove(&ida);
+    assert!(matches!(
+        cs.accept_file(&mut set, Path::new("a.rs")),
+        Err(ChangesetError::Conflict { .. })
+    ));
+}
+
+#[test]
+fn reject_all_leaves_text_untouched() {
+    let (mut set, mut cs, [(ida, pa), (idb, pb)]) = fixture();
+    let results = cs.reject_all(&mut set);
+    assert!(results.iter().all(|(_, r)| r.is_ok()));
+    assert_eq!(set.text(ida), TWO_FNS);
+    assert_eq!(set.text(idb), TWO_FNS);
+    assert!(pa.borrow().is_resolved() && pb.borrow().is_resolved());
+    assert_eq!(cs.summary(&mut set).counts.rejected, 4);
+}
+
+#[test]
+fn resolved_when_every_hunk_decided() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    assert!(!cs.is_resolved());
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    assert!(!cs.is_resolved());
+    cs.reject_file(&mut set, Path::new("b.rs")).unwrap();
+    assert!(cs.is_resolved());
+    let _ = (ida, pa);
+}
+
+#[test]
+fn revert_restores_pre_accept_text() {
+    let (mut set, mut cs, [(ida, pa), (idb, _)]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.accept_file(&mut set, Path::new("b.rs")).unwrap();
+    let out = cs.revert(&mut set);
+    assert_eq!(
+        out,
+        [
+            RevertOutcome::Reverted {
+                path: "a.rs".into(),
+                reapplied: true
+            },
+            RevertOutcome::Reverted {
+                path: "b.rs".into(),
+                reapplied: true
+            },
+        ]
+    );
+    assert_eq!(set.text(ida), TWO_FNS);
+    assert_eq!(set.text(idb), TWO_FNS);
+}
+
+#[test]
+fn revert_after_user_edit_needs_confirm() {
+    let (mut set, mut cs, [(ida, _), _]) = fixture();
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(0..0, "// hi\n")], Origin::User);
+    let before = set.text(ida);
+    assert_eq!(
+        cs.revert(&mut set),
+        [RevertOutcome::NeedsConfirm {
+            path: "a.rs".into()
+        }]
+    );
+    assert_eq!(set.text(ida), before);
+}
+
+#[test]
+fn revert_forced_restores_base() {
+    let (mut set, mut cs, [(ida, _), _]) = fixture();
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(0..0, "// hi\n")], Origin::User);
+    assert_eq!(
+        cs.revert_forced(&mut set),
+        [RevertOutcome::Reverted {
+            path: "a.rs".into(),
+            reapplied: true
+        }]
+    );
+    assert_eq!(set.text(ida), TWO_FNS);
+}
+
+#[test]
+fn revert_makes_hunks_pending_again() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    cs.revert(&mut set);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending, c.accepted), (2, 2, 0));
+    assert!(!pa.borrow().is_resolved());
+    // And they accept again.
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    assert!(set.text(ida).contains("    10\n"));
+}
+
+#[test]
+fn revert_with_nothing_accepted_is_noop() {
+    let (mut set, mut cs, [(ida, _), _]) = fixture();
+    cs.reject_all(&mut set);
+    assert!(cs.revert(&mut set).is_empty());
+    assert_eq!(set.text(ida), TWO_FNS);
+}
+
+#[test]
+fn new_file_entry_accept_and_revert() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    cs.add_new_file("new.rs", "fn n() {}\n");
+    assert_eq!(cs.files(&mut set)[0].counts.pending, 1);
+    assert!(set.buffers.is_empty());
+    cs.accept_file(&mut set, Path::new("new.rs")).unwrap();
+    assert_eq!(set.buffers.len(), 1);
+    assert_eq!(
+        set.buffers.values().next().unwrap().text().to_string(),
+        "fn n() {}\n"
+    );
+    assert_eq!(cs.files(&mut set)[0].counts.accepted, 1);
+    assert_eq!(
+        cs.revert(&mut set),
+        [RevertOutcome::Reverted {
+            path: "new.rs".into(),
+            reapplied: false
+        }]
+    );
+    assert!(set.buffers.is_empty());
+    assert_eq!(cs.files(&mut set)[0].counts.pending, 1);
+}
+
+#[test]
+fn failed_or_empty_accepts_leave_no_checkpoint() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    assert!(cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).is_err());
+    cs.reject_file(&mut set, Path::new("a.rs")).unwrap();
+    assert!(
+        cs.accept_file(&mut set, Path::new("a.rs"))
+            .unwrap()
+            .is_empty()
+    );
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(0..0, "// hi\n")], Origin::User);
+    let before = set.text(ida);
+    assert!(cs.revert(&mut set).is_empty());
+    assert!(cs.revert_forced(&mut set).is_empty());
+    assert_eq!(set.text(ida), before);
+}
+
+#[test]
+fn collapsed_insertions_accept_and_revert() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let mut buffer = Buffer::new("a\nb\nc\n");
+    let base = buffer.snapshot();
+    let p = ProposedChange::from_text(&base, 0..base.len(), "a\nX\nb\nY\nc\n", ai());
+    buffer.edit([(2..4, "")], Origin::User);
+    let id = buffer.id();
+    set.buffers.insert(id, buffer);
+    cs.add_file("c.txt", id, Rc::new(RefCell::new(p)));
+    cs.accept_file(&mut set, Path::new("c.txt")).unwrap();
+    assert_eq!(set.text(id), "a\nX\nY\nc\n");
+    cs.revert(&mut set);
+    assert_eq!(set.text(id), "a\nc\n");
+    assert!(cs.files(&mut set)[0].counts.pending >= 1);
+}
+
+#[test]
+fn missing_buffer_reports_last_known_counts() {
+    let (mut set, mut cs, [(ida, pa), (idb, _)]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    set.buffers.remove(&ida);
+    set.buffers.remove(&idb);
+    let files = cs.files(&mut set);
+    assert!(files[0].missing && files[1].missing);
+    assert!(files[0].counts_known && !files[1].counts_known);
+    assert_eq!((files[0].counts.hunks, files[0].counts.accepted), (2, 1));
+}
+
+#[test]
+fn counts_survive_a_vanished_buffer_after_reject_and_conflict() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let buffer = Buffer::new(TWO_FNS);
+    let id = buffer.id();
+    let base = buffer.snapshot();
+    let new = TWO_FNS
+        .replace("    1\n", "    10\n")
+        .replace("    2\n", "    20\n");
+    let p = Rc::new(RefCell::new(ProposedChange::from_text(
+        &base,
+        0..base.len(),
+        &new,
+        ai(),
+    )));
+    set.buffers.insert(id, buffer);
+    cs.add_file_seen(&mut set, "a.rs", id, p.clone());
+    let ids = hunk_ids(&set, id, &p);
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    set.buffers
+        .get_mut(&id)
+        .unwrap()
+        .edit([(35..36, "9")], Origin::User);
+    assert!(cs.accept_file(&mut set, Path::new("a.rs")).is_err());
+    set.buffers.remove(&id);
+    let f = cs.files(&mut set);
+    assert!(f[0].missing);
+    let c = f[0].counts;
+    assert_eq!((c.hunks, c.rejected, c.stale), (2, 1, 1));
+}
+
+struct NoRemove(Set);
+
+impl BufferSet for NoRemove {
+    fn buffer_mut(&mut self, id: BufferId) -> Option<&mut Buffer> {
+        self.0.buffer_mut(id)
+    }
+    fn create(&mut self, path: &Path, text: &str) -> Option<BufferId> {
+        self.0.create(path, text)
+    }
+}
+
+#[test]
+fn new_file_revert_conflicts_when_it_cannot_remove() {
+    let mut set = NoRemove(Set::default());
+    let mut cs = Changeset::new("t", ai());
+    cs.add_new_file("new.rs", "x\n");
+    cs.accept_file(&mut set, Path::new("new.rs")).unwrap();
+    assert_eq!(
+        cs.revert(&mut set),
+        [RevertOutcome::Conflict {
+            path: "new.rs".into()
+        }]
+    );
+    assert_eq!(cs.files(&mut set)[0].counts.accepted, 1);
+    assert_eq!(set.0.buffers.len(), 1);
+}
+
+#[test]
+fn first_listing_of_an_available_buffer_is_not_missing() {
+    let (mut set, mut cs, _) = fixture();
+    let files = cs.files(&mut set);
+    assert!(files.iter().all(|f| !f.missing && f.counts_known));
+    assert_eq!(files[0].counts.hunks, 2);
+}
+
+#[test]
+fn reject_hunk_on_a_vanished_buffer_conflicts_without_mutating() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let (id, p) = file(&mut set, &mut cs, "a.rs");
+    let ids = hunk_ids(&set, id, &p);
+    let buffer = set.buffers.remove(&id).unwrap();
+    assert_eq!(
+        cs.reject_hunk(&mut set, Path::new("a.rs"), ids[0]),
+        Err(ChangesetError::Conflict {
+            path: "a.rs".into()
+        })
+    );
+    set.buffers.insert(id, buffer);
+    // Still pending: the failed reject changed nothing.
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    assert_eq!(cs.files(&mut set)[0].counts.rejected, 1);
+}
+
+#[test]
+fn revert_keeps_a_stale_sibling_pending() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    // The user edits under the second hunk, making it stale.
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(35..36, "9")], Origin::User);
+    let edited = set.text(ida);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    assert_eq!(cs.files(&mut set)[0].counts.stale, 1);
+    // Nothing else edited since the accept.
+    cs.revert(&mut set);
+    assert_eq!(set.text(ida), edited);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending, c.stale, c.accepted), (2, 2, 0, 0));
+}
+
+#[test]
+fn accepted_new_file_whose_buffer_vanished_conflicts() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    cs.add_new_file("new.rs", "x\n");
+    cs.accept_file(&mut set, Path::new("new.rs")).unwrap();
+    set.buffers.clear();
+    assert!(cs.files(&mut set)[0].missing);
+    assert!(matches!(
+        cs.accept_file(&mut set, Path::new("new.rs")),
+        Err(ChangesetError::Conflict { .. })
+    ));
+    assert!(matches!(
+        cs.reject_file(&mut set, Path::new("new.rs")),
+        Err(ChangesetError::Conflict { .. })
+    ));
+}
+
+#[test]
+fn plain_add_file_has_unknown_counts_until_read() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let (id, _) = file(&mut set, &mut cs, "a.rs");
+    let buffer = set.buffers.remove(&id).unwrap();
+    let files = cs.files(&mut set);
+    assert!(!files[0].counts_known && files[0].missing);
+    set.buffers.insert(id, buffer);
+    let files = cs.files(&mut set);
+    assert!(files[0].counts_known && !files[0].missing);
+    assert_eq!(files[0].counts.hunks, 2);
+}

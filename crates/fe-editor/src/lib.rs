@@ -23,6 +23,7 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 mod auto_indent;
 pub mod auto_save;
 mod case_transform;
+pub mod changeset;
 mod column_select;
 pub mod commands;
 mod comment;
@@ -51,6 +52,9 @@ mod typing;
 mod viewer;
 
 pub use auto_indent::IndentSuggestion;
+pub use changeset::{
+    BufferSet, Changeset, ChangesetError, Counts, FileEntry, RevertOutcome, Summary,
+};
 pub use comment::CommentTokens;
 pub use disk::{SaveError, SaveJob, Saved, save_target};
 pub use indent_style::{IndentStyle, detect_indent_style};

@@ -1,0 +1,735 @@
+//! A headless AI changeset: the proposals one chat turn made for several
+//! files, reviewed together. Per-file and per-hunk accept and reject, accept
+//! all, reject all, a summary, and a checkpoint that reverts everything the
+//! turn accepted.
+//!
+//! A [`Changeset`] owns no buffers and no GPUI. It holds the same
+//! `Rc<RefCell<ProposedChange>>` the editor view and `ScriptedAi` hold, and
+//! borrows buffers per call through a [`BufferSet`] the workbench implements.
+//!
+//! Accepting goes through [`ProposedChange::accept_as`] with [`Origin::User`],
+//! so each accept is a user-origin transaction, as the proposal API defines.
+//!
+//! # Counts
+//!
+//! `ProposedChange` exposes no hunk count without a `BufferSnapshot`, and
+//! `add_file` is not given one. [`Changeset::add_file_seen`] reads the counts
+//! from the buffer in a [`BufferSet`]; plain `add_file` records the file with
+//! [`FileEntry::counts_known`] false. Counts are then read whenever the
+//! buffer is reachable (a listing, summary or any decision) and kept for when
+//! it is not. A file whose counts were never read lists zero with
+//! `counts_known` false, never `missing` for an available buffer. Documented
+//! limit; follow-up T240 (an `fe-buffer` addition) lifts it.
+//!
+//! # Checkpoint
+//!
+//! The first accept in a file that applies something records its pre-accept
+//! text and version, then the version after every accept and the
+//! [`TransactionId`]s. `fe-buffer` has no undo-by-id primitive:
+//! [`Buffer::undo`] takes the newest transaction matching an origin filter,
+//! which cannot tell this changeset's accepts from the user's other
+//! transactions. So revert uses the version check and a text restore only:
+//! [`Changeset::revert`] replaces the file's text with the pre-accept text as
+//! one new transaction (`reapplied: true`) when the buffer's version is the
+//! one after the last accept and nothing edited between accepts. A file
+//! edited since is never overwritten by it; it reports
+//! [`RevertOutcome::NeedsConfirm`], and [`Changeset::revert_forced`]
+//! restores the text anyway. The recorded transaction ids stay in the
+//! checkpoint for a host that gains undo-by-id.
+//!
+//! `ProposedChange` cannot return an accepted hunk to pending, so after a
+//! revert the shared proposal is replaced by a fresh one over the restored
+//! text, made from the hunks as they stood at the first accept (insertions
+//! that user edits had merged into one point become one insertion). Its hunk
+//! ids are new, and hunks rejected earlier are pending again.
+//!
+//! Documented limit: a stale hunk whose new text already equals its proposed
+//! text, or a stale deletion already done, is not rebuilt as pending after
+//! revert, because `ProposedChange::from_edits` drops no-op edits and cannot
+//! reset a hunk to pending. Every other stale sibling stays pending. Follow-up
+//! T240 (an `fe-buffer` addition) lifts it.
+
+use std::{
+    cell::RefCell,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
+
+use fe_buffer::{
+    Buffer, BufferId, HunkId, HunkStatus, Origin, ProposalError, ProposedChange, TransactionId,
+    Version,
+};
+
+/// The buffers a changeset reaches, by id. The workbench implements this;
+/// tests implement it over a map.
+pub trait BufferSet {
+    fn buffer_mut(&mut self, id: BufferId) -> Option<&mut Buffer>;
+
+    /// Creates a buffer holding `text` for a new file. `None` if it can't.
+    fn create(&mut self, _path: &Path, _text: &str) -> Option<BufferId> {
+        None
+    }
+
+    /// Removes a buffer made by [`BufferSet::create`]. Whether it was there.
+    fn remove(&mut self, _id: BufferId) -> bool {
+        false
+    }
+}
+
+/// Why a hunk or file could not be decided.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ChangesetError {
+    /// The file's buffer is gone, or its text moved so a hunk no longer
+    /// applies. Nothing was applied to the file.
+    Conflict { path: PathBuf },
+    /// The changeset has no such file.
+    NoSuchFile { path: PathBuf },
+    /// The hunk is not pending, or is not in that file (or the file is a new
+    /// file, which is decided whole).
+    NotPending { path: PathBuf },
+}
+
+impl std::fmt::Display for ChangesetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conflict { path } => {
+                write!(f, "{} changed since it was proposed", path.display())
+            }
+            Self::NoSuchFile { path } => write!(f, "{} is not in the changeset", path.display()),
+            Self::NotPending { path } => {
+                write!(f, "that hunk of {} is not pending", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for ChangesetError {}
+
+/// Hunk counts of one file, or the totals of a changeset.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub hunks: usize,
+    pub pending: usize,
+    pub accepted: usize,
+    pub rejected: usize,
+    /// Hunks whose text changed under them; they can only be rejected.
+    pub stale: usize,
+}
+
+impl Counts {
+    fn add(&mut self, other: Counts) {
+        self.hunks += other.hunks;
+        self.pending += other.pending;
+        self.accepted += other.accepted;
+        self.rejected += other.rejected;
+        self.stale += other.stale;
+    }
+}
+
+/// One file of a changeset, as listed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileEntry {
+    pub path: PathBuf,
+    /// A file the turn creates; it counts as one hunk.
+    pub is_new: bool,
+    /// The buffer is gone, so `counts` is as last read.
+    pub missing: bool,
+    pub counts: Counts,
+    /// Whether `counts` was ever read; false only for a file whose buffer
+    /// vanished before any listing or decision (see the module docs).
+    pub counts_known: bool,
+}
+
+/// The totals over every file.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub files: usize,
+    pub counts: Counts,
+}
+
+/// What reverting did to one file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RevertOutcome {
+    /// Back to its text before the turn, by one new transaction restoring it
+    /// (`reapplied` is always true until the buffer can undo by id), or, for a
+    /// new file, by removing it.
+    Reverted { path: PathBuf, reapplied: bool },
+    /// Edited since the last accept; [`Changeset::revert_forced`] overwrites.
+    NeedsConfirm { path: PathBuf },
+    /// The file's buffer is gone; nothing to revert.
+    Conflict { path: PathBuf },
+}
+
+enum Kind {
+    Existing {
+        buffer: BufferId,
+        proposal: Rc<RefCell<ProposedChange>>,
+        checkpoint: Option<Checkpoint>,
+        /// The counts last read, for when the buffer is missing.
+        last: Option<Counts>,
+    },
+    New {
+        text: String,
+        state: NewState,
+    },
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum NewState {
+    Pending,
+    Accepted { buffer: BufferId, version: Version },
+    Rejected,
+}
+
+/// What the first accept in a file recorded.
+struct Checkpoint {
+    text: String,
+    /// The hunks at the first accept, in the coordinates of `text`.
+    edits: Vec<(Range<usize>, Arc<str>)>,
+    transactions: Vec<TransactionId>,
+    /// The buffer's version after the last accept.
+    after: Version,
+    /// Whether anything else edited between accepts.
+    interleaved: bool,
+}
+
+struct File {
+    path: PathBuf,
+    kind: Kind,
+}
+
+pub struct Changeset {
+    turn_id: String,
+    origin: Origin,
+    files: Vec<File>,
+}
+
+impl Changeset {
+    pub fn new(turn_id: impl Into<String>, origin: Origin) -> Self {
+        Self {
+            turn_id: turn_id.into(),
+            origin,
+            files: Vec::new(),
+        }
+    }
+
+    pub fn turn_id(&self) -> &str {
+        &self.turn_id
+    }
+
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// Adds a file the turn proposes edits to, after the files added so far.
+    pub fn add_file(
+        &mut self,
+        path: impl Into<PathBuf>,
+        buffer: BufferId,
+        proposal: Rc<RefCell<ProposedChange>>,
+    ) {
+        self.files.push(File {
+            path: path.into(),
+            kind: Kind::Existing {
+                buffer,
+                proposal,
+                checkpoint: None,
+                last: None,
+            },
+        });
+    }
+
+    /// As [`Changeset::add_file`], also reading the hunk counts from
+    /// the buffer in `set`, so they are known even if it later vanishes.
+    pub fn add_file_seen(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: impl Into<PathBuf>,
+        buffer: BufferId,
+        proposal: Rc<RefCell<ProposedChange>>,
+    ) {
+        let counts = set
+            .buffer_mut(buffer)
+            .map(|buf| count(&proposal.borrow().hunks(buf.current())));
+        self.add_file(path, buffer, proposal);
+        if let Some(File {
+            kind: Kind::Existing { last, .. },
+            ..
+        }) = self.files.last_mut()
+        {
+            *last = counts;
+        }
+    }
+
+    /// Adds a file the turn creates, with its whole `text`.
+    pub fn add_new_file(&mut self, path: impl Into<PathBuf>, text: impl Into<String>) {
+        self.files.push(File {
+            path: path.into(),
+            kind: Kind::New {
+                text: text.into(),
+                state: NewState::Pending,
+            },
+        });
+    }
+
+    /// The files in insertion order with their counts.
+    pub fn files(&mut self, set: &mut impl BufferSet) -> Vec<FileEntry> {
+        self.files
+            .iter_mut()
+            .map(|file| FileEntry {
+                path: file.path.clone(),
+                is_new: matches!(file.kind, Kind::New { .. }),
+                missing: file.is_missing(set),
+                counts: file.counts(set),
+                counts_known: file.counts_known(),
+            })
+            .collect()
+    }
+
+    pub fn summary(&mut self, set: &mut impl BufferSet) -> Summary {
+        let mut summary = Summary::default();
+        for file in &mut self.files {
+            summary.files += 1;
+            summary.counts.add(file.counts(set));
+        }
+        summary
+    }
+
+    /// Whether no hunk of any file is pending any more.
+    pub fn is_resolved(&self) -> bool {
+        self.files.iter().all(|file| match &file.kind {
+            Kind::Existing { proposal, .. } => proposal.borrow().is_resolved(),
+            Kind::New { state, .. } => *state != NewState::Pending,
+        })
+    }
+
+    /// Accepts one pending hunk of `path`.
+    ///
+    /// # Errors
+    /// [`ChangesetError::Conflict`] if the buffer is missing or the hunk's
+    /// text moved, [`ChangesetError::NotPending`] if it is decided or unknown.
+    pub fn accept_hunk(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+        hunk: HunkId,
+    ) -> Result<TransactionId, ChangesetError> {
+        let file = self.file_mut(path)?;
+        let Kind::Existing {
+            buffer,
+            proposal,
+            checkpoint,
+            last,
+        } = &mut file.kind
+        else {
+            return Err(ChangesetError::NotPending {
+                path: file.path.clone(),
+            });
+        };
+        let conflict = || ChangesetError::Conflict {
+            path: path.to_path_buf(),
+        };
+        let buf = set.buffer_mut(*buffer).ok_or_else(conflict)?;
+        let mut proposal = proposal.borrow_mut();
+        let prep = prepare(checkpoint, &proposal, buf);
+        let result = proposal.accept_as(buf, hunk, Origin::User);
+        *last = Some(count(&proposal.hunks(buf.current())));
+        match result {
+            Ok(id) => {
+                commit(checkpoint, prep, buf, &[id]);
+                Ok(id)
+            }
+            Err(ProposalError::Stale) => Err(conflict()),
+            Err(ProposalError::NotPending) => Err(ChangesetError::NotPending {
+                path: path.to_path_buf(),
+            }),
+        }
+    }
+
+    /// Rejects one hunk of `path`; the buffer is untouched.
+    ///
+    /// # Errors
+    /// [`ChangesetError::Conflict`] if the buffer is missing (nothing changes),
+    /// [`ChangesetError::NotPending`] if it is decided or unknown.
+    pub fn reject_hunk(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+        hunk: HunkId,
+    ) -> Result<(), ChangesetError> {
+        let file = self.file_mut(path)?;
+        match &mut file.kind {
+            Kind::Existing {
+                buffer,
+                proposal,
+                last,
+                ..
+            } => {
+                let buf = set.buffer_mut(*buffer).ok_or_else(|| conflict_for(path))?;
+                let mut proposal = proposal.borrow_mut();
+                let result = proposal
+                    .reject(hunk)
+                    .map_err(|_| ChangesetError::NotPending {
+                        path: path.to_path_buf(),
+                    });
+                *last = Some(count(&proposal.hunks(buf.current())));
+                result
+            }
+            Kind::New { .. } => Err(ChangesetError::NotPending {
+                path: path.to_path_buf(),
+            }),
+        }
+    }
+
+    /// Accepts every pending hunk of `path`, or none: a file with a stale
+    /// hunk or a missing buffer is a conflict and is left as it was.
+    ///
+    /// # Errors
+    /// [`ChangesetError::Conflict`], [`ChangesetError::NoSuchFile`].
+    pub fn accept_file(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+    ) -> Result<Vec<TransactionId>, ChangesetError> {
+        let file = self.file_mut(path)?;
+        file.accept(set)
+    }
+
+    /// Rejects every pending hunk of `path`.
+    ///
+    /// # Errors
+    /// [`ChangesetError::NoSuchFile`]; [`ChangesetError::Conflict`] if the
+    /// buffer is missing, since the hunks can't be listed without it.
+    pub fn reject_file(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+    ) -> Result<(), ChangesetError> {
+        self.file_mut(path)?.reject(set)
+    }
+
+    /// Accepts every file, carrying on past a conflicting one. One result per
+    /// file, in order.
+    pub fn accept_all(
+        &mut self,
+        set: &mut impl BufferSet,
+    ) -> Vec<(PathBuf, Result<Vec<TransactionId>, ChangesetError>)> {
+        self.files
+            .iter_mut()
+            .map(|file| (file.path.clone(), file.accept(set)))
+            .collect()
+    }
+
+    /// Rejects every pending hunk of every file; no text is touched. A file
+    /// whose buffer is missing reports a conflict and the rest carry on.
+    pub fn reject_all(
+        &mut self,
+        set: &mut impl BufferSet,
+    ) -> Vec<(PathBuf, Result<(), ChangesetError>)> {
+        self.files
+            .iter_mut()
+            .map(|file| (file.path.clone(), file.reject(set)))
+            .collect()
+    }
+
+    /// Undoes what this changeset accepted, per file; see the module docs.
+    /// Files with nothing accepted are left out.
+    pub fn revert(&mut self, set: &mut impl BufferSet) -> Vec<RevertOutcome> {
+        self.revert_with(set, false)
+    }
+
+    /// As [`Changeset::revert`], but a file edited since is restored too.
+    pub fn revert_forced(&mut self, set: &mut impl BufferSet) -> Vec<RevertOutcome> {
+        self.revert_with(set, true)
+    }
+
+    fn revert_with(&mut self, set: &mut impl BufferSet, force: bool) -> Vec<RevertOutcome> {
+        let mut out = Vec::new();
+        for file in &mut self.files {
+            let path = file.path.clone();
+            match &mut file.kind {
+                Kind::Existing {
+                    buffer,
+                    proposal,
+                    checkpoint,
+                    last,
+                } => {
+                    let Some(cp) = checkpoint.as_ref() else {
+                        continue;
+                    };
+                    let Some(buf) = set.buffer_mut(*buffer) else {
+                        out.push(RevertOutcome::Conflict { path });
+                        continue;
+                    };
+                    let clean = !cp.interleaved && buf.version() == cp.after;
+                    if !clean && !force {
+                        out.push(RevertOutcome::NeedsConfirm { path });
+                        continue;
+                    }
+                    if buf.text().to_string() != cp.text {
+                        let len = buf.len();
+                        buf.with_transaction_aside(|buf| {
+                            buf.edit([(0..len, cp.text.as_str())], Origin::User)
+                        });
+                    }
+                    let cp = checkpoint.take().expect("checked above");
+                    let fresh = ProposedChange::from_edits(
+                        buf.current(),
+                        cp.edits,
+                        proposal.borrow().origin().clone(),
+                    );
+                    *last = Some(count(&fresh.hunks(buf.current())));
+                    *proposal.borrow_mut() = fresh;
+                    out.push(RevertOutcome::Reverted {
+                        path,
+                        reapplied: true,
+                    });
+                }
+                Kind::New { state, .. } => {
+                    let NewState::Accepted { buffer, version } = *state else {
+                        continue;
+                    };
+                    let edited = set
+                        .buffer_mut(buffer)
+                        .is_some_and(|buf| buf.version() != version);
+                    if edited && !force {
+                        out.push(RevertOutcome::NeedsConfirm { path });
+                        continue;
+                    }
+                    if !set.remove(buffer) && set.buffer_mut(buffer).is_some() {
+                        out.push(RevertOutcome::Conflict { path });
+                        continue;
+                    }
+                    *state = NewState::Pending;
+                    out.push(RevertOutcome::Reverted {
+                        path,
+                        reapplied: false,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn file_mut(&mut self, path: &Path) -> Result<&mut File, ChangesetError> {
+        self.files
+            .iter_mut()
+            .find(|file| file.path == path)
+            .ok_or_else(|| ChangesetError::NoSuchFile {
+                path: path.to_path_buf(),
+            })
+    }
+}
+
+impl File {
+    fn is_missing(&self, set: &mut impl BufferSet) -> bool {
+        match &self.kind {
+            Kind::Existing { buffer, .. } => set.buffer_mut(*buffer).is_none(),
+            Kind::New { state, .. } => match *state {
+                NewState::Accepted { buffer, .. } => set.buffer_mut(buffer).is_none(),
+                _ => false,
+            },
+        }
+    }
+
+    fn counts_known(&self) -> bool {
+        match &self.kind {
+            Kind::Existing { last, .. } => last.is_some(),
+            Kind::New { .. } => true,
+        }
+    }
+
+    fn counts(&mut self, set: &mut impl BufferSet) -> Counts {
+        match &mut self.kind {
+            Kind::New { state, .. } => {
+                let mut counts = Counts {
+                    hunks: 1,
+                    ..Counts::default()
+                };
+                match state {
+                    NewState::Pending => counts.pending = 1,
+                    NewState::Accepted { .. } => counts.accepted = 1,
+                    NewState::Rejected => counts.rejected = 1,
+                }
+                counts
+            }
+            Kind::Existing {
+                buffer,
+                proposal,
+                last,
+                ..
+            } => {
+                if let Some(buf) = set.buffer_mut(*buffer) {
+                    *last = Some(count(&proposal.borrow().hunks(buf.current())));
+                }
+                last.unwrap_or_default()
+            }
+        }
+    }
+
+    fn accept(&mut self, set: &mut impl BufferSet) -> Result<Vec<TransactionId>, ChangesetError> {
+        let conflict = ChangesetError::Conflict {
+            path: self.path.clone(),
+        };
+        match &mut self.kind {
+            Kind::New { text, state } => match *state {
+                NewState::Pending => {
+                    let id = set.create(&self.path, text).ok_or(conflict)?;
+                    let buf = set.buffer_mut(id).ok_or(conflict_for(&self.path))?;
+                    *state = NewState::Accepted {
+                        buffer: id,
+                        version: buf.version(),
+                    };
+                    Ok(Vec::new())
+                }
+                NewState::Accepted { buffer, .. } => {
+                    if set.buffer_mut(buffer).is_none() {
+                        return Err(conflict_for(&self.path));
+                    }
+                    Ok(Vec::new())
+                }
+                NewState::Rejected => Ok(Vec::new()),
+            },
+            Kind::Existing {
+                buffer,
+                proposal,
+                checkpoint,
+                last,
+            } => {
+                let buf = set.buffer_mut(*buffer).ok_or(conflict)?;
+                let mut proposal = proposal.borrow_mut();
+                if proposal
+                    .hunks(buf.current())
+                    .iter()
+                    .any(|hunk| hunk.status == HunkStatus::Stale)
+                {
+                    *last = Some(count(&proposal.hunks(buf.current())));
+                    return Err(conflict_for(&self.path));
+                }
+                let prep = prepare(checkpoint, &proposal, buf);
+                let (id, _) = proposal.accept_all_as(buf, Origin::User);
+                let ids: Vec<_> = id.into_iter().collect();
+                *last = Some(count(&proposal.hunks(buf.current())));
+                commit(checkpoint, prep, buf, &ids);
+                Ok(ids)
+            }
+        }
+    }
+
+    fn reject(&mut self, set: &mut impl BufferSet) -> Result<(), ChangesetError> {
+        match &mut self.kind {
+            Kind::New { state, .. } => match *state {
+                NewState::Pending => {
+                    *state = NewState::Rejected;
+                    Ok(())
+                }
+                NewState::Accepted { buffer, .. } if set.buffer_mut(buffer).is_none() => {
+                    Err(conflict_for(&self.path))
+                }
+                _ => Ok(()),
+            },
+            Kind::Existing {
+                buffer,
+                proposal,
+                last,
+                ..
+            } => {
+                let buf = set
+                    .buffer_mut(*buffer)
+                    .ok_or_else(|| conflict_for(&self.path))?;
+                let mut proposal = proposal.borrow_mut();
+                for hunk in proposal.hunks(buf.current()) {
+                    if matches!(hunk.status, HunkStatus::Pending | HunkStatus::Stale) {
+                        let _ = proposal.reject(hunk.id);
+                    }
+                }
+                *last = Some(count(&proposal.hunks(buf.current())));
+                Ok(())
+            }
+        }
+    }
+}
+
+fn conflict_for(path: &Path) -> ChangesetError {
+    ChangesetError::Conflict {
+        path: path.to_path_buf(),
+    }
+}
+
+fn count(hunks: &[fe_buffer::HunkView]) -> Counts {
+    let mut counts = Counts {
+        hunks: hunks.len(),
+        ..Counts::default()
+    };
+    for hunk in hunks {
+        match hunk.status {
+            HunkStatus::Pending => counts.pending += 1,
+            HunkStatus::Accepted => counts.accepted += 1,
+            HunkStatus::Rejected => counts.rejected += 1,
+            HunkStatus::Stale => counts.stale += 1,
+        }
+    }
+    counts
+}
+
+/// What an accept would add to the checkpoint, made before it and kept only
+/// if the accept applied something.
+struct Prep {
+    fresh: Option<Checkpoint>,
+    /// Whether anything edited since the last accept.
+    interleaved: bool,
+}
+
+fn prepare(checkpoint: &Option<Checkpoint>, proposal: &ProposedChange, buf: &Buffer) -> Prep {
+    match checkpoint {
+        Some(cp) => Prep {
+            fresh: None,
+            interleaved: buf.version() != cp.after,
+        },
+        None => {
+            let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+            for hunk in proposal.hunks(buf.current()) {
+                // Stale and rejected hunks are kept: after the restore they
+                // are pending again.
+                if hunk.status == HunkStatus::Accepted {
+                    continue;
+                }
+                // User edits can merge two insertion points into one offset;
+                // `from_edits` takes those as one insertion, in text order.
+                match edits.last_mut() {
+                    Some((range, text)) if range.start == range.end && *range == hunk.range => {
+                        *text = format!("{text}{}", hunk.new_text).into();
+                    }
+                    _ => edits.push((hunk.range, hunk.new_text)),
+                }
+            }
+            Prep {
+                fresh: Some(Checkpoint {
+                    text: buf.text().to_string(),
+                    edits,
+                    transactions: Vec::new(),
+                    after: buf.version(),
+                    interleaved: false,
+                }),
+                interleaved: false,
+            }
+        }
+    }
+}
+
+/// Records an accept that applied `ids`; nothing if it applied nothing.
+fn commit(checkpoint: &mut Option<Checkpoint>, prep: Prep, buf: &Buffer, ids: &[TransactionId]) {
+    if ids.is_empty() {
+        return;
+    }
+    if checkpoint.is_none() {
+        *checkpoint = prep.fresh;
+    }
+    if let Some(cp) = checkpoint {
+        cp.interleaved |= prep.interleaved;
+        cp.transactions.extend_from_slice(ids);
+        cp.after = buf.version();
+    }
+}
