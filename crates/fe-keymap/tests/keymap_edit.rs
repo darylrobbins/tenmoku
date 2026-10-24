@@ -6,8 +6,8 @@ use std::{fs, path::Path};
 
 use fe_keymap::{
     DEFAULT_KEYMAP_PATH, DefaultKeymap, KEYMAP_HEADER, KeySequence, Keymap, KeymapEdit,
-    KeymapEditError, KeymapLayer, edit_keymap, edit_keymap_on, write_keymap_hooked,
-    write_keymap_on,
+    KeymapEditError, KeymapLayer, edit_keymap, edit_keymap_on, write_keymap_checked,
+    write_keymap_hooked, write_keymap_on,
 };
 use kiln_core::Os;
 
@@ -1008,4 +1008,40 @@ fn concurrent_change_is_not_lost() {
     );
     assert!(matches!(result, Err(KeymapEditError::Io(_))));
     assert_eq!(fs::read_to_string(&path).unwrap(), "# changed 2\n");
+}
+
+#[test]
+fn check_runs_on_the_text_edited_and_refuses_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("keymap.toml");
+    fs::write(&path, USER).unwrap();
+    let gated =
+        format!("{USER}\n[[bindings]]\nkeys = \"f9\"\ncommand = \"\"\nplatform = \"macos\"\n");
+    // The file changes after the first read but before the write: the
+    // retry's check sees the new text and refuses it.
+    let mut seen = Vec::new();
+    let mut calls = 0;
+    let result = write_keymap_checked(
+        &path,
+        &sources(),
+        &add("f6", None, "app.quit"),
+        Os::Linux,
+        |text| {
+            seen.push(text.to_owned());
+            if text.contains("platform") {
+                Err("gated".into())
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            calls += 1;
+            if calls == 1 {
+                fs::write(&path, &gated).unwrap();
+            }
+        },
+    );
+    assert!(matches!(result, Err(KeymapEditError::Refused(ref why)) if why == "gated"));
+    assert_eq!(seen, [USER.to_owned(), gated.clone()]);
+    assert_eq!(fs::read_to_string(&path).unwrap(), gated);
 }

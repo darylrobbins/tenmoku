@@ -59,8 +59,8 @@ fn delayed_remove_then_reset_lands_in_order(cx: &mut TestAppContext) {
     let before = fs::read_to_string(&path).unwrap();
     let (first, second) = cx.update(|cx| {
         (
-            queue_write(path.clone(), Vec::new(), remove(), cx),
-            queue_write(path.clone(), Vec::new(), reset(), cx),
+            queue_write(path.clone(), Vec::new(), remove(), None, cx),
+            queue_write(path.clone(), Vec::new(), reset(), None, cx),
         )
     });
     // The Remove is held up; the Reset made after it waits behind it.

@@ -102,6 +102,9 @@ pub enum KeymapEditError {
     /// its diagnostics.
     #[error("the edited keymap doesn't load: {}", first_message(.0))]
     Invalid(Vec<Diagnostic>),
+    /// The caller's check of the text to edit refused the edit.
+    #[error("{0}")]
+    Refused(String),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -312,6 +315,22 @@ pub fn write_keymap_hooked(
     defaults: &[DefaultKeymap<'_>],
     edit: &KeymapEdit,
     os: Os,
+    before_put: impl FnMut(),
+) -> Result<KeymapWrite, KeymapEditError> {
+    write_keymap_checked(path, defaults, edit, os, |_| Ok(()), before_put)
+}
+
+/// [`write_keymap_hooked`], first running `check` on the text each round
+/// edits, the file as read then, including a second round's after a change
+/// under us; an `Err` refuses the edit as [`KeymapEditError::Refused`] and
+/// nothing is written.
+#[doc(hidden)]
+pub fn write_keymap_checked(
+    path: &Path,
+    defaults: &[DefaultKeymap<'_>],
+    edit: &KeymapEdit,
+    os: Os,
+    mut check: impl FnMut(&str) -> Result<(), String>,
     mut before_put: impl FnMut(),
 ) -> Result<KeymapWrite, KeymapEditError> {
     // A second round if the file changes under us.
@@ -323,6 +342,7 @@ pub fn write_keymap_hooked(
             Err(error) => return Err(error.into()),
         };
         let source = read.as_deref().unwrap_or(KEYMAP_HEADER);
+        check(source).map_err(KeymapEditError::Refused)?;
         let edited = edit_keymap_on(defaults, source, edit, os)?;
         before_put();
         let still = || resolve(path).is_ok_and(|now| now == target);

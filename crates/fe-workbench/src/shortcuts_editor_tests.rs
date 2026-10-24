@@ -1670,3 +1670,6 @@ fn an_editor_key_named_as_a_flag_never_holds(cx: &mut TestAppContext) {
 
 #[path = "shortcuts_recorder_tests.rs"]
 mod recorder_tests;
+
+#[path = "shortcuts_editor_reset_race_tests.rs"]
+mod reset_race_tests;

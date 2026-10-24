@@ -25,7 +25,7 @@ mod shortcuts_model;
 
 pub use keymap_edit::{
     DefaultKeymap, KEYMAP_HEADER, KeymapEdit, KeymapEditError, KeymapWrite, edit_keymap,
-    edit_keymap_on, write_keymap, write_keymap_hooked, write_keymap_on,
+    edit_keymap_on, write_keymap, write_keymap_checked, write_keymap_hooked, write_keymap_on,
 };
 
 pub use shortcuts_model::{

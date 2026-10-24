@@ -444,34 +444,27 @@ impl ShortcutsEditor {
     /// layer is passed to an edit as shipped, with every platform's keys,
     /// so its defaults reset either way.
     fn reset_refused(&self, row: &ShortcutRow, cx: &App) -> bool {
-        let (Some(source), Some(store)) = (&self.user_source, config::keymap_store(cx)) else {
+        let (Some(source), Some(guard)) = (&self.user_source, self.reset_guard(row, cx)) else {
             return false;
         };
+        guard.refuses(source)
+    }
+
+    /// The refusal of a reset of `row`'s command, to run on the file's
+    /// text: none if the store or the defaults can't make it refuse.
+    fn reset_guard(&self, row: &ShortcutRow, cx: &App) -> Option<ResetGuard> {
+        let store = config::keymap_store(cx)?;
         if store.platform_defaults().is_some() {
-            return false;
+            return None;
         }
         let elsewhere = (store.defaults().iter())
             .filter(|layer| layer.path != Path::new(DEFAULT_KEYMAP_PATH))
             .flat_map(|layer| &layer.entries)
             .any(|entry| (entry.command.as_ref()).is_some_and(|id| id.as_str() == row.command));
-        if !elsewhere {
-            return false;
-        }
-        let path = (self.user_keymap.clone()).unwrap_or_else(|| PathBuf::from(KEYMAP_FILE));
-        let entries = |os: Os| {
-            let (layer, _) = KeymapLayer::parse_for(&path, source, None, os);
-            layer.map_or_else(Vec::new, |layer| layer.entries)
-        };
-        let here: Vec<_> = (entries(Os::current()).into_iter())
-            .map(|entry| entry.location)
-            .collect();
-        (Os::ALL.into_iter())
-            .filter(|os| *os != Os::current())
-            .flat_map(entries)
-            .any(|entry| {
-                !here.contains(&entry.location)
-                    && (entry.command.as_ref()).is_none_or(|id| id.as_str() == row.command)
-            })
+        elsewhere.then(|| ResetGuard {
+            path: (self.user_keymap.clone()).unwrap_or_else(|| PathBuf::from(KEYMAP_FILE)),
+            command: row.command.clone(),
+        })
     }
 
     /// The items line `ix`'s menu offers, and those of them it shows
@@ -552,7 +545,8 @@ impl ShortcutsEditor {
             MenuItem::RemoveKeybinding => self.remove(menu.line, cx),
             MenuItem::ResetKeybinding => {
                 let command = row.command.clone();
-                self.edit(KeymapEdit::ResetCommand { command }, cx);
+                let guard = self.reset_guard(row, cx);
+                self.edit_guarded(KeymapEdit::ResetCommand { command }, guard, cx);
             }
             MenuItem::ShowSameKeybindings => {
                 let Some(binding) = binding else {
@@ -586,6 +580,16 @@ impl ShortcutsEditor {
     /// the edits made before it ([`queue_write`]), showing a toast if it
     /// fails. The watcher reloads the file it writes.
     fn edit(&mut self, edit: KeymapEdit, cx: &mut Context<Self>) {
+        self.edit_guarded(edit, None, cx);
+    }
+
+    /// [`Self::edit`], refused if `guard` refuses the text edited.
+    fn edit_guarded(
+        &mut self,
+        edit: KeymapEdit,
+        guard: Option<ResetGuard>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(path) = keymap_path(cx) else {
             toast::show(
                 cx,
@@ -594,7 +598,7 @@ impl ShortcutsEditor {
             return;
         };
         let defaults = default_keymaps(cx);
-        let write = queue_write(path, defaults, edit, cx);
+        let write = queue_write(path, defaults, edit, guard, cx);
         cx.spawn(async move |this, cx| {
             let written =
                 (write.recv().await).unwrap_or_else(|_| Err("the write was dropped".into()));
@@ -1410,6 +1414,40 @@ fn borrowed(keymaps: &[(PathBuf, String)]) -> Vec<DefaultKeymap<'_>> {
         .collect()
 }
 
+/// Reset's refusal for a command whose default comes from a layer other
+/// than fastedit's, which the queued write re-runs on the text it edits.
+#[derive(Clone)]
+struct ResetGuard {
+    path: PathBuf,
+    command: String,
+}
+
+impl ResetGuard {
+    /// Whether the user's `source` has an entry gated on another platform
+    /// that names the command or unbinds keys, whose effect on that
+    /// default there can't be told.
+    fn refuses(&self, source: &str) -> bool {
+        let entries = |os: Os| {
+            let (layer, _) = KeymapLayer::parse_for(&self.path, source, None, os);
+            layer.map_or_else(Vec::new, |layer| layer.entries)
+        };
+        let here: Vec<_> = (entries(Os::current()).into_iter())
+            .map(|entry| entry.location)
+            .collect();
+        (Os::ALL.into_iter())
+            .filter(|os| *os != Os::current())
+            .flat_map(entries)
+            .any(|entry| {
+                !here.contains(&entry.location)
+                    && (entry.command.as_ref()).is_none_or(|id| id.as_str() == self.command)
+            })
+    }
+}
+
+/// What a refused Reset's toast says when the file changed after the
+/// menu offered it.
+const RESET_REFUSED: &str = "Reset can't tell what the entries for other platforms in keymap.toml do to this default; edit keymap.toml";
+
 /// What a queued write answers: the file written, or why it failed.
 type WriteResult = Result<fe_keymap::KeymapWrite, String>;
 
@@ -1417,6 +1455,8 @@ type WriteResult = Result<fe_keymap::KeymapWrite, String>;
 struct QueuedWrite {
     defaults: Vec<(PathBuf, String)>,
     edit: KeymapEdit,
+    /// Refuses the edit on the text it would edit, if it does.
+    guard: Option<ResetGuard>,
     done: async_channel::Sender<WriteResult>,
     /// Asks the worker whether to wait before the write: for tests.
     #[cfg(test)]
@@ -1451,12 +1491,14 @@ fn queue_write(
     path: PathBuf,
     defaults: Vec<(PathBuf, String)>,
     edit: KeymapEdit,
+    guard: Option<ResetGuard>,
     cx: &mut App,
 ) -> async_channel::Receiver<WriteResult> {
     let (done, result) = async_channel::bounded(1);
     let mut job = QueuedWrite {
         defaults,
         edit,
+        guard,
         done,
         #[cfg(test)]
         before: cx.try_global::<BeforeWrite>().map(|hook| hook.0.clone()),
@@ -1479,11 +1521,16 @@ fn queue_write(
                 if let Some(gate) = job.before.as_ref().and_then(|before| before(&job.edit)) {
                     gate.recv().await.ok();
                 }
-                let written = fe_keymap::write_keymap_on(
+                let written = fe_keymap::write_keymap_checked(
                     &at,
                     &borrowed(&job.defaults),
                     &job.edit,
                     Os::current(),
+                    |source| match &job.guard {
+                        Some(guard) if guard.refuses(source) => Err(RESET_REFUSED.into()),
+                        _ => Ok(()),
+                    },
+                    || {},
                 )
                 .map_err(|error| error.to_string());
                 job.done.try_send(written).ok();
