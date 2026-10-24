@@ -50,13 +50,11 @@ impl BufferSet for Editors<'_, '_> {
         if let Some(rest) = self.rest.as_deref_mut() {
             return rest.create(path, text);
         }
-        // Typed into an empty buffer, so it's unsaved: closing it asks, and
-        // saving makes the file.
-        // An empty file is made from a one-line baseline, so it differs from
-        // the saved text and is unsaved all the same.
-        let mut buffer = Buffer::new(if text.is_empty() { "\n" } else { "" });
-        let baseline = buffer.len();
-        buffer.edit([(0..baseline, text)], Origin::User);
+        // Typed into an empty buffer and marked unsaved, so it's dirty even
+        // when empty: closing it asks, and saving makes the file.
+        let mut buffer = Buffer::new("");
+        buffer.edit([(0..0, text)], Origin::User);
+        buffer.mark_unsaved();
         let id = buffer.id();
         (self.made.as_deref_mut()?)
             .buffers

@@ -631,8 +631,15 @@ fn editor_accept_all_with_an_earlier_turn_keeps_its_edits_on_revert(cx: &mut Tes
     assert_eq!(s.text(1), format!("// earlier\n{TWO_FNS}"));
 }
 
-#[gpui::test]
-fn an_empty_new_file_is_unsaved_too(cx: &mut TestAppContext) {
+/// A workbench where an accepted changeset made the empty `empty.rs`.
+fn with_empty_new_file(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<Workbench>,
+    &mut VisualTestContext,
+) {
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a.rs");
     std::fs::write(&a, TWO_FNS).unwrap();
@@ -651,9 +658,69 @@ fn an_empty_new_file_is_unsaved_too(cx: &mut TestAppContext) {
         workbench.decide_ai_file(&created, true, window, cx)
     });
     draw(cx);
-    let (text, dirty) = editor(&workbench, &created, cx).read_with(cx, |editor, _| {
+    (dir, created, workbench, cx)
+}
+
+fn text_and_dirty(
+    workbench: &Entity<Workbench>,
+    path: &std::path::Path,
+    cx: &mut VisualTestContext,
+) -> (String, bool) {
+    editor(workbench, path, cx).read_with(cx, |editor, _| {
         let buffer = editor.model().buffer();
         (buffer.text().to_string(), buffer.is_dirty())
-    });
+    })
+}
+
+#[gpui::test]
+fn an_empty_new_file_is_unsaved_too(cx: &mut TestAppContext) {
+    let (_dir, created, workbench, cx) = with_empty_new_file(cx);
+    let (text, dirty) = text_and_dirty(&workbench, &created, cx);
     assert_eq!((text.as_str(), dirty), ("", true));
+}
+
+#[gpui::test]
+fn empty_new_file_undo_inserts_no_newline(cx: &mut TestAppContext) {
+    let (_dir, created, workbench, cx) = with_empty_new_file(cx);
+    let editor = editor(&workbench, &created, cx);
+    editor.update(cx, |editor, _| {
+        let _ = editor.model_mut().undo();
+        let _ = editor.model_mut().undo();
+    });
+    let (text, dirty) = text_and_dirty(&workbench, &created, cx);
+    assert_eq!((text.as_str(), dirty), ("", true));
+}
+
+#[gpui::test]
+fn empty_new_file_close_is_protected(cx: &mut TestAppContext) {
+    let (_dir, created, workbench, cx) = with_empty_new_file(cx);
+    let editor = editor(&workbench, &created, cx);
+    editor.update(cx, |editor, _| {
+        let _ = editor.model_mut().undo();
+    });
+    cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    let run = RunCommand(
+        Invocation::of("workbench.close_tab")
+            .unwrap()
+            .context(ContextStack::new().with(ContextFrame::new("workbench"))),
+    );
+    cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    cx.run_until_parked();
+    let question = cx.pending_prompt().map(|(question, _)| question);
+    assert_eq!(
+        question.as_deref(),
+        Some("Discard unsaved changes to empty.rs?")
+    );
+}
+
+#[gpui::test]
+fn empty_new_file_saves_accepted_text(cx: &mut TestAppContext) {
+    let (_dir, created, workbench, cx) = with_empty_new_file(cx);
+    let editor = editor(&workbench, &created, cx);
+    cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    cx.simulate_keystrokes("cmd-s");
+    cx.run_until_parked();
+    assert_eq!(std::fs::read(&created).unwrap(), b"");
+    let (text, dirty) = text_and_dirty(&workbench, &created, cx);
+    assert_eq!((text.as_str(), dirty), ("", false));
 }

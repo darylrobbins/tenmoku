@@ -255,6 +255,8 @@ pub struct Buffer {
     disk_stamp: Option<Option<DiskStamp>>,
     /// Set by [`Buffer::from_backup`] until the next save.
     restore: Option<Restore>,
+    /// Set by [`Buffer::mark_unsaved`] until the next save.
+    unsaved: bool,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
 
@@ -471,6 +473,7 @@ impl Buffer {
             dirty: false,
             disk_stamp: None,
             restore: None,
+            unsaved: false,
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -539,6 +542,14 @@ impl Buffer {
             || self.line_ending != self.saved_line_ending
             || self.encoding != self.saved_encoding
             || self.restore.as_ref().is_some_and(|restore| restore.applied)
+            || self.unsaved
+    }
+
+    /// Makes the buffer dirty whatever its text, until the next save: for
+    /// the text of a file that doesn't exist yet, which may be empty. Undo
+    /// and redo don't clear it.
+    pub fn mark_unsaved(&mut self) {
+        self.unsaved = true;
     }
 
     /// Widens `changed_since_save` to cover `batch`, an edit just applied.
@@ -635,6 +646,7 @@ impl Buffer {
         self.saved_line_ending = self.line_ending;
         self.saved_encoding = self.encoding;
         self.restore = None;
+        self.unsaved = false;
         self.changed_since_save = None;
         self.dirty = false;
         self.saved_version = self.version();
@@ -658,6 +670,7 @@ impl Buffer {
             self.saved_encoding = snapshot.encoding;
             self.saved_version = snapshot.version;
             self.restore = None;
+            self.unsaved = false;
             self.changed_since_save = Some(0..self.len());
             self.refresh_dirty();
             self.emit(BufferEvent::Saved {
