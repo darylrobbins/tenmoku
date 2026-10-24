@@ -487,6 +487,11 @@ pub struct GitPanel {
     head_reads: u64,
     /// With vim on, `c` was pressed: `c` or `a` follows.
     pending_c: bool,
+    /// With vim on, `g` was pressed: `g` follows for the first row, and any
+    /// other key drops it, as vim drops an unknown `g` sequence.
+    pending_g: bool,
+    /// Drops `pending_g` when focus leaves the panel, once it's drawn.
+    focus_out: Option<Subscription>,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
 }
@@ -522,6 +527,8 @@ impl GitPanel {
             head: None,
             head_reads: 0,
             pending_c: false,
+            pending_g: false,
+            focus_out: None,
             #[cfg(test)]
             test: Default::default(),
         }
@@ -922,11 +929,25 @@ impl GitPanel {
     /// in the commit box are the box's.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.box_focused(window, cx) {
+            self.pending_g = false;
             return;
         }
         let keystroke = &event.keystroke;
+        // Any key but a `g` drops the pending one, whatever vim or
+        // modifiers say.
+        let after_g = std::mem::take(&mut self.pending_g);
         if fe_gpui::vim_enabled(cx) && !keystroke.modifiers.modified() {
             let key = keystroke.key.as_str();
+            if key == "g" {
+                self.pending_c = false;
+                if !after_g {
+                    self.pending_g = true;
+                } else if !self.entries.is_empty() {
+                    self.select(0, cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
             if std::mem::take(&mut self.pending_c) && matches!(key, "c" | "a") {
                 self.ask_to_focus_box(key == "a", window, cx);
                 cx.stop_propagation();
@@ -952,6 +973,7 @@ impl GitPanel {
         let key = match (keystroke.modifiers, keystroke.key.as_str()) {
             (modifiers, key) if !modifiers.modified() => key,
             (modifiers, "x") if vim && modifiers == Modifiers::shift() => "X",
+            (modifiers, "g") if vim && modifiers == Modifiers::shift() => "G",
             _ => return,
         };
         let last = self.entries.len() - 1;
@@ -976,6 +998,7 @@ impl GitPanel {
                 let ix = self.selected.map_or(0, |ix| (ix + 1).min(last));
                 self.select(ix, cx);
             }
+            "G" => self.select(last, cx),
             "o" | "s" | "u" | "-" | "X" if vim => {
                 let Some(ix) = self.selected else {
                     return;
@@ -1505,6 +1528,7 @@ impl GitPanel {
     /// The box has focus: it takes its opening mode, unless its own command
     /// line handed focus back.
     fn box_focused_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_g = false;
         let Some(commit) = &mut self.commit else {
             return;
         };
@@ -1904,6 +1928,12 @@ impl Render for GitPanel {
             self.refresh(cx);
         }
         self.ask_for_box(window, cx);
+        if self.focus_out.is_none() {
+            // Focus leaving the panel: a later `g` doesn't finish the `g`.
+            self.focus_out = Some(cx.on_focus_out(&self.focus, window, |panel, _, _, _| {
+                panel.pending_g = false;
+            }));
+        }
         let commit_box = self.render_commit_box(cx);
         let ui = fe_ui::ui_theme(cx);
         let list = uniform_list(
@@ -2170,6 +2200,11 @@ impl GitPanel {
         self.list_row_bounds(self.row_of(ix))
     }
 
+    /// The list's viewport in the last frame.
+    pub(crate) fn list_viewport(&self) -> gpui::Bounds<gpui::Pixels> {
+        self.scroll.0.borrow().base_handle.bounds()
+    }
+
     /// Where the header of `group` was laid out in the last frame.
     pub(crate) fn header_bounds(&self, group: Group) -> Option<gpui::Bounds<gpui::Pixels>> {
         let at = (0..self.row_count()).find(|at| self.row(*at) == Some(Row::Header(group)))?;
@@ -2197,3 +2232,7 @@ mod tests;
 #[cfg(test)]
 #[path = "git_panel_groups_tests.rs"]
 mod git_panel_groups_tests;
+
+#[cfg(test)]
+#[path = "git_panel_vim_nav_tests.rs"]
+mod git_panel_vim_nav_tests;
