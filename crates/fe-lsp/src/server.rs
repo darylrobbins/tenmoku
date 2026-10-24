@@ -1557,7 +1557,7 @@ impl Actor {
                 return Started::Crashed(format!("{}: initialize failed: {err}", self.spec.name));
             }
         };
-        self.record(result);
+        self.record(result.0);
         if self
             .socket
             .notify::<Initialized>(InitializedParams {})
@@ -2217,8 +2217,24 @@ enum InitializeJson {}
 
 impl Request for InitializeJson {
     type Params = serde_json::Value;
-    type Result = InitializeResult;
+    type Result = InitializeOutcome;
     const METHOD: &'static str = Initialize::METHOD;
+}
+
+/// An `initialize` result, with the capabilities lsp-types 0.95.1 has no
+/// field for kept ([`crate::hierarchy::mark_type_hierarchy`]).
+#[derive(serde::Serialize)]
+#[serde(transparent)]
+struct InitializeOutcome(InitializeResult);
+
+impl<'de> serde::Deserialize<'de> for InitializeOutcome {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let mut result: InitializeResult =
+            serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+        crate::hierarchy::mark_type_hierarchy(&raw, &mut result.capabilities);
+        Ok(Self(result))
+    }
 }
 
 /// `params` as sent: with `workspace.diagnostics { refreshSupport: true }`
@@ -2356,6 +2372,12 @@ fn client_capabilities() -> ClientCapabilities {
                 link_support: Some(true),
             }),
             document_highlight: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
+            call_hierarchy: Some(lsp_types::CallHierarchyClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
+            type_hierarchy: Some(lsp_types::TypeHierarchyClientCapabilities {
                 dynamic_registration: dynamic,
             }),
             document_symbol: Some(DocumentSymbolClientCapabilities {

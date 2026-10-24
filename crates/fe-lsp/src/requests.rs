@@ -65,9 +65,16 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         "textDocument/definition"
         | "textDocument/declaration"
         | "textDocument/typeDefinition"
-        | "textDocument/implementation" => timeouts.definition,
+        | "textDocument/implementation"
+        | "textDocument/prepareCallHierarchy"
+        | "textDocument/prepareTypeHierarchy" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
-        "textDocument/references" | "workspace/willRenameFiles" => timeouts.references,
+        "textDocument/references"
+        | "workspace/willRenameFiles"
+        | "callHierarchy/incomingCalls"
+        | "callHierarchy/outgoingCalls"
+        | "typeHierarchy/supertypes"
+        | "typeHierarchy/subtypes" => timeouts.references,
         "textDocument/hover"
         | "textDocument/documentHighlight"
         | "textDocument/documentSymbol"
