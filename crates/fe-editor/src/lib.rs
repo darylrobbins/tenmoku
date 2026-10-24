@@ -43,6 +43,7 @@ mod join_lines;
 mod last_edit;
 mod line_sort;
 mod move_to_match;
+pub mod linked_ranges;
 mod multi_cursor;
 pub mod occurrences;
 mod pairs;
@@ -191,6 +192,8 @@ pub struct EditorModel {
     last_edit: last_edit::LastEdit,
     /// The selections Cursor Undo and Cursor Redo step through.
     cursor_history: cursor_history::CursorHistory,
+    /// The ranges whose typing is mirrored (see [`linked_ranges`]).
+    linked: Option<linked_ranges::LinkedSession>,
 }
 
 impl EditorModel {
@@ -236,6 +239,7 @@ impl EditorModel {
             snippet: None,
             last_edit: Rc::default(),
             cursor_history: Default::default(),
+            linked: None,
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -297,6 +301,7 @@ impl EditorModel {
             snippet: None,
             last_edit: Rc::clone(&self.last_edit),
             cursor_history: Default::default(),
+            linked: None,
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
@@ -416,6 +421,7 @@ impl EditorModel {
         self.poll_typing();
         self.forget_auto_closed();
         self.follow_snippet();
+        self.follow_linked();
         // Lets go of the paths a split set since.
         self.path = Rc::clone(self.path.latest());
     }
@@ -866,6 +872,7 @@ impl EditorModel {
         self.selections = selections;
         self.forget_auto_closed();
         self.follow_snippet();
+        self.follow_linked();
     }
 
     /// Places a single caret.
@@ -1492,6 +1499,7 @@ impl EditorModel {
             self.selections = carets;
             self.forget_auto_closed();
             self.follow_snippet();
+            self.follow_linked();
         }
     }
 
@@ -1537,6 +1545,7 @@ impl EditorModel {
         typed: Option<Typed>,
     ) -> BufferSnapshot {
         let (edits, selections) = self.mirror_snippet_edits(edits, selections);
+        let (edits, selections) = self.mirror_linked_edits(edits, selections);
         self.apply_through(selections, |model, buffer| {
             model.edit_typed(buffer, edits, typed)
         })
@@ -1572,6 +1581,7 @@ impl EditorModel {
             self.typing_left(&selections);
             // After the snapshot callers' offsets are in.
             self.sync_snippet_mirrors(&mut buffer, id);
+            self.sync_linked_ranges(&buffer, id);
             (selections, snapshot, id)
         };
         self.sync_display();
@@ -1579,6 +1589,7 @@ impl EditorModel {
         self.selections = selections;
         self.forget_auto_closed();
         self.follow_snippet();
+        self.follow_linked();
         (snapshot, id)
     }
 }

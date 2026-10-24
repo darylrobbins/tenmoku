@@ -1099,6 +1099,7 @@ impl EditorModel {
     pub fn insert_snippet(&mut self, range: Range<usize>, snippet: &Snippet) {
         self.sync_display();
         self.snippet = None;
+        self.linked = None;
         let text = self.text();
         let start = text.clip_offset(range.start.min(range.end), Bias::Left);
         let end = text.clip_offset(range.end.max(start), Bias::Right);
