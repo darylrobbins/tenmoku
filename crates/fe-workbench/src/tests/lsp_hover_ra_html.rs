@@ -3,7 +3,10 @@
 //! and its fences formatted (T256).
 
 use fe_lsp::fake::{Reply, Scripted};
+use fe_markdown::BlockKind;
+use fe_markdown_view::MarkdownStyle;
 use fe_syntax::Highlight;
+use fe_ui::UiTheme;
 use gpui::{
     Bounds, Focusable as _, Modifiers, Pixels, ScrollDelta, ScrollWheelEvent, TestAppContext,
     TestDispatcher, TouchPhase, point,
@@ -132,26 +135,52 @@ fn hover(cx: &mut TestAppContext, lines: &painted::Lines) {
         "{words:?}"
     );
 
-    // The test window paints no glyph, so the fences are painted apart by
-    // the renderer the popover draws with: their `impl`, `pub`, `const` and
-    // `fn` in the theme's keyword colour.
-    let (renderer, theme) = editor.read_with(&s.cx, |view, _| {
-        (
-            view.markdown_renderer().cloned().expect("a renderer"),
-            view.theme().clone(),
-        )
-    });
+    // The test window paints no glyph, so the fences' colours are resolved
+    // as the popover's markdown view draws them, without painting: the
+    // fixture parsed by `fe_markdown::parse`, each rust fence's highlights
+    // run through `MarkdownStyle::code_runs` in the editor's theme.
+    let theme = editor.read_with(&s.cx, |view, _| view.theme().clone());
+    let style = MarkdownStyle::new(&theme, &UiTheme::default_dark());
     let keyword = Highlight::from_capture("keyword").expect("a highlight");
-    let keyword = theme.syntax_color(keyword).expect("a keyword colour");
-    assert_ne!(keyword, theme.foreground);
-    let fences = HOVER.split("\n---\n").next().expect("the fences");
-    assert_eq!(fences.matches("```rust").count(), 2, "{fences:?}");
-    let glyphs = painted::glyphs(renderer, theme, fences);
-    let keywords = glyphs.iter().filter(|c| **c == keyword).count();
-    let expected: usize = ["impl", "pub", "const", "fn"].map(str::len).iter().sum();
-    assert!(
-        keywords >= expected,
-        "{keywords} keyword glyphs of {glyphs:?}"
+    let keyword = style.syntax_color(keyword).expect("a keyword colour");
+    assert_eq!(
+        Some(keyword),
+        theme.syntax_color(Highlight::from_capture("keyword").unwrap())
     );
-    assert!(keywords < glyphs.len(), "the rest isn't all keyword colour");
+    assert_ne!(keyword, style.foreground, "keywords look like plain text");
+    let mut fences = 0;
+    let (mut keywords, mut plain) = (Vec::new(), 0);
+    for block in fe_markdown::parse(HOVER).blocks {
+        let BlockKind::Code {
+            language: Some("rust"),
+            code,
+            highlights,
+            ..
+        } = block.kind
+        else {
+            continue;
+        };
+        fences += 1;
+        let mut at = 0;
+        for run in style.code_runs(&code, &highlights) {
+            if run.color == keyword {
+                keywords.push(code[at..at + run.len].to_owned());
+            } else if run.color == style.foreground {
+                plain += 1;
+            }
+            at += run.len;
+        }
+        assert_eq!(at, code.len(), "the runs cover {code:?}");
+    }
+    assert_eq!(
+        fences, 3,
+        "the fixture's rust fences: two atop, one example"
+    );
+    for word in ["impl", "pub", "const", "fn"] {
+        assert!(
+            keywords.iter().any(|run| run == word),
+            "{word:?} isn't a keyword-coloured run of {keywords:?}"
+        );
+    }
+    assert!(plain > 0, "everything is keyword colour");
 }
