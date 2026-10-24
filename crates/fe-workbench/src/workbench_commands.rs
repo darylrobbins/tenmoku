@@ -580,6 +580,22 @@ impl Workbench {
         });
     }
 
+    /// Review Latest Chat Changes
+    ///
+    /// Loads every file edit the open chat's latest reply proposes into the
+    /// AI Changes panel, as the reply's Review Changes button does.
+    #[command(id = "chat.review_latest_changes")]
+    fn review_latest_chat_changes(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::KEY_CONTEXT, cx, |this, window, cx| {
+            if let Some(chat) = this.dock().read(cx).chat().cloned() {
+                // The panel reads the workbench, which is being updated.
+                window.defer(cx, move |window, cx| {
+                    chat.update(cx, |chat, cx| chat.review_latest(window, cx))
+                });
+            }
+        });
+    }
+
     /// Accept All AI Changes
     #[command(id = "ai.changes_accept_all")]
     fn ai_changes_accept_all(&mut self, cx: &mut Cx<Self>) {

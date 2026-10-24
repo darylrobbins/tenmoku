@@ -68,7 +68,7 @@ use std::{
     sync::Arc,
 };
 
-use fe_buffer::{Anchor, Bias, BufferId, Origin, ProposedChange};
+use fe_buffer::{Anchor, Bias, BufferId, BufferSnapshot, Origin, ProposedChange};
 use fe_chat::{
     AttachmentKind, ContextItem, ContextKind, EditBlockError, EditBody, info_path,
     parse_edit_block, render_user_content,
@@ -85,6 +85,9 @@ use crate::{
     pane::Reveal,
     workbench::toast::{self, Toast},
 };
+
+#[path = "chat_changeset.rs"]
+mod chat_changeset;
 
 /// The agent the chat's actions are by.
 pub(crate) const AGENT: &str = "fastedit.chat";
@@ -153,6 +156,9 @@ struct Sent {
 /// The panel's state for applying blocks.
 pub(super) struct Applies {
     commands: Registry<ChatCommands>,
+    reviews: Registry<chat_changeset::ReviewCommands>,
+    /// The proposals each reviewed turn put on editors.
+    reviewed: chat_changeset::Reviewed,
     /// The selection the context's chip is of, as it was gathered.
     chip: Option<Sent>,
     /// The current chat's turns sent with a selection, by index: that
@@ -191,6 +197,8 @@ impl Applies {
     pub(super) fn new() -> Applies {
         Applies {
             commands: registry(),
+            reviews: chat_changeset::registry(),
+            reviewed: Rc::default(),
             chip: None,
             turns: HashMap::new(),
             seen: 0,
@@ -435,6 +443,39 @@ fn refusal(editor: &EditorView) -> Option<&'static str> {
     (text.slice_to_string(0..probe))
         .contains('\0')
         .then_some("it's binary")
+}
+
+/// `body` proposed over `range` of `snapshot`, as `origin`: the step Apply
+/// and Review Changes share, so their errors read alike; else why not, for
+/// the toast.
+fn propose(
+    snapshot: &BufferSnapshot,
+    range: Range<usize>,
+    body: EditBody,
+    origin: Origin,
+) -> Result<ProposedChange, String> {
+    match body {
+        EditBody::Replace(text) => Ok(ProposedChange::from_text(snapshot, range, &text, origin)),
+        EditBody::Sections(sections) => {
+            let text = snapshot.text().slice_to_string(range.clone());
+            let edits = resolve_sections(&text, range.start, &sections)?;
+            Ok(ProposedChange::from_edits(snapshot, edits, origin))
+        }
+    }
+}
+
+/// `body` proposed over all of `editor`'s text, unless it takes no
+/// proposal: [`refusal`], then [`propose`].
+fn propose_whole(
+    editor: &EditorView,
+    body: EditBody,
+    origin: Origin,
+) -> Result<ProposedChange, String> {
+    if let Some(why) = refusal(editor) {
+        return Err(why.to_owned());
+    }
+    let snapshot = editor.model().buffer().snapshot();
+    propose(&snapshot, 0..snapshot.len(), body, origin)
 }
 
 /// A toast that the block couldn't be applied to `file`, and why.
@@ -837,15 +878,9 @@ fn show_proposal(
         }
         Some(within) => snapshot.resolve_range(&within.range),
     };
-    let proposal = match body {
-        EditBody::Replace(text) => ProposedChange::from_text(&snapshot, range, &text, origin),
-        EditBody::Sections(sections) => {
-            let text = snapshot.text().slice_to_string(range.clone());
-            match resolve_sections(&text, range.start, &sections) {
-                Ok(edits) => ProposedChange::from_edits(&snapshot, edits, origin),
-                Err(why) => return refused(&shown, &why, cx),
-            }
-        }
+    let proposal = match propose(&snapshot, range, body, origin) {
+        Ok(proposal) => proposal,
+        Err(why) => return refused(&shown, &why, cx),
     };
     let Some(first) = proposal
         .hunks(&snapshot)

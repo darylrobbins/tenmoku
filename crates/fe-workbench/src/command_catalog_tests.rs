@@ -232,6 +232,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "app.hide_others",
     "app.quit",
     "app.show_all",
+    "chat.review_latest_changes",
     "diagnostics.next",
     "diagnostics.previous",
     "diff.compare_file",

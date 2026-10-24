@@ -83,6 +83,9 @@ pub enum ChatViewEvent {
     /// The user pressed Apply on code block `block` of turn `turn`'s reply:
     /// see [`ChatView::code_block`].
     ApplyBlock { turn: usize, block: usize },
+    /// The user pressed Review Changes on turn `turn`'s footer: its reply
+    /// holds two or more code blocks for files.
+    ReviewChanges { turn: usize },
 }
 
 /// How a turn was made in a view: what [`ChatView::was_sent`] and
@@ -960,6 +963,26 @@ impl ChatView {
             .banner
             .clone()
             .map(|banner| self.render_banner(index, banner, ui, cx));
+        let review = if streaming || shown.reply.is_empty() {
+            None
+        } else {
+            let document = self.documents.reply(index, &shown.reply, true);
+            let files = reply::path_blocks(&document);
+            (files >= 2).then(|| {
+                let ask = cx.listener(move |_, _, _, cx| {
+                    cx.emit(ChatViewEvent::ReviewChanges { turn: index })
+                });
+                h_flex().child(
+                    Button::new(
+                        ("chat-review-changes", index),
+                        format!("Review {files} changes"),
+                    )
+                    .small()
+                    .debug_selector(move || format!("chat-review-changes-{index}"))
+                    .on_click(ask),
+                )
+            })
+        };
         v_flex()
             .debug_selector(move || format!("chat-turn-{index}"))
             .gap_2()
@@ -975,6 +998,7 @@ impl ChatView {
                     .text_color(ui.text)
                     .child(reply),
             )
+            .children(review)
             .children(answered_by)
             .children(banner)
             .into_any_element()

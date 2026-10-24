@@ -86,6 +86,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("problems.show", "Show Problems", "workbench"),
     ("ai.show_changes", "Show AI Changes", "workbench"),
     (
+        "chat.review_latest_changes",
+        "Review Latest Chat Changes",
+        "workbench",
+    ),
+    (
         "ai.changes_accept_all",
         "Accept All AI Changes",
         "workbench",

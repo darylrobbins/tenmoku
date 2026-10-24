@@ -86,6 +86,29 @@ pub(crate) fn code_blocks(document: &Document) -> Vec<CodeBlock> {
     out
 }
 
+/// How many of `document`'s code blocks are for a file: those whose info
+/// string has a `path=`, in quotes and lists too.
+pub(crate) fn path_blocks(document: &Document) -> usize {
+    fn walk(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .map(|block| match &block.kind {
+                BlockKind::Code { info, code, .. } => {
+                    usize::from(match fe_chat::parse_edit_block(info, code) {
+                        Ok(edit) => edit.path.is_some(),
+                        Err(fe_chat::EditBlockError::Path(_)) => true,
+                        Err(_) => fe_chat::info_path(info).is_some(),
+                    })
+                }
+                BlockKind::Quote(blocks) => walk(blocks),
+                BlockKind::List { items, .. } => items.iter().map(|item| walk(&item.blocks)).sum(),
+                _ => 0,
+            })
+            .sum()
+    }
+    walk(&document.blocks)
+}
+
 /// A turn's reply or thinking as last parsed, and whether the turn had
 /// finished.
 struct Parsed {

@@ -1656,6 +1656,12 @@ impl ChatPanel {
                     (panel.update(cx, |panel, cx| panel.apply_block(turn, block, window, cx))).ok();
                 });
             }
+            ChatViewEvent::ReviewChanges { turn } => {
+                let (panel, turn) = (cx.weak_entity(), *turn);
+                window.defer(cx, move |window, cx| {
+                    (panel.update(cx, |panel, cx| panel.review_turn(turn, window, cx))).ok();
+                });
+            }
         }
     }
 
