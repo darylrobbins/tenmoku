@@ -11,12 +11,15 @@
 //! reads the editor's colours from a kiln theme; kiln's config service
 //! selects and hot-reloads the theme itself. [`themes`] lists the themes
 //! fastedit bundles, which `[theme] name` selects. [`SettingsModel`] lists
-//! every setting with its values, for the Settings editor.
+//! every setting with its values, for the Settings editor, and
+//! [`set_setting`] and [`reset_setting`] write one into the user's file or
+//! the project's.
 
 pub mod editorconfig;
 pub mod paths;
 pub mod recent;
 pub mod settings;
+pub mod settings_edit;
 pub mod settings_model;
 pub mod theme;
 pub mod themes;
@@ -39,6 +42,7 @@ pub use settings::{
     StickyScrollModel, StickyScrollSettings, TerminalSettings, ThemeModeSetting, ThemeSettings,
     TreeSettings, VimRemap, VimRemapMode, VimRemapModes, VimSettings, settings_schema,
 };
+pub use settings_edit::{SettingEditError, SettingScope, reset_setting, set_setting};
 pub use settings_model::{
     EffectiveValue, EnumVariant, SettingEntry, SettingGroup, SettingKind, SettingsModel,
     ValueSource,

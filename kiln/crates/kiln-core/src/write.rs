@@ -14,11 +14,17 @@ use std::{
 use toml_edit::{Document, Item, Table, TableLike, Value};
 
 /// A value [`write_settings`] sets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingValue<'a> {
     Bool(bool),
     /// Written as a basic string, escaped: `"Dark \"Modern\""`.
     Str(&'a str),
+    Int(i64),
+    /// Written with a fractional part or an exponent, `13.0` or `1e300`,
+    /// so it reads back as a float. One that isn't finite can't be written.
+    Float(f64),
+    /// Written as an array of basic strings: `["a", "b"]`.
+    StrList(&'a [&'a str]),
 }
 
 impl SettingValue<'_> {
@@ -27,6 +33,47 @@ impl SettingValue<'_> {
         match self {
             SettingValue::Bool(value) => value.to_string(),
             SettingValue::Str(text) => basic_string(text),
+            SettingValue::Int(value) => value.to_string(),
+            // Debug always writes a point or an exponent, as TOML's floats
+            // need: `13.0`, `1e300`.
+            SettingValue::Float(value) => format!("{value:?}"),
+            SettingValue::StrList(items) => {
+                let items: Vec<String> = items.iter().map(|item| basic_string(item)).collect();
+                format!("[{}]", items.join(", "))
+            }
+        }
+    }
+}
+
+/// What [`write`] does at a key.
+#[derive(Clone, Copy)]
+enum Change<'a> {
+    Set(SettingValue<'a>),
+    /// Removes the key.
+    Remove,
+    /// Removes the key, and the tables that leaves empty.
+    Reset,
+}
+
+/// Why [`edit`] couldn't make its changes.
+#[derive(Debug, PartialEq)]
+enum EditError {
+    /// The file isn't TOML, or a key's path isn't tables.
+    Invalid(String),
+    /// Removing the key would take a comment with it.
+    DropsComment(String),
+}
+
+impl From<String> for EditError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(message) | Self::DropsComment(message) => f.write_str(message),
         }
     }
 }
@@ -55,8 +102,10 @@ pub fn write_setting_str(path: &Path, key: &[&str], value: &str, template: &str)
 /// replaces its commented-out default, one of the same type), and a missing
 /// table at the end of the file. A key removed takes its line, the comment
 /// after it included, where nothing else on the line is a setting; one
-/// sharing its line (inside braces, say) is removed by `toml_edit`, which
-/// may take the comments before it too.
+/// inside braces with its `key = value` and a comma, the comments around it
+/// kept. Any other (a dotted key in braces, say) is removed by `toml_edit`,
+/// unless that would take a comment with it: then nothing is written, and
+/// the error is [`io::ErrorKind::Unsupported`], to edit the file by hand.
 /// Every byte outside the change is
 /// kept, line endings, a byte order mark and a missing final newline
 /// included, and what's added uses the file's line endings. A missing file,
@@ -88,8 +137,39 @@ pub fn write_settings(
     changes: &[(&[&str], Option<SettingValue<'_>>)],
     template: &str,
 ) -> io::Result<()> {
-    for (key, _) in changes {
+    let changes: Vec<(&[&str], Change<'_>)> = changes
+        .iter()
+        .map(|&(key, value)| (key, value.map_or(Change::Remove, Change::Set)))
+        .collect();
+    write(path, &changes, template)
+}
+
+/// Removes each of `keys` (`["editor", "font_size"]`), in one write, from
+/// the settings file at `path`, as [`write_settings`] removes a key, and
+/// then each table that leaves empty: an inline table's key with it, or a
+/// `[header]` with nothing after it but blank lines, if no comment is in
+/// it, on its line or on the line before it. A table that still holds other keys or
+/// a comment stays. A missing key, or file, writes nothing. A key whose
+/// removal would drop a comment is refused, as [`write_settings`] refuses
+/// it, and nothing is written.
+pub fn reset_settings(path: &Path, keys: &[&[&str]], template: &str) -> io::Result<()> {
+    let changes: Vec<(&[&str], Change<'_>)> =
+        keys.iter().map(|&key| (key, Change::Reset)).collect();
+    write(path, &changes, template)
+}
+
+/// [`write_settings`], with each change one of [`Change`].
+fn write(path: &Path, changes: &[(&[&str], Change<'_>)], template: &str) -> io::Result<()> {
+    for (key, change) in changes {
         assert!(!key.is_empty(), "a setting has a name");
+        if let Change::Set(SettingValue::Float(value)) = change
+            && !value.is_finite()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{}: {value} isn't a number TOML can hold", key.join(".")),
+            ));
+        }
     }
     // Another round each time the file changes under us.
     for _ in 0..8 {
@@ -100,8 +180,11 @@ pub fn write_settings(
             Err(error) => return Err(error),
         };
         let edited = edit(read.as_deref().unwrap_or(""), changes, template).map_err(|error| {
-            let error = format!("{}: {error}", target.display());
-            io::Error::new(io::ErrorKind::InvalidData, error)
+            let kind = match error {
+                EditError::Invalid(_) => io::ErrorKind::InvalidData,
+                EditError::DropsComment(_) => io::ErrorKind::Unsupported,
+            };
+            io::Error::new(kind, format!("{}: {error}", target.display()))
         })?;
         // Nothing changed, a missing file's template included: nothing to
         // write.
@@ -127,19 +210,20 @@ pub fn write_settings(
 /// `source`, or `template` if it's empty, with `changes` made.
 fn edit(
     source: &str,
-    changes: &[(&[&str], Option<SettingValue<'_>>)],
+    changes: &[(&[&str], Change<'_>)],
     template: &str,
-) -> Result<String, String> {
+) -> Result<String, EditError> {
     // toml_edit drops a byte order mark: set aside, and put back.
     let (mark, source) = match source.strip_prefix('\u{feff}') {
         Some(source) => ("\u{feff}", source),
         None => ("", source),
     };
     let mut text = if source.is_empty() { template } else { source }.to_owned();
-    for &(key, value) in changes {
-        text = match value {
-            Some(value) => set(&text, key, &value.toml())?,
-            None => remove(&text, key)?,
+    for &(key, change) in changes {
+        text = match change {
+            Change::Set(value) => set(&text, key, &value.toml())?,
+            Change::Remove => remove(&text, key)?,
+            Change::Reset => reset(&text, key)?,
         };
     }
     Ok(format!("{mark}{text}"))
@@ -159,7 +243,7 @@ fn set(source: &str, key: &[&str], value: &str) -> Result<String, String> {
 
 /// `source` without `key`, or as it is if it has none: without the line
 /// it's on, if that's all it takes, else as `toml_edit` removes it.
-fn remove(source: &str, key: &[&str]) -> Result<String, String> {
+fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
     let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
     let Some((found, value)) = lookup(parsed.as_table(), key)? else {
         return Ok(source.to_owned());
@@ -187,17 +271,278 @@ fn remove(source: &str, key: &[&str]) -> Result<String, String> {
             return Ok(cut);
         }
     }
+    // In braces, cut just the key, its value and a comma: toml_edit would
+    // take the comments before the key with it.
+    if let Some(cut) = inline_cut(source, parsed.as_table(), key)
+        && cut.parse::<toml::Table>().ok() == removed.parse::<toml::Table>().ok()
+    {
+        return Ok(cut);
+    }
+    // toml_edit takes the comments before a key it removes: a dotted key in
+    // braces, say, which neither cut can take.
+    if comments(&removed).len() < comments(source).len() {
+        return Err(EditError::DropsComment(format!(
+            "removing {} would drop a comment beside it; edit the file by hand",
+            key.join(".")
+        )));
+    }
     Ok(removed)
 }
 
+/// `source` without `key`, a key of an inline table in `root` (parsed from
+/// it): without its `key = value` and the comma after it, or else the one
+/// before it, the space beside them and every comment kept. `None` if it
+/// isn't in an inline table.
+fn inline_cut(source: &str, root: &Table, key: &[&str]) -> Option<String> {
+    let (name, tables) = key.split_last()?;
+    let (parent, tables) = tables.split_last()?;
+    let mut table: &dyn TableLike = root;
+    for part in tables {
+        table = table.get(part)?.as_table_like()?;
+    }
+    let item = table.get(parent)?;
+    let Item::Value(Value::InlineTable(inline)) = item else {
+        return None;
+    };
+    let braces = item.span()?;
+    let (found, value) = inline.get_key_value(name)?;
+    let (start, end) = (found.span()?.start, value.span()?.end);
+    let comments = comments(source);
+    let bytes = source.as_bytes();
+    // The first byte that isn't space or in a comment after `at`, or before
+    // it.
+    let next = |mut at: usize, forward: bool| -> Option<usize> {
+        loop {
+            if !forward {
+                at = at.checked_sub(1)?;
+            }
+            if let Some(comment) = comments.iter().find(|comment| comment.contains(&at)) {
+                at = if forward { comment.end } else { comment.start };
+                continue;
+            }
+            if !bytes.get(at)?.is_ascii_whitespace() {
+                return Some(at);
+            }
+            if forward {
+                at += 1;
+            }
+        }
+    };
+    let blank = |range: Range<usize>| source[range].chars().all(|c| c == ' ' || c == '\t');
+    let mut cuts = Vec::new();
+    match (next(end, true), next(start, false)) {
+        (Some(comma), _) if bytes[comma] == b',' => {
+            if source[end..comma].trim().is_empty() {
+                // The space after the comma, on its line, goes too.
+                let after = source[comma + 1..]
+                    .find(|c| c != ' ' && c != '\t')
+                    .map_or(source.len(), |at| comma + 1 + at);
+                cuts.push(start..after);
+            } else {
+                cuts.extend([start..end, comma..comma + 1]);
+            }
+        }
+        (_, Some(comma)) if bytes[comma] == b',' => {
+            if source[comma + 1..start].trim().is_empty() {
+                cuts.push(comma..end);
+            } else {
+                cuts.extend([comma..comma + 1, start..end]);
+            }
+        }
+        // Its only key: `{ key = value }` is `{}`.
+        _ if blank(braces.start + 1..start) && blank(end..braces.end - 1) => {
+            cuts.push(braces.start + 1..braces.end - 1);
+        }
+        _ => cuts.push(start..end),
+    }
+    cuts.sort_by_key(|cut| cut.start);
+    let mut text = String::with_capacity(source.len());
+    let mut at = 0;
+    for cut in cuts {
+        text.push_str(&source[at..cut.start]);
+        at = cut.end;
+    }
+    text.push_str(&source[at..]);
+    Some(text)
+}
+
+/// Where each comment in `source` is, `#` to the end of its line: a `#`
+/// outside any string.
+fn comments(source: &str) -> Vec<Range<usize>> {
+    let bytes = source.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'#' => {
+                let end = source[at..].find('\n').map_or(bytes.len(), |end| at + end);
+                found.push(at..end);
+                at = end;
+            }
+            quote @ (b'"' | b'\'') => {
+                let triple = bytes[at..].starts_with(&[quote; 3]);
+                at += if triple { 3 } else { 1 };
+                while at < bytes.len() {
+                    if quote == b'"' && bytes[at] == b'\\' {
+                        at += 2;
+                    } else if triple && bytes[at..].starts_with(&[quote; 3]) {
+                        // A closing quote or two may be the string's own.
+                        while bytes.get(at) == Some(&quote) {
+                            at += 1;
+                        }
+                        break;
+                    } else if !triple && (bytes[at] == quote || bytes[at] == b'\n') {
+                        at += 1;
+                        break;
+                    } else {
+                        at += 1;
+                    }
+                }
+            }
+            _ => at += 1,
+        }
+    }
+    found
+}
+
+/// Whether a comment starts in `range` of `source`.
+fn comment_in(comments: &[Range<usize>], range: Range<usize>) -> bool {
+    comments
+        .iter()
+        .any(|comment| range.contains(&comment.start))
+}
+
+/// Whether the line before the one starting at `line_start` is only a
+/// comment.
+fn comment_line_before(source: &str, comments: &[Range<usize>], line_start: usize) -> bool {
+    if line_start == 0 {
+        return false;
+    }
+    let before = source[..line_start - 1].rfind('\n').map_or(0, |at| at + 1);
+    let line = &source[before..line_start];
+    let first = before + line.len() - line.trim_start().len();
+    comments.iter().any(|comment| comment.start == first)
+}
+
+/// `source` without `key`, as [`remove`] takes it, and without each table
+/// on its path that leaves empty, innermost first. As it is if it has no
+/// `key`.
+fn reset(source: &str, key: &[&str]) -> Result<String, EditError> {
+    let mut text = remove(source, key)?;
+    if text == source {
+        return Ok(text);
+    }
+    for depth in (1..key.len()).rev() {
+        match prune(&text, &key[..depth])? {
+            Some(pruned) => text = pruned,
+            None => break,
+        }
+    }
+    Ok(text)
+}
+
+/// `source` without the table at `key` if it's empty: an inline table's
+/// key, unless a comment is in it, after it or just before its line, or a
+/// `[header]` with only blank lines under it and no comment on
+/// or just before its line. `source` as it is if there's no such table, an
+/// implicit or dotted one gone with its last key; `None` if the table
+/// stays.
+fn prune(source: &str, key: &[&str]) -> Result<Option<String>, EditError> {
+    let parsed = Document::parse(source).map_err(|error| format!("isn't valid TOML: {error}"))?;
+    let (name, tables) = key.split_last().expect("a table has a name");
+    let mut table: &dyn TableLike = parsed.as_table();
+    for (depth, part) in tables.iter().enumerate() {
+        let Some(item) = table.get(part) else {
+            return Ok(Some(source.to_owned()));
+        };
+        table = item
+            .as_table_like()
+            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
+    }
+    let Some(item) = table.get(name) else {
+        return Ok(Some(source.to_owned()));
+    };
+    let inner = item
+        .as_table_like()
+        .ok_or_else(|| format!("{} isn't a table", key.join(".")))?;
+    if inner.iter().next().is_some() {
+        return Ok(None);
+    }
+    match item {
+        Item::Value(Value::InlineTable(_)) => match item.span() {
+            Some(braces) if !commented_around(source, braces.clone()) => {
+                remove(source, key).map(Some)
+            }
+            _ => Ok(None),
+        },
+        Item::Table(inner) if !inner.is_implicit() && !inner.is_dotted() => {
+            Ok(header_cut(source, parsed.as_table(), inner))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Whether a comment is inside `braces`, an empty inline table, after it
+/// on its line, or on the line before the one it starts on.
+fn commented_around(source: &str, braces: Range<usize>) -> bool {
+    let comments = comments(source);
+    let line_start = source[..braces.start].rfind('\n').map_or(0, |at| at + 1);
+    let line_end = source[braces.end..]
+        .find('\n')
+        .map_or(source.len(), |at| braces.end + at);
+    comment_in(&comments, braces.start..line_end)
+        || comment_line_before(source, &comments, line_start)
+}
+
+/// `source` without `table`'s `[header]` and the blank lines under it,
+/// those before it too if it's last, if nothing else is under it and no
+/// comment is on its line or the line before.
+fn header_cut(source: &str, root: &Table, table: &Table) -> Option<String> {
+    let header = table.span()?;
+    let line_start = source[..header.end].rfind('\n').map_or(0, |at| at + 1);
+    let line_end = source[header.end..]
+        .find('\n')
+        .map_or(source.len(), |at| header.end + at + 1);
+    let comments = comments(source);
+    if comment_in(&comments, header.start..line_end)
+        || comment_line_before(source, &comments, line_start)
+    {
+        return None;
+    }
+    let mut starts = Vec::new();
+    headers(root, &mut starts);
+    let end = starts
+        .into_iter()
+        .filter(|&at| at > header.start)
+        .min()
+        .unwrap_or(source.len());
+    if !source[line_end.min(end)..end].trim().is_empty() {
+        return None;
+    }
+    // Last in the file: the blank lines before it go too.
+    let mut start = line_start;
+    if end == source.len() {
+        while start > 0 {
+            let before = source[..start - 1].rfind('\n').map_or(0, |at| at + 1);
+            if !source[before..start].trim().is_empty() {
+                break;
+            }
+            start = before;
+        }
+    }
+    Some(format!("{}{}", &source[..start], &source[end..]))
+}
+
 /// The lines a `key = value` from `start` to `end` is on, newline
-/// included, if nothing but space or a comment follows it.
+/// included, if nothing but space, a comma or a comment follows it.
 fn line_of(source: &str, start: usize, end: usize) -> Option<Range<usize>> {
     let line_start = source[..start].rfind('\n').map_or(0, |at| at + 1);
     let line_end = source[end..]
         .find('\n')
         .map_or(source.len(), |at| end + at + 1);
     let after = source[end..line_end].trim();
+    // The comma after a key in an inline table written over several lines.
+    let after = after.strip_prefix(',').map_or(after, str::trim_start);
     (after.is_empty() || after.starts_with('#')).then_some(line_start..line_end)
 }
 
@@ -407,12 +752,13 @@ fn insertion(
             Ok(line(end.unwrap_or(header.end), &setting))
         }
         _ => {
-            // A table of its own, after everything.
+            // A table of its own, after everything, set apart from what's
+            // before it, if anything is.
             let mut prefix = String::new();
-            if !source.ends_with('\n') {
+            if !source.is_empty() && !source.ends_with('\n') {
                 prefix.push_str(eol);
             }
-            if !source.ends_with("\n\n") && !source.ends_with("\n\r\n") {
+            if !source.is_empty() && !source.ends_with("\n\n") && !source.ends_with("\n\r\n") {
                 prefix.push_str(eol);
             }
             let header = tables

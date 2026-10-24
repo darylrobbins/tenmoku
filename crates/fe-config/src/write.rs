@@ -1,6 +1,7 @@
 //! Writing settings into fastedit's `settings.toml`: kiln-core's
 //! [`kiln_core::write_setting`] and its kin, creating a missing file from
-//! fastedit's template.
+//! fastedit's template. The Settings editor writes through
+//! [`crate::settings_edit`], which also writes the project's file.
 
 use std::{io, path::Path};
 
@@ -23,7 +24,8 @@ pub fn write_setting_str(path: &Path, key: &[&str], value: &str) -> io::Result<(
 }
 
 /// Makes each of `changes` in turn, in one write, to the settings file at
-/// `path`: sets its key's value, or, for `None`, removes the key. See
+/// `path`: sets its key's value (a boolean, string, integer, float or list
+/// of strings), or, for `None`, removes the key. See
 /// [`kiln_core::write::write_settings`].
 pub fn write_settings(
     path: &Path,
