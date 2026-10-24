@@ -254,6 +254,8 @@ pub(crate) struct ViewPlace {
     scroll: Point<Pixels>,
     top: Option<(u32, u32)>,
     autoscroll: bool,
+    /// [`EditorView::band_spares_caret`] and [`EditorView::clear_band`].
+    band: (bool, bool),
 }
 
 /// The command a vim-layer binding names to hand its keystroke to the
@@ -1321,8 +1323,10 @@ impl EditorView {
                 preview.opened_in = Some((before, events));
                 preview.reveal = Some(found.start);
                 preview.shown = Some((found, pattern, version));
-                // The frame scrolls to it as it would to the caret.
+                // The frame scrolls to it as it would to the caret, clear of
+                // sticky scroll's band.
                 self.autoscroll = true;
+                self.band_spares_caret = false;
             }
         }
         cx.notify();
@@ -1387,6 +1391,7 @@ impl EditorView {
             scroll: self.scroll,
             top: self.top_buffer_row().zip(self.top_display_row()),
             autoscroll: self.autoscroll,
+            band: (self.band_spares_caret, self.clear_band),
         }
     }
 
@@ -1449,6 +1454,7 @@ impl EditorView {
         self.scrolled_top = place.top.map(|(row, _)| row);
         self.scrolled_display_top = place.top.map(|(_, row)| row);
         self.autoscroll = place.autoscroll;
+        (self.band_spares_caret, self.clear_band) = place.band;
     }
 
     /// A frame was laid out: tells vim the view's height, so a counted
@@ -1957,6 +1963,23 @@ impl EditorView {
         let result: Result<_, DispatchError> =
             Ok(Dispatched::new(Effect::Changed).with_transactions(transactions));
         self.dispatched(result, &invocation, true, cx).is_ok()
+    }
+
+    /// Adds the caret to vim's jumplist and sets the jump mark (`''`) there,
+    /// as `m'` does, before a jump the view makes itself (a click on a
+    /// sticky scroll row); in insert or replace mode through `<C-o>`, so the
+    /// session goes on. Nothing with vim off.
+    pub(crate) fn record_vim_jump(&mut self, cx: &mut Context<Self>) {
+        self.sync_vim(cx);
+        if self.vim.is_none() || (self.typing_mode().is_some() && !self.one_command_typing(cx)) {
+            return;
+        }
+        let args = fe_command::Value::from_iter([("name", "'")]);
+        let invocation = Invocation::of("vim.set_mark")
+            .expect("a valid command ID")
+            .args(args)
+            .source(Source::Mouse);
+        self.run_command(invocation, None, cx);
     }
 
     /// `<C-o>` in insert or replace mode: normal mode for one command

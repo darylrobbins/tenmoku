@@ -12,7 +12,10 @@ use std::{
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_git::ChangeKind;
-use fe_gpui::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunCommand};
+use fe_gpui::{
+    DiffView, EditorSettings, EditorTheme, EditorView,
+    commands::{EditorViewEvent, RunCommand},
+};
 use fe_ui::ROW_HEIGHT;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
@@ -149,9 +152,9 @@ pub struct Workbench {
     #[cfg(test)]
     drops: HashMap<EntityId, Subscription>,
     /// Per open editor: the editor, held until its tab's close is seen
-    /// here, and its notifications, passed on to the editors that share its
-    /// buffer.
-    editors: HashMap<EntityId, (Entity<EditorView>, Subscription)>,
+    /// here, its notifications, passed on to the editors that share its
+    /// buffer, and its jumps, recorded in the navigation history.
+    editors: HashMap<EntityId, (Entity<EditorView>, [Subscription; 2])>,
     /// Per pane, the file the project panel last opened there, until its
     /// editor shows (an open can wait behind a Save As): for vim's normal
     /// mode then ([`Workbench::open_from_tree`]).
@@ -645,7 +648,13 @@ impl Workbench {
                 continue;
             }
             let observed = cx.observe(editor, Self::editor_changed);
-            (self.editors).insert(editor.entity_id(), (editor.clone(), observed));
+            let jumps = cx.subscribe(editor, |workbench, editor, event, cx| {
+                if let EditorViewEvent::Jumped { from } = event {
+                    workbench.editor_jumped(&editor, *from, cx);
+                }
+            });
+            let subscriptions = [observed, jumps];
+            (self.editors).insert(editor.entity_id(), (editor.clone(), subscriptions));
             if let Some(path) = editor.read(cx).model().path().map(Path::to_owned) {
                 recent_picker::record(path, false, cx);
             }

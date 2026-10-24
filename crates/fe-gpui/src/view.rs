@@ -57,6 +57,10 @@ pub struct EditorView {
     /// Counts the parses and language loads that landed, which change
     /// highlights beyond the rows edited.
     pub(crate) highlight_epoch: u64,
+    /// A sticky scroll row's header clicked, whose row the next frame whose
+    /// syntax matches the text scrolls to, under its parent's band
+    /// ([`EditorView::reveal_sticky_header`]).
+    pub(crate) sticky_reveal: Option<fe_buffer::Anchor>,
     /// The scopes sticky scroll's band was last found from
     /// ([`crate::element::sticky_scroll::scopes`]).
     pub(crate) sticky_scopes: Option<crate::element::sticky_scroll::Scopes>,
@@ -67,6 +71,16 @@ pub struct EditorView {
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
     pub(crate) autoscroll: bool,
+    /// A vim scroll (`zt`, `<C-e>`, `H`…) placed the view, which keeps
+    /// nvim's top rows, or the view is too short to show the caret's row
+    /// below sticky scroll's band: the band leaves the caret's row out
+    /// instead, until the caret moves or the view scrolls otherwise
+    /// ([`crate::element::sticky_scroll::keep_above`]).
+    pub(crate) band_spares_caret: bool,
+    /// The caret moved or the text changed since the last frame, which then
+    /// scrolls the caret's row out from under sticky scroll's band, even
+    /// where vim keeps the view where it is (`k` within it).
+    pub(crate) clear_band: bool,
     /// The hunk whose block the next frame scrolls into view, after the
     /// caret: where next or previous hunk went.
     pub(crate) reveal_hunk: Option<fe_buffer::HunkId>,
@@ -332,10 +346,13 @@ impl EditorView {
             minimap_hover: Default::default(),
             minimap_cache: Default::default(),
             highlight_epoch: 0,
+            sticky_reveal: None,
             sticky_scopes: None,
             annotations: None,
             scroll: Point::default(),
             autoscroll: true,
+            band_spares_caret: false,
+            clear_band: false,
             reveal_hunk: None,
             scrolled_top: None,
             scrolled_display_top: None,
@@ -671,6 +688,9 @@ impl EditorView {
     /// Call after anything that moves the cursor or changes the text.
     pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
         self.autoscroll = true;
+        self.band_spares_caret = false;
+        self.clear_band = true;
+        self.sticky_reveal = None;
         self.blurred_ghost_text = None;
         // An edit stops the find count running and starts another now, not
         // at the next frame.
@@ -799,14 +819,18 @@ impl EditorView {
         self.scrolled_top = Some(top_row);
         self.scrolled_display_top = Some(display_row);
         self.autoscroll = false;
+        self.band_spares_caret = true;
+        self.clear_band = false;
     }
 
     /// Keeps the view where it is through a vim scroll that left the top
     /// row alone, as the caret moves: its pixel offset, even partway down
     /// a wrapped row, stays as it is.
-    pub(crate) fn pin_top_row(&mut self) {
+    pub(crate) fn pin_top_row(&mut self, scrolled: bool) {
         self.scrolled_top = self.top_buffer_row();
         self.autoscroll = false;
+        self.band_spares_caret = scrolled;
+        self.clear_band &= !scrolled;
     }
 
     /// The rows a page scrolls. Called as each dispatch starts, it also
@@ -828,7 +852,7 @@ impl EditorView {
             .map_or(0, |layout| layout.offset_at(text, position))
     }
 
-    fn on_mouse_down(
+    pub(crate) fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
         window: &mut Window,
@@ -905,6 +929,14 @@ impl EditorView {
         // The minimap scrolls, and leaves the carets, a composition and vim's
         // mode be, whoever owns the mouse.
         if self.press_minimap(event, window, cx) {
+            return;
+        }
+        // Sticky scroll's band, which takes presses from what's under it.
+        let sticky = (self.layout.as_ref())
+            .and_then(|layout| element::sticky_scroll::row_at(layout, event.position, window));
+        if let Some(header) = sticky {
+            self.drag = None;
+            self.reveal_sticky_header(header, cx);
             return;
         }
         // A click ends a composition, typing nothing.
@@ -1011,6 +1043,48 @@ impl EditorView {
         });
         self.sync_completion(cx);
         self.changed(cx);
+    }
+
+    /// A click on the sticky scroll row of the header at `buffer_row`: the
+    /// caret goes to the header's first non-blank, with no selection, and
+    /// the view scrolls so the header shows directly under the band its own
+    /// enclosing scopes then form. It's a jump, as go-to-definition is: the
+    /// host hears where from ([`EditorViewEvent::Jumped`]), and with vim on
+    /// vim's jumplist gets it (`''` returns) as `m'` would, in insert mode
+    /// too. As a click in the text does, it leaves vim's visual mode and
+    /// ends a composition. A press on the band comes here once held keys
+    /// have resolved ([`EditorView::settle_press`]), so the row, the text
+    /// and the last frame agree.
+    pub(crate) fn reveal_sticky_header(&mut self, buffer_row: u32, cx: &mut Context<Self>) {
+        self.cancel_vim(cx);
+        self.composition = None;
+        // The header, and the jump's origin, through anchors: vim's jump (in
+        // insert mode through `<C-o>`) and the move after it can end the
+        // insert session, which edits the text: unused autoindent goes, a
+        // block insert fills its rows.
+        let header = self
+            .model
+            .snapshot()
+            .anchor_before(self.model.text().row_start(buffer_row));
+        self.record_vim_jump(cx);
+        let from = (self.model.snapshot()).anchor_before(self.model.primary_selection().head());
+        let to_header = |model: &mut EditorModel| {
+            let row = sticky_header_row(model, &header);
+            let text = model.text();
+            let start = text.row_start(row);
+            let line = text.slice_to_string(start..start + text.row_len(row) as usize);
+            model.set_cursor(start + line.len() - line.trim_start().len());
+        };
+        self.split_session(fe_vim::Splits::Moves, to_header, cx);
+        self.sync_completion(cx);
+        self.changed(cx);
+        // Directly under the band its own scopes form, which a frame finds
+        // once its syntax has caught up with any edit.
+        self.sticky_reveal = Some(header);
+        self.autoscroll = false;
+        self.clear_band = false;
+        let from = self.model.snapshot().resolve(&from);
+        cx.emit(EditorViewEvent::Jumped { from });
     }
 
     /// A click on a lens row the last frame painted: on an item, runs its
@@ -1469,6 +1543,9 @@ impl EditorView {
         self.scroll.y = (self.scroll.y - delta.y).max(px(0.));
         // The element clamps against the content size on the next frame.
         self.autoscroll = false;
+        self.band_spares_caret = false;
+        self.clear_band = false;
+        self.sticky_reveal = None;
         cx.notify();
     }
 
@@ -1522,6 +1599,13 @@ impl EditorView {
             .ok();
         }));
     }
+}
+
+/// The buffer row of the sticky scroll header `anchor` marks the start
+/// of, in `model`'s text now.
+pub(crate) fn sticky_header_row(model: &EditorModel, anchor: &fe_buffer::Anchor) -> u32 {
+    let at = model.snapshot().resolve(anchor);
+    model.text().offset_to_point(at).row
 }
 
 /// The offset of `range`'s last byte, which vim's cursor takes at its
@@ -1834,6 +1918,12 @@ mod diagnostics_tests;
 
 #[cfg(test)]
 mod hover_tests;
+
+#[cfg(test)]
+mod sticky_scroll_click_tests;
+
+#[cfg(test)]
+mod sticky_scroll_caret_tests;
 
 #[cfg(test)]
 mod completion_tests;

@@ -383,6 +383,24 @@ impl EditorHost for ViewHost<'_> {
     }
 }
 
+/// Whether `invocation` places the view as nvim does: one of vim's scrolls
+/// (`zt`, `<C-e>`…), even one that leaves the top row where it is, or `H`,
+/// `M` or `L`, which move within the window nvim shows.
+fn keeps_nvim_view(invocation: &Invocation) -> bool {
+    let motion = invocation
+        .args
+        .get("motion")
+        .and_then(|motion| motion.as_str());
+    match invocation.command.as_str() {
+        "vim.scroll" => true,
+        "vim.move" => matches!(
+            motion,
+            Some("window_top" | "window_middle" | "window_bottom")
+        ),
+        _ => false,
+    }
+}
+
 /// How long one dispatch's [`reparsed`] calls may take altogether.
 const INDENT_PARSE_BUDGET: Duration = Duration::from_millis(20);
 
@@ -721,8 +739,11 @@ impl EditorView {
             // A scroll that kept the top row still moved the caret, which
             // mustn't scroll the view back; so a motion that asked (`H`)
             // and left it in view. One that took it out of view (`G`, `'a`)
-            // scrolls it in.
-            None if ok && asked && self.shows_caret() => self.pin_top_row(),
+            // scrolls it in. A vim scroll, and `H`, `M` and `L`, keep nvim's
+            // view; sticky scroll's band then spares the caret's row.
+            None if ok && asked && self.shows_caret() => {
+                self.pin_top_row(keeps_nvim_view(invocation))
+            }
             None => {}
         }
         Ok(())

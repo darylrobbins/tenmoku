@@ -523,6 +523,19 @@ impl Workbench {
         self.push_place(place, cx);
     }
 
+    /// Records where `editor`'s caret jumped from, `from` in its file, as
+    /// a click on a sticky scroll row does.
+    pub(crate) fn editor_jumped(
+        &mut self,
+        editor: &Entity<fe_gpui::EditorView>,
+        from: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let path = editor.read(cx).model().path().map(Path::to_owned);
+        let place = path.map(|path| Place { path, offset: from });
+        self.push_place(place, cx);
+    }
+
     /// Records `place` before a jump.
     fn push_place(&mut self, place: Option<Place>, cx: &mut Context<Self>) {
         self.nav_state.history.push(place);

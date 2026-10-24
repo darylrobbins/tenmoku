@@ -6,6 +6,12 @@
 //! ([`scopes`]); the band is laid out once the frame has settled and painted
 //! over the text, selections and carets. It spans the gutter and the text,
 //! not the minimap beside them.
+//!
+//! The band takes the pointer from what's under it: a row under the pointer
+//! is painted in `sticky_scroll_hover`, and a click on it reveals its header
+//! ([`crate::EditorView::reveal_sticky_header`]). Autoscroll keeps the
+//! caret's row a row below the band ([`clear_of_caret`]); after a vim scroll
+//! the band leaves the caret's row out instead ([`keep_above`]).
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -13,16 +19,20 @@ use std::ops::{Range, RangeInclusive};
 
 use fe_buffer::Version;
 use fe_display::{
-    Bias, ExpandedRow,
+    Bias, BlockMap, CharWidth, ExpandedRow, RowIndex, RowSlice, StickyRow,
     layout::{
-        Frame, LINE_NUMBER_GAP_EMS, MAX_SHAPED_ROW_BYTES, Rect, StyleRun, TextMeasure, Vec2,
-        row_runs,
+        LINE_NUMBER_GAP_EMS, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, StyleRun, TextMeasure,
+        Vec2, row_runs,
     },
 };
 use fe_syntax::Syntax;
-use gpui::{App, ContentMask, Window, fill, linear_color_stop, linear_gradient, px};
 #[cfg(test)]
-use gpui::{Bounds, Hsla, Pixels};
+use gpui::Bounds;
+use gpui::{
+    App, ContentMask, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, Hsla, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, WeakEntity, Window, fill, linear_color_stop,
+    linear_gradient, px,
+};
 
 use super::{FrameLayout, Line, Shaper, foreground_spans, styled_highlights};
 use crate::{EditorTheme, EditorView};
@@ -59,24 +69,33 @@ pub(crate) fn queries() -> usize {
     QUERIES.with(Cell::get)
 }
 
-/// The scopes overlapping the rows at the top of `frame` that the band can
-/// pin, outermost first, from the view's cache when the top row and the
-/// text are those it was found for. None while the band is off or there's
-/// no syntax tree for the text.
-pub(crate) fn scopes<L>(view: &mut EditorView, frame: &Frame<L>) -> Vec<RangeInclusive<u32>> {
-    let syntax = (view.syntax.as_ref().map(fe_syntax::SyntaxDriver::syntax))
-        .filter(|syntax| syntax.version() == view.model.snapshot().version());
+/// The scopes overlapping the rows at the top of a view scrolled to
+/// `scroll_y` over `blocks` that the band can pin, outermost first, from
+/// `cache` when the top row and the text are those it was found for, else
+/// found and kept there. None while the band is off or the text has no
+/// syntax. `None` while they can't be known yet: the syntax tree is behind
+/// the text, being parsed, and asked again on a frame after it's caught up.
+pub(crate) fn scopes(
+    view: &EditorView,
+    cache: &mut Option<Scopes>,
+    blocks: &BlockMap,
+    scroll_y: f32,
+    line_height: f32,
+) -> Option<Vec<RangeInclusive<u32>>> {
+    let syntax = view.syntax.as_ref().map(fe_syntax::SyntaxDriver::syntax);
     let (Some(syntax), true) = (syntax, view.theme.sticky_scroll) else {
-        return Vec::new();
+        return Some(Vec::new());
     };
+    if syntax.version() != view.model.snapshot().version() {
+        return None;
+    }
     let display = view.model.display();
     let row_count = display.row_count();
-    let line_height = frame.line_height.max(1.);
+    let line_height = line_height.max(1.);
     // From the display row at the top to the one the band's last slot can
     // reach, by the whole screen row at the top, so scrolling within it
     // keeps the rows.
-    let top = (frame.scroll.y / line_height).floor();
-    let blocks = &frame.block_map;
+    let top = (scroll_y / line_height).floor();
     let display_row =
         |screen_top: f32| (blocks.to_display_top(screen_top).floor() as u32).min(row_count - 1);
     let first = display.row(display_row(top)).buffer_row;
@@ -84,32 +103,163 @@ pub(crate) fn scopes<L>(view: &mut EditorView, frame: &Frame<L>) -> Vec<RangeInc
         .row(display_row(top + MAX_ROWS as f32 + 1.))
         .buffer_row;
     let key = (syntax.language().name(), first..last + 1, syntax.version());
-    if let Some(cached) = view
-        .sticky_scopes
-        .as_ref()
-        .filter(|cached| cached.key == key)
-    {
-        return cached.scopes.clone();
+    if let Some(cached) = cache.as_ref().filter(|cached| cached.key == key) {
+        return Some(cached.scopes.clone());
     }
     #[cfg(test)]
     QUERIES.with(|queries| queries.set(queries.get() + 1));
-    // Not parsed yet, it's asked again next frame; a language without an
-    // outline, or a file too large for one, has no scopes.
+    // A language without an outline, or a file too large for one, has no
+    // scopes.
     let scopes = match fe_syntax::outline_scopes(syntax, key.1.clone()) {
         Ok(scopes) => scopes,
-        Err(fe_syntax::NoOutline::NotParsed) => return Vec::new(),
+        Err(fe_syntax::NoOutline::NotParsed) => return None,
         Err(_) => Vec::new(),
     };
-    view.sticky_scopes = Some(Scopes {
+    *cache = Some(Scopes {
         key,
         scopes: scopes.clone(),
     });
-    scopes
+    Some(scopes)
+}
+
+/// The rows the band pins from `scopes` over a view scrolled to `scroll_y`,
+/// none whose bottom passes `keep_above`: none while it's off.
+pub(crate) fn pinned(
+    view: &EditorView,
+    scopes: &[RangeInclusive<u32>],
+    blocks: &BlockMap,
+    scroll_y: f32,
+    line_height: f32,
+    keep_above: Option<f32>,
+) -> Vec<StickyRow> {
+    if !view.theme.sticky_scroll || scopes.is_empty() {
+        return Vec::new();
+    }
+    let display = view.model.display();
+    let (lines, rows) = (line_height, MAX_ROWS);
+    fe_display::sticky_rows(scopes, display, blocks, scroll_y, lines, rows, keep_above)
+}
+
+/// The bottom of the band of `rows`, from the view's top: 0 with none.
+pub(crate) fn bottom(rows: &[StickyRow], line_height: f32) -> f32 {
+    (rows.iter())
+        .map(|row| row.y + line_height)
+        .fold(0., f32::max)
+}
+
+/// The band the view pins at `scroll_y`, found through `cache`: `None`
+/// while its scopes can't be known yet ([`scopes`]).
+pub(crate) fn band_at(
+    view: &EditorView,
+    cache: &mut Option<Scopes>,
+    blocks: &BlockMap,
+    scroll_y: f32,
+    line_height: f32,
+) -> Option<Vec<StickyRow>> {
+    let scopes = scopes(view, cache, blocks, scroll_y, line_height)?;
+    Some(pinned(view, &scopes, blocks, scroll_y, line_height, None))
+}
+
+/// The top of the caret at `head`'s row, in pixels from the text's top,
+/// block rows counted.
+pub(crate) fn caret_top(
+    view: &EditorView,
+    blocks: &BlockMap,
+    head: usize,
+    line_height: f32,
+) -> f32 {
+    let display_row = view.model.display().row_for_offset(head);
+    blocks.screen_row(display_row) as f32 * line_height
+}
+
+/// Where a frame autoscrolled to `scroll_y` puts its top instead, so the
+/// caret's row, at `caret_top`, has a row between it and the band: the
+/// band's height for the scroll it ends at plus one row is its top margin,
+/// as fe-display's three rows are. Not so far that the caret's row passes
+/// `bottom_margin` above the bottom of a view `height` tall: a view too
+/// short for both keeps the caret there, and the band then spares its row
+/// ([`keep_above`]), which the second value says. `Ok(None)` where the
+/// caret already clears the band, or the band is empty; `Err` while the
+/// band can't be known yet ([`scopes`]), to ask again on a later frame.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn clear_of_caret(
+    view: &EditorView,
+    cache: &mut Option<Scopes>,
+    blocks: &BlockMap,
+    scroll_y: f32,
+    line_height: f32,
+    caret_top: f32,
+    height: f32,
+    bottom_margin: f32,
+) -> Result<Option<(f32, bool)>, NotKnown> {
+    let mut band = |scroll_y: f32| {
+        let rows = band_at(view, cache, blocks, scroll_y, line_height).ok_or(NotKnown)?;
+        Ok(bottom(&rows, line_height))
+    };
+    let mut pinned = band(scroll_y)?;
+    if pinned == 0. || caret_top - scroll_y >= pinned + line_height {
+        return Ok(None);
+    }
+    // Scrolled up, the band may pin more: up again by what it adds, until
+    // it adds nothing, which it does within its most rows.
+    let lowest = (caret_top + line_height + bottom_margin - height).max(0.);
+    let mut top = scroll_y;
+    for _ in 0..=MAX_ROWS {
+        let wanted = (caret_top - pinned - line_height).max(lowest);
+        if wanted >= top {
+            break;
+        }
+        top = wanted;
+        let more = band(top)?;
+        if more <= pinned {
+            pinned = more;
+            break;
+        }
+        pinned = more;
+    }
+    let spare = caret_top - top < pinned;
+    Ok((top < scroll_y || spare).then_some((top, spare)))
+}
+
+/// The band's scopes aren't known yet: the syntax tree is being parsed.
+#[derive(Debug)]
+pub(crate) struct NotKnown;
+
+/// Where a click on the pinned header `buffer_row` scrolls: its row
+/// directly under the band its enclosing scopes then form, so it shows as
+/// itself, not pinned (VS Code's `top = header − ancestors pinned`).
+/// `None` while the band can't be known yet ([`scopes`]).
+pub(crate) fn reveal_top(
+    view: &EditorView,
+    cache: &mut Option<Scopes>,
+    blocks: &BlockMap,
+    buffer_row: u32,
+    line_height: f32,
+) -> Option<f32> {
+    let display_row = view.model.display().row_for_buffer_row(buffer_row);
+    let header = blocks.screen_row(display_row) as f32 * line_height;
+    let mut top = header;
+    for above in 0..=MAX_ROWS {
+        top = (header - above as f32 * line_height).max(0.);
+        let rows = band_at(view, cache, blocks, top, line_height)?;
+        if top == 0. || bottom(&rows, line_height) <= header - top {
+            break;
+        }
+    }
+    Some(top)
+}
+
+/// With the view placed by a vim scroll, or too short to clear the band
+/// (`spares`, [`EditorView::band_spares_caret`]), the caret's row's top in the view at `scroll_y`, which the band pins
+/// nothing at or below; `None` otherwise, or with the caret above the view.
+pub(crate) fn keep_above(spares: bool, scroll_y: f32, caret_top: f32) -> Option<f32> {
+    let y = caret_top - scroll_y;
+    (spares && y >= 0.).then_some(y)
 }
 
 /// One pinned row, in the frame's coordinates.
 pub(crate) struct Row {
-    #[cfg(test)]
+    /// The header's, which a click on the row reveals.
     pub(crate) buffer_row: u32,
     /// The row's top, from the editor's.
     pub(crate) y: f32,
@@ -121,6 +271,9 @@ pub(crate) struct Row {
     pub(crate) text: String,
     /// The line number and its x, with a gutter.
     pub(crate) number: Option<(f32, Line)>,
+    /// Where the pointer is over the row, once inserted
+    /// ([`insert_hitboxes`]).
+    hitbox: Option<Hitbox>,
 }
 
 /// The band one frame laid out.
@@ -134,18 +287,18 @@ pub(crate) struct Placed {
     text: Rect,
 }
 
-/// Lays out the band over `layout`'s frame from `scopes`, its rows shaped
-/// with `shaper`: `None` while it's off or pins nothing.
+/// Lays out the band of `pinned` rows ([`pinned`]) over `layout`'s frame,
+/// its rows shaped with `shaper`: `None` while it pins nothing.
 pub(crate) fn layout(
     layout: &mut FrameLayout,
     view: &EditorView,
-    scopes: &[RangeInclusive<u32>],
+    pinned: Vec<StickyRow>,
     syntax: Option<&Syntax>,
     unnecessary: &[Range<usize>],
     shaper: &mut Shaper,
     em: f32,
 ) -> Option<Placed> {
-    if !view.theme.sticky_scroll || scopes.is_empty() {
+    if pinned.is_empty() {
         return None;
     }
     let theme = &view.theme;
@@ -153,18 +306,6 @@ pub(crate) fn layout(
     let display = model.display();
     let frame = &layout.frame;
     let line_height = frame.line_height;
-    let pinned = fe_display::sticky_rows(
-        scopes,
-        display,
-        &frame.block_map,
-        frame.scroll.y,
-        line_height,
-        MAX_ROWS,
-        None,
-    );
-    if pinned.is_empty() {
-        return None;
-    }
     let text = model.text();
     // The rows with a caret, whose numbers are the active colour.
     let caret_rows: Vec<u32> = (model.selections().iter())
@@ -176,6 +317,21 @@ pub(crate) fn layout(
     let text_bounds = frame.text_bounds();
     let (scroll_x, view_width) = (f64::from(frame.scroll.x), f64::from(text_bounds.width));
     let number_right = frame.fold_column.x - em * LINE_NUMBER_GAP_EMS;
+    // The text from `slice`, tabs expanded, shaped in the colours the text
+    // area gives it.
+    let shape = |shaper: &mut Shaper, slice: &RowSlice| {
+        let shown = slice.range.clone();
+        let expanded = ExpandedRow::with_start_column(
+            &text.slice_to_string(shown.clone()),
+            slice.start_column,
+            tab_size,
+        );
+        let foreground = foreground_spans(&model.decorations(shown.clone()), theme);
+        let spans = styled_highlights(syntax, theme, unnecessary, &foreground, shown.clone());
+        let first = spans.partition_point(|span| span.range.end <= shown.start);
+        let runs = row_runs(&expanded, shown.start, &spans[first..], &theme.foreground);
+        (shaper.shape(expanded.text(), &runs), expanded)
+    };
     let mut rows = Vec::with_capacity(pinned.len());
     for row in pinned {
         // A wrapped header shows its first display row.
@@ -183,7 +339,8 @@ pub(crate) fn layout(
         let range = display_row.range;
         // A long row, as in the text area, is shaped from a slice around the
         // view, and the rest of the row cut off.
-        let (shown, start_column, start_x) = if !wrapped && range.len() > MAX_SHAPED_ROW_BYTES {
+        #[cfg_attr(not(test), allow(unused_variables))]
+        let (slice, (line, expanded)) = if !wrapped && range.len() > MAX_SHAPED_ROW_BYTES {
             let FrameLayout {
                 long_rows,
                 glyph_widths,
@@ -197,23 +354,25 @@ pub(crate) fn layout(
                 glyph_widths,
             );
             let margin = f64::from(em * SLICE_MARGIN_EMS);
-            let slice = index.slice(scroll_x..scroll_x + view_width, margin, glyph_widths);
-            (slice.range, slice.start_column, slice.start_x)
+            let view = scroll_x..scroll_x + view_width;
+            let shape = |slice: &RowSlice| {
+                let shaped = shape(shaper, slice);
+                let width = f64::from(shaped.0.width());
+                (shaped, width)
+            };
+            let (slice, shaped) = widened_slice(index, glyph_widths, view, margin, shape);
+            (slice, shaped)
         } else {
             let len = range.len().min(MAX_SHAPED_ROW_BYTES);
             let end = text.clip_offset(range.start + len, Bias::Left);
-            (range.start..end, 0, 0.)
+            let slice = RowSlice {
+                range: range.start..end,
+                start_x: 0.,
+                start_column: 0,
+            };
+            let shaped = shape(shaper, &slice);
+            (slice, shaped)
         };
-        let expanded = ExpandedRow::with_start_column(
-            &text.slice_to_string(shown.clone()),
-            start_column,
-            tab_size,
-        );
-        let foreground = foreground_spans(&model.decorations(shown.clone()), theme);
-        let spans = styled_highlights(syntax, theme, unnecessary, &foreground, shown.clone());
-        let first = spans.partition_point(|span| span.range.end <= shown.start);
-        let runs = row_runs(&expanded, shown.start, &spans[first..], &theme.foreground);
-        let line = shaper.shape(expanded.text(), &runs);
         let number = view.gutter.then(|| {
             let color = match caret_rows.contains(&row.buffer_row) {
                 true => theme.gutter_active_foreground,
@@ -229,14 +388,14 @@ pub(crate) fn layout(
             (x, line)
         });
         rows.push(Row {
-            #[cfg(test)]
             buffer_row: row.buffer_row,
             y: row.y,
             line,
-            x: layout.frame.view_x(start_x),
+            x: layout.frame.view_x(slice.start_x),
             #[cfg(test)]
             text: expanded.text().to_owned(),
             number,
+            hitbox: None,
         });
     }
     let frame = &layout.frame;
@@ -254,6 +413,49 @@ pub(crate) fn layout(
         },
         text: text_bounds,
     })
+}
+
+/// The slice of a long row, indexed by `index`, to shape for the view
+/// `view` (x in the row) with `margin` either side, and what `shape`, which
+/// gives it and the width it's drawn, made of it. As in the text area
+/// (fe-display's `layout_frame`): where the shaper draws the slice narrower
+/// than the index measures it (contextual forms the index doesn't know),
+/// its text ends short of the view. It's widened by twice the shortfall, in
+/// index units per shaped unit, then, if it still ends short of the view,
+/// to as much as a slice may hold, each time shaped with what it then
+/// holds: three shapes at most.
+pub(crate) fn widened_slice<S>(
+    index: &mut RowIndex,
+    widths: &mut dyn CharWidth,
+    view: Range<f64>,
+    margin: f64,
+    mut shape: impl FnMut(&RowSlice) -> (S, f64),
+) -> (RowSlice, S) {
+    let mut slice = index.slice(view.clone(), margin, widths);
+    let (mut shaped, mut drawn) = shape(&slice);
+    let short = view.end + margin - (slice.start_x + drawn);
+    let limit = match short > 0. {
+        true => index.slice_limit(slice.range.start, widths),
+        false => slice.range.end,
+    };
+    if slice.range.end < limit {
+        slice = if drawn > 0. {
+            let indexed = index.x_for_offset(slice.range.end, widths) - slice.start_x;
+            index.widen(&slice, 2. * short * indexed / drawn, widths)
+        } else {
+            // Text shaped to nothing gives no ratio.
+            RowSlice {
+                range: slice.range.start..limit,
+                ..slice
+            }
+        };
+        (shaped, drawn) = shape(&slice);
+        if slice.start_x + drawn < view.end && slice.range.end < limit {
+            slice.range.end = limit;
+            (shaped, _) = shape(&slice);
+        }
+    }
+    (slice, shaped)
 }
 
 /// The band's row rect at `y`.
@@ -282,18 +484,90 @@ fn edges(placed: &Placed, theme: &EditorTheme) -> (Option<Rect>, Option<Rect>) {
     (border, shadow)
 }
 
+/// Inserts a hit area over each row of the band `layout` placed, which takes
+/// the pointer from what's under it: the text, the gutter and the blocks.
+/// The wheel goes on to the view, which scrolls.
+/// Inserted after every other of the frame's, and the rows bottom first, so
+/// a row pushed up under the one above it is under it here too.
+pub(crate) fn insert_hitboxes(layout: &mut FrameLayout, window: &mut Window) {
+    let Some(mut placed) = layout.sticky_scroll.take() else {
+        return;
+    };
+    let line_height = layout.frame.line_height;
+    for ix in (0..placed.rows.len()).rev() {
+        let rect = layout.bounds(row_rect(&placed, placed.rows[ix].y, line_height));
+        let behavior = HitboxBehavior::BlockMouseExceptScroll;
+        placed.rows[ix].hitbox = Some(window.insert_hitbox(rect, behavior));
+    }
+    layout.sticky_scroll = Some(placed);
+}
+
+/// Listens for button-1 presses on the band `layout` placed, which it takes
+/// from the view under it, and passes them to the view, where a press on a
+/// row reveals the row's header ([`EditorView::reveal_sticky_header`]),
+/// with any modifiers held.
+/// The header of the band's row under `position` in the rendered frame,
+/// if one is: the top row where rows overlap.
+pub(crate) fn row_at(
+    layout: &FrameLayout,
+    position: Point<Pixels>,
+    window: &Window,
+) -> Option<u32> {
+    let placed = layout.sticky_scroll.as_ref()?;
+    let over = |row: &&Row| {
+        (row.hitbox.as_ref()).is_some_and(|hitbox| hitbox.is_hovered_at(position, window))
+    };
+    placed.rows.iter().find(over).map(|row| row.buffer_row)
+}
+
+pub(crate) fn listen(view: &WeakEntity<EditorView>, layout: &FrameLayout, window: &mut Window) {
+    let Some(placed) = &layout.sticky_scroll else {
+        return;
+    };
+    let rows: Vec<Hitbox> = (placed.rows.iter())
+        .filter_map(|row| row.hitbox.clone())
+        .collect();
+    let view = view.clone();
+    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+        if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+            return;
+        }
+        if !rows.iter().any(|hitbox| hitbox.is_hovered(window)) {
+            return;
+        }
+        // As a press on the view: held keys resolve first, and the press
+        // finds the row under it again in the frame laid out after them.
+        view.update(cx, |view, cx| view.on_mouse_down(event, window, cx))
+            .ok();
+    });
+}
+
+/// The background of `row`: `sticky_scroll_hover` under the pointer.
+fn background(row: &Row, theme: &EditorTheme, window: &Window) -> Hsla {
+    match (row.hitbox.as_ref()).is_some_and(|hitbox| hitbox.is_hovered(window)) {
+        true => theme.sticky_scroll_hover,
+        false => theme.sticky_scroll_background,
+    }
+}
+
 /// Paints the band `layout` placed: the rows bottom first, so a row pushed
-/// up slides under the one above it, each over the band's background, then
-/// the line and the shadow under them.
+/// up slides under the one above it, each over the band's background (or
+/// the hover's, with a pointing hand, under the pointer), then the line and
+/// the shadow under them. The pointer moving onto or off a row redraws.
 pub(crate) fn paint(layout: &FrameLayout, theme: &EditorTheme, window: &mut Window, cx: &mut App) {
     let Some(placed) = &layout.sticky_scroll else {
         return;
     };
     let line_height = layout.frame.line_height;
     let text = layout.bounds(placed.text);
+    let mut hovered = Vec::new();
     for row in placed.rows.iter().rev() {
         let rect = layout.bounds(row_rect(placed, row.y, line_height));
-        window.paint_quad(fill(rect, theme.sticky_scroll_background));
+        window.paint_quad(fill(rect, background(row, theme, window)));
+        if let Some(hitbox) = &row.hitbox {
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            hovered.push((hitbox.clone(), hitbox.is_hovered(window)));
+        }
         if let Some((x, number)) = &row.number {
             let origin = layout.to_window(Vec2 { x: *x, y: row.y });
             number.paint(origin, px(line_height), window, cx);
@@ -318,6 +592,14 @@ pub(crate) fn paint(layout: &FrameLayout, theme: &EditorTheme, window: &mut Wind
         );
         window.paint_quad(fill(layout.bounds(shadow), fade));
     }
+    if !hovered.is_empty() {
+        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _| {
+            let moved = (hovered.iter()).any(|(hitbox, over)| hitbox.is_hovered(window) != *over);
+            if phase == DispatchPhase::Bubble && moved {
+                window.refresh();
+            }
+        });
+    }
 }
 
 /// A row [`paint`] painted, in window coordinates.
@@ -326,6 +608,8 @@ pub(crate) fn paint(layout: &FrameLayout, theme: &EditorTheme, window: &mut Wind
 pub(crate) struct PaintedRow {
     pub(crate) buffer_row: u32,
     pub(crate) bounds: Bounds<Pixels>,
+    /// Its background: the hover's under the pointer.
+    pub(crate) background: Hsla,
     /// The line number and its colour.
     pub(crate) number: Option<(Bounds<Pixels>, Hsla)>,
     pub(crate) text: String,
@@ -349,13 +633,18 @@ pub(crate) struct Painted {
 
 /// What [`paint`] paints for `layout`, for tests.
 #[cfg(test)]
-pub(crate) fn painted(layout: &FrameLayout, theme: &EditorTheme) -> Option<Painted> {
+pub(crate) fn painted(
+    layout: &FrameLayout,
+    theme: &EditorTheme,
+    window: &Window,
+) -> Option<Painted> {
     let placed = layout.sticky_scroll.as_ref()?;
     let line_height = layout.frame.line_height;
     let rows = (placed.rows.iter())
         .map(|row| PaintedRow {
             buffer_row: row.buffer_row,
             bounds: layout.bounds(row_rect(placed, row.y, line_height)),
+            background: background(row, theme, window),
             number: row.number.as_ref().map(|(x, number)| {
                 let rect = Rect {
                     x: *x,

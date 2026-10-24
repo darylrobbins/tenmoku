@@ -75,6 +75,10 @@ pub enum EditorViewEvent {
     /// of the text, empty for a deletion, at its row. The caret is at the
     /// change's first row.
     ChangeBarClicked { rows: std::ops::Range<u32> },
+    /// The caret jumped within the text, from `from` (a byte offset in it):
+    /// a click on a sticky scroll row. A host keeping a navigation history
+    /// records `from`, as before a go-to-definition.
+    Jumped { from: usize },
 }
 
 impl EventEmitter<EditorViewEvent> for EditorView {}
@@ -144,6 +148,9 @@ impl EditorView {
         let top = top.max(0.);
         self.scroll.y = px(top * self.line_height());
         self.autoscroll = false;
+        self.band_spares_caret = false;
+        self.clear_band = false;
+        self.sticky_reveal = None;
         // A vim scroll since the last frame is overtaken.
         self.scrolled_top = None;
         self.scrolled_display_top = None;

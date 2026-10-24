@@ -257,6 +257,8 @@ impl DiffView {
                     EditorViewEvent::Scrolled { .. } => {}
                     // A side's change bar is the host's to act on; it doesn't move the other side.
                     EditorViewEvent::ChangeBarClicked { .. } => {}
+                    // As is a jump within a side.
+                    EditorViewEvent::Jumped { .. } => {}
                 },
             ));
         }

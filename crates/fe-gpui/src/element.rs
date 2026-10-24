@@ -749,6 +749,9 @@ impl Element for EditorElement {
         if pending {
             window.request_animation_frame();
         }
+        // Sticky scroll's scopes, found as the frame settles and kept on the
+        // view once it has.
+        let mut sticky_cache = self.view.update(cx, |view, _| view.sticky_scopes.take());
 
         let view = self.view.read(cx);
         let host_top = view.host_top_holds();
@@ -800,6 +803,26 @@ impl Element for EditorElement {
         });
         let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
         let blocks = block_map(view, &lenses, &hunks, ghost.as_ref());
+        // A clicked sticky scroll header scrolls under the band its scopes
+        // form, found once the syntax has parsed the text (the click may have
+        // edited it): until then the view stays, and the parse landing draws
+        // again.
+        let revealed = (view.sticky_reveal.as_ref()).and_then(|header| {
+            let row = crate::view::sticky_header_row(model, header);
+            let cache = &mut sticky_cache;
+            sticky_scroll::reveal_top(view, cache, &blocks, row, line_height_f32)
+        });
+        let mut input = match revealed {
+            Some(top) => FrameInput {
+                scroll: Vec2 {
+                    x: input.scroll.x,
+                    y: top,
+                },
+                autoscroll: false,
+                ..input
+            },
+            None => input,
+        };
         let gutter = view.gutter;
         let hints = crate::inlay_hints::inlays(view);
         let unnecessary = unnecessary_ranges(&model.diagnostics());
@@ -863,6 +886,32 @@ impl Element for EditorElement {
             frame
         };
         let mut frame = settle(&input);
+        // The revealed header's caret comes into view across too, as
+        // autoscroll brings it: a frame autoscrolled there gives the scroll
+        // across, kept with the header's top.
+        if let Some(top) = revealed {
+            let across = settle(&FrameInput {
+                autoscroll: true,
+                styles: input.styles.clone(),
+                ..input
+            });
+            if across.scroll.x != frame.scroll.x {
+                frame = match across.scroll.y == top {
+                    true => across,
+                    false => settle(&FrameInput {
+                        scroll: Vec2 {
+                            x: across.scroll.x,
+                            y: top,
+                        },
+                        styles: input.styles.clone(),
+                        ..input
+                    }),
+                };
+            }
+            // Where the frame has it, so the blocks' widths below don't
+            // scroll back to where the view was.
+            input.scroll.x = frame.scroll.x;
+        }
         // Next or previous hunk: its block comes into view too, though that
         // leaves the caret, at the hunk's start, out of it.
         let reveal = view.reveal_hunk.and_then(|id| {
@@ -880,6 +929,55 @@ impl Element for EditorElement {
                 styles: input.styles.clone(),
                 ..input
             });
+        }
+        // Autoscroll keeps the caret's row out from under sticky scroll's
+        // band too, a row below it: settled again once, further up, short
+        // of the bottom margin autoscroll keeps (fe-display's).
+        // In a visual mode that's vim's cursor, painted where the model's
+        // selection head isn't (a block's corner, or a grapheme before a
+        // charwise head); a search preview's match is the caret meanwhile.
+        let visual = (view.vim.as_ref())
+            .filter(|vim| vim.mode_name().starts_with("visual"))
+            .and_then(|vim| vim.visual_cursor(model));
+        let band_head = (view.preview_reveal())
+            .or(visual)
+            .unwrap_or(input.primary_head);
+        let caret_top = |frame: &Frame<Line>| {
+            let line_height = frame.line_height;
+            sticky_scroll::caret_top(view, &frame.block_map, band_head, line_height)
+        };
+        let wants_clear = (input.autoscroll || view.clear_band)
+            && !view.band_spares_caret
+            && reveal.is_none()
+            && revealed.is_none();
+        let clear = wants_clear.then(|| {
+            let (blocks, scroll_y) = (&frame.block_map, frame.scroll.y);
+            let caret = caret_top(&frame);
+            let cache = &mut sticky_cache;
+            let (height, lines) = (frame.height, line_height_f32);
+            let margin = match input.autoscroll {
+                true => (lines * 3.).min(height / 3.),
+                false => 0.,
+            };
+            sticky_scroll::clear_of_caret(
+                view, cache, blocks, scroll_y, lines, caret, height, margin,
+            )
+        });
+        // Asked again once the band is known, a parse later.
+        let clear_later = matches!(clear, Some(Err(_)));
+        let mut spares = view.band_spares_caret;
+        if let Some(Ok(Some((top, spare)))) = clear {
+            spares |= spare;
+            if top != frame.scroll.y {
+                frame = settle(&FrameInput {
+                    scroll: Vec2 {
+                        x: input.scroll.x,
+                        y: top,
+                    },
+                    styles: input.styles.clone(),
+                    ..input
+                });
+            }
         }
         // Autoscroll keeps the buffer caret in view, which is before the
         // inlay. While composing, the composition's caret inside it stays in
@@ -1015,9 +1113,19 @@ impl Element for EditorElement {
         proposal::insert_hitboxes(&mut proposals, to_window, window);
         host_blocks::insert_lens_hitboxes(&mut lens_rows, to_window, window);
 
+        // The band, which pins nothing at or below the caret's row after a
+        // vim scroll or in a view too short to clear it.
+        let (blocks, scroll_y) = (&frame.block_map, frame.scroll.y);
+        let keep_above = sticky_scroll::keep_above(spares, scroll_y, caret_top(&frame));
+        let scopes =
+            sticky_scroll::scopes(view, &mut sticky_cache, blocks, scroll_y, line_height_f32)
+                .unwrap_or_default();
+        let pinned =
+            sticky_scroll::pinned(view, &scopes, blocks, scroll_y, line_height_f32, keep_above);
+
         let kept = kept_scroll.unwrap_or(frame.scroll);
         let scroll = point(px(kept.x), px(kept.y));
-        let sticky_scopes = self.view.update(cx, |view, cx| {
+        self.view.update(cx, |view, cx| {
             // Scrolled to reveal the caret, say: what the popover was found
             // under has moved, and it isn't drawn from this frame on
             // ([`crate::hover::popover_layer`]).
@@ -1026,10 +1134,19 @@ impl Element for EditorElement {
             }
             view.scroll = scroll;
             view.autoscroll = false;
+            view.clear_band = clear_later;
+            view.band_spares_caret = spares;
+            if revealed.is_some() {
+                view.sticky_reveal = None;
+            }
             view.reveal_hunk = None;
-            view.preview_revealed();
+            // A preview's match stays the caret the band clears until it's
+            // known.
+            if !clear_later {
+                view.preview_revealed();
+            }
             view.report_scroll_top(host_top, cx);
-            sticky_scroll::scopes(view, &frame)
+            view.sticky_scopes = sticky_cache;
         });
         let view = self.view.read(cx);
         let mut layout = FrameLayout {
@@ -1102,7 +1219,7 @@ impl Element for EditorElement {
         layout.sticky_scroll = sticky_scroll::layout(
             &mut layout,
             view,
-            &sticky_scopes,
+            pinned,
             syntax,
             &unnecessary,
             &mut shaper,
@@ -1125,6 +1242,8 @@ impl Element for EditorElement {
                     .push(window.insert_hitbox(hitbox, HitboxBehavior::Normal));
             }
         }
+        // Over every other hit area the band covers.
+        sticky_scroll::insert_hitboxes(&mut layout, window);
         // The completion menu goes by its word's start in this frame, which
         // the view doesn't hold until paint.
         let word = self.view.read(cx).completion_word_start();
@@ -1520,7 +1639,7 @@ impl Element for EditorElement {
         #[cfg(test)]
         let painted_minimap = minimap::painted(&layout, &theme, minimap_hover, minimap_dragged);
         #[cfg(test)]
-        let painted_sticky_scroll = sticky_scroll::painted(&layout, &theme);
+        let painted_sticky_scroll = sticky_scroll::painted(&layout, &theme, window);
         for hitbox in &layout.clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
@@ -1579,6 +1698,7 @@ impl Element for EditorElement {
         }
         add_hover_editor(&view, window, cx);
         minimap::listen(&view, &layout, window, cx);
+        sticky_scroll::listen(&view, &layout, window);
         // Once this frame is the rendered one, check the column against the
         // still pointer, so a column moving under or away from it (a dock
         // opening, the gutter widening) shows or hides the chevrons; and the

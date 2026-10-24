@@ -226,6 +226,9 @@ impl EditorView {
         self.hide_popover(cx);
         self.scroll.y = px(y.max(0.));
         self.autoscroll = false;
+        self.band_spares_caret = false;
+        self.clear_band = false;
+        self.sticky_reveal = None;
         cx.notify();
     }
 }

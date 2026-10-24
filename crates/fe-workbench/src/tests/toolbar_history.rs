@@ -285,3 +285,26 @@ fn button_state_is_pushed_on_change_only(cx: &mut TestAppContext) {
     }
     assert_eq!(pushes(&workbench, cx), before + 1);
 }
+
+#[gpui::test]
+fn an_editor_jump_pushes_history(cx: &mut TestAppContext) {
+    let (_dir, root) = project();
+    let (workbench, cx) = opened(cx, &root);
+    let pane = active(&workbench, cx);
+    let offsets = button_offsets(&pane, cx);
+    let main = root.join("src/main.rs");
+
+    // A click on a sticky scroll row: the caret is at the header, and the
+    // editor says where it jumped from.
+    let in_b = caret_at(&workbench, "util::helper", 2, cx);
+    let header = caret_at(&workbench, "impl S", 0, cx);
+    let editor = editor(&workbench, cx);
+    editor.update(cx, |_, cx| {
+        cx.emit(fe_gpui::commands::EditorViewEvent::Jumped { from: in_b })
+    });
+    settle(cx);
+    assert_eq!(nav(&pane, cx), (true, false));
+    assert_eq!(at(&workbench, cx), (main.clone(), header));
+    click_button(&pane, &offsets, false, cx);
+    assert_eq!(at(&workbench, cx), (main, in_b));
+}

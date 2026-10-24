@@ -868,7 +868,8 @@ impl Workbench {
 
     /// A diff view of `left` and the working side over `source`, a model of
     /// the file's buffer, or else `right`, its sides' host commands taken
-    /// here, its working side's change bar opening the file against HEAD.
+    /// here, its working side's change bar opening the file against HEAD
+    /// and its jumps recorded in the navigation history.
     fn new_diff(
         &mut self,
         compared: (PathBuf, Option<Base>, bool),
@@ -893,13 +894,22 @@ impl Workbench {
         }
         let mut subscriptions = Vec::new();
         if source.is_some() {
-            subscriptions.push(
-                cx.subscribe(&sides[1], |_, right, event: &EditorViewEvent, cx| {
-                    if let EditorViewEvent::ChangeBarClicked { rows } = event {
-                        Workbench::change_bar_clicked(cx.weak_entity(), right, rows.clone(), cx);
+            subscriptions.push(cx.subscribe(
+                &sides[1],
+                |workbench, right, event: &EditorViewEvent, cx| {
+                    match event {
+                        EditorViewEvent::ChangeBarClicked { rows } => {
+                            let workbench = cx.weak_entity();
+                            Workbench::change_bar_clicked(workbench, right, rows.clone(), cx);
+                        }
+                        // A jump in the file's side, as in its editor.
+                        EditorViewEvent::Jumped { from } => {
+                            workbench.editor_jumped(&right, *from, cx)
+                        }
+                        EditorViewEvent::Scrolled { .. } => {}
                     }
-                }),
-            );
+                },
+            ));
             // The view notifies as either side's buffer moves on: the source
             // catches up, so it holds no events or history back.
             let view = diff.downgrade();

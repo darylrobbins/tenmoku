@@ -2,8 +2,10 @@
 //! an impl, the impl's and the function's header rows are pinned at the top
 //! with their line numbers, in the colours the text area gives them; the
 //! function's row is pushed up as its last row scrolls under it; the scopes
-//! are found once per top row; the setting turns the band off live; and
-//! with the minimap on, the band stops at its left edge.
+//! are found once per top row; the setting turns the band off live; with
+//! the minimap on, the band stops at its left edge; and a long header's
+//! slice is widened where it's drawn narrower than indexed, as the text
+//! area's is.
 
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_config::{EditorSettings, Settings, USER_SETTINGS_TEMPLATE, settings_schema};
@@ -14,7 +16,9 @@ use gpui::{
     TestAppContext, VisualTestContext, px, size,
 };
 
-use super::{Painted, queries, runs};
+use fe_display::{RowIndex, RowSlice, layout::MAX_SHAPED_ROW_BYTES};
+
+use super::{Painted, queries, runs, widened_slice};
 use crate::{EditorTheme, EditorView, init};
 
 /// The impl's header row, 0-based.
@@ -348,4 +352,66 @@ fn beside_the_minimap_the_band_ends_at_its_edge(cx: &mut TestAppContext) {
     view.update(cx, |view, cx| view.apply_settings(&settings, cx));
     draw(cx);
     assert_eq!(click(cx), with_band);
+}
+
+#[gpui::test]
+fn a_long_header_is_pinned_as_the_text_area_draws_it(cx: &mut TestAppContext) {
+    // The impl's header past the shaped limit.
+    let source = source().replacen(
+        "impl Point {",
+        &format!("impl Point {{ // {}", "\u{644}\u{627}".repeat(4000)),
+        1,
+    );
+    let (view, cx) = editor(&source, "main.rs", cx);
+    let (origin, runs, _) = unscrolled(&view, IMPL, cx);
+    let shaped = view.read_with(cx, |view, _| {
+        let frame = &view.layout.as_ref().expect("drawn").frame;
+        let shown = (frame.rows.iter())
+            .find(|shown| shown.buffer_row == IMPL)
+            .unwrap();
+        shown.expanded.text().to_owned()
+    });
+
+    scroll_to_row(&view, 10, cx);
+    let band = band(&view, cx).expect("pinned");
+    let row = &band.rows[0];
+    assert_eq!(row.buffer_row, IMPL);
+    // The same slice of the row, coloured and placed as the text area has it.
+    assert_eq!(row.text, shaped);
+    assert_eq!(row.runs, runs);
+    assert_eq!(row.text_origin.x, origin.x);
+}
+
+#[test]
+fn a_long_row_drawn_narrower_than_indexed_is_widened_to_reach_the_view() {
+    let row = "\u{644}\u{627}".repeat(20_000);
+    let text = fe_buffer::Text::new(&row);
+    let measure = &mut fe_display::Monospace;
+    let mut index = RowIndex::new(&text, 0..row.len(), 4, measure);
+    let (view, margin) = (1000.0..1100., 32.);
+    let chars = |slice: &RowSlice| row[slice.range.clone()].chars().count() as f64;
+
+    // Drawn as indexed, one char a unit: the index's slice, shaped once.
+    let mut shapes = 0;
+    let (slice, drawn) = widened_slice(&mut index, measure, view.clone(), margin, |slice| {
+        shapes += 1;
+        (chars(slice), chars(slice))
+    });
+    assert_eq!(slice, index.slice(view.clone(), margin, measure));
+    assert_eq!(shapes, 1);
+    assert!(slice.start_x + drawn >= view.end + margin);
+
+    // Drawn a third as wide, as contextual forms can be: widened until the
+    // text drawn reaches the view's right edge, in three shapes at most.
+    for narrowing in [3., 10.] {
+        let mut shapes = 0;
+        let (slice, drawn) = widened_slice(&mut index, measure, view.clone(), margin, |slice| {
+            shapes += 1;
+            (chars(slice) / narrowing, chars(slice) / narrowing)
+        });
+        assert!(slice.start_x <= view.start, "{narrowing}");
+        assert!(slice.start_x + drawn >= view.end, "{narrowing}: {slice:?}");
+        assert!(shapes <= 3, "{narrowing}");
+        assert!(slice.range.len() <= MAX_SHAPED_ROW_BYTES, "{narrowing}");
+    }
 }

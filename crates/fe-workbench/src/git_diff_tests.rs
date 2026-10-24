@@ -1152,6 +1152,33 @@ fn a_working_sides_change_bar_opens_head(cx: &mut TestAppContext) {
     assert_eq!(caret_row(&head_right, cx), 10);
 }
 
+/// A jump in the working side, a click on a sticky scroll row, is recorded
+/// in the navigation history as one in the file's editor is.
+#[gpui::test]
+fn a_working_sides_jump_is_recorded_for_back(cx: &mut TestAppContext) {
+    let dir = fixture();
+    let (workbench, mut cx) = window(cx, dir.path(), Some("a.rs"));
+    let cx = &mut cx;
+    ex("Gdiffsplit", cx);
+    let [left, right] = sides(&diff(&workbench, cx), cx);
+    for (side, from) in [(&left, 1), (&right, 5)] {
+        cx.update(|_, cx| side.update(cx, |_, cx| cx.emit(EditorViewEvent::Jumped { from })));
+    }
+    draw(cx);
+    let back = workbench.update(cx, |workbench, _| {
+        let history = &mut workbench.nav_state.history;
+        (history.back(None), history.back(None))
+    });
+    // The index's side isn't the file: only the working side's is kept.
+    let a = fs::canonicalize(dir.path().join("a.rs")).unwrap();
+    let place = back.0.expect("recorded");
+    assert_eq!(
+        (fs::canonicalize(&place.path).unwrap(), place.offset),
+        (a, 5)
+    );
+    assert_eq!(back.1, None);
+}
+
 #[gpui::test]
 fn put_takes_exactly_the_hunk_picked(cx: &mut TestAppContext) {
     let dir = repo(&[("a.rs", "a\nremoved1\nb\nremoved2\nc\n")]);
