@@ -27,7 +27,8 @@
 //! than dispatched, and can take the keystrokes a failed chord swallowed.
 //! Without one, all of that is the plain behaviour above. An element can
 //! also keep keystrokes from the keymap while it reads them itself: see
-//! [`HOLDS_KEYS`].
+//! [`HOLDS_KEYS`], or [`HOLDS_ALL_KEYS`] to keep the platform modifier's
+//! keystrokes too.
 //!
 //! [`RunCommand`]: crate::commands::RunCommand
 
@@ -52,6 +53,14 @@ pub const CHORD_TIMEOUT: Duration = Duration::from_secs(1);
 /// mode that reads keys itself, such as a terminal's vi copy mode; the
 /// platform modifier's bindings stay the app's.
 pub const HOLDS_KEYS: &str = "holds_keys";
+
+/// A key context identifier: while the focused element's own context
+/// carries it, the keymap isn't consulted for any keystroke, the platform
+/// modifier's included, and a pending chord is abandoned; every keystroke
+/// goes on to the element's key listener. For a view that records keys,
+/// where `cmd-w` must not close the tab. Beside [`HOLDS_KEYS`], which
+/// leaves the platform modifier's bindings to the app.
+pub const HOLDS_ALL_KEYS: &str = "holds_all_keys";
 
 /// An app's say in key input, registered with [`set_key_owner`]. Each hook
 /// is called at the point its doc names, in the order the module doc
@@ -453,10 +462,13 @@ fn replay(
     cx.propagate();
 }
 
-/// Whether the focused element holds `event`'s keystroke ([`HOLDS_KEYS`]).
+/// Whether the focused element holds `event`'s keystroke ([`HOLDS_KEYS`],
+/// [`HOLDS_ALL_KEYS`]).
 fn holds_keys(event: &KeystrokeEvent) -> bool {
-    !event.keystroke.modifiers.platform
-        && (event.context_stack.last()).is_some_and(|context| context.contains(HOLDS_KEYS))
+    let own = event.context_stack.last();
+    own.is_some_and(|context| context.contains(HOLDS_ALL_KEYS))
+        || (!event.keystroke.modifiers.platform
+            && own.is_some_and(|context| context.contains(HOLDS_KEYS)))
 }
 
 /// Whether `keystroke` is a modifier pressed and released alone, which GPUI

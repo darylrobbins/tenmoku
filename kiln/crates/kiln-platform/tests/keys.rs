@@ -78,6 +78,8 @@ fn sec(keys: &str) -> String {
 struct Seen {
     ran: Vec<Invocation>,
     typed: String,
+    /// Every keystroke its key listener got.
+    keys: Vec<String>,
 }
 
 type Log = Rc<RefCell<Seen>>;
@@ -128,6 +130,7 @@ impl Render for Pad {
                 this.log.borrow_mut().ran.push(invocation.unwrap());
             }))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, _| {
+                this.log.borrow_mut().keys.push(event.keystroke.unparse());
                 if let Some(text) = &event.keystroke.key_char {
                     this.log.borrow_mut().typed.push_str(text);
                 }
@@ -649,4 +652,92 @@ fn namespaces_read_gpui_keys_as_dotted(cx: &mut TestAppContext) {
         ran_and_typed(&log),
         (vec!["pad.normal_x".into()], "".into())
     );
+}
+
+const CMD_KEYS: &str = r#"
+[[bindings]]
+keys = "cmd-w"
+command = "pad.close"
+context = "pad"
+
+[[bindings]]
+keys = "cmd-k cmd-s"
+command = "pad.shortcuts"
+context = "pad"
+"#;
+
+/// `keystroke` as the pad's listener spells it, which varies by host.
+fn spelled(keystroke: &str) -> String {
+    gpui::Keystroke::parse(keystroke).unwrap().unparse()
+}
+
+fn keys_seen(log: &Log) -> Vec<String> {
+    std::mem::take(&mut log.borrow_mut().keys)
+}
+
+#[gpui::test]
+fn holds_all_keys_gives_the_listener_the_platform_modifier_too(cx: &mut TestAppContext) {
+    init(cx, CMD_KEYS);
+    let (pair, cx) = cx.add_window_view(|_, cx| Pair {
+        left: cx.new(|cx| Pad::new("pad", cx)),
+        right: cx.new(|cx| Pad::new("pad holds_all_keys", cx)),
+    });
+    let (plain, held) = pair.update(cx, |pair, _| (pair.left.clone(), pair.right.clone()));
+    let plain_log = plain.update(cx, |pad, _| pad.log.clone());
+    let held_log = held.update(cx, |pad, _| pad.log.clone());
+    cx.update(|window, _| window.activate_window());
+    let focus = |pad: &Entity<Pad>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            let handle = pad.read(cx).focus.clone();
+            window.focus(&handle, cx);
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+    };
+
+    // Without the identifier the binding runs.
+    focus(&plain, cx);
+    cx.simulate_keystrokes("cmd-w");
+    assert_eq!(ran(&plain_log), ["pad.close"]);
+    assert_eq!(keys_seen(&plain_log), Vec::<String>::new());
+
+    // With it the listener gets the keystrokes and nothing runs.
+    focus(&held, cx);
+    cx.simulate_keystrokes("cmd-w cmd-k cmd-s");
+    assert_eq!(ran(&held_log), Vec::<String>::new());
+    assert_eq!(
+        keys_seen(&held_log),
+        ["cmd-w", "cmd-k", "cmd-s"].map(spelled)
+    );
+    assert!(!cx.update(|_, cx| chord_pending(cx)));
+
+    // A chord pending when focus moves in is abandoned.
+    focus(&plain, cx);
+    cx.simulate_keystrokes("cmd-k");
+    assert!(cx.update(|_, cx| chord_pending(cx)));
+    focus(&held, cx);
+    assert!(!cx.update(|_, cx| chord_pending(cx)));
+    cx.simulate_keystrokes("cmd-s");
+    time_out(cx);
+    assert_eq!(ran(&held_log), Vec::<String>::new());
+    assert_eq!(ran(&plain_log), Vec::<String>::new());
+    assert_eq!(keys_seen(&held_log), [spelled("cmd-s")]);
+}
+
+#[gpui::test]
+fn holds_keys_still_matches_the_platform_modifier(cx: &mut TestAppContext) {
+    init(cx, CMD_KEYS);
+    let (_, cx) = cx.add_window_view(|_, cx| Pad::new("pad holds_keys", cx));
+    let log = cx.update(|window, cx| {
+        let view = window.root::<Pad>().flatten().unwrap();
+        let focus = view.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        view.read(cx).log.clone()
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("cmd-w");
+    assert_eq!(ran(&log), ["pad.close"]);
+    assert_eq!(keys_seen(&log), Vec::<String>::new());
+    cx.simulate_keystrokes("x");
+    assert_eq!(keys_seen(&log), ["x"]);
 }
