@@ -221,6 +221,9 @@ pub struct Workbench {
     root_subscription: Subscription,
     /// To the Changes panel's events: replaced with it on a new root.
     changes_subscription: Subscription,
+    /// The config service's watch on the root's settings file: replaced
+    /// on a new root.
+    root_settings: Option<kiln::platform::config::FileWatch>,
     /// The root's git status, kept live in the Changes panel and the open
     /// editors' diff bases: replaced on a new root.
     git: Entity<GitState>,
@@ -571,7 +574,7 @@ impl Workbench {
             menu_bar: None,
             #[cfg(test)]
             client_tiling: None,
-            root: launch_root,
+            root: launch_root.clone(),
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
@@ -580,6 +583,7 @@ impl Workbench {
             lsp: Lsp::new(),
             root_subscription,
             changes_subscription,
+            root_settings: Self::watch_root_settings(launch_root.as_deref(), cx),
             git,
             _rail: rail,
             _docks: docks,

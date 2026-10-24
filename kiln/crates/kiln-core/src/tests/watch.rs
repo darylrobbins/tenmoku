@@ -404,3 +404,115 @@ pub(super) fn project_edit_seen_while_registering(
         }
     }
 }
+
+/// Files set besides those given ([`Tracker::set_extra`]) are tracked in
+/// their place: one in a directory not watched yet watches it and names
+/// every file, one whose directory is watched names itself, and one no
+/// longer set isn't reported.
+#[test]
+fn tracker_takes_up_extra_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let [a, b] = ["a", "b"].map(|name| dir.join(name));
+    for sub in [&a, &b] {
+        fs::create_dir(sub).unwrap();
+    }
+    let user = settings_in(&a, "");
+    let project = settings_in(&b, "");
+    let other = a.join("other.toml");
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let none = |_: &Path| {};
+    let set = |tracker: &mut Tracker, files: &[&PathBuf]| {
+        let mut watched = Vec::new();
+        let files = files.iter().map(|file| (*file).clone()).collect();
+        let reported = tracker.set_extra(files, |dir| watched.push(dir.to_owned()));
+        (reported, watched)
+    };
+
+    let mut tracker = Tracker::new(vec![user.clone()]);
+    assert_eq!(start(&mut tracker, none), std::slice::from_ref(&a));
+    let both = vec![user.clone(), project.clone()];
+    assert_eq!(
+        set(&mut tracker, &[&project]),
+        (both.clone(), vec![b.clone()])
+    );
+    assert_eq!(tracker.files(), both);
+    let batch = feed(&mut tracker, &[event(modify, &project)], none);
+    assert_eq!(batch, (vec![project.clone()], vec![]));
+
+    // Set again with another in a watched directory: only that one is new.
+    let batch = set(&mut tracker, &[&project, &other]);
+    assert_eq!(batch, (vec![other.clone()], vec![]));
+    // A given file set too stays given, and isn't new.
+    assert_eq!(set(&mut tracker, &[&user, &project]), (vec![], vec![]));
+
+    // Unset, the project's edits aren't reported; set again, it's new.
+    assert_eq!(set(&mut tracker, &[]), (vec![], vec![]));
+    assert_eq!(tracker.files(), std::slice::from_ref(&user));
+    let batch = feed(&mut tracker, &[event(modify, &project)], none);
+    assert_eq!(batch, (vec![], vec![]));
+    assert_eq!(tracker.reconcile(none), Vec::<PathBuf>::new());
+    let batch = set(&mut tracker, &[&project]);
+    assert_eq!(batch, (vec![project.clone()], vec![]));
+    let batch = feed(&mut tracker, &[event(modify, &user)], none);
+    assert_eq!(batch, (vec![user.clone()], vec![]));
+}
+
+/// A running watcher takes up a file set on it ([`ConfigWatcher::extra_files`])
+/// at once, in a directory it didn't watch: the batch after setting it
+/// names every file, and an edit to it is seen. Late fixture events may
+/// name the user's file in batches between.
+#[test]
+fn watcher_takes_up_extra_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let [user_dir, project_dir] = ["user", "project"].map(|name| dir.join(name));
+    for sub in [&user_dir, &project_dir] {
+        fs::create_dir(sub).unwrap();
+    }
+    let user = settings_in(&user_dir, "");
+    let project = settings_in(&project_dir, "");
+    let mut control = Control::new();
+    let (tx, batches) = mpsc::channel();
+    let watcher = ConfigWatcher::new(vec![user.clone()], move |batch| {
+        tx.send(batch).ok();
+    })
+    .unwrap();
+    let first = batches.recv_timeout(TIMEOUT).expect("a first batch");
+    assert_eq!(first, std::slice::from_ref(&user));
+    let check = |batch: &[PathBuf]| {
+        let mut files = [&user, &project].into_iter();
+        assert!(
+            !batch.is_empty() && batch.iter().all(|f| files.any(|expected| expected == f)),
+            "a non-empty, in-order subset of [user, project], got {batch:?}",
+        );
+    };
+
+    watcher.extra_files().set(vec![project.clone()]);
+    loop {
+        let batch = batches.recv_timeout(TIMEOUT).expect("a batch naming it");
+        check(&batch);
+        if batch.contains(&project) {
+            assert_eq!(batch, [user.clone(), project.clone()]);
+            break;
+        }
+    }
+
+    if !control.ready("the project's edit") {
+        return;
+    }
+    fs::write(&project, "editor.font_size = 18\n").unwrap();
+    let marks = vec![control.mark()];
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Ok(batch) = batches.recv_timeout(remaining) else {
+            control.timed_out(&marks, deadline, "the project's edit");
+            return;
+        };
+        check(&batch);
+        if batch.contains(&project) {
+            return;
+        }
+    }
+}

@@ -7,7 +7,7 @@ use std::{
     convert::Infallible,
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError, mpsc},
+    sync::{Arc, Mutex, PoisonError, Weak, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -42,10 +42,46 @@ use crate::platform::fs::FileStamp;
 /// resolved when the watcher starts or when a file's own links change. The
 /// watcher never creates directories.
 ///
+/// Files can be added to those it was given, and changed, while it runs:
+/// see [`ExtraFiles`].
+///
 /// Dropping the watcher stops it and waits for the thread.
 pub struct ConfigWatcher {
     watcher: Option<Arc<Mutex<RecommendedWatcher>>>,
+    extra: Option<Arc<Extra>>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+/// Sets the files a [`ConfigWatcher`] watches besides those it was given
+/// ([`ConfigWatcher::extra_files`]), from any thread. It doesn't keep the
+/// watcher running: once that's dropped, setting files does nothing.
+#[derive(Clone)]
+pub struct ExtraFiles(Weak<Extra>);
+
+/// What an [`ExtraFiles`] hands the watcher's thread.
+struct Extra {
+    /// The files last set, until the thread takes them up.
+    pending: Arc<Mutex<Option<Vec<PathBuf>>>>,
+    /// Wakes the thread to take them up: an event naming nothing.
+    wake: mpsc::Sender<notify::Result<Event>>,
+}
+
+impl ExtraFiles {
+    /// Watches `files` as well as the watcher's own, in place of those set
+    /// before. The next batch names each file that wasn't watched before,
+    /// as it may have changed since it was read, or every file if watching
+    /// them took up a directory not watched yet (see [`ConfigWatcher`]). A
+    /// file no longer set is no longer reported; its directory stays
+    /// watched, as unwatching one can drop events as watching one can.
+    pub fn set(&self, files: Vec<PathBuf>) {
+        let Some(extra) = self.0.upgrade() else {
+            return;
+        };
+        *extra.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(files);
+        // Gone only if the thread's events were swapped out, in tests: it
+        // takes the files up on its next wake.
+        let _ = extra.wake.send(Ok(Event::new(EventKind::Other)));
+    }
 }
 
 /// How often the watcher re-stats its files: see [`ConfigWatcher`].
@@ -68,6 +104,11 @@ impl ConfigWatcher {
     ) -> notify::Result<ConfigWatcher> {
         let mut tracker = Tracker::new(files);
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
+        let pending = Arc::new(Mutex::new(None));
+        let extra = Arc::new(Extra {
+            pending: pending.clone(),
+            wake: tx.clone(),
+        });
         let mut watcher = notify::recommended_watcher(tx)?;
         let rx = source(rx);
         let clock = Clock::take();
@@ -106,6 +147,16 @@ impl ConfigWatcher {
                 // re-stat off.
                 let mut reconcile_at = clock.now() + RECONCILE;
                 loop {
+                    let extra = pending
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                    if let Some(extra) = extra {
+                        let files = tracker.set_extra(extra, &mut watch);
+                        if !files.is_empty() {
+                            sink(files);
+                        }
+                    }
                     let now = clock.now();
                     let files = if now >= reconcile_at {
                         if weak.strong_count() == 0 {
@@ -129,7 +180,7 @@ impl ConfigWatcher {
                                 tracker.batch(&events, &mut watch)
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                            // The watcher, which owns the sender, was dropped.
+                            // The watcher, which owns the senders, was dropped.
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     };
@@ -140,13 +191,21 @@ impl ConfigWatcher {
             })?;
         Ok(ConfigWatcher {
             watcher: Some(watcher),
+            extra: Some(extra),
             thread: Some(thread),
         })
+    }
+
+    /// A handle that sets the files watched besides those it was given.
+    pub fn extra_files(&self) -> ExtraFiles {
+        ExtraFiles(self.extra.as_ref().map_or_else(Weak::new, Arc::downgrade))
     }
 }
 
 impl Drop for ConfigWatcher {
     fn drop(&mut self) {
+        // Its sender too, so the thread sees every sender gone.
+        drop(self.extra.take());
         drop(self.watcher.take());
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -206,7 +265,10 @@ const MAX_LINKS: usize = 40;
 
 /// Which files events concern, and which directories to watch for them.
 pub(crate) struct Tracker {
+    /// The files given, then those set since ([`Tracker::set_extra`]).
     files: Vec<PathBuf>,
+    /// How many of `files` were given.
+    given: usize,
     /// For each file, every path its resolution goes through: the file, then
     /// each symlink's target in turn, the last maybe missing. Each has its
     /// directory canonicalized, if that exists, as events name them (/var is
@@ -229,6 +291,7 @@ impl Tracker {
         Self {
             chains: files.iter().map(|file| chain(file)).collect(),
             prints: files.iter().map(|file| fingerprint(file)).collect(),
+            given: files.len(),
             files,
             dirs: HashSet::new(),
             unwatched: HashSet::new(),
@@ -265,6 +328,45 @@ impl Tracker {
             any = true;
             self.chains = self.files.iter().map(|file| chain(file)).collect();
         }
+    }
+
+    /// Tracks `extra` as well as the files given, in place of those set
+    /// before, watching with `watch` any directory they need, and returns
+    /// the files to report: every one if a directory was watched, else
+    /// those not tracked before, as they may have changed since they were
+    /// read. A file set again keeps its chain and fingerprint.
+    pub(crate) fn set_extra(
+        &mut self,
+        extra: Vec<PathBuf>,
+        mut watch: impl FnMut(&Path),
+    ) -> Vec<PathBuf> {
+        let files: Vec<PathBuf> = (self.files[..self.given].iter().cloned())
+            .chain(extra)
+            .collect();
+        let mut old: Vec<Option<(Vec<PathBuf>, Fingerprint)>> = (std::mem::take(&mut self.chains)
+            .into_iter())
+        .zip(std::mem::take(&mut self.prints))
+        .map(Some)
+        .collect();
+        let (mut chains, mut prints, mut added) = (Vec::new(), Vec::new(), Vec::new());
+        for file in &files {
+            let kept =
+                (self.files.iter().position(|was| was == file)).and_then(|index| old[index].take());
+            let (chain, print) = kept.unwrap_or_else(|| (chain(file), fingerprint(file)));
+            chains.push(chain);
+            prints.push(print);
+            added.push(!self.files.contains(file));
+        }
+        (self.files, self.chains, self.prints) = (files, chains, prints);
+        // Takes every fingerprint if it watched anything.
+        let Ok(registered) = self.register(|dir| {
+            watch(dir);
+            Ok::<_, Infallible>(())
+        });
+        if registered {
+            return self.files();
+        }
+        self.in_order(|index| added[index])
     }
 
     /// The files `events` may have changed, re-resolving their symlinks and

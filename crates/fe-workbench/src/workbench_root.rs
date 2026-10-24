@@ -25,6 +25,18 @@ impl Workbench {
         git
     }
 
+    /// Has kiln's config service watch `root`'s `.fastedit/settings.toml`,
+    /// with no root nothing, so a Settings tab on it re-reads an edit
+    /// ([`kiln::platform::config::ChangedFiles`]) though the service loads
+    /// only the launch root's.
+    pub(super) fn watch_root_settings(
+        root: Option<&Path>,
+        cx: &mut App,
+    ) -> Option<kiln::platform::config::FileWatch> {
+        let file = fe_config::project_settings_path(root?);
+        Some(kiln::platform::config::watch_files(cx, vec![file]))
+    }
+
     /// Subscribes to a root's project panel. Its tree opening reads the git
     /// status, so the tree shows it without the Changes panel drawn.
     pub(super) fn follow_root(
@@ -102,9 +114,10 @@ impl Workbench {
     /// dock keeps its visibility and active panel, and open tabs, dirty
     /// ones included, stay open. Emits [`RootChanged`].
     ///
-    /// The host's settings watcher keeps the launch root's
-    /// `.fastedit/settings.toml`: a new root's project settings aren't
-    /// loaded.
+    /// The config service's watcher watches `root`'s
+    /// `.fastedit/settings.toml` in place of the old root's, so a Settings
+    /// tab on it follows its edits; the service still loads only the launch
+    /// root's.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(
             self.palette,
@@ -154,6 +167,7 @@ impl Workbench {
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
         self.root = Some(root.clone());
+        self.root_settings = Self::watch_root_settings(Some(&root), cx);
         for pane in self.panes(cx) {
             let root = Some(root.clone());
             pane.update(cx, |pane, cx| {
@@ -234,7 +248,7 @@ impl Workbench {
         if inline_blame != event.previous.editor.inline_blame {
             git_blame::set_line_blame(self, inline_blame, cx);
         }
-        // The watcher saw a settings file change: the Settings tab reads it.
+        // The settings changed: the Settings tab reads its files again.
         self.reload_settings_editors(cx);
     }
 }

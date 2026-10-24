@@ -12,12 +12,13 @@
 //!   shows only with a folder open, and dims the rows a project's file
 //!   can't set ([`SettingsModel::workspace_allowed`]).
 //! - The files are read off the main thread when the tab opens, when the
-//!   scope changes, when the root changes, when the workbench reloads its
-//!   settings after the watcher saw a file change
-//!   ([`Workbench::reload_settings`]), and when the tab is activated or
-//!   focus comes back into it from elsewhere: the reload skips edits that
-//!   change no effective setting, and the watcher watches only the launch
-//!   root's project file (the spec's Known limits).
+//!   scope changes, when the root changes, when the config service's
+//!   watcher sees either file change ([`ChangedFiles`]), even in a way
+//!   that changes no effective setting, when the workbench reloads its
+//!   settings ([`Workbench::reload_settings`]), and when the tab is
+//!   activated or focus comes back into it from elsewhere. The watcher
+//!   watches every workbench's root's project file, not only the launch
+//!   root's.
 //! - Up and Down move the selected row, scrolling it into view; Down in
 //!   the search field moves into the list. `/` or secondary-f goes back to
 //!   the search, and Escape clears it. The search takes the text inputs'
@@ -41,6 +42,7 @@ use gpui::{
     ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
     UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
+use kiln::platform::config::{self, ChangedFiles};
 use kiln_shell::{PaneItem, PaneView as _};
 
 use crate::{
@@ -131,10 +133,21 @@ impl SettingsEditor {
         let search = cx.new(|cx| TextInput::new("Search settings", &ui, cx).bordered());
         let root_focus = cx.focus_handle();
         let subscriptions = vec![
-            // Back from another tab or app: the files may have changed in
-            // ways the settings reload doesn't report (a key set to its
-            // default), or in a root the watcher doesn't watch.
+            // Back from another tab or app: in case the watcher missed a
+            // change, or the files changed while it wasn't running.
             cx.on_focus_in(&root_focus, window, |this, _, cx| this.reload(cx)),
+            // Either file changed, though maybe no setting did.
+            cx.observe_global::<ChangedFiles>(|this, cx| {
+                let changed = config::changed_files(cx);
+                let (user, project) = this.files(cx);
+                if [user, project]
+                    .iter()
+                    .flatten()
+                    .any(|file| changed.contains(file))
+                {
+                    this.reload(cx);
+                }
+            }),
             cx.subscribe(&search, |this, _, event, cx| {
                 if *event == TextInputEvent::Changed {
                     this.refilter(cx);
@@ -167,8 +180,7 @@ impl SettingsEditor {
     /// Reads the user's and the root's settings files again, off the main
     /// thread, and shows what they hold once read.
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
-        let user = open::settings_path(cx);
-        let project = self.root.as_deref().map(fe_config::project_settings_path);
+        let (user, project) = self.files(cx);
         let read = cx.background_spawn(async move {
             let user = user.and_then(|path| read_settings(&path));
             let project = project.and_then(|path| read_settings(&path));
@@ -182,6 +194,12 @@ impl SettingsEditor {
             })
             .ok();
         });
+    }
+
+    /// The user's settings file and the root's.
+    fn files(&self, cx: &App) -> (Option<PathBuf>, Option<PathBuf>) {
+        let project = self.root.as_deref().map(fe_config::project_settings_path);
+        (open::settings_path(cx), project)
     }
 
     /// The rows for the search as it is now, keeping the selected setting

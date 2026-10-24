@@ -28,6 +28,10 @@
 //! reads them all with [`diagnostics`]. They and the reloads' `info` lines
 //! go under this module's log target, or the app's
 //! ([`ConfigService::log_target`]).
+//!
+//! Every batch of changed files is also published as [`ChangedFiles`],
+//! whatever reloading it changed, and the app can have the service watch
+//! further files of its own while it needs them ([`watch_files`]).
 
 use std::{
     cell::RefCell,
@@ -42,7 +46,8 @@ use std::{
 
 use gpui::{App, Global, Task};
 use kiln_core::{
-    ConfigWatcher, Diagnostic, KeymapEvent, KeymapStore, SettingsStore, SettingsType, TreeWatcher,
+    ConfigWatcher, Diagnostic, ExtraFiles, KeymapEvent, KeymapStore, SettingsStore, SettingsType,
+    TreeWatcher,
 };
 
 /// The log target the service logs under unless the app names its own:
@@ -166,6 +171,101 @@ impl Global for ConfigDiagnostics {}
 pub fn diagnostics(cx: &App) -> &[Diagnostic] {
     cx.try_global::<ConfigDiagnostics>()
         .map_or(&[], |diagnostics| &diagnostics.0)
+}
+
+/// The files the service's last batch named, as a GPUI global set for
+/// every batch once the sources have reloaded, whatever that changed:
+/// observe it to follow every change to a file, such as an edit that
+/// leaves the settings as they were, which [`GlobalSettings`] doesn't
+/// notify. Files are named as the sources and [`watch_files`] name them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChangedFiles(pub Vec<PathBuf>);
+
+impl Global for ChangedFiles {}
+
+/// The files the service's last batch named: see [`ChangedFiles`].
+pub fn changed_files(cx: &App) -> &[PathBuf] {
+    cx.try_global::<ChangedFiles>()
+        .map_or(&[], |changed| &changed.0)
+}
+
+/// The files watched for [`watch_files`], as a GPUI global, and the
+/// watcher of the service that started last.
+#[derive(Default)]
+struct ExtraWatches(Rc<RefCell<Extra>>);
+
+impl Global for ExtraWatches {}
+
+#[derive(Default)]
+struct Extra {
+    next: u64,
+    /// Each live [`FileWatch`]'s files, by its id.
+    sets: Vec<(u64, Vec<PathBuf>)>,
+    watcher: Option<ExtraFiles>,
+}
+
+impl Extra {
+    /// Every set's files, each once, in order.
+    fn files(&self) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        for file in self.sets.iter().flat_map(|(_, set)| set) {
+            if !files.contains(file) {
+                files.push(file.clone());
+            }
+        }
+        files
+    }
+
+    /// Has the watcher watch every set's files.
+    fn sync(&self) {
+        if let Some(watcher) = &self.watcher {
+            watcher.set(self.files());
+        }
+    }
+}
+
+/// Has the config service's watcher watch `files` too, beside its
+/// sources' own, for as long as the returned [`FileWatch`] lives: a file
+/// the app reads itself, such as a settings file of a root the sources
+/// don't load. A batch naming one goes to every source, which skips the
+/// files not its own, and into [`ChangedFiles`]; the first after it's
+/// watched names it, as it may have changed since it was read. Called
+/// before the service starts, the files are watched once it does. A
+/// service with no watcher ([`ConfigService::start_with`]) watches
+/// nothing, but [`watched_files`] still lists them.
+pub fn watch_files(cx: &mut App, files: Vec<PathBuf>) -> FileWatch {
+    let extra = cx.default_global::<ExtraWatches>().0.clone();
+    let id = {
+        let mut state = extra.borrow_mut();
+        let id = state.next;
+        state.next += 1;
+        state.sets.push((id, files));
+        state.sync();
+        id
+    };
+    FileWatch { id, extra }
+}
+
+/// Every file [`watch_files`] watches now, each once, in order.
+pub fn watched_files(cx: &App) -> Vec<PathBuf> {
+    cx.try_global::<ExtraWatches>()
+        .map(|extra| extra.0.borrow().files())
+        .unwrap_or_default()
+}
+
+/// Files the service watches for the app ([`watch_files`]): dropping it
+/// stops watching them, unless another names them too.
+pub struct FileWatch {
+    id: u64,
+    extra: Rc<RefCell<Extra>>,
+}
+
+impl Drop for FileWatch {
+    fn drop(&mut self) {
+        let mut extra = self.extra.borrow_mut();
+        extra.sets.retain(|(id, _)| *id != self.id);
+        extra.sync();
+    }
 }
 
 /// Logs `diagnostics`: errors at `error`, the rest at `warn`.
@@ -364,6 +464,9 @@ impl ConfigService {
     /// ([`ConfigSource::trees`]) are watched by a [`TreeWatcher`] into the
     /// same batches, its first naming each that exists.
     ///
+    /// The watcher also watches the files the app asks for
+    /// ([`watch_files`]).
+    ///
     /// If the files can't be watched, what was loaded still applies, and
     /// the error says why they won't reload.
     pub fn start(mut self, cx: &mut App) -> io::Result<Task<()>> {
@@ -429,6 +532,12 @@ impl ConfigService {
     fn run(self, mut batches: Batches, watcher: Option<Watchers>, cx: &mut App) -> Task<()> {
         let sources = Rc::new(RefCell::new(self.sources));
         cx.set_global(Running(sources.clone()));
+        {
+            let extra = cx.default_global::<ExtraWatches>().0.clone();
+            let mut extra = extra.borrow_mut();
+            extra.watcher = (watcher.as_ref()).map(|watchers| watchers.0.extra_files());
+            extra.sync();
+        }
         cx.spawn(async move |cx| {
             // Watching for as long as this task runs.
             let _watcher = watcher;
@@ -441,12 +550,12 @@ impl ConfigService {
 
 /// What [`ConfigService::start`] watches with, held by its task.
 struct Watchers(
-    #[allow(dead_code, reason = "held, not read")] ConfigWatcher,
+    ConfigWatcher,
     #[allow(dead_code, reason = "held, not read")] Option<TreeWatcher>,
 );
 
 /// Hands `batch` to every source, logging diagnostics that changed, then
-/// publishing them all if they did.
+/// publishing them all if they did, and the batch as [`ChangedFiles`].
 fn apply(sources: &Sources, batch: &[PathBuf], cx: &mut App) {
     let mut sources = sources.borrow_mut();
     for source in sources.iter_mut() {
@@ -458,6 +567,7 @@ fn apply(sources: &Sources, batch: &[PathBuf], cx: &mut App) {
         }
     }
     publish(&sources, cx);
+    cx.set_global(ChangedFiles(batch.to_vec()));
 }
 
 /// Sets [`ConfigDiagnostics`] to every source's diagnostics, if they

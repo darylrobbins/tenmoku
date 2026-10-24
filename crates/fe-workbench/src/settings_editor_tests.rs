@@ -4,12 +4,17 @@
 //! building only the rows in view. The user's config directory is a
 //! temporary one, through the test-only override.
 
-use std::{fs, path::Path, sync::Arc};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::{Settings, SettingsModel};
 use fe_gpui::{SettingsEvent, commands::RunCommand};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use kiln::platform::config::{self, BatchSender, ConfigService};
 use kiln_shell::{PaneItem as _, layout::LayoutStore, layout::WindowLayout};
 
 use crate::{
@@ -825,4 +830,139 @@ fn up_after_scrolling_away_shows_the_setting(cx: &mut TestAppContext) {
     let title = key(heading, cx);
     let group = bounds(&format!("settings-group-{title}"), cx);
     assert!(within(group, list), "{group:?} in {list:?}");
+}
+
+/// Kiln's config service on the user's settings file in `config` and
+/// `root`'s, as the host starts it, with no watcher: the sender stands in
+/// for it.
+fn start_service(cx: &mut TestAppContext, config: &Path, root: &Path) -> BatchSender {
+    let user = config.join(fe_config::paths::SETTINGS_FILE);
+    let project = fe_config::project_settings_path(root);
+    let store = fe_config::SettingsStore::load(Some(user), Some(project));
+    let (sender, batches) = config::batch_channel();
+    cx.update(|cx| {
+        cx.set_global(ConfigDirOverride(Some(config.to_owned())));
+        ConfigService::new()
+            .settings(store.into_inner())
+            .start_with(batches, cx)
+            .detach();
+    });
+    sender
+}
+
+/// A window of a workbench on `root`, drawn, beside any others.
+fn window_on(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, VisualTestContext) {
+    let launch = Launch {
+        root: Some(root.to_owned()),
+        file: None,
+    };
+    let window = cx.add_window(move |window, cx| {
+        let theme = fe_gpui::EditorTheme::default_dark(cx);
+        Workbench::new(
+            launch,
+            theme,
+            fe_gpui::EditorSettings::default(),
+            window,
+            cx,
+        )
+    });
+    let mut vcx = VisualTestContext::from_window(window.into(), cx);
+    let workbench = window.root(cx).unwrap();
+    vcx.update(|window, cx| {
+        window.activate_window();
+        window.focus(&workbench.focus_handle(cx), cx);
+    });
+    draw(&mut vcx);
+    (workbench, vcx)
+}
+
+/// A folder `name` beside the fixture's root, with a `.fastedit` folder.
+fn another_root(dirs: &Dirs, name: &str) -> PathBuf {
+    let root = dirs.root.with_file_name(name);
+    fs::create_dir_all(root.join(".fastedit")).unwrap();
+    root
+}
+
+#[gpui::test]
+fn external_edit_with_unchanged_effective_values_refreshes_the_tab(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    let (workbench, cx) = workbench(cx, Some(&dirs.root), &dirs.config);
+    let sender = start_service(cx, &dirs.config, &dirs.root);
+    let editor = open_settings(&workbench, cx);
+    let key = "editor.tab_size";
+    search("tab size", cx);
+    assert_eq!(shown(&editor, key, cx), ("4".to_owned(), false));
+    let settings = cx.update(|_, cx| config::settings::<Settings>(cx));
+
+    // Set to its default: the file changed, the settings didn't.
+    dirs.write_user("[editor]\ntab_size = 4\n");
+    sender.send(vec![dirs.config.join("settings.toml")]);
+    draw(cx);
+    let now = cx.update(|_, cx| config::settings::<Settings>(cx));
+    assert!(Arc::ptr_eq(&settings, &now), "no settings reload");
+    assert_eq!(shown(&editor, key, cx), ("4".to_owned(), true));
+    assert!(drawn(&format!("settings-modified-{key}"), cx));
+
+    // A comment alone, in the workspace's file.
+    set_scope(&editor, Scope::Workspace, cx);
+    assert_eq!(shown(&editor, key, cx), ("4".to_owned(), false));
+    dirs.write_workspace("# tabs\n[editor]\ntab_size = 4\n");
+    sender.send(vec![fe_config::project_settings_path(&dirs.root)]);
+    draw(cx);
+    assert_eq!(shown(&editor, key, cx), ("4".to_owned(), true));
+
+    // A batch naming neither file reads nothing again.
+    dirs.write_user("");
+    sender.send(vec![dirs.config.join("keymap.toml")]);
+    draw(cx);
+    assert_eq!(shown(&editor, key, cx), ("4".to_owned(), true));
+}
+
+#[gpui::test]
+fn workspace_edit_under_a_second_windows_root_refreshes_the_tab(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+    });
+    // The service loads the launch root's settings, not the second's.
+    let sender = start_service(cx, &dirs.config, &dirs.root);
+    let (other, third) = (another_root(&dirs, "other"), another_root(&dirs, "third"));
+    let project = |root: &Path| fe_config::project_settings_path(root);
+    let (_first, _first_cx) = window_on(cx, &dirs.root);
+    let (second, mut second_cx) = window_on(cx, &other);
+    let watched = |cx: &mut TestAppContext| cx.update(|cx| config::watched_files(cx));
+    assert_eq!(watched(cx), [project(&dirs.root), project(&other)]);
+
+    let cx_ = &mut second_cx;
+    let editor = open_settings(&second, cx_);
+    set_scope(&editor, Scope::Workspace, cx_);
+    let key = "editor.tab_size";
+    search("tab size", cx_);
+    assert_eq!(shown(&editor, key, cx_), ("4".to_owned(), false));
+
+    // What the watcher sends for the second root's file.
+    fs::write(project(&other), "[editor]\ntab_size = 2\n").unwrap();
+    sender.send(vec![project(&other)]);
+    draw(cx_);
+    assert_eq!(shown(&editor, key, cx_), ("2".to_owned(), true));
+
+    // Re-rooted, the window's new root is watched in place of the old.
+    second.update_in(cx_, |workbench, window, cx| {
+        workbench.set_root(third.clone(), window, cx)
+    });
+    draw(cx_);
+    assert_eq!(watched(cx), [project(&dirs.root), project(&third)]);
+    assert_eq!(shown(&editor, key, cx_), ("4".to_owned(), false));
+    fs::write(project(&third), "[editor]\ntab_size = 8\n").unwrap();
+    sender.send(vec![project(&third)]);
+    draw(cx_);
+    assert_eq!(shown(&editor, key, cx_), ("8".to_owned(), true));
+
+    // Closed, the window's root isn't watched.
+    drop(editor);
+    drop(second);
+    cx_.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    assert_eq!(watched(cx), [project(&dirs.root)]);
 }

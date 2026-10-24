@@ -75,7 +75,7 @@ pub use secrets::{KeychainStore, MemoryStore, Secret, SecretError, SecretStore};
 pub use serde;
 pub use settings::{ProjectFilter, SettingsEvent, SettingsOptions, SettingsStore, SettingsType};
 pub use text_edit::{Motion, Selection, TextEdit};
-pub use watch::ConfigWatcher;
+pub use watch::{ConfigWatcher, ExtraFiles};
 pub use watch_tree::TreeWatcher;
 pub use write::write_setting;
 
