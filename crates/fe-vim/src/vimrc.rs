@@ -11,6 +11,8 @@ use crate::remap::{Remap, RemapMode, RemapSet};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Vimrc {
     pub remaps: Vec<Remap>,
+    /// The 1-based line each of `remaps` was written on, in step with it.
+    pub lines: Vec<usize>,
     pub issues: Vec<VimrcIssue>,
 }
 
@@ -204,6 +206,7 @@ impl Parser {
             return false;
         }
         self.vimrc.remaps.push(remap);
+        self.vimrc.lines.push(line);
         true
     }
 
@@ -222,11 +225,10 @@ impl Parser {
             Ok(keys) => keys,
             Err(error) => return self.issue(line, error.to_string()),
         };
-        self.vimrc.remaps.retain_mut(|remap| {
+        self.retain_remaps(|remap| {
             if parse_keys(&remap.from).is_ok_and(|keys| keys == from) {
                 remap.modes.retain(|mode| !modes.contains(mode));
             }
-            !remap.modes.is_empty()
         });
     }
 
@@ -236,10 +238,21 @@ impl Parser {
             "<buffer>" => return self.issue(line, "<buffer> isn't supported"),
             other => return self.issue(line, format!("trailing characters: {other}")),
         }
-        self.vimrc.remaps.retain_mut(|remap| {
-            remap.modes.retain(|mode| !modes.contains(mode));
+        self.retain_remaps(|remap| remap.modes.retain(|mode| !modes.contains(mode)));
+    }
+
+    /// Edits each record with `edit`, dropping those left without a mode,
+    /// and their lines.
+    fn retain_remaps(&mut self, mut edit: impl FnMut(&mut Remap)) {
+        let mut keep = self.vimrc.remaps.iter_mut().map(|remap| {
+            edit(remap);
             !remap.modes.is_empty()
         });
+        let keep: Vec<bool> = keep.by_ref().collect();
+        let mut at = keep.iter();
+        self.vimrc.remaps.retain(|_| *at.next().unwrap());
+        let mut at = keep.iter();
+        self.vimrc.lines.retain(|_| *at.next().unwrap());
     }
 
     /// `args` after the leading `<silent>`-style arguments, or `None` after

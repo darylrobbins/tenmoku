@@ -21,6 +21,7 @@ use fe_config::{Diagnostic, Settings, SettingsStore, Severity, VimRemap, VimRema
 use fe_vim::{Remap, RemapMode, RemapSet, parse_keys, parse_vimrc};
 use gpui::{App, Global};
 use kiln::{GlobalSettings, platform::config::ConfigSource};
+use std::sync::Arc;
 use toml::{
     Spanned,
     de::{DeTable, DeValue},
@@ -53,6 +54,8 @@ pub(crate) struct VimRemaps {
     /// The vimrc's maps: as last read, or as last read well while it
     /// can't be read.
     vimrc_remaps: Vec<Remap>,
+    /// The line each of `vimrc_remaps` was written on.
+    vimrc_lines: Vec<usize>,
     /// A warning for each of the vimrc's problems, or the one error
     /// reading it.
     vimrc_diagnostics: Vec<Diagnostic>,
@@ -62,6 +65,13 @@ pub(crate) struct VimRemaps {
     /// A warning for each `vim.remap` entry that can't load, and for a
     /// `vim.leader` that can't be read, at its line.
     table_diagnostics: Vec<Diagnostic>,
+    /// The user's keymap file, watched so a change to it is seen.
+    keymap_file: Option<PathBuf>,
+    /// The keymap the conflicts were last found against.
+    keymap: Option<Arc<fe_gpui::fe_keymap::Keymap>>,
+    /// A warning for each insert or cmdline map the keymap hides, at the
+    /// vimrc line that wrote it.
+    vimrc_conflicts: Vec<Diagnostic>,
 }
 
 /// A problem with the settings' remaps, before it's found in a file.
@@ -86,10 +96,14 @@ impl VimRemaps {
                 .collect(),
             settings_files,
             vimrc_remaps: Vec::new(),
+            vimrc_lines: Vec::new(),
             vimrc_diagnostics: Vec::new(),
             table: vim.remap.clone(),
             leader: vim.leader.clone(),
             table_diagnostics: Vec::new(),
+            keymap_file: fe_gpui::fe_keymap::user_keymap_path(),
+            keymap: None,
+            vimrc_conflicts: Vec::new(),
         };
         remaps.read_vimrc();
         remaps.build(None);
@@ -106,6 +120,7 @@ impl VimRemaps {
             Ok(text) => {
                 let vimrc = parse_vimrc(&text);
                 self.vimrc_remaps = vimrc.remaps;
+                self.vimrc_lines = vimrc.lines;
                 self.vimrc_diagnostics = (vimrc.issues.into_iter())
                     .map(|issue| at_line(path, Severity::Warning, issue.line, issue.message))
                     .collect();
@@ -174,6 +189,7 @@ impl VimRemaps {
             });
         }
         let in_use = RemapsInUse { remaps, leader };
+        let in_use_keymap = cx.as_deref().map(fe_gpui::current_keymap);
         let issues = match cx {
             Some(cx) if cx.try_global::<RemapsInUse>() != Some(&in_use) => {
                 let issues = fe_gpui::set_vim_remaps(cx, &in_use.remaps, &in_use.leader);
@@ -183,6 +199,26 @@ impl VimRemaps {
             _ => RemapSet::new(&in_use.remaps, &in_use.leader).1,
         };
         let first = self.vimrc_remaps.len();
+        self.vimrc_conflicts.clear();
+        if let Some(keymap) = in_use_keymap {
+            let conflicts =
+                fe_gpui::remap_keymap_conflicts(&keymap, &in_use.remaps, &in_use.leader);
+            for conflict in conflicts {
+                let message = conflict_message(&conflict);
+                if let Some(&line) = self.vimrc_lines.get(conflict.index)
+                    && conflict.index < first
+                {
+                    let path = self.vimrc.clone().unwrap_or_default();
+                    self.vimrc_conflicts
+                        .push(at_line(&path, Severity::Warning, line, message));
+                } else if let Some(&entry) =
+                    (conflict.index.checked_sub(first)).and_then(|at| entries.get(at))
+                {
+                    problems.push(Problem::Entry(entry, "from", message));
+                }
+            }
+            self.keymap = Some(keymap);
+        }
         for issue in issues {
             let Some(&entry) = (issue.index.checked_sub(first)).and_then(|at| entries.get(at))
             else {
@@ -252,6 +288,7 @@ impl VimRemaps {
 impl ConfigSource for VimRemaps {
     fn paths(&self) -> Vec<PathBuf> {
         (self.vimrc.iter().chain(&self.settings_files))
+            .chain(&self.keymap_file)
             .cloned()
             .collect()
     }
@@ -268,11 +305,21 @@ impl ConfigSource for VimRemaps {
         self.build(Some(cx));
     }
 
+    /// Known limit (T223): the keymap conflict warnings are recomputed
+    /// here, when a watched file changes or the keymap in use has changed
+    /// by the time of a reload. A keymap swapped by `SharedKeymap::update`
+    /// (extension bindings) doesn't call the sources, so its warnings wait
+    /// for the next reload.
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         let named = self.paths().iter().any(|path| changed.contains(path));
         // The settings' source reloads first, so these are the new ones.
         let table = self.take_settings(cx);
-        if !(named || table) {
+        // The keymap source reloads before this one, so this is the new one.
+        let keymap = self
+            .keymap
+            .as_ref()
+            .is_some_and(|last| *last != fe_gpui::current_keymap(cx));
+        if !(named || table || keymap) {
             return;
         }
         if named {
@@ -284,6 +331,7 @@ impl ConfigSource for VimRemaps {
     fn diagnostics(&self) -> Vec<Diagnostic> {
         (self.vimrc_diagnostics.iter())
             .chain(&self.table_diagnostics)
+            .chain(&self.vimrc_conflicts)
             .cloned()
             .collect()
     }
@@ -315,6 +363,18 @@ fn read(path: &Path) -> Result<String, String> {
         ));
     }
     String::from_utf8(bytes).map_err(|_| "cannot read the file: it isn't valid UTF-8".to_owned())
+}
+
+/// What a map the keymap hides says in the config problems list.
+fn conflict_message(conflict: &fe_gpui::RemapConflict) -> String {
+    let mode = match conflict.mode {
+        RemapMode::CmdLine => "the command line",
+        _ => "insert mode",
+    };
+    format!(
+        "\"{}\" is bound in the keymap in {mode} (\"{}\" runs {}); the keymap wins there",
+        conflict.from, conflict.keys, conflict.command
+    )
 }
 
 /// A diagnostic for the file at `path`, at the start of `line`.

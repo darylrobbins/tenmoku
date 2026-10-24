@@ -28,6 +28,7 @@ mod hover;
 mod image_viewer;
 pub mod inlay_hints;
 pub mod keymap;
+mod keymap_remap_conflicts;
 pub mod lens;
 mod link_ranges;
 pub mod menu;
@@ -62,6 +63,7 @@ pub use lens::{Lens, LensItem, LensProvider};
 pub use fe_display::minimap::MinimapOptions;
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
+pub use keymap_remap_conflicts::{RemapConflict, remap_keymap_conflicts};
 pub use pane_item::{SaveFixes, SaveHook, set_restore_style};
 pub use signature_help::{
     Parameter, Signature, SignatureContext, SignatureHelp, SignatureHelpFuture,
