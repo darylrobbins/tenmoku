@@ -49,9 +49,9 @@ use std::{
 use fe_command::{ContextFrame, ContextPredicate, ContextStack};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_keymap::{
-    Binding, CommandInfo, DEFAULT, DEFAULT_KEYMAP_PATH, DefaultKeymap, KEYMAP_FILE, KEYMAP_HEADER,
-    Keymap, KeymapEdit, KeymapIssue, KeymapLayer, ShortcutBinding, ShortcutIssue, ShortcutRow,
-    ShortcutSource, ShortcutsModel,
+    Binding, CommandInfo, DEFAULT, DEFAULT_KEYMAP_PATH, DefaultKeymap, Entry, KEYMAP_FILE,
+    KEYMAP_HEADER, Keymap, KeymapEdit, KeymapIssue, KeymapLayer, ShortcutBinding, ShortcutIssue,
+    ShortcutRow, ShortcutSource, ShortcutsModel,
 };
 use fe_ui::{ActiveTheme as _, Icon, TextInput, TextInputEvent, Tooltip};
 use gpui::{
@@ -87,7 +87,8 @@ const SOURCE_WIDTH: Pixels = px(80.);
 
 /// What a refused Reset Keybinding says, beside it in the menu: the tab
 /// can't tell what the user's file does to the command's default on
-/// another platform ([`ShortcutsEditor::reset_refused`]).
+/// another platform ([`ShortcutsEditor::reset_refused`]), which takes a
+/// keymap store kept without every platform's defaults.
 pub(crate) const RESET_REFUSED_HINT: &str = "Edit keymap.toml";
 
 /// What the list says when the search finds nothing.
@@ -413,16 +414,21 @@ impl ShortcutsEditor {
 
     /// Whether a reset of `row`'s command is refused, fail-closed: its
     /// default comes from a layer the app ships other than fastedit's
-    /// (kiln's, a module's, an extension's), which the store holds only as
-    /// read on this platform, and the user's file has an entry gated on
+    /// (kiln's, a module's, an extension's), the store holds the layers
+    /// only as read on this platform (kiln keeps every platform's with it,
+    /// [`config::SharedKeymap::platform_defaults`], so only a store made
+    /// without kiln's setup), and the user's file has an entry gated on
     /// another platform that names the command or unbinds keys, whose
     /// effect on that default there the tab can't tell. fastedit's own
     /// layer is passed to an edit as shipped, with every platform's keys,
-    /// so its defaults reset as before. A known limit of the spec.
+    /// so its defaults reset either way.
     fn reset_refused(&self, row: &ShortcutRow, cx: &App) -> bool {
         let (Some(source), Some(store)) = (&self.user_source, config::keymap_store(cx)) else {
             return false;
         };
+        if store.platform_defaults().is_some() {
+            return false;
+        }
         let elsewhere = (store.defaults().iter())
             .filter(|layer| layer.path != Path::new(DEFAULT_KEYMAP_PATH))
             .flat_map(|layer| &layer.entries)
@@ -1197,31 +1203,86 @@ pub(crate) fn conflict_note(binding: &ShortcutBinding) -> Option<String> {
 /// edit to read it on: the default layers of the keymap store the config
 /// service reloads, kiln's and its modules' and extensions' with
 /// fastedit's, or fastedit's alone without one. fastedit's is its file as
-/// shipped, with every platform's keys; the others are written out as
-/// read on this one ([`layer_text`]).
+/// shipped, with every platform's keys; the others are written out with
+/// each platform's entries as kiln read them there ([`layer_text`]), a
+/// layer kept on any platform included, though not on this one (an
+/// extension's file with an error here alone); or, from a store kept
+/// without every platform's, as read on this one.
 fn default_keymaps(cx: &App) -> Vec<(PathBuf, String)> {
     let Some(store) = kiln::platform::config::keymap_store(cx) else {
         return vec![(PathBuf::from(DEFAULT_KEYMAP_PATH), DEFAULT.to_owned())];
     };
-    (store.defaults().iter())
-        .map(|layer| {
-            let text = match layer.path == Path::new(DEFAULT_KEYMAP_PATH) {
-                true => DEFAULT.to_owned(),
-                false => layer_text(layer),
-            };
-            (layer.path.clone(), text)
+    let text = |path: &Path, entries: &mut dyn Iterator<Item = (&Entry, Option<Os>)>| match path
+        == Path::new(DEFAULT_KEYMAP_PATH)
+    {
+        true => DEFAULT.to_owned(),
+        false => layer_text(entries),
+    };
+    let Some(platforms) = store.platform_defaults() else {
+        return (store.defaults().iter())
+            .map(|layer| {
+                let mut entries = layer.entries.iter().map(|entry| (entry, None));
+                (layer.path.clone(), text(&layer.path, &mut entries))
+            })
+            .collect();
+    };
+    // Every platform's layers in one order, each in its place among those
+    // it lies over and under there.
+    let mut order: Vec<(&Path, usize)> = Vec::new();
+    for (_, layers) in &platforms {
+        let mut at = 0;
+        for (layer, _) in keyed(layers) {
+            match order.iter().position(|other| *other == layer) {
+                Some(ix) => at = at.max(ix + 1),
+                None => {
+                    order.insert(at, layer);
+                    at += 1;
+                }
+            }
+        }
+    }
+    (order.into_iter())
+        .map(|key| {
+            let mut entries = (platforms.iter()).flat_map(|(os, layers)| {
+                (keyed(layers).find(|(other, _)| *other == key))
+                    .into_iter()
+                    .flat_map(move |(_, layer)| {
+                        layer.entries.iter().map(move |entry| (entry, Some(*os)))
+                    })
+            });
+            (key.0.to_owned(), text(key.0, &mut entries))
         })
         .collect()
 }
 
-/// `layer`'s entries as a keymap file writes them, as they were read on
-/// this platform. Args TOML can't hold (a JSON `null`) are left out: an
-/// edit matches defaults by keys, context and command.
-fn layer_text(layer: &KeymapLayer) -> String {
-    let bindings = (layer.entries.iter())
-        .map(|entry| {
+/// Each of `layers` by its file and how many of that file's lie under
+/// it, which tell the same layer apart on each platform.
+fn keyed(layers: &[KeymapLayer]) -> impl Iterator<Item = ((&Path, usize), &KeymapLayer)> {
+    (layers.iter().enumerate()).map(|(ix, layer)| {
+        let under = (layers[..ix].iter())
+            .filter(|under| under.path == layer.path)
+            .count();
+        ((layer.path.as_path(), under), layer)
+    })
+}
+
+/// `entries` as a keymap file writes them, each as it was read on the
+/// platform it's paired with, its keys for that one alone, or with
+/// `None` on this one, its keys for any. Args TOML can't hold (a JSON
+/// `null`) are left out: an edit matches defaults by keys, context and
+/// command.
+fn layer_text(entries: &mut dyn Iterator<Item = (&Entry, Option<Os>)>) -> String {
+    let bindings = entries
+        .map(|(entry, os)| {
             let mut table = toml::Table::new();
-            table.insert("keys".into(), entry.keys.to_string().into());
+            let keys = entry.keys.to_string();
+            let keys = match os {
+                Some(os) => {
+                    toml::Value::Table(toml::Table::from_iter([(os.name().into(), keys.into())]))
+                }
+                None => keys.into(),
+            };
+            table.insert("keys".into(), keys);
             if let Some(context) = &entry.context {
                 table.insert("context".into(), context.to_string().into());
             }

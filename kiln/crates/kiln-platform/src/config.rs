@@ -46,8 +46,8 @@ use std::{
 
 use gpui::{App, Global, Task};
 use kiln_core::{
-    ConfigWatcher, Diagnostic, ExtraFiles, KeymapEvent, KeymapLayer, KeymapStore, SettingsStore,
-    SettingsType, TreeWatcher,
+    ConfigWatcher, Diagnostic, ExtraFiles, KeymapEvent, KeymapLayer, KeymapStore, Os,
+    SettingsStore, SettingsType, TreeWatcher,
 };
 
 /// The log target the service logs under unless the app names its own:
@@ -307,23 +307,64 @@ impl Global for Running {}
 /// to lay new default layers under the user's file, say, as commands are
 /// registered.
 #[derive(Clone)]
-pub struct SharedKeymap(Rc<RefCell<KeymapStore>>);
+pub struct SharedKeymap {
+    store: Rc<RefCell<KeymapStore>>,
+    /// The default layers as read on each platform, as
+    /// [`SharedKeymap::set_platform_defaults`] last gave them.
+    platforms: Rc<RefCell<Option<PlatformDefaults>>>,
+}
+
+/// Every platform's default layers, and the platform the store's are
+/// read on.
+struct PlatformDefaults {
+    here: Os,
+    layers: Vec<(Os, Vec<KeymapLayer>)>,
+}
 
 impl SharedKeymap {
+    fn new(store: KeymapStore) -> Self {
+        Self {
+            store: Rc::new(RefCell::new(store)),
+            platforms: Rc::default(),
+        }
+    }
+
     /// The store's effective keymap now.
     pub fn keymap(&self) -> Arc<kiln_core::Keymap> {
-        self.0.borrow().keymap().clone()
+        self.store.borrow().keymap().clone()
     }
 
     /// The store's default layers now, which the user's file lies over:
     /// for an app that edits that file to read it on them.
     pub fn defaults(&self) -> Vec<KeymapLayer> {
-        self.0.borrow().defaults().to_vec()
+        self.store.borrow().defaults().to_vec()
+    }
+
+    /// The default layers as read on every platform, in [`Os::ALL`]'s
+    /// order, each list as [`SharedKeymap::defaults`] would be there: for
+    /// an app that edits the user's file to tell what an entry for
+    /// another platform does to them. `None` unless they were given
+    /// ([`SharedKeymap::set_platform_defaults`]) with the store's defaults
+    /// as they are now: given before a change to them, they're stale.
+    pub fn platform_defaults(&self) -> Option<Vec<(Os, Vec<KeymapLayer>)>> {
+        let platforms = self.platforms.borrow();
+        let platforms = platforms.as_ref()?;
+        let store = self.store.borrow();
+        let (_, here) = (platforms.layers.iter()).find(|(os, _)| *os == platforms.here)?;
+        (here.as_slice() == store.defaults()).then(|| platforms.layers.clone())
+    }
+
+    /// Keeps `layers`, the default layers as read on each platform, the
+    /// store's own as read on `here` among them, for
+    /// [`SharedKeymap::platform_defaults`]. The store is left as it is.
+    pub fn set_platform_defaults(&self, here: Os, mut layers: Vec<(Os, Vec<KeymapLayer>)>) {
+        layers.sort_by_key(|(os, _)| Os::ALL.iter().position(|each| each == os));
+        *self.platforms.borrow_mut() = Some(PlatformDefaults { here, layers });
     }
 
     /// The store's diagnostics now.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        self.0.borrow().diagnostics().to_vec()
+        self.store.borrow().diagnostics().to_vec()
     }
 
     /// Changes the store with `change`, such as
@@ -338,7 +379,7 @@ impl SharedKeymap {
         change: impl FnOnce(&mut KeymapStore) -> Option<KeymapEvent>,
     ) {
         let (event, previous) = {
-            let mut store = self.0.borrow_mut();
+            let mut store = self.store.borrow_mut();
             let previous = store.diagnostics().to_vec();
             (change(&mut store), previous)
         };
@@ -390,7 +431,7 @@ impl ConfigService {
         store: KeymapStore,
         reloaded: impl FnMut(&mut App) + 'static,
     ) -> Self {
-        let store = SharedKeymap(Rc::new(RefCell::new(store)));
+        let store = SharedKeymap::new(store);
         self.keymap = Some(store.clone());
         self.source(KeymapSource {
             store,
@@ -684,7 +725,7 @@ struct KeymapSource {
 
 impl ConfigSource for KeymapSource {
     fn paths(&self) -> Vec<PathBuf> {
-        self.store.0.borrow().paths()
+        self.store.store.borrow().paths()
     }
 
     fn user_files(&self) -> Vec<PathBuf> {
@@ -698,7 +739,7 @@ impl ConfigSource for KeymapSource {
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         // Not borrowed while the hook runs, which may change it.
-        let event = self.store.0.borrow_mut().reload(changed);
+        let event = self.store.store.borrow_mut().reload(changed);
         let Some(event) = event else {
             return;
         };

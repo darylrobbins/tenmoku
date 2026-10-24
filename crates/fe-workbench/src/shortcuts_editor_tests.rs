@@ -81,31 +81,75 @@ fn keys(written: &str) -> String {
 /// kiln's own keys, laid under the app's keymap when it asks for them.
 const KILN_KEYMAP: &str = include_str!("../../../kiln/crates/kiln/src/setup/keymap.toml");
 
+/// An extension's keymap, laid over fastedit's by [`Shipped::extension`].
+const EXTENSION_KEYMAP_PATH: &str = "extensions/demo/keymap.toml";
+
+/// The default layers a test's keymap store starts with.
+#[derive(Clone, Copy)]
+struct Shipped {
+    /// An extension's keymap over fastedit's: [`EXTENSION_KEYMAP_PATH`].
+    extension: Option<&'static str>,
+    /// The extension's keymap as kept on the other platforms, if not
+    /// `extension`: its last good text there, when the one here has an
+    /// error there.
+    extension_elsewhere: Option<&'static str>,
+    /// Whether every platform's default layers are kept with the store,
+    /// as kiln's setup keeps them.
+    platforms: bool,
+}
+
+impl Shipped {
+    /// As the app ships them: kiln's keys and fastedit's, every
+    /// platform's kept.
+    const APP: Self = Self {
+        extension: None,
+        extension_elsewhere: None,
+        platforms: true,
+    };
+
+    /// The default layers as read on `os`: kiln's keys, fastedit's over
+    /// them, then the extension's.
+    fn layers(self, os: Os) -> Vec<KeymapLayer> {
+        let catalog = crate::command_catalog();
+        let files = [
+            (Path::new("kiln/keymap.toml"), KILN_KEYMAP),
+            (Path::new(DEFAULT_KEYMAP_PATH), DEFAULT),
+        ];
+        let extension = match os == Os::current() {
+            true => self.extension,
+            false => self.extension_elsewhere.or(self.extension),
+        };
+        let extension = extension.map(|text| (Path::new(EXTENSION_KEYMAP_PATH), text));
+        (files.into_iter().chain(extension))
+            .map(|(path, text)| {
+                let (layer, diagnostics) = KeymapLayer::parse_for(path, text, Some(&*catalog), os);
+                assert_eq!(diagnostics, [], "{path:?} on {os:?}");
+                layer.unwrap()
+            })
+            .collect()
+    }
+}
+
 /// Starts the config service on a keymap store as the app's: kiln's keys
 /// and this platform's defaults over them, then `dirs`' `keymap.toml`.
-fn start_config(dirs: &Dirs, cx: &mut VisualTestContext) {
+fn start_config(dirs: &Dirs, shipped: Shipped, cx: &mut VisualTestContext) {
     let (sender, batches) = config::batch_channel();
     assert!(dirs.watcher.set(sender).is_ok());
     let keymap = dirs.keymap();
     cx.update(|_, cx| {
         let catalog = crate::command_catalog();
         let os = Os::current();
-        let (kiln, mut diagnostics) = KeymapLayer::parse_for(
-            Path::new("kiln/keymap.toml"),
-            KILN_KEYMAP,
-            Some(&*catalog),
-            os,
-        );
-        let path = Path::new(DEFAULT_KEYMAP_PATH);
-        let (layer, found) = KeymapLayer::parse_for(path, DEFAULT, Some(&*catalog), os);
-        diagnostics.extend(found);
-        assert_eq!(diagnostics, []);
-        let layers = vec![kiln.unwrap(), layer.unwrap()];
-        let store = KeymapStore::with_defaults(layers, diagnostics, Some(keymap), Some(catalog));
-        ConfigService::new()
-            .keymap(store)
-            .start_with(batches, cx)
-            .detach();
+        let layers = shipped.layers(os);
+        let store = KeymapStore::with_defaults(layers, Vec::new(), Some(keymap), Some(catalog));
+        let service = ConfigService::new().keymap(store);
+        if shipped.platforms {
+            let platforms = (Os::ALL.into_iter())
+                .map(|on| (on, shipped.layers(on)))
+                .collect();
+            let store = service.keymap_store().unwrap();
+            store.set_platform_defaults(os, platforms);
+        }
+        service.start_with(batches, cx).detach();
     });
     draw(cx);
 }
@@ -124,6 +168,15 @@ fn workbench<'a>(
     cx: &'a mut TestAppContext,
     dirs: &Dirs,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    workbench_with(cx, dirs, Shipped::APP)
+}
+
+/// [`workbench`], its keymap store's default layers `shipped`.
+fn workbench_with<'a>(
+    cx: &'a mut TestAppContext,
+    dirs: &Dirs,
+    shipped: Shipped,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     let launch = Launch {
         root: None,
         file: None,
@@ -134,7 +187,7 @@ fn workbench<'a>(
         window.activate_window();
         window.focus(&workbench.focus_handle(cx), cx);
     });
-    start_config(dirs, cx);
+    start_config(dirs, shipped, cx);
     (workbench, cx)
 }
 
@@ -1134,7 +1187,155 @@ fn reset_follows_the_file_while_open(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn reset_is_disabled_for_another_platforms_entry_on_a_kiln_default(cx: &mut TestAppContext) {
+fn reset_restores_kiln_and_extension_defaults_unbound_on_another_platform(cx: &mut TestAppContext) {
+    const PALETTE: &str = "command_palette.toggle";
+    // The extension's keys for Open Settings differ by platform.
+    const EXTENSION: &str = "[[bindings]]\n\
+        keys = { macos = \"cmd-alt-7\", default = \"ctrl-alt-7\" }\n\
+        command = \"workbench.open_settings_ui\"\n";
+    let dirs = Dirs::new();
+    // kiln's palette keys and the extension's keys unbound on another
+    // platform, as written there; this platform's extension keys unbound
+    // there too, which aren't its keys there; and fastedit's Open
+    // Keyboard Shortcuts bound there.
+    let (other, palette_keys, settings_keys, here_keys, open_keys) = match Os::current() {
+        Os::MacOs => (
+            "linux",
+            "ctrl-shift-p",
+            "ctrl-alt-7",
+            "cmd-alt-7",
+            "ctrl-alt-9",
+        ),
+        _ => (
+            "macos",
+            "cmd-shift-p",
+            "cmd-alt-7",
+            "ctrl-alt-7",
+            "cmd-alt-9",
+        ),
+    };
+    let unbind = |keys: &str| {
+        format!("[[bindings]]\nkeys = \"{keys}\"\ncommand = \"\"\nplatform = \"{other}\"\n\n")
+    };
+    let open = format!(
+        "[[bindings]]\nkeys = \"{open_keys}\"\ncommand = \"{OPEN}\"\nplatform = \"{other}\"\n"
+    );
+    let text = [
+        unbind(palette_keys),
+        unbind(settings_keys),
+        unbind(here_keys),
+        open.clone(),
+    ]
+    .concat();
+    dirs.write_keymap(&text);
+    let shipped = Shipped {
+        extension: Some(EXTENSION),
+        extension_elsewhere: None,
+        platforms: true,
+    };
+    let (workbench, cx) = workbench_with(cx, &dirs, shipped);
+    let editor = open_shortcuts(&workbench, cx);
+    let reset = |search: &str, command: &str, cx: &mut VisualTestContext| {
+        set_search(&editor, search, cx);
+        right_click(&format!("shortcuts-row-{command}"), cx);
+        let items = menu_items(&editor, cx).unwrap();
+        assert!(
+            items.contains(&MenuItem::ResetKeybinding),
+            "{command}: {items:?}"
+        );
+        let disabled = editor.read_with(cx, |editor, _| {
+            editor.disabled_menu_items().map(<[_]>::to_vec)
+        });
+        assert_eq!(disabled, Some(vec![]), "{command}");
+        click_menu_item(MenuItem::ResetKeybinding, cx);
+        assert_eq!(toasts(&workbench, cx), [], "{command}");
+        reload(&dirs, cx);
+        dirs.read_keymap()
+    };
+
+    // kiln's: only its unbind goes.
+    let after = reset("show all commands", PALETTE, cx);
+    assert_eq!(
+        after,
+        [unbind(settings_keys), unbind(here_keys), open.clone()].concat()
+    );
+
+    // The extension's: the unbind of its keys there goes; the one of keys
+    // that are its keys only here stays, as it unbinds nothing there.
+    let after = reset("open settings", SETTINGS_UI, cx);
+    assert_eq!(after, [unbind(here_keys), open].concat());
+
+    // fastedit's own resets as before.
+    let after = reset("open keyboard shortcuts", OPEN, cx);
+    assert_eq!(after.trim_end(), unbind(here_keys).trim_end());
+}
+
+#[gpui::test]
+fn reset_restores_an_extension_default_kept_on_another_platform_only(cx: &mut TestAppContext) {
+    // The extension's file binds Open Settings to secondary-alt-7 now. The
+    // other platforms keep an earlier one, which bound f9, as its last good
+    // file there: the new one has an error there (as `secondary-ctrl-k`
+    // holds ctrl twice off macOS).
+    const NOW: &str = "[[bindings]]\nkeys = \"secondary-alt-7\"\n\
+        command = \"workbench.open_settings_ui\"\n";
+    reset_an_extension_default_kept_elsewhere(Some(NOW), cx);
+}
+
+#[gpui::test]
+fn reset_restores_an_extension_default_in_a_layer_on_another_platform_only(
+    cx: &mut TestAppContext,
+) {
+    // The extension's file has an error here, and no last good version:
+    // there's no layer of it here, only on the other platforms.
+    reset_an_extension_default_kept_elsewhere(None, cx);
+}
+
+/// Resets Open Settings, whose extension keys on the other platforms are
+/// f9, with `here` the extension's keymap on this one, and the user's
+/// unbinds of f9 and f8 there: f9's goes, f8's, not its key anywhere,
+/// stays.
+fn reset_an_extension_default_kept_elsewhere(here: Option<&'static str>, cx: &mut TestAppContext) {
+    const LAST_GOOD: &str = "[[bindings]]\nkeys = \"f9\"\n\
+        command = \"workbench.open_settings_ui\"\n";
+    let other = match Os::current() {
+        Os::MacOs => "linux",
+        _ => "macos",
+    };
+    let dirs = Dirs::new();
+    // f9 unbound on the other platform, where it's the extension's key.
+    let text = format!(
+        "[[bindings]]\nkeys = \"f9\"\ncommand = \"\"\nplatform = \"{other}\"\n\n\
+         [[bindings]]\nkeys = \"f8\"\ncommand = \"\"\nplatform = \"{other}\"\n"
+    );
+    dirs.write_keymap(&text);
+    let shipped = Shipped {
+        extension: here,
+        extension_elsewhere: Some(LAST_GOOD),
+        platforms: true,
+    };
+    let (workbench, cx) = workbench_with(cx, &dirs, shipped);
+    let editor = open_shortcuts(&workbench, cx);
+    set_search(&editor, "open settings", cx);
+    right_click(&format!("shortcuts-row-{SETTINGS_UI}"), cx);
+    let items = menu_items(&editor, cx).unwrap();
+    assert!(items.contains(&MenuItem::ResetKeybinding), "{items:?}");
+    let disabled = editor.read_with(cx, |editor, _| {
+        editor.disabled_menu_items().map(<[_]>::to_vec)
+    });
+    assert_eq!(disabled, Some(vec![]));
+    click_menu_item(MenuItem::ResetKeybinding, cx);
+    assert_eq!(toasts(&workbench, cx), []);
+    let after = dirs.read_keymap();
+    assert_eq!(
+        after.trim_start(),
+        format!("[[bindings]]\nkeys = \"f8\"\ncommand = \"\"\nplatform = \"{other}\"\n")
+    );
+}
+
+#[gpui::test]
+fn reset_is_disabled_for_another_platforms_entry_on_a_kiln_default_without_its_platforms(
+    cx: &mut TestAppContext,
+) {
     const PALETTE: &str = "command_palette.toggle";
     let dirs = Dirs::new();
     // kiln's palette keys unbound on another platform, as written there;
@@ -1148,7 +1349,14 @@ fn reset_is_disabled_for_another_platforms_entry_on_a_kiln_default(cx: &mut Test
          [[bindings]]\nkeys = \"{open_keys}\"\ncommand = \"{OPEN}\"\nplatform = \"{other}\"\n"
     );
     dirs.write_keymap(&text);
-    let (workbench, cx) = workbench(cx, &dirs);
+    // A store kept with this platform's default layers alone, not
+    // kiln's setup.
+    let shipped = Shipped {
+        extension: None,
+        extension_elsewhere: None,
+        platforms: false,
+    };
+    let (workbench, cx) = workbench_with(cx, &dirs, shipped);
     let editor = open_shortcuts(&workbench, cx);
     let disabled = |cx: &mut VisualTestContext| {
         editor.read_with(cx, |editor, _| {

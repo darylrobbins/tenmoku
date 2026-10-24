@@ -28,7 +28,11 @@
 //!
 //! The new keymap is swapped in ([`kiln_platform::keys::set_keymap`]) and
 //! the menus reinstalled ([`kiln_platform::menus::install`]). A reload of
-//! the user's keymap keeps the contributed layer under it.
+//! the user's keymap keeps the contributed layer under it. The default
+//! layers as read on every platform are kept with the keymap store
+//! ([`kiln_platform::config::SharedKeymap::platform_defaults`]), for an
+//! edit of the user's file to tell what its entries for another platform
+//! do to them.
 //!
 //! The rest is added before `init`, as a [`Module`] does when
 //! [`crate::app()`] starts: panels ([`Contributions::add_panel`]), each with
@@ -1372,21 +1376,8 @@ pub(crate) fn shipped_catalog(config: &Config, cx: &App) -> Rc<dyn CommandCatalo
 pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx: &App) -> Shipped {
     let commands = Contributions::commands(cx);
     let this = cx.try_global::<Contributions>();
-    let bindings: Vec<KeyBinding> = match this.and_then(|this| this.key_table.as_ref()) {
-        Some(table) => table.bindings.clone(),
-        None => (commands.iter())
-            .map(|command| KeyBinding {
-                command: command.id.clone(),
-                keys: command.keys.clone(),
-                context: command.context,
-            })
-            .collect(),
-    };
-    let (contributed, mut keymap_diagnostics) = keymap_layer(&bindings, os, catalog);
-    let (mut layers, found) = config.own_keymap(os, Some(catalog), Some(contributed));
-    keymap_diagnostics.extend(found);
-    let (extension_layers, mut extension_diagnostics) = extensions::keymap_layers(cx, os, catalog);
-    layers.extend(extension_layers);
+    let (layers, keymap_diagnostics, mut extension_diagnostics) =
+        shipped_layers(config, os, catalog, cx);
     let (mut menu_bar, menu_diagnostics) = match this.and_then(|this| this.menu_table.as_ref()) {
         Some(table) => table_menu_bar(table, catalog, &config.menu_shortcut_context, cx),
         None => {
@@ -1417,6 +1408,56 @@ pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx:
     }
 }
 
+/// The keymap layers `config` ships on `os`, with what's contributed,
+/// checked against `catalog`, then the extensions' over them: the
+/// layers, their diagnostics, and the extensions' apart.
+fn shipped_layers(
+    config: &Config,
+    os: Os,
+    catalog: &dyn CommandCatalog,
+    cx: &App,
+) -> (Vec<KeymapLayer>, Vec<Diagnostic>, Vec<Diagnostic>) {
+    let this = cx.try_global::<Contributions>();
+    let bindings: Vec<KeyBinding> = match this.and_then(|this| this.key_table.as_ref()) {
+        Some(table) => table.bindings.clone(),
+        None => (Contributions::commands(cx).iter())
+            .map(|command| KeyBinding {
+                command: command.id.clone(),
+                keys: command.keys.clone(),
+                context: command.context,
+            })
+            .collect(),
+    };
+    let (contributed, mut keymap_diagnostics) = keymap_layer(&bindings, os, catalog);
+    let (mut layers, found) = config.own_keymap(os, Some(catalog), Some(contributed));
+    keymap_diagnostics.extend(found);
+    let (extension_layers, extension_diagnostics) = extensions::keymap_layers(cx, os, catalog);
+    layers.extend(extension_layers);
+    (layers, keymap_diagnostics, extension_diagnostics)
+}
+
+/// Keeps with `keymap` the layers its defaults are, `os`'s, as shipped
+/// on every platform ([`SharedKeymap::set_platform_defaults`]): for an
+/// edit of the user's keymap to tell what an entry for another platform
+/// does to kiln's, a contributed command's or an extension's defaults,
+/// which the store holds only as read on this one. Their diagnostics are
+/// this platform's: every platform's keys are checked on each.
+fn keep_platform_layers(
+    config: &Config,
+    os: Os,
+    keymap: &SharedKeymap,
+    catalog: &dyn CommandCatalog,
+    cx: &App,
+) {
+    let layers = (Os::ALL.into_iter())
+        .map(|on| match on == os {
+            true => (on, keymap.defaults()),
+            false => (on, shipped_layers(config, on, catalog, cx).0),
+        })
+        .collect();
+    keymap.set_platform_defaults(os, layers);
+}
+
 /// Has additions re-resolve from now on: called by `init` once it has
 /// installed what it shipped.
 pub(crate) fn start(
@@ -1426,6 +1467,8 @@ pub(crate) fn start(
     keymap: SharedKeymap,
     menu_diagnostics: Vec<Diagnostic>,
 ) {
+    let catalog = shipped_catalog(&config, cx);
+    keep_platform_layers(&config, os, &keymap, &*catalog, cx);
     let this = cx.default_global::<Contributions>();
     this.resolver = Some(Resolver {
         config,
@@ -1549,8 +1592,15 @@ fn resolve(cx: &mut App) {
     } = shipped;
     extensions::set_laid(cx, extension_diagnostics, true);
     resolver.keymap.update(cx, |store| {
-        store.set_defaults(layers, keymap_diagnostics, Some(Box::new(catalog)))
+        store.set_defaults(layers, keymap_diagnostics, Some(Box::new(catalog.clone())))
     });
+    keep_platform_layers(
+        &resolver.config,
+        resolver.os,
+        &resolver.keymap,
+        &*catalog,
+        cx,
+    );
     menus::install(cx, menu_bar);
     if menu_diagnostics != resolver.menu_diagnostics {
         let target = kiln_platform::config::log_target(cx);
@@ -2088,6 +2138,86 @@ mod tests {
             };
             assert_eq!(declared("a.panel.toggle"), Some(Some(("src/a.rs", 9))));
             assert_eq!(declared("hand.toggle"), Some(None));
+        });
+    }
+
+    /// Each platform's keys of `command` in its default layers from
+    /// `path`, as the keymap in use keeps them, in [`Os::ALL`]'s order.
+    fn platform_keys(path: &str, command: &str, cx: &App) -> Vec<(Os, Vec<String>)> {
+        let store = kiln_platform::config::keymap_store(cx).unwrap();
+        let platforms = store
+            .platform_defaults()
+            .expect("kept with the store's defaults");
+        (platforms.into_iter())
+            .map(|(os, layers)| {
+                let keys = (layers.iter())
+                    .filter(|layer| layer.path == std::path::Path::new(path))
+                    .flat_map(|layer| &layer.entries)
+                    .filter(|entry| entry.command.as_ref().map(CommandId::as_str) == Some(command))
+                    .map(|entry| entry.keys.to_string())
+                    .collect();
+                (os, keys)
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn every_platforms_default_layers_are_kept_with_the_keymap(cx: &mut gpui::TestAppContext) {
+        const KEYMAP: &str = "[[bindings]]\n\
+            keys = { macos = \"cmd-alt-q\", default = \"ctrl-alt-q\" }\n\
+            command = \"app.quit\"\n\n\
+            [[bindings]]\nkeys = \"f9\"\ncommand = \"app.quit\"\nplatform = \"linux\"\n";
+        let (_sender, batches) = kiln_platform::config::batch_channel();
+        let config = Config::new("com.example.Notes", "Notes")
+            .keymap("keymap.toml", KEYMAP)
+            .watch_with(batches);
+        let diagnostics = cx.update(|cx| crate::init(cx, config));
+        assert_eq!(diagnostics, []);
+        let strings = |keys: &[&str]| keys.iter().map(|keys| keys.to_string()).collect::<Vec<_>>();
+        cx.update(|cx| {
+            assert_eq!(
+                platform_keys("keymap.toml", "app.quit", cx),
+                [
+                    (Os::MacOs, strings(&["cmd-alt-q"])),
+                    (Os::Linux, strings(&["ctrl-alt-q", "f9"])),
+                    (Os::Windows, strings(&["ctrl-alt-q"])),
+                ]
+            );
+            // This platform's are the store's.
+            let store = kiln_platform::config::keymap_store(cx).unwrap();
+            let platforms = store.platform_defaults().unwrap();
+            let here = platforms.iter().find(|(os, _)| *os == Os::current());
+            assert_eq!(here.map(|(_, layers)| layers), Some(&store.defaults()));
+        });
+
+        // A command contributed after `init`: each platform's are resolved
+        // again with it.
+        cx.update(|cx| {
+            let keys = Keys::ByPlatform(vec![
+                ("macos".into(), "cmd-alt-m".into()),
+                ("default".into(), "ctrl-alt-m".into()),
+            ]);
+            let spec = CommandSpec::new::<crate::window::Minimize>("Minimize").keys(keys);
+            Contributions::add_command(cx, spec);
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                platform_keys(CONTRIBUTED_KEYS_PATH, "window.minimize", cx),
+                [
+                    (Os::MacOs, strings(&["cmd-alt-m"])),
+                    (Os::Linux, strings(&["ctrl-alt-m"])),
+                    (Os::Windows, strings(&["ctrl-alt-m"])),
+                ]
+            );
+        });
+
+        // The store's defaults changed without them: they're stale, so
+        // there are none.
+        cx.update(|cx| {
+            let store = kiln_platform::config::keymap_store(cx).unwrap();
+            store.update(cx, |store| store.set_defaults(Vec::new(), Vec::new(), None));
+            assert!(store.platform_defaults().is_none());
         });
     }
 }

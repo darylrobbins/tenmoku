@@ -616,7 +616,7 @@ impl ExtensionSource {
         let listed: HashSet<PathBuf> = (files.keymaps.iter().chain(&files.menus))
             .map(|file| file.path.clone())
             .collect();
-        files.last_good.retain(|path, _| listed.contains(path));
+        files.last_good.retain(|(_, path), _| listed.contains(path));
         changed
     }
 
@@ -1088,8 +1088,10 @@ struct FileLayers {
     read: Vec<Diagnostic>,
     /// What laying them in found, as last resolved.
     laid: Vec<Diagnostic>,
-    /// Each file's text as last laid in without errors.
-    last_good: HashMap<PathBuf, String>,
+    /// Each file's text as last laid in without errors on each platform:
+    /// a text can parse on one and not another (`secondary-ctrl-k` holds
+    /// ctrl twice off macOS), and the keymap is resolved for each.
+    last_good: HashMap<(Os, PathBuf), String>,
 }
 
 /// The extensions' keymap and menu files, shared by [`ExtensionSource`],
@@ -1107,17 +1109,20 @@ impl Files {
     }
 }
 
-/// `file` parsed with `parse`: its text's layer, with the text, and
-/// diagnostics, which with no errors becomes its last good version; else,
-/// or if it can't be read, its last good version's layer, with no text,
-/// as what's dropped from it was reported when it was read.
+/// `file` parsed with `parse` as on `os`: its text's layer, with the
+/// text, and diagnostics, which with no errors becomes its last good
+/// version there; else, or if it can't be read, its last good version's
+/// layer there, with no text, as what's dropped from it was reported when
+/// it was read.
 fn parse_kept<'a, T>(
     file: &'a File,
-    last_good: &mut HashMap<PathBuf, String>,
+    os: Os,
+    last_good: &mut HashMap<(Os, PathBuf), String>,
     parse: impl Fn(&str) -> (Option<T>, Vec<Diagnostic>),
 ) -> (Option<(T, Option<&'a str>)>, Vec<Diagnostic>) {
-    let kept = |last_good: &HashMap<PathBuf, String>| {
-        let text = last_good.get(&file.path)?;
+    let key = (os, file.path.clone());
+    let kept = |last_good: &HashMap<(Os, PathBuf), String>| {
+        let text = last_good.get(&key)?;
         Some((parse(text).0?, None))
     };
     let Some(text) = &file.text else {
@@ -1125,7 +1130,7 @@ fn parse_kept<'a, T>(
     };
     match parse(text) {
         (Some(layer), found) => {
-            last_good.insert(file.path.clone(), text.clone());
+            last_good.insert(key.clone(), text.clone());
             (Some((layer, Some(text.as_str()))), found)
         }
         (None, found) => (kept(last_good), found),
@@ -1149,7 +1154,7 @@ pub(crate) fn keymap_layers(
     let mut layers = Vec::new();
     let mut diagnostics = Vec::new();
     for file in &files.keymaps {
-        let (layer, found) = parse_kept(file, &mut files.last_good, |text| {
+        let (layer, found) = parse_kept(file, os, &mut files.last_good, |text| {
             KeymapLayer::parse_for(&file.path, text, Some(catalog), os)
         });
         diagnostics.extend(found);
@@ -1202,7 +1207,7 @@ pub(crate) fn extend_menus(
     let frames: Vec<&str> = frames.iter().map(String::as_str).collect();
     let mut diagnostics = Vec::new();
     for file in &files.menus {
-        let (layer, found) = parse_kept(file, &mut files.last_good, |text| {
+        let (layer, found) = parse_kept(file, os, &mut files.last_good, |text| {
             MenuBar::parse_in(&file.path, text, Some(catalog), os, &frames)
         });
         diagnostics.extend(found);
