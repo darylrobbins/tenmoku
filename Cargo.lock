@@ -2126,6 +2126,7 @@ dependencies = [
 name = "fe-chat"
 version = "0.1.0"
 dependencies = [
+ "fe-buffer",
  "futures",
  "serde",
  "serde_json",

@@ -15,6 +15,9 @@
 //!   in the record's order, cutting or dropping what doesn't fit.
 //! - [`parse_edit_block`] reads a reply's code block as an edit: a whole
 //!   file, the selection, or SEARCH/REPLACE sections.
+//! - [`inline_request`], [`InlineEditSession`], [`run_inline_edit`] and
+//!   [`to_proposal`] turn a selection and an instruction into a proposed
+//!   change.
 //! - [`ChatStore`] keeps a folder's chats as atomically written files,
 //!   listed newest first.
 //! - [`ScriptedProvider`] plays scripted replies and records the requests,
@@ -26,6 +29,7 @@ mod context;
 mod conversation;
 mod edits;
 mod fake;
+mod inline;
 mod provider;
 mod request;
 mod store;
@@ -40,6 +44,10 @@ pub use edits::{
     parse_edit_block,
 };
 pub use fake::ScriptedProvider;
+pub use inline::{
+    CONTEXT_BYTES, INLINE_EDIT_AGENT, InlineEditInput, InlineEditSession, InlineEditState,
+    InlineEditUpdate, inline_request, run_inline_edit, to_proposal,
+};
 pub use provider::{
     ApiMessage, BlockKind, CacheControl, ChatEvent, ChatProvider, ChatRequest, ChatStream, Effort,
     ErrorKind, ProviderError, Role, StopReason, SystemBlock, ToolCall, ToolChoice, ToolSpec, Usage,
