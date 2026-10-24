@@ -1,0 +1,97 @@
+# Insert, replace and command-line remap cases for fe-vim's oracle (see
+# remaps.toml for the format): each case's `mapping` lines run in nvim
+# before the keys, and fe-vim reads the same lines with its vimrc parser.
+# The oracle cannot end in insert mode, so each insert case ends with a
+# mapped or typed <Esc>. Edit a case, then re-record
+# remaps_insert.expected.json with the ignored `record_corpus_with_neovim`.
+
+[[case]]
+name = "remap_insert_esc"
+mapping = ["inoremap jk <Esc>"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ijkx"
+
+[[case]]
+name = "remap_insert_expansion"
+mapping = ["inoremap kj hello"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ikj<Esc>"
+
+[[case]]
+name = "remap_insert_imap_chain"
+mapping = ["imap a b", "imap b c"]
+buffer = "x"
+cursor = [0, 0]
+keys = "ia<Esc>"
+
+[[case]]
+name = "remap_insert_inoremap_no_chain"
+mapping = ["inoremap a b", "imap b c"]
+buffer = "x"
+cursor = [0, 0]
+keys = "ia<Esc>"
+
+[[case]]
+name = "remap_insert_failed_prefix"
+mapping = ["inoremap jk X"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ijx<Esc>"
+
+[[case]]
+name = "remap_replace_mode"
+mapping = ["inoremap jk <Esc>", "inoremap q Q"]
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "Rqjkx"
+
+[[case]]
+name = "remap_nmap_then_imap"
+mapping = ["nmap ab abx", "imap b B"]
+buffer = "xyz"
+cursor = [0, 0]
+keys = "ab<Esc>"
+
+[[case]]
+name = "remap_insert_normal_cmd"
+mapping = ["inoremap jk <Esc>"]
+buffer = "abc"
+cursor = [0, 0]
+keys = ":normal ijkx<CR>"
+
+[[case]]
+name = "remap_insert_normal_bang_cmd"
+mapping = ["inoremap jk <Esc>"]
+buffer = "abc"
+cursor = [0, 0]
+keys = ":normal! ijkx<CR>"
+
+[[case]]
+name = "remap_cmdline_cr"
+mapping = ["cnoremap jk <CR>"]
+buffer = "aaa"
+cursor = [0, 0]
+keys = ":s/a/b/jk"
+
+[[case]]
+name = "remap_bang_map_and_unmap"
+mapping = ["noremap! jk <Esc>", "unmap! jk"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ijk<Esc>"
+
+[[case]]
+name = "remap_bang_map_insert"
+mapping = ["noremap! jk <Esc>"]
+buffer = "abc"
+cursor = [0, 0]
+keys = "ijkx"
+
+[[case]]
+name = "remap_bang_map_cmdline"
+mapping = ["noremap! jk <CR>"]
+buffer = "aaa"
+cursor = [0, 0]
+keys = ":s/a/b/jk"

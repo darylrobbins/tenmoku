@@ -3,6 +3,8 @@ use fe_vim::{Remap, RemapMode, Vimrc, VimrcIssue, parse_vimrc};
 const N: RemapMode = RemapMode::Normal;
 const X: RemapMode = RemapMode::Visual;
 const O: RemapMode = RemapMode::OperatorPending;
+const I: RemapMode = RemapMode::Insert;
+const C: RemapMode = RemapMode::CmdLine;
 
 fn remap(modes: &[RemapMode], from: &str, to: &str, recursive: bool) -> Remap {
     Remap {
@@ -219,7 +221,7 @@ vmapclear\" comment
 mapclear! \" insert and command line
 ";
     let vimrc = parse_vimrc(text);
-    assert_eq!(lines(&vimrc), vec![9]);
+    assert_eq!(lines(&vimrc), Vec::<usize>::new());
     assert_eq!(vimrc.remaps, vec![]);
 
     // A double-quoted leader is the string's value: escapes are decoded
@@ -428,7 +430,7 @@ fn vimrc_reports_problems() {
 nnoremap a 1
 imap jk <Esc>
 inoremap jj <Esc>
-cnoremap <C-a> <Home>
+cnoremap <C-a> <C-b>
 map! x y
 noremap! x y
 smap b c
@@ -461,16 +463,10 @@ let mapleader = \"\\<M-a>\"
 let mapleader = \"\\<C-@>\"
 ";
     let vimrc = parse_vimrc(text);
-    let insert = "insert and command-line remaps aren't supported yet";
     let select = "Select mode isn't in fastedit";
     assert_eq!(
         vimrc.issues,
         vec![
-            issue(2, insert),
-            issue(3, insert),
-            issue(4, insert),
-            issue(5, insert),
-            issue(6, insert),
             issue(7, select),
             issue(8, select),
             issue(9, "<buffer> isn't supported"),
@@ -503,6 +499,11 @@ let mapleader = \"\\<C-@>\"
         vimrc.remaps,
         vec![
             remap(&[N], "a", "1", false),
+            remap(&[I], "jk", "<Esc>", true),
+            remap(&[I], "jj", "<Esc>", false),
+            remap(&[C], "<C-a>", "<C-b>", false),
+            remap(&[I, C], "x", "y", true),
+            remap(&[I, C], "x", "y", false),
             remap(&[N], "e", "2", false),
             remap(&[N], "\\k", "3", false),
         ]
@@ -511,11 +512,12 @@ let mapleader = \"\\<C-@>\"
     // One issue per command, and the commands around it on the line still
     // load.
     let vimrc = parse_vimrc("nnoremap a b | imap c d | nnoremap e f\nnnoremap g h\n");
-    assert_eq!(vimrc.issues, vec![issue(1, insert)]);
+    assert_eq!(vimrc.issues, vec![]);
     assert_eq!(
         vimrc.remaps,
         vec![
             remap(&[N], "a", "b ", false),
+            remap(&[I], "c", "d ", true),
             remap(&[N], "e", "f", false),
             remap(&[N], "g", "h", false),
         ]

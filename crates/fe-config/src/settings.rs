@@ -301,7 +301,8 @@ impl Default for VimSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct VimRemap {
     /// The modes the remap applies in: one of `"n"` (normal), `"x"` or `"v"`
-    /// (visual), `"o"` (operator-pending), or a list of them.
+    /// (visual), `"o"` (operator-pending), `"i"` (insert and replace), `"c"`
+    /// (command line), or a list of them.
     pub mode: VimRemapModes,
     /// The keys to map, in vim notation (`"<leader>w"`, `"H"`).
     pub from: String,
@@ -345,6 +346,12 @@ pub enum VimRemapMode {
     /// Operator-pending mode.
     #[serde(rename = "o")]
     OperatorPending,
+    /// Insert and replace mode.
+    #[serde(rename = "i")]
+    Insert,
+    /// Command-line mode.
+    #[serde(rename = "c")]
+    CmdLine,
 }
 
 /// `vim.clipboard`.

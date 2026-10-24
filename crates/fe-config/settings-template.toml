@@ -151,8 +151,8 @@
 # filter_time_limit = 10000
 # The key <leader> stands for in a remap, in vim notation.
 # leader = "\\"
-# Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", or a list
-# of them; recursive = true remaps the keys `to` produces too.
+# Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", "i", "c", or a
+# list of them; recursive = true remaps the keys `to` produces too.
 # [[vim.remap]]
 # mode = "n"
 # from = "<leader>w"

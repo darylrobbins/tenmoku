@@ -832,7 +832,7 @@
         },
         "mode": {
           "$ref": "#/$defs/VimRemapModes",
-          "description": "The modes the remap applies in: one of `\"n\"` (normal), `\"x\"` or `\"v\"`\n(visual), `\"o\"` (operator-pending), or a list of them."
+          "description": "The modes the remap applies in: one of `\"n\"` (normal), `\"x\"` or `\"v\"`\n(visual), `\"o\"` (operator-pending), `\"i\"` (insert and replace), `\"c\"`\n(command line), or a list of them."
         },
         "recursive": {
           "default": false,
@@ -872,6 +872,16 @@
         {
           "const": "o",
           "description": "Operator-pending mode.",
+          "type": "string"
+        },
+        {
+          "const": "i",
+          "description": "Insert and replace mode.",
+          "type": "string"
+        },
+        {
+          "const": "c",
+          "description": "Command-line mode.",
           "type": "string"
         }
       ]

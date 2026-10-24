@@ -36,7 +36,7 @@ fn vim_remap_setting() {
     );
     assert!(vim.remap[1].recursive);
 
-    let store = load("[[vim.remap]]\nmode = \"i\"\nfrom = \"a\"\nto = \"b\"\n");
+    let store = load("[[vim.remap]]\nmode = \"s\"\nfrom = \"a\"\nto = \"b\"\n");
     let diagnostics = store.diagnostics();
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     // Located at the `mode` value.

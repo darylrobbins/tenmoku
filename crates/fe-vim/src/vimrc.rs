@@ -25,9 +25,11 @@ pub struct VimrcIssue {
 const N: RemapMode = RemapMode::Normal;
 const X: RemapMode = RemapMode::Visual;
 const O: RemapMode = RemapMode::OperatorPending;
+const I: RemapMode = RemapMode::Insert;
+const C: RemapMode = RemapMode::CmdLine;
 const NXO: &[RemapMode] = &[N, X, O];
+const IC: &[RemapMode] = &[I, C];
 
-const INSERT_CMDLINE: &str = "insert and command-line remaps aren't supported yet";
 const SELECT: &str = "Select mode isn't in fastedit";
 const LANGUAGE: &str = "language remaps aren't supported";
 const TERMINAL: &str = "terminal remaps aren't supported";
@@ -66,14 +68,14 @@ const COMMANDS: &[(&str, usize, Command)] = &[
     ("xmapclear", 5, Command::Mapclear(&[X])),
     ("omapclear", 5, Command::Mapclear(&[O])),
     ("vmapclear", 5, Command::Mapclear(&[X])),
-    ("imap", 2, Command::Unsupported(INSERT_CMDLINE)),
-    ("inoremap", 3, Command::Unsupported(INSERT_CMDLINE)),
-    ("iunmap", 2, Command::Unsupported(INSERT_CMDLINE)),
-    ("imapclear", 5, Command::Unsupported(INSERT_CMDLINE)),
-    ("cmap", 2, Command::Unsupported(INSERT_CMDLINE)),
-    ("cnoremap", 3, Command::Unsupported(INSERT_CMDLINE)),
-    ("cunmap", 2, Command::Unsupported(INSERT_CMDLINE)),
-    ("cmapclear", 5, Command::Unsupported(INSERT_CMDLINE)),
+    ("imap", 2, Command::Map(&[I], true)),
+    ("inoremap", 3, Command::Map(&[I], false)),
+    ("iunmap", 2, Command::Unmap(&[I])),
+    ("imapclear", 5, Command::Mapclear(&[I])),
+    ("cmap", 2, Command::Map(&[C], true)),
+    ("cnoremap", 3, Command::Map(&[C], false)),
+    ("cunmap", 2, Command::Unmap(&[C])),
+    ("cmapclear", 5, Command::Mapclear(&[C])),
     ("smap", 4, Command::Unsupported(SELECT)),
     ("snoremap", 4, Command::Unsupported(SELECT)),
     ("sunmap", 4, Command::Unsupported(SELECT)),
@@ -148,15 +150,17 @@ impl Parser {
         // The mapclear family takes a trailing `"` comment; the map and
         // unmap families read `"` as part of their keys.
         let comments = full.ends_with("mapclear");
-        if command_bang(command, bang) {
-            let (_, rest) = split_bar(after, comments);
-            self.issue(line, INSERT_CMDLINE);
-            return rest;
-        }
-        if bang {
-            self.issue(line, format!("not supported: {full}!"));
-            return None;
-        }
+        let command = if bang {
+            match bang_command(command) {
+                Some(command) => command,
+                None => {
+                    self.issue(line, format!("not supported: {full}!"));
+                    return None;
+                }
+            }
+        } else {
+            command
+        };
         let (args, rest) = split_bar(after, comments);
         match command {
             Command::Map(modes, recursive) => {
@@ -314,11 +318,13 @@ impl Parser {
 }
 
 /// `map!`, `noremap!`, `unmap!` and `mapclear!`: insert and command-line.
-fn command_bang(command: Command, bang: bool) -> bool {
-    bang && matches!(
-        command,
-        Command::Map(NXO, _) | Command::Unmap(NXO) | Command::Mapclear(NXO)
-    )
+fn bang_command(command: Command) -> Option<Command> {
+    match command {
+        Command::Map(NXO, recursive) => Some(Command::Map(IC, recursive)),
+        Command::Unmap(NXO) => Some(Command::Unmap(IC)),
+        Command::Mapclear(NXO) => Some(Command::Mapclear(IC)),
+        _ => None,
+    }
 }
 
 /// The command's text up to an unescaped `|` (`:help map-bar`), or a `"`

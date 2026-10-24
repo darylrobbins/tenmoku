@@ -337,6 +337,8 @@ fn remap_modes(modes: &[VimRemapMode]) -> Vec<RemapMode> {
             VimRemapMode::Normal => RemapMode::Normal,
             VimRemapMode::Visual | VimRemapMode::VisualSelect => RemapMode::Visual,
             VimRemapMode::OperatorPending => RemapMode::OperatorPending,
+            VimRemapMode::Insert => RemapMode::Insert,
+            VimRemapMode::CmdLine => RemapMode::CmdLine,
         };
         if !out.contains(&mode) {
             out.push(mode);
@@ -569,8 +571,34 @@ mod tests {
     }
 
     #[gpui::test]
+    fn insert_and_cmdline_modes_load(cx: &mut TestAppContext) {
+        let settings = "[[vim.remap]]\nmode = \"i\"\nfrom = \"jk\"\nto = \"<Esc>\"\n\n\
+                        [[vim.remap]]\nmode = \"c\"\nfrom = \"kj\"\nto = \"<CR>\"\n";
+        let files = Files::new(settings, Some("inoremap ab c\n"));
+        let (_sender, diagnostics) = start(&files, cx);
+        assert_eq!(diagnostics, []);
+        let lookup = |mode: RemapMode, from: &str, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let in_use = cx.global::<RemapsInUse>();
+                let (set, _) = RemapSet::new(&in_use.remaps, &in_use.leader);
+                match set.lookup(mode, &parse_keys(from).unwrap()) {
+                    Lookup::Exact { to, .. } | Lookup::ExactAndPrefix { to, .. } => {
+                        Some(to.to_vec())
+                    }
+                    Lookup::None | Lookup::Prefix => None,
+                }
+            })
+        };
+        assert_eq!(lookup(RemapMode::Insert, "jk", cx), keys("<Esc>"));
+        assert_eq!(lookup(RemapMode::Insert, "ab", cx), keys("c"));
+        assert_eq!(lookup(RemapMode::CmdLine, "kj", cx), keys("<CR>"));
+        assert_eq!(lookup(RemapMode::Normal, "jk", cx), None);
+        assert_eq!(lookup(RemapMode::Insert, "kj", cx), None);
+    }
+
+    #[gpui::test]
     fn problems_at_their_lines(cx: &mut TestAppContext) {
-        let vimrc = "\" maps\nnnoremap H ^\ninoremap jk <Esc>\nset number\nnnoremap <leader>v x\n";
+        let vimrc = "\" maps\nnnoremap H ^\ntmap jk <Esc>\nset number\nnnoremap <leader>v x\n";
         let settings = "[vim]\nleader = \",\"\n\n\
                         [[vim.remap]]\nmode = \"n\"\nfrom = \"a\"\nto = \"<Bogus>\"\n\n\
                         [[vim.remap]]\nmode = \"n\"\nfrom = \"<Nop>\"\nto = \"x\"\n\n\

@@ -1,0 +1,329 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "remap_insert_esc",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ijkx",
+      "mapping": [
+        "inoremap jk <Esc>"
+      ],
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_insert_expansion",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ikj<Esc>",
+      "mapping": [
+        "inoremap kj hello"
+      ],
+      "expect": {
+        "buffer": "helloabc",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_insert_imap_chain",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<Esc>",
+      "mapping": [
+        "imap a b",
+        "imap b c"
+      ],
+      "expect": {
+        "buffer": "cx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_insert_inoremap_no_chain",
+      "buffer": "x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ia<Esc>",
+      "mapping": [
+        "inoremap a b",
+        "imap b c"
+      ],
+      "expect": {
+        "buffer": "bx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_insert_failed_prefix",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ijx<Esc>",
+      "mapping": [
+        "inoremap jk X"
+      ],
+      "expect": {
+        "buffer": "jxabc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_replace_mode",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Rqjkx",
+      "mapping": [
+        "inoremap jk <Esc>",
+        "inoremap q Q"
+      ],
+      "expect": {
+        "buffer": "bcdef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Q",
+            "linewise": false
+          },
+          "-": {
+            "text": "Q",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_nmap_then_imap",
+      "buffer": "xyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ab<Esc>",
+      "mapping": [
+        "nmap ab abx",
+        "imap b B"
+      ],
+      "expect": {
+        "buffer": "xBxyz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_insert_normal_cmd",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal ijkx<CR>",
+      "mapping": [
+        "inoremap jk <Esc>"
+      ],
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_insert_normal_bang_cmd",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal! ijkx<CR>",
+      "mapping": [
+        "inoremap jk <Esc>"
+      ],
+      "expect": {
+        "buffer": "jkxabc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_cmdline_cr",
+      "buffer": "aaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/b/jk",
+      "mapping": [
+        "cnoremap jk <CR>"
+      ],
+      "expect": {
+        "buffer": "baa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_bang_map_and_unmap",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ijk<Esc>",
+      "mapping": [
+        "noremap! jk <Esc>",
+        "unmap! jk"
+      ],
+      "expect": {
+        "buffer": "jkabc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "remap_bang_map_insert",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ijkx",
+      "mapping": [
+        "noremap! jk <Esc>"
+      ],
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "remap_bang_map_cmdline",
+      "buffer": "aaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/b/jk",
+      "mapping": [
+        "noremap! jk <CR>"
+      ],
+      "expect": {
+        "buffer": "baa",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}
