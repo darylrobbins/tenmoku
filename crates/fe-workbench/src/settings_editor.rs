@@ -1,7 +1,9 @@
 //! The Settings editor, as VS Code's (`workbench.action.openSettings2`):
 //! a tab, opened by `workbench.open_settings_ui`, that lists every setting
 //! [`SettingsModel`] knows, grouped as the schema nests them, with its
-//! description and its value. Read-only for now: it shows values as text.
+//! description and its value, which it edits in place: a switch, a
+//! dropdown, an input or a list editor by the setting's kind, or a link to
+//! `settings.toml` for a table ([`controls`]).
 //!
 //! - A search field on top, focused when the tab opens, filters the list
 //!   as it's typed ([`SettingsModel::search`]); a group with nothing found
@@ -10,7 +12,17 @@
 //!   shows the selected scope's file's value, else what it inherits, and
 //!   a 2px accent bar at its left edge if that file sets it. Workspace
 //!   shows only with a folder open, and dims the rows a project's file
-//!   can't set ([`SettingsModel::workspace_allowed`]).
+//!   can't set ([`SettingsModel::workspace_allowed`]), whose controls are
+//!   off.
+//! - A change is written to the selected scope's file
+//!   ([`fe_config::set_setting`], [`fe_config::reset_setting`]), keeping
+//!   its comments and key order, off the main thread and after the writes
+//!   before it, even once the tab is closed. Its row shows it at once, and
+//!   once it's written the files are read again and shown, not waiting
+//!   for the watcher; a read that started earlier and finishes later is
+//!   dropped. A write that fails, or a file that's there but can't be
+//!   written to, says why in a toast, and the row shows the file's value
+//!   again.
 //! - The files are read off the main thread when the tab opens, when the
 //!   scope changes, when the root changes, when the config service's
 //!   watcher sees either file change ([`ChangedFiles`]), even in a way
@@ -21,26 +33,36 @@
 //!   root's.
 //! - Up and Down move the selected row, scrolling it into view; Down in
 //!   the search field moves into the list. `/` or secondary-f goes back to
-//!   the search, and Escape clears it. The search takes the text inputs'
-//!   editing keys (`text_input.backspace` and the like).
+//!   the search, and Escape clears it. The search and the rows' inputs
+//!   take the text inputs' editing keys (`text_input.backspace` and the
+//!   like). On the selected row, Space toggles a switch and Enter works
+//!   its control: it opens a dropdown, goes into an input, or opens
+//!   `settings.toml`.
 //! - Only the rows in view are built: the list is a `uniform_list`.
 //!
 //! It has no path and serializes to nothing, so it isn't kept in saved
 //! layouts, and closes as any tab does.
 
 use std::{
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
-use fe_config::{SettingEntry, SettingKind, SettingsModel};
+use fe_command::Value as Json;
+use fe_config::{SettingEditError, SettingEntry, SettingsModel};
 use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, TextInput, TextInputEvent, ui_theme};
+use fe_ui::{Icon, TextInput, TextInputEvent, Tooltip, ui_theme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Pixels, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
+    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px, svg, uniform_list,
 };
 use kiln::platform::config::{self, ChangedFiles};
 use kiln_shell::{PaneItem, PaneView as _};
@@ -48,22 +70,35 @@ use kiln_shell::{PaneItem, PaneView as _};
 use crate::{
     RootChanged, Workbench, open,
     picker::{self, PaletteOp},
+    workbench::toast::{self, Toast},
 };
+
+#[path = "settings_editor_controls.rs"]
+mod controls;
+
+use controls::{Change, Field, ListField};
 
 /// The key context the editor's element sets.
 pub(crate) const KEY_CONTEXT: &str = "settings_editor";
 
 /// Every row's height, a group heading's as a setting's: the list is a
 /// `uniform_list`. A setting's holds its title line, two lines of
-/// description and its value line, with [`ROW_PADDING`] above and below
-/// and [`ROW_GAP`] between.
-const ROW_HEIGHT: Pixels = px(96.);
+/// description, its control's line and a line for why a typed value wasn't
+/// written, with [`ROW_PADDING`] above and below and [`ROW_GAP`] between.
+const ROW_HEIGHT: Pixels = px(126.);
 
-/// The height of a setting's title line and of its value line.
+/// The height of a setting's title line, and of a switch's or a link's
+/// line.
 const LINE_HEIGHT: Pixels = px(18.);
 
 /// The height of a line of a setting's description, which shows up to two.
 const DESCRIPTION_LINE_HEIGHT: Pixels = px(16.);
+
+/// The height of the control's line: a text input's.
+const CONTROL_HEIGHT: Pixels = px(30.);
+
+/// The height of the line under the control.
+const MESSAGE_HEIGHT: Pixels = px(14.);
 
 const ROW_PADDING: Pixels = px(10.);
 
@@ -77,12 +112,48 @@ pub(crate) const WORKSPACE_RESTRICTED: &str = "This setting cannot be changed in
 pub(crate) const NOTHING_FOUND: &str = "No settings found";
 
 /// Which settings file the editor shows values from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Scope {
     /// The user's `settings.toml`.
     User,
     /// The root's `.fastedit/settings.toml`.
     Workspace,
+}
+
+impl Scope {
+    fn setting_scope(self) -> fe_config::SettingScope {
+        match self {
+            Scope::User => fe_config::SettingScope::User,
+            Scope::Workspace => fe_config::SettingScope::Workspace,
+        }
+    }
+}
+
+/// The user's settings file and the root's, as [`SettingsEditor::files`]
+/// gives them.
+type Files = (Option<PathBuf>, Option<PathBuf>);
+
+/// The Settings tabs' writes, each after the one before, the last one
+/// queued here: across tabs, so that a tab reopened writes after what the
+/// old one left, and past them, so that what a closed tab took is written.
+/// Once one lands, every other open tab reads the files again, not
+/// waiting for the watcher.
+#[derive(Default)]
+struct SettingsWrites {
+    last: Option<Task<()>>,
+    tabs: Vec<WeakEntity<SettingsEditor>>,
+}
+
+impl Global for SettingsWrites {}
+
+/// A change written or waiting to be, not read back yet, to a key in a
+/// scope's file.
+struct Pending {
+    /// Which change to the key it is: a later one supersedes it.
+    generation: u64,
+    /// The files it was made in, whose rows it shows in.
+    files: Files,
+    change: Change,
 }
 
 /// A row of the list.
@@ -102,6 +173,7 @@ pub(crate) struct SettingsEditor {
     /// The list's: where the keys go once Down leaves the search.
     focus: FocusHandle,
     search: Entity<TextInput>,
+    workbench: WeakEntity<Workbench>,
     scope: Scope,
     /// The workbench's root, whose settings file the Workspace scope shows.
     root: Option<PathBuf>,
@@ -114,6 +186,29 @@ pub(crate) struct SettingsEditor {
     scroll: UniformListScrollHandle,
     /// The read of the files under way, dropped for a newer one.
     load: Task<()>,
+    /// The number and text inputs, by dotted key, kept across renders so
+    /// focus and a half-typed value survive them.
+    fields: HashMap<String, Field>,
+    /// The list editors, by dotted key.
+    lists: HashMap<String, ListField>,
+    /// The open dropdown: its setting's dotted key, and the variant
+    /// highlighted.
+    select: Option<(String, usize)>,
+    /// The changes written or waiting to be, not read back yet, by dotted
+    /// key and the scope whose file they're to: what their rows show
+    /// meanwhile.
+    pending: HashMap<(String, Scope), Pending>,
+    /// The generation the next change gets.
+    next_generation: u64,
+    /// The number the next read of the files gets, in the order the reads
+    /// start, shared with the reads off the main thread.
+    reads: Arc<AtomicU64>,
+    /// The number of the read the model is from: an older read, finishing
+    /// later, is out of date.
+    shown_read: u64,
+    /// Holds the writes until a message comes, or the sender is dropped.
+    #[cfg(test)]
+    gate: Option<async_channel::Receiver<()>>,
     /// Each range of rows the list built, for the tests.
     #[cfg(test)]
     built: Vec<Range<usize>>,
@@ -162,6 +257,7 @@ impl SettingsEditor {
             root_focus,
             focus: cx.focus_handle(),
             search,
+            workbench: workbench.downgrade(),
             scope: Scope::User,
             root,
             model: None,
@@ -169,10 +265,23 @@ impl SettingsEditor {
             selected: None,
             scroll: UniformListScrollHandle::new(),
             load: Task::ready(()),
+            fields: HashMap::new(),
+            lists: HashMap::new(),
+            select: None,
+            pending: HashMap::new(),
+            next_generation: 0,
+            reads: Arc::new(AtomicU64::new(1)),
+            shown_read: 0,
+            #[cfg(test)]
+            gate: None,
             #[cfg(test)]
             built: Vec::new(),
             _subscriptions: subscriptions,
         };
+        let tab = cx.weak_entity();
+        let tabs = &mut cx.default_global::<SettingsWrites>().tabs;
+        tabs.retain(|tab| tab.upgrade().is_some());
+        tabs.push(tab);
         this.reload(cx);
         this
     }
@@ -181,25 +290,148 @@ impl SettingsEditor {
     /// thread, and shows what they hold once read.
     pub(crate) fn reload(&mut self, cx: &mut Context<Self>) {
         let (user, project) = self.files(cx);
-        let read = cx.background_spawn(async move {
-            let user = user.and_then(|path| read_settings(&path));
-            let project = project.and_then(|path| read_settings(&path));
-            SettingsModel::new(user.as_deref(), project.as_deref())
-        });
+        let reads = self.reads.clone();
+        let read = cx.background_spawn(async move { read_model(&reads, user, project) });
         self.load = cx.spawn(async move |this, cx| {
-            let model = read.await;
-            this.update(cx, |this, cx| {
-                this.model = Some(model);
-                this.refilter(cx);
-            })
-            .ok();
+            let (read, model) = read.await;
+            this.update(cx, |this, cx| this.show_read(read, model, cx))
+                .ok();
         });
     }
 
+    /// Shows `model`, from read number `read`, unless what's shown is from
+    /// a read that started later.
+    pub(crate) fn show_read(&mut self, read: u64, model: SettingsModel, cx: &mut Context<Self>) {
+        if read < self.shown_read {
+            return;
+        }
+        self.shown_read = read;
+        self.model = Some(model);
+        self.refilter(cx);
+    }
+
+    /// The number the next read of the files gets: see
+    /// [`SettingsEditor::show_read`].
+    #[cfg(test)]
+    pub(crate) fn next_read(&self) -> u64 {
+        self.reads.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Holds every write from now until the sender sends, once a write, or
+    /// is dropped.
+    #[cfg(test)]
+    pub(crate) fn hold_writes(&mut self) -> async_channel::Sender<()> {
+        let (sender, gate) = async_channel::unbounded();
+        self.gate = Some(gate);
+        sender
+    }
+
     /// The user's settings file and the root's.
-    fn files(&self, cx: &App) -> (Option<PathBuf>, Option<PathBuf>) {
+    fn files(&self, cx: &App) -> Files {
         let project = self.root.as_deref().map(fe_config::project_settings_path);
         (open::settings_path(cx), project)
+    }
+
+    /// Makes `change` at `key` in the selected scope's file, after the
+    /// writes before it, any Settings tab's ([`SettingsWrites`]), then
+    /// reads the files again and shows them, unless the files shown have
+    /// changed since (a new root, say). Until then the row shows the
+    /// change. If the write fails, a toast says why, tab or no tab, and the
+    /// row shows the file's value again, unless a later change is waiting.
+    fn write(&mut self, key: &[String], change: Change, cx: &mut Context<Self>) {
+        let scope = self.scope();
+        let root = self.root.clone().unwrap_or_default();
+        let files = self.files(cx);
+        // The write goes where `set_setting` puts the user's file: a test
+        // must have it be the one the tab reads, not the real one.
+        #[cfg(test)]
+        if scope == Scope::User {
+            assert_eq!(
+                files.0,
+                fe_config::user_settings_path(),
+                "a test writing the user's settings sets FASTEDIT_CONFIG_DIR to its config directory",
+            );
+        }
+        self.next_generation += 1;
+        let generation = self.next_generation;
+        let dotted = key.join(".");
+        let pending = Pending {
+            generation,
+            files: files.clone(),
+            change: change.clone(),
+        };
+        self.pending.insert((dotted.clone(), scope), pending);
+        let (key, reads) = (key.to_vec(), self.reads.clone());
+        #[cfg(test)]
+        let gate = self.gate.clone();
+        let previous = cx.default_global::<SettingsWrites>().last.take();
+        let write = cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            #[cfg(test)]
+            if let Some(gate) = gate {
+                gate.recv().await.ok();
+            }
+            let read = files.clone();
+            let written = cx.background_spawn(async move {
+                let key: Vec<&str> = key.iter().map(String::as_str).collect();
+                change.write(scope.setting_scope(), &root, &key)?;
+                Ok::<_, SettingEditError>(read_model(&reads, read.0, read.1))
+            });
+            let written = written.await;
+            // Said here, not by the tab, which may have closed.
+            if let Err(error) = &written {
+                log::warn!("can't set {dotted}: {error}");
+                cx.update(|cx| {
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Can't change {dotted}")).detail(error.to_string()),
+                    )
+                });
+            }
+            if written.is_ok() {
+                let tabs = cx.update(|cx| cx.default_global::<SettingsWrites>().tabs.clone());
+                let others = tabs
+                    .iter()
+                    .filter(|tab| tab.entity_id() != this.entity_id());
+                for tab in others {
+                    tab.update(cx, |tab, cx| tab.reload(cx)).ok();
+                }
+            }
+            this.update(cx, |this, cx| {
+                this.written(&dotted, scope, generation, files, written.ok(), cx)
+            })
+            .ok();
+        });
+        cx.default_global::<SettingsWrites>().last = Some(write);
+        cx.notify();
+    }
+
+    /// Shows the files as change `generation`'s write to `key` in
+    /// `scope`'s file read them after, if they're still the files shown;
+    /// `None` if the write failed. Either way, the row stops showing the
+    /// change, unless a later one is waiting.
+    fn written(
+        &mut self,
+        key: &str,
+        scope: Scope,
+        generation: u64,
+        files: Files,
+        written: Option<(u64, SettingsModel)>,
+        cx: &mut Context<Self>,
+    ) {
+        let pending = (key.to_owned(), scope);
+        if (self.pending.get(&pending)).is_some_and(|p| p.generation == generation) {
+            self.pending.remove(&pending);
+        }
+        match written {
+            Some((read, model)) if self.files(cx) == files => self.show_read(read, model, cx),
+            // A new root's read may have missed the write.
+            Some(_) => self.reload(cx),
+            None => {}
+        }
+        cx.notify();
     }
 
     /// The rows for the search as it is now, keeping the selected setting
@@ -223,6 +455,42 @@ impl SettingsEditor {
         }
     }
 
+    /// The selected setting.
+    fn selected_entry(&self) -> Option<&SettingEntry> {
+        let entry = self.selected_setting()?;
+        self.model.as_ref()?.entries().get(entry)
+    }
+
+    /// The setting at dotted `key`.
+    fn entry(&self, key: &str) -> Option<&SettingEntry> {
+        let model = self.model.as_ref()?;
+        model.entries().iter().find(|entry| entry.key_path() == key)
+    }
+
+    /// `entry`'s value as the selected scope shows it, and whether that
+    /// scope's file sets it: a change waiting to be written or read back
+    /// shows as if it were.
+    fn value(&self, entry: &SettingEntry, cx: &App) -> Option<(Json, bool)> {
+        let model = self.model.as_ref()?;
+        let scope = self.scope();
+        let pending = (self.pending.get(&(entry.key_path(), scope)))
+            .filter(|pending| pending.files == self.files(cx));
+        Some(match pending.map(|pending| &pending.change) {
+            Some(Change::Set(value)) => (value.json(), true),
+            Some(Change::Reset) => {
+                let (value, _) = scope_value(model, entry, scope, true);
+                (value, false)
+            }
+            None => scope_value(model, entry, scope, false),
+        })
+    }
+
+    /// Whether the selected scope's file can't set `entry`.
+    fn restricted(&self, entry: &SettingEntry) -> bool {
+        let model = self.model.as_ref();
+        self.scope() == Scope::Workspace && model.is_some_and(|m| !m.workspace_allowed(entry))
+    }
+
     /// The scopes the editor offers: Workspace only with a folder open.
     fn scopes(&self) -> &'static [Scope] {
         match self.root {
@@ -243,6 +511,11 @@ impl SettingsEditor {
     /// Shows `scope`'s values, reading the files again.
     pub(crate) fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         self.scope = scope;
+        self.select = None;
+        // The inputs are made again with the new scope's values, dropping
+        // any message, and a late blur of the old ones commits nothing.
+        self.fields.clear();
+        self.lists.clear();
         self.reload(cx);
         cx.notify();
     }
@@ -279,12 +552,20 @@ impl SettingsEditor {
         std::mem::take(&mut self.built)
     }
 
-    /// `entry`'s value as the selected scope shows it, as text, and
-    /// whether that scope's file sets it; `None` until the files are read.
+    /// `entry`'s value as the selected scope's file and the one it
+    /// inherits from hold it, as text, and whether that scope's file sets
+    /// it; `None` until the files are read.
     #[cfg(test)]
     pub(crate) fn shown_value(&self, entry: &SettingEntry) -> Option<(String, bool)> {
         let model = self.model.as_ref()?;
-        Some(shown_value(model, entry, self.scope()))
+        Some(as_text(scope_value(model, entry, self.scope(), false)))
+    }
+
+    /// [`SettingsEditor::shown_value`] as the row shows it, a change still
+    /// being written included.
+    #[cfg(test)]
+    pub(crate) fn row_value(&self, entry: &SettingEntry, cx: &App) -> Option<(String, bool)> {
+        Some(as_text(self.value(entry, cx)?))
     }
 
     /// Selects the setting below the selected one, or with `down` false the
@@ -307,6 +588,7 @@ impl SettingsEditor {
             return;
         };
         self.selected = Some(next);
+        self.select = None;
         // Going up to a group's first setting, its heading comes into view
         // with it, the heading at the top, if both fit and either is out
         // of view; else the setting alone comes into view.
@@ -330,9 +612,10 @@ impl SettingsEditor {
         cx.notify();
     }
 
-    /// The search field's editing commands (`text_input.backspace` and the
-    /// like, which the input leaves to its host); others go on.
-    fn on_input_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+    /// The text inputs' editing commands (`text_input.backspace` and the
+    /// like, which an input leaves to its host), for the search or the
+    /// row's input that has focus, unless that's off; others go on.
+    fn on_input_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
             Some(PaletteOp::Backspace) => TextInput::backspace,
             Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
@@ -340,7 +623,18 @@ impl SettingsEditor {
             Some(PaletteOp::Paste) => TextInput::paste,
             _ => return cx.propagate(),
         };
-        self.search.update(cx, edit);
+        let input = match self.editing(window, cx) {
+            Some(editing) => self.input_of(&editing),
+            None if self.search.focus_handle(cx).is_focused(window) => Some(self.search.clone()),
+            None => None,
+        };
+        match input {
+            // A row's input that's off takes no edit: its row's file
+            // can't set it.
+            Some(input) if !input.read(cx).typing() => {}
+            Some(input) => input.update(cx, edit),
+            None => cx.propagate(),
+        }
     }
 
     /// Its keys: see the module docs.
@@ -348,15 +642,41 @@ impl SettingsEditor {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         let searching = self.search.focus_handle(cx).is_focused(window);
+        let editing = self.editing(window, cx);
+        let listing = self.focus.is_focused(window);
         match keystroke.key.as_str() {
-            "up" | "down" if !m.modified() => {
+            "up" | "down" if !m.modified() && listing && self.select.is_some() => {
+                self.move_highlight(keystroke.key == "down", cx);
+            }
+            "up" | "down" if !m.modified() && editing.is_none() => {
                 let down = keystroke.key == "down";
                 if searching && down {
                     window.focus(&self.focus, cx);
                 }
                 self.move_selection(down, cx);
             }
-            "/" if !m.modified() && !searching => {
+            "enter" if !m.modified() && editing.is_some() => {
+                if let Some(editing) = editing {
+                    self.commit(&editing, true, cx);
+                }
+            }
+            "enter" if !m.modified() && listing => self.activate(window, cx),
+            "space" if !m.modified() && listing => {
+                if !self.toggle_selected(cx) {
+                    return;
+                }
+            }
+            "escape" if !m.modified() && self.select.is_some() => {
+                self.select = None;
+                cx.notify();
+            }
+            "escape" if !m.modified() && editing.is_some() => {
+                if let Some(editing) = editing {
+                    self.revert(&editing, cx);
+                }
+                window.focus(&self.focus, cx);
+            }
+            "/" if !m.modified() && !searching && editing.is_none() => {
                 window.focus(&self.search.focus_handle(cx), cx);
             }
             "f" if m.secondary() && !m.alt && !m.shift => {
@@ -373,7 +693,7 @@ impl SettingsEditor {
     fn render_rows(
         &mut self,
         range: Range<usize>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         #[cfg(test)]
@@ -382,62 +702,64 @@ impl SettingsEditor {
         let Some(model) = &self.model else {
             return Vec::new();
         };
-        let scope = self.scope();
         let selected_bg = if self.focus.is_focused(window) {
             ui.row_selected
         } else {
             ui.row_selected_inactive
         };
-        range
+        let rows: Vec<(usize, Result<SettingEntry, String>)> = (range.clone())
             .filter_map(|ix| {
                 let row = match self.rows.get(ix)? {
-                    Row::Group(title) => div()
-                        .debug_selector({
-                            let title = title.clone();
-                            move || format!("settings-group-{title}")
-                        })
-                        .h(ROW_HEIGHT)
-                        .px_6()
-                        .pb_2()
-                        .flex()
-                        .flex_col()
-                        .justify_end()
-                        .text_size(px(16.))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(ui.text)
-                        .child(title.clone())
-                        .into_any_element(),
-                    Row::Setting(entry) => {
-                        let entry = &model.entries()[*entry];
-                        let restricted =
-                            scope == Scope::Workspace && !model.workspace_allowed(entry);
-                        self.setting_row(ix, entry, restricted, model, cx)
-                            .when(self.selected == Some(ix), |row| row.bg(selected_bg))
-                            .into_any_element()
-                    }
+                    Row::Group(title) => Err(title.clone()),
+                    Row::Setting(entry) => Ok(model.entries()[*entry].clone()),
                 };
-                Some(row)
+                Some((ix, row))
+            })
+            .collect();
+        rows.into_iter()
+            .map(|(ix, row)| match row {
+                Err(title) => div()
+                    .debug_selector({
+                        let title = title.clone();
+                        move || format!("settings-group-{title}")
+                    })
+                    .h(ROW_HEIGHT)
+                    .px_6()
+                    .pb_2()
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .text_size(px(16.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(ui.text)
+                    .child(title)
+                    .into_any_element(),
+                Ok(entry) => self
+                    .setting_row(ix, &entry, window, cx)
+                    .when(self.selected == Some(ix), |row| row.bg(selected_bg))
+                    .into_any_element(),
             })
             .collect()
     }
 
-    /// Row `ix`, `entry`'s: its title and key path, its description, and
-    /// its value, dimmed with a note if `restricted`.
+    /// Row `ix`, `entry`'s: its title and key path, with Reset to Default
+    /// if the selected scope's file sets it, its description, its control,
+    /// and under that why a typed value wasn't written, if it wasn't. It's
+    /// dimmed with a note, its control off, if the selected scope's file
+    /// can't set it.
     fn setting_row(
-        &self,
+        &mut self,
         ix: usize,
         entry: &SettingEntry,
-        restricted: bool,
-        model: &SettingsModel,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let ui = ui_theme(cx);
         let key = entry.key_path();
-        let (value, modified) = shown_value(model, entry, self.scope());
-        let value = match entry.kind {
-            SettingKind::Other => "Edit in settings.toml".to_owned(),
-            _ => value,
-        };
+        let restricted = self.restricted(entry);
+        let (value, modified) = self.value(entry, cx).unwrap_or((Json::Null, false));
+        let control = self.control(ix, entry, &value, restricted, window, cx);
+        let message = self.message(&key);
         let name = entry
             .key
             .last()
@@ -449,6 +771,7 @@ impl SettingsEditor {
                 move || format!("settings-row-{key}")
             })
             .relative()
+            .w_full()
             .h(ROW_HEIGHT)
             .px_6()
             .py(ROW_PADDING)
@@ -498,7 +821,10 @@ impl SettingsEditor {
                             .text_color(ui.muted_text)
                             .text_size(px(12.))
                             .child(key.clone()),
-                    ),
+                    )
+                    .when(modified && !restricted, |line| {
+                        line.child(self.reset_button(ix, entry, cx))
+                    }),
             )
             .child(
                 div()
@@ -516,20 +842,16 @@ impl SettingsEditor {
             )
             .child(
                 div()
-                    .debug_selector({
-                        let key = key.clone();
-                        move || format!("settings-value-{key}")
-                    })
                     .flex_none()
-                    .h(LINE_HEIGHT)
-                    .line_height(LINE_HEIGHT)
+                    .h(CONTROL_HEIGHT)
                     .flex()
+                    .items_center()
                     .gap_3()
                     .whitespace_nowrap()
-                    .overflow_hidden()
                     .text_size(px(12.))
-                    .child(div().text_color(ui.text).child(value))
+                    .child(control)
                     .when(restricted, |line| {
+                        let key = key.clone();
                         line.child(
                             div()
                                 .debug_selector(move || format!("settings-restricted-{key}"))
@@ -538,6 +860,55 @@ impl SettingsEditor {
                         )
                     }),
             )
+            .child(
+                div()
+                    .flex_none()
+                    .h(MESSAGE_HEIGHT)
+                    .line_height(MESSAGE_HEIGHT)
+                    .text_size(px(11.))
+                    .text_color(ui.error_text)
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .when_some(message, |line, message| {
+                        line.debug_selector(move || format!("setting-message-{key}"))
+                            .child(message)
+                    }),
+            )
+    }
+
+    /// The Reset to Default button of row `ix`, `entry`'s.
+    fn reset_button(
+        &self,
+        ix: usize,
+        entry: &SettingEntry,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let ui = ui_theme(cx);
+        let key = entry.key.clone();
+        let path = entry.key_path();
+        div()
+            .id(("setting-reset", ix))
+            .debug_selector(move || format!("setting-reset-{path}"))
+            .flex_none()
+            .self_center()
+            .size(LINE_HEIGHT)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(move |style| style.bg(ui.row_hover))
+            .child(
+                svg()
+                    .path(Icon::RotateCcw.path())
+                    .size(px(12.))
+                    .text_color(ui.muted_text),
+            )
+            .tooltip(move |_, cx| {
+                cx.new(|_| Tooltip::new("Reset to Default", None::<&str>, &ui))
+                    .into()
+            })
+            .on_click(cx.listener(move |this, _, window, cx| this.reset(&key, window, cx)))
     }
 
     /// The User and Workspace tabs.
@@ -573,6 +944,23 @@ impl SettingsEditor {
                     .child(label)
             }))
     }
+}
+
+/// The settings in the user's file and the project's, either of which may
+/// be missing, with the number of the read, taken from `reads` as it
+/// starts.
+fn read_model(
+    reads: &AtomicU64,
+    user: Option<PathBuf>,
+    project: Option<PathBuf>,
+) -> (u64, SettingsModel) {
+    let read = reads.fetch_add(1, Ordering::SeqCst);
+    let user = user.and_then(|path| read_settings(&path));
+    let project = project.and_then(|path| read_settings(&path));
+    (
+        read,
+        SettingsModel::new(user.as_deref(), project.as_deref()),
+    )
 }
 
 /// `path`'s text; `None` if it's missing, or unreadable (logged).
@@ -620,11 +1008,17 @@ pub(crate) fn rows(model: &SettingsModel, query: &str) -> Vec<Row> {
     rows
 }
 
-/// `entry`'s value as `scope` shows it, as text: its file's, else what it
-/// inherits (the user's, under Workspace) or the default; and whether
-/// `scope`'s file sets it.
-fn shown_value(model: &SettingsModel, entry: &SettingEntry, scope: Scope) -> (String, bool) {
+/// `entry`'s value as `scope` shows it: its file's, else, or if `reset`,
+/// what it inherits (the user's, under Workspace) or the default; and
+/// whether `scope`'s file sets it.
+fn scope_value(
+    model: &SettingsModel,
+    entry: &SettingEntry,
+    scope: Scope,
+    reset: bool,
+) -> (Json, bool) {
     let set = match scope {
+        _ if reset => None,
         Scope::User => model.user_value(entry),
         Scope::Workspace => model.workspace_value(entry),
     };
@@ -634,12 +1028,26 @@ fn shown_value(model: &SettingsModel, entry: &SettingEntry, scope: Scope) -> (St
         Scope::Workspace => model.user_value(entry),
     };
     let value = (set.or(inherited)).unwrap_or_else(|| entry.default.clone());
+    (value, modified)
+}
+
+/// A value and whether it's modified, as the tests compare them: a string
+/// as itself, and null as `Not set`.
+#[cfg(test)]
+fn as_text((value, modified): (Json, bool)) -> (String, bool) {
     let text = match value.as_str() {
         Some(text) => text.to_owned(),
         None if value.is_null() => "Not set".to_owned(),
         None => value.to_string(),
     };
     (text, modified)
+}
+
+/// [`controls::table_row`], of a dotted key.
+#[cfg(test)]
+pub(crate) fn table_row_for_tests(text: &str, key: &str) -> Option<u32> {
+    let key: Vec<String> = key.split('.').map(str::to_owned).collect();
+    controls::table_row(text, &key)
 }
 
 /// `name` as a title, as the model titles groups: `status_bar` is `Status
@@ -697,12 +1105,27 @@ impl Render for SettingsEditor {
             )
             .track_scroll(&self.scroll)
             .flex_1()
+            // Its width is the tab's, not its widest row's (a long list's).
+            .w_full()
             .into_any_element()
         };
+        // Under an open dropdown, a click anywhere else in the tab closes
+        // it, its button's too, and does nothing else.
+        let backdrop = self.select.is_some().then(|| {
+            div().absolute().inset_0().occlude().on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.select = None;
+                    cx.notify();
+                }),
+            )
+        });
         div()
             .track_focus(&self.root_focus)
             .key_context(KEY_CONTEXT)
+            .relative()
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::on_input_command))
             .size_full()
             .flex()
             .flex_col()
@@ -712,7 +1135,6 @@ impl Render for SettingsEditor {
             .child(
                 div()
                     .debug_selector(|| "settings-search".into())
-                    .on_action(cx.listener(Self::on_input_command))
                     .flex_none()
                     .px_6()
                     .pt_3()
@@ -731,6 +1153,7 @@ impl Render for SettingsEditor {
                     .flex_col()
                     .child(body),
             )
+            .children(backdrop)
     }
 }
 

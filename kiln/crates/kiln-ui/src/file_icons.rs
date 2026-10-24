@@ -125,6 +125,8 @@ icons! {
     ListX => "list-x",
     FoldVertical => "fold-vertical",
     UnfoldVertical => "unfold-vertical",
+    // The Settings tab's Reset to Default; not mapped from names.
+    RotateCcw => "rotate-ccw",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

@@ -252,6 +252,8 @@ mod lsp_consent_tests;
 #[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
+mod settings_editor_controls_tests;
+#[cfg(test)]
 mod settings_editor_tests;
 #[cfg(test)]
 mod tests;
