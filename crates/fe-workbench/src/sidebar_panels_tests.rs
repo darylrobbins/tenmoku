@@ -24,7 +24,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 7] {
+); 8] {
     [
         (
             DockPanel::Explorer,
@@ -81,6 +81,14 @@ fn base() -> [(
             Icon::FileDiff,
             "git.file_history",
             DockOp::ShowHistory,
+        ),
+        (
+            DockPanel::AiChanges,
+            "AI Changes",
+            "ai_changes",
+            Icon::FileDiff,
+            "ai.show_changes",
+            DockOp::ShowAiChanges,
         ),
     ]
 }
@@ -224,6 +232,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Chat,
             DockPanel::Problems,
             DockPanel::History,
+            DockPanel::AiChanges,
         ]
     );
 }
@@ -295,6 +304,7 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         DockPanel::References,
         DockPanel::Problems,
         DockPanel::History,
+        DockPanel::AiChanges,
         DockPanel::Chat,
     ];
     for panel in order {

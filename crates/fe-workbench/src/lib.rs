@@ -13,6 +13,8 @@
 //! line's) a keystroke reaches as a [`fe_gpui::commands::RunCommand`] that
 //! the panel takes. [`command_catalog`] checks them all with no app.
 
+mod ai_changes_buffers;
+mod ai_changes_panel;
 mod auto_save;
 mod chat_panel;
 mod closed_editors;
@@ -229,6 +231,8 @@ impl CommandCatalog for Catalog {
     }
 }
 
+#[cfg(test)]
+mod ai_changes_panel_tests;
 #[cfg(test)]
 mod closed_editors_tests;
 #[cfg(test)]

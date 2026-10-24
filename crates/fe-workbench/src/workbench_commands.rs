@@ -14,6 +14,7 @@ use kiln_shell::DockPosition;
 
 use crate::{
     Axis, Direction, Pane, ReferencesPanel, Workbench,
+    ai_changes_panel::{self, AiChangesOp},
     dock::{DockOp, ProblemsOp, problems_panel},
     dock_layout,
     git::git_conflicts::{Side, Which},
@@ -570,6 +571,45 @@ impl Workbench {
         self.problems_command(ProblemsOp::Open, cx);
     }
 
+    /// Show AI Changes
+    #[command(id = "ai.show_changes")]
+    fn show_ai_changes(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::KEY_CONTEXT, cx, |this, window, cx| {
+            this.ai_changes_panel(cx);
+            this.run_dock_op(DockOp::ShowAiChanges, window, cx)
+        });
+    }
+
+    /// Accept All AI Changes
+    #[command(id = "ai.changes_accept_all")]
+    fn ai_changes_accept_all(&mut self, cx: &mut Cx<Self>) {
+        self.ai_changes_command(AiChangesOp::AcceptAll, crate::KEY_CONTEXT, cx);
+    }
+
+    /// Reject All AI Changes
+    #[command(id = "ai.changes_reject_all")]
+    fn ai_changes_reject_all(&mut self, cx: &mut Cx<Self>) {
+        self.ai_changes_command(AiChangesOp::RejectAll, crate::KEY_CONTEXT, cx);
+    }
+
+    /// Revert AI Turn
+    #[command(id = "ai.changes_revert")]
+    fn ai_changes_revert(&mut self, cx: &mut Cx<Self>) {
+        self.ai_changes_command(AiChangesOp::Revert, crate::KEY_CONTEXT, cx);
+    }
+
+    /// Select Next AI Changed File
+    #[command(id = "ai.changes_next_file", context = "ai_changes")]
+    fn ai_changes_next_file(&mut self, cx: &mut Cx<Self>) {
+        self.ai_changes_command(AiChangesOp::NextFile, ai_changes_panel::KEY_CONTEXT, cx);
+    }
+
+    /// Select Previous AI Changed File
+    #[command(id = "ai.changes_previous_file", context = "ai_changes")]
+    fn ai_changes_previous_file(&mut self, cx: &mut Cx<Self>) {
+        self.ai_changes_command(AiChangesOp::PreviousFile, ai_changes_panel::KEY_CONTEXT, cx);
+    }
+
     /// Go to Next Problem
     #[command(id = "diagnostics.next")]
     fn go_to_next_problem(&mut self, cx: &mut Cx<Self>) {
@@ -1019,6 +1059,14 @@ impl Workbench {
     ) {
         self.in_context(references_panel::KEY_CONTEXT, cx, |this, window, cx| {
             this.on_references_panel(run, window, cx)
+        });
+    }
+
+    /// Does the AI changes op `op`, if the command was invoked where
+    /// `context` holds: see [`Workbench::in_context`].
+    fn ai_changes_command(&mut self, op: AiChangesOp, context: &str, cx: &mut Cx<Self>) {
+        self.in_context(context, cx, |this, window, cx| {
+            this.run_ai_changes_op(op, window, cx)
         });
     }
 

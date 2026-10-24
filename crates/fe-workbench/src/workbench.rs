@@ -276,6 +276,8 @@ pub struct Workbench {
     /// An editor a problem opened in, left in vim's insert or replace mode,
     /// and the problem's start: see [`Workbench::land_problem`].
     pub(crate) problem_landing: Option<(WeakEntity<EditorView>, usize)>,
+    /// The AI turn's changeset the AI Changes panel lists, one at a time.
+    pub(crate) ai_changes: Option<crate::ai_changes_panel::AiChanges>,
     /// The editors shown outside the tabs, and what shows each: see
     /// [`Workbench::own_editor`].
     owned_editors: Vec<(WeakEntity<EditorView>, git_commands::Owner)>,
@@ -609,6 +611,7 @@ impl Workbench {
             disk_sync: DiskSync::new(window, cx),
             auto_save,
             problem_landing: None,
+            ai_changes: None,
             owned_editors: Vec::new(),
             diff_left: None,
             vim_keys: None,
@@ -709,6 +712,10 @@ impl Workbench {
         self.sync_problems(cx);
         self.sync_backups(cx);
         self.sync_auto_save(cx);
+        if self.ai_changes.is_some() {
+            // Text edited under a hunk can make it stale.
+            self.sync_ai_changes(cx);
+        }
         if self.echoes.remove(&editor.entity_id()) {
             return;
         }

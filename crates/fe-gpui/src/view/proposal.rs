@@ -29,6 +29,9 @@ pub enum ProposalEvent {
         hunk: HunkId,
         transaction: TransactionId,
     },
+    /// `hunk` was accepted though its new text was in place already: the
+    /// text wasn't touched and there is no transaction.
+    AcceptedNoChange { hunk: HunkId },
     /// `hunk` was rejected; the text wasn't touched.
     Rejected { hunk: HunkId },
 }
@@ -87,8 +90,17 @@ impl EditorView {
     ) -> Result<TransactionId, ProposalError> {
         let proposal = self.holding(id).ok_or(ProposalError::NotPending)?;
         // The guard's drop catches the model up.
-        let transaction =
-            (proposal.borrow_mut()).accept_as(&mut self.model.buffer_mut(), id, Origin::User)?;
+        let accepted =
+            (proposal.borrow_mut()).accept_as(&mut self.model.buffer_mut(), id, Origin::User);
+        let transaction = match accepted {
+            Ok(transaction) => transaction,
+            Err(ProposalError::NoChange) => {
+                // Accepted all the same: the hunk is decided.
+                self.resolved(ProposalEvent::AcceptedNoChange { hunk: id }, cx);
+                return Err(ProposalError::NoChange);
+            }
+            Err(error) => return Err(error),
+        };
         // Caught up with the edit now, not at the next frame.
         self.sync_find(cx);
         self.sync_completion(cx);

@@ -1015,6 +1015,18 @@ keys = "j"
 command = "problems.select_next"
 context = "problems_panel && vim"
 
+# The AI Changes panel's list, when it has focus: alt-] and alt-[ move over
+# the files (nothing else binds them).
+[[bindings]]
+keys = "alt-]"
+command = "ai.changes_next_file"
+context = "ai_changes"
+
+[[bindings]]
+keys = "alt-["
+command = "ai.changes_previous_file"
+context = "ai_changes"
+
 # Dismiss every notification: VS Code's chord. Off macOS ctrl-k is read as
 # vim's <C-k>, so there it's off in an editor with vim on.
 [[bindings]]

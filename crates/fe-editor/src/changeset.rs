@@ -182,6 +182,10 @@ struct Checkpoint {
     after: Version,
     /// Whether anything else edited between accepts.
     interleaved: bool,
+    /// Whether the buffer held changes beyond this changeset's hunks when
+    /// they were accepted (another proposal's, say): a revert then undoes
+    /// the hunks one by one and leaves the rest of the text be.
+    foreign: bool,
 }
 
 struct File {
@@ -193,6 +197,12 @@ pub struct Changeset {
     turn_id: String,
     origin: Origin,
     files: Vec<File>,
+    /// What a first accept made by the host's own editors would checkpoint,
+    /// per file, taken by [`Changeset::arm`].
+    armed: Vec<(PathBuf, Checkpoint)>,
+    /// The hunks' statuses per file as last observed, for following a file
+    /// whose tab was closed and reopened ([`Changeset::rebind`]).
+    memo: Vec<(PathBuf, Vec<fe_buffer::HunkView>)>,
 }
 
 impl Changeset {
@@ -201,6 +211,8 @@ impl Changeset {
             turn_id: turn_id.into(),
             origin,
             files: Vec::new(),
+            armed: Vec::new(),
+            memo: Vec::new(),
         }
     }
 
@@ -263,6 +275,287 @@ impl Changeset {
                 state: NewState::Pending,
             },
         });
+    }
+
+    /// The buffer and the shared proposal of the existing file `path`, for a
+    /// host that shows the proposal in the file's editor. `None` for a new
+    /// file or one not in the changeset.
+    pub fn proposal(&self, path: &Path) -> Option<(BufferId, Rc<RefCell<ProposedChange>>)> {
+        self.files.iter().find_map(|file| match &file.kind {
+            Kind::Existing {
+                buffer, proposal, ..
+            } if file.path == path => Some((*buffer, proposal.clone())),
+            _ => None,
+        })
+    }
+
+    /// For a host whose editors accept hunks by themselves: records what the
+    /// first accept in `path` would checkpoint, from the buffer as it is now.
+    /// Call it before editors can accept, and again after the buffer changed;
+    /// then [`Changeset::adopt_accept`] files the accept under the
+    /// checkpoint, so [`Changeset::revert`] covers it.
+    pub fn arm(&mut self, set: &mut impl BufferSet, path: &Path) {
+        let Some(File {
+            kind:
+                Kind::Existing {
+                    buffer,
+                    proposal,
+                    checkpoint: None,
+                    ..
+                },
+            ..
+        }) = self.files.iter().find(|file| file.path == path)
+        else {
+            return;
+        };
+        let Some(buf) = set.buffer_mut(*buffer) else {
+            return;
+        };
+        if (self.armed.iter()).any(|(armed, cp)| armed == path && cp.after == buf.version()) {
+            return;
+        }
+        let Some(fresh) = prepare(&None, &proposal.borrow(), buf).fresh else {
+            return;
+        };
+        self.armed.retain(|(armed, _)| armed != path);
+        self.armed.push((path.to_path_buf(), fresh));
+    }
+
+    /// Files an accept of `transaction` that a host's editor made in `path`
+    /// under the checkpoint. Returns whether it could: not if the file was
+    /// not [armed](Changeset::arm) before its first accept.
+    pub fn adopt_accept(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+        hunk: HunkId,
+        transaction: Option<TransactionId>,
+    ) -> bool {
+        let Some(File {
+            kind:
+                Kind::Existing {
+                    buffer,
+                    proposal,
+                    checkpoint,
+                    last,
+                },
+            ..
+        }) = self.files.iter_mut().find(|file| file.path == path)
+        else {
+            return false;
+        };
+        let Some(buf) = set.buffer_mut(*buffer) else {
+            return false;
+        };
+        let hunks = proposal.borrow().hunks(buf.current());
+        // Only the hunks of this changeset's own proposal: an earlier turn's
+        // proposal may still be shown by the editor, and what it changed is
+        // not this turn's to revert.
+        if !hunks.iter().any(|shown| shown.id == hunk) {
+            if let Some(cp) = checkpoint {
+                cp.foreign = true;
+            }
+            return false;
+        }
+        *last = Some(count(&hunks));
+        let fresh = match self.armed.iter().position(|(armed, _)| armed == path) {
+            Some(at) => Some(self.armed.remove(at).1),
+            None => None,
+        };
+        if checkpoint.is_none() && fresh.is_none() {
+            return false;
+        }
+        commit(
+            checkpoint,
+            Prep {
+                fresh,
+                interleaved: false,
+            },
+            buf,
+            transaction.as_slice(),
+            true,
+        );
+        if let Some(cp) = checkpoint
+            && without_accepted(buf, &hunks).is_none_or(|before| before != cp.text)
+        {
+            cp.foreign = true;
+        }
+        true
+    }
+
+    /// Notes edits made since the last accept, which a revert must ask
+    /// about. Call it whenever a buffer may have changed.
+    pub fn observe(&mut self, set: &mut impl BufferSet) {
+        let mut memo = Vec::new();
+        for file in &mut self.files {
+            let Kind::Existing {
+                buffer,
+                proposal,
+                checkpoint,
+                ..
+            } = &mut file.kind
+            else {
+                continue;
+            };
+            let Some(buf) = set.buffer_mut(*buffer) else {
+                continue;
+            };
+            if let Some(cp) = checkpoint
+                && buf.version() != cp.after
+            {
+                cp.interleaved = true;
+            }
+            let hunks = proposal.borrow().hunks(buf.current());
+            memo.push((file.path.clone(), hunks));
+        }
+        for (path, hunks) in memo {
+            match self.memo.iter_mut().find(|(known, _)| *known == path) {
+                Some(known) => known.1 = hunks,
+                None => self.memo.push((path, hunks)),
+            }
+        }
+    }
+
+    /// Follows `path` to `buffer`, a reopened buffer of the file whose
+    /// previous one is gone: if it holds the text the file had before any
+    /// accept, the proposal is made again on it, every hunk pending.
+    ///
+    /// # Errors
+    /// [`ChangesetError::Conflict`] if `buffer` is missing, or holds other
+    /// text. Then nothing changes.
+    pub fn rebind(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+        buffer: BufferId,
+    ) -> Result<(), ChangesetError> {
+        let conflict = || ChangesetError::Conflict {
+            path: path.to_path_buf(),
+        };
+        let file = (self.files.iter_mut())
+            .find(|file| file.path == path)
+            .ok_or_else(|| ChangesetError::NoSuchFile {
+                path: path.to_path_buf(),
+            })?;
+        let Kind::Existing {
+            buffer: held,
+            proposal,
+            checkpoint,
+            last,
+        } = &mut file.kind
+        else {
+            return Err(ChangesetError::NotPending {
+                path: path.to_path_buf(),
+            });
+        };
+        if *held == buffer {
+            return Ok(());
+        }
+        let buf = set.buffer_mut(buffer).ok_or_else(conflict)?;
+        let armed = self.armed.iter().position(|(armed, _)| armed == path);
+        let hunks = (self.memo.iter())
+            .find(|(known, _)| known == path)
+            .map(|(_, hunks)| hunks.clone())
+            .ok_or_else(conflict)?;
+        // The hunks as they stood when the tab closed must be where they
+        // were: the accepted ones with their new text in place, the others
+        // with their old text (or one typed by hand that equals the new).
+        let now = buf.text().to_string();
+        let at = |range: &Range<usize>| now.get(range.clone());
+        let in_place = hunks.iter().all(|hunk| match hunk.status {
+            HunkStatus::Accepted => at(&hunk.range) == Some(&*hunk.new_text),
+            HunkStatus::Stale => true,
+            // Whatever the user left in a rejected hunk's place stays.
+            HunkStatus::Rejected => at(&hunk.range).is_some(),
+            _ => {
+                let shown = at(&hunk.range);
+                shown == Some(&*hunk.old_text) || shown == Some(&*hunk.new_text)
+            }
+        });
+        // Stale hunks, and hunks that overlap or share an insertion point,
+        // can't be given back their identities: refuse before touching
+        // the buffer.
+        let ordered = hunks.windows(2).all(|pair| {
+            let (a, b) = (&pair[0].range, &pair[1].range);
+            a.end <= b.start && !(a.is_empty() && b.is_empty() && a.start == b.start)
+        });
+        let stale = hunks.iter().any(|hunk| hunk.status == HunkStatus::Stale);
+        if !in_place || !ordered || stale {
+            return Err(conflict());
+        }
+        // The text before the accepts, and each hunk's range in it.
+        let mut before = String::new();
+        let mut edits = Vec::new();
+        let (mut copied, mut shift) = (0usize, 0isize);
+        for hunk in &hunks {
+            let range = hunk.range.clone();
+            before.push_str(&now[copied..range.start]);
+            let start = (range.start as isize + shift) as usize;
+            if hunk.status == HunkStatus::Accepted {
+                before.push_str(&hunk.old_text);
+                edits.push((start..start + hunk.old_text.len(), hunk.new_text.clone()));
+                shift += hunk.old_text.len() as isize - range.len() as isize;
+            } else {
+                before.push_str(&now[range.clone()]);
+                edits.push((start..start + range.len(), hunk.new_text.clone()));
+            }
+            copied = range.end;
+        }
+        before.push_str(&now[copied..]);
+        let accepted = hunks.iter().any(|hunk| hunk.status == HunkStatus::Accepted);
+        if accepted {
+            // Back to the text before the accepts, to accept them again.
+            let len = buf.len();
+            buf.with_transaction_aside(|buf| buf.edit([(0..len, before.as_str())], Origin::User));
+        }
+        let mut fresh = ProposedChange::from_edits_keeping_noops(
+            buf.current(),
+            edits,
+            proposal.borrow().origin().clone(),
+        );
+        let views = fresh.hunks(buf.current());
+        let mut transactions = Vec::new();
+        for (view, old) in views.iter().zip(&hunks) {
+            match old.status {
+                HunkStatus::Rejected => drop(fresh.reject(view.id)),
+                HunkStatus::Accepted => {
+                    // A hunk with nothing to change is accepted all the same.
+                    transactions.extend(fresh.accept_as(buf, view.id, Origin::User).ok());
+                }
+                _ => {}
+            }
+        }
+        *last = Some(count(&fresh.hunks(buf.current())));
+        *proposal.borrow_mut() = fresh;
+        *held = buffer;
+        let version = buf.version();
+        match checkpoint {
+            Some(cp) => {
+                // Text outside the hunks, saved, is still to be asked about.
+                cp.interleaved |= before != cp.text;
+                cp.transactions = transactions;
+                cp.after = version;
+            }
+            None => {
+                if let Some(at) = armed {
+                    let mut kept = self.armed.remove(at).1;
+                    // Armed on other text: armed again at the next sync.
+                    if before == kept.text {
+                        kept.after = version;
+                        self.armed.push((path.to_path_buf(), kept));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The whole text of the new file `path`, if it is one.
+    pub fn new_file_text(&self, path: &Path) -> Option<&str> {
+        self.files.iter().find_map(|file| match &file.kind {
+            Kind::New { text, .. } if file.path == path => Some(text.as_str()),
+            _ => None,
+        })
     }
 
     /// The files in insertion order with their counts.
@@ -462,6 +755,45 @@ impl Changeset {
                         out.push(RevertOutcome::Conflict { path });
                         continue;
                     };
+                    if cp.foreign {
+                        // Other changes are in the text: undo this turn's
+                        // hunks and leave the rest be.
+                        let hunks = proposal.borrow().hunks(buf.current());
+                        let accepted: Vec<_> = (hunks.iter())
+                            .filter(|hunk| hunk.status == HunkStatus::Accepted)
+                            .collect();
+                        let undo: Vec<_> = (accepted.iter().copied())
+                            .filter(|hunk| {
+                                buf.text().slice_to_string(hunk.range.clone()) == *hunk.new_text
+                            })
+                            .collect();
+                        // A hunk edited since can't be undone by itself.
+                        if undo.len() != accepted.len() && !force {
+                            out.push(RevertOutcome::NeedsConfirm { path });
+                            continue;
+                        }
+                        if !undo.is_empty() {
+                            let edits: Vec<_> = (undo.iter())
+                                .map(|hunk| (hunk.range.clone(), hunk.old_text.clone()))
+                                .collect();
+                            buf.with_transaction_aside(|buf| buf.edit(edits, Origin::User));
+                        }
+                        for hunk in &undo {
+                            proposal.borrow_mut().reset_to_pending(hunk.id).ok();
+                        }
+                        *last = Some(count(&proposal.borrow().hunks(buf.current())));
+                        if undo.len() == accepted.len() {
+                            *checkpoint = None;
+                            out.push(RevertOutcome::Reverted {
+                                path,
+                                reapplied: true,
+                            });
+                        } else {
+                            // What can't be undone keeps the checkpoint.
+                            out.push(RevertOutcome::Conflict { path });
+                        }
+                        continue;
+                    }
                     let clean = !cp.interleaved && buf.version() == cp.after;
                     if !clean && !force {
                         out.push(RevertOutcome::NeedsConfirm { path });
@@ -724,6 +1056,7 @@ fn prepare(checkpoint: &Option<Checkpoint>, proposal: &ProposedChange, buf: &Buf
                     transactions: Vec::new(),
                     after: buf.version(),
                     interleaved: false,
+                    foreign: false,
                 }),
                 interleaved: false,
             }
@@ -751,4 +1084,26 @@ fn commit(
         cp.transactions.extend_from_slice(ids);
         cp.after = buf.version();
     }
+}
+
+/// The text of `buf` with the accepted `hunks` put back as they were, or
+/// `None` if one's new text is not where it landed.
+fn without_accepted(buf: &Buffer, hunks: &[fe_buffer::HunkView]) -> Option<String> {
+    let text = buf.text().to_string();
+    let mut out = String::new();
+    let mut at = 0;
+    for hunk in hunks
+        .iter()
+        .filter(|hunk| hunk.status == HunkStatus::Accepted)
+    {
+        let range = hunk.range.clone();
+        if range.start < at || text.get(range.clone()) != Some(&*hunk.new_text) {
+            return None;
+        }
+        out.push_str(&text[at..range.start]);
+        out.push_str(&hunk.old_text);
+        at = range.end;
+    }
+    out.push_str(&text[at..]);
+    Some(out)
 }

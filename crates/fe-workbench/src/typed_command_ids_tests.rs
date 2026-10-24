@@ -84,6 +84,28 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("references_panel.open", "Open Reference", "ReferencesPanel"),
     ("problems.show", "Show Problems", "workbench"),
+    ("ai.show_changes", "Show AI Changes", "workbench"),
+    (
+        "ai.changes_accept_all",
+        "Accept All AI Changes",
+        "workbench",
+    ),
+    (
+        "ai.changes_reject_all",
+        "Reject All AI Changes",
+        "workbench",
+    ),
+    ("ai.changes_revert", "Revert AI Turn", "workbench"),
+    (
+        "ai.changes_next_file",
+        "Select Next AI Changed File",
+        "ai_changes",
+    ),
+    (
+        "ai.changes_previous_file",
+        "Select Previous AI Changed File",
+        "ai_changes",
+    ),
     (
         "problems.select_next",
         "Select Next Problem",

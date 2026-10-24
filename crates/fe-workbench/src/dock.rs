@@ -31,6 +31,7 @@ use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewConta
 use crate::{
     ChatPanel, GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel,
     ReferencesPanel,
+    ai_changes_panel::AiChangesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -56,6 +57,7 @@ impl DockPanel {
     pub const SourceControl: DockPanel = source_control::SIDEBAR.panel;
     pub const References: DockPanel = crate::references_panel::SIDEBAR.panel;
     pub const Problems: DockPanel = problems_panel::SIDEBAR.panel;
+    pub const AiChanges: DockPanel = crate::ai_changes_panel::SIDEBAR.panel;
     pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
     pub const Chat: DockPanel = crate::chat_panel::SIDEBAR.panel;
 }
@@ -132,6 +134,7 @@ const PANELS: &[&SidebarPanel] = &[
     &crate::references_panel::SIDEBAR,
     &problems_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
+    &crate::ai_changes_panel::SIDEBAR,
 ];
 
 const _: () = {
@@ -206,6 +209,7 @@ macro_rules! dock_item {
 dock_item!(SearchPanel, search_panel::SIDEBAR);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
 dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
+dock_item!(AiChangesPanel, crate::ai_changes_panel::SIDEBAR);
 // Titled with the file it lists.
 dock_item!(
     HistoryPanel,
@@ -243,6 +247,8 @@ pub struct Dock {
     git_log: Option<Entity<GitLogPanel>>,
     /// Made the first time it's asked for.
     chat: Option<Entity<ChatPanel>>,
+    /// Made the first time a changeset is shown.
+    ai_changes: Option<Entity<AiChangesPanel>>,
     #[cfg(test)]
     ops: Vec<DockOp>,
     /// The explorer's views' collapse and weights are the dock's state,
@@ -343,6 +349,7 @@ impl Dock {
             history: None,
             git_log: Some(git_log),
             chat: Some(chat),
+            ai_changes: None,
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
@@ -428,6 +435,17 @@ impl Dock {
 
     pub(crate) fn git_log(&self) -> Option<&Entity<GitLogPanel>> {
         self.git_log.as_ref()
+    }
+
+    pub(crate) fn ai_changes(&self) -> Option<&Entity<AiChangesPanel>> {
+        self.ai_changes.as_ref()
+    }
+
+    /// Registers `panel`, the AI Changes panel made on first use.
+    pub(crate) fn set_ai_changes(&mut self, panel: Entity<AiChangesPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(panel.clone(), cx);
+        self.ai_changes = Some(panel);
+        cx.notify();
     }
 
     pub(crate) fn chat(&self) -> Option<&Entity<ChatPanel>> {
@@ -692,6 +710,8 @@ pub(crate) enum DockOp {
     ShowGitLog,
     /// The Chat button, and `chat.open` once it has made the panel.
     ShowChat,
+    /// `ai.show_changes`, and a changeset set: shows the AI Changes panel.
+    ShowAiChanges,
     /// `git.refresh`: reads the git status again, shown or not.
     RefreshChanges,
     Toggle,

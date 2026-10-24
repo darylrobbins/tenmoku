@@ -308,6 +308,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "search_results && vim"
                         | "project_panel && vim"
                         | "problems_panel"
+                        | "ai_changes"
                         | "problems_panel && vim"
                         | "find_bar && replace_input && text_input"
                         | "editor && vim.mode == normal && !vim.pending"
@@ -330,6 +331,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
             || command == "editor.peek_references"
             || command.starts_with("lsp.")
             || command.starts_with("git.")
+            || command.starts_with("ai.changes_")
             || command.starts_with("markdown.")
     };
     for binding in bindings

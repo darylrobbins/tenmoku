@@ -168,6 +168,9 @@ fn main() -> ExitCode {
             ProposalEvent::Accepted { hunk, transaction } => {
                 println!("      event: hunk {hunk:?} accepted as {transaction:?}");
             }
+            ProposalEvent::AcceptedNoChange { hunk } => {
+                println!("      event: hunk {hunk:?} accepted, nothing to change");
+            }
             ProposalEvent::Rejected { hunk } => println!("      event: hunk {hunk:?} rejected"),
         })
         .detach();

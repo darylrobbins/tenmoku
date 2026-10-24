@@ -669,3 +669,228 @@ fn accepting_only_noop_hunks_still_reverts_to_pending() {
     let c = cs.files(&mut set)[0].counts;
     assert_eq!((c.hunks, c.pending, c.accepted, c.rejected), (3, 3, 0, 0));
 }
+
+#[test]
+fn accept_all_does_not_record_earlier_turn_edits_in_the_checkpoint() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    cs.arm(&mut set, path);
+    // An earlier turn's proposal, still shown by the editor.
+    let earlier =
+        ProposedChange::from_edits(set.buffers[&id].current(), [(0..0, "// earlier\n")], ai());
+    let mut earlier = earlier;
+    let hunks = hunk_ids(&set, id, &proposal);
+    // The editor's Accept All: each proposal in turn, then the events.
+    let buf = set.buffers.get_mut(&id).unwrap();
+    earlier.accept_all_as(buf, Origin::User);
+    let (transaction, _) = proposal.borrow_mut().accept_all_as(buf, Origin::User);
+    for hunk in hunks {
+        cs.adopt_accept(&mut set, path, hunk, transaction);
+    }
+    cs.observe(&mut set);
+    let expected = format!("// earlier\n{}", proposed());
+    assert_eq!(set.text(id), expected);
+
+    let outcomes = cs.revert(&mut set);
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RevertOutcome::Reverted { .. }]
+    ));
+    assert_eq!(set.text(id), format!("// earlier\n{TWO_FNS}"));
+}
+
+fn proposed() -> String {
+    TWO_FNS
+        .replace("    1\n", "    10\n")
+        .replace("    2\n", "    20\n")
+}
+
+/// The file saved, its tab closed and opened again: a new buffer with the
+/// text the old one had.
+fn reopen(set: &mut Set, cs: &mut Changeset, id: BufferId, path: &str) -> BufferId {
+    cs.observe(set);
+    let saved = set.text(id);
+    set.buffers.remove(&id);
+    let buffer = Buffer::new(&saved);
+    let new = buffer.id();
+    set.buffers.insert(new, buffer);
+    cs.rebind(set, Path::new(path), new).unwrap();
+    new
+}
+
+#[test]
+fn checkpoint_and_decisions_survive_save_close_reopen() {
+    let counts = |cs: &mut Changeset, set: &mut Set| {
+        let c = cs.files(set)[0].counts;
+        (c.pending, c.accepted, c.rejected)
+    };
+    // Accepted and rejected hunks.
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.accept_hunk(&mut set, path, hunks[0]).unwrap();
+    cs.reject_hunk(&mut set, path, hunks[1]).unwrap();
+    let saved = set.text(id);
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(set.text(id), saved);
+    assert_eq!(counts(&mut cs, &mut set), (0, 1, 1));
+    let outcomes = cs.revert(&mut set);
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RevertOutcome::Reverted { .. }]
+    ));
+    assert_eq!(set.text(id), TWO_FNS);
+
+    // Everything accepted.
+    let (mut set, mut cs, [(id, _), _]) = fixture();
+    cs.accept_file(&mut set, path).unwrap();
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(counts(&mut cs, &mut set), (0, 2, 0));
+    cs.revert(&mut set);
+    assert_eq!(set.text(id), TWO_FNS);
+
+    // Only rejected: nothing to revert, the decision stays.
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    cs.arm(&mut set, path);
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.reject_hunk(&mut set, path, hunks[1]).unwrap();
+    reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(counts(&mut cs, &mut set), (1, 0, 1));
+}
+
+#[test]
+fn a_manually_satisfied_rejected_hunk_survives_reopening_beside_an_accepted_one() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.reject_hunk(&mut set, path, hunks[1]).unwrap();
+    // The rejected hunk's replacement typed by hand, then the other accepted.
+    let buf = set.buffers.get_mut(&id).unwrap();
+    let at = buf.text().to_string().find("    2\n").unwrap();
+    buf.edit([(at..at + "    2\n".len(), "    20\n")], Origin::User);
+    cs.accept_hunk(&mut set, path, hunks[0]).unwrap();
+    let saved = set.text(id);
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(set.text(id), saved);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.accepted, c.rejected), (1, 1));
+}
+
+#[test]
+fn mixed_turn_accept_all_survives_save_close_reopen_and_revert() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    cs.arm(&mut set, path);
+    let mut earlier =
+        ProposedChange::from_edits(set.buffers[&id].current(), [(0..0, "// earlier\n")], ai());
+    let hunks = hunk_ids(&set, id, &proposal);
+    let buf = set.buffers.get_mut(&id).unwrap();
+    earlier.accept_all_as(buf, Origin::User);
+    let (transaction, _) = proposal.borrow_mut().accept_all_as(buf, Origin::User);
+    for hunk in hunks {
+        cs.adopt_accept(&mut set, path, hunk, transaction);
+    }
+    let saved = set.text(id);
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(set.text(id), saved);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.pending, c.accepted), (0, 2));
+    cs.revert(&mut set);
+    assert_eq!(set.text(id), format!("// earlier\n{TWO_FNS}"));
+}
+
+#[test]
+fn a_foreign_revert_asks_when_an_accepted_hunk_was_edited_and_keeps_its_checkpoint() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    cs.arm(&mut set, path);
+    let mut earlier =
+        ProposedChange::from_edits(set.buffers[&id].current(), [(0..0, "// earlier\n")], ai());
+    let hunks = hunk_ids(&set, id, &proposal);
+    let buf = set.buffers.get_mut(&id).unwrap();
+    earlier.accept_all_as(buf, Origin::User);
+    let (transaction, _) = proposal.borrow_mut().accept_all_as(buf, Origin::User);
+    for hunk in hunks {
+        cs.adopt_accept(&mut set, path, hunk, transaction);
+    }
+    // An accepted hunk edited afterwards.
+    let buf = set.buffers.get_mut(&id).unwrap();
+    let at = buf.text().to_string().find("    10\n").unwrap();
+    buf.edit([(at..at + 7, "    11\n")], Origin::User);
+    let outcomes = cs.revert(&mut set);
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RevertOutcome::NeedsConfirm { .. }]
+    ));
+    // Confirmed: what can be undone is, and the checkpoint stays for the rest.
+    let outcomes = cs.revert_forced(&mut set);
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RevertOutcome::Conflict { .. }]
+    ));
+    assert!(set.text(id).contains("    11\n"));
+    assert!(!set.text(id).contains("    20\n"));
+    assert!(matches!(
+        cs.revert(&mut set).as_slice(),
+        [RevertOutcome::NeedsConfirm { .. }]
+    ));
+}
+
+#[test]
+fn text_saved_outside_the_hunks_is_asked_about_after_reopening() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.accept_hunk(&mut set, path, hunks[0]).unwrap();
+    let buf = set.buffers.get_mut(&id).unwrap();
+    buf.edit([(0..0, "// mine\n")], Origin::User);
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    let outcomes = cs.revert(&mut set);
+    assert!(matches!(
+        outcomes.as_slice(),
+        [RevertOutcome::NeedsConfirm { .. }]
+    ));
+    assert!(set.text(id).starts_with("// mine\n"));
+}
+
+#[test]
+fn reopening_a_file_with_collapsed_or_stale_hunks_is_refused_untouched() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.accept_hunk(&mut set, path, hunks[0]).unwrap();
+    // The whole text deleted: both remaining ranges collapse to one offset.
+    let buf = set.buffers.get_mut(&id).unwrap();
+    let len = buf.len();
+    buf.edit([(0..len, "")], Origin::User);
+    cs.observe(&mut set);
+    set.buffers.remove(&id);
+    let buffer = Buffer::new("");
+    let new = buffer.id();
+    set.buffers.insert(new, buffer);
+    assert!(cs.rebind(&mut set, path, new).is_err());
+    assert_eq!(set.text(new), "");
+}
+
+#[test]
+fn an_arbitrary_manual_replacement_of_a_rejected_hunk_survives_reopening() {
+    let (mut set, mut cs, [(id, proposal), _]) = fixture();
+    let path = Path::new("a.rs");
+    let hunks = hunk_ids(&set, id, &proposal);
+    cs.reject_hunk(&mut set, path, hunks[1]).unwrap();
+    let buf = set.buffers.get_mut(&id).unwrap();
+    let at = buf.text().to_string().find("    2\n").unwrap();
+    buf.edit(
+        [(at..at + "    2\n".len(), "    something else\n")],
+        Origin::User,
+    );
+    cs.accept_hunk(&mut set, path, hunks[0]).unwrap();
+    let saved = set.text(id);
+    let id = reopen(&mut set, &mut cs, id, "a.rs");
+    assert_eq!(set.text(id), saved);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.accepted, c.rejected), (1, 1));
+    cs.revert(&mut set);
+    assert!(set.text(id).contains("    something else\n"));
+    assert!(set.text(id).contains("    1\n"));
+}

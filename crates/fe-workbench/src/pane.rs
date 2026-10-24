@@ -1317,6 +1317,27 @@ impl Pane {
         self.close_active_item(window, cx);
     }
 
+    /// Closes the tabs of the editors on `buffers`, whose buffers the host
+    /// removed, without asking: there's nothing left to save.
+    pub(crate) fn discard_buffers(
+        &mut self,
+        buffers: &[fe_buffer::BufferId],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let gone: Vec<usize> = (self.tabs().iter().enumerate())
+            .filter(|(_, tab)| {
+                (tab.editor())
+                    .is_some_and(|editor| buffers.contains(&editor.read(cx).model().buffer().id()))
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        for ix in gone.into_iter().rev() {
+            self.take_item(ix, window, cx);
+        }
+        cx.notify();
+    }
+
     /// Moves tab `ix` to before the tab now at `index`, or else to the end,
     /// and shows and focuses it.
     #[cfg(test)]

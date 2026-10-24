@@ -447,6 +447,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "search_results && vim"
                             | "project_panel && vim"
                             | "problems_panel"
+                            | "ai_changes"
                             | "problems_panel && vim"
                             | "find_bar && replace_input && text_input"
                             | "editor && vim.mode == normal && !vim.pending"
