@@ -8,10 +8,11 @@ use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use fe_vim::VisualKind;
 use gpui::{
-    App, AppContext as _, Bounds, Context, CursorStyle, FocusHandle, Focusable, Hsla,
-    InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
-    Render, ScrollWheelEvent, Styled as _, Subscription, Task, Window, div, px,
+    AnyElement, AnyView, App, AppContext as _, AvailableSpace, Bounds, Context, CursorStyle,
+    FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Subscription, Task,
+    Window, canvas, deferred, div, point, px, size,
 };
 
 use crate::{
@@ -146,6 +147,8 @@ pub struct EditorView {
     /// The host's glyph in the gutter's mark slot, its row anchored at the
     /// row's start so it follows edits.
     gutter_glyph: Option<(fe_buffer::Anchor, GlyphKind)>,
+    /// The host's overlay under its anchor's last row.
+    overlay: Option<Overlay>,
     /// What a click on the glyph calls.
     glyph_click: Option<GlyphClick>,
     /// Where the last frame painted the glyph, in window coordinates.
@@ -392,6 +395,7 @@ impl EditorView {
             vim_unrecorded_logged: false,
             fold_column_hovered: false,
             gutter_glyph: None,
+            overlay: None,
             glyph_click: None,
             glyph_hit: None,
             #[cfg(test)]
@@ -1801,6 +1805,7 @@ impl Render for EditorView {
             .child(crate::hover::popover_layer(cx))
             .child(crate::completion_menu::menu_layer(cx))
             .child(crate::signature_help::popover_layer(cx))
+            .child(overlay_layer(cx))
     }
 }
 
@@ -1861,7 +1866,84 @@ pub enum GlyphKind {
     LightbulbAutofix,
 }
 
+/// A view the host draws under a range of the buffer.
+struct Overlay {
+    view: AnyView,
+    /// The anchored range, which follows edits.
+    anchor: Range<fe_buffer::Anchor>,
+    /// Where the last frame puts its top left, in window coordinates, and
+    /// the editor's bounds; `None` while the anchor's row isn't shown.
+    placed: Option<(Point<Pixels>, Bounds<Pixels>)>,
+}
+
 impl EditorView {
+    /// Draws `view` at the text area's left edge, just under the last row
+    /// of `anchor`, a range of bytes that follows edits, or removes the
+    /// overlay with `None`. There is one: a second replaces the first. It
+    /// is hidden while the row is out of view, and keeps focus and the
+    /// pointer's events to itself.
+    pub fn set_overlay(&mut self, view: Option<AnyView>, anchor: Range<usize>) {
+        let text = self.model.text();
+        let (start, end) = (anchor.start.min(text.len()), anchor.end.min(text.len()));
+        let snapshot = self.model.snapshot();
+        self.overlay = view.map(|view| Overlay {
+            view,
+            anchor: snapshot.anchor_before(start)..snapshot.anchor_after(end.max(start)),
+            placed: None,
+        });
+    }
+
+    /// Removes the overlay.
+    pub fn clear_overlay(&mut self) {
+        self.overlay = None;
+    }
+
+    /// The buffer row the overlay goes under, as edits have moved it: the
+    /// anchor's last row, or the one before it for a range that ends at the
+    /// start of a row.
+    pub fn overlay_anchor_row(&self) -> Option<usize> {
+        let overlay = self.overlay.as_ref()?;
+        let snapshot = self.model.snapshot();
+        let range = snapshot.resolve_range(&overlay.anchor);
+        let end = if range.end > range.start {
+            range.end - 1
+        } else {
+            range.end
+        };
+        let text = self.model.text();
+        Some(text.offset_to_point(end).row as usize)
+    }
+
+    /// Sets where the frame being drawn puts the overlay.
+    pub(crate) fn place_overlay(&mut self, at: Option<(Point<Pixels>, Bounds<Pixels>)>) {
+        if let Some(overlay) = &mut self.overlay {
+            overlay.placed = at;
+        }
+    }
+
+    /// The overlay laid out and placed, if the frame shows its row: its top
+    /// left at the text area's left, clamped into the editor.
+    fn layout_overlay(&mut self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let overlay = self.overlay.as_ref()?;
+        let (at, editor) = overlay.placed?;
+        // Its content may be larger than the editor, which cuts it short, so
+        // it never reaches (or takes the input of) what's beside the editor.
+        let mut element = div()
+            .occlude()
+            .max_w(editor.size.width)
+            .max_h(editor.size.height)
+            .overflow_hidden()
+            .debug_selector(|| "editor-overlay".into())
+            .child(overlay.view.clone())
+            .into_any_element();
+        let space = size(AvailableSpace::MaxContent, AvailableSpace::MaxContent);
+        let laid = element.layout_as_root(space, window, cx);
+        let x = at.x.min(editor.right() - laid.width).max(editor.left());
+        let y = at.y.min(editor.bottom() - laid.height).max(editor.top());
+        element.prepaint_at(point(x, y), window, cx);
+        Some(element)
+    }
+
     /// Shows `glyph` in the gutter's mark slot, or clears it. The row
     /// follows edits. A left click on it calls `on_click`, and does nothing
     /// else.
@@ -1917,6 +1999,10 @@ mod ime_tests;
 
 #[cfg(test)]
 mod lens_bounds_tests;
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+#[path = "view/overlay_tests.rs"]
+mod overlay_tests;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod primary_selection_tests;
@@ -2125,4 +2211,21 @@ mod gutter_tests {
             "{wrap} vs {gutter_wrap}"
         );
     }
+}
+
+/// Where the view's overlay is drawn: over everything else in the window.
+fn overlay_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
+    let view = cx.entity().downgrade();
+    let layer = canvas(
+        move |_, window, cx| {
+            view.update(cx, |view, cx| view.layout_overlay(window, cx))
+                .ok()?
+        },
+        |_, overlay, window, cx| {
+            if let Some(mut overlay) = overlay {
+                overlay.paint(window, cx);
+            }
+        },
+    );
+    deferred(layer.absolute())
 }

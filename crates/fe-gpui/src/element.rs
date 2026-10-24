@@ -1285,6 +1285,10 @@ impl Element for EditorElement {
         let caret = caret.and_then(|caret| layout.caret_bounds(caret));
         self.view
             .update(cx, |view, _| view.anchor_signature_help(caret, bounds));
+        let overlay = overlay_origin(&layout, self.view.read(cx));
+        self.view.update(cx, |view, _| {
+            view.place_overlay(overlay.map(|at| (at, bounds)))
+        });
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }
@@ -2307,6 +2311,21 @@ fn gutter_glyph(
         height: side,
     };
     Some((row, layout.bounds(rect), kind))
+}
+
+/// Where the host's overlay starts: the text area's left, at the bottom of
+/// the last display row its anchor's row has in this frame, if it shows one.
+fn overlay_origin(layout: &FrameLayout, view: &EditorView) -> Option<Point<Pixels>> {
+    let row = u32::try_from(view.overlay_anchor_row()?).ok()?;
+    let frame = &layout.frame;
+    let shown = frame.rows.iter().rfind(|shown| shown.buffer_row == row)?;
+    let rect = Rect {
+        x: frame.text_left,
+        y: frame.row_top(shown.row) + frame.line_height,
+        width: 0.,
+        height: 0.,
+    };
+    Some(layout.bounds(rect).origin)
 }
 
 /// A lightbulb in `bounds`: the glass, a neck and the base's two lines.
