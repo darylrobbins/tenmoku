@@ -213,3 +213,6 @@ fn refresh_and_the_setting(cx: &mut TestAppContext) {
 
 #[path = "lsp_semantic_underline.rs"]
 mod underline;
+
+#[path = "lsp_semantic_timeout.rs"]
+mod timeout;

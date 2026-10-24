@@ -21,8 +21,8 @@
 //!   version. A token whose type isn't in the legend is skipped, modifier
 //!   bits past the legend are ignored, and a token running past the end of
 //!   its line is cut there.
-//! - **Failures.** A request past `lsp.timeouts.hover` (3 s) is `Ok(None)`,
-//!   and cancels the request.
+//! - **Failures.** A request past `lsp.timeouts.hover` (3 s) is
+//!   `Err(Retry)`, and cancels the request.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -194,11 +194,12 @@ impl LspManager {
     /// the server can answer one.
     ///
     /// `Ok(None)` if the server doesn't provide full semantic tokens
-    /// (nothing is sent), or doesn't answer within `lsp.timeouts.hover`
-    /// (which also cancels the request). `Err(LspError::Retry)` if the
-    /// answer can't be decoded as asked: the server was initializing, or
-    /// restarted or reopened the document before the request went. Asking
-    /// again then works. Dropping the future cancels the request. It
+    /// (nothing is sent). `Err(LspError::Retry)` if the server doesn't
+    /// answer within `lsp.timeouts.hover` (which also cancels the request:
+    /// a busy server answers a later ask, as rust-analyzer does once it has
+    /// analysed), or the answer can't be decoded as asked: the server was
+    /// initializing, or restarted or reopened the document before the
+    /// request went. Asking again then works. Dropping the future cancels the request. It
     /// doesn't borrow the manager.
     pub fn semantic_tokens(
         &self,
@@ -237,7 +238,7 @@ impl LspManager {
                 .map(|answer| match answer {
                     Ok(_) => Err(LspError::Retry),
                     Err(LspError::Unavailable(why)) if why == INITIALIZED => Err(LspError::Retry),
-                    Err(LspError::Timeout) => Ok(None),
+                    Err(LspError::Timeout) => Err(LspError::Retry),
                     Err(err) => Err(err),
                 })
                 .boxed();
@@ -300,7 +301,7 @@ impl LspManager {
             .map(move |answer| {
                 let (answer, at) = match answer {
                     Ok(answered) => answered,
-                    Err(LspError::Timeout) => return Ok(None),
+                    Err(LspError::Timeout) => return Err(LspError::Retry),
                     Err(LspError::Unavailable(why)) if why == FEATURE => return Ok(None),
                     Err(err) => return Err(err),
                 };
