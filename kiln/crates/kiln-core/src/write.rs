@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use toml_edit::{Document, Item, Table, TableLike, Value};
+use toml_edit::{Document, InlineTable, Item, Table, TableLike, Value};
 
 /// A value [`write_settings`] sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -260,11 +260,42 @@ fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
             .ok_or_else(|| format!("{} isn't a table", tables.join(".")))?;
     }
     table.remove(name);
+    // A dotted table it empties is no more; as text, it isn't there.
+    for depth in (1..key.len() - 1).rev() {
+        let mut parent: &mut dyn TableLike = document.as_table_mut();
+        for part in &key[..depth] {
+            parent = parent
+                .get_mut(part)
+                .and_then(Item::as_table_like_mut)
+                .expect("the path was walked");
+        }
+        let emptied = parent.get(key[depth]).is_some_and(|item| {
+            matches!(item, Item::Value(Value::InlineTable(inline))
+                if inline.is_dotted() && inline.is_empty())
+        });
+        if !emptied {
+            break;
+        }
+        parent.remove(key[depth]);
+    }
     let removed = document.to_string();
     if let (Some(key_span), Some(value_span)) = (found.span(), value.span())
         && let Some(line) = line_of(source, key_span.start, value_span.end)
     {
-        let cut = format!("{}{}", &source[..line.start], &source[line.end..]);
+        // A comment inside the value stays, on a line of its own.
+        let indent = &source[line.start
+            ..line.start
+                + (source[line.start..].len()
+                    - source[line.start..].trim_start_matches([' ', '\t']).len())];
+        let kept: String = comments(source)
+            .into_iter()
+            .filter(|comment| key_span.start <= comment.start && comment.end <= value_span.end)
+            .map(|comment| {
+                let text = source[comment].trim_end_matches('\r');
+                format!("{indent}{text}\n")
+            })
+            .collect();
+        let cut = format!("{}{kept}{}", &source[..line.start], &source[line.end..]);
         // Braces, or another key on the line, would be cut too.
         let same = |text: &str| text.parse::<toml::Table>().ok();
         if same(&cut).is_some_and(|cut| Some(cut) == same(&removed)) {
@@ -274,12 +305,13 @@ fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
     // In braces, cut just the key, its value and a comma: toml_edit would
     // take the comments before the key with it.
     if let Some(cut) = inline_cut(source, parsed.as_table(), key)
+        && comments(&cut).len() == comments(source).len()
         && cut.parse::<toml::Table>().ok() == removed.parse::<toml::Table>().ok()
     {
         return Ok(cut);
     }
-    // toml_edit takes the comments before a key it removes: a dotted key in
-    // braces, say, which neither cut can take.
+    // toml_edit takes the comments before a key it removes: one in
+    // braces, say, that neither cut can take.
     if comments(&removed).len() < comments(source).len() {
         return Err(EditError::DropsComment(format!(
             "removing {} would drop a comment beside it; edit the file by hand",
@@ -294,19 +326,36 @@ fn remove(source: &str, key: &[&str]) -> Result<String, EditError> {
 /// before it, the space beside them and every comment kept. `None` if it
 /// isn't in an inline table.
 fn inline_cut(source: &str, root: &Table, key: &[&str]) -> Option<String> {
-    let (name, tables) = key.split_last()?;
-    let (parent, tables) = tables.split_last()?;
+    // The innermost inline table on the path; what's under it is dotted keys.
     let mut table: &dyn TableLike = root;
-    for part in tables {
+    let mut inline: Option<(&Item, &InlineTable, usize)> = None;
+    for (depth, part) in key.iter().enumerate() {
+        let item = table.get(part)?;
+        if depth + 1 < key.len() {
+            if let Item::Value(Value::InlineTable(found)) = item
+                && !found.is_dotted()
+            {
+                inline = Some((item, found, depth + 1));
+            }
+            table = item.as_table_like()?;
+        }
+    }
+    let (braces, inline, depth) = inline?;
+    let braces = braces.span()?;
+    let dotted = &key[depth..];
+    let (name, parents) = dotted.split_last()?;
+    let mut table: &dyn TableLike = inline;
+    for part in parents {
         table = table.get(part)?.as_table_like()?;
     }
-    let item = table.get(parent)?;
-    let Item::Value(Value::InlineTable(inline)) = item else {
-        return None;
-    };
-    let braces = item.span()?;
-    let (found, value) = inline.get_key_value(name)?;
-    let (start, end) = (found.span()?.start, value.span()?.end);
+    let (found, value) = table.get_key_value(name)?;
+    // The key's own span is just its last part: `enabled` of
+    // `minimap.enabled`. Step back over the rest.
+    let mut start = found.span()?.start;
+    for _ in parents {
+        start = dotted_part_before(source, start)?;
+    }
+    let end = value.span()?.end;
     let comments = comments(source);
     let bytes = source.as_bytes();
     // The first byte that isn't space or in a comment after `at`, or before
@@ -360,10 +409,46 @@ fn inline_cut(source: &str, root: &Table, key: &[&str]) -> Option<String> {
     let mut at = 0;
     for cut in cuts {
         text.push_str(&source[at..cut.start]);
+        // A comment inside the removed value stays, ending its line.
+        for comment in &comments {
+            if cut.start.max(start) <= comment.start && comment.end <= cut.end.min(end) {
+                if !text.ends_with(char::is_whitespace) {
+                    text.push(' ');
+                }
+                text.push_str(source[comment.clone()].trim_end_matches('\r'));
+                text.push('\n');
+            }
+        }
         at = cut.end;
     }
     text.push_str(&source[at..]);
     Some(text)
+}
+
+/// Where the part of a dotted key before the `.` that `source` has before
+/// `at` starts, quoted or bare.
+fn dotted_part_before(source: &str, at: usize) -> Option<usize> {
+    let before = source[..at].trim_end().strip_suffix('.')?.trim_end();
+    let last = before.chars().next_back()?;
+    if last == '"' || last == '\'' {
+        // A basic string's quote after a backslash is its own.
+        let mut end = before.len() - 1;
+        while let Some(at) = before[..end].rfind(last) {
+            let slashes = before[..at]
+                .bytes()
+                .rev()
+                .take_while(|&b| b == b'\\')
+                .count();
+            if last == '\'' || slashes % 2 == 0 {
+                return Some(at);
+            }
+            end = at;
+        }
+        return None;
+    }
+    let bare = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let len = before.chars().rev().take_while(|&c| bare(c)).count();
+    (len > 0).then_some(before.len() - len)
 }
 
 /// Where each comment in `source` is, `#` to the end of its line: a `#`

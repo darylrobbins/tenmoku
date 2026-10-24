@@ -423,28 +423,27 @@ fn unknown_enum_variant_is_refused() {
 }
 
 #[test]
-fn reset_of_a_dotted_key_in_a_commented_inline_table_is_refused() {
+fn reset_of_a_dotted_key_in_a_commented_inline_table_keeps_every_comment() {
     let dirs = Dirs::new();
     fs::create_dir_all(&dirs.config).unwrap();
-    for text in [
-        "editor = {\n  # keep editor\n  minimap.enabled = true }\n",
-        "editor = { tab_size = 2,\n  # keep minimap\n  minimap.enabled = true }\n",
+    for (text, want) in [
+        (
+            "editor = {\n  # keep editor\n  minimap.enabled = true }\n",
+            "editor = {\n  # keep editor\n   }\n",
+        ),
+        (
+            "editor = { tab_size = 2,\n  # keep minimap\n  minimap.enabled = true }\n",
+            "editor = { tab_size = 2\n  # keep minimap\n   }\n",
+        ),
     ] {
         fs::write(dirs.user(), text).unwrap();
-        let before = modified(&dirs.user());
-        std::thread::sleep(Duration::from_millis(20));
-        let reset = reset_setting(
+        reset_setting(
             SettingScope::User,
             &dirs.root,
             &["editor", "minimap", "enabled"],
-        );
-        assert!(
-            matches!(&reset, Err(SettingEditError::Invalid(message))
-                if message.contains("edit settings.toml by hand")),
-            "{text}: {reset:?}"
-        );
-        assert_eq!(read(&dirs.user()), text, "byte for byte");
-        assert_eq!(modified(&dirs.user()), before, "{text}: not written");
+        )
+        .unwrap();
+        assert_eq!(read(&dirs.user()), want, "{text}");
     }
 
     // On a line of its own it goes with its line, the comment kept.

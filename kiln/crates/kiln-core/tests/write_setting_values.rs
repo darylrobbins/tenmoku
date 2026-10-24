@@ -359,22 +359,147 @@ fn a_table_added_to_an_empty_file_has_nothing_before_it() {
 }
 
 #[test]
-fn removing_a_key_never_drops_a_comment() {
+fn reset_of_a_dotted_key_in_a_commented_inline_table_keeps_every_comment() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("settings.toml");
-    let text = "editor = {\n  # keep editor\n  minimap.enabled = true }\n";
     let key: &[&str] = &["editor", "minimap", "enabled"];
+    for (text, want) in [
+        // Alone, the closing brace on the value's line: the table stays, a
+        // comment in it.
+        (
+            "editor = {\n  # keep editor\n  minimap.enabled = true }\n",
+            "editor = {\n  # keep editor\n   }\n",
+        ),
+        (
+            "editor = { # keep editor\n  minimap.enabled = true }\n",
+            "editor = { # keep editor\n   }\n",
+        ),
+        (
+            "editor = { minimap.enabled = true # keep\n}\n",
+            "editor = {  # keep\n}\n",
+        ),
+        // With siblings: one comma goes.
+        (
+            "editor = { tab_size = 2,\n  # keep minimap\n  minimap.enabled = true }\n",
+            "editor = { tab_size = 2\n  # keep minimap\n   }\n",
+        ),
+        (
+            "editor = {\n  # keep minimap\n  minimap.enabled = true, tab_size = 2 }\n",
+            "editor = {\n  # keep minimap\n  tab_size = 2 }\n",
+        ),
+        (
+            "editor = { tab_size = 2, # keep\n  minimap.enabled = true } # after\n",
+            "editor = { tab_size = 2 # keep\n   } # after\n",
+        ),
+        // A sibling under the same dotted prefix stays.
+        (
+            "editor = { # keep\n  minimap.enabled = true, minimap.side = \"left\" }\n",
+            "editor = { # keep\n  minimap.side = \"left\" }\n",
+        ),
+    ] {
+        for via_write in [false, true] {
+            fs::write(&file, text).unwrap();
+            if via_write {
+                write_settings(&file, &[(key, None)], TEMPLATE).expect(text);
+            } else {
+                reset_settings(&file, &[key], TEMPLATE).expect(text);
+            }
+            let got = fs::read_to_string(&file).unwrap();
+            assert_eq!(got, want, "{text:?} (write: {via_write})");
+            assert_eq!(
+                got.matches('#').count(),
+                text.matches('#').count(),
+                "{text:?}"
+            );
+            assert!(got.parse::<toml::Table>().is_ok(), "{got:?}");
+        }
+    }
 
+    // Nothing commented inside: a reset takes the table it empties too.
+    let text = "a = 1\neditor = { minimap.enabled = true }\n";
     fs::write(&file, text).unwrap();
-    let error = reset_settings(&file, &[key], TEMPLATE).unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported, "{error}");
-    let error = write_settings(&file, &[(key, None)], TEMPLATE).unwrap_err();
-    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported, "{error}");
-    assert_eq!(fs::read_to_string(&file).unwrap(), text);
+    reset_settings(&file, &[key], TEMPLATE).unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "a = 1\n");
+    fs::write(&file, text).unwrap();
+    write_settings(&file, &[(key, None)], TEMPLATE).unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "a = 1\neditor = {}\n");
 
     // Without the comment, it goes.
     fs::write(&file, "editor = { minimap.enabled = true, x = 1 }\n").unwrap();
     write_settings(&file, &[(key, None)], TEMPLATE).unwrap();
     let parsed: toml::Table = fs::read_to_string(&file).unwrap().parse().unwrap();
     assert_eq!(parsed["editor"].as_table().unwrap().len(), 1);
+}
+
+#[test]
+fn a_cut_keeps_a_comment_inside_the_removed_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("settings.toml");
+    let key: &[&str] = &["editor", "minimap", "rulers"];
+    let plain: &[&str] = &["editor", "rulers"];
+    for (key, text, want) in [
+        (
+            key,
+            "editor = { minimap.rulers = [80, # keep widths\n 120] }\n",
+            "editor = { # keep widths\n}\n",
+        ),
+        (
+            key,
+            "editor = {\n minimap.rulers = [80, # keep widths\n 120]\n}\n",
+            "editor = {\n # keep widths\n}\n",
+        ),
+        (
+            key,
+            "editor = { a = 1, minimap.rulers = [80, # keep widths\n 120] }\n",
+            "editor = { a = 1 # keep widths\n }\n",
+        ),
+        (
+            key,
+            "editor = { minimap.rulers = { x = 1, # keep x\n y = 2 } }\n",
+            "editor = { # keep x\n}\n",
+        ),
+        (
+            plain,
+            "editor = {\n rulers = [80, # keep widths\n 120]\n}\n",
+            "editor = {\n # keep widths\n}\n",
+        ),
+    ] {
+        for via_write in [false, true] {
+            fs::write(&file, text).unwrap();
+            if via_write {
+                write_settings(&file, &[(key, None)], TEMPLATE).expect(text);
+            } else {
+                reset_settings(&file, &[key], TEMPLATE).expect(text);
+            }
+            let got = fs::read_to_string(&file).unwrap();
+            assert!(got.parse::<toml::Table>().is_ok(), "{got:?}");
+            assert!(!got.contains("rulers"), "{got:?}");
+            assert_eq!(
+                got.matches('#').count(),
+                text.matches('#').count(),
+                "{text:?} => {got:?}"
+            );
+            assert_eq!(got, want, "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn a_dotted_cut_through_an_escaped_quote_in_a_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("settings.toml");
+    let key: &[&str] = &["editor", "mini\"map", "enabled"];
+    let text = "editor = { # keep\n \"mini\\\"map\".enabled = true }\n";
+    for via_write in [false, true] {
+        fs::write(&file, text).unwrap();
+        if via_write {
+            write_settings(&file, &[(key, None)], TEMPLATE).unwrap();
+        } else {
+            reset_settings(&file, &[key], TEMPLATE).unwrap();
+        }
+        let got = fs::read_to_string(&file).unwrap();
+        assert!(got.contains("# keep"), "{got:?}");
+        assert!(!got.contains("enabled"), "{got:?}");
+        assert!(got.parse::<toml::Table>().is_ok(), "{got:?}");
+    }
 }
