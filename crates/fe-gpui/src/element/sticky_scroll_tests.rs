@@ -46,7 +46,7 @@ fn source() -> String {
 
 /// An editor on `text`, as the file at `path`, in an 800 × 400 window, its
 /// caret at the start, drawn once parsed.
-fn editor<'a>(
+pub(super) fn editor<'a>(
     text: &str,
     path: &str,
     cx: &'a mut TestAppContext,
@@ -66,19 +66,19 @@ fn editor<'a>(
     (view, cx)
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
-fn line_height(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> f32 {
+pub(super) fn line_height(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> f32 {
     view.read_with(cx, |view, _| {
         view.layout.as_ref().expect("drawn").frame.line_height
     })
 }
 
 /// Scrolls `y` pixels down from the top, and draws.
-fn scroll_to(view: &Entity<EditorView>, y: f32, cx: &mut VisualTestContext) {
+pub(super) fn scroll_to(view: &Entity<EditorView>, y: f32, cx: &mut VisualTestContext) {
     view.update(cx, |view, cx| {
         view.scroll.y = px(y);
         view.autoscroll = false;
@@ -88,17 +88,17 @@ fn scroll_to(view: &Entity<EditorView>, y: f32, cx: &mut VisualTestContext) {
 }
 
 /// Scrolls so buffer row `row` (no blocks or folds above it) is at the top.
-fn scroll_to_row(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) {
+pub(super) fn scroll_to_row(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) {
     let line_height = line_height(view, cx);
     scroll_to(view, row as f32 * line_height, cx);
 }
 
-fn band(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<Painted> {
+pub(super) fn band(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<Painted> {
     view.read_with(cx, |view, _| view.painted_sticky_scroll.clone())
 }
 
 /// The buffer rows pinned, top first, and each row's top from the band's.
-fn pinned(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<(u32, Pixels)> {
+pub(super) fn pinned(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<(u32, Pixels)> {
     let Some(band) = band(view, cx) else {
         return Vec::new();
     };
@@ -109,7 +109,7 @@ fn pinned(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<(u32, Pi
 
 /// What the text area draws for buffer row `row` at the top of the file:
 /// its text's origin and colour runs, and its line number's right edge.
-fn unscrolled(
+pub(super) fn unscrolled(
     view: &Entity<EditorView>,
     row: u32,
     cx: &mut VisualTestContext,
@@ -222,12 +222,13 @@ fn the_band_is_empty_at_the_top_and_without_scopes(cx: &mut TestAppContext) {
         scroll_to_row(&view, 60, cx);
         assert_eq!(band(&view, cx), None);
     }
-    // Rust with no scopes, and text with no syntax at all.
+    // Rust with no scopes, which doesn't fall back to another model, and
+    // text with no syntax and no indented blocks.
     let rows: String = (0..100)
         .map(|n| format!("const C_{n}: u32 = {n};\n"))
         .collect();
-    for (text, path) in [(rows, "main.rs"), (source(), "notes.txt")] {
-        let (view, cx) = editor(&text, path, cx);
+    for path in ["main.rs", "notes.txt"] {
+        let (view, cx) = editor(&rows, path, cx);
         scroll_to_row(&view, 20, cx);
         assert_eq!(band(&view, cx), None, "{path}");
     }

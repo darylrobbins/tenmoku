@@ -3,10 +3,15 @@
 //! pushed up as its scope scrolls out.
 //!
 //! Scopes are buffer row ranges, `header..=last`, from whatever model finds
-//! them (fe-syntax's outline, for one). Placement is in screen terms, so
-//! folds, soft wrap and block rows all count.
+//! them: fe-syntax's outline, its fold candidates, or [`indent_scopes`]
+//! where there's no tree. Placement is in screen terms, so folds, soft wrap
+//! and block rows all count.
 
-use std::ops::RangeInclusive;
+#[cfg(test)]
+use std::cell::Cell;
+use std::ops::{Range, RangeInclusive};
+
+use fe_buffer::Text;
 
 use crate::{BlockMap, DisplayMap};
 
@@ -88,6 +93,164 @@ pub fn sticky_rows(
     rows
 }
 
+/// How far above its rows [`indent_scopes`] looks for headers. Past it a
+/// file is too deeply nested in too long a block to scan from a frame, and
+/// the headers further up aren't found.
+pub const INDENT_SCAN_ROWS: u32 = 50_000;
+
+/// The indented blocks overlapping `rows`, sticky scroll's scopes for text
+/// without a tree: `header..=last`, sorted by header, as fe-editor's
+/// indented-block folds find them. A block is headed by a row with text and
+/// holds the rows below it indented deeper, blank rows among them, though
+/// not trailing ones.
+///
+/// Headers above `rows` are found scanning up from `rows.start` for rows
+/// indented less than those below them, until one with no indent or
+/// [`INDENT_SCAN_ROWS`] up; ends scanning down no further than row
+/// `rows.end`. A block still open there ends at `rows.end`: past the rows,
+/// which is all sticky scroll's push-up needs to know. So it never scans the
+/// whole of a long file.
+pub fn indent_scopes(text: &Text, rows: Range<u32>, tab_size: usize) -> Vec<RangeInclusive<u32>> {
+    let row_count = text.row_count();
+    if rows.start >= rows.end || rows.start >= row_count {
+        return Vec::new();
+    }
+    // To the row past `rows`, or the file's last.
+    let bound = rows.end.min(row_count - 1);
+    let below = indents(text, rows.start..bound + 1, tab_size);
+    // The level the rows start at, their first text row's, or with none
+    // before `bound`, past the row above's.
+    let level = match below.iter().find_map(|indent| *indent) {
+        Some(level) => level,
+        None if bound == row_count - 1 => return Vec::new(),
+        None => usize::MAX,
+    };
+    // The rows heading blocks open at `rows.start`, with their indents,
+    // outermost first, and the last text row above it, read a window at a
+    // time, each four times the last.
+    let mut open: Vec<(u32, usize)> = Vec::new();
+    let mut last_text_row = None;
+    let mut under = level;
+    let (mut end, mut window) = (rows.start, 64);
+    let top = rows.start.saturating_sub(INDENT_SCAN_ROWS);
+    while under > 0 && end > top {
+        let start = end.saturating_sub(window).max(top);
+        let indents = indents(text, start..end, tab_size);
+        for (row, indent) in (start..end).zip(indents).rev() {
+            let Some(indent) = indent else {
+                continue;
+            };
+            last_text_row.get_or_insert(row);
+            if indent < under {
+                open.push((row, indent));
+                under = indent;
+                if under == 0 {
+                    break;
+                }
+            }
+        }
+        (end, window) = (start, window * 4);
+    }
+    open.reverse();
+    let mut last_text_row = last_text_row.unwrap_or(0);
+    let mut scopes = Vec::new();
+    let mut close = |open: &mut Vec<(u32, usize)>, level: usize, last_text_row: u32| {
+        while let Some(&(header, _)) = open.last().filter(|(_, indent)| *indent >= level) {
+            open.pop();
+            if last_text_row > header {
+                scopes.push(header..=last_text_row);
+            }
+        }
+    };
+    for (row, indent) in (rows.start..=bound).zip(below) {
+        let Some(level) = indent else {
+            continue;
+        };
+        close(&mut open, level, last_text_row);
+        open.push((row, level));
+        last_text_row = row;
+    }
+    if bound == row_count - 1 {
+        close(&mut open, 0, last_text_row);
+    } else {
+        // Still open past the rows. One headed by the last text row may
+        // have no rows under it at all.
+        let past = (open.iter()).filter(|(header, _)| *header < last_text_row);
+        scopes.extend(past.map(|(header, _)| *header..=rows.end));
+    }
+    scopes.sort_by_key(|scope| *scope.start());
+    scopes
+}
+
+/// The column each of `rows` has its text start at, tabs advancing to the
+/// next multiple of `tab_size`, or `None` for a blank row, from one pass
+/// over their text that skips each row's once its indent is known.
+fn indents(text: &Text, rows: Range<u32>, tab_size: usize) -> Vec<Option<usize>> {
+    #[cfg(test)]
+    MEASURED.set(MEASURED.get() + rows.len());
+    let tab_size = tab_size.max(1);
+    let end = match rows.end < text.row_count() {
+        true => text.row_start(rows.end),
+        false => text.len(),
+    };
+    let mut indents = Vec::with_capacity(rows.len());
+    // The row's indent so far, while only whitespace has been read.
+    let mut leading = Some(0);
+    for chunk in text.chunks_in_range(text.row_start(rows.start)..end) {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            let Some(mut column) = leading else {
+                // The rest of a row whose indent is known.
+                let Some(newline) = rest.find('\n') else {
+                    break;
+                };
+                rest = &rest[newline + 1..];
+                leading = Some(0);
+                continue;
+            };
+            let mut read = rest.len();
+            for (ix, ch) in rest.char_indices() {
+                match ch {
+                    '\n' => {
+                        indents.push(None);
+                        column = 0;
+                        read = ix + 1;
+                        break;
+                    }
+                    ' ' => column += 1,
+                    '\t' => column += tab_size - column % tab_size,
+                    ch if ch.is_whitespace() => {}
+                    _ => {
+                        indents.push(Some(column));
+                        leading = None;
+                        read = ix;
+                        break;
+                    }
+                }
+            }
+            if leading.is_some() {
+                leading = Some(column);
+            }
+            rest = &rest[read..];
+        }
+    }
+    // The last row, with no newline after it.
+    if leading.is_some() && indents.len() < rows.len() {
+        indents.push(None);
+    }
+    indents
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many rows [`indent_scopes`] has measured on this thread.
+    static MEASURED: Cell<usize> = const { Cell::new(0) };
+}
+
 #[cfg(test)]
 #[path = "sticky_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sticky_indent_tests.rs"]
+mod indent_tests;

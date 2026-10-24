@@ -37,7 +37,7 @@ mod vim;
 
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
-pub use fe_config::{EditorSettings, SettingsEvent, theme::EditorPalette};
+pub use fe_config::{EditorSettings, SettingsEvent, StickyScrollSettings, theme::EditorPalette};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
@@ -145,9 +145,10 @@ pub struct EditorTheme {
     pub sticky_scroll_shadow: Hsla,
     /// Behind a band row under the pointer.
     pub sticky_scroll_hover: Hsla,
-    /// Whether sticky scroll's band is drawn, from
-    /// `editor.sticky_scroll.enabled`.
-    pub sticky_scroll: bool,
+    /// Sticky scroll's settings, `editor.sticky_scroll`: whether its band is
+    /// drawn, how many rows it pins, where its scopes come from and whether
+    /// its text scrolls sideways.
+    pub sticky_scroll: StickyScrollSettings,
     /// The vim mode's status bar segment in normal mode, operator pending
     /// and while a jump is pending.
     pub vim_mode_normal: Hsla,
@@ -216,7 +217,7 @@ impl EditorTheme {
         self.line_height = settings.line_height as f32;
         self.indent_guides = settings.indent_guides;
         self.bracket_pair_colors = settings.bracket_pair_colors;
-        self.sticky_scroll = settings.sticky_scroll.enabled;
+        self.sticky_scroll = settings.sticky_scroll.clone();
     }
 
     /// The editor's font: `font_family` with `font_features`.

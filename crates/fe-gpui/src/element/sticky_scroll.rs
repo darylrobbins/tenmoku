@@ -2,10 +2,12 @@
 //! scopes enclosing the top of the view, pinned there over the text, each
 //! with its line number in the gutter and its text in the colours the text
 //! area gives the row, with a line and a shadow under the band. The scopes
-//! come from fe-syntax's outline, found once per top row and text version
-//! ([`scopes`]); the band is laid out once the frame has settled and painted
-//! over the text, selections and carets. It spans the gutter and the text,
-//! not the minimap beside them.
+//! come from fe-syntax's outline, or its fold candidates for a language
+//! without one, or fe-display's indented blocks for text without a tree, as
+//! `editor.sticky_scroll.default_model` starts, found once per top row and
+//! text version ([`scopes`]); the band is laid out once the frame has
+//! settled and painted over the text, selections and carets. It spans the
+//! gutter and the text, not the minimap beside them.
 //!
 //! The band takes the pointer from what's under it: a row under the pointer
 //! is painted in `sticky_scroll_hover`, and a click on it reveals its header
@@ -18,6 +20,7 @@ use std::cell::Cell;
 use std::ops::{Range, RangeInclusive};
 
 use fe_buffer::Version;
+use fe_config::StickyScrollModel;
 use fe_display::{
     Bias, BlockMap, CharWidth, ExpandedRow, RowIndex, RowSlice, StickyRow,
     layout::{
@@ -37,9 +40,11 @@ use gpui::{
 use super::{FrameLayout, Line, Shaper, foreground_spans, styled_highlights};
 use crate::{EditorTheme, EditorView};
 
-/// The most rows the band pins, VS Code's `editor.stickyScroll.maxLineCount`
-/// default.
-pub(crate) const MAX_ROWS: usize = 5;
+/// The most rows the band pins, `editor.sticky_scroll.max_line_count`,
+/// within its bounds.
+pub(crate) fn max_rows(view: &EditorView) -> usize {
+    view.theme.sticky_scroll.max_line_count.clamp(1, 20) as usize
+}
 
 /// How far the shadow under the band fades down, as VS Code's
 /// `scrollbar.shadow` does.
@@ -49,32 +54,90 @@ const SHADOW_HEIGHT: f32 = 3.;
 /// ems, as a long row's in the text area.
 const SLICE_MARGIN_EMS: f32 = 32.;
 
+/// Where a band's scopes come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Model {
+    /// fe-syntax's outline items.
+    Outline,
+    /// fe-syntax's fold candidates.
+    Folding,
+    /// fe-display's indented blocks, at a tab size.
+    Indentation(usize),
+}
+
 /// The scopes the band was last found from, cached on the view.
 pub(crate) struct Scopes {
-    /// The language, the buffer rows the scopes overlap and the text version
-    /// they were found for.
-    key: (&'static str, Range<u32>, Version),
+    /// The language, the model, the runs of buffer rows the scopes overlap
+    /// and the text version they were found for.
+    key: (Option<&'static str>, Model, Vec<Range<u32>>, Version),
     scopes: Vec<RangeInclusive<u32>>,
 }
 
 #[cfg(test)]
 thread_local! {
-    /// How many times [`scopes`] has asked the outline, for tests.
+    /// How many times [`scopes`] has asked a model, for tests.
     static QUERIES: Cell<usize> = const { Cell::new(0) };
+    /// The model it last asked, and the buffer rows it asked for.
+    static ASKED: Cell<Option<Model>> = const { Cell::new(None) };
+    static ASKED_ROWS: std::cell::RefCell<Vec<Range<u32>>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
 }
 
-/// How many times the outline has been asked for scopes on this thread.
+/// How many times a model has been asked for scopes on this thread.
 #[cfg(test)]
 pub(crate) fn queries() -> usize {
     QUERIES.with(Cell::get)
 }
 
+/// The model last asked for scopes on this thread.
+#[cfg(test)]
+pub(crate) fn asked() -> Option<Model> {
+    ASKED.with(Cell::get)
+}
+
+/// The runs of buffer rows the model was last asked for on this thread.
+#[cfg(test)]
+pub(crate) fn asked_rows() -> Vec<Range<u32>> {
+    ASKED_ROWS.with(|rows| rows.borrow().clone())
+}
+
+/// The model the band's scopes come from: the setting's, or the next that
+/// can serve the text. The outline needs a language with an outline query
+/// and folding a syntax tree, which plain text, an unknown language and a
+/// file over its language's parse limit lack: those use indentation. An
+/// outline with no scope at the top doesn't fall back. `None` while the
+/// tree is behind the text, being parsed.
+fn model(view: &EditorView) -> Option<(Model, Option<&Syntax>)> {
+    let snapshot = view.model.snapshot();
+    let indentation = Model::Indentation(view.model.tab_size());
+    let setting = view.theme.sticky_scroll.default_model;
+    let syntax = (view.syntax.as_ref())
+        .map(fe_syntax::SyntaxDriver::syntax)
+        .filter(|syntax| !syntax.failed() && snapshot.len() <= syntax.language().parse_limit());
+    let Some(syntax) = syntax.filter(|_| setting != StickyScrollModel::Indentation) else {
+        return Some((indentation, None));
+    };
+    if syntax.version() != snapshot.version() || syntax.needs_parse() {
+        return None;
+    }
+    let outline = setting == StickyScrollModel::Outline
+        && fe_syntax::outline_supported(syntax.language().name());
+    let model = match outline {
+        true => Model::Outline,
+        false => Model::Folding,
+    };
+    Some((model, Some(syntax)))
+}
+
 /// The scopes overlapping the rows at the top of a view scrolled to
 /// `scroll_y` over `blocks` that the band can pin, outermost first, from
-/// `cache` when the top row and the text are those it was found for, else
-/// found and kept there. None while the band is off or the text has no
-/// syntax. `None` while they can't be known yet: the syntax tree is behind
-/// the text, being parsed, and asked again on a frame after it's caught up.
+/// `cache` when the top row, the model ([`model`]) and the text are those
+/// it was found for, else found and kept there. None while the band is off.
+/// The model is asked for each run of buffer rows shown there, so the rows
+/// a closed fold hides between them aren't read.
+/// `None` while they can't be known yet: the syntax tree is behind the
+/// text, being parsed, and asked again on a frame after it's caught up.
 pub(crate) fn scopes(
     view: &EditorView,
     cache: &mut Option<Scopes>,
@@ -82,13 +145,10 @@ pub(crate) fn scopes(
     scroll_y: f32,
     line_height: f32,
 ) -> Option<Vec<RangeInclusive<u32>>> {
-    let syntax = view.syntax.as_ref().map(fe_syntax::SyntaxDriver::syntax);
-    let (Some(syntax), true) = (syntax, view.theme.sticky_scroll) else {
+    if !view.theme.sticky_scroll.enabled {
         return Some(Vec::new());
-    };
-    if syntax.version() != view.model.snapshot().version() {
-        return None;
     }
+    let (model, syntax) = model(view)?;
     let display = view.model.display();
     let row_count = display.row_count();
     let line_height = line_height.max(1.);
@@ -98,23 +158,49 @@ pub(crate) fn scopes(
     let top = (scroll_y / line_height).floor();
     let display_row =
         |screen_top: f32| (blocks.to_display_top(screen_top).floor() as u32).min(row_count - 1);
-    let first = display.row(display_row(top)).buffer_row;
-    let last = display
-        .row(display_row(top + MAX_ROWS as f32 + 1.))
-        .buffer_row;
-    let key = (syntax.language().name(), first..last + 1, syntax.version());
+    let first = display_row(top);
+    let last = display_row(top + max_rows(view) as f32 + 1.);
+    let mut runs: Vec<Range<u32>> = Vec::new();
+    for row in first..=last {
+        let buffer_row = display.row(row).buffer_row;
+        match runs.last_mut() {
+            Some(run) if buffer_row <= run.end => run.end = buffer_row + 1,
+            _ => runs.push(buffer_row..buffer_row + 1),
+        }
+    }
+    let language = syntax.map(|syntax| syntax.language().name());
+    let version = view.model.snapshot().version();
+    let key = (language, model, runs, version);
     if let Some(cached) = cache.as_ref().filter(|cached| cached.key == key) {
         return Some(cached.scopes.clone());
     }
     #[cfg(test)]
-    QUERIES.with(|queries| queries.set(queries.get() + 1));
-    // A language without an outline, or a file too large for one, has no
-    // scopes.
-    let scopes = match fe_syntax::outline_scopes(syntax, key.1.clone()) {
-        Ok(scopes) => scopes,
-        Err(fe_syntax::NoOutline::NotParsed) => return None,
-        Err(_) => Vec::new(),
-    };
+    {
+        QUERIES.with(|queries| queries.set(queries.get() + 1));
+        ASKED.with(|asked| asked.set(Some(model)));
+        ASKED_ROWS.with(|rows| *rows.borrow_mut() = key.2.clone());
+    }
+    let mut scopes = Vec::new();
+    for rows in key.2.iter().cloned() {
+        scopes.extend(match (model, syntax) {
+            (Model::Outline, Some(syntax)) => match fe_syntax::outline_scopes(syntax, rows) {
+                Ok(scopes) => scopes,
+                Err(fe_syntax::NoOutline::NotParsed) => return None,
+                Err(_) => Vec::new(),
+            },
+            (Model::Folding, Some(syntax)) => fe_syntax::fold_scopes(syntax, rows),
+            (Model::Indentation(tab_size), _) => {
+                fe_display::indent_scopes(view.model.text(), rows, tab_size)
+            }
+            (_, None) => Vec::new(),
+        });
+    }
+    // One per header, as each run gives them. Indentation ends a block
+    // still open at the row past a run there, a row the fold after it
+    // hides, so that it ends with the fold's header unless the next run
+    // finds it open past the fold too, further down.
+    scopes.sort_by_key(|scope| (*scope.start(), std::cmp::Reverse(*scope.end())));
+    scopes.dedup_by_key(|scope| *scope.start());
     *cache = Some(Scopes {
         key,
         scopes: scopes.clone(),
@@ -132,11 +218,11 @@ pub(crate) fn pinned(
     line_height: f32,
     keep_above: Option<f32>,
 ) -> Vec<StickyRow> {
-    if !view.theme.sticky_scroll || scopes.is_empty() {
+    if !view.theme.sticky_scroll.enabled || scopes.is_empty() {
         return Vec::new();
     }
     let display = view.model.display();
-    let (lines, rows) = (line_height, MAX_ROWS);
+    let (lines, rows) = (line_height, max_rows(view));
     fe_display::sticky_rows(scopes, display, blocks, scroll_y, lines, rows, keep_above)
 }
 
@@ -204,7 +290,7 @@ pub(crate) fn clear_of_caret(
     // it adds nothing, which it does within its most rows.
     let lowest = (caret_top + line_height + bottom_margin - height).max(0.);
     let mut top = scroll_y;
-    for _ in 0..=MAX_ROWS {
+    for _ in 0..=max_rows(view) {
         let wanted = (caret_top - pinned - line_height).max(lowest);
         if wanted >= top {
             break;
@@ -239,7 +325,7 @@ pub(crate) fn reveal_top(
     let display_row = view.model.display().row_for_buffer_row(buffer_row);
     let header = blocks.screen_row(display_row) as f32 * line_height;
     let mut top = header;
-    for above in 0..=MAX_ROWS {
+    for above in 0..=max_rows(view) {
         top = (header - above as f32 * line_height).max(0.);
         let rows = band_at(view, cache, blocks, top, line_height)?;
         if top == 0. || bottom(&rows, line_height) <= header - top {
@@ -315,7 +401,13 @@ pub(crate) fn layout(
     let tab_size = model.tab_size();
     let wrapped = display.wrap_width().is_some();
     let text_bounds = frame.text_bounds();
-    let (scroll_x, view_width) = (f64::from(frame.scroll.x), f64::from(text_bounds.width));
+    // The text scrolls with the editor's, or with
+    // `scroll_with_editor = false` stays at the first column.
+    let scroll_x = match theme.sticky_scroll.scroll_with_editor {
+        true => f64::from(frame.scroll.x),
+        false => 0.,
+    };
+    let view_width = f64::from(text_bounds.width);
     let number_right = frame.fold_column.x - em * LINE_NUMBER_GAP_EMS;
     // The text from `slice`, tabs expanded, shaped in the colours the text
     // area gives it.
@@ -391,7 +483,7 @@ pub(crate) fn layout(
             buffer_row: row.buffer_row,
             y: row.y,
             line,
-            x: layout.frame.view_x(slice.start_x),
+            x: layout.frame.text_left + (slice.start_x - scroll_x) as f32,
             #[cfg(test)]
             text: expanded.text().to_owned(),
             number,
@@ -680,3 +772,7 @@ pub(crate) fn runs(line: &Line) -> Vec<(u32, Hsla)> {
 #[cfg(test)]
 #[path = "sticky_scroll_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sticky_scroll_settings_tests.rs"]
+mod settings_tests;

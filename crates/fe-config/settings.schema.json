@@ -222,7 +222,10 @@
         "sticky_scroll": {
           "$ref": "#/$defs/StickyScrollSettings",
           "default": {
-            "enabled": true
+            "default_model": "outline",
+            "enabled": true,
+            "max_line_count": 5,
+            "scroll_with_editor": true
           },
           "description": "Sticky scroll: the header rows of the scopes enclosing the top of the\nview stay pinned there, VS Code's `editor.stickyScroll.*`."
         },
@@ -554,12 +557,50 @@
       },
       "type": "object"
     },
+    "StickyScrollModel": {
+      "description": "`editor.sticky_scroll.default_model`.",
+      "oneOf": [
+        {
+          "const": "outline",
+          "description": "The file's symbols: functions, types, sections. Languages without an\noutline use folding.",
+          "type": "string"
+        },
+        {
+          "const": "folding",
+          "description": "The ranges the fold gutter folds. Text without a syntax tree uses\nindentation.",
+          "type": "string"
+        },
+        {
+          "const": "indentation",
+          "description": "Blocks of rows indented under a less indented one.",
+          "type": "string"
+        }
+      ]
+    },
     "StickyScrollSettings": {
       "description": "`[editor.sticky_scroll]`: VS Code's `editor.stickyScroll.*` settings,\nwith its defaults.",
       "properties": {
+        "default_model": {
+          "$ref": "#/$defs/StickyScrollModel",
+          "default": "outline",
+          "description": "Where the pinned scopes come from first. Each falls back to the next\nfor a file it can't serve: the outline for a language without one,\nthe folding ranges for text without a syntax tree."
+        },
         "enabled": {
           "default": true,
           "description": "Pin the header rows of the functions, types and other scopes the top\nof the view is inside, as you scroll.",
+          "type": "boolean"
+        },
+        "max_line_count": {
+          "default": 5,
+          "description": "The most header rows pinned at once.",
+          "format": "uint32",
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scroll_with_editor": {
+          "default": true,
+          "description": "The pinned rows' text scrolls sideways with the editor's; off, it\nstays at the first column. Their line numbers never scroll.",
           "type": "boolean"
         }
       },
@@ -910,7 +951,10 @@
         "semantic_highlighting": true,
         "soft_wrap": false,
         "sticky_scroll": {
-          "enabled": true
+          "default_model": "outline",
+          "enabled": true,
+          "max_line_count": 5,
+          "scroll_with_editor": true
         },
         "tab_size": 4
       },

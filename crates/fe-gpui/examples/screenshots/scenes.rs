@@ -446,7 +446,10 @@ fn capture(
     let window = cx.open_offscreen_window(size, |_, cx| {
         let theme = EditorTheme {
             font_family: FONT_FAMILY.into(),
-            sticky_scroll,
+            sticky_scroll: fe_config::StickyScrollSettings {
+                enabled: sticky_scroll,
+                ..Default::default()
+            },
             ..EditorTheme::default_dark(cx)
         };
         let shown = (!annotations.is_empty()).then(|| gutter_annotations(&model, annotations));

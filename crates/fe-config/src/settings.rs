@@ -490,12 +490,42 @@ pub struct StickyScrollSettings {
     /// Pin the header rows of the functions, types and other scopes the top
     /// of the view is inside, as you scroll.
     pub enabled: bool,
+    /// The most header rows pinned at once.
+    #[schemars(range(min = 1, max = 20))]
+    pub max_line_count: u32,
+    /// Where the pinned scopes come from first. Each falls back to the next
+    /// for a file it can't serve: the outline for a language without one,
+    /// the folding ranges for text without a syntax tree.
+    pub default_model: StickyScrollModel,
+    /// The pinned rows' text scrolls sideways with the editor's; off, it
+    /// stays at the first column. Their line numbers never scroll.
+    pub scroll_with_editor: bool,
 }
 
 impl Default for StickyScrollSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            max_line_count: 5,
+            default_model: StickyScrollModel::default(),
+            scroll_with_editor: true,
+        }
     }
+}
+
+/// `editor.sticky_scroll.default_model`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StickyScrollModel {
+    /// The file's symbols: functions, types, sections. Languages without an
+    /// outline use folding.
+    #[default]
+    Outline,
+    /// The ranges the fold gutter folds. Text without a syntax tree uses
+    /// indentation.
+    Folding,
+    /// Blocks of rows indented under a less indented one.
+    Indentation,
 }
 
 /// `editor.minimap.side`.

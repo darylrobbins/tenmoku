@@ -23,7 +23,7 @@ pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
 pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice, SourceKey};
-pub use sticky::{StickyRow, sticky_rows};
+pub use sticky::{StickyRow, indent_scopes, sticky_rows};
 
 /// Measures chars for soft wrapping, in the unit of the wrap width (the UI
 /// uses pixels).

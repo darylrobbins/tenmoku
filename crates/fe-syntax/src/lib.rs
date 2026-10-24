@@ -13,7 +13,8 @@
 //! - Grammar capture names map onto our own [`Highlight`] vocabulary, which
 //!   themes colour (see [`resolve_theme`]).
 //! - [`fold_ranges`] and [`fold_range_at`] find the rows a tree's blocks,
-//!   bodies, lists and comments span, for folding.
+//!   bodies, lists and comments span, for folding; [`fold_scopes`] the
+//!   ones enclosing some rows, sticky scroll's fallback from the outline.
 //! - [`outline`] lists a parsed file's symbols, nested, from our own
 //!   per-language outline queries; [`outline_job`] runs it on another thread.
 //!   [`outline_scopes`] lists just the items enclosing some rows, for sticky
@@ -47,7 +48,7 @@ pub use comment::{CommentTokens, auto_pairs, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fence::fence_language;
-pub use fold::{fold_range_at, fold_ranges};
+pub use fold::{fold_range_at, fold_ranges, fold_scopes};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};
 pub use indent::{IndentSuggestion, closer_outdents, suggest_indent};

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use fe_config::theme::{Color, EditorPalette};
 use gpui::{App, Context, Global, Hsla, Pixels, SharedString, px, rgba};
 
-use crate::{EditorSettings, EditorTheme, EditorView};
+use crate::{EditorSettings, EditorTheme, EditorView, StickyScrollSettings};
 
 impl EditorTheme {
     /// `palette`'s colours with the font and metrics of `settings`.
@@ -23,7 +23,7 @@ impl EditorTheme {
         let font_family = std::mem::take(&mut self.font_family);
         let font_features = self.font_features.clone();
         let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
-        let sticky_scroll = self.sticky_scroll;
+        let sticky_scroll = self.sticky_scroll.clone();
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
         self.font_features = font_features;
         self.indent_guides = indent_guides;
@@ -72,7 +72,7 @@ impl EditorTheme {
             sticky_scroll_border: hsla(editor.sticky_scroll_border),
             sticky_scroll_shadow: hsla(editor.sticky_scroll_shadow),
             sticky_scroll_hover: hsla(editor.sticky_scroll_hover),
-            sticky_scroll: true,
+            sticky_scroll: StickyScrollSettings::default(),
             vim_mode_normal: hsla(editor.vim_mode_normal),
             vim_mode_insert: hsla(editor.vim_mode_insert),
             vim_mode_visual: hsla(editor.vim_mode_visual),

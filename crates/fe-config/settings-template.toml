@@ -91,6 +91,16 @@
 # Pin the header rows of the functions, types and other scopes the top of the
 # view is inside, as you scroll.
 # enabled = true
+# The most header rows pinned at once, 1 to 20.
+# max_line_count = 5
+# Where the pinned scopes come from first: "outline" (the file's symbols),
+# "folding" (the ranges the fold gutter folds) or "indentation". Each falls
+# back to the next for a file it can't serve: the outline for a language
+# without one, the folding ranges for text without a syntax tree.
+# default_model = "outline"
+# The pinned rows' text scrolls sideways with the editor's; false keeps it at
+# the first column. Their line numbers never scroll.
+# scroll_with_editor = true
 
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.

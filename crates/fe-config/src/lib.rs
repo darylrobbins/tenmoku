@@ -33,9 +33,9 @@ pub use paths::{
 pub use recent::{RecentList, recent_path};
 pub use settings::{
     ChatEffort, ChatSettings, EditorSettings, PROJECT_CHAT, PROJECT_TERMINAL_SHELL,
-    PROJECT_VIM_USER_ONLY, Settings, SettingsEvent, SettingsStore, TerminalSettings,
-    ThemeModeSetting, ThemeSettings, TreeSettings, VimRemap, VimRemapMode, VimRemapModes,
-    VimSettings, settings_schema,
+    PROJECT_VIM_USER_ONLY, Settings, SettingsEvent, SettingsStore, StickyScrollModel,
+    StickyScrollSettings, TerminalSettings, ThemeModeSetting, ThemeSettings, TreeSettings,
+    VimRemap, VimRemapMode, VimRemapModes, VimSettings, settings_schema,
 };
 pub use theme::{Color, EditorColors, EditorPalette};
 pub use watch::ConfigWatcher;

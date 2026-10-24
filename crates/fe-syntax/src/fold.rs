@@ -10,7 +10,10 @@
 //! do: those fold from the row where the node before them ends, such as the
 //! `:` of a `def`.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
+    cmp::Reverse,
     ops::{Range, RangeInclusive},
     sync::OnceLock,
 };
@@ -30,6 +33,25 @@ pub fn fold_ranges(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>
     ranges.sort_by_key(|range| (*range.start(), *range.end()));
     ranges.dedup();
     ranges
+}
+
+/// The candidates overlapping `rows` as sticky scroll's scopes, in
+/// [`outline_scopes`](crate::outline_scopes)' shape: `header..=last`, the
+/// candidate's first and last rows, sorted by header, the outermost of each
+/// header row the only one kept. The candidates are the fold gutter's, so a
+/// `{ … }` ends on the row before its `}`. Only the part of the tree over
+/// `rows` is walked: the nodes enclosing them, theirs and the ones in them.
+/// None without a tree.
+pub fn fold_scopes(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
+    let mut scopes = Vec::new();
+    for_each_candidate(syntax, rows.clone(), 0..rows.end, |range| {
+        if *range.end() >= rows.start {
+            scopes.push(range);
+        }
+    });
+    scopes.sort_by_key(|scope| (*scope.start(), Reverse(*scope.end())));
+    scopes.dedup_by_key(|scope| *scope.start());
+    scopes
 }
 
 /// The innermost candidate headed by `row`, or if there's none, the
@@ -550,6 +572,8 @@ fn for_each_candidate(
     let past = |node: Node| node.start_position().row >= rows.end as usize;
     let mut cursor = tree.walk();
     'nodes: loop {
+        #[cfg(test)]
+        WALKED.set(WALKED.get() + 1);
         if let Some(range) = candidates.of(cursor.node()) {
             found(range);
         }
@@ -584,6 +608,13 @@ fn for_each_candidate(
             }
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many nodes [`for_each_candidate`] has stepped onto on this
+    /// thread, for tests.
+    static WALKED: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Moves to the first child of the cursor's node that ends after `start`,
@@ -777,3 +808,49 @@ mod large_prefix_tests;
 mod lookup_tests;
 #[cfg(test)]
 mod tests;
+
+/// [`fold_scopes`] walks only the nodes over its rows.
+#[cfg(test)]
+mod scope_walk_tests {
+    use std::fmt::Write as _;
+
+    use fe_buffer::Buffer;
+
+    use super::*;
+    use crate::language_by_name;
+
+    #[test]
+    fn fold_scopes_walk_only_the_nodes_over_the_rows() {
+        let Some(json) = language_by_name("json") else {
+            return;
+        };
+        // An object of 50,000 four-row objects.
+        let mut text = String::from("{\n");
+        for i in 0..50_000 {
+            writeln!(
+                text,
+                "  \"k{i}\": {{\n    \"a\": [\n      {i}\n    ]\n  }},"
+            )
+            .unwrap();
+        }
+        text.push_str("  \"end\": 0\n}\n");
+        let buffer = Buffer::new(&text);
+        let mut syntax = Syntax::new(json, buffer.current());
+        syntax.finish(syntax.parse_job().run());
+        let walked = |rows: Range<u32>| {
+            let before = WALKED.get();
+            let scopes = fold_scopes(&syntax, rows);
+            (scopes, WALKED.get() - before)
+        };
+        // Row 100_003 is `      20000` in k20000's array.
+        let (scopes, deep) = walked(100_003..100_004);
+        assert_eq!(scopes, [0..=250_001, 100_001..=100_004, 100_002..=100_003]);
+        // The document, the outer object, k20000's pair and the few nodes
+        // in it: tree-sitter finds the child over a row without the cursor
+        // stepping onto the 20,000 pairs before it.
+        assert!(deep < 50, "{deep} nodes walked");
+        let (scopes, top) = walked(1..2);
+        assert_eq!(scopes, [0..=250_001, 1..=4]);
+        assert!(top < 50, "{top} nodes walked");
+    }
+}
