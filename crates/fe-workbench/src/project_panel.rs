@@ -14,7 +14,9 @@
 //! highest-precedence status beneath it with a dot.
 //!
 //! The file operations on the selected row (new file and folder, rename,
-//! move to the Trash, duplicate, copy path) are in [`ops`].
+//! move to the Trash, duplicate, copy path) are in [`ops`]; expanding and
+//! collapsing every folder, toggling ignored entries and refreshing are in
+//! [`nav`].
 
 use std::{
     cell::Cell,
@@ -167,6 +169,11 @@ pub struct ProjectPanel {
     drawn_status: Vec<(String, DrawnStatus)>,
     /// Whether the tree lists ignored entries.
     show_ignored: bool,
+    /// Folders being expanded as their parents' listings land: expand
+    /// all's, or those expanded before the tree was opened again.
+    expansion: Option<nav::Expansion>,
+    /// The panel's last word on an operation, under its rows.
+    status: Option<String>,
     _watch: Option<Task<()>>,
 }
 
@@ -208,6 +215,8 @@ impl ProjectPanel {
             #[cfg(test)]
             drawn_status: Vec::new(),
             show_ignored,
+            expansion: None,
+            status: None,
             _watch: None,
         };
         panel.start(show_ignored, cx);
@@ -274,6 +283,13 @@ impl ProjectPanel {
             return;
         }
         self.show_ignored = show_ignored;
+        self.reopen(cx);
+    }
+
+    /// Opens the tree again, as [`Self::new`] first did.
+    fn reopen(&mut self, cx: &mut Context<Self>) {
+        self.expansion = None;
+        self.status = None;
         // The new tree numbers its nodes afresh, so what the old ids named
         // goes; a pending reveal is by path and carries over.
         self.generation += 1;
@@ -285,7 +301,7 @@ impl ProjectPanel {
         self.selected_hint = 0;
         self.revealing = None;
         self.edit = None;
-        self.start(show_ignored, cx);
+        self.start(self.show_ignored, cx);
         cx.notify();
     }
 
@@ -314,6 +330,7 @@ impl ProjectPanel {
             }
         };
         self.advance_reveal(cx);
+        self.advance_expansion(cx);
         cx.notify();
     }
 
@@ -370,6 +387,7 @@ impl ProjectPanel {
         }
         self.reconcile(cx);
         self.advance_reveal(cx);
+        self.advance_expansion(cx);
     }
 
     /// Forgets nodes the tree removed (a watcher batch or a listing can).
@@ -510,8 +528,8 @@ impl ProjectPanel {
         }
     }
 
-    /// Enter: opens the selected file, or toggles the selected directory,
-    /// as a click does.
+    /// Enter, and vim's `l` and `o`: opens the selected file, or toggles
+    /// the selected directory, as a click does.
     fn open_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.selected_index().and(self.selected) {
             self.click(id, cx);
@@ -720,6 +738,7 @@ impl ProjectPanel {
         cx.notify();
         self.reconcile(cx);
         self.advance_reveal(cx);
+        self.advance_expansion(cx);
     }
 
     /// Runs a panel command; others go on to the workbench. While the name
@@ -729,8 +748,9 @@ impl ProjectPanel {
             return self.run_in_field(run, window, cx);
         }
         let op = op(run, cx);
-        if op.is_some() {
-            // The user moved on.
+        // The user moved on. Toggling ignored entries carries a pending
+        // reveal over to the new tree.
+        if op.is_some_and(|op| op != PanelOp::ToggleIgnored) {
             self.cancel_reveal();
         }
         match op {
@@ -738,7 +758,7 @@ impl ProjectPanel {
             Some(PanelOp::SelectNext) => self.move_selection(1, cx),
             Some(PanelOp::CollapseOrParent) => self.collapse_or_parent(cx),
             Some(PanelOp::ExpandOrFirstChild) => self.expand_or_first_child(cx),
-            Some(PanelOp::Open) => self.open_selected(cx),
+            Some(PanelOp::Open | PanelOp::Toggle) => self.open_selected(cx),
             Some(PanelOp::SelectFirst) => self.select_end(false, cx),
             Some(PanelOp::SelectLast) => self.select_end(true, cx),
             Some(PanelOp::NewFile) => self.start_edit(EditKind::NewFile, window, cx),
@@ -748,6 +768,10 @@ impl ProjectPanel {
             Some(PanelOp::Duplicate) => self.duplicate_selected(window, cx),
             Some(PanelOp::CopyPath) => self.copy_path(false, cx),
             Some(PanelOp::CopyRelativePath) => self.copy_path(true, cx),
+            Some(PanelOp::ExpandAll) => self.expand_all(cx),
+            Some(PanelOp::CollapseAll) => self.collapse_all(cx),
+            Some(PanelOp::ToggleIgnored) => self.toggle_ignored(cx),
+            Some(PanelOp::Refresh) => self.refresh(cx),
             None => cx.propagate(),
         }
     }
@@ -929,6 +953,7 @@ impl Render for ProjectPanel {
             .text_size(px(12.))
             .child(div().flex_none().px_3().py_2().child(title))
             .child(body)
+            .children((self.status.clone()).map(|status| self.message(status, cx)))
     }
 }
 
@@ -978,6 +1003,11 @@ pub(crate) enum PanelOp {
     Duplicate,
     CopyPath,
     CopyRelativePath,
+    Toggle,
+    ExpandAll,
+    CollapseAll,
+    ToggleIgnored,
+    Refresh,
 }
 
 /// The [`CommandTarget`] of panel commands: the op to do.
@@ -1067,6 +1097,31 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             KEY_CONTEXT,
             CopyRelativePath,
         ),
+        (
+            "project_panel.toggle",
+            "Toggle Folder or Open File",
+            KEY_CONTEXT,
+            Toggle,
+        ),
+        (
+            "project_panel.expand_all",
+            "Expand All Folders",
+            KEY_CONTEXT,
+            ExpandAll,
+        ),
+        (
+            "project_panel.collapse_all",
+            "Collapse All Folders",
+            KEY_CONTEXT,
+            CollapseAll,
+        ),
+        (
+            "project_panel.toggle_ignored",
+            "Toggle Ignored Files",
+            KEY_CONTEXT,
+            ToggleIgnored,
+        ),
+        ("project_panel.refresh", "Refresh", KEY_CONTEXT, Refresh),
     ];
     let mut registry = Registry::new();
     for (id, title, context, op) in commands {
@@ -1162,6 +1217,13 @@ impl ProjectPanel {
 mod ops;
 
 pub(crate) use ops::running;
+
+#[path = "project_panel_nav.rs"]
+mod nav;
+
+#[cfg(test)]
+#[path = "project_panel_nav_tests.rs"]
+mod nav_tests;
 
 #[cfg(test)]
 #[path = "project_panel_hover_tests.rs"]

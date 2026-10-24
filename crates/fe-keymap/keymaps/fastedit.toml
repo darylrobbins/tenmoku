@@ -1025,6 +1025,36 @@ keys = "g y"
 command = "project_panel.copy_path"
 context = "project_panel && vim"
 
+# Project tree: nvim-tree's o / E / W / H / refresh. `o` toggles a folder
+# or opens a file, as `enter` does; `E` expands every folder (up to a
+# limit), `W` collapses them all and `H` lists ignored entries or stops.
+# nvim-tree's `R` refreshes, but here `R` renames (netrw's alias, above), so
+# refresh is `g r`.
+[[bindings]]
+keys = "o"
+command = "project_panel.toggle"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-e"
+command = "project_panel.expand_all"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-w"
+command = "project_panel.collapse_all"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-h"
+command = "project_panel.toggle_ignored"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "g r"
+command = "project_panel.refresh"
+context = "project_panel && vim"
+
 # Find references' results, when they have focus.
 [[bindings]]
 keys = "up"
