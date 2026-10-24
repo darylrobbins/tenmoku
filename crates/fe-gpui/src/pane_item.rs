@@ -643,6 +643,7 @@ impl EditorView {
         if current.is_none() || current != Some(language.unwrap_or("")) {
             self.set_language(language, cx);
         }
+        self.language_chosen = false;
         cx.notify();
     }
 

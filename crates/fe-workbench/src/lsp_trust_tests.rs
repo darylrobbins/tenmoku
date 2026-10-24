@@ -51,3 +51,6 @@ mod lenses;
 
 #[path = "lsp_lens_references_tests.rs"]
 mod lens_references;
+
+#[path = "lsp_grammarless_tests.rs"]
+mod grammarless;

@@ -43,6 +43,8 @@
 //!   (a root that fails, at the next save of any shown buffer).
 //! - **Buffers.** Once a frame, after the draw, every buffer an editor
 //!   shows, with a file and a language, is opened on the manager once,
+//!   its language fe-syntax's name for it or, for a file fe-syntax has no
+//!   language for, its extension ([`routed_language`]),
 //!   however many panes show it, and closed when no view of it is left. Path aliases of one file (`src/main.rs`, `src/../src/main.rs`)
 //!   are separate buffers but one server document: the first to open owns
 //!   it, the others send nothing, and when the owner closes, a remaining
@@ -106,6 +108,7 @@
 //!   can't be preempted, and its server may outlive fastedit.
 
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::{HashMap, HashSet},
     fs,
@@ -627,14 +630,36 @@ fn server_name(manager: &LspManager, language: Option<&str>) -> Option<String> {
     manager.route_for(language?)
 }
 
+/// The language `view`'s buffer is routed to a server by: fe-syntax's name
+/// for its grammar, or, for a file fe-syntax has no language for, its
+/// extension in lowercase, which a server's `languages` may list (a
+/// `[lsp.servers.zls]` with `languages = ["zig"]` takes `.zig` files).
+/// `None` while its language loads, and for plain text otherwise: a file
+/// fe-syntax has a language for but shown as plain text isn't routed, nor
+/// is one set to plain text by hand.
+fn routed_language(view: &fe_gpui::EditorView) -> Option<Cow<'static, str>> {
+    if let Some(syntax) = view.syntax() {
+        return Some(Cow::Borrowed(syntax.language().name()));
+    }
+    if view.is_loading_language() || view.is_language_chosen() {
+        return None;
+    }
+    let path = view.model().path()?;
+    if fe_syntax::language_name_for_path(path).is_some() {
+        return None;
+    }
+    let extension = path.extension()?.to_str()?;
+    Some(Cow::Owned(extension.to_ascii_lowercase()))
+}
+
 /// A buffer opened on the manager.
 struct Document {
     /// Its file, resolved.
     path: PathBuf,
     /// The name of the server its language is handled by, if any.
     server_name: Option<String>,
-    /// fe-syntax's name for it.
-    language: &'static str,
+    /// fe-syntax's name for it, or its extension: see [`routed_language`].
+    language: Cow<'static, str>,
     /// The server it went to, kept after the server stops.
     server: Option<ServerId>,
     /// The folder its server runs in, or would: the window root for a file
@@ -1416,12 +1441,12 @@ impl Workbench {
         // Each shown buffer's language, by its first view (the one that
         // opens it), for finding an alias that can take over a released
         // path.
-        let mut languages: HashMap<BufferId, Option<&'static str>> = HashMap::new();
+        let mut languages: HashMap<BufferId, Option<Cow<'static, str>>> = HashMap::new();
         for editor in &editors {
             let view = editor.read(cx);
             languages
                 .entry(view.model().buffer().id())
-                .or_insert_with(|| view.syntax().map(|syntax| syntax.language().name()));
+                .or_insert_with(|| routed_language(view));
         }
         // Whether `alias` can open `route`'s path: shown, resolved to it,
         // not open, and in a language that server handles.
@@ -1435,7 +1460,7 @@ impl Workbench {
                 && resolved.get(&alias).and_then(Option::as_ref) == Some(&route.1)
                 && languages
                     .get(&alias)
-                    .is_some_and(|&language| server_name(manager, language) == route.0)
+                    .is_some_and(|language| server_name(manager, language.as_deref()) == route.0)
         };
         // Trust grants, settings reloads and a server's closing documents
         // move them on the manager by themselves: owners are taken anew
@@ -1485,10 +1510,10 @@ impl Workbench {
                 to_resolve.push((buffer, path.to_owned()));
                 to_follow.push(editor.clone());
             }
-            let language = view.syntax().map(|syntax| syntax.language().name());
-            match (documents.get(&buffer), language) {
+            let language = routed_language(view);
+            match (documents.get(&buffer), &language) {
                 _ if moved => {}
-                (Some(document), Some(language)) if document.language == language => continue,
+                (Some(document), Some(language)) if &document.language == language => continue,
                 (Some(_), _) if view.is_loading_language() => continue,
                 (None, None) => continue,
                 _ => {}
@@ -1522,7 +1547,7 @@ impl Workbench {
                 continue;
             };
             let path = path.clone();
-            let server_name = server_name(&manager, Some(language));
+            let server_name = server_name(&manager, Some(&language));
             let route: Route = (server_name.clone(), path.clone());
             // A server has one document per path: a buffer that is an alias
             // of a file owned there waits for its owner to close.
@@ -1557,7 +1582,7 @@ impl Workbench {
             // document's: `manager.close` above left nothing for `open` to
             // close first.
             lock(&lsp.asked).take();
-            let opened = manager.open(root, buffer, text, version, synced, &path, language);
+            let opened = manager.open(root, buffer, text, version, synced, &path, &language);
             let server = opened.unwrap_or_else(|error| {
                 log::warn!("{}: {error}", path.display());
                 None

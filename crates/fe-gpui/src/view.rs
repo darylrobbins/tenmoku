@@ -109,6 +109,9 @@ pub struct EditorView {
     pub(crate) syntax: Option<SyntaxDriver<Task<()>>>,
     /// The language loading in the background.
     language_task: Option<Task<()>>,
+    /// Whether the language was set by hand ([`EditorView::set_language`])
+    /// rather than detected from the path and first lines.
+    pub(crate) language_chosen: bool,
     /// Injected languages loading in the background.
     injected_task: Option<Task<()>>,
     /// Runs just before the view takes the injected languages a frame
@@ -381,6 +384,7 @@ impl EditorView {
             last_primary: None,
             syntax: None,
             language_task: None,
+            language_chosen: false,
             injected_task: None,
             #[cfg(test)]
             before_taking_missing: None,
@@ -620,6 +624,7 @@ impl EditorView {
     /// language not loaded yet loads in the background, with the buffer
     /// plain until it's ready.
     pub fn set_language(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
+        self.language_chosen = true;
         // Dropping the driver and the load cancels them, so neither can
         // install anything for the old language.
         self.syntax = None;
@@ -665,6 +670,13 @@ impl EditorView {
     /// in the background, the buffer plain text until it's ready.
     pub fn is_loading_language(&self) -> bool {
         self.language_task.is_some()
+    }
+
+    /// Whether the language, plain text included, was set by
+    /// [`EditorView::set_language`] since it was last detected (as the view
+    /// opened, or after a Save As): a language picked by hand.
+    pub fn is_language_chosen(&self) -> bool {
+        self.language_chosen
     }
 
     pub fn model(&self) -> &EditorModel {
