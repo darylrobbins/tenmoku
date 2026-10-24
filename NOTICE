@@ -24,6 +24,22 @@ VS Code (colour values, adapted in crates/fe-config/themes/vscode-2026-light.tom
 Copyright (c) Microsoft Corporation.
 Licensed under the MIT License.
 
+Catppuccin for VS Code (colour values, adapted in crates/fe-config/themes/catppuccin-latte.toml)
+Copyright (c) 2021 Catppuccin.
+Licensed under the MIT License.
+
+Catppuccin for VS Code (colour values, adapted in crates/fe-config/themes/catppuccin-frappe.toml)
+Copyright (c) 2021 Catppuccin.
+Licensed under the MIT License.
+
+Catppuccin for VS Code (colour values, adapted in crates/fe-config/themes/catppuccin-macchiato.toml)
+Copyright (c) 2021 Catppuccin.
+Licensed under the MIT License.
+
+Catppuccin for VS Code (colour values, adapted in crates/fe-config/themes/catppuccin-mocha.toml)
+Copyright (c) 2021 Catppuccin.
+Licensed under the MIT License.
+
 VS Code (the minimap's prebaked character samples, from
 src/vs/editor/browser/viewParts/minimap/minimapPreBaked.ts, adapted in
 crates/fe-gpui/src/element/minimap_glyphs.rs)

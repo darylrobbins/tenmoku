@@ -37,13 +37,20 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
         .position(|&key| key == "indent_guide_active")
         .unwrap();
     assert_eq!(EditorColors::KEYS[at + 1..at + 5], KEYS);
-    let want: [(&str, [u32; 4]); 6] = [
+    let want: [(&str, [u32; 4]); 10] = [
         ("vscode-2026-dark", [0x121314FF, 0, 0x191B1D4D, 0x2A2D2EFF]),
         (
             "vscode-dark-modern",
             [0x1F1F1FFF, 0, 0x000000FF, 0x2A2D2EFF],
         ),
         ("vscode-2026-light", [0xFFFFFFFF, 0, 0, 0xF0F0F0FF]),
+        ("catppuccin-latte", [0xEFF1F5FF, 0, 0xDCE0E8FF, 0xCCD0DAFF]),
+        ("catppuccin-frappe", [0x303446FF, 0, 0x232634FF, 0x414559FF]),
+        (
+            "catppuccin-macchiato",
+            [0x24273AFF, 0, 0x181926FF, 0x363A4FFF],
+        ),
+        ("catppuccin-mocha", [0x1E1E2EFF, 0, 0x11111BFF, 0x313244FF]),
         ("fastedit-dark", [0x16181DFF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("fastedit-ember", [0x1C1814FF, 0, 0x000000FF, 0x2A2D2EFF]),
         ("fastedit-light", [0xFFFFFFFF, 0, 0xDDDDDDFF, 0xF0F0F0FF]),

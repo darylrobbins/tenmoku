@@ -34,7 +34,7 @@ fn every_bundled_theme_sets_every_minimap_key() {
     }
     // Appended at the end of the table.
     assert_eq!(EditorColors::KEYS[EditorColors::KEYS.len() - 11..], KEYS);
-    assert_eq!(bundled_themes().len(), 6);
+    assert_eq!(bundled_themes().len(), 10);
     for theme in bundled_themes() {
         let file = theme.file();
         let editor = &file.extensions["editor"];
@@ -74,6 +74,11 @@ fn minimap_colours_are_vscode_s() {
             // editor.selectionBackground.
             ("vscode-2026-dark", _) => [0xA8A9AA85, 0xA8A9AA90, 0xA8A9AA9C, 0x276782DD],
             ("vscode-2026-light", _) => [0x646464C0, 0x646464D0, 0x646464E0, 0x0069CC40],
+            // Catppuccin sets minimapSlider.* and minimap.selectionHighlight.
+            ("catppuccin-latte", _) => [0x8839EF33, 0x8839EF66, 0x8839EF99, 0xACB0BEBF],
+            ("catppuccin-frappe", _) => [0xCA9EE633, 0xCA9EE666, 0xCA9EE699, 0x626880BF],
+            ("catppuccin-macchiato", _) => [0xC6A0F633, 0xC6A0F666, 0xC6A0F699, 0x5B6078BF],
+            ("catppuccin-mocha", _) => [0xCBA6F733, 0xCBA6F766, 0xCBA6F799, 0x585B70BF],
             // scrollbarSlider.* at half alpha, editor.selectionBackground.
             (_, Appearance::Dark) => [0x79797933, 0x64646459, 0xBFBFBF33, 0x264F78FF],
             (_, Appearance::Light) => [0x64646433, 0x64646459, 0x0000004D, 0xADD6FFFF],

@@ -1,0 +1,195 @@
+# Catppuccin Frappe: Catppuccin for VS Code's Frappé flavour (dark), on
+# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# through kiln's semantic token groups, not per component.
+# Upstream spells the flavour Frappé; the title here is plain ASCII.
+#
+# Adapted from catppuccin/vscode's
+# `packages/catppuccin-vsc/themes/frappe.json`, the theme file the extension's
+# build writes. It isn't committed; this is the one in the published
+# Catppuccin.catppuccin-vsc 3.19.0 package, at
+# commit befc9e6fc41980f4241408f7049755d47c06ff45
+# (tag catppuccin-vsc-v3.19.0).
+#
+# Copyright (c) 2021 Catppuccin. Licensed under the MIT License; the notice is
+# in this repository's NOTICE.
+#
+# Values the theme sets none for are chosen from the flavour's palette: hint
+# (teal), text.muted (subtext0), the jump labels and the vim mode segments.
+# The minimap's background, warning, gutter, error and find match marks are
+# the editor's and VS Code's defaults (see below), as every bundled theme's
+# are, not the theme's translucent minimap.* and minimapGutter.* values.
+#
+# Scopes with no highlight name are left out: font styles (italic
+# functions, types, comments and parameters), markup.bold/italic/
+# strikethrough/quote, the diff scopes, the regexp scopes, headings 2 to 6
+# (heading 1's colour is markup.heading's) and the CSS-only and
+# language-specific scope variants. Of the semanticTokenColors only
+# enumMember is used (`constant.enum_member`): boolean, number, selfKeyword
+# and heading repeat their scopes' colours, variable.defaultLibrary has no
+# highlight name and the rest are language-specific.
+#
+# A highlight name that several scopes colour differently takes the general
+# scope's colour: `constant.builtin` takes the booleans' (constant.language.
+# boolean and the semantic `boolean`), `module` the namespaces',
+# `type.parameter` entity.name.type's, as VS Code colours a type parameter
+# like its type, and `punctuation.special` and `string.special` take
+# punctuation's and string's. `label`, `property` and `variable` have no
+# scope of their own and take the text colour.
+#
+# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "Catppuccin Frappe"
+appearance = "dark"
+
+[surface]
+background = "#303446"
+panel = "#292C3C"
+raised = "#292C3C"
+overlay = "#292C3C80"
+
+[text]
+primary = "#C6D0F5"
+muted = "#A5ADCE"
+disabled = "#737994"
+accent = "#8CAAEE"
+on_accent = "#232634"
+
+[border]
+default = "#626880"
+subtle = "#51576D"
+focused = "#CA9EE6"
+
+[accent]
+base = "#CA9EE6"
+hover = "#D9BAED"
+subtle = "#CA9EE666"
+
+[state]
+hover = "#41455980"
+pressed = "#414559"
+selected = "#414559"
+selected_inactive = "#414559"
+focus_ring = "#CA9EE6"
+drop_target = "#CA9EE633"
+dirty = "#E5C890"
+
+[status]
+error = "#E78284"
+warning = "#EF9F76"
+info = "#8CAAEE"
+success = "#A6D189"
+
+[list]
+indent_guide = "#949CBB"
+chevron = "#CA9EE6"
+icon = "#CA9EE6"
+folder_icon = "#CA9EE6"
+
+[tab]
+active = "#303446"
+inactive = "#292C3C"
+active_text = "#CA9EE6"
+
+[scrollbar]
+thumb = "#62688080"
+thumb_hover = "#737994"
+
+[editor]
+background = "#303446"
+foreground = "#C6D0F5"
+gutter_foreground = "#838BA7"
+gutter_active_foreground = "#CA9EE6"
+active_line = "#C6D0F512"
+selection = "#949CBB40"
+cursor = "#F2D5CF"
+error = "#E78284"
+warning = "#EF9F76"
+information = "#8CAAEE"
+hint = "#81C8BE"
+popover_background = "#292C3C"
+popover_border = "#626880"
+# The jump labels: a live label on pink, a preview on teal, the glyph crust.
+jump_label = "#F4B8E4"
+jump_label_preview = "#81C8BE"
+jump_label_foreground = "#232634"
+change_added = "#A6D189"
+change_modified = "#E5C890"
+change_deleted = "#E78284"
+indent_guide = "#51576D"
+indent_guide_active = "#626880"
+# Sticky scroll: the band of pinned scope headers at the top of the editor,
+# the line under it when a theme shows one, the shadow fading down from it and
+# a row under the pointer. The theme sets editorStickyScrollHover.background;
+# the rest are VS Code's defaults: editorStickyScroll.background (the
+# editor's), .border (none) and .shadow (scrollbar.shadow).
+sticky_scroll_background = "#303446"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#232634"
+sticky_scroll_hover = "#414559"
+# The vim mode segments: normal blue, insert green, visual mauve, replace red,
+# command peach, the label crust.
+vim_mode_normal = "#8CAAEE"
+vim_mode_insert = "#A6D189"
+vim_mode_visual = "#CA9EE6"
+vim_mode_replace = "#E78284"
+vim_mode_command = "#EF9F76"
+vim_mode_foreground = "#232634"
+# editorBracketHighlight.foreground1 to 3.
+bracket_1 = "#E78284"
+bracket_2 = "#EF9F76"
+bracket_3 = "#E5C890"
+# The minimap. The slider is the theme's minimapSlider.* and the selection
+# mark its minimap.selectionHighlight. The rest are VS Code's defaults:
+# minimap.background is the editor's, minimap.errorHighlight #FF1212B3,
+# minimap.warningHighlight editorWarning.foreground and minimapGutter.*
+# editorGutter.*. The find match mark is the overview ruler's opaque
+# #D18616, so a one-row match shows.
+minimap_background = "#303446"
+minimap_slider = "#CA9EE633"
+minimap_slider_hover = "#CA9EE666"
+minimap_slider_active = "#CA9EE699"
+minimap_selection = "#626880BF"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#EF9F76"
+minimap_gutter_added = "#A6D189"
+minimap_gutter_modified = "#E5C890"
+minimap_gutter_deleted = "#E78284"
+
+# Every name fastedit Dark colours is listed, since a theme's table is laid
+# over Dark's.
+[syntax]
+"attribute" = "#E5C890"
+"comment" = "#949CBB"
+"constant" = "#EF9F76"
+"constant.builtin" = "#EF9F76"
+"constant.enum_member" = "#81C8BE"
+"constructor" = "#E5C890"
+"escape" = "#F4B8E4"
+"function" = "#8CAAEE"
+"function.builtin" = "#E78284"
+"function.macro" = "#8CAAEE"
+"keyword" = "#CA9EE6"
+"label" = "#C6D0F5"
+"markup.heading" = "#E78284"
+"markup.link" = "#BABBF1"
+"markup.link.url" = "#8CAAEE"
+"markup.raw" = "#A6D189"
+"module" = "#E5C890"
+"number" = "#EF9F76"
+"operator" = "#81C8BE"
+"property" = "#C6D0F5"
+"punctuation" = "#949CBB"
+"punctuation.special" = "#949CBB"
+"string" = "#A6D189"
+"string.special" = "#A6D189"
+"string.special.key" = "#8CAAEE"
+"tag" = "#8CAAEE"
+"type" = "#E5C890"
+"type.builtin" = "#CA9EE6"
+"type.parameter" = "#E5C890"
+"variable" = "#C6D0F5"
+"variable.builtin" = "#E78284"
+"variable.parameter" = "#EA999C"

@@ -1,0 +1,196 @@
+# Catppuccin Latte: Catppuccin for VS Code's Latte flavour (light), on
+# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# through kiln's semantic token groups, not per component.
+#
+# Adapted from catppuccin/vscode's
+# `packages/catppuccin-vsc/themes/latte.json`, the theme file the extension's
+# build writes. It isn't committed; this is the one in the published
+# Catppuccin.catppuccin-vsc 3.19.0 package, at
+# commit befc9e6fc41980f4241408f7049755d47c06ff45
+# (tag catppuccin-vsc-v3.19.0).
+#
+# Copyright (c) 2021 Catppuccin. Licensed under the MIT License; the notice is
+# in this repository's NOTICE.
+#
+# Values the theme sets none for are chosen from the flavour's palette: hint
+# (teal), text.muted (subtext0), the jump labels and the vim mode segments.
+# The minimap's background, warning, gutter, error and find match marks are
+# the editor's and VS Code's defaults (see below), as every bundled theme's
+# are, not the theme's translucent minimap.* and minimapGutter.* values.
+#
+# Scopes with no highlight name are left out: font styles (italic
+# functions, types, comments and parameters), markup.bold/italic/
+# strikethrough/quote, the diff scopes, the regexp scopes, headings 2 to 6
+# (heading 1's colour is markup.heading's) and the CSS-only and
+# language-specific scope variants. Of the semanticTokenColors only
+# enumMember is used (`constant.enum_member`): boolean, number, selfKeyword
+# and heading repeat their scopes' colours, variable.defaultLibrary has no
+# highlight name and the rest are language-specific.
+#
+# A highlight name that several scopes colour differently takes the general
+# scope's colour: `constant.builtin` takes the booleans' (constant.language.
+# boolean and the semantic `boolean`), `module` the namespaces',
+# `type.parameter` entity.name.type's, as VS Code colours a type parameter
+# like its type, and `punctuation.special` and `string.special` take
+# punctuation's and string's. `label`, `property` and `variable` have no
+# scope of their own and take the text colour.
+#
+# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "light"`.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "Catppuccin Latte"
+appearance = "light"
+
+[surface]
+background = "#EFF1F5"
+panel = "#E6E9EF"
+raised = "#E6E9EF"
+overlay = "#E6E9EF80"
+
+[text]
+primary = "#4C4F69"
+muted = "#6C6F85"
+disabled = "#9CA0B0"
+accent = "#1E66F5"
+on_accent = "#DCE0E8"
+
+[border]
+default = "#ACB0BE"
+subtle = "#BCC0CC"
+focused = "#8839EF"
+
+[accent]
+base = "#8839EF"
+hover = "#9C5AF2"
+subtle = "#8839EF66"
+
+[state]
+hover = "#CCD0DA80"
+pressed = "#CCD0DA"
+selected = "#CCD0DA"
+selected_inactive = "#CCD0DA"
+focus_ring = "#8839EF"
+drop_target = "#8839EF33"
+dirty = "#DF8E1D"
+
+[status]
+error = "#D20F39"
+warning = "#FE640B"
+info = "#1E66F5"
+success = "#40A02B"
+
+[list]
+indent_guide = "#7C7F93"
+chevron = "#8839EF"
+icon = "#8839EF"
+folder_icon = "#8839EF"
+
+[tab]
+active = "#EFF1F5"
+inactive = "#E6E9EF"
+active_text = "#8839EF"
+
+[scrollbar]
+thumb = "#ACB0BE80"
+thumb_hover = "#9CA0B0"
+
+[editor]
+background = "#EFF1F5"
+foreground = "#4C4F69"
+gutter_foreground = "#8C8FA1"
+gutter_active_foreground = "#8839EF"
+active_line = "#4C4F6912"
+selection = "#7C7F934D"
+cursor = "#DC8A78"
+error = "#D20F39"
+warning = "#FE640B"
+information = "#1E66F5"
+hint = "#179299"
+popover_background = "#E6E9EF"
+popover_border = "#ACB0BE"
+# The jump labels: a live label on mauve, a preview on teal, the glyph base.
+# Latte's pink is too light for a glyph to read on it.
+jump_label = "#8839EF"
+jump_label_preview = "#179299"
+jump_label_foreground = "#EFF1F5"
+change_added = "#40A02B"
+change_modified = "#DF8E1D"
+change_deleted = "#D20F39"
+indent_guide = "#BCC0CC"
+indent_guide_active = "#ACB0BE"
+# Sticky scroll: the band of pinned scope headers at the top of the editor,
+# the line under it when a theme shows one, the shadow fading down from it and
+# a row under the pointer. The theme sets editorStickyScrollHover.background;
+# the rest are VS Code's defaults: editorStickyScroll.background (the
+# editor's), .border (none) and .shadow (scrollbar.shadow).
+sticky_scroll_background = "#EFF1F5"
+sticky_scroll_border = "#00000000"
+sticky_scroll_shadow = "#DCE0E8"
+sticky_scroll_hover = "#CCD0DA"
+# The vim mode segments: normal blue, insert teal, visual mauve, replace red,
+# command maroon, the label base. Latte's green and peach are too light
+# for a label to read on them.
+vim_mode_normal = "#1E66F5"
+vim_mode_insert = "#179299"
+vim_mode_visual = "#8839EF"
+vim_mode_replace = "#D20F39"
+vim_mode_command = "#E64553"
+vim_mode_foreground = "#EFF1F5"
+# editorBracketHighlight.foreground1 to 3.
+bracket_1 = "#D20F39"
+bracket_2 = "#FE640B"
+bracket_3 = "#DF8E1D"
+# The minimap. The slider is the theme's minimapSlider.* and the selection
+# mark its minimap.selectionHighlight. The rest are VS Code's defaults:
+# minimap.background is the editor's, minimap.errorHighlight #FF1212B3,
+# minimap.warningHighlight editorWarning.foreground and minimapGutter.*
+# editorGutter.*. The find match mark is the overview ruler's opaque
+# #D18616, so a one-row match shows.
+minimap_background = "#EFF1F5"
+minimap_slider = "#8839EF33"
+minimap_slider_hover = "#8839EF66"
+minimap_slider_active = "#8839EF99"
+minimap_selection = "#ACB0BEBF"
+minimap_find_match = "#D18616"
+minimap_error = "#FF1212B3"
+minimap_warning = "#FE640B"
+minimap_gutter_added = "#40A02B"
+minimap_gutter_modified = "#DF8E1D"
+minimap_gutter_deleted = "#D20F39"
+
+# Every name fastedit Light colours is listed, since a theme's table is laid
+# over Light's.
+[syntax]
+"attribute" = "#DF8E1D"
+"comment" = "#7C7F93"
+"constant" = "#FE640B"
+"constant.builtin" = "#FE640B"
+"constant.enum_member" = "#179299"
+"constructor" = "#DF8E1D"
+"escape" = "#EA76CB"
+"function" = "#1E66F5"
+"function.builtin" = "#D20F39"
+"function.macro" = "#1E66F5"
+"keyword" = "#8839EF"
+"label" = "#4C4F69"
+"markup.heading" = "#D20F39"
+"markup.link" = "#7287FD"
+"markup.link.url" = "#1E66F5"
+"markup.raw" = "#40A02B"
+"module" = "#DF8E1D"
+"number" = "#FE640B"
+"operator" = "#179299"
+"property" = "#4C4F69"
+"punctuation" = "#7C7F93"
+"punctuation.special" = "#7C7F93"
+"string" = "#40A02B"
+"string.special" = "#40A02B"
+"string.special.key" = "#1E66F5"
+"tag" = "#1E66F5"
+"type" = "#DF8E1D"
+"type.builtin" = "#8839EF"
+"type.parameter" = "#DF8E1D"
+"variable" = "#4C4F69"
+"variable.builtin" = "#D20F39"
+"variable.parameter" = "#E64553"
