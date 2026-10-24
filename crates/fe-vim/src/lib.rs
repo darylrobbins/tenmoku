@@ -853,6 +853,121 @@ pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
 pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc};
 
+/// Every frame [`VimState::stamp`] can make of `frame`, an editor's frame
+/// with none of vim's keys: one for each mode and what can be pending in it
+/// (`vim.pending_kind`, `remap` while keys are held for a longer map, in the
+/// modes maps have), each with and without `vim.replace_with_register`,
+/// `vim.insert_pending` (but in insert and replace mode, which `<C-o>`
+/// leaves) and `vim.recording`, for each register `q` records into.
+/// `operator_pending` always has something pending, insert, replace and
+/// `cmdline` mode never do, and `vim.visual` and `vim.cmdline_kind` go with
+/// their modes. It's how the Keyboard Shortcuts tab finds the bindings that
+/// clash where vim can be, and only there.
+pub fn frames(frame: &fe_command::ContextFrame) -> Vec<fe_command::ContextFrame> {
+    use PendingKind as K;
+    let has = |kind: &K| match kind {
+        K::Z => feature::has_z(),
+        K::BigZ => feature::has_big_z(),
+        K::Bracket => feature::has_bracket(),
+        _ => true,
+    };
+    // A count, `g`, `f`, `'` and the jump wait in every mode keys go to the
+    // reducer in; the rest as `reducer::step` takes them. Only surround's
+    // keys wait on a feature's own prefix: `ds`, `cs`, `ys{motion}`, and
+    // `S` in a visual mode.
+    let waits = |own: &[K]| -> Vec<Option<&'static str>> {
+        let kinds = [K::Count, K::G, K::Find, K::Mark, K::Jump]
+            .iter()
+            .chain(own);
+        (kinds.filter(|kind| has(kind)))
+            .map(|kind| Some(kind.name()))
+            .chain([Some("remap")])
+            .collect()
+    };
+    let normal = [
+        K::Register,
+        K::Z,
+        K::BigZ,
+        K::Bracket,
+        K::Replace,
+        K::SetMark,
+    ];
+    let operator = [K::Operator, K::Z, K::Bracket, K::TextObject];
+    let operator = [&operator[..], &[K::Feature("surround")]].concat();
+    let visual = [
+        K::Register,
+        K::Z,
+        K::Bracket,
+        K::TextObject,
+        K::Replace,
+        K::SetMark,
+    ];
+    let visual = [&visual[..], &[K::Feature("surround")]].concat();
+    let idle = |waits: Vec<_>| [None].into_iter().chain(waits).collect::<Vec<_>>();
+    // Each mode's name, its command line's kind, what can be pending and
+    // whether `<C-o>`'s command can be under way in it.
+    let mut modes = vec![
+        ("normal", None, idle(waits(&normal)), true),
+        ("operator_pending", None, waits(&operator), true),
+        ("insert", None, vec![None], false),
+        ("replace", None, vec![None], false),
+    ];
+    for mode in ["visual", "visual_line", "visual_block"] {
+        modes.push((mode, None, idle(waits(&visual)), true));
+    }
+    for kind in [
+        CommandLineKind::SearchForward,
+        CommandLineKind::SearchBackward,
+        CommandLineKind::Ex,
+    ] {
+        modes.push(("cmdline", Some(kind.name()), vec![None], true));
+    }
+    let recordings = [None].into_iter().chain(('a'..='z').map(Some));
+    let recordings: Vec<_> = recordings.collect();
+    let mut frames = Vec::new();
+    for (mode, cmdline_kind, pending, one_command) in modes {
+        let mut base = frame.clone().set("vim.mode", mode);
+        if mode.starts_with("visual") {
+            base = base.flag("vim.visual");
+        }
+        if let Some(kind) = cmdline_kind {
+            base = base.set("vim.cmdline_kind", kind);
+        }
+        for kind in pending {
+            let pending = match kind {
+                Some(kind) => base
+                    .clone()
+                    .flag("vim.pending")
+                    .set("vim.pending_kind", kind),
+                None => base.clone(),
+            };
+            for (replace_with_register, insert_pending) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                if insert_pending && !one_command {
+                    continue;
+                }
+                let mut flagged = pending.clone();
+                if replace_with_register {
+                    flagged = flagged.flag("vim.replace_with_register");
+                }
+                if insert_pending {
+                    flagged = flagged.flag("vim.insert_pending");
+                }
+                for recording in &recordings {
+                    frames.push(match recording {
+                        Some(register) => {
+                            flagged.clone().set("vim.recording", register.to_string())
+                        }
+                        None => flagged.clone(),
+                    });
+                }
+            }
+        }
+    }
+    frames
+}
+
 /// Runs `invocation` through `registry`, as a host runs each of vim's
 /// commands: [`fe_command::Registry::dispatch`], then, if the command was
 /// the one `<C-o>` left insert mode for and it's done, back to insert mode
@@ -871,3 +986,193 @@ pub fn dispatch(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod frames_tests {
+    use std::sync::Arc;
+
+    use fe_command::ContextFrame;
+
+    use crate::{HeadlessVim, Remap, RemapMode, RemapSet, frames};
+
+    /// Key sequences reaching each mode and what can be pending in it, a
+    /// key at a time; `j` waits for the map `jk`.
+    const SEQUENCES: &[&[&str]] = &[
+        &["2"],
+        &["\""],
+        &["g"],
+        &["z"],
+        &["Z"],
+        &["["],
+        &["f"],
+        &["r"],
+        &["m"],
+        &["'"],
+        &["j"],
+        &["\"", "a"],
+        &["q"],
+        &["g", "s"],
+        &["d", "2"],
+        &["d", "g"],
+        &["d", "g", "s"],
+        &["d", "z"],
+        &["d", "["],
+        &["d", "f"],
+        &["d", "i"],
+        &["d", "'"],
+        &["d", "s"],
+        &["d", "j"],
+        &["i"],
+        &["R"],
+        &["/"],
+        &["?"],
+        &[":"],
+    ];
+
+    /// The keys entering each visual mode.
+    const VISUAL: [&str; 3] = ["v", "V", "<C-v>"];
+
+    /// The keys after a visual mode's that wait.
+    const IN_VISUAL: &[&[&str]] = &[
+        &["2"],
+        &["\""],
+        &["g"],
+        &["g", "s"],
+        &["z"],
+        &["["],
+        &["f"],
+        &["i"],
+        &["r"],
+        &["m"],
+        &["'"],
+        &["S"],
+        &["j"],
+    ];
+
+    fn vim(replace_with_register: bool) -> HeadlessVim {
+        let mut vim = HeadlessVim::new("one two\nthree (four) five\nsix\n", (0, 0));
+        vim.set_replace_with_register(replace_with_register);
+        let map = Remap {
+            modes: vec![
+                RemapMode::Normal,
+                RemapMode::Visual,
+                RemapMode::OperatorPending,
+            ],
+            from: "jk".to_owned(),
+            to: "<Esc>".to_owned(),
+            recursive: false,
+        };
+        let (set, issues) = RemapSet::new(&[map], "\\");
+        assert!(issues.is_empty(), "{issues:?}");
+        vim.state_mut().set_remaps(Arc::new(set));
+        vim
+    }
+
+    fn stamp(vim: &HeadlessVim) -> ContextFrame {
+        vim.state().stamp(ContextFrame::new("editor"))
+    }
+
+    /// Every frame reached by `keys` after each of the starts: recording
+    /// into `a` or not, after `<C-o>` from insert mode or not, with `gr`
+    /// ReplaceWithRegister's or not.
+    fn reached(keys: &[&str], into: &mut Vec<ContextFrame>) {
+        for replace_with_register in [false, true] {
+            for start in [
+                &[][..],
+                &["q", "a"],
+                &["i", "<C-o>"],
+                &["q", "a", "i", "<C-o>"],
+            ] {
+                let mut vim = vim(replace_with_register);
+                for key in start.iter().chain(keys) {
+                    vim.feed(key).unwrap();
+                    let frame = stamp(&vim);
+                    if !into.contains(&frame) {
+                        into.push(frame);
+                    }
+                }
+            }
+        }
+    }
+
+    fn key(frame: &ContextFrame) -> String {
+        format!("{frame:?}")
+    }
+
+    #[test]
+    fn frames_are_exactly_the_stamps() {
+        let mut reached_frames = vec![stamp(&vim(false)), stamp(&vim(true))];
+        for keys in SEQUENCES {
+            reached(keys, &mut reached_frames);
+        }
+        for visual in VISUAL {
+            for keys in IN_VISUAL {
+                let keys: Vec<&str> = [visual].into_iter().chain(keys.iter().copied()).collect();
+                reached(&keys, &mut reached_frames);
+            }
+        }
+        let mut reached_frames: Vec<String> = reached_frames.iter().map(key).collect();
+        reached_frames.sort();
+        reached_frames.dedup();
+        // Recording into another register than `a` is the same frame but
+        // for its name.
+        let mut listed: Vec<String> = (frames(&ContextFrame::new("editor")).iter())
+            .filter(|frame| {
+                frame
+                    .get("vim.recording")
+                    .is_none_or(|register| register == "a")
+            })
+            .map(key)
+            .collect();
+        listed.sort();
+        let missing: Vec<_> = (listed.iter())
+            .filter(|frame| !reached_frames.contains(frame))
+            .collect();
+        let unlisted: Vec<_> = (reached_frames.iter())
+            .filter(|frame| !listed.contains(frame))
+            .collect();
+        assert!(missing.is_empty(), "listed, never stamped: {missing:#?}");
+        assert!(unlisted.is_empty(), "stamped, not listed: {unlisted:#?}");
+    }
+
+    #[test]
+    fn frames_record_into_every_register() {
+        let listed = frames(&ContextFrame::new("editor"));
+        for register in ['a', 'q', 'z'] {
+            let mut vim = vim(false);
+            vim.feed(&format!("q{}", register.to_ascii_uppercase()))
+                .unwrap();
+            assert!(listed.contains(&stamp(&vim)), "{:?}", stamp(&vim));
+            vim.feed("v").unwrap();
+            assert!(listed.contains(&stamp(&vim)), "{:?}", stamp(&vim));
+        }
+    }
+
+    #[test]
+    fn a_walk_of_keys_stays_in_the_frames() {
+        // No `<CR>`, `@` or `Q`: nothing runs a line or plays a register.
+        const KEYS: &[&str] = &[
+            "d", "c", "y", ">", "g", "z", "Z", "[", "]", "f", "t", "i", "a", "r", "m", "'", "`",
+            "\"", "q", "v", "V", "<C-v>", "s", "S", "2", "0", "<Esc>", ":", "/", "?", "j", "k",
+            "h", "l", "x", "p", "u", "o", "O", "R", "<C-o>", "<BS>", "n",
+        ];
+        let listed: Vec<String> = frames(&ContextFrame::new("editor"))
+            .iter()
+            .map(key)
+            .collect();
+        let mut vim = vim(false);
+        let mut seed = 0x9e37_79b9_u32;
+        for _ in 0..20_000 {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let key_typed = KEYS[seed as usize % KEYS.len()];
+            let _ = vim.feed(key_typed);
+            let frame = stamp(&vim);
+            assert!(
+                listed.contains(&key(&frame)),
+                "after {key_typed}: {frame:?}"
+            );
+        }
+    }
+}

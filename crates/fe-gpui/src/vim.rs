@@ -1096,6 +1096,35 @@ fn named(key: &str) -> Option<VimKey> {
     })
 }
 
+/// [`EditorView::key_context_frames`], built.
+fn key_context_frames() -> Vec<fe_command::ContextFrame> {
+    let typing = [
+        crate::completion_menu::KEY_CONTEXT,
+        crate::view::ghost_text::KEY_CONTEXT,
+    ];
+    // `frame` with each subset of `flags`.
+    let with_each = |frame: fe_command::ContextFrame, flags: &[&str]| {
+        (0..1usize << flags.len())
+            .map(|set| {
+                (flags.iter().enumerate())
+                    .filter(|(bit, _)| set & (1 << bit) != 0)
+                    .fold(frame.clone(), |frame, (_, flag)| frame.flag(*flag))
+            })
+            .collect::<Vec<_>>()
+    };
+    let editor = fe_command::ContextFrame::new(crate::KEY_CONTEXT);
+    let mut frames = with_each(editor.clone(), &[&typing[..], &["proposal"]].concat());
+    for editor in with_each(editor.flag(ENABLED), &["proposal"]) {
+        for frame in fe_vim::frames(&editor) {
+            match frame.get("vim.mode") {
+                Some("insert" | "replace") => frames.extend(with_each(frame, &typing)),
+                _ => frames.push(frame),
+            }
+        }
+    }
+    frames
+}
+
 impl EditorView {
     /// The keyword completion vim has under way in this view, for the
     /// completion menu to show.
@@ -1113,6 +1142,21 @@ impl EditorView {
         let stack = stamp(stack, self.vim.as_ref());
         let stack = crate::completion_menu::stamp(stack, self.completion_shown());
         crate::view::ghost_text::stamp(stack, self.ghost_text_shown())
+    }
+
+    /// Every frame of an editor's a keystroke can be matched in
+    /// ([`Self::live_frame`]), for the Keyboard Shortcuts tab to find the
+    /// bindings that clash where they both apply: with vim off, with or
+    /// without the completion menu, a suggestion and an open hunk's
+    /// proposal; with vim on, each frame vim stamps ([`fe_vim::frames`])
+    /// with `vim.enabled`, with or without a proposal, and with or without
+    /// the menu and a suggestion in insert and replace mode, the only modes
+    /// that keep them. Built once: vim's keys don't change while the app
+    /// runs.
+    pub fn key_context_frames() -> &'static [fe_command::ContextFrame] {
+        static FRAMES: std::sync::LazyLock<Vec<fe_command::ContextFrame>> =
+            std::sync::LazyLock::new(key_context_frames);
+        &FRAMES
     }
 
     /// Creates the vim state when vim is on and drops it when it's off.

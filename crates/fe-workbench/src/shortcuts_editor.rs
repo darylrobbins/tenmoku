@@ -38,6 +38,7 @@
 //! layouts, and closes as any tab does.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     io::Write as _,
     ops::Range,
@@ -46,7 +47,7 @@ use std::{
 };
 
 use fe_command::{ContextFrame, ContextPredicate, ContextStack};
-use fe_gpui::commands::RunCommand;
+use fe_gpui::{EditorView, commands::RunCommand};
 use fe_keymap::{
     Binding, CommandInfo, DEFAULT, DEFAULT_KEYMAP_PATH, DefaultKeymap, KEYMAP_FILE, KEYMAP_HEADER,
     Keymap, KeymapEdit, KeymapIssue, KeymapLayer, ShortcutBinding, ShortcutIssue, ShortcutRow,
@@ -913,70 +914,131 @@ fn build_model(keymap: &Keymap, cx: &App) -> ShortcutsModel {
 /// [`Keymap::report_with`] in the contexts the workbench has, as the
 /// keymap's own contexts tell them: the workbench alone, an editor in it,
 /// and for each context a binding names, a context where each of its
-/// alternatives holds ([`witness`]), as `[workbench, terminal]` for `terminal`. A binding
-/// for `workbench` and one for `terminal` with the same keys clash there,
-/// where the terminal's wins; one for `project_panel` and one for `editor`
-/// never hold in one context, so don't.
+/// alternatives holds ([`witness`]), as `[workbench, terminal]` for `terminal`.
+/// An alternative that needs one of the editor's flags or keys
+/// ([`EditorView::key_context_frames`]), or rules some out with no other
+/// view named, holds in each frame an editor can have, innermost: an editor
+/// is in a view only where a binding says so (`DiffView && editor`), so
+/// `project_panel && !vim.enabled` holds in the panel alone. A binding for
+/// `workbench` and one for `terminal` with the same keys clash there, where
+/// the terminal's wins; one for `project_panel` and one for `editor` never
+/// hold in one context, so don't, nor one for `vim.visual` and one for
+/// `vim.mode == normal`.
 fn clashes(keymap: &Keymap) -> Vec<KeymapIssue> {
+    let mut predicates: Vec<&ContextPredicate> = Vec::new();
+    for context in (keymap.bindings().iter()).filter_map(|binding| binding.context.as_ref()) {
+        if !predicates.contains(&context) {
+            predicates.push(context);
+        }
+    }
+    let mut mentions = Mentions::default();
+    for predicate in &predicates {
+        mentions.add(predicate);
+    }
+    // The editor's keys, from every frame it can have: `vim.recording`, a
+    // key, is the editor's though a context names it as a flag.
+    let frames = EditorView::key_context_frames();
+    let mut editor_keys = BTreeSet::from([fe_gpui::KEY_CONTEXT]);
+    for frame in frames {
+        editor_keys.extend(frame.flags.iter().map(String::as_str));
+        editor_keys.extend(frame.values.keys().map(String::as_str));
+    }
+    let is_editor = |name: &str| editor_keys.contains(name);
+    let editors = mentions.project(frames);
     let workbench = ContextStack::new().with(ContextFrame::new(crate::KEY_CONTEXT));
     let editor = workbench
         .clone()
         .with(ContextFrame::new(fe_gpui::KEY_CONTEXT));
     let mut contexts = vec![workbench, editor];
-    let mut seen: Vec<&ContextPredicate> = Vec::new();
-    for context in keymap
-        .bindings()
-        .iter()
-        .filter_map(|binding| binding.context.as_ref())
-    {
-        if seen.contains(&context) {
-            continue;
-        }
-        seen.push(context);
+    for context in predicates {
         // A witness for each alternative: `settings_editor ||
         // shortcuts_editor` holds in either tab.
-        let stacks = (terms(context, false).into_iter())
-            .filter_map(|term| witness(&term))
-            .filter(|stack| context.eval(stack));
-        for stack in stacks.flat_map(with_editor_states) {
-            if !contexts.contains(&stack) {
-                contexts.push(stack);
+        for term in terms(context, false) {
+            let Some(stack) = witness(&term, is_editor) else {
+                continue;
+            };
+            let needs_editor = term.iter().any(|literal| {
+                matches!(literal, Literal::Has(_) | Literal::Is(..)) && is_editor(literal.name())
+            });
+            let names_editor = term.iter().any(|literal| is_editor(literal.name()));
+            let mut stacks = vec![stack.clone()];
+            if needs_editor || (names_editor && stack.frames().len() == 1) {
+                stacks.extend((editors.iter()).map(|editor| stack.clone().with(editor.clone())));
+            }
+            for stack in stacks.into_iter().filter(|stack| context.eval(stack)) {
+                if !contexts.contains(&stack) {
+                    contexts.push(stack);
+                }
             }
         }
     }
     keymap.report_with(&contexts)
 }
 
-/// The flags an editor's frame carries apart from vim's, which combine
-/// with any state of it: its completion menu shown, its ghost text, an
-/// open hunk's proposal (fe-gpui's `EditorView` key context).
-const EDITOR_FLAGS: [&str; 3] = ["completion", "ghost_text", "proposal"];
+/// The flags and the values of keys some binding's context names: an
+/// editor's frames that differ only in others hold for the same bindings.
+#[derive(Default)]
+struct Mentions<'a> {
+    flags: BTreeSet<&'a str>,
+    values: BTreeMap<&'a str, BTreeSet<&'a str>>,
+}
 
-/// `stack`, and if it has an editor's frame, each way of adding
-/// [`EDITOR_FLAGS`] to that frame: an editor showing completions in vim's
-/// insert mode is one context.
-fn with_editor_states(stack: ContextStack) -> Vec<ContextStack> {
-    let is_editor = |frame: &ContextFrame| frame.name == fe_gpui::KEY_CONTEXT;
-    let frames = stack.frames().to_vec();
-    if !frames.iter().any(is_editor) {
-        return vec![stack];
-    }
-    (0..1usize << EDITOR_FLAGS.len())
-        .map(|set| {
-            let mut frames = frames.clone();
-            for (bit, flag) in EDITOR_FLAGS.iter().enumerate() {
-                if set & (1 << bit) != 0 {
-                    // The flag's own frame from the witness goes into the
-                    // editor's, where the app sets it.
-                    frames.retain(|frame| frame.name != *flag);
-                    let editor = frames.iter_mut().find(|frame| is_editor(frame));
-                    let editor = editor.expect("the editor's frame stays");
-                    *editor = editor.clone().flag(*flag);
-                }
+impl<'a> Mentions<'a> {
+    fn add(&mut self, predicate: &'a ContextPredicate) {
+        use ContextPredicate as P;
+        match predicate {
+            P::Identifier(name) => {
+                self.flags.insert(name);
             }
-            frames.into_iter().collect()
-        })
-        .collect()
+            P::Equal(key, value) | P::NotEqual(key, value) => {
+                self.values.entry(key).or_default().insert(value);
+            }
+            P::Not(inner) => self.add(inner),
+            P::And(a, b) | P::Or(a, b) => {
+                self.add(a);
+                self.add(b);
+            }
+        }
+    }
+
+    /// `frames` without the flags and keys no context names, and with the
+    /// value of a key named only for other values as the first such value
+    /// seen, each once.
+    fn project(&self, frames: &[ContextFrame]) -> Vec<ContextFrame> {
+        let mut others: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut seen = BTreeSet::new();
+        let mut projected = Vec::new();
+        for frame in frames {
+            let flags: Vec<&str> = (frame.flags.iter())
+                .map(String::as_str)
+                .filter(|flag| self.flags.contains(flag))
+                .collect();
+            let values: Vec<(&str, &str)> = (frame.values.iter())
+                .filter_map(|(key, value)| {
+                    let named = self.values.get(key.as_str())?;
+                    let value = match named.contains(value.as_str()) {
+                        true => value.as_str(),
+                        false => *others.entry(key).or_insert(value),
+                    };
+                    Some((key.as_str(), value))
+                })
+                .collect();
+            let shape = (flags, values);
+            if !seen.contains(&shape) {
+                let (flags, values) = &shape;
+                let frame = flags
+                    .iter()
+                    .fold(ContextFrame::new(&frame.name), |frame, flag| {
+                        frame.flag(*flag)
+                    });
+                projected.push(
+                    (values.iter()).fold(frame, |frame, (key, value)| frame.set(*key, *value)),
+                );
+                seen.insert(shape);
+            }
+        }
+        projected
+    }
 }
 
 /// The most terms [`terms`] expands a predicate to.
@@ -1025,15 +1087,25 @@ fn terms(predicate: &ContextPredicate, negated: bool) -> Vec<Vec<Literal>> {
     }
 }
 
-/// The flag an editor with vim on has.
-const VIM_ENABLED: &str = "vim.enabled";
+impl Literal {
+    /// The flag or key it reads.
+    fn name(&self) -> &str {
+        match self {
+            Self::Has(name) | Self::Lacks(name) | Self::Is(name, _) | Self::IsNot(name, _) => name,
+        }
+    }
+}
 
-/// A context stack where every literal of `term` holds, under the
+/// A context stack where every literal of `term` holds but those on an
+/// editor's keys (`is_editor`), whose frame goes in after it, under the
 /// workbench's frame, or `None` if some contradict each other.
-fn witness(term: &[Literal]) -> Option<ContextStack> {
+fn witness(term: &[Literal], is_editor: impl Fn(&str) -> bool) -> Option<ContextStack> {
+    let term: Vec<_> = (term.iter())
+        .filter(|literal| !is_editor(literal.name()))
+        .collect();
     let mut names = Vec::new();
     let mut values: Vec<(&str, &str)> = Vec::new();
-    for literal in term {
+    for literal in &term {
         match literal {
             Literal::Has(name) if !names.contains(&name.as_str()) => names.push(name.as_str()),
             Literal::Is(key, value) => {
@@ -1044,12 +1116,6 @@ fn witness(term: &[Literal]) -> Option<ContextStack> {
             }
             _ => {}
         }
-    }
-    // A vim flag or key is set only with vim on.
-    let vim = |name: &str| name.starts_with("vim.") && name != VIM_ENABLED;
-    let vim_state = names.iter().any(|name| vim(name)) || values.iter().any(|(key, _)| vim(key));
-    if vim_state && !names.contains(&VIM_ENABLED) {
-        names.push(VIM_ENABLED);
     }
     let contradicted = term.iter().any(|literal| match literal {
         Literal::Lacks(name) => name == crate::KEY_CONTEXT || names.contains(&name.as_str()),

@@ -1214,3 +1214,231 @@ fn alternative_branches_clash(cx: &mut TestAppContext) {
         ]
     );
 }
+
+/// A keymap binding the Settings UI and the JSON shortcuts to each
+/// `(keys, one context, the other)`, and a Keyboard Shortcuts tab on it:
+/// for each pair, whether both its lines are marked as clashing.
+fn clashing(pairs: &[(&str, &str, &str)], cx: &mut TestAppContext) -> Vec<bool> {
+    let dirs = Dirs::new();
+    let entry = |keys: &str, command: &str, context: &str| {
+        format!(
+            "[[bindings]]\nkeys = \"{keys}\"\ncommand = \"{command}\"\ncontext = \"{context}\"\n\n"
+        )
+    };
+    dirs.write_keymap(
+        &(pairs.iter())
+            .map(|(keys, a, b)| entry(keys, SETTINGS_UI, a) + &entry(keys, OPEN_JSON, b))
+            .collect::<String>(),
+    );
+    let (workbench, cx) = workbench(cx, &dirs);
+    let editor = open_shortcuts(&workbench, cx);
+    (pairs.iter())
+        .map(|(written, ..)| {
+            let notes = notes_for(&editor, &keys(written), cx);
+            assert_eq!(notes.len(), 2, "{written}: {notes:?}");
+            let marked = notes.iter().filter(|(_, note)| note.is_some()).count();
+            assert_ne!(marked, 1, "{written}: {notes:?}");
+            marked == 2
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn visual_frames_clash(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // Only a visual mode has both.
+            (
+                "secondary-alt-9",
+                "editor && vim.visual",
+                "editor && vim.mode == visual_block",
+            ),
+            (
+                "secondary-alt-8",
+                "editor && vim.visual",
+                "editor && vim.pending_kind == text_object",
+            ),
+            // Never in one: `vim.visual` goes with its modes, and `r` in a
+            // visual mode is a pending replace, not the operator.
+            (
+                "secondary-alt-7",
+                "editor && vim.visual",
+                "editor && vim.mode != visual && vim.mode != visual_line && vim.mode != visual_block",
+            ),
+            (
+                "secondary-alt-6",
+                "editor && vim.visual",
+                "editor && vim.pending_kind == operator",
+            ),
+            (
+                "secondary-alt-5",
+                "editor && vim.visual",
+                "editor && completion",
+            ),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [true, true, false, false, false]);
+}
+
+#[gpui::test]
+fn pending_operator_frames_clash(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // `di`, `dj` held for a map, and `<C-o>d`.
+            (
+                "secondary-alt-9",
+                "editor && vim.mode == operator_pending",
+                "editor && vim.pending_kind == text_object",
+            ),
+            (
+                "secondary-alt-8",
+                "editor && vim.mode == operator_pending",
+                "editor && vim.pending_kind == remap",
+            ),
+            (
+                "secondary-alt-7",
+                "editor && vim.mode == operator_pending",
+                "editor && vim.insert_pending",
+            ),
+            // An operator always waits on something, never on a register
+            // (`d\"` cancels) or a mark to set.
+            (
+                "secondary-alt-6",
+                "editor && vim.mode == operator_pending",
+                "editor && !vim.pending",
+            ),
+            (
+                "secondary-alt-5",
+                "editor && vim.mode == operator_pending",
+                "editor && (vim.pending_kind == register || vim.pending_kind == set_mark)",
+            ),
+            (
+                "secondary-alt-4",
+                "editor && vim.pending_kind == operator",
+                "editor && vim.mode == normal",
+            ),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [true, true, true, false, false, false]);
+}
+
+#[gpui::test]
+fn cmdline_frames_clash(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // Only on the command line, and there while recording or after
+            // `<C-o>`.
+            (
+                "secondary-alt-9",
+                "editor && vim.cmdline_kind == ex",
+                "editor && vim.mode == cmdline",
+            ),
+            (
+                "secondary-alt-8",
+                "editor && vim.cmdline_kind == search_backward",
+                "editor && vim.recording == q && vim.insert_pending",
+            ),
+            // The kind goes with the mode, the line takes its keys with
+            // nothing pending, and no menu or suggestion shows there.
+            (
+                "secondary-alt-7",
+                "editor && vim.cmdline_kind == search_forward",
+                "editor && vim.mode != cmdline",
+            ),
+            (
+                "secondary-alt-6",
+                "editor && vim.mode == cmdline",
+                "editor && vim.pending",
+            ),
+            (
+                "secondary-alt-5",
+                "editor && vim.mode == cmdline",
+                "editor && ghost_text",
+            ),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [true, true, false, false, false]);
+}
+
+#[gpui::test]
+fn editor_flags_only_where_they_show(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // The menu and a suggestion show with vim off and where vim's
+            // keys type; a proposal in every mode.
+            (
+                "secondary-alt-9",
+                "editor && completion",
+                "editor && vim.mode == replace",
+            ),
+            (
+                "secondary-alt-8",
+                "editor && ghost_text",
+                "editor && !vim.enabled",
+            ),
+            (
+                "secondary-alt-7",
+                "editor && proposal",
+                "editor && vim.pending_kind == find",
+            ),
+            (
+                "secondary-alt-6",
+                "editor && completion",
+                "editor && vim.mode == normal",
+            ),
+            (
+                "secondary-alt-5",
+                "editor && ghost_text",
+                "editor && vim.pending",
+            ),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [true, true, true, false, false]);
+}
+
+#[gpui::test]
+fn ruling_out_editor_keys_holds_outside_an_editor(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // The panel and the terminal hold no editor, whatever its keys.
+            ("secondary-alt-9", "project_panel && !vim.enabled", "editor"),
+            (
+                "secondary-alt-8",
+                "terminal && vim.mode != normal",
+                "editor",
+            ),
+            ("secondary-alt-7", "terminal && !vim.visual", "terminal"),
+            // With no other view named, an editor's frame may be focused.
+            ("secondary-alt-6", "workbench && !vim.enabled", "editor"),
+            (
+                "secondary-alt-5",
+                "vim.mode != normal",
+                "editor && vim.mode == insert",
+            ),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [false, false, true, true, true]);
+}
+
+#[gpui::test]
+fn an_editor_key_named_as_a_flag_never_holds(cx: &mut TestAppContext) {
+    let marked = clashing(
+        &[
+            // `vim.recording` and `vim.mode` are keys of the editor's,
+            // never flags, though no context here names their values.
+            (
+                "secondary-alt-9",
+                "editor && vim.recording",
+                "editor && !vim.enabled",
+            ),
+            ("secondary-alt-8", "vim.mode", "editor"),
+        ],
+        cx,
+    );
+    assert_eq!(marked, [false, false]);
+}
