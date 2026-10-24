@@ -559,8 +559,9 @@ impl ShortcutsEditor {
         self.edit(edit, cx);
     }
 
-    /// Makes `edit` to the user's keymap off the main thread, showing a
-    /// toast if it fails. The watcher reloads the file it writes.
+    /// Makes `edit` to the user's keymap off the main thread, in order with
+    /// the edits made before it ([`queue_write`]), showing a toast if it
+    /// fails. The watcher reloads the file it writes.
     fn edit(&mut self, edit: KeymapEdit, cx: &mut Context<Self>) {
         let Some(path) = keymap_path(cx) else {
             toast::show(
@@ -570,25 +571,27 @@ impl ShortcutsEditor {
             return;
         };
         let defaults = default_keymaps(cx);
-        let write = cx.background_spawn(async move {
-            fe_keymap::write_keymap_on(&path, &borrowed(&defaults), &edit, Os::current())
-        });
-        cx.spawn(async move |this, cx| match write.await {
-            Ok(written) => {
-                this.update(cx, |this, cx| {
-                    this.user_source = Some(written.source);
-                    this.refresh_menu(cx);
-                })
-                .ok();
-            }
-            Err(error) => {
-                log::warn!("can't change the keymap: {error}");
-                cx.update(|cx| {
-                    toast::show(
-                        cx,
-                        Toast::error("Can't change the keybinding").detail(error.to_string()),
-                    )
-                });
+        let write = queue_write(path, defaults, edit, cx);
+        cx.spawn(async move |this, cx| {
+            let written =
+                (write.recv().await).unwrap_or_else(|_| Err("the write was dropped".into()));
+            match written {
+                Ok(written) => {
+                    this.update(cx, |this, cx| {
+                        this.user_source = Some(written.source);
+                        this.refresh_menu(cx);
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    log::warn!("can't change the keymap: {error}");
+                    cx.update(|cx| {
+                        toast::show(
+                            cx,
+                            Toast::error("Can't change the keybinding").detail(error),
+                        )
+                    });
+                }
             }
         })
         .detach();
@@ -1311,6 +1314,92 @@ fn borrowed(keymaps: &[(PathBuf, String)]) -> Vec<DefaultKeymap<'_>> {
         .collect()
 }
 
+/// What a queued write answers: the file written, or why it failed.
+type WriteResult = Result<fe_keymap::KeymapWrite, String>;
+
+/// An edit waiting for its file's worker.
+struct QueuedWrite {
+    defaults: Vec<(PathBuf, String)>,
+    edit: KeymapEdit,
+    done: async_channel::Sender<WriteResult>,
+    /// Asks the worker whether to wait before the write: for tests.
+    #[cfg(test)]
+    before: Option<BeforeFn>,
+}
+
+/// Each keymap file's queue of edits, whose worker writes them in the
+/// order they were queued. The worker is detached from the tab and its
+/// window, so an edit made before the tab closes still lands before one
+/// made after.
+#[derive(Default)]
+struct KeymapWrites(BTreeMap<PathBuf, async_channel::Sender<QueuedWrite>>);
+
+impl gpui::Global for KeymapWrites {}
+
+/// Test-only: called with each edit in the worker before it's written; the
+/// worker waits on the channel it returns, if any, so a test can hold an
+/// edit up without blocking other tasks.
+#[cfg(test)]
+type BeforeFn = Arc<dyn Fn(&KeymapEdit) -> Option<async_channel::Receiver<()>> + Send + Sync>;
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct BeforeWrite(pub(crate) BeforeFn);
+
+#[cfg(test)]
+impl gpui::Global for BeforeWrite {}
+
+/// Queues `edit` to the keymap at `path` after the edits queued to it
+/// before, and returns what answers once it's been written.
+fn queue_write(
+    path: PathBuf,
+    defaults: Vec<(PathBuf, String)>,
+    edit: KeymapEdit,
+    cx: &mut App,
+) -> async_channel::Receiver<WriteResult> {
+    let (done, result) = async_channel::bounded(1);
+    let mut job = QueuedWrite {
+        defaults,
+        edit,
+        done,
+        #[cfg(test)]
+        before: cx.try_global::<BeforeWrite>().map(|hook| hook.0.clone()),
+    };
+    loop {
+        let writes = cx.default_global::<KeymapWrites>();
+        let sender = writes.0.get(&path).filter(|sender| !sender.is_closed());
+        if let Some(sender) = sender {
+            match sender.try_send(job) {
+                Ok(()) => return result,
+                Err(async_channel::TrySendError::Closed(back)) => job = back,
+                Err(async_channel::TrySendError::Full(_)) => unreachable!("unbounded"),
+            }
+        }
+        let (sender, queued) = async_channel::unbounded::<QueuedWrite>();
+        let at = path.clone();
+        cx.background_spawn(async move {
+            while let Ok(job) = queued.recv().await {
+                #[cfg(test)]
+                if let Some(gate) = job.before.as_ref().and_then(|before| before(&job.edit)) {
+                    gate.recv().await.ok();
+                }
+                let written = fe_keymap::write_keymap_on(
+                    &at,
+                    &borrowed(&job.defaults),
+                    &job.edit,
+                    Os::current(),
+                )
+                .map_err(|error| error.to_string());
+                job.done.try_send(written).ok();
+            }
+        })
+        .detach();
+        cx.global_mut::<KeymapWrites>()
+            .0
+            .insert(path.clone(), sender);
+    }
+}
+
 /// The user's `keymap.toml`, if there's a config directory.
 pub(crate) fn keymap_path(cx: &App) -> Option<PathBuf> {
     #[cfg(test)]
@@ -1439,3 +1528,7 @@ impl Workbench {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "shortcuts_editor_queue_tests.rs"]
+mod queue_tests;
