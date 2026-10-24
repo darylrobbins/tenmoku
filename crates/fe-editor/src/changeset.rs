@@ -12,14 +12,10 @@
 //!
 //! # Counts
 //!
-//! `ProposedChange` exposes no hunk count without a `BufferSnapshot`, and
-//! `add_file` is not given one. [`Changeset::add_file_seen`] reads the counts
-//! from the buffer in a [`BufferSet`]; plain `add_file` records the file with
-//! [`FileEntry::counts_known`] false. Counts are then read whenever the
-//! buffer is reachable (a listing, summary or any decision) and kept for when
-//! it is not. A file whose counts were never read lists zero with
-//! `counts_known` false, never `missing` for an available buffer. Documented
-//! limit; follow-up T240 (an `fe-buffer` addition) lifts it.
+//! [`Changeset::add_file`] records the proposal's hunk counts as it stands
+//! (every hunk pending unless it was already decided). They are read again
+//! from the buffer whenever it is reachable (a listing, summary or any
+//! decision) and kept for when it is not.
 //!
 //! # Checkpoint
 //!
@@ -37,17 +33,11 @@
 //! restores the text anyway. The recorded transaction ids stay in the
 //! checkpoint for a host that gains undo-by-id.
 //!
-//! `ProposedChange` cannot return an accepted hunk to pending, so after a
-//! revert the shared proposal is replaced by a fresh one over the restored
-//! text, made from the hunks as they stood at the first accept (insertions
-//! that user edits had merged into one point become one insertion). Its hunk
-//! ids are new, and hunks rejected earlier are pending again.
-//!
-//! Documented limit: a stale hunk whose new text already equals its proposed
-//! text, or a stale deletion already done, is not rebuilt as pending after
-//! revert, because `ProposedChange::from_edits` drops no-op edits and cannot
-//! reset a hunk to pending. Every other stale sibling stays pending. Follow-up
-//! T240 (an `fe-buffer` addition) lifts it.
+//! After a revert the shared proposal is rebuilt over the restored text,
+//! from the hunks as they stood at the first accept, keeping no-op ones
+//! (insertions that user edits had merged into one point become one
+//! insertion). Its hunk ids are new, and every hunk, stale or rejected
+//! earlier, is pending again.
 
 use std::{
     cell::RefCell,
@@ -137,8 +127,7 @@ pub struct FileEntry {
     /// The buffer is gone, so `counts` is as last read.
     pub missing: bool,
     pub counts: Counts,
-    /// Whether `counts` was ever read; false only for a file whose buffer
-    /// vanished before any listing or decision (see the module docs).
+    /// Whether `counts` was ever read; true for every file added.
     pub counts_known: bool,
 }
 
@@ -230,13 +219,14 @@ impl Changeset {
         buffer: BufferId,
         proposal: Rc<RefCell<ProposedChange>>,
     ) {
+        let last = Some(stored_counts(&proposal.borrow()));
         self.files.push(File {
             path: path.into(),
             kind: Kind::Existing {
                 buffer,
                 proposal,
                 checkpoint: None,
-                last: None,
+                last,
             },
         });
     }
@@ -258,6 +248,7 @@ impl Changeset {
             kind: Kind::Existing { last, .. },
             ..
         }) = self.files.last_mut()
+            && counts.is_some()
         {
             *last = counts;
         }
@@ -305,7 +296,9 @@ impl Changeset {
         })
     }
 
-    /// Accepts one pending hunk of `path`.
+    /// Accepts one pending hunk of `path`. The transaction is `None` for a
+    /// hunk that changes nothing (a restored deletion already done); it is
+    /// accepted all the same.
     ///
     /// # Errors
     /// [`ChangesetError::Conflict`] if the buffer is missing or the hunk's
@@ -315,7 +308,7 @@ impl Changeset {
         set: &mut impl BufferSet,
         path: &Path,
         hunk: HunkId,
-    ) -> Result<TransactionId, ChangesetError> {
+    ) -> Result<Option<TransactionId>, ChangesetError> {
         let file = self.file_mut(path)?;
         let Kind::Existing {
             buffer,
@@ -338,8 +331,14 @@ impl Changeset {
         *last = Some(count(&proposal.hunks(buf.current())));
         match result {
             Ok(id) => {
-                commit(checkpoint, prep, buf, &[id]);
-                Ok(id)
+                commit(checkpoint, prep, buf, &[id], true);
+                Ok(Some(id))
+            }
+            // Accepted, but it changed nothing: no transaction, yet the
+            // checkpoint keeps the hunk so a revert rebuilds it pending.
+            Err(ProposalError::NoChange) => {
+                commit(checkpoint, prep, buf, &[], true);
+                Ok(None)
             }
             Err(ProposalError::Stale) => Err(conflict()),
             Err(ProposalError::NotPending) => Err(ChangesetError::NotPending {
@@ -475,7 +474,7 @@ impl Changeset {
                         });
                     }
                     let cp = checkpoint.take().expect("checked above");
-                    let fresh = ProposedChange::from_edits(
+                    let fresh = ProposedChange::from_edits_keeping_noops(
                         buf.current(),
                         cp.edits,
                         proposal.borrow().origin().clone(),
@@ -609,10 +608,12 @@ impl File {
                     return Err(conflict_for(&self.path));
                 }
                 let prep = prepare(checkpoint, &proposal, buf);
+                let before = proposal.status_count(HunkStatus::Accepted);
                 let (id, _) = proposal.accept_all_as(buf, Origin::User);
                 let ids: Vec<_> = id.into_iter().collect();
+                let accepted = proposal.status_count(HunkStatus::Accepted) > before;
                 *last = Some(count(&proposal.hunks(buf.current())));
-                commit(checkpoint, prep, buf, &ids);
+                commit(checkpoint, prep, buf, &ids, accepted);
                 Ok(ids)
             }
         }
@@ -655,6 +656,17 @@ impl File {
 fn conflict_for(path: &Path) -> ChangesetError {
     ChangesetError::Conflict {
         path: path.to_path_buf(),
+    }
+}
+
+/// The counts as the proposal last recorded them, without a snapshot.
+fn stored_counts(proposal: &ProposedChange) -> Counts {
+    Counts {
+        hunks: proposal.hunk_count(),
+        pending: proposal.status_count(HunkStatus::Pending),
+        accepted: proposal.status_count(HunkStatus::Accepted),
+        rejected: proposal.status_count(HunkStatus::Rejected),
+        stale: proposal.status_count(HunkStatus::Stale),
     }
 }
 
@@ -719,9 +731,16 @@ fn prepare(checkpoint: &Option<Checkpoint>, proposal: &ProposedChange, buf: &Buf
     }
 }
 
-/// Records an accept that applied `ids`; nothing if it applied nothing.
-fn commit(checkpoint: &mut Option<Checkpoint>, prep: Prep, buf: &Buffer, ids: &[TransactionId]) {
-    if ids.is_empty() {
+/// Records an accept that applied `ids`, or that accepted hunks changing
+/// nothing (`accepted`); nothing if it accepted nothing.
+fn commit(
+    checkpoint: &mut Option<Checkpoint>,
+    prep: Prep,
+    buf: &Buffer,
+    ids: &[TransactionId],
+    accepted: bool,
+) {
+    if ids.is_empty() && !accepted {
         return;
     }
     if checkpoint.is_none() {

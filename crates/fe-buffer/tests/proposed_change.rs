@@ -414,3 +414,94 @@ fn stale_observation_is_not_overwritten_by_an_unchanged_snapshot() {
     });
     assert!(stale(&proposal.hunks(&edited)));
 }
+
+#[test]
+fn counts_without_a_snapshot() {
+    let buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let mut proposal = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    assert_eq!(proposal.hunk_count(), 2);
+    assert_eq!(proposal.status_count(HunkStatus::Pending), 2);
+
+    let first = proposal.hunks(&base)[0].id;
+    proposal.reject(first).unwrap();
+    assert_eq!(proposal.hunk_count(), 2);
+    assert_eq!(proposal.status_count(HunkStatus::Pending), 1);
+    assert_eq!(proposal.status_count(HunkStatus::Rejected), 1);
+}
+
+#[test]
+fn a_decided_hunk_returns_to_pending() {
+    let mut buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let mut proposal = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    let id = proposal.hunks(&base)[0].id;
+
+    proposal.reject(id).unwrap();
+    proposal.reset_to_pending(id).unwrap();
+    assert_eq!(
+        proposal.hunks(buffer.current())[0].status,
+        HunkStatus::Pending
+    );
+
+    // Accepted, then the text undone by the caller: pending and applicable.
+    proposal.accept_as(&mut buffer, id, Origin::User).unwrap();
+    assert_eq!(
+        proposal.hunks(buffer.current())[0].status,
+        HunkStatus::Accepted
+    );
+    let landed = proposal.hunks(buffer.current())[0].range.clone();
+    buffer.edit([(landed, "    1\n")], Origin::User);
+    proposal.reset_to_pending(id).unwrap();
+    let hunks = proposal.hunks(buffer.current());
+    assert_eq!(hunks[0].status, HunkStatus::Pending, "{hunks:?}");
+    proposal.accept_as(&mut buffer, id, Origin::User).unwrap();
+    assert!(buffer.text().to_string().contains("let x = 1;"));
+}
+
+#[test]
+fn reset_of_an_unknown_hunk_is_an_error() {
+    let buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let a = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    let mut b = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    let id = a.hunks(&base)[0].id;
+    assert_eq!(b.reset_to_pending(id), Err(ProposalError::NotPending));
+}
+
+#[test]
+fn from_edits_keeping_noops_keeps_them() {
+    let buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let edits = vec![(0..2, "fn"), (3..6, "xyz")];
+    let dropped = ProposedChange::from_edits(&base, edits.clone(), ai());
+    assert_eq!(dropped.hunk_count(), 1);
+    let kept = ProposedChange::from_edits_keeping_noops(&base, edits, ai());
+    assert_eq!(kept.hunk_count(), 2);
+    let hunks = kept.hunks(&base);
+    assert!(hunks.iter().all(|hunk| hunk.status == HunkStatus::Pending));
+    assert_eq!(hunks[0].old_text, hunks[0].new_text);
+}
+
+#[test]
+fn a_hunk_that_changes_nothing_accepts_without_a_transaction() {
+    let mut buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let mut proposal =
+        ProposedChange::from_edits_keeping_noops(&base, vec![(0..0, ""), (3..6, "xyz")], ai());
+    let ids: Vec<_> = proposal.hunks(&base).iter().map(|h| h.id).collect();
+    assert_eq!(
+        proposal.accept_as(&mut buffer, ids[0], Origin::User),
+        Err(ProposalError::NoChange)
+    );
+    let hunks = proposal.hunks(buffer.current());
+    assert_eq!(hunks[0].status, HunkStatus::Accepted);
+
+    // Alone in accept_all: accepted, no transaction, no panic.
+    let mut only = ProposedChange::from_edits_keeping_noops(&base, vec![(0..0, "")], ai());
+    assert_eq!(
+        only.accept_all_as(&mut buffer, Origin::User),
+        (None, vec![])
+    );
+    assert!(only.is_resolved());
+}

@@ -59,6 +59,11 @@ pub enum ProposalError {
     /// The hunk was already accepted or rejected, or isn't in this proposal.
     #[error("the hunk isn't pending")]
     NotPending,
+    /// The hunk changes nothing (an empty range replaced by empty text, as a
+    /// rebuilt proposal can keep), so there is no transaction to return. The
+    /// hunk is accepted all the same and the buffer is unchanged.
+    #[error("the hunk changes nothing")]
+    NoChange,
 }
 
 /// Edits against a snapshot of one buffer, as hunks that follow the text.
@@ -115,6 +120,28 @@ impl ProposedChange {
         I: IntoIterator<Item = (Range<usize>, S)>,
         S: Into<Arc<str>>,
     {
+        Self::build(base, edits, origin, false)
+    }
+
+    /// As [`ProposedChange::from_edits`], but an edit that changes nothing
+    /// keeps its hunk (pending, with equal old and new text), so a proposal
+    /// can be rebuilt with exactly the hunks it had.
+    ///
+    /// # Panics
+    /// As [`ProposedChange::from_edits`].
+    pub fn from_edits_keeping_noops<I, S>(base: &BufferSnapshot, edits: I, origin: Origin) -> Self
+    where
+        I: IntoIterator<Item = (Range<usize>, S)>,
+        S: Into<Arc<str>>,
+    {
+        Self::build(base, edits, origin, true)
+    }
+
+    fn build<I, S>(base: &BufferSnapshot, edits: I, origin: Origin, keep_noops: bool) -> Self
+    where
+        I: IntoIterator<Item = (Range<usize>, S)>,
+        S: Into<Arc<str>>,
+    {
         let text = base.text();
         let mut edits: Vec<(Range<usize>, Arc<str>)> = edits
             .into_iter()
@@ -130,7 +157,7 @@ impl ProposedChange {
         }
         let hunks = edits
             .into_iter()
-            .filter(|(range, new_text)| !text.range_eq(range.clone(), new_text))
+            .filter(|(range, new_text)| keep_noops || !text.range_eq(range.clone(), new_text))
             .map(|(range, new_text)| {
                 let old_text = text.slice_to_string(range.clone()).into();
                 (range, old_text, new_text)
@@ -305,10 +332,9 @@ impl ProposedChange {
         let transaction = buffer.with_transaction_aside(|buffer| {
             buffer.edit([(range.clone(), new_text.clone())], origin)
         });
-        let transaction = transaction.expect("a hunk always changes the text");
         let landed = range.start..range.start + new_text.len();
         self.landed(buffer.current(), id, landed);
-        Ok(transaction)
+        transaction.ok_or(ProposalError::NoChange)
     }
 
     /// Applies every pending hunk whose old text is still in place, as one
@@ -348,13 +374,16 @@ impl ProposedChange {
                 HunkStatus::Accepted | HunkStatus::Rejected => {}
             }
         }
-        if edits.is_empty() {
+        // Aside, so a caller's open transaction neither joins nor is closed.
+        // `None` when every hunk changes nothing; they are accepted anyway.
+        let transaction = if edits.is_empty() {
+            None
+        } else {
+            buffer.with_transaction_aside(|buffer| buffer.edit(edits, origin))
+        };
+        if accepted.is_empty() {
             return (None, stale);
         }
-        // Aside, so a caller's open transaction neither joins nor is closed.
-        let transaction = buffer
-            .with_transaction_aside(|buffer| buffer.edit(edits, origin))
-            .expect("a hunk always changes the text");
         // Where each landed: hunks are in text order and don't overlap, so
         // this is how `Buffer::edit` placed them.
         let mut delta = 0isize;
@@ -364,7 +393,7 @@ impl ProposedChange {
             delta += len as isize - range.len() as isize;
             self.landed(buffer.current(), id, start..start + len);
         }
-        (Some(transaction), stale)
+        (transaction, stale)
     }
 
     /// Marks a pending or stale hunk rejected; the buffer isn't touched.
@@ -380,6 +409,43 @@ impl ProposedChange {
             }
             HunkStatus::Accepted | HunkStatus::Rejected => Err(ProposalError::NotPending),
         }
+    }
+
+    /// How many hunks the proposal has, whatever their status. Needs no
+    /// snapshot.
+    pub fn hunk_count(&self) -> usize {
+        self.hunks.len()
+    }
+
+    /// How many hunks have `status` as last recorded. Needs no snapshot, so a
+    /// pending hunk that went stale since [`ProposedChange::hunks`] last saw
+    /// it still counts as pending.
+    pub fn status_count(&self, status: HunkStatus) -> usize {
+        self.hunks
+            .iter()
+            .filter(|hunk| hunk.status.get() == status)
+            .count()
+    }
+
+    /// Returns a decided (accepted, rejected or stale) hunk to pending. The
+    /// buffer isn't touched: for an accepted hunk the caller has undone its
+    /// text, and the hunk is located by its old range again. If that text is
+    /// not back in place, the next [`ProposedChange::hunks`] reports it stale.
+    /// A hunk already pending stays so.
+    ///
+    /// # Errors
+    /// [`ProposalError::NotPending`] if the proposal has no such hunk.
+    pub fn reset_to_pending(&mut self, id: HunkId) -> Result<(), ProposalError> {
+        if id.proposal != self.id {
+            return Err(ProposalError::NotPending);
+        }
+        let hunk = self
+            .hunks
+            .get_mut(id.index as usize)
+            .ok_or(ProposalError::NotPending)?;
+        hunk.landed = None;
+        hunk.status.set(HunkStatus::Pending);
+        Ok(())
     }
 
     /// Whether no hunk is pending any more. A pending hunk that has gone

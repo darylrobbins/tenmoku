@@ -344,7 +344,8 @@ fn missing_buffer_reports_last_known_counts() {
     set.buffers.remove(&idb);
     let files = cs.files(&mut set);
     assert!(files[0].missing && files[1].missing);
-    assert!(files[0].counts_known && !files[1].counts_known);
+    assert!(files[0].counts_known && files[1].counts_known);
+    assert_eq!(files[1].counts.hunks, 2);
     assert_eq!((files[0].counts.hunks, files[0].counts.accepted), (2, 1));
 }
 
@@ -472,15 +473,199 @@ fn accepted_new_file_whose_buffer_vanished_conflicts() {
 }
 
 #[test]
-fn plain_add_file_has_unknown_counts_until_read() {
+fn plain_add_file_lists_real_counts() {
     let mut set = Set::default();
     let mut cs = Changeset::new("t", ai());
     let (id, _) = file(&mut set, &mut cs, "a.rs");
     let buffer = set.buffers.remove(&id).unwrap();
     let files = cs.files(&mut set);
-    assert!(!files[0].counts_known && files[0].missing);
+    assert!(files[0].counts_known && files[0].missing);
+    assert_eq!((files[0].counts.hunks, files[0].counts.pending), (2, 2));
     set.buffers.insert(id, buffer);
     let files = cs.files(&mut set);
     assert!(files[0].counts_known && !files[0].missing);
     assert_eq!(files[0].counts.hunks, 2);
+}
+
+#[test]
+fn revert_restores_a_stale_noop_sibling_to_pending() {
+    let (mut set, mut cs, [(ida, pa), _]) = fixture();
+    let ids = hunk_ids(&set, ida, &pa);
+    // The user already typed the second hunk's proposed text.
+    set.buffers
+        .get_mut(&ida)
+        .unwrap()
+        .edit([(35..36, "20")], Origin::User);
+    let edited = set.text(ida);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]).unwrap();
+    assert_eq!(cs.files(&mut set)[0].counts.stale, 1);
+    cs.revert(&mut set);
+    assert_eq!(set.text(ida), edited);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending, c.stale, c.accepted), (2, 2, 0, 0));
+}
+
+#[test]
+fn add_file_seen_with_an_unavailable_buffer_keeps_the_initial_counts() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let (id, p) = file(&mut set, &mut cs, "a.rs");
+    set.buffers.remove(&id);
+    cs.add_file_seen(&mut set, "b.rs", id, p);
+    let files = cs.files(&mut set);
+    assert!(files[1].counts_known && files[1].missing);
+    assert_eq!((files[1].counts.hunks, files[1].counts.pending), (2, 2));
+}
+
+#[test]
+fn a_restored_deletion_already_done_accepts_without_a_transaction() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    // Hunk 1 deletes "    1\n"; hunk 2 rewrites "2".
+    let buffer = Buffer::new(TWO_FNS);
+    let id = buffer.id();
+    let base = buffer.snapshot();
+    let one = TWO_FNS.find("    1\n").unwrap();
+    let two = TWO_FNS.find("    2\n").unwrap();
+    let proposal = Rc::new(RefCell::new(ProposedChange::from_edits(
+        &base,
+        vec![(one..one + 6, ""), (two..two + 6, "    20\n")],
+        ai(),
+    )));
+    set.buffers.insert(id, buffer);
+    cs.add_file("a.rs", id, proposal.clone());
+    // The user already deleted the first line, then the changeset accepts
+    // the second hunk, then everything is reverted.
+    set.buffers
+        .get_mut(&id)
+        .unwrap()
+        .edit([(one..one + 6, "")], Origin::User);
+    let ids = hunk_ids(&set, id, &proposal);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.revert(&mut set);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending), (2, 2));
+
+    // The deletion that is already done accepts one by one without a panic.
+    let ids = hunk_ids(&set, id, &proposal);
+    assert_eq!(
+        cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]),
+        Ok(None)
+    );
+    // And through accept_file, with the other hunk decided first.
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    assert!(cs.accept_file(&mut set, Path::new("a.rs")).is_ok());
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.accepted, c.rejected, c.pending), (1, 1, 0));
+}
+
+#[test]
+fn accept_file_of_only_restored_noop_deletions_does_not_panic() {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let buffer = Buffer::new(TWO_FNS);
+    let id = buffer.id();
+    let base = buffer.snapshot();
+    let one = TWO_FNS.find("    1\n").unwrap();
+    let two = TWO_FNS.find("    2\n").unwrap();
+    let proposal = Rc::new(RefCell::new(ProposedChange::from_edits(
+        &base,
+        vec![
+            (one..one + 6, ""),
+            (two..two + 6, "    20\n"),
+            (TWO_FNS.len() - 2..TWO_FNS.len() - 2, "// end\n"),
+        ],
+        ai(),
+    )));
+    set.buffers.insert(id, buffer);
+    cs.add_file("a.rs", id, proposal.clone());
+    // The user already deleted the first line; the insertion at the end is
+    // accepted, then everything is reverted.
+    set.buffers
+        .get_mut(&id)
+        .unwrap()
+        .edit([(one..one + 6, "")], Origin::User);
+    let ids = hunk_ids(&set, id, &proposal);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[2]).unwrap();
+    cs.revert(&mut set);
+    let ids = hunk_ids(&set, id, &proposal);
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[2]).unwrap();
+    // Only the no-op deletion is pending.
+    assert!(cs.accept_file(&mut set, Path::new("a.rs")).is_ok());
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.accepted, c.rejected, c.pending), (1, 2, 0));
+}
+
+/// Three hunks of `TWO_FNS`: a deletion the user already did (a no-op once
+/// restored), a rewrite, and an insertion at the end.
+fn noop_fixture() -> (Set, Changeset, BufferId, Rc<RefCell<ProposedChange>>) {
+    let mut set = Set::default();
+    let mut cs = Changeset::new("t", ai());
+    let buffer = Buffer::new(TWO_FNS);
+    let id = buffer.id();
+    let base = buffer.snapshot();
+    let one = TWO_FNS.find("    1\n").unwrap();
+    let two = TWO_FNS.find("    2\n").unwrap();
+    let end = TWO_FNS.len();
+    let proposal = Rc::new(RefCell::new(ProposedChange::from_edits(
+        &base,
+        vec![
+            (one..one + 6, ""),
+            (two..two + 6, "    20\n"),
+            (end..end, "// end\n"),
+        ],
+        ai(),
+    )));
+    set.buffers.insert(id, buffer);
+    cs.add_file("a.rs", id, proposal.clone());
+    set.buffers
+        .get_mut(&id)
+        .unwrap()
+        .edit([(one..one + 6, "")], Origin::User);
+    (set, cs, id, proposal)
+}
+
+#[test]
+fn noop_accept_then_sibling_then_revert_twice_keeps_all_pending() {
+    let (mut set, mut cs, id, p) = noop_fixture();
+    let ids = hunk_ids(&set, id, &p);
+    assert_eq!(ids.len(), 3);
+    // Revert once so the no-op hunk exists (stale deletion rebuilt).
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[2]).unwrap();
+    cs.revert(&mut set);
+    let ids = hunk_ids(&set, id, &p);
+    assert_eq!(cs.files(&mut set)[0].counts.pending, 3);
+    // Individually: no-op first, then a real sibling, then revert.
+    assert_eq!(
+        cs.accept_hunk(&mut set, Path::new("a.rs"), ids[0]),
+        Ok(None)
+    );
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.revert(&mut set);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending, c.accepted), (3, 3, 0));
+    // A second revert of the rebuilt proposal after another accept.
+    let ids = hunk_ids(&set, id, &p);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.revert(&mut set);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending), (3, 3));
+}
+
+#[test]
+fn accepting_only_noop_hunks_still_reverts_to_pending() {
+    let (mut set, mut cs, id, p) = noop_fixture();
+    let ids = hunk_ids(&set, id, &p);
+    cs.accept_hunk(&mut set, Path::new("a.rs"), ids[2]).unwrap();
+    cs.revert(&mut set);
+    let ids = hunk_ids(&set, id, &p);
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[1]).unwrap();
+    cs.reject_hunk(&mut set, Path::new("a.rs"), ids[2]).unwrap();
+    // The batch accepts only the no-op deletion.
+    cs.accept_file(&mut set, Path::new("a.rs")).unwrap();
+    assert_eq!(cs.files(&mut set)[0].counts.accepted, 1);
+    cs.revert(&mut set);
+    let c = cs.files(&mut set)[0].counts;
+    assert_eq!((c.hunks, c.pending, c.accepted, c.rejected), (3, 3, 0, 0));
 }
