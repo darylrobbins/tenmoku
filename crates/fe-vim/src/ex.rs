@@ -4,7 +4,8 @@
 //! the host's commands. The commands ([`ExCommand`]):
 //!
 //! - `:{range}` alone, `:d[elete]`, `:noh[lsearch]`, `:s[ubstitute]`, `:&`
-//!   and `:&&`, and the host's `:w :q :wq :x :e :qa :wa`.
+//!   and `:&&`, the host's `:w :q :wq :x :e :qa :wa`, and its buffer
+//!   list's `:b :bn :bp :bd :bf :bl` (`buffers.rs`).
 //! - `:y[ank] [x] [count]`: the range's lines (the cursor's by default; with
 //!   a count, that many from the range's last) yanked linewise into
 //!   register `x` (`"` and `0` without one); the cursor stays.
@@ -90,6 +91,8 @@ use crate::{
     substitute::{self, Substitute},
 };
 
+mod buffers;
+pub use buffers::{BufferAddress, BufferCommand, BufferTarget};
 mod complete;
 pub(crate) mod global;
 mod lines;
@@ -325,6 +328,9 @@ pub enum HostCommand {
     /// A list the host shows to pick a row from (`:marks`); choosing one
     /// runs its `then` in the editor the line was typed in.
     Pick(Pick),
+    /// `:b`, `:bn`, `:bp`, `:bd`, `:bf` and `:bl`: the host's buffers,
+    /// its open files, switched or deleted (`ex/buffers.rs`).
+    Buffer(BufferCommand),
     /// `:{range}!{cmd}`: `rows` (from 0) run through `command`, whose
     /// output takes their place ([`crate::VimState::apply_filter`]); asked
     /// for by `actor`, which fe-vim lets only [`Actor::User`] be, for the
@@ -508,6 +514,7 @@ fn command_end(piece: &str) -> Option<usize> {
     let takes_the_rest = filter
         || !name.is_empty()
             && (host(name).is_some()
+                || buffers::kind(name).is_some()
                 || name == "Replace"
                 || is_diff(name)
                 || global::kind(name).is_some()
@@ -696,6 +703,9 @@ fn command(
     // the name isn't its own. Wrapped after `:browse`, which recurses.
     let mut check = Some(check);
     let mut check = |both| check.take().map_or(Ok(()), |check| check(both));
+    if let Some(kind) = buffers::kind(name) {
+        return buffers::parse(kind, range, after);
+    }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
     }
@@ -1315,6 +1325,15 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
         ExCommand::NoHighlight => {
             target.state.highlight = None;
             Ok(Dispatched::new(Effect::Notify))
+        }
+        ExCommand::Host(HostCommand::Buffer(_))
+            if global::running() || target.state.normal_suspended.is_some() =>
+        {
+            // The host switches once the keys have run, so the rest would
+            // run in the buffer left (`ex/buffers.rs`).
+            return Err(ExError::Unsupported(
+                "a buffer command in :g or :normal".into(),
+            ));
         }
         ExCommand::Host(mut command) => {
             let rows = |target: &VimTarget<'_>| {

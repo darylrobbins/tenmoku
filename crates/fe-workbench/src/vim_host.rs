@@ -13,6 +13,10 @@
 //! search's Replace All with `text`, through its question, saying "No
 //! search to replace" when its query is empty.
 //!
+//! The buffer list's commands, `:b`, `:bn`, `:bp`, `:bd`, `:bf` and `:bl`,
+//! run over the window's open files, numbered as nvim numbers buffers:
+//! see [`vim_buffers`].
+//!
 //! `!` filters and `:r !{cmd}` run through the user's shell, off the UI
 //! thread, only from the user's own keys in a trusted folder: see
 //! [`vim_filter`].
@@ -47,6 +51,9 @@ use crate::dock::{DockOp, DockPanel, ProblemsOp};
 
 #[path = "vim_pick.rs"]
 mod vim_pick;
+
+#[path = "vim_buffers.rs"]
+mod vim_buffers;
 
 #[path = "vim_filter.rs"]
 pub(super) mod vim_filter;
@@ -187,12 +194,14 @@ impl Workbench {
             | HostCommand::OpenProblems
             | HostCommand::CloseProblems
             | HostCommand::ReplaceInFiles { .. }
-            | HostCommand::Pick(_)) => self.run_window_command(&editor, command, window, cx),
+            | HostCommand::Pick(_)
+            | HostCommand::Buffer(_)) => self.run_window_command(&editor, command, window, cx),
         }
     }
 
     /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
-    /// `:cclose`, `:Replace` and the lists to pick from (`:marks`), typed in `editor`, which act on the window
+    /// `:cclose`, `:Replace`, the lists to pick from (`:marks`) and the
+    /// buffer list's (`:b`, `:bn`, `:bd`), typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
@@ -218,6 +227,9 @@ impl Workbench {
                 self.vim_replace_in_files(editor, text, window, cx)
             }
             HostCommand::Pick(pick) => self.show_vim_pick(editor, pick, window, cx),
+            HostCommand::Buffer(command) => {
+                self.run_vim_buffer_command(editor, command, window, cx)
+            }
             _ => {}
         }
     }
@@ -245,6 +257,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.note_vim_buffer(cx);
         let id = editor.map(Entity::entity_id);
         if self.vim_keys.as_ref().map(|(followed, _)| *followed) == id {
             return;

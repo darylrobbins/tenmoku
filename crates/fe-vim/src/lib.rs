@@ -388,6 +388,10 @@
 //!   commands), changing no text, cursor or register. They take no range,
 //!   and no argument but `:e`'s, `:w`'s and `:sav`'s path (`:sav` needs one,
 //!   E471); `:wq {path}` and `:x {path}` aren't supported.
+//! - Nor are the buffer list's: `:b[uffer] [N|name|#]`, `:bn[ext]`,
+//!   `:bN[ext]`, `:bp[revious]`, `:bd[elete][!]`, `:bf[irst]`, `:br[ewind]`
+//!   and `:bl[ast]` leave a [`HostCommand::Buffer`], read as nvim reads
+//!   them (`ex/buffers.rs`), for the host to run over its open files.
 //! - Nor are shell commands: `:{range}!{cmd}` and `:[line]r[ead] !{cmd}`
 //!   leave a [`HostCommand::Filter`] or [`HostCommand::ReadCommand`], whose
 //!   output the host hands back to [`VimState::apply_filter`] or
@@ -835,8 +839,8 @@ pub use cmdline::search_preview_limit;
 pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
-    Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part, Pick, PickRow, PickThen,
-    SHELL_REFUSED, ShellCommand, ShellPart,
+    Address, Base, BufferAddress, BufferCommand, BufferTarget, Ex, ExCommand, ExError, HostCommand,
+    LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
 };
 pub use feature::filter::FilterArgs;
 pub use headless::{FeedError, HeadlessVim};

@@ -2,13 +2,21 @@
 
 use super::{Ex, split, table};
 
-/// The full names of the commands `ex.rs`, `lines.rs`, `global.rs` and
-/// `normal.rs` take (those of the table are added from [`table::COMMANDS`]).
+/// The full names of the commands `ex.rs`, `lines.rs`, `global.rs`,
+/// `normal.rs` and `buffers.rs` take (those of the table are added from [`table::COMMANDS`]).
 /// Each must parse as a command; a test holds the list to that.
 const NAMES: &[&str] = &[
     "Explore",
     "Replace",
+    "bNext",
+    "bdelete",
+    "bfirst",
+    "blast",
+    "bnext",
+    "bprevious",
+    "brewind",
     "browse",
+    "buffer",
     "cclose",
     "copen",
     "copy",
