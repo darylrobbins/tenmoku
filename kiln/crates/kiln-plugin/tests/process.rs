@@ -392,7 +392,7 @@ fn nothing_outlives_a_call_that_ends() {
         &[&sleep, &printf, &holder],
     );
     let mut state =
-        State::new(record, &Limits::default()).with_deadline(Duration::from_millis(300));
+        State::new(record.clone(), &Limits::default()).with_deadline(Duration::from_millis(300));
     let before = threads();
     let unread = vec![b'x'; 1 << 20];
 
@@ -410,7 +410,9 @@ fn nothing_outlives_a_call_that_ends() {
         started.elapsed()
     );
 
-    // A program that ends without reading its stdin ends the call.
+    // A program that ends without reading its stdin ends the call. This is the success path, so
+    // it gets a deadline a loaded machine cannot miss.
+    let mut state = State::new(record, &Limits::default()).with_deadline(Duration::from_secs(30));
     let output = state
         .spawn("printf", &args(&["ok"]), Some(&unread))
         .unwrap();
