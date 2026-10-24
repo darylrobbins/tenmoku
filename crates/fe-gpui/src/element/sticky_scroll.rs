@@ -174,12 +174,8 @@ pub(crate) fn scopes(
     if let Some(cached) = cache.as_ref().filter(|cached| cached.key == key) {
         return Some(cached.scopes.clone());
     }
-    #[cfg(test)]
-    {
-        QUERIES.with(|queries| queries.set(queries.get() + 1));
-        ASKED.with(|asked| asked.set(Some(model)));
-        ASKED_ROWS.with(|rows| *rows.borrow_mut() = key.2.clone());
-    }
+    // Counted once the model has answered: a tree still being parsed gives
+    // None and is asked again, when a background parse lands depends on timing.
     let mut scopes = Vec::new();
     for rows in key.2.iter().cloned() {
         scopes.extend(match (model, syntax) {
@@ -194,6 +190,12 @@ pub(crate) fn scopes(
             }
             (_, None) => Vec::new(),
         });
+    }
+    #[cfg(test)]
+    {
+        QUERIES.with(|queries| queries.set(queries.get() + 1));
+        ASKED.with(|asked| asked.set(Some(model)));
+        ASKED_ROWS.with(|rows| *rows.borrow_mut() = key.2.clone());
     }
     // One per header, as each run gives them. Indentation ends a block
     // still open at the row past a run there, a row the fold after it
