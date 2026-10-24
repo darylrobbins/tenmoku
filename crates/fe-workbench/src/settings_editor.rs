@@ -257,7 +257,14 @@ impl SettingsEditor {
             }),
             cx.subscribe(workbench, |this, _, RootChanged(root), cx| {
                 this.root = Some(root.clone());
+                // Uncommitted inputs were typed against the old root's
+                // file: drop them, and their blur subscriptions, so a late
+                // blur writes nothing to the new root.
+                this.select = None;
+                this.fields.clear();
+                this.lists.clear();
                 this.reload(cx);
+                cx.notify();
             }),
         ];
         let mut this = Self {

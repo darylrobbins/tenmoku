@@ -1203,6 +1203,24 @@ fn switching_scope_drops_what_is_typed(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn changing_root_drops_what_is_typed(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    let other = Dirs::new();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "editor.tab_size";
+    let editor = open_settings(&workbench, Scope::Workspace, key, cx);
+    type_into(&format!("setting-input-{key}"), "7", cx);
+    // The root changes with the input still focused: its blur, after,
+    // writes nothing to the new root.
+    workbench.update(cx, |_, cx| cx.emit(crate::RootChanged(other.root.clone())));
+    draw(cx);
+    click(&format!("settings-description-{key}"), cx);
+    assert!(!other.workspace().exists());
+    assert!(!dirs.workspace().exists());
+    assert_eq!(field(&editor, key, cx), ("4".to_owned(), None));
+}
+
+#[gpui::test]
 fn changes_to_a_key_in_two_roots_stay_apart(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let other = Dirs::new();
