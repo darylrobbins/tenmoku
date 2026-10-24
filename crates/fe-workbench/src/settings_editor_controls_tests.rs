@@ -761,6 +761,85 @@ fn other_rows_edit_in_settings_toml(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn edit_in_settings_toml_counts_the_open_editors_unsaved_edits(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    fs::write(
+        dirs.user(),
+        "[editor]\ntab_size = 2\n\n[[vim.remap]]\nfrom = \"jj\"\n",
+    )
+    .unwrap();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "vim.remap";
+    open_settings(&workbench, Scope::User, key, cx);
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let tab = pane.read_with(cx, |pane, _| {
+        (pane.tabs().iter()).position(|tab| tab.item().downcast::<SettingsEditor>().is_some())
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.open_at(dirs.user(), None, window, cx)
+    });
+    draw(cx);
+    let file = workbench.read_with(cx, |workbench, cx| {
+        workbench.active_editor(cx).unwrap().clone()
+    });
+    file.update(cx, |editor, _| {
+        editor.model_mut().insert("# one\n# two\n# three\n");
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.activate(tab.unwrap(), window, cx)
+    });
+    draw(cx);
+
+    click(&format!("setting-edit-{key}"), cx);
+    assert_eq!(
+        caret(&workbench, cx),
+        (dirs.user(), 6),
+        "at [[vim.remap]] in the unsaved text, not row 3 on disk"
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn edit_in_settings_toml_ignores_an_editor_open_through_a_symlink(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    fs::write(
+        dirs.user(),
+        "[editor]\ntab_size = 2\n\n[[vim.remap]]\nfrom = \"jj\"\n",
+    )
+    .unwrap();
+    let alias = dirs.root.join("alias.toml");
+    std::os::unix::fs::symlink(dirs.user(), &alias).unwrap();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "vim.remap";
+    open_settings(&workbench, Scope::User, key, cx);
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let tab = pane.read_with(cx, |pane, _| {
+        (pane.tabs().iter()).position(|tab| tab.item().downcast::<SettingsEditor>().is_some())
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.open_at(alias.clone(), None, window, cx)
+    });
+    draw(cx);
+    let file = workbench.read_with(cx, |workbench, cx| {
+        workbench.active_editor(cx).unwrap().clone()
+    });
+    file.update(cx, |editor, _| {
+        editor.model_mut().insert("# one\n# two\n# three\n");
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.activate(tab.unwrap(), window, cx)
+    });
+    draw(cx);
+
+    click(&format!("setting-edit-{key}"), cx);
+    assert_eq!(
+        caret(&workbench, cx),
+        (dirs.user(), 3),
+        "the configured path opens from disk, so its row is the disk's"
+    );
+}
+
 #[test]
 fn table_rows() {
     use super::settings_editor::table_row_for_tests as row;

@@ -1052,13 +1052,27 @@ impl SettingsEditor {
             return;
         };
         let key = key.to_vec();
+        // An open editor's text, unsaved edits included, is what `open_at`
+        // will show, so the row comes from it rather than from disk.
+        let open_text = self.workbench.upgrade().and_then(|workbench| {
+            let editors = workbench.read(cx).file_editors(cx);
+            // The exact path, as `open_at` finds a tab by.
+            let editor = editors
+                .iter()
+                .find(|editor| editor.read(cx).model().path() == Some(path.as_path()))?;
+            let model = editor.read(cx).model();
+            Some(model.buffer().text().to_string())
+        });
         let read = cx.background_spawn({
             let path = path.clone();
             async move {
                 if create {
                     open::create_settings(&path)?;
                 }
-                let text = read_settings(&path).unwrap_or_default();
+                let text = match open_text {
+                    Some(text) => text,
+                    None => read_settings(&path).unwrap_or_default(),
+                };
                 Ok::<_, std::io::Error>(table_row(&text, &key))
             }
         });
