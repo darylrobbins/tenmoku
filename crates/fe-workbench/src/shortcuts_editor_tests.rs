@@ -689,6 +689,7 @@ fn remove_default_writes_unbind(cx: &mut TestAppContext) {
         menu_items(&editor, cx),
         Some(vec![
             MenuItem::CopyCommandId,
+            MenuItem::AddKeybinding,
             MenuItem::RemoveKeybinding,
             MenuItem::ShowSameKeybindings,
         ]),
@@ -720,7 +721,11 @@ fn remove_default_writes_unbind(cx: &mut TestAppContext) {
     right_click(&format!("shortcuts-row-{OPEN}"), cx);
     assert_eq!(
         menu_items(&editor, cx),
-        Some(vec![MenuItem::CopyCommandId, MenuItem::ResetKeybinding])
+        Some(vec![
+            MenuItem::CopyCommandId,
+            MenuItem::AddKeybinding,
+            MenuItem::ResetKeybinding
+        ])
     );
 }
 
@@ -783,6 +788,7 @@ fn reset_keybinding(cx: &mut TestAppContext) {
         menu_items(&editor, cx),
         Some(vec![
             MenuItem::CopyCommandId,
+            MenuItem::AddKeybinding,
             MenuItem::RemoveKeybinding,
             MenuItem::ResetKeybinding,
             MenuItem::ShowSameKeybindings,
@@ -813,7 +819,7 @@ fn copy_command_id(cx: &mut TestAppContext) {
     right_click(&format!("shortcuts-row-{OPEN_JSON}"), cx);
     assert_eq!(
         menu_items(&editor, cx),
-        Some(vec![MenuItem::CopyCommandId]),
+        Some(vec![MenuItem::CopyCommandId, MenuItem::AddKeybinding]),
         "an unbound command's line has nothing to remove or show"
     );
     click_menu_item(MenuItem::CopyCommandId, cx);
@@ -961,7 +967,11 @@ fn reset_is_offered_for_entries_not_in_effect(cx: &mut TestAppContext) {
     right_click(&format!("shortcuts-row-{OPEN_JSON}"), cx);
     assert_eq!(
         menu_items(&editor, cx),
-        Some(vec![MenuItem::CopyCommandId, MenuItem::ResetKeybinding])
+        Some(vec![
+            MenuItem::CopyCommandId,
+            MenuItem::AddKeybinding,
+            MenuItem::ResetKeybinding
+        ])
     );
     click_menu_item(MenuItem::ResetKeybinding, cx);
     let after = dirs.read_keymap();
@@ -1150,7 +1160,10 @@ fn reset_follows_the_file_while_open(cx: &mut TestAppContext) {
     search("keyboard shortcuts json", cx);
     let row = format!("shortcuts-row-{OPEN_JSON}");
     right_click(&row, cx);
-    assert_eq!(menu_items(&editor, cx), Some(vec![MenuItem::CopyCommandId]));
+    assert_eq!(
+        menu_items(&editor, cx),
+        Some(vec![MenuItem::CopyCommandId, MenuItem::AddKeybinding])
+    );
 
     // An entry for another platform, and one a later entry unbinds: the
     // keymap in use is the same, but each is the command's to reset. The
@@ -1172,7 +1185,11 @@ fn reset_follows_the_file_while_open(cx: &mut TestAppContext) {
         assert!(same, "the keymap in use doesn't change: {entry}");
         assert_eq!(
             menu_items(&editor, cx),
-            Some(vec![MenuItem::CopyCommandId, MenuItem::ResetKeybinding]),
+            Some(vec![
+                MenuItem::CopyCommandId,
+                MenuItem::AddKeybinding,
+                MenuItem::ResetKeybinding
+            ]),
             "{entry}"
         );
         // Deleted again: no reset.
@@ -1180,7 +1197,7 @@ fn reset_follows_the_file_while_open(cx: &mut TestAppContext) {
         reload(&dirs, cx);
         assert_eq!(
             menu_items(&editor, cx),
-            Some(vec![MenuItem::CopyCommandId]),
+            Some(vec![MenuItem::CopyCommandId, MenuItem::AddKeybinding]),
             "{entry}"
         );
     }
@@ -1650,3 +1667,6 @@ fn an_editor_key_named_as_a_flag_never_holds(cx: &mut TestAppContext) {
     );
     assert_eq!(marked, [false, false]);
 }
+
+#[path = "shortcuts_recorder_tests.rs"]
+mod recorder_tests;

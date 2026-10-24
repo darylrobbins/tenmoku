@@ -15,11 +15,12 @@
 //!   the other commands ([`conflict_note`]); one a later entry with the
 //!   same keys and context replaces is dimmed, its tooltip naming that
 //!   entry's location ([`ShortcutsEditor::hidden_note`]).
-//! - A right click on a line opens its menu: Copy Command ID, Remove
-//!   Keybinding (also Delete, or secondary-backspace, on the selected
-//!   line), Reset Keybinding on a command with entries in the user's
-//!   keymap, and Show Same Keybindings, which searches for its keys.
-//!   Removing and resetting write the user's `keymap.toml`
+//! - A right click on a line opens its menu: Copy Command ID, Add
+//!   Keybinding (below), Remove Keybinding (also Delete, or
+//!   secondary-backspace, on the selected line), Reset Keybinding on a
+//!   command with entries in the user's keymap, and Show Same
+//!   Keybindings, which searches for its keys. Adding, changing,
+//!   removing and resetting write the user's `keymap.toml`
 //!   ([`fe_keymap::write_keymap`]) off the main thread, a failure shown in
 //!   a toast; the watcher's reload of the file swaps the keymap in use,
 //!   and the tab follows.
@@ -31,10 +32,12 @@
 //!   the search field moves into the list. `/` or secondary-f goes back
 //!   to the search, and Escape closes the menu, else clears the search.
 //!   The search takes the text inputs' editing keys.
+//! - Keys for a binding, to add one or change it, are recorded in a box
+//!   in the line's Keybinding cell: see [`recorder`]. Enter, a double
+//!   click or a line's pencil (Add, on a line without a binding) opens it.
 //! - Only the lines in view are built: the list is a `uniform_list`.
 //!
-//! Recording keys for a binding, to add or change one, is to come. The tab
-//! has no path and serializes to nothing, so it isn't kept in saved
+//! The tab has no path and serializes to nothing, so it isn't kept in saved
 //! layouts, and closes as any tab does.
 
 use std::{
@@ -55,8 +58,8 @@ use fe_keymap::{
 };
 use fe_ui::{ActiveTheme as _, Icon, TextInput, TextInputEvent, Tooltip};
 use gpui::{
-    AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+    AnyElement, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement as _, Pixels, Point, Render, ScrollStrategy, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
     Window, anchored, deferred, div, prelude::FluentBuilder as _, px, svg, uniform_list,
@@ -67,6 +70,7 @@ use kiln::{
 };
 use kiln_shell::{PaneItem, PaneView as _};
 
+use self::recorder::Recorder;
 use crate::{
     ListedCommands, Workbench,
     picker::{self, PaletteOp},
@@ -78,6 +82,9 @@ pub(crate) const KEY_CONTEXT: &str = "shortcuts_editor";
 
 /// Every line's height: the list is a `uniform_list`.
 const LINE_HEIGHT: Pixels = px(26.);
+
+/// The width of the column of each line's pencil or Add button.
+const EDIT_WIDTH: Pixels = px(16.);
 
 /// The Keybinding column's width.
 const KEYS_WIDTH: Pixels = px(200.);
@@ -94,6 +101,10 @@ pub(crate) const RESET_REFUSED_HINT: &str = "Edit keymap.toml";
 /// What the list says when the search finds nothing.
 pub(crate) const NOTHING_FOUND: &str = "No keybindings found";
 
+/// What a line shows, to find it again among new lines: its command, and
+/// its binding's keys and location.
+type Identity = (String, Option<(String, String)>);
+
 /// A line of the table: a binding of one of the rows found, or a row
 /// with no binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +119,7 @@ pub(crate) struct Line {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MenuItem {
     CopyCommandId,
+    AddKeybinding,
     RemoveKeybinding,
     ResetKeybinding,
     ShowSameKeybindings,
@@ -117,6 +129,7 @@ impl MenuItem {
     pub(crate) fn title(self) -> &'static str {
         match self {
             MenuItem::CopyCommandId => "Copy Command ID",
+            MenuItem::AddKeybinding => "Add Keybinding",
             MenuItem::RemoveKeybinding => "Remove Keybinding",
             MenuItem::ResetKeybinding => "Reset Keybinding",
             MenuItem::ShowSameKeybindings => "Show Same Keybindings",
@@ -155,6 +168,8 @@ pub(crate) struct ShortcutsEditor {
     /// The selected line.
     selected: Option<usize>,
     menu: Option<LineMenu>,
+    /// The recorder open on a line.
+    recorder: Option<Recorder>,
     scroll: UniformListScrollHandle,
     /// Each range of lines the list built, for the tests.
     #[cfg(test)]
@@ -197,6 +212,7 @@ impl ShortcutsEditor {
             lines: Vec::new(),
             selected: None,
             menu: None,
+            recorder: None,
             scroll: UniformListScrollHandle::new(),
             #[cfg(test)]
             built: Vec::new(),
@@ -301,11 +317,16 @@ impl ShortcutsEditor {
             (0..self.lines.len()).position(|ix| self.identity(ix).as_ref() == Some(&selected))
         });
         self.menu = None;
+        // The recorder stays on its line while it's listed.
+        if self.recorder.is_some() && self.recorder_line().is_none() {
+            self.recorder = None;
+        }
+        self.refresh_recorder(cx);
     }
 
     /// What line `ix` shows, to find it again among new lines: its command,
     /// and its binding's keys and location.
-    fn identity(&self, ix: usize) -> Option<(String, Option<(String, String)>)> {
+    fn identity(&self, ix: usize) -> Option<Identity> {
         let (row, binding) = self.line(ix)?;
         let binding =
             binding.map(|binding| (binding.keys.to_string(), binding.location.to_string()));
@@ -459,7 +480,7 @@ impl ShortcutsEditor {
         let Some((row, binding)) = self.line(ix) else {
             return (Vec::new(), Vec::new());
         };
-        let mut items = vec![MenuItem::CopyCommandId];
+        let mut items = vec![MenuItem::CopyCommandId, MenuItem::AddKeybinding];
         let mut disabled = Vec::new();
         if let Some(binding) = binding
             && self.hidden_note(binding).is_none()
@@ -486,6 +507,7 @@ impl ShortcutsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.recorder = None;
         self.selected = Some(ix);
         let (items, disabled) = self.menu_items_for(ix, cx);
         self.menu = Some(LineMenu {
@@ -526,6 +548,7 @@ impl ShortcutsEditor {
             MenuItem::CopyCommandId => {
                 cx.write_to_clipboard(ClipboardItem::new_string(row.command.clone()));
             }
+            MenuItem::AddKeybinding => self.start_recording(menu.line, true, window, cx),
             MenuItem::RemoveKeybinding => self.remove(menu.line, cx),
             MenuItem::ResetKeybinding => {
                 let command = row.command.clone();
@@ -618,14 +641,9 @@ impl ShortcutsEditor {
     /// The search field's editing commands (`text_input.backspace` and the
     /// like, which the input leaves to its host); others go on.
     fn on_input_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
-        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-            Some(PaletteOp::Backspace) => TextInput::backspace,
-            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-            Some(PaletteOp::Clear) => TextInput::clear,
-            Some(PaletteOp::Paste) => TextInput::paste,
-            _ => return cx.propagate(),
-        };
-        self.search.update(cx, edit);
+        if !input_command(&self.search, run, cx) {
+            cx.propagate();
+        }
     }
 
     /// Its keys: see the module docs.
@@ -633,7 +651,22 @@ impl ShortcutsEditor {
         let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         let searching = self.search.focus_handle(cx).is_focused(window);
+        // The recorder's box takes its own keys; its When field's Enter
+        // and Escape come here.
+        if self.when_focused(window, cx) {
+            match keystroke.key.as_str() {
+                "enter" if !m.modified() => self.save_recording(window, cx),
+                "escape" if !m.modified() => self.cancel_recording(window, cx),
+                _ => return,
+            }
+            return cx.stop_propagation();
+        }
         match keystroke.key.as_str() {
+            "enter" if !m.modified() && !searching => {
+                if let Some(ix) = self.selected {
+                    self.start_recording(ix, false, window, cx);
+                }
+            }
             "up" | "down" if !m.modified() => {
                 let down = keystroke.key == "down";
                 self.close_menu(cx);
@@ -694,8 +727,9 @@ impl ShortcutsEditor {
             .collect()
     }
 
-    /// Line `ix`: its command's title and ID, its keys with a warning if
-    /// they clash, its when-text and its source; dimmed if it's hidden.
+    /// Line `ix`: its pencil, or Add without a binding, its command's
+    /// title and ID, its keys with a warning if they clash, or the recorder
+    /// open on it, its when-text and its source; dimmed if it's hidden.
     fn render_line(&self, ix: usize, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
         let ui = fe_ui::ui_theme(cx);
         let warning = cx.theme().colors.status.warning;
@@ -729,13 +763,48 @@ impl ShortcutsEditor {
                 .whitespace_nowrap()
         };
         let hidden_selector = format!("shortcuts-hidden-{command}-{nth}");
+        let recording = self.recorder_line() == Some(ix);
+        let recorder = recording.then(|| self.render_recorder_keys(cx)).flatten();
+        let when_input = recording.then(|| self.render_recorder_when(cx)).flatten();
+        // A line's pencil is `shortcuts-edit-<command>`, `-<n>` after for
+        // its others, as the line's selector; Add, on a line without a
+        // binding, `shortcuts-add-<command>`.
+        let button = match (binding, &hidden) {
+            (_, Some(_)) => None,
+            (Some(_), None) => Some((
+                match nth {
+                    0 => format!("shortcuts-edit-{command}"),
+                    nth => format!("shortcuts-edit-{command}-{nth}"),
+                },
+                "✎",
+                false,
+            )),
+            (None, None) => Some((format!("shortcuts-add-{command}"), "+", true)),
+        };
+        let button = button.map(|(selector, glyph, add)| {
+            div()
+                .id(SharedString::from(selector.clone()))
+                .debug_selector(move || selector)
+                .flex_none()
+                .text_color(ui.muted_text)
+                .hover(|style| style.text_color(ui.text))
+                .child(glyph)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.start_recording(ix, add, window, cx);
+                }))
+        });
+        let edit_cell = cell().w(EDIT_WIDTH).children(button);
         let keys_cell = cell()
             .w(KEYS_WIDTH)
             .when(hidden.is_some(), |cell| {
                 cell.debug_selector(move || hidden_selector)
             })
-            .child(div().text_color(ui.text).child(keys))
-            .when_some(conflict, |cell, note| {
+            .map(|cell| match recorder {
+                Some(recorder) => cell.child(recorder),
+                None => cell.child(div().text_color(ui.text).child(keys)),
+            })
+            .when_some(conflict.filter(|_| !recording), |cell, note| {
                 let selector = format!("shortcuts-conflict-{command}-{nth}");
                 cell.child(
                     div()
@@ -774,10 +843,19 @@ impl ShortcutsEditor {
                     cx.new(|_| tooltip).into()
                 })
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    return this.start_recording(ix, false, window, cx);
+                }
                 this.selected = Some(ix);
                 this.close_menu(cx);
-                window.focus(&this.focus, cx);
+                match (this.recorder_line() == Some(ix), &this.recorder) {
+                    (true, Some(recorder)) => window.focus(recorder.focus(), cx),
+                    _ => {
+                        this.recorder = None;
+                        window.focus(&this.focus, cx);
+                    }
+                }
                 cx.notify();
             }))
             .on_mouse_down(
@@ -787,6 +865,7 @@ impl ShortcutsEditor {
                     this.open_menu(ix, event.position, window, cx);
                 }),
             )
+            .child(edit_cell)
             .child(
                 div()
                     .flex_1()
@@ -805,15 +884,16 @@ impl ShortcutsEditor {
                     ),
             )
             .child(keys_cell)
-            .child(
-                div()
+            .child(match when_input {
+                Some(input) => div().flex_1().min_w_0().flex().child(input),
+                None => div()
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_color(ui.muted_text)
                     .child(when),
-            )
+            })
             .child(
                 cell()
                     .w(SOURCE_WIDTH)
@@ -844,6 +924,7 @@ impl ShortcutsEditor {
             .border_b_1()
             .border_color(ui.border)
             .text_color(ui.muted_text)
+            .child(div().flex_none().w(EDIT_WIDTH))
             .child(heading("Command").flex_1().min_w_0())
             .child(heading("Keybinding").flex_none().w(KEYS_WIDTH))
             .child(heading("When").flex_1().min_w_0())
@@ -912,6 +993,21 @@ impl ShortcutsEditor {
             .into_any_element(),
         )
     }
+}
+
+/// Runs `run` on `input` if it's one of a text input's editing commands
+/// (`text_input.backspace` and the like, which the input leaves to its
+/// host), returning whether it was.
+fn input_command(input: &Entity<TextInput>, run: &RunCommand, cx: &mut App) -> bool {
+    let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
+        Some(PaletteOp::Backspace) => TextInput::backspace,
+        Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
+        Some(PaletteOp::Clear) => TextInput::clear,
+        Some(PaletteOp::Paste) => TextInput::paste,
+        _ => return false,
+    };
+    input.update(cx, edit);
+    true
 }
 
 /// The model of the rows `keymap` gives the commands the palette lists,
@@ -1528,6 +1624,9 @@ impl Workbench {
         });
     }
 }
+
+#[path = "shortcuts_recorder.rs"]
+pub(crate) mod recorder;
 
 #[cfg(test)]
 #[path = "shortcuts_editor_queue_tests.rs"]
