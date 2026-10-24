@@ -146,13 +146,21 @@ struct SettingsWrites {
 
 impl Global for SettingsWrites {}
 
+/// What a pending change is to: a dotted key, in a scope, in the file that
+/// scope wrote to then (`None` with no file to write, no folder open). Two
+/// changes to one key in different files, or different roots', are two.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PendingKey {
+    key: String,
+    scope: Scope,
+    file: Option<PathBuf>,
+}
+
 /// A change written or waiting to be, not read back yet, to a key in a
 /// scope's file.
 struct Pending {
     /// Which change to the key it is: a later one supersedes it.
     generation: u64,
-    /// The files it was made in, whose rows it shows in.
-    files: Files,
     change: Change,
 }
 
@@ -195,9 +203,8 @@ pub(crate) struct SettingsEditor {
     /// highlighted.
     select: Option<(String, usize)>,
     /// The changes written or waiting to be, not read back yet, by dotted
-    /// key and the scope whose file they're to: what their rows show
-    /// meanwhile.
-    pending: HashMap<(String, Scope), Pending>,
+    /// key, scope and the file they're to: what their rows show meanwhile.
+    pending: HashMap<PendingKey, Pending>,
     /// The generation the next change gets.
     next_generation: u64,
     /// The number the next read of the files gets, in the order the reads
@@ -332,6 +339,14 @@ impl SettingsEditor {
         (open::settings_path(cx), project)
     }
 
+    /// The file `scope` writes to, of `files`.
+    fn target(scope: Scope, files: &Files) -> Option<PathBuf> {
+        match scope {
+            Scope::User => files.0.clone(),
+            Scope::Workspace => files.1.clone(),
+        }
+    }
+
     /// Makes `change` at `key` in the selected scope's file, after the
     /// writes before it, any Settings tab's ([`SettingsWrites`]), then
     /// reads the files again and shows them, unless the files shown have
@@ -357,10 +372,14 @@ impl SettingsEditor {
         let dotted = key.join(".");
         let pending = Pending {
             generation,
-            files: files.clone(),
             change: change.clone(),
         };
-        self.pending.insert((dotted.clone(), scope), pending);
+        let pending_key = PendingKey {
+            key: dotted.clone(),
+            scope,
+            file: Self::target(scope, &files),
+        };
+        self.pending.insert(pending_key.clone(), pending);
         let (key, reads) = (key.to_vec(), self.reads.clone());
         #[cfg(test)]
         let gate = self.gate.clone();
@@ -400,7 +419,7 @@ impl SettingsEditor {
                 }
             }
             this.update(cx, |this, cx| {
-                this.written(&dotted, scope, generation, files, written.ok(), cx)
+                this.written(pending_key, generation, files, written.ok(), cx)
             })
             .ok();
         });
@@ -414,14 +433,12 @@ impl SettingsEditor {
     /// change, unless a later one is waiting.
     fn written(
         &mut self,
-        key: &str,
-        scope: Scope,
+        pending: PendingKey,
         generation: u64,
         files: Files,
         written: Option<(u64, SettingsModel)>,
         cx: &mut Context<Self>,
     ) {
-        let pending = (key.to_owned(), scope);
         if (self.pending.get(&pending)).is_some_and(|p| p.generation == generation) {
             self.pending.remove(&pending);
         }
@@ -473,8 +490,11 @@ impl SettingsEditor {
     fn value(&self, entry: &SettingEntry, cx: &App) -> Option<(Json, bool)> {
         let model = self.model.as_ref()?;
         let scope = self.scope();
-        let pending = (self.pending.get(&(entry.key_path(), scope)))
-            .filter(|pending| pending.files == self.files(cx));
+        let pending = self.pending.get(&PendingKey {
+            key: entry.key_path(),
+            scope,
+            file: Self::target(scope, &self.files(cx)),
+        });
         Some(match pending.map(|pending| &pending.change) {
             Some(Change::Set(value)) => (value.json(), true),
             Some(Change::Reset) => {

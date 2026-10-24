@@ -1201,3 +1201,99 @@ fn switching_scope_drops_what_is_typed(cx: &mut TestAppContext) {
     assert!(!dirs.user().exists());
     assert_eq!(field(&editor, key, cx), ("4".to_owned(), None));
 }
+
+#[gpui::test]
+fn changes_to_a_key_in_two_roots_stay_apart(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    let other = Dirs::new();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "editor.soft_wrap";
+    let switch = format!("setting-switch-{key}");
+    let editor = open_settings(&workbench, Scope::Workspace, key, cx);
+    let held = hold_writes(&editor, cx);
+    let root = |dirs: &Dirs, cx: &mut VisualTestContext| {
+        workbench.update(cx, |_, cx| cx.emit(crate::RootChanged(dirs.root.clone())));
+        draw(cx);
+    };
+
+    // Each root's file has its own change waiting.
+    click(&switch, cx);
+    root(&other, cx);
+    assert_eq!(shown(&editor, key, cx), ("false".to_owned(), false));
+    click(&switch, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    root(&dirs, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    // A third toggle counts from the first root's own change.
+    click(&switch, cx);
+    assert_eq!(shown(&editor, key, cx), ("false".to_owned(), true));
+    root(&other, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+
+    // The first write landing leaves the other root's change waiting.
+    held.try_send(()).unwrap();
+    draw(cx);
+    assert_eq!(read(&dirs.workspace()), "[editor]\nsoft_wrap = true\n");
+    assert!(!other.workspace().exists(), "held");
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+
+    drop(held);
+    draw(cx);
+    assert_eq!(read(&dirs.workspace()), "[editor]\nsoft_wrap = false\n");
+    assert_eq!(read(&other.workspace()), "[editor]\nsoft_wrap = true\n");
+}
+
+#[gpui::test]
+fn changes_to_a_key_in_two_user_files_stay_apart(cx: &mut TestAppContext) {
+    let Some(dirs) = in_own_process("changes_to_a_key_in_two_user_files_stay_apart") else {
+        return;
+    };
+    let other = Dirs::new();
+    let (workbench, cx) = workbench(cx, &dirs);
+    let key = "editor.soft_wrap";
+    let switch = format!("setting-switch-{key}");
+    let editor = open_settings(&workbench, Scope::User, key, cx);
+    let held = hold_writes(&editor, cx);
+    // The config directory the tab reads and writes, as a test's own
+    // process has it set.
+    let config = |dirs: &Dirs, cx: &mut VisualTestContext| {
+        // SAFETY: the test runs alone in its own process, on one thread.
+        unsafe { std::env::set_var("FASTEDIT_CONFIG_DIR", &dirs.config) };
+        cx.update(|_, cx| cx.set_global(ConfigDirOverride(Some(dirs.config.clone()))));
+        editor.update(cx, |editor, cx| editor.reload(cx));
+        draw(cx);
+    };
+
+    click(&switch, cx);
+    config(&other, cx);
+    assert_eq!(shown(&editor, key, cx), ("false".to_owned(), false));
+    click(&switch, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    config(&dirs, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    click(&switch, cx);
+    assert_eq!(shown(&editor, key, cx), ("false".to_owned(), true));
+    config(&other, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+
+    // A write goes to the config directory as it is when it runs: have
+    // each land in the one it was made for, in the order made.
+    config(&dirs, cx);
+    held.try_send(()).unwrap();
+    draw(cx);
+    assert!(read(&dirs.user()).contains("soft_wrap = true"));
+    assert!(!other.user().exists(), "held");
+    config(&other, cx);
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    held.try_send(()).unwrap();
+    draw(cx);
+    assert!(read(&other.user()).contains("soft_wrap = true"));
+    assert_eq!(shown(&editor, key, cx), ("true".to_owned(), true));
+    // The first root's last change is still waiting.
+    config(&dirs, cx);
+    assert_eq!(shown(&editor, key, cx), ("false".to_owned(), true));
+    drop(held);
+    draw(cx);
+    assert!(read(&dirs.user()).contains("soft_wrap = false"));
+    assert!(read(&other.user()).contains("soft_wrap = true"));
+}
