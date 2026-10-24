@@ -76,6 +76,7 @@ use lsp_types::{
     CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
     DiagnosticClientCapabilities, DiagnosticTag, DidChangeConfigurationParams,
     DidChangeWatchedFilesClientCapabilities, DocumentLinkClientCapabilities,
+    DocumentSymbolClientCapabilities,
     DynamicRegistrationClientCapabilities, FailureHandlingKind, GeneralClientCapabilities,
     GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
     InlayHintClientCapabilities, InlayHintResolveClientCapabilities,
@@ -84,7 +85,7 @@ use lsp_types::{
     RenameClientCapabilities, ResourceOperationKind, SemanticTokensClientCapabilities,
     SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
+    SignatureInformationSettings, SymbolTag, TagSupport, TextDocumentClientCapabilities,
     TextDocumentSyncClientCapabilities, TokenFormat, Url, WindowClientCapabilities,
     WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
     WorkspaceSymbolClientCapabilities,
@@ -2268,7 +2269,7 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             symbol: Some(WorkspaceSymbolClientCapabilities {
                 dynamic_registration: dynamic,
-                symbol_kind: symbol_kinds,
+                symbol_kind: symbol_kinds.clone(),
                 ..Default::default()
             }),
             inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -2356,6 +2357,14 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             document_highlight: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
+            }),
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                dynamic_registration: dynamic,
+                symbol_kind: symbol_kinds,
+                hierarchical_document_symbol_support: Some(true),
+                tag_support: Some(TagSupport {
+                    value_set: vec![SymbolTag::DEPRECATED],
+                }),
             }),
             inlay_hint: Some(InlayHintClientCapabilities {
                 dynamic_registration: dynamic,

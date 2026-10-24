@@ -70,6 +70,7 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         "textDocument/references" | "workspace/willRenameFiles" => timeouts.references,
         "textDocument/hover"
         | "textDocument/documentHighlight"
+        | "textDocument/documentSymbol"
         | "textDocument/inlayHint"
         | "textDocument/codeLens"
         | "textDocument/documentLink"
