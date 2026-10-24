@@ -21,8 +21,8 @@ use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
-    DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
-    commands::RunCommand,
+    DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, ImageViewer,
+    SettingsEvent, commands::RunCommand,
 };
 use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
@@ -101,6 +101,11 @@ impl Tab {
 
     /// The tab's editor; `None` for a viewer.
     pub fn editor(&self) -> Option<&Entity<EditorView>> {
+        self.item.downcast_ref()
+    }
+
+    /// The tab's image viewer, if it shows an image file.
+    pub fn image_viewer(&self) -> Option<&Entity<ImageViewer>> {
         self.item.downcast_ref()
     }
 
@@ -504,6 +509,13 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         let viewer = self.new_viewer(view, index, cx);
+        self.add_item(Box::new(viewer), cx);
+    }
+
+    /// Opens a viewer of the image file `path` in a new tab and shows it,
+    /// without focusing it.
+    pub(crate) fn add_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let viewer = self.new_image_viewer(path, cx);
         self.add_item(Box::new(viewer), cx);
     }
 
@@ -1012,6 +1024,7 @@ impl Pane {
                             Box::new(self.new_editor(model, cx))
                         }
                         Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
+                        Opened::Image => Box::new(self.new_image_viewer(path.clone(), cx)),
                     };
                     if preview {
                         return self.replace_preview(item, cx);
@@ -1268,6 +1281,13 @@ impl Pane {
         cx.new(|cx| FileViewer::new(view, index, banner.into(), theme, cx))
     }
 
+    /// A viewer of the image file `path`, which decodes it off the main
+    /// thread.
+    fn new_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Entity<ImageViewer> {
+        let theme = self.theme.clone();
+        cx.new(|cx| ImageViewer::new(path, fe_gpui::ImageZoom::Fit, theme, cx))
+    }
+
     fn message(&self, text: String, cx: &App) -> gpui::AnyElement {
         div()
             .size_full()
@@ -1497,15 +1517,7 @@ pub(crate) fn lower_edit_warning(dir: &Path, bytes: u64) {
 
 /// `bytes` for a banner: `1.5 GiB`, `512 MiB`, `12 KiB`.
 fn size_text(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    const GIB: u64 = MIB * 1024;
-    match bytes {
-        GIB.. => format!("{:.1} GiB", bytes as f64 / GIB as f64),
-        MIB.. => format!("{} MiB", bytes / MIB),
-        KIB.. => format!("{} KiB", bytes / KIB),
-        _ => format!("{bytes} bytes"),
-    }
+    fe_gpui::size_text(bytes)
 }
 
 pub(crate) fn file_name(path: Option<&Path>) -> String {

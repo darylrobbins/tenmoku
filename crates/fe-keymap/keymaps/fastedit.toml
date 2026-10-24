@@ -1966,3 +1966,31 @@ keys = "cmd-shift-alt-down"
 command = "editor.column_select_down"
 context = "editor && !vim.enabled"
 platform = "macos"
+
+# The image viewer's zoom (VS Code's Image Preview has none of these keys;
+# these are the browser's). Only in its own key context: the editor's keys
+# are untouched.
+[[bindings]]
+keys = "secondary-="
+command = "image.zoom_in"
+context = "ImageViewer"
+
+[[bindings]]
+keys = "secondary-+"
+command = "image.zoom_in"
+context = "ImageViewer"
+
+[[bindings]]
+keys = "secondary--"
+command = "image.zoom_out"
+context = "ImageViewer"
+
+[[bindings]]
+keys = "secondary-0"
+command = "image.zoom_fit"
+context = "ImageViewer"
+
+[[bindings]]
+keys = "secondary-1"
+command = "image.zoom_actual"
+context = "ImageViewer"

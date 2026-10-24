@@ -152,6 +152,14 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
             ("enter".to_string(), "peek.open", false),
             ("escape".to_string(), "peek.close", false),
         ])
+        // The image viewer's zoom keys.
+        .chain([
+            ("cmd-=".to_string(), "image.zoom_in", false),
+            ("cmd-+".to_string(), "image.zoom_in", false),
+            ("cmd--".to_string(), "image.zoom_out", false),
+            ("cmd-0".to_string(), "image.zoom_fit", false),
+            ("cmd-1".to_string(), "image.zoom_actual", false),
+        ])
         .collect();
     assert_eq!(others, context_free);
     for binding in bindings {

@@ -64,6 +64,7 @@ fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
             );
             Ok(Opened::Large { view, index })
         }
+        Opened::Image => Ok(Opened::Image),
     }
 }
 

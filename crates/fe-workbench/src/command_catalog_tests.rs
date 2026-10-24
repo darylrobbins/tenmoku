@@ -498,3 +498,25 @@ fn the_line_sort_commands_have_their_ids_and_titles() {
         );
     }
 }
+
+/// The image viewer's zoom commands, bound in its key context, are in the
+/// catalog and the palette's list, which shows them where the viewer has
+/// the focus.
+#[test]
+fn the_image_viewers_zoom_commands_are_cataloged_and_listed() {
+    let ids = [
+        "image.zoom_in",
+        "image.zoom_out",
+        "image.zoom_fit",
+        "image.zoom_actual",
+    ];
+    let catalog = crate::command_catalog();
+    let list = crate::command_list();
+    for id in ids {
+        let command = CommandId::parse(id).unwrap();
+        assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
+        let listed: Vec<_> = list.iter().filter(|meta| meta.id == command).collect();
+        assert_eq!(listed.len(), 1, "{id}");
+        assert!(listed[0].context.is_some(), "{id} is listed in a context");
+    }
+}

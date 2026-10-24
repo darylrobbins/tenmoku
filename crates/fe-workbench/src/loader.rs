@@ -37,6 +37,9 @@ pub enum Opened {
         view: Arc<FileView>,
         index: Arc<LineIndex>,
     },
+    /// An image file, unread: the image viewer reads and decodes it
+    /// itself, off the main thread.
+    Image,
 }
 
 impl std::fmt::Debug for Opened {
@@ -44,6 +47,7 @@ impl std::fmt::Debug for Opened {
         match self {
             Opened::Text(buffer) => write!(f, "Text({:?} bytes)", buffer.as_ref().map(Buffer::len)),
             Opened::Large { view, .. } => write!(f, "Large({})", view.path().display()),
+            Opened::Image => write!(f, "Image"),
         }
     }
 }
@@ -57,12 +61,27 @@ impl From<Buffer> for Opened {
 /// Opens `path`: a file of [`LARGE_FILE_BYTES`] or more as a view whose
 /// index starts building, anything else as [`read`] does.
 pub fn open(path: PathBuf) -> io::Result<Opened> {
+    if is_image(&path) {
+        return Ok(Opened::Image);
+    }
     if !is_large(&path) {
         return read(path).map(Opened::Text);
     }
     let view = Arc::new(FileView::open(&path)?);
     let index = Arc::new(build_index(view.clone()));
     Ok(Opened::Large { view, index })
+}
+
+/// Whether `path` names an image the image viewer shows, by its extension
+/// (png, jpg, jpeg, gif, webp, bmp or ico, in any case).
+pub(crate) fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"]
+                .iter()
+                .any(|image| ext.eq_ignore_ascii_case(image))
+        })
 }
 
 /// Whether `path` is a file of [`LARGE_FILE_BYTES`] or more (lower in
@@ -223,6 +242,10 @@ impl Reading {
 #[cfg(test)]
 #[path = "loader_encoding_tests.rs"]
 mod encoding_tests;
+
+#[cfg(test)]
+#[path = "image_viewer_open_tests.rs"]
+mod image_viewer_open_tests;
 
 #[cfg(test)]
 mod tests {

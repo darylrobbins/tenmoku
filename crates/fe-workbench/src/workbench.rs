@@ -353,6 +353,7 @@ impl Workbench {
                     cx,
                 ),
                 Some((_, Some(Opened::Large { view, index }))) => pane.add_viewer(view, index, cx),
+                Some((path, Some(Opened::Image))) => pane.add_image_viewer(path, cx),
                 Some((path, None)) => pane.opening(path, cx),
             }
             pane

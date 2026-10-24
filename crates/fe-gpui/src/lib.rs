@@ -24,6 +24,7 @@ mod element;
 mod file_viewer;
 mod gutter_annotations;
 mod hover;
+mod image_viewer;
 pub mod inlay_hints;
 pub mod keymap;
 pub mod lens;
@@ -48,6 +49,10 @@ pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use gutter_annotations::{GutterAnnotation, GutterAnnotations};
 pub use hover::{HoverContent, HoverFuture, HoverProvider, MarkdownRenderer};
+pub use image_viewer::pane_item::status as image_status;
+pub use image_viewer::{
+    ImageViewer, KEY_CONTEXT as IMAGE_VIEWER_CONTEXT, Zoom as ImageZoom, size_text,
+};
 pub use inlay_hints::{InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
 
