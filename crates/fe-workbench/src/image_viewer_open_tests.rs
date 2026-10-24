@@ -98,10 +98,12 @@ fn the_extension_picks_the_viewer_in_any_case() {
         "A.PNG",
         "a.JpG",
         "dir.d/a.Webp",
+        "a.svg",
+        "a.SVGZ",
     ] {
         assert!(is_image(Path::new(name)), "{name}");
     }
-    for name in ["a.txt", "a.svg", "png", "a.png.txt", "a", "a.pn"] {
+    for name in ["a.txt", "a.svg.txt", "png", "a.png.txt", "a", "a.pn"] {
         assert!(!is_image(Path::new(name)), "{name}");
     }
     // Not read: even a missing file is an image to view.

@@ -73,15 +73,25 @@ pub fn open(path: PathBuf) -> io::Result<Opened> {
 }
 
 /// Whether `path` names an image the image viewer shows, by its extension
-/// (png, jpg, jpeg, gif, webp, bmp or ico, in any case).
+/// (png, jpg, jpeg, gif, webp, bmp, ico, svg or svgz, in any case).
 pub(crate) fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
-            ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"]
-                .iter()
-                .any(|image| ext.eq_ignore_ascii_case(image))
+            [
+                "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "svgz",
+            ]
+            .iter()
+            .any(|image| ext.eq_ignore_ascii_case(image))
         })
+}
+
+/// Whether `path` is an uncompressed SVG (`.svg`, in any case), the one image
+/// format that is also text. (A `.svgz` is a viewer only.)
+pub(crate) fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
 }
 
 /// Whether `path` is a file of [`LARGE_FILE_BYTES`] or more (lower in
@@ -246,6 +256,10 @@ mod encoding_tests;
 #[cfg(test)]
 #[path = "image_viewer_open_tests.rs"]
 mod image_viewer_open_tests;
+
+#[cfg(test)]
+#[path = "svg_view_as_text_tests.rs"]
+mod svg_view_as_text_tests;
 
 #[cfg(test)]
 mod tests {

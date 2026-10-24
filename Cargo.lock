@@ -2267,6 +2267,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "unicode-segmentation",
+ "usvg",
 ]
 
 [[package]]

@@ -27,6 +27,8 @@ futures.workspace = true
 # The minimap's tiles are images (element/minimap.rs).
 image.workspace = true
 log.workspace = true
+# An SVG's size and links are read as GPUI's renderer reads them (image_viewer.rs).
+usvg.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]

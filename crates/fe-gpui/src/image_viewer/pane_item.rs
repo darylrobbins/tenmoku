@@ -97,10 +97,12 @@ impl PaneItem for ImageViewer {
             Zoom::Fit => Value::from("fit"),
             Zoom::Scale(scale) => Value::from(f64::from(scale)),
         };
-        Some(Value::from_iter([
-            ("path", Value::from(path)),
-            ("zoom", zoom),
-        ]))
+        let mut state = vec![("path", Value::from(path)), ("zoom", zoom)];
+        // Where an SVG may link files, kept across a restore.
+        if let Some(root) = self.root().and_then(Path::to_str) {
+            state.push(("root", Value::from(root)));
+        }
+        Some(Value::from_iter(state))
     }
 
     /// A viewer of `state`'s file in the theme of
@@ -115,8 +117,11 @@ impl PaneItem for ImageViewer {
             return Task::ready(None);
         }
         let zoom = zoom_of(&state);
+        let root = state.get("root").and_then(Value::as_str).map(PathBuf::from);
         let (theme, _) = restore_style(cx);
-        Task::ready(Some(cx.new(|cx| ImageViewer::new(path, zoom, theme, cx))))
+        Task::ready(Some(
+            cx.new(|cx| ImageViewer::in_workspace(path, zoom, root, theme, cx)),
+        ))
     }
 
     /// Puts back the zoom a split's saved state holds.

@@ -520,3 +520,14 @@ fn the_image_viewers_zoom_commands_are_cataloged_and_listed() {
         assert!(listed[0].context.is_some(), "{id} is listed in a context");
     }
 }
+
+/// Open as Text and Open as Image, which swap an SVG's viewer tab and
+/// editor tab, are typed commands in the catalog.
+#[test]
+fn the_svg_view_as_text_commands_are_cataloged() {
+    let catalog = crate::command_catalog();
+    for id in ["image.open_as_text", "image.open_as_image"] {
+        let command = CommandId::parse(id).unwrap();
+        assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
+    }
+}

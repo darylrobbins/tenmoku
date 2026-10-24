@@ -184,6 +184,12 @@ pub struct Pane {
     viewer_events: HashMap<TabId, Subscription>,
     /// Reads of the files of viewer tabs being converted to editors.
     conversions: HashMap<TabId, Task<()>>,
+    /// The zoom of each SVG viewer tab replaced by an editor
+    /// ([`Pane::open_as_text`]), for the way back.
+    svg_zooms: HashMap<PathBuf, fe_gpui::ImageZoom>,
+    /// The reads of `open_as_text` running, by path: a newer request, or
+    /// `open_as_image`, drops (cancels) the older one.
+    text_reads: HashMap<PathBuf, Task<()>>,
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
     actions: gpui::ScrollHandle,
@@ -302,6 +308,8 @@ impl Pane {
             save_keys: Rc::default(),
             viewer_events: HashMap::new(),
             conversions: HashMap::new(),
+            svg_zooms: HashMap::new(),
+            text_reads: HashMap::new(),
             #[cfg(test)]
             actions: gpui::ScrollHandle::new(),
             #[cfg(test)]
@@ -757,14 +765,27 @@ impl Pane {
             let at = text.clip_offset(head.min(text.len()), Bias::Left);
             editor.select_and_reveal(at..at, cx);
         });
-        // The editor goes in before the viewer, which then goes. The
-        // active index is put back before the viewer's removal so that
-        // `take_item` activates no tab: a newer open pending, and the
-        // window's focus, stay as they are.
+        self.replace_in_place(ix, Box::new(editor), window, cx);
+    }
+
+    /// Replaces tab `ix` with `item`, at the same index. The item goes in
+    /// before the tab, which then goes. The active index is put back before
+    /// the removal so that `take_item` activates no tab: a newer open
+    /// pending, and the window's focus, stay as they are.
+    fn replace_in_place(
+        &mut self,
+        ix: usize,
+        item: Box<dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let was_active = self.state.active() == Some(ix);
-        let had_focus = viewer.focus_handle(cx).contains_focused(window, cx);
-        let focus = editor.focus_handle(cx);
-        self.state.insert(ix, Box::new(editor), cx);
+        let had_focus = self.tabs[ix]
+            .item()
+            .item_focus_handle(cx)
+            .contains_focused(window, cx);
+        let focus = item.item_focus_handle(cx);
+        self.state.insert(ix, item, cx);
         if was_active {
             self.state.set_active(ix);
         }
@@ -773,6 +794,127 @@ impl Pane {
             window.focus(&focus, cx);
         }
         cx.notify();
+    }
+
+    /// Opens the file `path` as text in an editor, whatever its format: an
+    /// SVG viewer tab for it is replaced in place (its zoom kept for
+    /// [`Pane::open_as_image`]), an editor tab open already is shown, and
+    /// otherwise it opens in a new tab. The file is read on the background
+    /// executor. For `image.open_as_text`; ordinary opens still go by
+    /// [`loader::is_image`].
+    pub fn open_as_text(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.position(&path)
+            && self.tabs[ix].editor().is_some()
+        {
+            self.activate(ix, window, cx);
+            return;
+        }
+        // The tab to replace, which the read must still find as it was.
+        let origin = self.position(&path).map(|ix| self.tabs[ix].id());
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move { loader::read(path) }
+        });
+        let task = cx.spawn_in(window, {
+            let path = path.clone();
+            async move |pane, cx| {
+                let result = read.await;
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.text_landed(path, origin, result, window, cx)
+                })
+                .ok();
+            }
+        });
+        // A request already running for the file is dropped.
+        self.text_reads.insert(path, task);
+    }
+
+    /// The read for `open_as_text` landed. It does nothing if the tab it was
+    /// for has gone or moved to another pane meanwhile, or if the file has
+    /// been opened as text since: the user has moved on.
+    fn text_landed(
+        &mut self,
+        path: PathBuf,
+        origin: Option<TabId>,
+        result: io::Result<Option<fe_buffer::Buffer>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.text_reads.remove(&path);
+        let position = self.position(&path);
+        let ix = match (origin, position) {
+            (Some(origin), Some(ix)) if self.tabs[ix].id() == origin => Some(ix),
+            (Some(_), _) => return,
+            (None, Some(ix)) => {
+                // Opened meanwhile.
+                if self.tabs[ix].editor().is_some() {
+                    self.activate(ix, window, cx);
+                }
+                return;
+            }
+            (None, None) => None,
+        };
+        if ix.is_some_and(|ix| self.tabs[ix].editor().is_some()) {
+            return;
+        }
+        let buffer = match result {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                log::error!("cannot open {} as text: {error}", path.display());
+                let name = path.file_name().unwrap_or(path.as_os_str());
+                toast::show(
+                    cx,
+                    Toast::error(format!("Can't open {}", name.to_string_lossy()))
+                        .detail(error.to_string()),
+                );
+                return;
+            }
+        };
+        let model = self
+            .peer_model(&path, cx)
+            .unwrap_or_else(|| EditorModel::new(loader::buffer_or_new(buffer), Some(path.clone())));
+        let editor = self.new_editor(model, cx);
+        match ix {
+            Some(ix) => {
+                if let Some(viewer) = self.tabs[ix].image_viewer() {
+                    let zoom = viewer.read(cx).zoom();
+                    self.svg_zooms.insert(path, zoom);
+                }
+                self.replace_in_place(ix, Box::new(editor), window, cx);
+            }
+            None => {
+                self.add_item(Box::new(editor), cx);
+                let ix = self.tabs.len() - 1;
+                self.activate(ix, window, cx);
+            }
+        }
+    }
+
+    /// Replaces the editor tab of the SVG `path` with a viewer of it, at the
+    /// zoom it had before [`Pane::open_as_text`]. An editor with unsaved
+    /// changes stays, with a toast saying why.
+    pub fn open_as_image(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.position(path) else {
+            return;
+        };
+        // A read for the way to the text is out of date now.
+        self.text_reads.remove(path);
+        if self.tabs[ix].editor().is_none() {
+            return;
+        }
+        if self.tabs[ix].item().is_dirty(cx) {
+            toast::show(
+                cx,
+                Toast::error("Save the file before opening it as an image"),
+            );
+            return;
+        }
+        let zoom = self
+            .svg_zooms
+            .remove(path)
+            .unwrap_or(fe_gpui::ImageZoom::Fit);
+        let viewer = self.image_viewer_at(path.to_owned(), zoom, cx);
+        self.replace_in_place(ix, Box::new(viewer), window, cx);
     }
 
     /// Shows the tab for `path` if it's open; otherwise reads the file in the
@@ -868,7 +1010,12 @@ impl Pane {
             cx.notify();
             return;
         }
-        if let Some(model) = self.peer_model(&path, cx) {
+        // An image opens in its viewer, though another pane has the file open as
+        // text (`Pane::open_as_text`): that buffer is shared only by it.
+        let peer = self
+            .peer_model(&path, cx)
+            .filter(|_| !loader::is_image(&path));
+        if let Some(model) = peer {
             let ix = if preview {
                 let editor = self.new_editor(model, cx);
                 let ix = self.replace_preview(Box::new(editor), cx);
@@ -1284,8 +1431,20 @@ impl Pane {
     /// A viewer of the image file `path`, which decodes it off the main
     /// thread.
     fn new_image_viewer(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Entity<ImageViewer> {
+        self.image_viewer_at(path, fe_gpui::ImageZoom::Fit, cx)
+    }
+
+    /// A viewer of `path` at `zoom`; an SVG in it may link files in the
+    /// project.
+    fn image_viewer_at(
+        &mut self,
+        path: PathBuf,
+        zoom: fe_gpui::ImageZoom,
+        cx: &mut Context<Self>,
+    ) -> Entity<ImageViewer> {
         let theme = self.theme.clone();
-        cx.new(|cx| ImageViewer::new(path, fe_gpui::ImageZoom::Fit, theme, cx))
+        let root = self.toolbar.root.clone();
+        cx.new(|cx| ImageViewer::in_workspace(path, zoom, root, theme, cx))
     }
 
     fn message(&self, text: String, cx: &App) -> gpui::AnyElement {

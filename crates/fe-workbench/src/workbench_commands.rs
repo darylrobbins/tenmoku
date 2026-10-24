@@ -829,6 +829,30 @@ impl Workbench {
         });
     }
 
+    /// Open as Text
+    #[command(id = "image.open_as_text", context = "ImageViewer && svg")]
+    fn open_as_text_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("ImageViewer && svg", cx, |this, window, cx| {
+            let pane = this.pane().clone();
+            let path = svg_tab(&pane, true, cx);
+            if let Some(path) = path {
+                pane.update(cx, |pane, cx| pane.open_as_text(path, window, cx));
+            }
+        });
+    }
+
+    /// Open as Image
+    #[command(id = "image.open_as_image", context = "editor")]
+    fn open_as_image_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, window, cx| {
+            let pane = this.pane().clone();
+            let path = svg_tab(&pane, false, cx);
+            if let Some(path) = path {
+                pane.update(cx, |pane, cx| pane.open_as_image(&path, window, cx));
+            }
+        });
+    }
+
     /// Open Folder…
     #[command(id = "workbench.open_folder")]
     fn open_folder(&mut self, cx: &mut Cx<Self>) {
@@ -1116,4 +1140,23 @@ pub(crate) fn invoked_in(context: &str, cx: &App) -> bool {
         }
         _ => true,
     }
+}
+
+/// The path of `pane`'s active tab if it's an SVG's viewer (`viewer`) or
+/// an SVG's editor: `image.open_as_text` and `image.open_as_image` do
+/// nothing on any other tab.
+fn svg_tab(
+    pane: &gpui::Entity<crate::Pane>,
+    viewer: bool,
+    cx: &gpui::App,
+) -> Option<std::path::PathBuf> {
+    let pane = pane.read(cx);
+    let tab = pane.tabs().get(pane.active()?)?;
+    let shown = if viewer {
+        tab.image_viewer().is_some()
+    } else {
+        tab.editor().is_some()
+    };
+    let path = tab.path.clone()?;
+    (shown && crate::loader::is_svg(&path)).then_some(path)
 }
