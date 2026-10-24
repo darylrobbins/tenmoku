@@ -48,6 +48,7 @@ mod pane_toolbar;
 mod peek;
 mod persist;
 mod picker;
+mod plugin_prompt;
 mod preserve_case;
 mod project_panel;
 mod quick_open;
@@ -88,6 +89,9 @@ pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};
 pub use persist::save_toggles_to;
 pub use picker::{Picker, PickerDelegate};
+pub use plugin_prompt::{
+    PendingPluginGrant, PluginAnswer, PluginAsk, plugin_prompt_text, show_plugin_prompt,
+};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
 pub use references_panel::ReferencesPanel;

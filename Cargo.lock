@@ -2533,6 +2533,7 @@ dependencies = [
  "kiln",
  "kiln-command",
  "kiln-platform",
+ "kiln-plugin",
  "kiln-shell",
  "kiln-ui",
  "libc",

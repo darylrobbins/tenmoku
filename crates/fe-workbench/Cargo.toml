@@ -42,6 +42,8 @@ fe-ui.workspace = true
 # The workbench's typed commands: `#[kiln::command]` expands to `::kiln::..` paths.
 kiln.workspace = true
 kiln-platform.workspace = true
+# A plugin install prompt's plain-words warnings and its grant decisions.
+kiln-plugin.workspace = true
 # The window's chrome: the title bar, the frame and the menu bar.
 kiln-shell.workspace = true
 gpui.workspace = true
