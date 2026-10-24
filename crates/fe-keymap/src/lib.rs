@@ -18,7 +18,15 @@ pub use kiln_core::{
     macos_label, pc_label, shortcut_label, shortcuts,
 };
 
+pub use fe_command::{CommandId, ContextPredicate};
+
+mod keymap_edit;
 mod shortcuts_model;
+
+pub use keymap_edit::{
+    DefaultKeymap, KEYMAP_HEADER, KeymapEdit, KeymapEditError, KeymapWrite, edit_keymap,
+    edit_keymap_on, write_keymap, write_keymap_hooked, write_keymap_on,
+};
 
 pub use shortcuts_model::{
     CommandInfo, ShortcutBinding, ShortcutIssue, ShortcutRow, ShortcutSource, ShortcutsModel,
