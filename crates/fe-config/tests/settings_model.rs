@@ -438,7 +438,12 @@ fn search_matches_key_description_and_group() {
     // By group title: every row of `Editor > Sticky Scroll`.
     assert_eq!(
         keys(&model.search("sticky scroll")),
-        ["editor.sticky_scroll.enabled"]
+        [
+            "editor.sticky_scroll.default_model",
+            "editor.sticky_scroll.enabled",
+            "editor.sticky_scroll.max_line_count",
+            "editor.sticky_scroll.scroll_with_editor",
+        ]
     );
     let minimap = keys(&model.search("Minimap"));
     assert!(
