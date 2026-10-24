@@ -1159,6 +1159,15 @@ impl EditorView {
         &FRAMES
     }
 
+    /// The named key contexts fe-gpui's own views seat an editor under, for
+    /// the Keyboard Shortcuts tab to find the bindings that clash there: the
+    /// diff view. The file viewer and the panes set none, so their editors
+    /// sit in the workbench's frame alone; hosts outside fe-gpui (the chat
+    /// composer) add theirs.
+    pub fn host_key_contexts() -> &'static [&'static str] {
+        &[crate::diff_view::KEY_CONTEXT]
+    }
+
     /// Creates the vim state when vim is on and drops it when it's off.
     /// Returns whether that changed anything.
     pub(crate) fn sync_vim(&mut self, cx: &App) -> bool {

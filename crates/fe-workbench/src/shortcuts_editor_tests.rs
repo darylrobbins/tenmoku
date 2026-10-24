@@ -1673,3 +1673,6 @@ mod recorder_tests;
 
 #[path = "shortcuts_editor_reset_race_tests.rs"]
 mod reset_race_tests;
+
+#[path = "shortcuts_editor_frames_tests.rs"]
+mod frames_tests;

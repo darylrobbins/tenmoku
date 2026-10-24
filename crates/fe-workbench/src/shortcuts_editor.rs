@@ -1058,7 +1058,18 @@ fn clashes(keymap: &Keymap) -> Vec<KeymapIssue> {
     let editor = workbench
         .clone()
         .with(ContextFrame::new(fe_gpui::KEY_CONTEXT));
-    let mut contexts = vec![workbench, editor];
+    let mut contexts = vec![workbench.clone(), editor];
+    // Every view that holds editors, with each frame an editor can have in
+    // it: a condition that only rules editor keys out (`DiffView &&
+    // !vim.enabled`) holds there though no binding names the editor.
+    for host in hosting_contexts() {
+        let host = workbench.clone().with(ContextFrame::new(host));
+        contexts.extend(
+            editors
+                .iter()
+                .map(|editor| host.clone().with(editor.clone())),
+        );
+    }
     for context in predicates {
         // A witness for each alternative: `settings_editor ||
         // shortcuts_editor` holds in either tab.
@@ -1082,6 +1093,16 @@ fn clashes(keymap: &Keymap) -> Vec<KeymapIssue> {
         }
     }
     keymap.report_with(&contexts)
+}
+
+/// The named key contexts an editor sits in, apart from the workbench's own
+/// frame (where the file viewer's and the panes' editors are): fe-gpui's
+/// views', the chat composer's and the Changes panel's commit message.
+fn hosting_contexts() -> impl Iterator<Item = &'static str> {
+    (EditorView::host_key_contexts().iter().copied()).chain([
+        fe_chat_view::COMPOSER_CONTEXT,
+        crate::git_panel::KEY_CONTEXT,
+    ])
 }
 
 /// The flags and the values of keys some binding's context names: an
