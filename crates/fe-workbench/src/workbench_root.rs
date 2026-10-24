@@ -234,5 +234,7 @@ impl Workbench {
         if inline_blame != event.previous.editor.inline_blame {
             git_blame::set_line_blame(self, inline_blame, cx);
         }
+        // The watcher saw a settings file change: the Settings tab reads it.
+        self.reload_settings_editors(cx);
     }
 }

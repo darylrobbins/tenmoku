@@ -921,10 +921,17 @@ impl Workbench {
         self.open_command(OpenOp::File, cx);
     }
 
-    /// Settings…
+    /// Open Settings (JSON)
     #[command(id = "workbench.open_settings")]
     fn open_settings_command(&mut self, cx: &mut Cx<Self>) {
         self.open_command(OpenOp::Settings, cx);
+    }
+
+    /// Open Settings (UI)
+    #[command(id = "workbench.open_settings_ui")]
+    fn open_settings_ui_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.open_settings_ui(cx.window, cx.cx);
     }
 
     /// New Window

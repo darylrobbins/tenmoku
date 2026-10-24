@@ -572,7 +572,7 @@ context = "workbench"
 
 [[bindings]]
 keys = "secondary-,"
-command = "workbench.open_settings"
+command = "workbench.open_settings_ui"
 context = "workbench"
 
 # Open Recent: VS Code's macOS ctrl-r, on every platform. In an editor with

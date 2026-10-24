@@ -188,7 +188,16 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("lsp.format_selection", "Format Selection", "editor"),
     ("workbench.open_folder", "Open Folder…", "workbench"),
     ("workbench.open_file", "Open File…", "workbench"),
-    ("workbench.open_settings", "Settings…", "workbench"),
+    (
+        "workbench.open_settings",
+        "Open Settings (JSON)",
+        "workbench",
+    ),
+    (
+        "workbench.open_settings_ui",
+        "Open Settings (UI)",
+        "workbench",
+    ),
     ("window.new", "New Window", "workbench"),
     (
         "workbench.open_folder_in_new_window",

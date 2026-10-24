@@ -1,10 +1,14 @@
-//! Settings… (cmd-comma): the user's `settings.toml`, created from the
-//! template if missing, in a tab of the active pane. The config directory is
+//! Open Settings (JSON), `workbench.open_settings`: the user's
+//! `settings.toml`, created from the template if missing, in a tab of the
+//! active pane. (cmd-comma opens the Settings editor:
+//! `crate::settings_editor_tests`.) The config directory is
 //! a temporary one, through the test-only override.
 
 use std::{fs, path::PathBuf, sync::Mutex};
 
+use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::USER_SETTINGS_TEMPLATE;
+use fe_gpui::commands::RunCommand;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::open_root;
@@ -63,8 +67,18 @@ fn capture_errors() {
     }
 }
 
-fn press_settings(cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes("cmd-,");
+/// Runs `workbench.open_settings`, as the palette does.
+fn run_open_settings(cx: &mut VisualTestContext) {
+    let run = RunCommand(
+        Invocation::of("workbench.open_settings")
+            .unwrap()
+            .context(ContextStack::new().with(ContextFrame::new("workbench"))),
+    );
+    cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+}
+
+fn open_settings_and_wait(cx: &mut VisualTestContext) {
+    run_open_settings(cx);
     // The file is written on a background thread.
     for _ in 0..50 {
         cx.run_until_parked();
@@ -81,7 +95,7 @@ fn creates_and_opens_the_file(cx: &mut TestAppContext) {
     let file = dir.join("settings.toml");
     let (workbench, cx) = workbench_with(cx, project.path(), Some(dir));
 
-    press_settings(cx);
+    open_settings_and_wait(cx);
     assert_eq!(fs::read_to_string(&file).unwrap(), USER_SETTINGS_TEMPLATE);
     assert_eq!(
         tabs(&workbench, cx),
@@ -100,7 +114,7 @@ fn creates_and_opens_the_file(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(tabs(&workbench, cx).1, Some(other.clone()));
-    press_settings(cx);
+    open_settings_and_wait(cx);
     assert_eq!(fs::read_to_string(&file).unwrap(), "# mine\n");
     assert_eq!(
         tabs(&workbench, cx),
@@ -116,7 +130,7 @@ fn an_existing_file_is_never_overwritten(cx: &mut TestAppContext) {
     fs::write(&file, "[editor]\nfont_size = 16\n").unwrap();
     let (workbench, cx) = workbench_with(cx, project.path(), Some(config.path().to_owned()));
 
-    press_settings(cx);
+    open_settings_and_wait(cx);
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
         "[editor]\nfont_size = 16\n"
@@ -141,7 +155,7 @@ fn no_config_directory_opens_nothing(cx: &mut TestAppContext) {
     assert_eq!(before, (vec![existing.clone()], Some(existing)));
     ERRORS.lock().unwrap().clear();
 
-    press_settings(cx);
+    open_settings_and_wait(cx);
     assert_eq!(tabs(&workbench, cx), before);
     let errors = ERRORS.lock().unwrap();
     assert!(
@@ -208,7 +222,7 @@ fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
         let _ = release_tx.send(());
     });
 
-    cx.simulate_keystrokes("cmd-,");
+    run_open_settings(cx);
     // The command's request returns once the first is released; wait, with
     // a bound, for its tab.
     let mut opened = false;

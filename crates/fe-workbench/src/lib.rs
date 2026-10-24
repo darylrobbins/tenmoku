@@ -53,6 +53,7 @@ mod project_panel;
 mod quick_open;
 mod references_panel;
 mod search_panel;
+mod settings_editor;
 mod status_bar;
 mod terminal_panel;
 mod theme_picker;
@@ -246,6 +247,8 @@ mod lsp_consent_relaunch_tests;
 mod lsp_consent_tests;
 #[cfg(test)]
 mod panel_width_tests;
+#[cfg(test)]
+mod settings_editor_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

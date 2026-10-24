@@ -485,7 +485,7 @@ fn linux_menus_are_the_macos_menus_without_the_app_menu() {
         .iter()
         .position(|c| c == "workbench.close_tab")
         .unwrap();
-    file.insert(close_tab, "workbench.open_settings".to_owned());
+    file.insert(close_tab, "workbench.open_settings_ui".to_owned());
     file.push("app.quit".to_owned());
     assert_eq!(commands_by_menu(&linux), expected);
 
