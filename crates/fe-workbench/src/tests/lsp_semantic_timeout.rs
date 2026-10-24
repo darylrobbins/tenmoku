@@ -68,7 +68,7 @@ fn a_timed_out_ask_is_asked_again_and_its_mutable_underline_lands(cx: &mut TestA
         (model
             .decorations(0..model.snapshot().text().len())
             .into_iter())
-        .filter(|item| matches!(item.kind, DecorationKind::Underline { .. }))
+        .filter(|item| matches!(item.kind, DecorationKind::SyntaxUnderline(_)))
         .map(|item| item.range)
         .collect::<Vec<_>>()
     });

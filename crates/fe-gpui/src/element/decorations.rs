@@ -73,6 +73,11 @@ fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
     }
 }
 
+/// The colour the theme gives the highlight `name`, if it has one.
+pub(crate) fn name_color(theme: &EditorTheme, name: &str) -> Option<Hsla> {
+    fe_syntax::Highlight::from_capture(name).and_then(|highlight| theme.syntax_color(highlight))
+}
+
 /// A decoration laid out on one display row.
 #[derive(Clone)]
 pub(crate) struct Placed {
@@ -157,7 +162,12 @@ impl Decorations {
             let from = (frame.rows).partition_point(|row| row.buffer_row < *covered.start());
             let to = (frame.rows).partition_point(|row| row.buffer_row <= *covered.end());
             let rows = &frame.rows[from..to];
-            let tint = tint_color(theme, decoration.tint);
+            let tint = match &decoration.kind {
+                DecorationKind::SyntaxUnderline(name) => {
+                    name_color(theme, name).unwrap_or(theme.foreground)
+                }
+                _ => tint_color(theme, decoration.tint),
+            };
             let range = decoration.range;
             let mut place = |rect: Rect, color: Hsla, text: Option<Line>| {
                 placed.push((decoration.kind.clone(), rect, color, text));
@@ -223,7 +233,9 @@ impl Decorations {
                     };
                     place(rect, tint.opacity(DELETION_ALPHA), None);
                 }
-                DecorationKind::Highlight | DecorationKind::Underline { .. } => {
+                DecorationKind::Highlight
+                | DecorationKind::Underline { .. }
+                | DecorationKind::SyntaxUnderline(_) => {
                     for row in rows {
                         let (start, end) = (range.start.max(row.start), range.end.min(row.end));
                         // An empty one only on the row its caret would be
@@ -338,15 +350,14 @@ impl Decorations {
                 }
             }
             Layer::Underlines => {
-                for placed in of(|kind| matches!(kind, DecorationKind::Underline { .. })) {
-                    let DecorationKind::Underline { wavy } = placed.kind else {
-                        continue;
-                    };
-                    let style = UnderlineStyle {
-                        thickness: placed.bounds.size.height,
-                        color: Some(placed.color),
-                        wavy,
-                    };
+                let underlined = |kind: &DecorationKind| {
+                    matches!(
+                        kind,
+                        DecorationKind::Underline { .. } | DecorationKind::SyntaxUnderline(_)
+                    )
+                };
+                for placed in of(underlined) {
+                    let style = underline_style(placed);
                     window.paint_underline(placed.bounds.origin, placed.bounds.size.width, &style);
                     painted = true;
                 }
@@ -394,6 +405,15 @@ impl Decorations {
     }
 }
 
+/// How a placed underline is painted: wavy only for a wavy `Underline`.
+fn underline_style(placed: &Placed) -> UnderlineStyle {
+    UnderlineStyle {
+        thickness: placed.bounds.size.height,
+        color: Some(placed.color),
+        wavy: matches!(placed.kind, DecorationKind::Underline { wavy: true }),
+    }
+}
+
 /// The corners of a deletion wedge in `bounds`: a triangle pointing toward
 /// the text, its tip on the middle of the right edge.
 fn wedge_points(bounds: Bounds<Pixels>) -> [Point<Pixels>; 3] {
@@ -423,6 +443,10 @@ pub(super) fn note(stage: &'static str) {
 #[cfg(test)]
 #[path = "decorations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "syntax_underline_tests.rs"]
+mod syntax_underline_tests;
 
 #[cfg(test)]
 #[path = "change_bar_tests.rs"]

@@ -279,7 +279,8 @@ impl Workbench {
         };
         let mut items: Vec<Decoration> = Vec::new();
         for token in &tokens.tokens {
-            if let Some(name) = highlight_name(&token.token_type, &token.modifiers) {
+            let name = highlight_name(&token.token_type, &token.modifiers);
+            if let Some(name) = name {
                 items.push(Decoration::new(
                     token.range.clone(),
                     DecorationKind::Foreground(Arc::from(name)),
@@ -290,7 +291,8 @@ impl Workbench {
             if token.modifiers.iter().any(|m| m.as_ref() == "mutable") {
                 items.push(Decoration::new(
                     token.range.clone(),
-                    DecorationKind::Underline { wavy: false },
+                    // In the token's own colour; none maps to foreground.
+                    DecorationKind::SyntaxUnderline(Arc::from(name.unwrap_or(""))),
                     Tint::Muted,
                 ));
             }

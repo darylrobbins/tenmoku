@@ -27,7 +27,7 @@ fn script() -> Script {
 
 /// `fn main() {}`: `fn` a mutable variable, `main` a variable, `{}` a
 /// mutable label (a type with no colour).
-fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
+pub(super) fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
     let mut s = Lsp::with_fake_clock(cx, script(), Script::default());
     s.fake.set_reply(
         FULL,
@@ -54,19 +54,19 @@ fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
     (s, editor)
 }
 
-/// The `Underline` decorations: bytes, wavy and tint.
-fn underlined(s: &Lsp, editor: &Entity<EditorView>) -> Vec<(std::ops::Range<usize>, bool, Tint)> {
+/// The `SyntaxUnderline` decorations: bytes and highlight name.
+fn underlined(s: &Lsp, editor: &Entity<EditorView>) -> Vec<(std::ops::Range<usize>, String)> {
     editor.read_with(&s.cx, |view, _| {
         let model = view.model();
         let mut found: Vec<_> = (model
             .decorations(0..model.snapshot().text().len())
             .into_iter())
         .filter_map(|item| match item.kind {
-            DecorationKind::Underline { wavy } => Some((item.range, wavy, item.tint)),
+            DecorationKind::SyntaxUnderline(name) => Some((item.range, name.to_string())),
             _ => None,
         })
         .collect();
-        found.sort_by_key(|(range, ..)| range.start);
+        found.sort_by_key(|(range, _)| range.start);
         found
     })
 }
@@ -78,7 +78,7 @@ fn underline(cx: &mut TestAppContext) {
     // `main` has no `mutable`, so no underline; `{}` has no colour.
     assert_eq!(
         underlined(&s, &editor),
-        vec![(0..2, false, Tint::Muted), (10..12, false, Tint::Muted)]
+        vec![(0..2, "variable".to_owned()), (10..12, String::new())]
     );
     assert_eq!(
         painted(&s, &editor),

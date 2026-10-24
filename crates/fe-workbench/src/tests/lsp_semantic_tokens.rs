@@ -5,7 +5,7 @@
 use std::{sync::Arc, time::Duration};
 
 use fe_config::{Settings, SettingsEvent};
-use fe_editor::decorations::{DecorationKind, Tint};
+use fe_editor::decorations::DecorationKind;
 use fe_gpui::EditorView;
 use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
 use gpui::{Entity, Focusable as _, TestAppContext};
@@ -216,3 +216,6 @@ mod underline;
 
 #[path = "lsp_semantic_timeout.rs"]
 mod timeout;
+
+#[path = "lsp_semantic_underline_colour.rs"]
+mod underline_colour;

@@ -68,6 +68,13 @@ pub enum DecorationKind {
     /// whatever colour the syntax gives it. A name the theme doesn't know
     /// leaves the syntax colour. It paints no background or underline.
     Foreground(Arc<str>),
+    /// A straight underline under the range's text in the colour the
+    /// editor's theme gives this highlight name, as [`Foreground`] would
+    /// draw the text. A name the theme doesn't know underlines in the
+    /// editor's foreground. The tint is unused.
+    ///
+    /// [`Foreground`]: DecorationKind::Foreground
+    SyntaxUnderline(Arc<str>),
 }
 
 /// A decoration over a byte range of the snapshot it was resolved in.
