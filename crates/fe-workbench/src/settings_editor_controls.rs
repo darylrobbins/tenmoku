@@ -31,14 +31,14 @@
 //! nothing. A switch toggles from the value shown, a change still being
 //! written included.
 
-use std::{fs::OpenOptions, io, path::Path};
+use std::{cell::Cell, fs::OpenOptions, io, path::Path, rc::Rc};
 
 use fe_command::Value as Json;
 use fe_config::{
     EnumVariant, Layer, SettingEditError, SettingEntry, SettingKind, SettingScope, SettingValue,
     parse_layer, reset_setting, set_setting, settings_schema,
 };
-use fe_ui::{Button, Icon, Switch, TextInput, ui_theme};
+use fe_ui::{Button, Icon, Switch, TextInput, TextInputEvent, ui_theme};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, StatefulInteractiveElement as _, Styled as _,
@@ -164,7 +164,11 @@ pub(super) struct Field {
     /// A list's item that Add Item made, which isn't written while it's
     /// empty.
     added: bool,
+    /// Whether the input changed since the last commit or sync from the
+    /// file, even if its text is back to what it showed.
+    edited: Rc<Cell<bool>>,
     _blur: Subscription,
+    _edit: Subscription,
 }
 
 impl Field {
@@ -172,10 +176,11 @@ impl Field {
     pub(super) fn forget_shown(&mut self) {
         self.shown = None;
         self.message = None;
+        self.edited.set(false);
     }
 
     fn typed(&self, cx: &App) -> bool {
-        self.shown.as_deref() != Some(self.input.read(cx).text())
+        self.edited.get() || self.shown.as_deref() != Some(self.input.read(cx).text())
     }
 }
 
@@ -191,6 +196,17 @@ impl ListField {
     /// Has the next render show the file's items, typed text or not.
     pub(super) fn forget_shown(&mut self) {
         self.shown = None;
+    }
+
+    /// Whether an item has been edited since the last commit or sync.
+    fn edited(&self) -> bool {
+        self.items.iter().any(|item| item.edited.get())
+    }
+
+    fn clear_edited(&self) {
+        for item in &self.items {
+            item.edited.set(false);
+        }
     }
 
     /// The items typed, less the ones Add Item made that are still empty.
@@ -642,12 +658,23 @@ impl SettingsEditor {
         let blur = cx.on_blur(&input.focus_handle(cx), window, move |this, _, cx| {
             commit(this, cx)
         });
+        let edited = Rc::new(Cell::new(false));
+        let edit = cx.subscribe(&input, {
+            let edited = edited.clone();
+            move |_, _, event: &TextInputEvent, _| {
+                if *event == TextInputEvent::Changed {
+                    edited.set(true);
+                }
+            }
+        });
         Field {
             input,
             shown: Some(text),
             message: None,
             added: false,
+            edited,
             _blur: blur,
+            _edit: edit,
         }
     }
 
@@ -663,6 +690,7 @@ impl SettingsEditor {
         (field.input).update(cx, |input, cx| input.set_text(text.to_owned(), cx));
         field.shown = Some(text.to_owned());
         field.message = None;
+        field.edited.set(false);
     }
 
     /// The input of a number or text setting: its typed text, else its
@@ -846,7 +874,7 @@ impl SettingsEditor {
         if list.shown.as_ref() == Some(&items) {
             return;
         }
-        let typed = list.shown.as_ref() != Some(&list.texts(cx));
+        let typed = list.edited() || list.shown.as_ref() != Some(&list.texts(cx));
         if list.shown.is_some() && typed {
             return;
         }
@@ -919,6 +947,7 @@ impl SettingsEditor {
         list.items.remove(item);
         let items = list.texts(cx);
         list.commit_added(cx);
+        list.clear_edited();
         list.shown = Some(items.clone());
         self.write(&entry.key, Change::Set(Value::List(items)), cx);
         cx.stop_propagation();
@@ -962,10 +991,11 @@ impl SettingsEditor {
                 return;
             };
             let items = list.texts(cx);
-            if !always && list.shown.as_ref() == Some(&items) {
+            if !always && !list.edited() && list.shown.as_ref() == Some(&items) {
                 return;
             }
             list.commit_added(cx);
+            list.clear_edited();
             list.shown = Some(items.clone());
             return self.write(&entry.key, Change::Set(Value::List(items)), cx);
         }
@@ -990,6 +1020,7 @@ impl SettingsEditor {
             Ok(change) => {
                 field.message = None;
                 field.shown = Some(text);
+                field.edited.set(false);
                 self.write(&entry.key, change, cx);
             }
         }
@@ -1108,3 +1139,7 @@ impl SettingsEditor {
         .detach();
     }
 }
+
+#[cfg(test)]
+#[path = "settings_editor_controls_blur_tests.rs"]
+mod blur_tests;
