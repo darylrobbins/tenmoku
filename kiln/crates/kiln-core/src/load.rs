@@ -155,6 +155,12 @@ impl KeymapStore {
         &self.keymap
     }
 
+    /// The default layers the user's file lies over, as the store was
+    /// given them, in order.
+    pub fn defaults(&self) -> &[KeymapLayer] {
+        &self.defaults
+    }
+
     /// Every layer's diagnostics, the defaults' first.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics

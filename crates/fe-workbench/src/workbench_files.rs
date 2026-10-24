@@ -23,7 +23,7 @@ use crate::{
     Pane,
     loader::Opened,
     open::{self, OpenOp},
-    project_panel,
+    project_panel, shortcuts_editor,
 };
 
 impl Workbench {
@@ -629,6 +629,46 @@ impl Workbench {
         let created = cx.background_spawn({
             let path = path.clone();
             async move { open::create_settings(&path) }
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            if let Err(error) = created.await {
+                log::error!("can't create {}: {error}", path.display());
+                cx.update(|_, cx| {
+                    toast::show(
+                        cx,
+                        Toast::error(format!("Can't create {}", path.display()))
+                            .detail(error.to_string()),
+                    )
+                })
+                .ok();
+                return;
+            }
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench
+                        .active
+                        .update(cx, |pane, cx| pane.open(path, window, cx))
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Opens the user's `keymap.toml` in the active pane, creating it with
+    /// [`fe_keymap::KEYMAP_HEADER`] first if it's missing: Open Keyboard
+    /// Shortcuts (JSON).
+    pub(crate) fn open_keymap_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = shortcuts_editor::keymap_path(cx) else {
+            log::error!("can't open the keymap: there's no config directory");
+            toast::show(
+                cx,
+                Toast::error("Can't open the keymap").detail("There's no config directory"),
+            );
+            return;
+        };
+        let created = cx.background_spawn({
+            let path = path.clone();
+            async move { shortcuts_editor::create_keymap(&path) }
         });
         cx.spawn_in(window, async move |workbench, cx| {
             if let Err(error) = created.await {

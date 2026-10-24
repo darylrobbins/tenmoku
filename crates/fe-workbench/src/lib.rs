@@ -55,6 +55,7 @@ mod quick_open;
 mod references_panel;
 mod search_panel;
 mod settings_editor;
+mod shortcuts_editor;
 mod status_bar;
 mod terminal_panel;
 mod theme_picker;
@@ -129,7 +130,10 @@ pub fn init(cx: &mut App) {
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
-    kiln_shell::command_palette::add_commands(cx, command_list());
+    // The Keyboard Shortcuts tab lists them too.
+    let listed = command_list();
+    cx.set_global(ListedCommands(listed.clone()));
+    kiln_shell::command_palette::add_commands(cx, listed);
     // A vim map's `fe:` command of any of them isn't E492.
     fe_gpui::set_host_catalog(command_catalog());
     // Saved layouts restore their editors, and their viewers of files too
@@ -196,6 +200,12 @@ fn command_list() -> Vec<CommandMeta> {
     list
 }
 
+/// [`command_list`] as [`init`] gave it to the palette, for the Keyboard
+/// Shortcuts tab to list without building the registries again.
+pub(crate) struct ListedCommands(pub(crate) Vec<CommandMeta>);
+
+impl gpui::Global for ListedCommands {}
+
 /// The [`CommandTarget`] of the Changes panel's commit box key: nothing,
 /// as the panel runs it itself.
 struct CommitBoxCommands;
@@ -255,6 +265,8 @@ mod panel_width_tests;
 mod settings_editor_controls_tests;
 #[cfg(test)]
 mod settings_editor_tests;
+#[cfg(test)]
+mod shortcuts_editor_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

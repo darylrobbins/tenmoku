@@ -343,6 +343,8 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.open_file",
     "workbench.open_folder",
     "workbench.open_folder_in_new_window",
+    "workbench.open_keyboard_shortcuts",
+    "workbench.open_keyboard_shortcuts_json",
     "workbench.open_recent",
     "workbench.open_settings",
     "workbench.open_settings_ui",

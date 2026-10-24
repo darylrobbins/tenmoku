@@ -46,8 +46,8 @@ use std::{
 
 use gpui::{App, Global, Task};
 use kiln_core::{
-    ConfigWatcher, Diagnostic, ExtraFiles, KeymapEvent, KeymapStore, SettingsStore, SettingsType,
-    TreeWatcher,
+    ConfigWatcher, Diagnostic, ExtraFiles, KeymapEvent, KeymapLayer, KeymapStore, SettingsStore,
+    SettingsType, TreeWatcher,
 };
 
 /// The log target the service logs under unless the app names its own:
@@ -313,6 +313,12 @@ impl SharedKeymap {
     /// The store's effective keymap now.
     pub fn keymap(&self) -> Arc<kiln_core::Keymap> {
         self.0.borrow().keymap().clone()
+    }
+
+    /// The store's default layers now, which the user's file lies over:
+    /// for an app that edits that file to read it on them.
+    pub fn defaults(&self) -> Vec<KeymapLayer> {
+        self.0.borrow().defaults().to_vec()
     }
 
     /// The store's diagnostics now.
@@ -659,6 +665,18 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
     }
 }
 
+/// The keymap store of the service that started last.
+struct InstalledKeymap(SharedKeymap);
+
+impl Global for InstalledKeymap {}
+
+/// The keymap store of the config service that started last, if it had
+/// one ([`ConfigService::keymap`]): what the keymap in use is built from.
+pub fn keymap_store(cx: &App) -> Option<SharedKeymap> {
+    cx.try_global::<InstalledKeymap>()
+        .map(|installed| installed.0.clone())
+}
+
 struct KeymapSource {
     store: SharedKeymap,
     reloaded: Box<dyn FnMut(&mut App)>,
@@ -674,6 +692,7 @@ impl ConfigSource for KeymapSource {
     }
 
     fn install(&mut self, cx: &mut App) {
+        cx.set_global(InstalledKeymap(self.store.clone()));
         keys::init(cx, self.store.keymap());
     }
 

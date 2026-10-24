@@ -934,6 +934,20 @@ impl Workbench {
         self.open_settings_ui(cx.window, cx.cx);
     }
 
+    /// Open Keyboard Shortcuts
+    #[command(id = "workbench.open_keyboard_shortcuts")]
+    fn open_keyboard_shortcuts_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.open_keyboard_shortcuts(cx.window, cx.cx);
+    }
+
+    /// Open Keyboard Shortcuts (JSON)
+    #[command(id = "workbench.open_keyboard_shortcuts_json")]
+    fn open_keyboard_shortcuts_json_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.open_keymap_file(cx.window, cx.cx);
+    }
+
     /// New Window
     #[command(id = "window.new")]
     fn new_window(&mut self, cx: &mut Cx<Self>) {

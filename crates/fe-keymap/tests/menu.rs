@@ -466,8 +466,8 @@ fn linux_menus_are_the_macos_menus_without_the_app_menu() {
     let names: Vec<_> = linux.menus.iter().map(|menu| menu.name.as_str()).collect();
     assert_eq!(names, ["File", "Edit", "View", "Go", "Window"]);
 
-    // macOS's, but for what only macOS has, with the app menu's Settings…
-    // and Quit in File, before Close Tab and last.
+    // macOS's, but for what only macOS has, with the app menu's Settings…,
+    // Keyboard Shortcuts and Quit in File, before Close Tab and last.
     let macos_only = [
         "app.hide",
         "app.hide_others",
@@ -485,7 +485,12 @@ fn linux_menus_are_the_macos_menus_without_the_app_menu() {
         .iter()
         .position(|c| c == "workbench.close_tab")
         .unwrap();
-    file.insert(close_tab, "workbench.open_settings_ui".to_owned());
+    let preferences = [
+        "workbench.open_settings_ui",
+        "workbench.open_keyboard_shortcuts",
+        "workbench.open_keyboard_shortcuts_json",
+    ];
+    file.splice(close_tab..close_tab, preferences.map(str::to_owned));
     file.push("app.quit".to_owned());
     assert_eq!(commands_by_menu(&linux), expected);
 

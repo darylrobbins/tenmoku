@@ -575,6 +575,12 @@ keys = "secondary-,"
 command = "workbench.open_settings_ui"
 context = "workbench"
 
+# Keyboard Shortcuts, as VS Code's cmd-k cmd-s.
+[[bindings]]
+keys = "secondary-k secondary-s"
+command = "workbench.open_keyboard_shortcuts"
+context = "workbench"
+
 # Open Recent: VS Code's macOS ctrl-r, on every platform. In an editor with
 # vim on it stays vim's (redo, and insert mode's register key), as on vim's
 # command line, and in the terminal the shell's (reverse search).

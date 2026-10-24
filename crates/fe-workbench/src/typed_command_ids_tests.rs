@@ -198,6 +198,16 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Open Settings (UI)",
         "workbench",
     ),
+    (
+        "workbench.open_keyboard_shortcuts",
+        "Open Keyboard Shortcuts",
+        "workbench",
+    ),
+    (
+        "workbench.open_keyboard_shortcuts_json",
+        "Open Keyboard Shortcuts (JSON)",
+        "workbench",
+    ),
     ("window.new", "New Window", "workbench"),
     (
         "workbench.open_folder_in_new_window",

@@ -32,6 +32,14 @@ title = "Settings…"
 command = "workbench.open_settings_ui"
 
 [[menus.items]]
+title = "Keyboard Shortcuts"
+command = "workbench.open_keyboard_shortcuts"
+
+[[menus.items]]
+title = "Keyboard Shortcuts (JSON)"
+command = "workbench.open_keyboard_shortcuts_json"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]
@@ -110,6 +118,16 @@ separator = true
 [[menus.items]]
 title = "Settings…"
 command = "workbench.open_settings_ui"
+platform = "!macos"
+
+[[menus.items]]
+title = "Keyboard Shortcuts"
+command = "workbench.open_keyboard_shortcuts"
+platform = "!macos"
+
+[[menus.items]]
+title = "Keyboard Shortcuts (JSON)"
+command = "workbench.open_keyboard_shortcuts_json"
 platform = "!macos"
 
 [[menus.items]]
