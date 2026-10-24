@@ -33,6 +33,7 @@ pub mod lens;
 mod link_ranges;
 pub mod menu;
 pub mod pane_item;
+mod server_folds;
 pub mod signature_help;
 mod theme;
 mod timing;

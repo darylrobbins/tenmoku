@@ -3,6 +3,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     mem,
     ops::Range,
+    ops::RangeInclusive,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -796,6 +797,7 @@ impl Element for EditorElement {
             .as_ref()
             .map(SyntaxDriver::syntax)
             .filter(|syntax| syntax.version() == model.snapshot().version());
+        let server_folds = view.server_fold_ranges();
         let mut shaper = Shaper {
             text_system,
             font,
@@ -854,7 +856,7 @@ impl Element for EditorElement {
                 &mut long_rows,
                 &mut glyph_widths,
                 |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
-                |rows| fold_headers(syntax, rows),
+                |rows| fold_headers(syntax, server_folds.as_deref().map(Vec::as_slice), rows),
             ),
             true => layout::layout_frame_with_hints(
                 input,
@@ -865,7 +867,7 @@ impl Element for EditorElement {
                 &mut long_rows,
                 &mut glyph_widths,
                 |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
-                |rows| fold_headers(syntax, rows),
+                |rows| fold_headers(syntax, server_folds.as_deref().map(Vec::as_slice), rows),
             ),
             false => layout::layout_frame_without_gutter_with_hints(
                 input,
@@ -3030,7 +3032,17 @@ fn next_grapheme(text: &Text, offset: usize, line_end: usize) -> Option<usize> {
 }
 
 /// The buffer rows in `rows` that head a fold candidate of the syntax tree.
-fn fold_headers(syntax: Option<&Syntax>, rows: Range<u32>) -> Vec<u32> {
+fn fold_headers(
+    syntax: Option<&Syntax>,
+    server_folds: Option<&[RangeInclusive<u32>]>,
+    rows: Range<u32>,
+) -> Vec<u32> {
+    if let Some(ranges) = server_folds {
+        return crate::server_folds::ranges_in(ranges, rows)
+            .into_iter()
+            .map(|range| *range.start())
+            .collect();
+    }
     let Some(syntax) = syntax else {
         return Vec::new();
     };

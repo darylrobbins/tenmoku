@@ -2187,6 +2187,7 @@ impl EditorView {
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
         let language = loaded_language(&self.syntax);
+        let server_folds = self.server_fold_ranges();
         let Some(state) = &mut self.vim else {
             return false;
         };
@@ -2196,6 +2197,7 @@ impl EditorView {
             cx,
             page_rows,
             syntax,
+            server_folds,
             language,
             vim: true,
         };
@@ -2232,6 +2234,7 @@ impl EditorView {
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
         let language = loaded_language(&self.syntax);
+        let server_folds = self.server_fold_ranges();
         let Some(state) = &self.vim else {
             return false;
         };
@@ -2239,6 +2242,7 @@ impl EditorView {
             cx,
             page_rows,
             syntax,
+            server_folds,
             language,
             vim: true,
         };
@@ -2908,6 +2912,7 @@ impl EditorView {
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
         let language = loaded_language(&self.syntax);
+        let server_folds = self.server_fold_ranges();
         let state = self.vim.as_mut()?;
         // Out of the global while the host holds `cx`, and back after.
         let mut registers = std::mem::take(&mut cx.default_global::<Vim>().registers);
@@ -2915,6 +2920,7 @@ impl EditorView {
             cx,
             page_rows,
             syntax,
+            server_folds,
             language,
             vim: true,
         };

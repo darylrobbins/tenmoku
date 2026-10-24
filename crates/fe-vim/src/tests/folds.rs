@@ -170,6 +170,50 @@ fn indentation_backs_up_a_syntax_candidate_elsewhere() {
     }
 }
 
+/// [`Elsewhere`], whose candidates are the only folds.
+struct Exclusive(Elsewhere);
+
+impl EditorHost for Exclusive {
+    fn page_rows(&self) -> u32 {
+        self.0.page_rows()
+    }
+    fn read_clipboard(&mut self) -> Option<String> {
+        None
+    }
+    fn write_clipboard(&mut self, _: String) {}
+    fn fold_range_at(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        self.0.fold_range_at(row)
+    }
+    fn fold_ranges(&self, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
+        self.0.fold_ranges(rows)
+    }
+    fn folds_exclusive(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn an_exclusive_host_has_no_indentation_folds() {
+    let mut vim = HeadlessVim::new(TEXT, (3, 4));
+    let host = Exclusive(Elsewhere(HeadlessHost::new()));
+    for (action, expected) in [
+        (FoldAction::Close, vec![]),
+        (FoldAction::CloseAll, vec![]),
+        (FoldAction::Toggle, vec![]),
+        (FoldAction::CloseEvery, vec![(5, 6)]),
+    ] {
+        run(
+            vim.model_mut(),
+            &host,
+            FoldArgs {
+                action,
+                count: None,
+            },
+        );
+        assert_eq!(folds(&vim), expected, "{action:?}");
+    }
+}
+
 #[test]
 fn recursive_open_reaches_every_nested_fold() {
     let text = "a\n  b\n    c\n    d\n  e\n    f\n    g\nh";

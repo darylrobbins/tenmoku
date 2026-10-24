@@ -34,6 +34,11 @@ pub trait EditorHost {
     fn fold_range_at(&self, row: u32) -> Option<RangeInclusive<u32>>;
     /// Every fold candidate in `rows`; none falls back to indented blocks.
     fn fold_ranges(&self, rows: Range<u32>) -> Vec<RangeInclusive<u32>>;
+    /// Whether the host's candidates are the only folds: no falling back to
+    /// indented blocks where it has none (a language server's ranges).
+    fn folds_exclusive(&self) -> bool {
+        false
+    }
     /// What the view shows, in the text's rows; `None` (the default) if
     /// that isn't known.
     fn viewport(&self) -> Option<Viewport> {
@@ -433,7 +438,7 @@ pub fn registry() -> Registry<Editor> {
         Ok(Effect::Changed)
     });
     add(&mut registry, "fold", "Fold", false, |model, host| {
-        model.fold(&|row| host.fold_range_at(row));
+        model.fold_from(&|row| host.fold_range_at(row), !host.folds_exclusive());
         Ok(Effect::Changed)
     });
     add(&mut registry, "unfold", "Unfold", false, |model, _| {
@@ -447,7 +452,11 @@ pub fn registry() -> Registry<Editor> {
         false,
         |model, host| {
             let candidates = host.fold_ranges(0..model.text().row_count());
-            model.fold_all(candidates);
+            if host.folds_exclusive() {
+                model.fold_all_exact(candidates);
+            } else {
+                model.fold_all(candidates);
+            }
             Ok(Effect::Changed)
         },
     );

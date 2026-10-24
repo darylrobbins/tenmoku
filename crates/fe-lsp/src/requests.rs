@@ -78,6 +78,7 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         "textDocument/hover"
         | "textDocument/documentHighlight"
         | "textDocument/documentSymbol"
+        | "textDocument/foldingRange"
         | "textDocument/inlayHint"
         | "textDocument/codeLens"
         | "textDocument/documentLink"

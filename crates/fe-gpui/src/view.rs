@@ -213,6 +213,8 @@ pub struct EditorView {
     pub(crate) lens_rows: Vec<crate::lens::PaintedRow>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
+    /// The host's fold ranges, if it gave any ([`crate::server_folds`]).
+    pub(crate) server_folds: Option<crate::server_folds::ServerFolds>,
     /// The host's inlay hints ([`crate::inlay_hints`]).
     pub(crate) inlay_hints: crate::inlay_hints::Hints,
     /// Resolves a hint's tooltip and edits.
@@ -423,6 +425,7 @@ impl EditorView {
             lens_providers: Vec::new(),
             lens_rows: Vec::new(),
             ghost_text: None,
+            server_folds: None,
             inlay_hints: Default::default(),
             inlay_hint_host: None,
             inlay_hints_bounds: Vec::new(),
@@ -1348,9 +1351,12 @@ impl EditorView {
         let candidate = if folded {
             None
         } else {
-            synced_syntax(&self.syntax, &self.model)
-                .and_then(|syntax| fe_syntax::fold_range_at(syntax, row))
-                .filter(|candidate| *candidate.start() == row)
+            match self.server_fold_ranges() {
+                Some(ranges) => crate::server_folds::range_at(&ranges, row),
+                None => synced_syntax(&self.syntax, &self.model)
+                    .and_then(|syntax| fe_syntax::fold_range_at(syntax, row)),
+            }
+            .filter(|candidate| *candidate.start() == row)
         };
         // Like the fold commands, it splits an insert session whatever it
         // does to the carets.

@@ -596,6 +596,10 @@ impl EditorHost for ViewHost<'_> {
         self.host.fold_ranges(rows)
     }
 
+    fn folds_exclusive(&self) -> bool {
+        self.host.folds_exclusive()
+    }
+
     fn viewport(&self) -> Option<Viewport> {
         Some(*self.view)
     }

@@ -702,6 +702,16 @@ impl EditorModel {
     /// buffer as it is once caught up, and a selection spanning rows then
     /// folds them whether or not it got a candidate.
     pub fn fold(&mut self, candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>) {
+        self.fold_from(candidate_at, true);
+    }
+
+    /// [`EditorModel::fold`], with the indented block for a caret `candidate_at`
+    /// has nothing for only if `indent_fallback`. Selected rows fold either way.
+    pub fn fold_from(
+        &mut self,
+        candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>,
+        indent_fallback: bool,
+    ) {
         let shown = self.snapshot.clone();
         let latest = self.buffer.borrow().snapshot();
         let mut selections = Vec::new();
@@ -724,7 +734,8 @@ impl EditorModel {
             let rows = selected_rows(&self.snapshot, &selection).or_else(|| {
                 let offset = self.snapshot.resolve(&selection.start);
                 let row = text.offset_to_point(offset).row;
-                (!has_candidate).then(|| indented_block(&text, row, self.tab_size))?
+                (!has_candidate && indent_fallback)
+                    .then(|| indented_block(&text, row, self.tab_size))?
             });
             if let Some(rows) = rows {
                 self.display.fold(rows);
@@ -746,6 +757,15 @@ impl EditorModel {
             let blocks = indented_blocks(self.text(), self.tab_size);
             self.display.fold_many(blocks);
         }
+        self.move_folded_carets();
+    }
+
+    /// Folds every one of `candidates`, rows of [`EditorModel::text`], and
+    /// nothing else: with none, nothing folds. Carets folded away move to
+    /// the fold's header.
+    pub fn fold_all_exact(&mut self, candidates: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        self.display.fold_many(candidates);
+        self.sync_display();
         self.move_folded_carets();
     }
 

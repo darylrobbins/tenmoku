@@ -573,6 +573,8 @@ pub(crate) struct Lsp {
     pub(crate) lightbulb_on: std::cell::Cell<bool>,
     /// The active editor's lightbulb.
     lightbulb: lightbulb::Lightbulb,
+    /// The folding requests of each open buffer.
+    folds: folds::Folds,
     /// The code lenses of each open buffer.
     lenses: lenses::Lenses,
     /// Whether `editor.links` is on (set from the settings each reload).
@@ -757,6 +759,7 @@ impl Lsp {
             code_lens_on: std::cell::Cell::new(true),
             lightbulb_on: std::cell::Cell::new(true),
             lightbulb: Default::default(),
+            folds: Default::default(),
             lenses: Default::default(),
             links_on: std::cell::Cell::new(true),
             links: Default::default(),
@@ -1354,6 +1357,7 @@ impl Workbench {
         self.sync_links(cx);
         self.sync_colors(cx);
         self.sync_symbols(cx);
+        self.sync_folds(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
@@ -2552,6 +2556,8 @@ mod lightbulb;
 
 #[path = "lsp_colors.rs"]
 mod colors;
+#[path = "lsp_folds.rs"]
+mod folds;
 #[path = "lsp_inlay_hints.rs"]
 mod inlay_hints;
 #[path = "lsp_lenses.rs"]

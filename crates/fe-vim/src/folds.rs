@@ -197,19 +197,25 @@ pub(crate) fn run(model: &mut EditorModel, host: &dyn EditorHost, args: FoldArgs
         .row;
     let levels = args.count.unwrap_or(1).max(1) as usize;
     let host_ranges = host.fold_ranges(0..model.text().row_count());
+    let exclusive = host.folds_exclusive();
     let closed = closed_at(model, row);
     match args.action {
         FoldAction::OpenEvery | FoldAction::DeleteEvery => model.unfold_all(),
+        FoldAction::CloseEvery if exclusive => model.fold_all_exact(host_ranges),
         FoldAction::CloseEvery => model.fold_all(host_ranges),
         FoldAction::Open => reopen(model, row, false, |ix, _| ix < levels),
         FoldAction::Delete => reopen(model, row, false, |ix, _| ix == 0),
         FoldAction::OpenAll | FoldAction::DeleteNested => reopen(model, row, true, |_, _| true),
         FoldAction::Reveal => reopen(model, row, false, |_, start| start < row),
-        FoldAction::Close => close(model, &host_ranges, row, levels),
-        FoldAction::CloseAll => close(model, &host_ranges, row, usize::MAX),
-        FoldAction::Toggle if closed.is_empty() => close(model, &host_ranges, row, levels),
+        FoldAction::Close => close(model, &host_ranges, exclusive, row, levels),
+        FoldAction::CloseAll => close(model, &host_ranges, exclusive, row, usize::MAX),
+        FoldAction::Toggle if closed.is_empty() => {
+            close(model, &host_ranges, exclusive, row, levels)
+        }
         FoldAction::Toggle => reopen(model, row, false, |ix, _| ix < levels),
-        FoldAction::ToggleAll if closed.is_empty() => close(model, &host_ranges, row, usize::MAX),
+        FoldAction::ToggleAll if closed.is_empty() => {
+            close(model, &host_ranges, exclusive, row, usize::MAX)
+        }
         FoldAction::ToggleAll => reopen(model, row, true, |_, _| true),
     }
 }
@@ -219,6 +225,7 @@ pub(crate) fn run(model: &mut EditorModel, host: &dyn EditorHost, args: FoldArgs
 fn candidates_at(
     model: &EditorModel,
     host: &[RangeInclusive<u32>],
+    exclusive: bool,
     row: u32,
 ) -> Vec<RangeInclusive<u32>> {
     let mut local: Vec<_> = host
@@ -226,7 +233,7 @@ fn candidates_at(
         .filter(|rows| rows.contains(&row))
         .cloned()
         .collect();
-    if local.is_empty() {
+    if local.is_empty() && !exclusive {
         local = indented_blocks(model.text(), model.tab_size());
         local.retain(|rows| rows.contains(&row));
     }
@@ -343,9 +350,15 @@ fn reopen(model: &mut EditorModel, row: u32, recursive: bool, open: impl Fn(usiz
 
 /// Closes the innermost `levels` candidates containing `row` that aren't
 /// closed yet.
-fn close(model: &mut EditorModel, host: &[RangeInclusive<u32>], row: u32, levels: usize) {
+fn close(
+    model: &mut EditorModel,
+    host: &[RangeInclusive<u32>],
+    exclusive: bool,
+    row: u32,
+    levels: usize,
+) {
     let closed = closed_at(model, row);
-    let mut open: Vec<_> = candidates_at(model, host, row)
+    let mut open: Vec<_> = candidates_at(model, host, exclusive, row)
         .into_iter()
         .filter(|rows| {
             !closed
@@ -487,7 +500,7 @@ pub(crate) fn with_candidates<'a, R>(
     let model = &mut *target.model;
     model.sync_display();
     let mut candidates = target.host.fold_ranges(0..model.text().row_count());
-    if candidates.is_empty() {
+    if candidates.is_empty() && !target.host.folds_exclusive() {
         candidates = indented_blocks(model.text(), model.tab_size());
     }
     let closed = fold_rows(model);

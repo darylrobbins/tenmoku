@@ -253,6 +253,8 @@ pub(crate) struct ViewHost<'a> {
     pub(crate) page_rows: u32,
     /// The syntax tree, if it matches the text.
     pub(crate) syntax: Option<&'a Syntax>,
+    /// The host's fold ranges, which replace the syntax's if it gave any.
+    pub(crate) server_folds: Option<Rc<Vec<RangeInclusive<u32>>>>,
     /// The view's language, once loaded, whether or not its tree matches
     /// the text yet ([`loaded_language`]).
     pub(crate) language: Option<LoadedLanguage<'a>>,
@@ -326,14 +328,24 @@ impl EditorHost for ViewHost<'_> {
     }
 
     fn fold_range_at(&self, row: u32) -> Option<RangeInclusive<u32>> {
+        if let Some(ranges) = &self.server_folds {
+            return crate::server_folds::range_at(ranges, row);
+        }
         self.syntax
             .and_then(|syntax| fe_syntax::fold_range_at(syntax, row))
     }
 
     fn fold_ranges(&self, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
+        if let Some(ranges) = &self.server_folds {
+            return crate::server_folds::ranges_in(ranges, rows);
+        }
         self.syntax
             .map(|syntax| fe_syntax::fold_ranges(syntax, rows))
             .unwrap_or_default()
+    }
+
+    fn folds_exclusive(&self) -> bool {
+        self.server_folds.is_some()
     }
 
     fn larger_syntax_node(&self, range: Range<usize>) -> Option<Range<usize>> {
@@ -557,6 +569,7 @@ impl EditorView {
             cx,
             page_rows,
             syntax,
+            server_folds: self.server_fold_ranges(),
             language,
             vim: self.vim.is_some(),
         };
