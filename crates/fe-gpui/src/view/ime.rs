@@ -244,6 +244,14 @@ impl EditorView {
         self.accepts_text() && !self.read_only
     }
 
+    /// Resolves keys held for a longer map before an input method's text
+    /// goes in, then asks again whether the editor takes input: they may
+    /// have been an `<Esc>`.
+    fn resolve_prefix_for_input(&mut self, cx: &mut Context<Self>) -> bool {
+        self.resolve_held_prefix(cx);
+        self.takes_input(cx)
+    }
+
     /// Whether a read-only view refuses an input method's call: every
     /// one, and one that `edits`, putting in text or taking it out, with
     /// vim on says `E21` ([`EditorView::refuse_edit`]).
@@ -437,6 +445,11 @@ impl EntityInputHandler for EditorView {
         if self.refuses_input(edits, cx) || !self.takes_input(cx) {
             return;
         }
+        // Keys held for a longer map go on as typed before this text; if
+        // they leave insert mode, it isn't typed.
+        if !self.resolve_prefix_for_input(cx) {
+            return;
+        }
         let marked = self.marked_text_range(window, cx);
         let range = range_utf16.filter(|range| Some(range) != marked.as_ref());
         let Some(range) = range else {
@@ -468,6 +481,11 @@ impl EntityInputHandler for EditorView {
         cx: &mut Context<Self>,
     ) {
         if self.refuses_input(!text.is_empty(), cx) || !self.takes_input(cx) {
+            return;
+        }
+        // A composition never completes a map: what's held resolves first,
+        // and may leave insert mode.
+        if !self.resolve_prefix_for_input(cx) {
             return;
         }
         if text.is_empty() {

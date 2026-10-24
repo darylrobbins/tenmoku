@@ -136,8 +136,8 @@ use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, Provider
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_vim::{
-    CommandLineKind, Registers, Remap, RemapCommand, RemapIssue, RemapSet, Step, VimCommands,
-    VimKey, VimState, VimTarget, search::Pattern,
+    CommandLineKind, Registers, Remap, RemapCommand, RemapInsert, RemapIssue, RemapSet, Step,
+    VimCommands, VimKey, VimState, VimTarget, search::Pattern,
 };
 use gpui::{
     AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Pixels,
@@ -1751,6 +1751,9 @@ impl EditorView {
                     }
                 };
             }
+            if let Some(taken) = self.remap_typed(keystroke, window, cx) {
+                return taken;
+            }
             // `ctrl-t`, `ctrl-d` and `ctrl-o` are vim's in insert and
             // replace mode, and so are the other ctrl keys it takes.
             return match vim_key(keystroke) {
@@ -1828,6 +1831,66 @@ impl EditorView {
         self.replay_vim_from(Some(origin), cx);
         self.wait_for_remap(window, cx);
         taken
+    }
+
+    /// A keystroke typed in insert or replace mode, asked of the `i` maps
+    /// ([`VimState::remap_insert`]) when it's a plain character or a ctrl
+    /// key, or any key while keys are held for a longer map. `None`: it
+    /// goes on as typed, to the IME path or the ctrl key's own, which
+    /// record it. Otherwise `Some(true)`, the editor having taken it: it
+    /// starts or completes a map, whose keys are fed once the keystroke is
+    /// over ([`EditorView::replay_vim_from`]), or it broke a held prefix,
+    /// whose first key is typed here and the rest fed. A composition in
+    /// progress is never matched, nor is a multi-character commit, which
+    /// comes in by the IME and not as a keystroke.
+    fn remap_typed(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<bool> {
+        let waiting = self.vim.as_ref().is_some_and(VimState::remap_waiting);
+        if self.typing_mode().is_none() || self.composition().is_some() {
+            return None;
+        }
+        let key = match vim_key(keystroke) {
+            Some(key @ (VimKey::Char(_) | VimKey::Ctrl(_))) => key,
+            Some(key) if waiting => key,
+            // A key vim has no name for breaks the match: what's held goes
+            // on as typed.
+            None if waiting => {
+                self.resolve_remap(cx);
+                return None;
+            }
+            _ => return None,
+        };
+        let state = self.vim.as_mut()?;
+        let origin = ReplayOrigin::of(window);
+        note_origin(cx.entity_id(), origin.clone(), cx);
+        match state.remap_insert(key) {
+            RemapInsert::Wait => {}
+            RemapInsert::Keys(keys) => {
+                // With nothing held the key goes on as typed. The tag of
+                // each key typed here is read before the rest is taken,
+                // which puts its own tags in front.
+                if !waiting && keys == [key] {
+                    return None;
+                }
+                self.vim_replaying = true;
+                for key in keys {
+                    self.type_replayed_key(key, cx);
+                }
+                self.vim_replaying = false;
+                let rest = self.vim.as_mut()?.take_replay();
+                if !rest.is_empty() {
+                    self.replay_from(rest.into(), None, Some(origin.clone()), cx);
+                }
+            }
+        }
+        self.replay_vim_from(Some(origin), cx);
+        self.wait_for_remap(window, cx);
+        cx.notify();
+        Some(true)
     }
 
     /// If keys are held for a longer map, ends the wait for the next after
@@ -2612,50 +2675,16 @@ impl EditorView {
         }
         match mode {
             fe_vim::Mode::Insert | fe_vim::Mode::Replace => {
-                state.record_key(key);
-                if state.insert_register_waiting()
-                    || key == VimKey::Ctrl('r')
-                    || (mode == fe_vim::Mode::Insert && key == VimKey::Ctrl('a'))
-                {
-                    return self.register_typing(Some(key), cx);
+                // The key after `<C-r>` names a register: never matched.
+                if state.insert_register_waiting() {
+                    return self.type_replayed_key(key, cx);
                 }
-                let command = match key {
-                    VimKey::Char(ch) => {
-                        self.type_text(ch.encode_utf8(&mut [0; 4]), cx);
-                        return true;
+                match state.remap_insert(key) {
+                    RemapInsert::Wait => !state.failed(),
+                    RemapInsert::Keys(keys) => {
+                        keys.into_iter().all(|key| self.type_replayed_key(key, cx))
                     }
-                    // `<C-j>` (`<NL>`) is `<CR>` here.
-                    VimKey::Enter | VimKey::Ctrl('j') => NEWLINE,
-                    VimKey::Backspace => BACKSPACE,
-                    VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
-                    VimKey::Ctrl('o') => return self.one_command_typing(cx),
-                    VimKey::Ctrl('n' | 'p') => return self.complete_typing(key, cx),
-                    // Vim's only while completing, as live.
-                    VimKey::Ctrl('e' | 'y') if self.keyword_completion().is_some() => {
-                        return self.complete_typing(key, cx);
-                    }
-                    VimKey::Ctrl(_) => return self.insert_key_typing(key, cx),
-                    VimKey::Esc => {
-                        let normal = match mode {
-                            fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,
-                            _ => NORMAL_MODE,
-                        };
-                        let normal = Invocation::of(normal)
-                            .expect("a valid command ID")
-                            .source(Source::Keyboard);
-                        let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
-                        return self.run_vim_once(&normal.context(context), cx);
-                    }
-                    key => match MOVES.iter().find(|(_, moved)| *moved == key) {
-                        Some(&(command, _)) => command,
-                        None => return false,
-                    },
-                };
-                let invocation = Invocation::of(command)
-                    .expect("a valid command ID")
-                    .source(Source::Keyboard);
-                self.run_command(invocation, None, cx);
-                true
+                }
             }
             fe_vim::Mode::CmdLine(_) => {
                 state.record_key(key);
@@ -2701,6 +2730,61 @@ impl EditorView {
             // `vim.move`s do.
             _ => self.replay_fed(key, handed, cx),
         }
+    }
+
+    /// One `key` of a replay, or of a live key a map resolved, typed in
+    /// insert or replace mode as the mode is now. Records it
+    /// ([`VimState::record_key`]), which counts a typed key once and not a
+    /// map's.
+    fn type_replayed_key(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        let mode = state.mode();
+        state.record_key(key);
+        if state.insert_register_waiting()
+            || key == VimKey::Ctrl('r')
+            || (mode == fe_vim::Mode::Insert && key == VimKey::Ctrl('a'))
+        {
+            return self.register_typing(Some(key), cx);
+        }
+        let command = match key {
+            VimKey::Char(ch) => {
+                self.type_text(ch.encode_utf8(&mut [0; 4]), cx);
+                return true;
+            }
+            // `<C-j>` (`<NL>`) is `<CR>` here.
+            VimKey::Enter | VimKey::Ctrl('j') => NEWLINE,
+            VimKey::Backspace => BACKSPACE,
+            VimKey::Ctrl('t' | 'd') => return self.indent_typing(key, cx),
+            VimKey::Ctrl('o') => return self.one_command_typing(cx),
+            VimKey::Ctrl('n' | 'p') => return self.complete_typing(key, cx),
+            // Vim's only while completing, as live.
+            VimKey::Ctrl('e' | 'y') if self.keyword_completion().is_some() => {
+                return self.complete_typing(key, cx);
+            }
+            VimKey::Ctrl(_) => return self.insert_key_typing(key, cx),
+            VimKey::Esc => {
+                let normal = match mode {
+                    fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,
+                    _ => NORMAL_MODE,
+                };
+                let normal = Invocation::of(normal)
+                    .expect("a valid command ID")
+                    .source(Source::Keyboard);
+                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+                return self.run_vim_once(&normal.context(context), cx);
+            }
+            key => match MOVES.iter().find(|(_, moved)| *moved == key) {
+                Some(&(command, _)) => command,
+                None => return false,
+            },
+        };
+        let invocation = Invocation::of(command)
+            .expect("a valid command ID")
+            .source(Source::Keyboard);
+        self.run_command(invocation, None, cx);
+        true
     }
 
     /// [`EditorView::replay_key`] for a key the reducer reads: in normal or
@@ -2885,6 +2969,8 @@ mod remap_setting_tests;
 #[cfg(test)]
 mod macro_tests;
 
+#[cfg(test)]
+mod remap_insert_tests;
 #[cfg(test)]
 mod remap_tests;
 
