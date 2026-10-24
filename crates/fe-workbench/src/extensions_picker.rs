@@ -4,15 +4,19 @@
 //! licence, source and state, and its language servers' effective
 //! invocations (extensions record §1, §3, §6), then those of a workspace
 //! folder that isn't trusted, skipped ([`kiln::extensions::skipped`]).
-//! Enter on one waiting on the user's consent, or that they declined,
-//! shows its consent prompt. An extension that failed to load isn't
-//! listed: its diagnostics are in the config problems list.
+//! One the settings disable ([`kiln::extensions::disabled`]) is listed as
+//! such. The rows follow the extensions and the consents while it shows.
+//! Enter on one waiting on the user's consent, or that they declined, asks
+//! about each of its servers in turn, those waiting first, through the
+//! consent prompt ([`crate::lsp_consent_prompt::ask_in`]); on any other, it shows all the row has to
+//! say. An extension that failed to load isn't listed: its diagnostics are
+//! in the config problems list.
 
-use std::path::PathBuf;
+use std::{collections::VecDeque, path::PathBuf};
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, IntoElement as _, ParentElement as _, PromptLevel,
-    SharedString, Styled as _, Window, div, px,
+    SharedString, Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
     core::{LicenseClass, Manifest, extension::ExtensionSource as Installed},
@@ -20,8 +24,9 @@ use kiln::{
 };
 
 use crate::{
-    PendingConsent, decline_extension_server, extension_servers, grant_extension_server,
-    lsp_consent_prompt::consent_prompt_text,
+    ExtensionConsent, Invocation, PendingConsent,
+    lsp_consent::{GrantedServer, granted_extension_servers},
+    lsp_consent_prompt::{Ask, ask_about, next_to_ask, server_key},
     pending_extension_consents,
     picker::{Picker, PickerDelegate},
 };
@@ -44,7 +49,6 @@ impl From<Installed> for ExtensionSource {
 
 /// What an extension is doing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "disabling comes from its own card")]
 pub(crate) enum ExtensionState {
     Active,
     /// These servers wait for the user's decision.
@@ -55,6 +59,7 @@ pub(crate) enum ExtensionState {
     Declined {
         servers: Vec<String>,
     },
+    /// The settings' `extensions.disabled` has it: it contributes nothing.
     Disabled,
     /// A workspace folder's, which isn't trusted: it isn't loaded.
     SkippedUntrusted,
@@ -95,15 +100,20 @@ pub(crate) struct Row {
 }
 
 impl Row {
+    /// `manifest`'s row: disabled if `disabled`, else as its servers'
+    /// consents are, matched by its directory and their names.
     fn of(
         manifest: &Manifest,
         source: ExtensionSource,
+        disabled: bool,
         pending: &[PendingConsent],
-        granted: &[fe_lsp::ServerSpec],
+        granted: &[GrantedServer],
     ) -> Self {
         let (major, minor, patch) = manifest.version;
+        // The consents' directories are canonical.
+        let dir = (manifest.dir.canonicalize()).unwrap_or_else(|_| manifest.dir.clone());
         let own: Vec<PendingConsent> = (pending.iter())
-            .filter(|pending| pending.extension_id == manifest.id)
+            .filter(|pending| pending.extension_dir == dir)
             .cloned()
             .collect();
         let names = |declined: bool| -> Vec<String> {
@@ -112,7 +122,9 @@ impl Row {
                 .map(|pending| pending.server.clone())
                 .collect()
         };
-        let state = if !names(false).is_empty() {
+        let state = if disabled {
+            ExtensionState::Disabled
+        } else if !names(false).is_empty() {
             ExtensionState::NeedsConsent {
                 servers: names(false),
             }
@@ -133,7 +145,7 @@ impl Row {
                 format!(
                     "{}: {} ({status})",
                     pending.server,
-                    invocation_line(pending)
+                    invocation_line(&pending.invocation)
                 )
             })
             .collect();
@@ -142,11 +154,16 @@ impl Row {
             if own.iter().any(|pending| pending.server == *name) {
                 continue;
             }
-            if let Some(spec) = granted.iter().find(|spec| spec.name == *name) {
-                let args = spec.args.join(" ");
+            let key = (dir.clone(), name.clone());
+            if let Some(granted) = granted.iter().find(|granted| granted.key == key) {
+                let status = if granted.running {
+                    "granted"
+                } else {
+                    "granted; not running: an earlier extension's server of this name runs"
+                };
                 servers.push(format!(
-                    "{name}: {} {args} (granted)",
-                    spec.command.display()
+                    "{name}: {} ({status})",
+                    invocation_line(&granted.invocation)
                 ));
             }
         }
@@ -172,7 +189,13 @@ impl Row {
         Self {
             state: ExtensionState::SkippedUntrusted,
             reason: Some(skipped.reason.clone()),
-            ..Self::of(&skipped.manifest, ExtensionSource::Workspace, &[], &[])
+            ..Self::of(
+                &skipped.manifest,
+                ExtensionSource::Workspace,
+                false,
+                &[],
+                &[],
+            )
         }
     }
 
@@ -186,28 +209,79 @@ impl Row {
         format!("{} ({class})", self.license)
     }
 
+    fn source_text(&self) -> &'static str {
+        match self.source {
+            ExtensionSource::User => "User",
+            ExtensionSource::Workspace => "Workspace",
+        }
+    }
+
     /// The secondary line: kinds, licence, source, servers, and why it
     /// isn't loaded.
     pub(crate) fn detail(&self) -> String {
-        let source = match self.source {
-            ExtensionSource::User => "User",
-            ExtensionSource::Workspace => "Workspace",
-        };
-        let mut parts = vec![self.kinds.clone(), self.license_text(), source.to_owned()];
+        let mut parts = vec![
+            self.kinds.clone(),
+            self.license_text(),
+            self.source_text().to_owned(),
+        ];
         parts.extend(self.servers.iter().cloned());
         parts.extend(self.reason.clone());
         parts.join(" · ")
     }
+
+    /// Everything the row has to say, a line each, for the prompt Enter
+    /// shows: the row's line may not have room for it.
+    pub(crate) fn full_detail(&self) -> String {
+        let mut lines = vec![
+            format!("ID: {}", self.id),
+            format!("Version: {}", self.version),
+            format!("State: {}", self.state.label()),
+            format!("Contributes: {}", self.kinds),
+            format!("Licence: {}", self.license_text()),
+            format!("Source: {}", self.source_text()),
+            format!("Directory: {}", self.dir.display()),
+        ];
+        if !self.servers.is_empty() {
+            lines.push("Language servers:".to_owned());
+            lines.extend(self.servers.iter().map(|server| format!("  {server}")));
+        }
+        lines.extend(self.reason.clone());
+        lines.join("\n")
+    }
+
+    /// The servers Enter asks about: each waiting for a first decision,
+    /// then each declined, as the consents are now.
+    fn to_ask(&self, cx: &App) -> VecDeque<(PathBuf, String)> {
+        let dir = (self.pending.first()).map(|pending| pending.extension_dir.clone());
+        let Some(dir) = dir else {
+            return VecDeque::new();
+        };
+        let mut now: Vec<PendingConsent> = (pending_extension_consents(cx).into_iter())
+            .filter(|pending| pending.extension_dir == dir)
+            .collect();
+        // Stable: undecided first, each in its order.
+        now.sort_by_key(|pending| pending.declined);
+        now.iter().map(server_key).collect()
+    }
 }
 
-/// `pending`'s server's executable and arguments.
-fn invocation_line(pending: &PendingConsent) -> String {
-    let mut line = pending.invocation.command.display().to_string();
-    for arg in &pending.invocation.args {
-        line.push(' ');
-        line.push_str(arg);
+/// What `invocation` runs, as a shell would read it: its environment, its
+/// executable and each argument, quoted where it must be.
+fn invocation_line(invocation: &Invocation) -> String {
+    let env = (invocation.env.iter()).map(|(name, value)| format!("{name}={}", quoted(value)));
+    let command = std::iter::once(quoted(&invocation.command.to_string_lossy()));
+    let args = invocation.args.iter().map(|arg| quoted(arg));
+    env.chain(command).chain(args).collect::<Vec<_>>().join(" ")
+}
+
+/// `word` as a shell word: as it is if nothing in it is special, else
+/// single-quoted.
+fn quoted(word: &str) -> String {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c);
+    if !word.is_empty() && word.chars().all(plain) {
+        return word.to_owned();
     }
-    line
+    format!("'{}'", word.replace('\'', "'\\''"))
 }
 
 /// What `manifest` contributes, with counts: "1 theme, 1 lsp server".
@@ -241,8 +315,12 @@ pub(crate) struct ExtensionsPicker {
     rows: Vec<Row>,
     /// The rows matching the query, as indices into `rows`.
     matches: Vec<usize>,
+    /// The query, lowercased.
+    query: String,
     /// What was focused before it opened, focused again once it closes.
     previous_focus: Option<FocusHandle>,
+    /// The follow of the extensions and the consents while it shows.
+    following: Option<[Subscription; 2]>,
 }
 
 impl ExtensionsPicker {
@@ -250,18 +328,44 @@ impl ExtensionsPicker {
         Self {
             rows: Vec::new(),
             matches: Vec::new(),
+            query: String::new(),
             previous_focus: None,
+            following: None,
         }
     }
 
     /// The picker is opening, with `previous_focus` focused until now, or
     /// opening afresh, keeping what was focused before, if that's `None`.
-    pub(crate) fn opened(&mut self, previous_focus: Option<FocusHandle>, cx: &App) {
+    /// From now until it closes, a change to the extensions or the
+    /// consents shows in the rows.
+    pub(crate) fn opened(
+        &mut self,
+        previous_focus: Option<FocusHandle>,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         self.previous_focus = previous_focus.or(self.previous_focus.take());
+        self.query.clear();
+        self.load(cx);
+        if self.following.is_none() {
+            let picker = cx.entity().downgrade();
+            let extensions = kiln::extensions::observe(cx, move |cx| {
+                picker.update(cx, refresh_rows).ok();
+            });
+            let consents = cx.observe_global::<ExtensionConsent>(refresh_rows);
+            self.following = Some([extensions, consents]);
+        }
+    }
+
+    /// Reads the rows again, the query's matches among them.
+    fn load(&mut self, cx: &App) {
         let pending = pending_extension_consents(cx);
-        let granted = extension_servers(cx);
+        let granted = granted_extension_servers(cx);
+        let disabled = kiln::extensions::disabled(cx);
         self.rows = (kiln::extensions::loaded_from(cx).iter())
-            .map(|(source, manifest)| Row::of(manifest, (*source).into(), &pending, &granted))
+            .map(|(source, manifest)| {
+                let off = disabled.contains(&manifest.id);
+                Row::of(manifest, (*source).into(), off, &pending, &granted)
+            })
             .collect();
         self.rows.sort_by_key(|row| row.name.to_lowercase());
         let mut skipped: Vec<Row> = (kiln::extensions::skipped(cx).iter())
@@ -269,18 +373,44 @@ impl ExtensionsPicker {
             .collect();
         skipped.sort_by_key(|row| row.name.to_lowercase());
         self.rows.extend(skipped);
-        self.matches = (0..self.rows.len()).collect();
+        self.filter();
+    }
+
+    /// The rows whose name or ID holds the query, ignoring case.
+    fn filter(&mut self) {
+        let query = &self.query;
+        self.matches = (self.rows.iter().enumerate())
+            .filter(|(_, row)| {
+                row.name.to_lowercase().contains(query) || row.id.to_lowercase().contains(query)
+            })
+            .map(|(ix, _)| ix)
+            .collect();
     }
 
     fn row(&self, ix: usize) -> &Row {
         &self.rows[self.matches[ix]]
     }
 
-    fn restore_focus(&mut self, window: &mut Window, cx: &mut App) {
+    /// Stops following, and focuses what was focused before it opened.
+    fn closed(&mut self, window: &mut Window, cx: &mut App) {
+        self.following = None;
         if let Some(focus) = self.previous_focus.take() {
             window.focus(&focus, cx);
         }
     }
+}
+
+/// Reads `picker`'s rows again, keeping the query and the selected row, if
+/// it's still there.
+fn refresh_rows(picker: &mut Picker<ExtensionsPicker>, cx: &mut Context<Picker<ExtensionsPicker>>) {
+    let count = picker.delegate.match_count();
+    let selected = (picker.selected() < count).then(|| picker.delegate.match_id(picker.selected()));
+    picker.delegate.load(cx);
+    let count = picker.delegate.match_count();
+    let ix = selected
+        .and_then(|id| (0..count).find(|&ix| picker.delegate.match_id(ix) == id))
+        .unwrap_or(picker.selected());
+    picker.select(ix, cx);
 }
 
 #[cfg(test)]
@@ -293,41 +423,11 @@ impl ExtensionsPicker {
     }
 }
 
-/// Asks about `pending`'s server as the consent prompt does, and records
-/// the answer.
-fn ask(pending: PendingConsent, window: &mut Window, cx: &mut Context<Picker<ExtensionsPicker>>) {
-    let (question, detail) = consent_prompt_text(&pending);
-    let answer = window.prompt(
-        PromptLevel::Warning,
-        &question,
-        Some(&detail),
-        &["Allow", "Don't Allow"],
-        cx,
-    );
-    cx.spawn_in(window, async move |_, cx| {
-        let answer = answer.await.ok();
-        // Outside any update: a decision hands the servers to every
-        // window's managers.
-        cx.update(|_, cx| match answer {
-            Some(0) => grant_extension_server(cx, &pending).ok(),
-            Some(1) => decline_extension_server(cx, &pending).ok(),
-            _ => None,
-        })
-        .ok();
-    })
-    .detach();
-}
-
 impl PickerDelegate for ExtensionsPicker {
     /// Rows whose name or ID holds `query`, ignoring case.
     fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
-        let query = query.to_lowercase();
-        self.matches = (self.rows.iter().enumerate())
-            .filter(|(_, row)| {
-                row.name.to_lowercase().contains(&query) || row.id.to_lowercase().contains(&query)
-            })
-            .map(|(ix, _)| ix)
-            .collect();
+        self.query = query.to_lowercase();
+        self.filter();
         cx.notify();
         let picker = cx.entity();
         // `Picker::matches_updated` borrows the picker, which is being
@@ -367,24 +467,37 @@ impl PickerDelegate for ExtensionsPicker {
             .into_any_element()
     }
 
-    /// Shows the consent prompt of a row waiting or declined; any other
-    /// row is left alone.
+    /// On a row waiting or declined, asks about each of its servers that
+    /// waits now, those undecided first, through the consent prompt; if
+    /// one's being asked about already, or none waits now, nothing. On any
+    /// other row, shows all it has to say. Focus goes back to where it was
+    /// before the list opened first, so the prompt takes it from there and
+    /// gives it back there.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let row = self.row(ix);
         let waiting = matches!(
             row.state,
             ExtensionState::NeedsConsent { .. } | ExtensionState::Declined { .. }
         );
-        let Some(pending) = row.pending.first().cloned().filter(|_| waiting) else {
-            return false;
-        };
-        self.restore_focus(window, cx);
-        ask(pending, window, cx);
+        if waiting {
+            let mut ask = Ask::These(row.to_ask(cx));
+            let Some(pending) = next_to_ask(window, cx, &mut ask) else {
+                return false;
+            };
+            self.closed(window, cx);
+            ask_about(window, cx, pending, ask);
+        } else {
+            let question = format!("{} {}", row.name, row.version);
+            let detail = row.full_detail();
+            self.closed(window, cx);
+            // Answered by closing it: nothing follows.
+            drop(window.prompt(PromptLevel::Info, &question, Some(&detail), &["OK"], cx));
+        }
         true
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.restore_focus(window, cx);
+        self.closed(window, cx);
     }
 }
 
@@ -395,3 +508,7 @@ mod extensions_picker_tests;
 #[cfg(test)]
 #[path = "extensions_picker_workspace_tests.rs"]
 mod extensions_picker_workspace_tests;
+
+#[cfg(test)]
+#[path = "extensions_picker_disable_tests.rs"]
+mod extensions_picker_disable_tests;

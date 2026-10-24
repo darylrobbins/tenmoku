@@ -210,8 +210,9 @@ pub struct Workbench {
     /// Whether the open panel shows: it doesn't block the window, and
     /// another isn't shown until it's answered.
     prompting: bool,
-    /// The prompt for an extension language server waiting on consent.
-    pub(crate) consent_prompt: crate::lsp_consent_prompt::ConsentPrompt,
+    /// The follow of the extension language servers waiting on consent,
+    /// which asks about them.
+    _consent_prompt: crate::lsp_consent_prompt::ConsentPrompt,
     /// The root's workspace trust.
     pub(crate) trust: kiln_shell::trust::RootTrust,
     /// The root's language servers.
@@ -568,7 +569,7 @@ impl Workbench {
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
-            consent_prompt: crate::lsp_consent_prompt::ConsentPrompt::new(window, cx),
+            _consent_prompt: crate::lsp_consent_prompt::ConsentPrompt::new(window, cx),
             trust: kiln_shell::trust::RootTrust::new(trust::prompt()),
             lsp: Lsp::new(),
             root_subscription,

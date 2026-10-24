@@ -717,6 +717,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         extensions::Files::get(cx),
         // Batches given name a workspace's directory too.
         config.batches.is_none(),
+        cx.default_global::<extensions::Disabled>().0.clone(),
     );
 
     let os = Capabilities::of(cx).os;
@@ -773,16 +774,18 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
+    // The app's before the extensions, so one that disables some as it's
+    // installed ([`extensions::set_disabled`]) does before they apply.
+    let installed = Installed::default();
+    for add in std::mem::take(&mut config.sources) {
+        service = add(service, installed.clone());
+    }
     if let Some(source) = extension_source {
         let source = Rc::new(RefCell::new(source));
         cx.set_global(extensions::Running(source.clone()));
         let source = Shared(source);
         diagnostics.extend(source.diagnostics());
         service = service.source(source);
-    }
-    let installed = Installed::default();
-    for add in std::mem::take(&mut config.sources) {
-        service = add(service, installed.clone());
     }
     // Last, so a choice made between batches can put its diagnostics in
     // place of the last ones at the end ([`Layers::select`]).

@@ -53,6 +53,20 @@ pub struct Settings {
     /// The AI chat.
     #[serde(default)]
     pub chat: ChatSettings,
+    /// Installed extensions. A project file can't set them.
+    #[serde(default)]
+    pub extensions: ExtensionsSettings,
+}
+
+/// Settings for the installed extensions (extensions record §10). They're
+/// the user's, not a folder's, so a project file may not set them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ExtensionsSettings {
+    /// The IDs of installed extensions that contribute nothing, as in
+    /// "acme.solarized": they stay installed and listed. An ID no
+    /// extension has is ignored.
+    pub disabled: Vec<String>,
 }
 
 /// Settings for the project tree.
@@ -861,7 +875,8 @@ impl SettingsStore {
 
 /// How fastedit's settings files are checked: against [`SCHEMA`] with each
 /// server listed ([`schema_for`]), a project's `lsp` keys narrowed
-/// ([`narrow_lsp`]) and its `theme` dropped ([`drop_theme`]).
+/// ([`narrow_lsp`]) and its `theme` and `extensions` dropped
+/// ([`drop_theme`], [`drop_extensions`]).
 fn options() -> SettingsOptions {
     SettingsOptions::new()
         .schema_for(schema_for)
@@ -870,6 +885,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
         .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
+        .project_filter(ProjectFilter::new("extensions", drop_extensions))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -1110,24 +1126,39 @@ pub const PROJECT_THEME: &str =
 /// Drops a project layer's `theme` table, with a [`PROJECT_THEME`] warning
 /// at each key it set (at `theme` itself if it isn't a table).
 fn drop_theme(layer: &mut Layer) {
-    let dropped: Vec<Vec<String>> = match layer.table.remove("theme") {
+    drop_table(layer, "theme", PROJECT_THEME);
+}
+
+/// Drops a project layer's `name` table, with a `message` warning at each
+/// key it set (at `name` itself if it isn't a table).
+fn drop_table(layer: &mut Layer, name: &str, message: &str) {
+    let dropped: Vec<Vec<String>> = match layer.table.remove(name) {
         None => return,
-        Some(toml::Value::Table(theme)) => theme.into_iter().map(|(key, _)| vec![key]).collect(),
+        Some(toml::Value::Table(table)) => table.into_iter().map(|(key, _)| vec![key]).collect(),
         Some(_) => vec![Vec::new()],
     };
     let document = DeTable::parse(&layer.source).ok();
     for path in dropped {
         let offset = document
             .as_ref()
-            .map_or(0, |document| key_offset(document.get_ref(), "theme", &path));
-        let key = std::iter::once("theme")
+            .map_or(0, |document| key_offset(document.get_ref(), name, &path));
+        let key = std::iter::once(name)
             .chain(path.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(".");
-        let warning =
-            layer.diagnostic_at(Severity::Warning, Some(key), offset, PROJECT_THEME.into());
+        let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message.into());
         layer.diagnostics.push(warning);
     }
+}
+
+/// The warning for each `extensions` key a project file sets.
+pub const PROJECT_EXTENSIONS: &str =
+    "extensions settings in project files are ignored: they're your own, in every window";
+
+/// Drops a project layer's `extensions` table, with a [`PROJECT_EXTENSIONS`]
+/// warning at each key it set (at `extensions` itself if it isn't a table).
+fn drop_extensions(layer: &mut Layer) {
+    drop_table(layer, "extensions", PROJECT_EXTENSIONS);
 }
 
 /// The warning for a project file's `[chat]` table.

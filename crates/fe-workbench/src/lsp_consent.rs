@@ -464,6 +464,43 @@ pub fn pending_extension_consents(cx: &App) -> Vec<PendingConsent> {
         .unwrap_or_default()
 }
 
+/// An extension's server the user granted what it runs now: by its
+/// extension's canonical directory and its name, the invocation granted,
+/// and whether the managers have it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GrantedServer {
+    pub(crate) key: Key,
+    pub(crate) invocation: Invocation,
+    /// Not when an earlier extension has a server of its name, which the
+    /// managers run instead.
+    pub(crate) running: bool,
+}
+
+/// The servers granted what they'd run now, in extension order, as last
+/// evaluated: one whose invocation changed since is
+/// [pending](pending_extension_consents) instead.
+pub(crate) fn granted_extension_servers(cx: &App) -> Vec<GrantedServer> {
+    let Some(state) = cx.try_global::<ExtensionConsent>() else {
+        return Vec::new();
+    };
+    let mut granted = Vec::new();
+    for evaluated in &state.evaluated {
+        let key = evaluated.key();
+        let entry = state.decided.get(&key).or_else(|| state.entries.get(&key));
+        let Some(entry) = entry.filter(|entry| {
+            entry.decision == Decision::Granted && entry.invocation == evaluated.invocation
+        }) else {
+            continue;
+        };
+        granted.push(GrantedServer {
+            running: state.handed.contains_key(&key),
+            invocation: entry.invocation.clone(),
+            key,
+        });
+    }
+    granted
+}
+
 /// Lets `pending`'s server run exactly what it shows, from now on and in
 /// later sessions, and starts it, restarting what ran before it. Each
 /// launch checks it still runs that ([`ConsentGate`]). The decision is

@@ -212,13 +212,19 @@ fn a_skipped_row_with_a_users_id_is_its_own_row(cx: &mut TestAppContext) {
     );
     assert_ne!(ids[0], ids[2], "each row its own identity");
 
-    // Clicking the skipped one asks nothing: it isn't the user's.
+    // Clicking the skipped one asks nothing, as it isn't the user's: it
+    // shows its details.
     let click = |ix: usize, cx: &mut VisualTestContext| {
         let row = picker.read_with(cx, |picker, _| picker.row_bounds(ix));
         cx.simulate_click(row.expect("laid out").center(), Modifiers::none());
         draw(cx);
     };
     click(2, &mut cx);
+    let (question, detail) = cx.pending_prompt().expect("a prompt");
+    assert_eq!(question, "Zig 1.2.3");
+    assert!(detail.contains("State: Skipped (untrusted)"), "{detail}");
+    cx.simulate_prompt_answer("OK");
+    draw(&mut cx);
     assert!(!cx.has_pending_prompt());
 
     // Clicking the user's asks about its server.

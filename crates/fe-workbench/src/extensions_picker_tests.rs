@@ -1,6 +1,6 @@
 //! Extensions: Show Installed (`workbench.show_extensions`): the loaded
 //! extensions with their kinds, licence, source and state; Enter on one
-//! waiting on consent shows its prompt.
+//! waiting on consent shows its prompt, and on any other its details.
 
 use std::{fs, path::PathBuf};
 
@@ -87,7 +87,10 @@ fn server(dir: &std::path::Path) -> ExtensionServer {
     }
 }
 
-fn workbench(host: &TempDir, cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
+pub(super) fn workbench(
+    host: &TempDir,
+    cx: &mut TestAppContext,
+) -> (Entity<Workbench>, VisualTestContext) {
     let root = host.path().join("project");
     fs::create_dir_all(&root).unwrap();
     let (workbench, cx) = open_root(cx, &root);
@@ -96,12 +99,12 @@ fn workbench(host: &TempDir, cx: &mut TestAppContext) -> (Entity<Workbench>, Vis
     (workbench, cx.clone())
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
-fn dispatch(id: &str, cx: &mut VisualTestContext) {
+pub(super) fn dispatch(id: &str, cx: &mut VisualTestContext) {
     let run = RunCommand(
         Invocation::of(id)
             .unwrap()
@@ -111,14 +114,17 @@ fn dispatch(id: &str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-fn picker(
+pub(super) fn picker(
     workbench: &Entity<Workbench>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<ExtensionsPicker>> {
     workbench.read_with(cx, |workbench, _| workbench.extensions_picker().clone())
 }
 
-fn rows(picker: &Entity<Picker<ExtensionsPicker>>, cx: &mut VisualTestContext) -> Vec<super::Row> {
+pub(super) fn rows(
+    picker: &Entity<Picker<ExtensionsPicker>>,
+    cx: &mut VisualTestContext,
+) -> Vec<super::Row> {
     picker.read_with(cx, |picker, _| picker.delegate.rows())
 }
 
@@ -226,13 +232,20 @@ fn enter_on_a_waiting_row_opens_its_consent_prompt(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let _ = &workbench;
 
-    // Active: Enter does nothing.
+    // Active: Enter shows its details.
     dispatch("workbench.show_extensions", &mut cx);
     cx.simulate_input("wasm");
     draw(&mut cx);
     cx.simulate_keystrokes("enter");
     draw(&mut cx);
-    assert!(!cx.has_pending_prompt());
+    let (question, detail) = cx.pending_prompt().expect("a prompt");
+    assert_eq!(question, "Wasm 1.2.3");
+    assert!(
+        detail.contains("Licence: GPL-3.0-only (copyleft)"),
+        "{detail}"
+    );
+    cx.simulate_prompt_answer("OK");
+    draw(&mut cx);
 
     // Waiting: it asks about that extension.
     dispatch("workbench.show_extensions", &mut cx);

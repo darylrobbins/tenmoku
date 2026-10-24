@@ -202,3 +202,9 @@
 # When Claude declines a request, let Anthropic's API answer with its
 # recommended fallback model.
 # fallbacks = true
+
+[extensions]
+# The IDs of installed extensions to turn off, as in ["acme.solarized"]: they
+# stay installed but contribute nothing. An ID no extension has is ignored. A
+# project file can't set it.
+# disabled = []

@@ -797,6 +797,9 @@ pub struct Contributions {
     /// Set by `init`, from when additions re-resolve.
     resolver: Option<Resolver>,
     scheduled: bool,
+    /// Whether the extensions' files changed after `init` resolved but
+    /// before [`start`]: it resolves again then.
+    stale: bool,
     resolutions: usize,
     /// The `#[kiln::command]` types whose handler is set: GPUI keeps every
     /// listener, so a second would run it twice.
@@ -1431,6 +1434,9 @@ pub(crate) fn start(
         menu_diagnostics,
     });
     this.scheduled = false;
+    if std::mem::take(&mut this.stale) {
+        schedule(cx);
+    }
     // One at a time, so one that contributes another runs it now.
     loop {
         let unrun = &mut cx.global_mut::<Contributions>().unrun;
@@ -1511,14 +1517,14 @@ fn on_workspace(
 }
 
 /// Resolves the keymap and menus again once the current update is over,
-/// as the extensions' keymap or menu files changed: once [`start`] has
-/// them resolve, as `init` resolves them itself until then.
+/// as the extensions' keymap or menu files changed; before [`start`], as
+/// when a config source's install disables an extension, once it starts.
 pub(crate) fn resolve_again(cx: &mut App) {
-    if cx
-        .try_global::<Contributions>()
-        .is_some_and(|this| this.resolver.is_some())
-    {
+    let this = cx.default_global::<Contributions>();
+    if this.resolver.is_some() {
         schedule(cx);
+    } else {
+        this.stale = true;
     }
 }
 

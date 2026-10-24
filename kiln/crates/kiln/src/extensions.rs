@@ -65,10 +65,17 @@
 //! user's isn't loaded, with a warning: the user's copy is.
 //! [`crate::Config::on_extensions`] gets the user's then the workspace's
 //! ([`ExtensionSet::joined`], [`ExtensionSet::sourced`]).
+//!
+//! The app may disable installed extensions by ID ([`set_disabled`], the
+//! user's `[extensions] disabled`): one disabled is still discovered and
+//! [`loaded`], but contributes nothing. Its themes aren't installed (one
+//! selected falls back as one that isn't installed does), its keymap and
+//! menu files aren't laid in, and [`crate::Config::on_extensions`] gets
+//! the set without it. Enabling it again applies it as a rescan would.
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     rc::Rc,
@@ -327,6 +334,56 @@ struct Loaded(Vec<(Source, Manifest)>);
 
 impl Global for Loaded {}
 
+/// Disables the installed extensions with these IDs, and enables the rest
+/// ([`crate::extensions`]): each one disabled stays [`loaded`], and its
+/// themes, keymap and menu files and app kinds go, with no restart, as
+/// those of one enabled again come back. An ID no extension has is no
+/// error: it's disabled if one with it is installed. Set before
+/// [`crate::init`], they never load. Not to be called from
+/// [`crate::Config::on_extensions`]'s callback.
+pub fn set_disabled<S: Into<String>>(cx: &mut App, ids: impl IntoIterator<Item = S>) {
+    let ids: BTreeSet<String> = ids.into_iter().map(Into::into).collect();
+    if cx
+        .try_global::<Disabled>()
+        .is_some_and(|disabled| disabled.0 == ids)
+    {
+        return;
+    }
+    cx.set_global(Disabled(ids.clone()));
+    if let Some(source) = cx.try_global::<Running>().map(|running| running.0.clone()) {
+        ExtensionSource::disable(&source, ids, cx);
+    }
+}
+
+/// The IDs [`set_disabled`] last disabled, in order, whether or not an
+/// extension has them.
+pub fn disabled(cx: &App) -> Vec<String> {
+    (cx.try_global::<Disabled>())
+        .map(|disabled| disabled.0.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Calls `f` after each change to what [`loaded_from`], [`skipped`] and
+/// [`disabled`] give, while the subscription is held: a view listing them
+/// follows them so.
+pub fn observe(cx: &mut App, f: impl Fn(&mut App) + 'static) -> Subscription {
+    let f = Rc::new(f);
+    let on = || {
+        let f = f.clone();
+        move |cx: &mut App| f(cx)
+    };
+    let loaded = cx.observe_global::<Loaded>(on());
+    let skipped = cx.observe_global::<SkippedGlobal>(on());
+    let disabled = cx.observe_global::<Disabled>(on());
+    Subscription::join(Subscription::join(loaded, skipped), disabled)
+}
+
+/// The IDs disabled ([`set_disabled`]), as a GPUI global.
+#[derive(Default)]
+pub(crate) struct Disabled(pub(crate) BTreeSet<String>);
+
+impl Global for Disabled {}
+
 /// The extensions directory, as a source for the config service: it
 /// watches the directory's tree, and a batch naming it rescans it.
 pub(crate) struct ExtensionSource {
@@ -360,6 +417,11 @@ pub(crate) struct ExtensionSource {
     logged: HashSet<LicenseNotice>,
     /// The workspace's extensions, if the app takes them.
     workspace: Option<Workspace>,
+    /// The IDs of the extensions that contribute nothing ([`set_disabled`]).
+    disabled: BTreeSet<String>,
+    /// Whether the config service has installed it: until then, nothing's
+    /// applied.
+    installed: bool,
 }
 
 /// A workspace folder's extensions: [`set_workspace_root`].
@@ -395,7 +457,8 @@ impl ExtensionSource {
     /// and their keymap and menu files into `files`; IDs may not start
     /// with a namespace in `reserved`.
     /// A workspace's extensions, if `setup` takes them, are watched with
-    /// a watcher of their own if `watch`.
+    /// a watcher of their own if `watch`. Those with an ID in `disabled`
+    /// contribute nothing.
     pub(crate) fn load(
         setup: Setup,
         reserved: Vec<String>,
@@ -403,6 +466,7 @@ impl ExtensionSource {
         layers: Layers,
         files: Files,
         watch: bool,
+        disabled: BTreeSet<String>,
     ) -> Option<Self> {
         let (dir, app, version) = setup.dir?;
         let api = ExtensionApi {
@@ -441,13 +505,15 @@ impl ExtensionSource {
             on_notice: setup.on_notice,
             logged: HashSet::new(),
             workspace,
+            disabled,
+            installed: false,
         };
         source.read_themes();
         source.read_files();
         Some(source)
     }
 
-    /// Reads every loaded extension's themes again. Returns whether they
+    /// Reads every enabled extension's themes again. Returns whether they
     /// or their diagnostics changed. Each theme's current path is
     /// resolved, following links, and must still be under the extension's
     /// directory, including for a theme listed by a kept last-good
@@ -456,7 +522,8 @@ impl ExtensionSource {
     fn read_themes(&mut self) -> bool {
         let mut themes = BTreeMap::new();
         let mut diagnostics = Vec::new();
-        for manifest in self.set.extensions() {
+        let enabled = (self.set.extensions().iter()).filter(|m| !self.disabled.contains(&m.id));
+        for manifest in enabled {
             for path in &manifest.themes {
                 let stem = path.file_stem().unwrap_or_default().to_string_lossy();
                 let id = format!("{}/{stem}", manifest.id);
@@ -510,13 +577,14 @@ impl ExtensionSource {
         changed
     }
 
-    /// Reads every loaded extension's keymap and menu files again. Returns
-    /// whether they or their diagnostics changed.
+    /// Reads every enabled extension's keymap and menu files again.
+    /// Returns whether they or their diagnostics changed.
     fn read_files(&mut self) -> bool {
         let mut keymaps = Vec::new();
         let mut menus = Vec::new();
         let mut diagnostics = Vec::new();
-        for manifest in self.set.extensions() {
+        let enabled = (self.set.extensions().iter()).filter(|m| !self.disabled.contains(&m.id));
+        for manifest in enabled {
             for (paths, files) in [
                 (&manifest.keymaps, &mut keymaps),
                 (&manifest.menus, &mut menus),
@@ -553,7 +621,7 @@ impl ExtensionSource {
     }
 
     /// The size and modification time of each file the app lists for each
-    /// loaded extension ([`crate::Config::extension_files`]): a file that's
+    /// enabled extension ([`crate::Config::extension_files`]): a file that's
     /// missing, isn't a regular file, or leads outside the extension's
     /// directory has none. Reads no contents: a rewrite that keeps a file's
     /// size and modification time is found by [`hash_files`], which
@@ -563,7 +631,7 @@ impl ExtensionSource {
             return Fingerprints::new();
         };
         let mut out = Fingerprints::new();
-        for manifest in self.joined().extensions() {
+        for manifest in self.enabled().extensions() {
             let root = manifest.dir.canonicalize().ok();
             let stamps = files(manifest)
                 .into_iter()
@@ -581,28 +649,31 @@ impl ExtensionSource {
 
     /// Gives the themes to the pair's layers, which lay them in.
     fn apply_themes(&mut self, cx: &mut App) {
-        {
-            let mut layers = self.layers.borrow_mut();
-            layers.installed = self.themes.clone();
-            layers.root = Some(self.set.root().to_owned());
-        }
+        self.install_themes();
         self.layers.apply(cx);
     }
 
-    /// Publishes the set, tells the app, then gives the licence notices
-    /// it hasn't had to [`crate::Config::on_license_notice`]'s callbacks,
-    /// acknowledging them in the state directory, the extensions
-    /// directory's parent. Without a callback they only go to the log,
+    /// Puts the themes in the pair's layers, for them to lay in.
+    fn install_themes(&mut self) {
+        let mut layers = self.layers.borrow_mut();
+        layers.installed = self.themes.clone();
+        layers.root = Some(self.set.root().to_owned());
+    }
+
+    /// Publishes the set, tells the app of those enabled, then gives the
+    /// licence notices it hasn't had to
+    /// [`crate::Config::on_license_notice`]'s callbacks, acknowledging them
+    /// in the state directory, the extensions directory's parent. Without a callback they only go to the log,
     /// once each while the app runs, and stay unacknowledged, so a later
     /// launch with one shows them.
     fn apply(&mut self, cx: &mut App) {
-        let joined = self.joined();
-        publish_loaded(&joined, cx);
+        publish_loaded(&self.joined(), cx);
         self.fingerprints = self.fingerprint();
         self.hashes = None;
         self.dirty = false;
+        let enabled = self.enabled();
         for on_extensions in &mut self.on_extensions {
-            on_extensions(&joined, cx);
+            on_extensions(&enabled, cx);
         }
         let Some(state_dir) = self.set.root().parent() else {
             return;
@@ -635,6 +706,57 @@ impl ExtensionSource {
             Some(workspace) => self.set.joined(workspace),
             None => self.set.clone(),
         }
+    }
+
+    /// [`ExtensionSource::joined`] without those disabled: what the app's
+    /// told of.
+    fn enabled(&self) -> ExtensionSet {
+        self.joined()
+            .filtered(|manifest| !self.disabled.contains(&manifest.id))
+    }
+
+    /// Disables the extensions with these IDs, and enables the rest: their
+    /// themes, keymaps and menus are read again and applied, and the app
+    /// told, as after a rescan. The selection's and the extensions'
+    /// diagnostics are published, as this comes between the config
+    /// service's batches. Before the service installs the source, they're
+    /// only read again: installing applies them.
+    fn disable(this: &Rc<RefCell<Self>>, ids: BTreeSet<String>, cx: &mut App) {
+        let previous = this.borrow().diagnostics();
+        let stamps = {
+            let mut source = this.borrow_mut();
+            if source.disabled == ids {
+                return;
+            }
+            source.disabled = ids;
+            if !source.installed {
+                source.read_themes();
+                if source.read_files() {
+                    crate::contributions::resolve_again(cx);
+                }
+                return;
+            }
+            if source.read_themes() {
+                source.install_themes();
+                source.layers.apply_publishing(cx);
+            }
+            if source.read_files() {
+                crate::contributions::resolve_again(cx);
+            }
+            if source.files_of.is_none() {
+                source.apply(cx);
+                None
+            } else {
+                // Told once the files are hashed, as after a rescan.
+                source.dirty = true;
+                Some(source.fingerprint())
+            }
+        };
+        if let Some(stamps) = stamps {
+            Self::hash(this, stamps, cx);
+        }
+        let diagnostics = this.borrow().diagnostics();
+        replace_diagnostics(cx, &previous, diagnostics);
     }
 
     /// The extensions' problems now: the user's, the workspace's while
@@ -852,6 +974,7 @@ impl ConfigSource for Shared {
     fn install(&mut self, cx: &mut App) {
         let stamps = {
             let mut source = self.0.borrow_mut();
+            source.installed = true;
             source.apply_themes(cx);
             if source.files_of.is_none() {
                 source.apply(cx);

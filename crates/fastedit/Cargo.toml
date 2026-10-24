@@ -31,6 +31,7 @@ objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSRe
 objc2-foundation = { version = "0.2", features = ["NSData", "NSThread"] }
 
 [dev-dependencies]
+fe-lsp = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 kiln = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

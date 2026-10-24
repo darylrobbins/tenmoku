@@ -240,6 +240,20 @@
       },
       "type": "object"
     },
+    "ExtensionsSettings": {
+      "description": "Settings for the installed extensions (extensions record §10). They're\nthe user's, not a folder's, so a project file may not set them.",
+      "properties": {
+        "disabled": {
+          "default": [],
+          "description": "The IDs of installed extensions that contribute nothing, as in\n\"acme.solarized\": they stay installed and listed. An ID no\nextension has is ignored.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "LspReadiness": {
       "description": "How a server's readiness is told.",
       "oneOf": [
@@ -959,6 +973,13 @@
         "tab_size": 4
       },
       "description": "The text editor."
+    },
+    "extensions": {
+      "$ref": "#/$defs/ExtensionsSettings",
+      "default": {
+        "disabled": []
+      },
+      "description": "Installed extensions. A project file can't set them."
     },
     "lsp": {
       "$ref": "#/$defs/LspSettings",

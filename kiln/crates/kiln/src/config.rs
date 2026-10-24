@@ -84,12 +84,19 @@ impl Layers {
         notes: Vec<Diagnostic>,
         cx: &mut App,
     ) {
-        let previous = self.borrow().diagnostics.clone();
         {
             let mut layers = self.borrow_mut();
             layers.selected = [dark.map(str::to_owned), light.map(str::to_owned)];
             layers.notes = notes;
         }
+        self.apply_publishing(cx);
+    }
+
+    /// [`Layers::apply`], publishing what's wrong with the selection in
+    /// [`ConfigDiagnostics`] in place of what was: for a change between
+    /// the config service's batches.
+    pub(crate) fn apply_publishing(&self, cx: &mut App) {
+        let previous = self.borrow().diagnostics.clone();
         self.apply(cx);
         let diagnostics = self.borrow().diagnostics.clone();
         if diagnostics != previous {

@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use fe_config::SettingsStore;
 use fe_config::settings::LspServerSettings;
+use fe_config::{Settings, SettingsStore};
 use fe_gpui::fe_keymap;
 use gpui::{App, AppContext as _};
-use kiln::{Config, core::ApiVersion};
+use kiln::{Config, GlobalSettings, core::ApiVersion};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -89,7 +89,9 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// completions in every workbench ([`fe_workbench::set_extension_snippets`]).
 /// A trusted launch root's own extensions come after the user's, with
 /// [`WORKSPACE_KINDS`] only: their servers' consent is keyed by their own
-/// directories, so a grant to a user's server doesn't cover them.
+/// directories, so a grant to a user's server doesn't cover them. Those
+/// the settings' `extensions.disabled` names contribute none of these
+/// ([`DisabledExtensions`]).
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
     // 1.1 added snippets.
     let api = ApiVersion { major: 1, minor: 1 };
@@ -119,6 +121,41 @@ pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
             cx.background_spawn(async move { register_grammars(batch, grammars) })
                 .detach();
         })
+        .source(DisabledExtensions)
+}
+
+/// Has kiln disable the extensions the settings' `extensions.disabled`
+/// names ([`kiln::extensions::set_disabled`]), from the config service's
+/// start and whenever a reload changes it, as [`theme::init`] follows
+/// `theme.dark`. Disabled, an extension's language servers stop, their
+/// consent kept, its grammars aren't offered for files opened after and
+/// its snippets aren't offered; enabled again, they're back.
+struct DisabledExtensions;
+
+impl kiln::platform::config::ConfigSource for DisabledExtensions {
+    fn paths(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
+    /// Before the extensions' own, as kiln installs the app's sources
+    /// first: those disabled never contribute, nor reach the app.
+    fn install(&mut self, cx: &mut App) {
+        if let Some(global) = cx.try_global::<GlobalSettings<Settings>>() {
+            let disabled = global.settings().extensions.disabled.clone();
+            kiln::extensions::set_disabled(cx, disabled);
+        }
+        cx.observe_global::<GlobalSettings<Settings>>(|cx| {
+            let global = cx.global::<GlobalSettings<Settings>>();
+            let (now, before) = (&global.settings().extensions, &global.previous().extensions);
+            if now.disabled != before.disabled {
+                let disabled = now.disabled.clone();
+                kiln::extensions::set_disabled(cx, disabled);
+            }
+        })
+        .detach();
+    }
+
+    fn reload(&mut self, _: &[PathBuf], _: &mut App) {}
 }
 
 /// The contribution kinds a trusted folder's own extensions may have

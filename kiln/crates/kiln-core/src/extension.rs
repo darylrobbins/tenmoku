@@ -803,6 +803,25 @@ impl ExtensionSet {
         joined
     }
 
+    /// This set with only the extensions `keep` keeps, each keeping its
+    /// source, and all the diagnostics. Like [`ExtensionSet::joined`]'s,
+    /// the set is for reading.
+    pub fn filtered(&self, keep: impl Fn(&Manifest) -> bool) -> ExtensionSet {
+        let (sources, extensions) = self
+            .sourced()
+            .filter(|(_, manifest)| keep(manifest))
+            .map(|(source, manifest)| (source, manifest.clone()))
+            .unzip();
+        ExtensionSet {
+            root: self.root.clone(),
+            api: self.api.clone(),
+            source: self.source,
+            extensions,
+            sources,
+            diagnostics: self.diagnostics.clone(),
+        }
+    }
+
     /// Reads the directory again: an extension whose manifest now has
     /// errors, or is missing or unreadable, keeps its last good version,
     /// reporting them, and one whose directory is gone drops out. Returns whether anything changed, the

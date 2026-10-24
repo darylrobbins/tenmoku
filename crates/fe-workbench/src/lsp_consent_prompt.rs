@@ -5,12 +5,17 @@
 //! for an interpreter and what changed since the last grant.
 //!
 //! Windows don't ask twice: a server one window is asking about isn't
-//! offered to another. A prompt closed without a choice (its window closed)
-//! leaves the server pending, and the next window to be active asks again. A
-//! server the user declined isn't asked about again until its invocation
-//! changes.
+//! offered to another, and a window asks about one at a time, whether by
+//! itself or from the extensions list ([`ask_in`]). A prompt closed without
+//! a choice (its window closed) leaves the server pending, and the next
+//! window to be active asks again. A server the user declined isn't asked
+//! about again until its invocation changes, unless the extensions list
+//! asks.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
+};
 
 use gpui::{App, Context, Global, PromptLevel, Subscription, Window, WindowId};
 
@@ -24,17 +29,22 @@ const BUTTONS: [&str; 2] = ["Allow", "Don't Allow"];
 const ALLOW: usize = 0;
 const DONT_ALLOW: usize = 1;
 
-/// The servers some window is asking about, by extension directory and
-/// server name, and the window.
+/// A server by its extension's canonical directory and its name.
+pub(crate) type ServerKey = (PathBuf, String);
+
+/// `pending`'s server.
+pub(crate) fn server_key(pending: &PendingConsent) -> ServerKey {
+    (pending.extension_dir.clone(), pending.server.clone())
+}
+
+/// The servers some window is asking about, and the window.
 #[derive(Default)]
-struct Asking(HashMap<(PathBuf, String), WindowId>);
+struct Asking(HashMap<ServerKey, WindowId>);
 
 impl Global for Asking {}
 
 /// A workbench's follow of the pending consents.
 pub(crate) struct ConsentPrompt {
-    /// Whether a prompt is up in this window: it shows one at a time.
-    pub(crate) asking: bool,
     _subscriptions: [Subscription; 2],
 }
 
@@ -42,82 +52,100 @@ impl ConsentPrompt {
     /// Asks when `window` becomes active and when the consents change, and
     /// once the workbench exists.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Workbench>) -> Self {
-        let activation = cx.observe_window_activation(window, |workbench, window, cx| {
-            workbench.ask_consent(window, cx)
+        let activation = cx.observe_window_activation(window, |_, window, cx| {
+            ask_in(window, cx, Ask::Undecided);
         });
-        let changed = cx.observe_global_in::<ExtensionConsent>(window, |workbench, window, cx| {
-            workbench.ask_consent(window, cx)
+        let changed = cx.observe_global_in::<ExtensionConsent>(window, |_, window, cx| {
+            ask_in(window, cx, Ask::Undecided);
         });
-        cx.defer_in(window, |workbench, window, cx| {
-            workbench.ask_consent(window, cx)
+        cx.defer_in(window, |_, window, cx| {
+            ask_in(window, cx, Ask::Undecided);
         });
         Self {
-            asking: false,
             _subscriptions: [activation, changed],
         }
     }
 }
 
-impl Workbench {
-    /// Asks about the first server waiting for a decision that no window is
-    /// asking about, if this window is active and not asking already.
-    fn ask_consent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.consent_prompt.asking || !window.is_window_active() {
-            return;
-        }
-        let open: Vec<WindowId> = cx
-            .windows()
+/// Which servers a window asks about, one after another.
+pub(crate) enum Ask {
+    /// Each waiting for a first decision, while the window is active.
+    Undecided,
+    /// These, in order, each while it waits, undecided or declined: the
+    /// extensions list's, for one extension.
+    These(VecDeque<ServerKey>),
+}
+
+/// Asks in `window` about the next server of `ask` that waits for a decision
+/// now and that no window is asking about, unless `window` is asking about
+/// one already; once that's answered, about the next. Returns whether it
+/// asked. Not to be called while a workbench is being updated by anything
+/// but this window's own view.
+pub(crate) fn ask_in(window: &mut Window, cx: &mut App, mut ask: Ask) -> bool {
+    let Some(pending) = next_to_ask(window, cx, &mut ask) else {
+        return false;
+    };
+    ask_about(window, cx, pending, ask);
+    true
+}
+
+/// The next server of `ask` that `window` may ask about now, as
+/// [`ask_in`] chooses, taken from `ask`.
+pub(crate) fn next_to_ask(window: &Window, cx: &mut App, ask: &mut Ask) -> Option<PendingConsent> {
+    if matches!(ask, Ask::Undecided) && !window.is_window_active() {
+        return None;
+    }
+    let open: Vec<WindowId> = cx
+        .windows()
+        .iter()
+        .map(|handle| handle.window_id())
+        .collect();
+    let me = window.window_handle().window_id();
+    let asking = cx.default_global::<Asking>();
+    // A window that closed mid-prompt asks no more.
+    asking.0.retain(|_, window| open.contains(window));
+    if asking.0.values().any(|window| *window == me) {
+        return None;
+    }
+    let asked: HashSet<ServerKey> = asking.0.keys().cloned().collect();
+    let waiting = pending_extension_consents(cx);
+    let free = |pending: &&PendingConsent| !asked.contains(&server_key(pending));
+    let next = match ask {
+        Ask::Undecided => waiting
             .iter()
-            .map(|handle| handle.window_id())
-            .collect();
-        let me = window.window_handle().window_id();
-        let asking = cx.default_global::<Asking>();
-        // A window that closed mid-prompt asks no more.
-        asking.0.retain(|_, window| open.contains(window));
-        let Some(pending) = pending_extension_consents(cx)
-            .into_iter()
-            .find(|pending| !pending.declined && !is_asked(pending, cx))
-        else {
-            return;
-        };
-        let key = (pending.extension_dir.clone(), pending.server.clone());
-        cx.global_mut::<Asking>().0.insert(key.clone(), me);
-        self.consent_prompt.asking = true;
-        let (question, detail) = consent_prompt_text(&pending);
-        let answer = window.prompt(PromptLevel::Warning, &question, Some(&detail), &BUTTONS, cx);
-        cx.spawn_in(window, async move |workbench, cx| {
+            .filter(free)
+            .find(|pending| !pending.declined),
+        Ask::These(keys) => std::iter::from_fn(|| keys.pop_front())
+            .find_map(|key| waiting.iter().filter(free).find(|p| server_key(p) == key)),
+    };
+    next.cloned()
+}
+
+/// Asks in `window` about `pending`, which [`next_to_ask`] gave, then about
+/// the rest of `ask` once it's answered.
+pub(crate) fn ask_about(window: &mut Window, cx: &mut App, pending: PendingConsent, ask: Ask) {
+    let me = window.window_handle().window_id();
+    let key = server_key(&pending);
+    cx.default_global::<Asking>().0.insert(key.clone(), me);
+    let (question, detail) = consent_prompt_text(&pending);
+    let answer = window.prompt(PromptLevel::Warning, &question, Some(&detail), &BUTTONS, cx);
+    window
+        .spawn(cx, async move |cx| {
             let answer = answer.await.ok();
-            // Outside any update of the workbench: a decision hands the
+            // Outside any update of a workbench: a decision hands the
             // servers to every window's managers.
-            let decided = cx.update(|window, cx| {
+            cx.update(|window, cx| {
                 cx.global_mut::<Asking>().0.remove(&key);
                 match answer {
                     Some(ALLOW) => grant_extension_server(cx, &pending).ok(),
                     Some(DONT_ALLOW) => decline_extension_server(cx, &pending).ok(),
-                    _ => None,
+                    _ => return,
                 };
-                window.window_handle()
-            });
-            workbench
-                .update_in(cx, |workbench, window, cx| {
-                    workbench.consent_prompt.asking = false;
-                    if decided.is_ok() && answer.is_some() {
-                        workbench.ask_consent(window, cx);
-                    }
-                })
-                .ok();
+                ask_in(window, cx, ask);
+            })
+            .ok();
         })
         .detach();
-    }
-}
-
-/// Whether some window is asking about `pending`'s server.
-fn is_asked(pending: &PendingConsent, cx: &App) -> bool {
-    cx.try_global::<Asking>().is_some_and(|asking| {
-        asking
-            .0
-            .contains_key(&(pending.extension_dir.clone(), pending.server.clone()))
-    })
 }
 
 /// The question and the detail the prompt shows for `pending`.
