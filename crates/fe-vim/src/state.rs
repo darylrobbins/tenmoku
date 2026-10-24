@@ -699,6 +699,12 @@ impl VimState {
         self.remap.waiting()
     }
 
+    /// The keys held for a longer map, in order: empty unless
+    /// [`VimState::remap_waiting`].
+    pub fn remap_held(&self) -> Vec<VimKey> {
+        self.remap.held_keys()
+    }
+
     /// No key came for `CHORD_TIMEOUT` (nvim's 'timeoutlen') while keys
     /// were held for a longer map: the longest complete map among them
     /// runs, the keys after it to be matched again, or with none, the

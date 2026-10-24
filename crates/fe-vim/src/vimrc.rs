@@ -855,7 +855,7 @@ fn char_key(ch: char) -> VimKey {
 }
 
 /// One key in vim notation, so it reads back as itself.
-fn notation(key: VimKey) -> String {
+pub(crate) fn notation(key: VimKey) -> String {
     match key {
         VimKey::Char(' ') => "<Space>".to_string(),
         VimKey::Char('<') => "<lt>".to_string(),

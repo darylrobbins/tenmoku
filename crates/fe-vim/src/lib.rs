@@ -829,6 +829,7 @@ mod text_object;
 mod unmatched;
 mod vimrc;
 mod visual;
+mod which_key;
 
 pub use args::{
     CancelArgs, CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JoinArgs,
@@ -857,12 +858,14 @@ pub use motion::take_row_bytes;
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
 pub use remap::{
-    ExLineArgs, Lookup, Remap, RemapCommand, RemapInsert, RemapIssue, RemapMode, RemapSet,
+    Continuation, ExLineArgs, Lookup, Remap, RemapCommand, RemapInsert, RemapIssue, RemapMode,
+    RemapSet,
 };
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
 pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc};
+pub use which_key::{BUILTIN_KEYS, BuiltinKeys, WhichKey, WhichKeyEntry, WhichKeyLabel};
 
 /// Every frame [`VimState::stamp`] can make of `frame`, an editor's frame
 /// with none of vim's keys: one for each mode and what can be pending in it

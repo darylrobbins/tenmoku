@@ -249,6 +249,18 @@ impl Pending {
         self.prefix.is_some()
     }
 
+    /// The key of the prefix waiting, if it's `g`, `z`, `Z`, `[` or `]`,
+    /// for which-key (`crate::which_key`).
+    pub(crate) fn which_key_prefix(&self) -> Option<char> {
+        match self.prefix {
+            Some(Prefix::G) => Some('g'),
+            Some(Prefix::Z) => Some('z'),
+            Some(Prefix::BigZ) => Some('Z'),
+            Some(Prefix::Bracket { forward }) => Some(if forward { ']' } else { '[' }),
+            _ => None,
+        }
+    }
+
     /// The jump awaiting its chars or a label, if one is.
     pub(crate) fn jump(&self) -> Option<&JumpPrefix> {
         match &self.prefix {

@@ -100,7 +100,8 @@ pub(crate) const EX_LINE: &str = "vim.ex_line";
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
     mode: RemapMode,
-    text: String,
+    /// The map as written.
+    remap: Remap,
     from: Vec<VimKey>,
     to: Vec<VimKey>,
     /// The right side's `<Cmd>`s, each with how many of `to`'s keys come
@@ -127,7 +128,7 @@ impl RemapSet {
                         set.entries.retain(|e| !(e.mode == mode && e.from == from));
                         set.entries.push(Entry {
                             mode,
-                            text: remap.from.clone(),
+                            remap: remap.clone(),
                             from: from.clone(),
                             to: to.clone(),
                             cmds: cmds.clone(),
@@ -174,15 +175,71 @@ impl RemapSet {
         self.entries
             .iter()
             .filter(|e| e.mode == mode && hides(mode, &e.from))
-            .map(|e| e.text.clone())
+            .map(|e| e.remap.from.clone())
             .collect()
     }
+
+    /// The keys that go on from `keys` in `mode`'s maps, each once, in the
+    /// order their maps were added: for which-key.
+    pub fn continuations(&self, mode: RemapMode, keys: &[VimKey]) -> Vec<Continuation<'_>> {
+        let mut found: Vec<Continuation<'_>> = Vec::new();
+        let longer = self
+            .entries
+            .iter()
+            .filter(|e| e.mode == mode && e.from.len() > keys.len() && e.from.starts_with(keys));
+        for entry in longer {
+            let key = entry.from[keys.len()];
+            let at = match found.iter().position(|c| c.key == key) {
+                Some(at) => at,
+                None => {
+                    found.push(Continuation {
+                        key,
+                        map: None,
+                        command: None,
+                        longer: 0,
+                    });
+                    found.len() - 1
+                }
+            };
+            let continuation = &mut found[at];
+            if entry.from.len() == keys.len() + 1 {
+                continuation.map = Some(&entry.remap);
+                continuation.command = match entry.cmds.as_slice() {
+                    [(0, cmd)] if entry.to.is_empty() => match cmd.as_ref() {
+                        Cmd::Fe(id) => Some(id),
+                        Cmd::Ex(_) => None,
+                    },
+                    _ => None,
+                };
+            } else {
+                continuation.longer += 1;
+            }
+        }
+        found
+    }
+}
+
+/// A key that goes on from typed keys in a mode's maps
+/// ([`RemapSet::continuations`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Continuation<'a> {
+    pub key: VimKey,
+    /// The map whose left side ends at the key, as written, if one does.
+    pub map: Option<&'a Remap>,
+    /// The fastedit command that map runs, if its right side is a
+    /// `<Cmd>fe:{command id}<CR>` alone.
+    pub command: Option<&'a CommandId>,
+    /// How many longer maps go on past the key.
+    pub longer: usize,
 }
 
 /// Whether a map of `from` in `mode` is complete where a built-in goes on.
 fn hides(mode: RemapMode, from: &[VimKey]) -> bool {
     const PREFIXES: &str = "gzZ[]\"fFtTrm'`q@";
     const OPERATORS: &str = "cdy<>!=";
+    if matches!(mode, RemapMode::Insert | RemapMode::CmdLine) {
+        return false;
+    }
     match from {
         [VimKey::Char(c)] => match mode {
             RemapMode::Normal => PREFIXES.contains(*c) || OPERATORS.contains(*c),
@@ -436,6 +493,11 @@ impl RemapState {
         !self.held.is_empty()
     }
 
+    /// The keys held for a longer match, in order.
+    pub(crate) fn held_keys(&self) -> Vec<VimKey> {
+        self.held.iter().map(|&(key, _)| key).collect()
+    }
+
     /// Whether keys were resolved that the host hasn't taken yet.
     pub(crate) fn resolved(&self) -> bool {
         !self.queued.is_empty()
@@ -567,6 +629,9 @@ fn map_mode(state: &VimState, key: VimKey) -> Option<RemapMode> {
         Mode::Normal if state.pending.has_operator() => Some(RemapMode::OperatorPending),
         Mode::Normal => Some(RemapMode::Normal),
         Mode::Visual(_) => Some(RemapMode::Visual),
+        // The key after `<C-r>` (or `<C-r><C-r>`, ...) names a register,
+        // read unmapped, as nvim reads it.
+        Mode::Insert | Mode::Replace if state.insert_register_waiting() => None,
         Mode::Insert | Mode::Replace => Some(RemapMode::Insert),
         Mode::CmdLine(_) => Some(RemapMode::CmdLine),
     }
