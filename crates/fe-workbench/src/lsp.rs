@@ -556,6 +556,8 @@ pub(crate) struct Lsp {
     hover: Rc<LspHover>,
     /// Every editor's caret highlights.
     highlights: highlights::Highlights,
+    /// Every editor's document symbols request.
+    symbols: symbols::Symbols,
     /// Every editor's documentation renderer.
     markdown: markdown::Renderers,
     /// Every editor's save hook, and whether `editor.format_on_save` is on
@@ -747,6 +749,7 @@ impl Lsp {
             resolved_from: HashMap::new(),
             hover: Rc::default(),
             highlights: Default::default(),
+            symbols: Default::default(),
             markdown: Default::default(),
             format_on_save: Rc::default(),
             inlay_hints_on: std::cell::Cell::new(true),
@@ -1350,6 +1353,7 @@ impl Workbench {
         self.sync_lenses(cx);
         self.sync_links(cx);
         self.sync_colors(cx);
+        self.sync_symbols(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
@@ -2554,6 +2558,9 @@ mod inlay_hints;
 mod lenses;
 #[path = "lsp_links.rs"]
 mod links;
+
+#[path = "lsp_symbols.rs"]
+mod symbols;
 
 #[path = "lsp_semantic_tokens.rs"]
 mod semantic_tokens;

@@ -17,7 +17,7 @@
 //! is still of its language: one set to another language and back meanwhile
 //! keeps the outline shown.
 
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use fe_gpui::EditorView;
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, OutlineKind, Syntax};
@@ -54,6 +54,9 @@ pub struct OutlinePanel {
     /// Moves on with each outline shown and each editor followed, so a
     /// click on a row of another can't land.
     generation: u64,
+    /// The outlines the language server gave, by editor: while an editor has
+    /// one it's shown in place of tree-sitter's.
+    served: HashMap<EntityId, Outline>,
     /// The job in flight.
     job: Option<Task<()>>,
     /// Whether the last refresh found the syntax trailing the text, or not
@@ -85,6 +88,7 @@ impl OutlinePanel {
             status: Status::NoFile,
             outline: None,
             generation: 0,
+            served: HashMap::new(),
             job: None,
             behind: false,
             scroll: UniformListScrollHandle::new(),
@@ -120,6 +124,37 @@ impl OutlinePanel {
         cx.notify();
     }
 
+    /// Shows `outline`, the language server's symbols for `editor`, in place
+    /// of the tree-sitter outline; `None` (no provider, an error, an empty
+    /// reply, a stopped server, the editor closed) goes back to it.
+    pub(crate) fn set_served(
+        &mut self,
+        editor: EntityId,
+        outline: Option<Outline>,
+        cx: &mut Context<Self>,
+    ) {
+        match outline {
+            Some(outline) => {
+                self.served.insert(editor, outline);
+            }
+            None if self.served.remove(&editor).is_none() => return,
+            None => {}
+        }
+        if self.editor_id() == Some(editor) {
+            self.generation += 1;
+            self.refresh(cx);
+            cx.notify();
+        }
+    }
+
+    /// The outline shown, the server's or tree-sitter's.
+    fn current(&self) -> Option<&Outline> {
+        match self.editor_id().and_then(|editor| self.served.get(&editor)) {
+            Some(served) => Some(served),
+            None => self.outline.as_ref().map(|(outline, _)| outline),
+        }
+    }
+
     fn editor_id(&self) -> Option<EntityId> {
         self.editor.as_ref().map(|editor| editor.entity_id())
     }
@@ -132,6 +167,10 @@ impl OutlinePanel {
             self.status = Status::NoFile;
             return;
         };
+        if self.served.contains_key(&editor.entity_id()) {
+            self.status = Status::Outline;
+            return;
+        }
         let view = editor.read(cx);
         let Some(syntax) = view.syntax() else {
             self.status = if view.is_loading_language() {
@@ -240,14 +279,13 @@ impl OutlinePanel {
         if self.editor_id() != Some(editor) || self.status != Status::Outline {
             return None;
         }
-        let outline = self.outline.as_ref();
-        Some(outline.map(|(outline, _)| (outline, self.generation)))
+        Some(self.current().map(|outline| (outline, self.generation)))
     }
 
     /// The outline's items, if it's shown.
     fn items(&self) -> &[fe_syntax::OutlineItem] {
-        match (&self.status, &self.outline) {
-            (Status::Outline, Some((outline, _))) => &outline.items,
+        match (&self.status, self.current()) {
+            (Status::Outline, Some(outline)) => &outline.items,
             _ => &[],
         }
     }
@@ -259,9 +297,9 @@ impl OutlinePanel {
             Status::PlainText => "No outline for plain text".into(),
             Status::Unsupported(language) => format!("No outline for {language}"),
             Status::TooLarge => "File too large for an outline".into(),
-            Status::Outline => match &self.outline {
+            Status::Outline => match self.current() {
                 None => "Parsing…".into(),
-                Some((outline, _)) if outline.items.is_empty() => "No symbols".into(),
+                Some(outline) if outline.items.is_empty() => "No symbols".into(),
                 Some(_) => return None,
             },
         })
@@ -270,10 +308,7 @@ impl OutlinePanel {
     /// The footer under a capped outline.
     fn footer(&self) -> Option<String> {
         let truncated = self.status == Status::Outline
-            && self
-                .outline
-                .as_ref()
-                .is_some_and(|(outline, _)| outline.truncated);
+            && self.current().is_some_and(|outline| outline.truncated);
         truncated.then(|| format!("Showing the first {} symbols", thousands(MAX_OUTLINE_ITEMS)))
     }
 
@@ -487,7 +522,7 @@ impl OutlinePanel {
 
     /// The outline shown, if any.
     pub(crate) fn outline(&self) -> Option<&Outline> {
-        self.outline.as_ref().map(|(outline, _)| outline)
+        self.current()
     }
 
     /// What shows in place of the rows, if anything.
