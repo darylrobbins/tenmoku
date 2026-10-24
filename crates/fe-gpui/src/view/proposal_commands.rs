@@ -223,7 +223,9 @@ impl EditorView {
 
     /// Accepts every pending hunk of the proposals shown whose old text is
     /// still in place, one transaction of the user's per proposal, and emits
-    /// [`ProposalEvent::Accepted`] for each with it. Stale hunks stay.
+    /// [`ProposalEvent::Accepted`] for each with it, or
+    /// [`ProposalEvent::AcceptedNoChange`] for one that changes nothing.
+    /// Stale hunks stay.
     /// Returns how many were accepted.
     ///
     /// Like [`EditorView::accept_hunk`], a read-only view accepts for the
@@ -233,24 +235,29 @@ impl EditorView {
         let proposals: Vec<Rc<RefCell<ProposedChange>>> = self.proposals.clone();
         for proposal in proposals {
             let snapshot = self.model.snapshot();
-            let pending: Vec<HunkId> = {
+            let pending: Vec<(HunkId, bool)> = {
                 let proposal = proposal.borrow();
                 if proposal.buffer() != snapshot.id() || proposal.version() > snapshot.version() {
                     continue;
                 }
                 (proposal.hunks(snapshot).into_iter())
                     .filter(|hunk| hunk.status == HunkStatus::Pending)
-                    .map(|hunk| hunk.id)
+                    .map(|hunk| (hunk.id, hunk.old_text == hunk.new_text))
                     .collect()
             };
             // The guard's drop catches the model up.
             let (transaction, stale) =
                 (proposal.borrow_mut()).accept_all_as(&mut self.model.buffer_mut(), Origin::User);
-            let Some(transaction) = transaction else {
-                continue;
-            };
-            for hunk in pending.into_iter().filter(|hunk| !stale.contains(hunk)) {
-                events.push(ProposalEvent::Accepted { hunk, transaction });
+            // Hunks that change nothing are accepted all the same, with no
+            // transaction: the panel and checkpoint adoption still hear of them.
+            for (hunk, no_op) in pending
+                .into_iter()
+                .filter(|(hunk, _)| !stale.contains(hunk))
+            {
+                events.push(match transaction {
+                    Some(transaction) if !no_op => ProposalEvent::Accepted { hunk, transaction },
+                    _ => ProposalEvent::AcceptedNoChange { hunk },
+                });
             }
         }
         if events.is_empty() {

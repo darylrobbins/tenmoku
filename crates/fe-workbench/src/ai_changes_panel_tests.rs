@@ -43,6 +43,16 @@ fn draw(cx: &mut VisualTestContext) {
 
 /// Two open files with a changeset proposing a change to each, shown.
 fn setup(cx: &mut TestAppContext) -> Setup<'_> {
+    setup_with(cx, |snapshot| {
+        ProposedChange::from_text(snapshot, 0..snapshot.len(), &proposed(), ai())
+    })
+}
+
+/// [`setup`] with each file's proposal made by `make`.
+fn setup_with(
+    cx: &mut TestAppContext,
+    make: impl Fn(&fe_buffer::BufferSnapshot) -> ProposedChange,
+) -> Setup<'_> {
     let dir = tempfile::tempdir().unwrap();
     let paths = ["a.rs", "b.rs"].map(|name| dir.path().join(name));
     for path in &paths {
@@ -66,9 +76,7 @@ fn setup(cx: &mut TestAppContext) -> Setup<'_> {
         let proposal = editor.read_with(cx, |editor, _| {
             let buffer = editor.model().buffer();
             let snapshot = buffer.snapshot();
-            let proposal =
-                ProposedChange::from_text(&snapshot, 0..snapshot.len(), &proposed(), ai());
-            (buffer.id(), proposal)
+            (buffer.id(), make(&snapshot))
         });
         changeset.add_file(path.clone(), proposal.0, Rc::new(RefCell::new(proposal.1)));
     }
@@ -723,4 +731,27 @@ fn empty_new_file_saves_accepted_text(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read(&created).unwrap(), b"");
     let (text, dirty) = text_and_dirty(&workbench, &created, cx);
     assert_eq!((text.as_str(), dirty), ("", false));
+}
+
+#[gpui::test]
+fn accept_all_then_revert_turn(cx: &mut TestAppContext) {
+    // Each file: a hunk that changes nothing, then a real one.
+    let at = TWO_FNS.find("    1\n").unwrap();
+    let mut s = setup_with(cx, |snapshot| {
+        ProposedChange::from_edits_keeping_noops(
+            snapshot,
+            [(0..0, ""), (at..at + 6, "    10\n")],
+            ai(),
+        )
+    });
+    assert_eq!(counts(&s.rows(), 0), (2, 0, 0));
+    let editor = s.editor(0);
+    editor.update(s.cx, |editor, cx| assert_eq!(editor.accept_all(cx), 2));
+    draw(s.cx);
+    // The no-op counts as accepted in the panel.
+    assert_eq!(counts(&s.rows(), 0), (0, 2, 0));
+    assert_eq!(counts(&s.rows(), 1), (2, 0, 0));
+    s.click("ai-changes-revert");
+    assert_eq!(s.text(0), TWO_FNS);
+    assert_eq!(counts(&s.rows(), 0), (2, 0, 0));
 }

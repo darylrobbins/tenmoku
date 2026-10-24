@@ -556,3 +556,55 @@ fn frames_read_the_rows_of_a_tall_block_in_view(cx: &mut TestAppContext) {
     // screen row 3.
     assert_eq!(texts[0][0], "n49996");
 }
+
+#[gpui::test]
+fn accept_all_emits_accepted_no_change(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    let at = TEXT.find("r6").unwrap();
+    let proposal = view.read_with(cx, |view, _| {
+        Rc::new(RefCell::new(ProposedChange::from_edits_keeping_noops(
+            view.model().snapshot(),
+            [(0..0, ""), (at..at + 2, "six")],
+            ai(),
+        )))
+    });
+    let ids = hunk_ids(&proposal, &view, cx);
+    assert_eq!(ids.len(), 2);
+    view.update(cx, |view, cx| {
+        view.set_proposals(vec![proposal.clone()], cx)
+    });
+    let seen = events(&view, cx);
+    assert_eq!(view.update(cx, |view, cx| view.accept_all(cx)), 2);
+    assert!(text(&view, cx).contains("six"));
+    for id in &ids {
+        assert_eq!(status(&proposal, *id, &view, cx), HunkStatus::Accepted);
+    }
+    let seen = seen.borrow();
+    assert!(matches!(
+        seen[..],
+        [
+            ProposalEvent::AcceptedNoChange { hunk },
+            ProposalEvent::Accepted { hunk: second, .. },
+        ] if hunk == ids[0] && second == ids[1]
+    ));
+
+    // Only no-ops: no transaction, but still accepted and announced.
+    let (view, cx) = editor(cx);
+    let proposal = view.read_with(cx, |view, _| {
+        Rc::new(RefCell::new(ProposedChange::from_edits_keeping_noops(
+            view.model().snapshot(),
+            [(0..0, "")],
+            ai(),
+        )))
+    });
+    view.update(cx, |view, cx| {
+        view.set_proposals(vec![proposal.clone()], cx)
+    });
+    let seen = events(&view, cx);
+    assert_eq!(view.update(cx, |view, cx| view.accept_all(cx)), 1);
+    assert!(matches!(
+        seen.borrow()[..],
+        [ProposalEvent::AcceptedNoChange { .. }]
+    ));
+    assert_eq!(text(&view, cx), TEXT);
+}
