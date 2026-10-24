@@ -21,6 +21,7 @@ mod closed_editors;
 mod config_problems;
 mod disk_sync;
 mod dock;
+mod dock_focus;
 mod dock_layout;
 mod extension_snippets;
 mod extensions_picker;

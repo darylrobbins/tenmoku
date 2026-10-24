@@ -12,8 +12,9 @@
 //! with Changes expanded, `git.log` with Graph. The References, Problems,
 //! History and Chat buttons join the rail once their panel has shown; the
 //! History panel is made the first time `git.file_history` runs
-//! ([`Dock::set_history`]), and the Chat panel the first time `chat.open`
-//! does ([`Dock::set_chat`]).
+//! ([`Dock::set_history`]), the others with the dock. With vim on,
+//! `<C-w>h`/`l`/`j` past the panes' edge focus what the dock shows
+//! ([`Dock::focus_active`], `dock_focus.rs`).
 //!
 //! Its commands (`dock.show_project`, `dock.toggle`, the panels' show
 //! commands, `search.show_replace`, `search.replace_all` and `git.refresh`)
@@ -23,8 +24,9 @@
 
 use fe_ui::Icon;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, Focusable as _, IntoElement, Render,
-    SharedString, Subscription, Window,
+    AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
+    Subscription, Window, div,
 };
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
 
@@ -146,6 +148,13 @@ const _: () = {
         );
         ix += 1;
     }
+    // History, the one panel registered after the dock is made
+    // ([`Dock::set_history`]), is added at the rail's end: its place.
+    assert!(
+        PANELS[PANELS.len() - 1].order
+            == crate::workbench::git_commands::git_history::SIDEBAR.order,
+        "History, registered last, is last on the rail"
+    );
 };
 
 /// The [`SidebarPanel::always_on_rail`] panels of [`PANELS`], in its order.
@@ -277,12 +286,41 @@ fn explorer(
                 title: "Outline".into(),
                 order: 20,
                 default_collapsed: true,
-                view: outline.clone().into(),
+                view: cx.new(|cx| Tracked::new(outline, cx)).into(),
             },
             cx,
         );
         explorer
     })
+}
+
+/// A view drawn in an element tracking its focus, for one that draws
+/// without, as the outline does: [`Dock::focus_active`] focusing it then
+/// puts focus in the sidebar, under the workbench's keys.
+struct Tracked {
+    focus: FocusHandle,
+    view: AnyView,
+}
+
+impl Tracked {
+    fn new<V: Render + Focusable>(view: &Entity<V>, cx: &App) -> Self {
+        Self {
+            focus: view.focus_handle(cx),
+            view: view.clone().into(),
+        }
+    }
+}
+
+impl Render for Tracked {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Fills the view's body, a row, as the view would.
+        div()
+            .track_focus(&self.focus)
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .child(self.view.clone())
+    }
 }
 
 /// The Explorer's Folders view: `project`'s tree.
@@ -604,6 +642,52 @@ impl Dock {
     /// Whether a panel that isn't shown has focus.
     pub(crate) fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
         self.state.hidden_panel_focused(window, cx)
+    }
+
+    /// Focuses what the dock shows, as showing it would: search's input,
+    /// or the top expanded view of the Explorer or Source Control. False,
+    /// leaving focus, if the dock is hidden or its container's views are
+    /// all collapsed.
+    pub(crate) fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(focus) = self.active_focus(cx) else {
+            return false;
+        };
+        window.focus(&focus, cx);
+        true
+    }
+
+    /// What [`Dock::focus_active`] focuses.
+    fn active_focus(&self, cx: &App) -> Option<FocusHandle> {
+        if !self.is_visible() {
+            return None;
+        }
+        let (container, views) = match self.active() {
+            DockPanel::Explorer => (
+                &self.explorer,
+                vec![
+                    (crate::project_panel::FOLDERS, self.project.focus_handle(cx)),
+                    (crate::outline_panel::VIEW, self.outline.focus_handle(cx)),
+                ],
+            ),
+            DockPanel::SourceControl => {
+                let changes = (source_control::CHANGES, self.changes.focus_handle(cx));
+                let graph = (self.git_log.as_ref())
+                    .map(|git_log| (source_control::GRAPH, git_log.focus_handle(cx)));
+                let views = std::iter::once(changes).chain(graph).collect();
+                (&self.source_control, views)
+            }
+            DockPanel::Search => return Some(self.search.focus_handle(cx)),
+            DockPanel::References => return Some(self.references.focus_handle(cx)),
+            DockPanel::Problems => return Some(self.problems.focus_handle(cx)),
+            DockPanel::History => return self.history.as_ref().map(|panel| panel.focus_handle(cx)),
+            DockPanel::Chat => return self.chat.as_ref().map(|panel| panel.focus_handle(cx)),
+            _ => return None,
+        };
+        let stack = container.read(cx).stack().read(cx);
+        (stack.view_ids().into_iter())
+            .filter(|view| stack.is_collapsed(*view) == Some(false))
+            .find_map(|view| views.iter().find(|(id, _)| *id == view))
+            .map(|(_, focus)| focus.clone())
     }
 }
 

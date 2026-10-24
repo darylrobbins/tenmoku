@@ -520,7 +520,9 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Activates the pane in `direction` of the active one, if there's one.
+    /// Activates the pane in `direction` of the active one, if there's one;
+    /// else, with vim on, focuses the dock shown on that side
+    /// ([`Workbench::focus_dock_beyond`]).
     pub(crate) fn focus_pane(
         &mut self,
         direction: Direction,
@@ -529,6 +531,8 @@ impl Workbench {
     ) {
         if let Some(pane) = self.pane_group(cx).neighbour(&self.active, direction, cx) {
             self.activate(pane, window, cx);
+        } else if fe_gpui::vim_enabled(cx) {
+            self.focus_dock_beyond(direction, window, cx);
         }
     }
 
