@@ -24,7 +24,10 @@
 //! last that is still listed, else the next listed by number, else the one
 //! before; a pane emptied closes, as nvim closes the other windows showing
 //! it, and focus stays in this pane. The window stays open with an empty
-//! pane when the last goes.
+//! pane when the last goes. When that buffer's file is still being read,
+//! the tabs go once it lands. A range's `$` is the last buffer numbered,
+//! listed or not, and a range is checked against the numbers there are
+//! (E16), and for order (E493), as nvim does.
 //!
 //! A name matches as nvim's `:b {name}` does, a part of the file's path,
 //! tried anywhere, then at the start, then at the end, then whole, until
@@ -56,6 +59,7 @@ use super::message;
 use crate::{Pane, Workbench};
 
 const E16: &str = "E16: Invalid range";
+const E493: &str = "E493: Backwards range given";
 const E23: &str = "E23: No alternate file";
 const E85: &str = "E85: There is no listed buffer";
 const E516: &str = "E516: No buffers were deleted";
@@ -97,6 +101,9 @@ pub(crate) fn record(
     item: &dyn ItemHandle,
     cx: &mut App,
 ) {
+    if owner.is_some_and(|owner| cx.default_global::<VimBuffers>().released.contains(&owner)) {
+        return;
+    }
     let editor = item.downcast_ref::<EditorView>();
     let buffer = editor.map(|editor| editor.read(cx).model().buffer().id());
     let path = item.path(cx);
@@ -126,9 +133,21 @@ struct VimBuffers {
     seq: u64,
     /// Transitions noted and not yet read, in order.
     pending: Vec<Pending>,
+    /// The workbenches released since they were first read, whose panes'
+    /// later transitions are dropped: nothing will read them.
+    released: std::collections::HashSet<EntityId>,
 }
 
 impl Global for VimBuffers {}
+
+/// Drops the window of the released workbench `id`, and the transitions its
+/// panes noted that were never read.
+fn forget(id: EntityId, cx: &mut App) {
+    let all = cx.global_mut::<VimBuffers>();
+    all.windows.remove(&id);
+    all.pending.retain(|pending| pending.owner != Some(id));
+    all.released.insert(id);
+}
 
 struct WindowBuffers {
     workbench: WeakEntity<Workbench>,
@@ -137,6 +156,8 @@ struct WindowBuffers {
     panes: std::collections::HashSet<EntityId>,
     /// To the window's workspace changing.
     _watch: Option<Subscription>,
+    /// Deletions waiting for the file that replaces a buffer to open.
+    waiting: HashMap<u64, Subscription>,
     buffers: Buffers,
 }
 
@@ -278,7 +299,12 @@ impl Workbench {
                 workbench.note_vim_buffer(cx)
             })
         });
-        cx.default_global::<VimBuffers>();
+        let known = (cx.default_global::<VimBuffers>().windows).contains_key(&id);
+        if !known {
+            // Once released nothing reads this window's transitions, noted
+            // or to come, so they go.
+            cx.on_release(move |_, cx| forget(id, cx)).detach();
+        }
         // Every transition the panes noted, in the order they happened,
         // before the final state: a tab that came and went has a number.
         // A pane that is gone and was never seen is taken to be this
@@ -290,6 +316,7 @@ impl Workbench {
         let window = (all.windows.entry(id)).or_insert_with(|| WindowBuffers {
             workbench,
             _watch: None,
+            waiting: HashMap::new(),
             panes: Default::default(),
             buffers: Buffers::default(),
         });
@@ -393,7 +420,10 @@ impl Workbench {
             BufferAddress::Number(number) if number > last => Err(E16.to_owned()),
             BufferAddress::Number(number) => Ok(number),
             BufferAddress::Current => current.ok_or_else(|| E16.to_owned()),
-            BufferAddress::Last => listed.last().copied().ok_or_else(|| E16.to_owned()),
+            // The last buffer there is, listed or not: a deleted highest
+            // one is still what `$` addresses.
+            BufferAddress::Last if last > 0 => Ok(last),
+            BufferAddress::Last => Err(E16.to_owned()),
         };
         let alternate =
             || (buffers.alternate(pane.entity_id(), current)).ok_or_else(|| E23.to_owned());
@@ -412,6 +442,17 @@ impl Workbench {
             find_named(name, rounds, root.as_deref())
         };
         match command {
+            BufferCommand::Ranged {
+                first,
+                last,
+                command,
+            } => {
+                let (first, last) = (address(first)?, address(last)?);
+                if first > last {
+                    return Err(E493.to_owned());
+                }
+                self.vim_buffer_command(editor, *command, window, cx)
+            }
             BufferCommand::List => {
                 let alternate = buffers.alternate(pane.entity_id(), current);
                 let rows = listed.iter().map(|&number| {
@@ -470,6 +511,7 @@ impl Workbench {
                     BufferTarget::Range { last, .. } => address(last)?,
                 };
                 self.show_vim_buffer(&pane, number, current, window, cx)
+                    .map(|_| ())
             }
             BufferCommand::Next(count) | BufferCommand::Previous(count) => {
                 if listed.is_empty() {
@@ -485,6 +527,7 @@ impl Workbench {
                     false => (at + len - step) % len,
                 };
                 self.show_vim_buffer(&pane, listed[to], current, window, cx)
+                    .map(|_| ())
             }
             BufferCommand::First | BufferCommand::Last => {
                 let ends = (listed.first().copied()).zip(listed.last().copied());
@@ -494,6 +537,7 @@ impl Workbench {
                     _ => last,
                 };
                 self.show_vim_buffer(&pane, to, current, window, cx)
+                    .map(|_| ())
             }
             BufferCommand::Delete { target, force } => {
                 let deleting: Vec<u32> = match target {
@@ -504,7 +548,7 @@ impl Workbench {
                     BufferTarget::Range { first, last } => {
                         let (first, last) = (address(first)?, address(last)?);
                         if first > last {
-                            return Err("E493: Backwards range given".to_owned());
+                            return Err(E493.to_owned());
                         }
                         (first..=last).collect()
                     }
@@ -536,38 +580,114 @@ impl Workbench {
                             })
                             .or_else(|| listed.iter().rev().copied().find(staying))
                     });
-                if let Some(next) = next {
-                    self.show_vim_buffer(&pane, next, current, window, cx)?;
-                }
-                let mut tabs = self.buffer_tabs(cx);
-                self.vim_buffers(&mut tabs, cx, |_| ());
-                for tab in tabs.into_iter().rev() {
-                    if deleting.contains(&tab.number) {
-                        tab.pane.update(cx, |pane, cx| {
-                            pane.take_item(tab.ix, window, cx);
-                            cx.notify();
-                        });
+                // The tabs go once the buffer that replaces them is shown:
+                // when its file is still being read, once that lands, so
+                // the activations in between don't leave the pane with the
+                // closed buffer's neighbour.
+                let reading = match next {
+                    Some(next) => self.show_vim_buffer(&pane, next, current, window, cx)?,
+                    None => None,
+                };
+                match reading {
+                    Some(path) => {
+                        self.delete_when_opened(editor, &pane, path, (deleting, force), window, cx)
                     }
-                }
-                // Closing another pane's shown tab focuses its neighbour:
-                // focus goes back to this pane, unless it closed.
-                if self.panes(cx).contains(&pane) && !pane.read(cx).tabs().is_empty() {
-                    let focus = pane.read(cx).focus_target(cx);
-                    window.focus(&focus, cx);
-                }
-                if deleting.len() > 1 {
-                    let report = format!("{} buffers deleted", deleting.len());
-                    editor.update(cx, |editor, cx| editor.report_vim_message(report, cx));
+                    None => self.delete_vim_buffers(editor, &pane, &deleting, force, window, cx),
                 }
                 Ok(())
             }
         }
     }
 
+    /// Runs the deletion of `deleting` once `pane` has opened `path`, or
+    /// failed to.
+    fn delete_when_opened(
+        &mut self,
+        editor: &Entity<EditorView>,
+        pane: &Entity<Pane>,
+        path: PathBuf,
+        (deleting, force): (Vec<u32>, bool),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (id, editor) = (cx.entity_id(), editor.clone());
+        let key = {
+            let all = cx.global_mut::<VimBuffers>();
+            all.seq += 1;
+            all.seq
+        };
+        let subscription = cx.observe_in(pane, window, move |workbench, pane, window, cx| {
+            // Whatever else the pane is shown or opens meanwhile, the read of
+            // the replacement runs on until it lands or fails.
+            if pane.read(cx).reading().any(|reading| reading == path) {
+                return;
+            }
+            if let Some(window) = cx.global_mut::<VimBuffers>().windows.get_mut(&id) {
+                window.waiting.remove(&key);
+            }
+            // The replacement didn't open (its read failed, or a Save As
+            // holding it ended without it): the buffers stay.
+            let opened =
+                (pane.read(cx).tabs().iter()).any(|tab| tab.path.as_deref() == Some(&path));
+            if opened {
+                workbench.delete_vim_buffers(&editor, &pane, &deleting, force, window, cx);
+            }
+        });
+        if let Some(window) = cx.global_mut::<VimBuffers>().windows.get_mut(&id) {
+            window.waiting.insert(key, subscription);
+        }
+    }
+
+    /// Closes every tab of the buffers `deleting`, in every pane, with
+    /// `pane`, the one the command ran in, keeping the focus.
+    fn delete_vim_buffers(
+        &mut self,
+        editor: &Entity<EditorView>,
+        pane: &Entity<Pane>,
+        deleting: &[u32],
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut tabs = self.buffer_tabs(cx);
+        self.vim_buffers(&mut tabs, cx, |_| ());
+        // A deletion that waited for a file to be read finds the buffers as
+        // they are now: one changed meanwhile is still refused without `!`.
+        if !force {
+            let dirty =
+                (deleting.iter()).find(|&&n| tabs.iter().any(|tab| tab.number == n && tab.dirty));
+            if let Some(number) = dirty {
+                let error = format!(
+                    "E89: No write since last change for buffer {number} (add ! to override)"
+                );
+                return message(editor, error, cx);
+            }
+        }
+        for tab in tabs.into_iter().rev() {
+            if deleting.contains(&tab.number) {
+                tab.pane.update(cx, |pane, cx| {
+                    pane.take_item(tab.ix, window, cx);
+                    cx.notify();
+                });
+            }
+        }
+        // Closing another pane's shown tab focuses its neighbour:
+        // focus goes back to this pane, unless it closed.
+        if self.panes(cx).contains(pane) && !pane.read(cx).tabs().is_empty() {
+            let focus = pane.read(cx).focus_target(cx);
+            window.focus(&focus, cx);
+        }
+        if deleting.len() > 1 {
+            let report = format!("{} buffers deleted", deleting.len());
+            editor.update(cx, |editor, cx| editor.report_vim_message(report, cx));
+        }
+    }
+
     /// Shows buffer `number` in `pane`, whose shown buffer is `current`: its
     /// tab there, or else a new one, of its file or sharing another pane's
-    /// untitled text; noted as what the pane shows now, but for a file
-    /// still to be read, which is noted as it lands.
+    /// untitled text; noted as what the pane shows now, even where the
+    /// file was opened at once. The file still being read, if it is, which
+    /// is noted as it lands.
     fn show_vim_buffer(
         &mut self,
         pane: &Entity<Pane>,
@@ -575,9 +695,9 @@ impl Workbench {
         current: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<PathBuf>, String> {
         if Some(number) == current {
-            return Ok(());
+            return Ok(None);
         }
         let mut tabs = self.buffer_tabs(cx);
         let entry = self.vim_buffers(&mut tabs, cx, |buffers| buffers.entry(number).cloned());
@@ -588,8 +708,12 @@ impl Workbench {
         if let Some(tab) = here {
             pane.update(cx, |pane, cx| pane.activate(tab.ix, window, cx));
         } else if let Some(path) = entry.path {
-            pane.update(cx, |pane, cx| pane.open(path, window, cx));
-            return Ok(());
+            pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx));
+            // Opened at once, from text another pane holds or a tab there
+            // already: the switch is done, and noted below.
+            if pane.read(cx).is_opening(&path) {
+                return Ok(Some(path));
+            }
         } else {
             let other = (tabs.iter())
                 .find(|tab| tab.number == number)
@@ -607,7 +731,7 @@ impl Workbench {
         let mut tabs = self.buffer_tabs(cx);
         let pane = pane.entity_id();
         self.vim_buffers(&mut tabs, cx, |buffers| buffers.show(pane, number));
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -664,3 +788,7 @@ mod tests;
 #[cfg(test)]
 #[path = "vim_buffers_transition_tests.rs"]
 mod transition_tests;
+
+#[cfg(test)]
+#[path = "vim_buffers_followup_tests.rs"]
+mod followup_tests;

@@ -90,8 +90,15 @@ fn buffer() {
             last: current
         })
     );
-    // The argument wins over the range.
-    assert_eq!(host("2b 3"), switch(BufferTarget::Number(3)));
+    // The argument wins over the range, which the host still checks.
+    assert_eq!(
+        host("2b 3"),
+        BufferCommand::Ranged {
+            first: BufferAddress::Number(2),
+            last: BufferAddress::Number(2),
+            command: Box::new(switch(BufferTarget::Number(3))),
+        }
+    );
     for line in ["b#", "b #", "b # "] {
         assert_eq!(host(line), switch(BufferTarget::Alternate), ":{line}");
     }

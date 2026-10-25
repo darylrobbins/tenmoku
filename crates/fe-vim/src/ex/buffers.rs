@@ -16,11 +16,18 @@
 //! A number argument is `N` alone (0 is E939; past 32 bits it is the
 //! largest, as nvim reads it); digits with more after them are a name
 //! (`:b 1x`), but for `:b 2 3`, E488. A name is the rest of the line,
-//! trimmed. A range is buffer numbers, not lines: `N`, `.` (the current
+//! trimmed, with a backslash taken from before a space, `#` or `%` as nvim
+//! does for file names. A range is buffer numbers, not lines: `N`, `.` (the current
 //! buffer), `$` (the last) and `%` (all), with no offsets; `:b` takes its
 //! last, `:bn` and `:bp` read a number there as their count (0 as 1), and
 //! `:bf` and `:bl` ignore it. `"` starts a comment. nvim gives none of
 //! them E471: with no argument each acts on the current buffer.
+//!
+//! A range is checked as nvim does: `:b` and `:bd` give E16 for 0 and past
+//! the highest buffer number (even with an argument, which the host checks
+//! as [`BufferCommand::Ranged`]), `:bn`, `:bp`, `:bf` and `:bl` only for a
+//! negative address (a number past 32 bits wraps), and all give E493 for
+//! numbers the wrong way round.
 //!
 //! Not supported: `+cmd` before the argument, and `:bd` of several buffers
 //! by argument (`:bd 2 3`, `:bd a b`); offsets in a range (`:.+1b`); and a
@@ -53,6 +60,15 @@ pub enum BufferCommand {
     /// `:ls`, `:buffers` and `:files` (with `!` or not): the host lists its
     /// open files in a picker ([`super::Pick::buffers`]).
     List,
+    /// `command` after the host has checked the range `first` to `last` as
+    /// nvim does for a buffer range the command doesn't read itself
+    /// (`:9b 2`, `:2,1b`, `:.,$b`): E16 for an address past the last buffer
+    /// number, E493 backwards.
+    Ranged {
+        first: BufferAddress,
+        last: BufferAddress,
+        command: Box<BufferCommand>,
+    },
 }
 
 /// The buffer a [`BufferCommand`] names.
@@ -120,7 +136,7 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
         Some(args) => (true, args),
         None => (false, after),
     };
-    let args = uncommented(args).trim_matches([' ', '\t']);
+    let args = super::trim_unescaped_end(uncommented(args).trim_start_matches([' ', '\t']));
     // The host switches buffers once the line has run, so a command after
     // one would run in the buffer it leaves: refused before any runs.
     if args.contains('|') {
@@ -142,24 +158,24 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
             BufferCommand::List
         }
         Kind::Buffer => {
-            let target = match args {
-                "" => match range.last() {
-                    Some(address) => {
-                        let at = self::address(address)?;
-                        BufferTarget::Range {
-                            first: at,
-                            last: at,
-                        }
-                    }
-                    None => BufferTarget::Current,
-                },
-                args => target(args, false)?,
+            let bounds = bounds(range, true)?;
+            let target = match (args, bounds) {
+                ("", Some((_, last))) => BufferTarget::Range { first: last, last },
+                ("", None) => BufferTarget::Current,
+                (args, _) => target(args, false)?,
             };
-            BufferCommand::Switch(target)
+            let switch = BufferCommand::Switch(target);
+            match bounds {
+                Some((first, last)) if !args.is_empty() || !ordered(first, last) => {
+                    ranged(first, last, switch)
+                }
+                _ => switch,
+            }
         }
         Kind::Next | Kind::Previous => {
+            let range_count = range_count(range)?;
             let count = match args {
-                "" => range_count(range)?,
+                "" => range_count,
                 args => count(args)?,
             };
             match kind {
@@ -170,29 +186,25 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
         Kind::First | Kind::Last if !args.is_empty() => {
             return Err(ExError::Trailing(args.to_string()));
         }
-        Kind::First => BufferCommand::First,
-        Kind::Last => BufferCommand::Last,
+        Kind::First | Kind::Last => {
+            range_count(range)?;
+            match kind {
+                Kind::First => BufferCommand::First,
+                _ => BufferCommand::Last,
+            }
+        }
         Kind::Delete => {
-            let target = match (args, range) {
-                ("", []) => BufferTarget::Current,
-                ("", [address]) if address.base == Base::All => BufferTarget::Range {
-                    first: BufferAddress::Number(1),
-                    last: BufferAddress::Last,
-                },
-                ("", [.., first, last]) => BufferTarget::Range {
-                    first: self::address(first)?,
-                    last: self::address(last)?,
-                },
-                ("", [one]) => {
-                    let at = self::address(one)?;
-                    BufferTarget::Range {
-                        first: at,
-                        last: at,
-                    }
-                }
+            let bounds = bounds(range, true)?;
+            let target = match (args, bounds) {
+                ("", None) => BufferTarget::Current,
+                ("", Some((first, last))) => BufferTarget::Range { first, last },
                 (args, _) => target(args, true)?,
             };
-            BufferCommand::Delete { target, force }
+            let delete = BufferCommand::Delete { target, force };
+            match bounds {
+                Some((first, last)) if !args.is_empty() => ranged(first, last, delete),
+                _ => delete,
+            }
         }
     };
     Ok(ExCommand::Host(HostCommand::Buffer(command)))
@@ -219,10 +231,34 @@ fn target(args: &str, delete: bool) -> Result<BufferTarget, ExError> {
             rest => Err(ExError::Trailing(rest.to_string())),
         };
     }
-    if delete && args.contains([' ', '\t']) {
+    let name = unescaped(args);
+    if delete && name.1 {
         return Err(several());
     }
-    Ok(BufferTarget::Name(args.to_string()))
+    Ok(BufferTarget::Name(name.0))
+}
+
+/// `name` with the backslash taken from before a space, tab, `#` or `%`, as
+/// nvim reads a file name argument (`:b a\ b` is `a b`, `:b a\%b` is
+/// `a%b`); any other keeps its backslash. And whether it has white space
+/// that wasn't escaped, where `:bd` would read a second name.
+fn unescaped(name: &str) -> (String, bool) {
+    let (mut out, mut split) = (String::new(), false);
+    let mut chars = name.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.peek().copied()) {
+            ('\\', Some(next @ (' ' | '\t' | '#' | '%'))) => {
+                out.push(next);
+                chars.next();
+            }
+            (' ' | '\t', _) => {
+                split = true;
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    (out, split)
 }
 
 /// `:bn`'s and `:bp`'s count argument, `args`.
@@ -238,17 +274,83 @@ fn count(args: &str) -> Result<u32, ExError> {
 }
 
 /// `:bn`'s and `:bp`'s count from `range`, its last address: 1 with none,
-/// and for 0.
+/// and for 0. Unlike `:b`'s, the range is checked here alone, as nvim does
+/// for these: a negative address is E16 and a backwards one E493, but one
+/// past the last buffer is fine.
 fn range_count(range: &[Address]) -> Result<u32, ExError> {
     let Some(address) = range.last() else {
         return Ok(1);
     };
-    if !address.parts.is_empty() {
-        return Err(offsets());
-    }
+    bounds(range, false)?;
     match address.base {
         Base::Line(line) => Ok(u32::try_from(line).unwrap_or(0).max(1)),
         _ => Err(ExError::Unsupported("a count other than a number".into())),
+    }
+}
+
+/// The first and last buffer of `range`, its last two addresses (a single
+/// one is both, `%` is all), or none for an empty range. A negative address
+/// is E16, and 0 too if `from_one`, where a number starts at 1. Two numbers
+/// the wrong way round are E493, but with `from_one` that is the host's to
+/// say after E16 for one past the last buffer.
+fn bounds(
+    range: &[Address],
+    from_one: bool,
+) -> Result<Option<(BufferAddress, BufferAddress)>, ExError> {
+    let Some(last) = range.last() else {
+        return Ok(None);
+    };
+    if range.iter().any(|address| !address.parts.is_empty()) {
+        return Err(offsets());
+    }
+    if let [address] = range
+        && address.base == Base::All
+    {
+        return Ok(from_one.then_some((BufferAddress::Number(1), BufferAddress::Last)));
+    }
+    let first = match range {
+        [.., first, _] => first,
+        _ => last,
+    };
+    if [first, last]
+        .iter()
+        .any(|address| !address.parts.is_empty())
+    {
+        return Err(offsets());
+    }
+    let numbers = |address: &Address| match (address.parts.is_empty(), &address.base) {
+        (true, Base::Line(line)) => Some(*line),
+        _ => None,
+    };
+    for address in [first, last] {
+        if let Some(line) = numbers(address)
+            && (line < 0 || from_one && line == 0)
+        {
+            return Err(ExError::InvalidRange);
+        }
+    }
+    if !from_one && matches!((numbers(first), numbers(last)), (Some(a), Some(b)) if a > b) {
+        return Err(ExError::Backwards);
+    }
+    if !from_one {
+        return Ok(None);
+    }
+    Ok(Some((address(first)?, address(last)?)))
+}
+
+/// Whether the buffers `first` to `last` are certainly not backwards, with
+/// their numbers: those with a `.` or `$` are the host's to compare.
+fn ordered(first: BufferAddress, last: BufferAddress) -> bool {
+    matches!((first, last), (BufferAddress::Number(a), BufferAddress::Number(b)) if a <= b)
+        || first == BufferAddress::Number(1)
+        || first == last
+}
+
+fn ranged(first: BufferAddress, last: BufferAddress, command: BufferCommand) -> BufferCommand {
+    BufferCommand::Ranged {
+        first,
+        last,
+        command: Box::new(command),
     }
 }
 
