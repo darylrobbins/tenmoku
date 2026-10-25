@@ -471,6 +471,13 @@ keys = "secondary-w"
 command = "workbench.close_tab"
 context = "workbench"
 
+# VS Code's Reopen Closed Editor. Not in the terminal, whose shell keeps
+# ctrl-shift-t off macOS.
+[[bindings]]
+keys = "secondary-shift-t"
+command = "workbench.reopen_closed_editor"
+context = "workbench && !terminal"
+
 [[bindings]]
 keys = { macos = "cmd-shift-]", default = "ctrl-pagedown" }
 command = "workbench.next_tab"

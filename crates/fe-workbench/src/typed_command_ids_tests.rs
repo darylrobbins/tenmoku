@@ -280,6 +280,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Git: Toggle Blame Annotations",
         "workbench",
     ),
+    (
+        "workbench.reopen_closed_editor",
+        "Reopen Closed Editor",
+        "workbench",
+    ),
 ];
 
 #[gpui::test]

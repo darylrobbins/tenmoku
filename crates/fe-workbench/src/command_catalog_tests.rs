@@ -341,6 +341,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.open_recent",
     "workbench.open_settings",
     "workbench.previous_tab",
+    "workbench.reopen_closed_editor",
     "workbench.save_as",
     "workbench.show_config_problems",
     "workbench.show_extensions",

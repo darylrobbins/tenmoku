@@ -15,6 +15,7 @@
 
 mod auto_save;
 mod chat_panel;
+mod closed_editors;
 mod config_problems;
 mod disk_sync;
 mod dock;
@@ -225,6 +226,8 @@ impl CommandCatalog for Catalog {
     }
 }
 
+#[cfg(test)]
+mod closed_editors_tests;
 #[cfg(test)]
 mod command_catalog_tests;
 #[cfg(test)]

@@ -39,6 +39,13 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| pane.close_active(window, cx));
     }
 
+    /// Reopen Closed Editor
+    #[command(id = "workbench.reopen_closed_editor")]
+    fn reopen_closed_editor(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.reopen_closed(cx.window, cx.cx);
+    }
+
     /// Next Tab
     #[command(id = "workbench.next_tab")]
     fn next_tab(&mut self, cx: &mut Cx<Self>) {

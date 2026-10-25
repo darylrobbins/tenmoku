@@ -121,6 +121,10 @@ title = "Close Tab"
 command = "workbench.close_tab"
 
 [[menus.items]]
+title = "Reopen Closed Editor"
+command = "workbench.reopen_closed_editor"
+
+[[menus.items]]
 title = "Close Pane"
 command = "pane.close"
 

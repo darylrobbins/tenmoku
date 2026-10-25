@@ -40,6 +40,7 @@ pub use kiln_shell::PaneEvent;
 use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
 
 use crate::{
+    closed_editors::{ClosedEditor, SharedClosedEditors, ViewState},
     find_bar::{FindBar, FindOp},
     loader::{self, Opened},
     nav::Place,
@@ -145,6 +146,17 @@ pub struct Pane {
     shown_serial: u64,
     /// The last reveal applied to an editor, and the open it was for.
     revealed: Option<Revealed>,
+    /// The window's closed file editors, which every pane of it shares.
+    closed: SharedClosedEditors,
+    /// The selections and scroll each file being reopened gets back once
+    /// its editor is in the pane ([`Pane::reopen`]).
+    restores: HashMap<PathBuf, ViewState>,
+    /// Set while the preview tab is replaced, which doesn't close it for
+    /// [`Pane::closed_editors`].
+    replacing: bool,
+    /// Pushes the tabs of a pane closed with them, as Close Pane closes it,
+    /// as the pane is released: the workspace holds the only strong handle.
+    _released: Subscription,
     theme: EditorTheme,
     /// For editors yet to open.
     settings: EditorSettings,
@@ -263,6 +275,14 @@ impl Pane {
             shown: None,
             shown_serial: 0,
             revealed: None,
+            closed: SharedClosedEditors::default(),
+            restores: HashMap::new(),
+            replacing: false,
+            _released: cx.on_release(|pane, cx| {
+                for tab in &pane.tabs {
+                    pane.note_closed(tab, cx);
+                }
+            }),
             theme,
             settings,
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
@@ -288,6 +308,7 @@ impl Pane {
     pub(crate) fn new_peer(&self, cx: &mut Context<Self>) -> Self {
         let mut pane = Self::new(self.theme.clone(), self.settings.clone(), cx);
         pane.state.set_peers(self.state.peers().clone());
+        pane.closed = self.closed.clone();
         pane
     }
 
@@ -514,6 +535,11 @@ impl Pane {
         }
         let open: Vec<TabId> = self.tabs.iter().map(Tab::id).collect();
         self.viewer_events.retain(|id, _| open.contains(id));
+        if !self.replacing {
+            for tab in old.iter().filter(|tab| !open.contains(&tab.id())) {
+                self.note_closed(tab, cx);
+            }
+        }
         // A converting viewer that left the pane isn't converted by it.
         for tab in old.iter().filter(|tab| !open.contains(&tab.id())) {
             if let (Some(_), Some(viewer)) = (self.conversions.remove(&tab.id()), tab.viewer()) {
@@ -529,6 +555,45 @@ impl Pane {
                 self.viewer_events.insert(tab.id(), subscription);
             }
         }
+    }
+
+    /// Pushes `tab`, gone from the pane, to [`Pane::closed_editors`] as it
+    /// is now, if it's a file's editor, once the effect cycle is over: a tab
+    /// moved to another pane is in it by then, and isn't pushed. A copy of
+    /// it, another editor of its file, doesn't stop it.
+    fn note_closed(&self, tab: &Tab, cx: &mut App) {
+        let Some(closed) =
+            (tab.editor()).and_then(|editor| ClosedEditor::of(editor, self.this.clone(), cx))
+        else {
+            return;
+        };
+        let (id, stack) = (tab.id(), self.closed.clone());
+        // The group as it is then: a pane split off for a move joins it
+        // after the tab has left this one.
+        let (peers, this) = (self.state.peers().clone(), self.this.clone());
+        cx.defer(move |cx| {
+            let peers = peers.borrow();
+            let panes = peers.iter().chain([&this]).filter_map(WeakEntity::upgrade);
+            let moved = (panes.into_iter()).any(|pane| pane.read(cx).state.position(id).is_some());
+            if !moved {
+                stack.borrow_mut().push(closed);
+            }
+        });
+    }
+
+    /// The window's closed file editors, newest on top, which Reopen
+    /// Closed Editor takes from: see [`crate::closed_editors`].
+    pub(crate) fn closed_editors(&self) -> &SharedClosedEditors {
+        &self.closed
+    }
+
+    /// [`PaneView::add_preview`], whose preview tab it replaces isn't
+    /// closed for [`Pane::closed_editors`].
+    fn replace_preview(&mut self, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
+        self.replacing = true;
+        let ix = self.add_preview(item, cx);
+        self.replacing = false;
+        ix
     }
 
     /// Hears `viewer` ask to be edited, and handles it in the window the
@@ -726,6 +791,34 @@ impl Pane {
         self.open_tab(path, reveal, false, window, cx);
     }
 
+    /// [`Pane::open_at`] `closed`'s file, revealing its primary selection,
+    /// and gives its editor back all its selections and its scroll once
+    /// it's in the pane, shown or not: at once if it's open, else once its
+    /// read lands, after any wait behind a Save As of it. A read that fails
+    /// or is dropped drops them too.
+    pub(crate) fn reopen(
+        &mut self,
+        closed: ClosedEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reveal = (closed.view.primary()).map(|primary| Reveal::bytes(primary.range.clone()));
+        self.restores.insert(closed.path.clone(), closed.view);
+        self.open_at(closed.path, reveal, window, cx);
+    }
+
+    /// Gives tab `ix`'s editor the selections and scroll its reopen saved
+    /// ([`Pane::reopen`]), once.
+    fn restore_view(&mut self, ix: usize, cx: &mut App) {
+        let tab = &self.tabs[ix];
+        let Some(view) = (tab.path.as_ref()).and_then(|path| self.restores.remove(path)) else {
+            return;
+        };
+        if let Some(editor) = tab.editor() {
+            view.apply(editor, cx);
+        }
+    }
+
     fn open_tab(
         &mut self,
         path: PathBuf,
@@ -753,6 +846,7 @@ impl Pane {
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
             }
+            self.restore_view(ix, cx);
             // Activating the active tab says nothing: an open that landed
             // on it, such as one waiting behind a Save As, is told still.
             cx.notify();
@@ -761,7 +855,7 @@ impl Pane {
         if let Some(model) = self.peer_model(&path, cx) {
             let ix = if preview {
                 let editor = self.new_editor(model, cx);
-                let ix = self.add_preview(Box::new(editor), cx);
+                let ix = self.replace_preview(Box::new(editor), cx);
                 self.error = None;
                 ix
             } else {
@@ -772,6 +866,7 @@ impl Pane {
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
             }
+            self.restore_view(ix, cx);
             return;
         }
         self.reveal = reveal.map(|reveal| (path.clone(), reveal));
@@ -840,6 +935,8 @@ impl Pane {
                         pane.opening = None;
                         let preview = intent == Some(Intent::Preview);
                         pane.open_tab(path, reveal, preview, window, cx);
+                    } else {
+                        pane.restores.remove(&path);
                     }
                 })
                 .ok();
@@ -897,7 +994,9 @@ impl Pane {
         let empty = self.active().is_none() && self.opening.is_none() && self.error.is_none();
         let reveal = self.reveal.take_if(|(at, _)| last && *at == path);
         match result {
-            Ok(_) if preview && !(last || empty) && self.position(&path).is_none() => {}
+            Ok(_) if preview && !(last || empty) && self.position(&path).is_none() => {
+                self.restores.remove(&path);
+            }
             Ok(opened) => {
                 let open = self.position(&path);
                 let ix = open.unwrap_or_else(|| {
@@ -911,7 +1010,7 @@ impl Pane {
                         Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
                     };
                     if preview {
-                        return self.add_preview(item, cx);
+                        return self.replace_preview(item, cx);
                     }
                     let ix = self.state.push(item, cx);
                     self.sync_tabs(cx);
@@ -927,8 +1026,10 @@ impl Pane {
                 if let Some((_, reveal)) = reveal {
                     self.apply(&reveal, ix, window, cx);
                 }
+                self.restore_view(ix, cx);
             }
             Err(error) => {
+                self.restores.remove(&path);
                 log::error!("cannot open {}: {error}", path.display());
                 let name = path.file_name().unwrap_or(path.as_os_str());
                 toast::show(
