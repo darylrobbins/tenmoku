@@ -121,6 +121,14 @@ fn every_editor_command_is_registered() {
         "editor.expand_selection".to_string(),
         "editor.shrink_selection".to_string(),
     ]);
+    expected.extend(
+        [
+            "sort_lines_ascending",
+            "sort_lines_descending",
+            "delete_duplicate_lines",
+        ]
+        .map(|name| format!("editor.{name}")),
+    );
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",
@@ -140,6 +148,9 @@ fn every_editor_command_is_registered() {
         "duplicate_rows",
         "delete_rows",
         "toggle_comment",
+        "sort_lines_ascending",
+        "sort_lines_descending",
+        "delete_duplicate_lines",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

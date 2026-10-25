@@ -357,7 +357,7 @@ impl EditorModel {
 
     /// Applies `edits` as one transaction and sets `selections`, offsets in
     /// the text they make, then folds `folds`, rows of that text.
-    fn apply_row_edits(
+    pub(crate) fn apply_row_edits(
         &mut self,
         edits: Vec<(Range<usize>, String)>,
         selections: Vec<ResolvedSelection>,
@@ -445,7 +445,7 @@ impl EditorModel {
 
 /// The rows `range` touches: a non-empty range ending at the start of a
 /// later row leaves that row out.
-fn touched_rows(text: &Text, range: &Range<usize>) -> RangeInclusive<u32> {
+pub(crate) fn touched_rows(text: &Text, range: &Range<usize>) -> RangeInclusive<u32> {
     let start = text.offset_to_point(range.start).row;
     let end = text.offset_to_point(range.end);
     let last = if end.row > start && end.column == 0 {
@@ -465,7 +465,7 @@ fn rows_text(text: &Text, rows: RangeInclusive<u32>) -> String {
 
 /// Where `offset` is once `edits`, sorted and disjoint, are applied: past
 /// an insertion at it, or at the start of a deletion it's in.
-fn map_offset(edits: &[(Range<usize>, String)], offset: usize) -> usize {
+pub(crate) fn map_offset(edits: &[(Range<usize>, String)], offset: usize) -> usize {
     let mut delta = 0isize;
     for (range, new_text) in edits {
         if range.start > offset {

@@ -358,6 +358,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.copy",
     "editor.cut",
     "editor.delete",
+    "editor.delete_duplicate_lines",
     "editor.delete_rows",
     "editor.delete_word_left",
     "editor.duplicate_rows",
@@ -403,6 +404,8 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.show_signature_help",
     "editor.shrink_selection",
     "editor.single_selection",
+    "editor.sort_lines_ascending",
+    "editor.sort_lines_descending",
     "editor.split_selection_into_lines",
     "editor.tab",
     "editor.toggle_comment",
@@ -441,3 +444,21 @@ const LISTED_IN_THE_PROJECT_PANEL: &[&str] = &[
     "project_panel.select_next",
     "project_panel.select_prev",
 ];
+
+/// The sort and dedupe line commands are registered with these IDs and titles.
+#[test]
+fn the_line_sort_commands_have_their_ids_and_titles() {
+    let registry = fe_editor::commands::registry();
+    for (id, title) in [
+        ("editor.sort_lines_ascending", "Sort Lines Ascending"),
+        ("editor.sort_lines_descending", "Sort Lines Descending"),
+        ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
+    ] {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        assert_eq!(
+            meta.map(|meta| meta.title.to_string()),
+            Some(title.to_string()),
+            "{id}"
+        );
+    }
+}

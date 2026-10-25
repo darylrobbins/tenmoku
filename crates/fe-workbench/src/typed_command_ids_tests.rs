@@ -642,3 +642,21 @@ fn the_references_commands_run_only_in_the_panels_context(cx: &mut TestAppContex
     run_in("references_panel.select_next", &in_panel, cx);
     assert_eq!(selected(cx), second);
 }
+
+/// The editor's own registry (not the typed commands in [`MOVED`]) lists the
+/// line sort commands with these IDs and titles.
+const EDITOR_LINE_COMMANDS: &[(&str, &str)] = &[
+    ("editor.sort_lines_ascending", "Sort Lines Ascending"),
+    ("editor.sort_lines_descending", "Sort Lines Descending"),
+    ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
+];
+
+#[test]
+fn the_editor_registry_lists_the_line_sort_commands() {
+    let registry = fe_editor::commands::registry();
+    for &(id, title) in EDITOR_LINE_COMMANDS {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        let meta = meta.unwrap_or_else(|| panic!("{id} is registered"));
+        assert_eq!(meta.title, title, "{id}");
+    }
+}
