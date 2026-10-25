@@ -358,22 +358,22 @@ impl EditorView {
         let mut edits: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
         {
             let text = model.text();
-            let rows = text.row_count();
-            let mut last_kept = 0;
-            for row in 0..rows {
-                let start = text.row_start(row);
-                let len = text.row_len(row) as usize;
-                let content = text.slice_to_string(start..start + len);
-                let kept = if trim {
-                    content.trim_end_matches([' ', '\t']).len()
-                } else {
-                    len
-                };
-                last_kept = kept;
-                if kept < len {
-                    edits.push((start + kept..start + len, ""));
+            if trim {
+                for range in fe_editor::trailing_whitespace(text, &[]) {
+                    edits.push((range, ""));
                 }
             }
+            let last = text.row_count() - 1;
+            let last_start = text.row_start(last);
+            let last_end = last_start + text.row_len(last) as usize;
+            let trimmed = edits.last().map_or(0, |(range, _)| {
+                if range.end == last_end {
+                    range.len()
+                } else {
+                    0
+                }
+            });
+            let last_kept = last_end - last_start - trimmed;
             if newline && last_kept > 0 {
                 let end = text.len();
                 match edits.last_mut() {

@@ -561,6 +561,7 @@ pub fn registry() -> Registry<Editor> {
     crate::smart_select::register(&mut registry);
     crate::line_sort::register(&mut registry);
     crate::join_lines::register(&mut registry);
+    crate::trim_whitespace::register(&mut registry);
     crate::case_transform::register(&mut registry);
     crate::plugin_access::allow_plugins(&mut registry);
     registry

@@ -650,6 +650,10 @@ const EDITOR_LINE_COMMANDS: &[(&str, &str)] = &[
     ("editor.sort_lines_descending", "Sort Lines Descending"),
     ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
     ("editor.join_lines", "Join Lines"),
+    (
+        "editor.trim_trailing_whitespace",
+        "Trim Trailing Whitespace",
+    ),
 ];
 
 #[test]

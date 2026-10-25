@@ -28,7 +28,7 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 
 /// Where `offset` is once `edits`, sorted and disjoint, are applied: at the
 /// start of a deletion it's in, and before an insertion at it.
-fn map_before(edits: &[(Range<usize>, String)], offset: usize) -> usize {
+pub(crate) fn map_before(edits: &[(Range<usize>, String)], offset: usize) -> usize {
     let mut delta = 0isize;
     for (range, new_text) in edits {
         if range.start > offset || range.start == offset && range.is_empty() {

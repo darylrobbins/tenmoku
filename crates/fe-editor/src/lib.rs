@@ -45,6 +45,7 @@ pub mod scripted_ai;
 mod smart_select;
 pub mod snippet;
 pub mod text_diff;
+mod trim_whitespace;
 mod typing;
 mod viewer;
 
@@ -54,6 +55,7 @@ pub use disk::{SaveError, SaveJob, Saved, save_target};
 pub use indent_style::{IndentStyle, detect_indent_style};
 pub use multi_cursor::MAX_OCCURRENCES;
 pub use text_diff::{Hunk, HunkKind, Side, TextDiff};
+pub use trim_whitespace::trailing_whitespace;
 pub use typing::TYPING_PAUSE;
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 

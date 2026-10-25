@@ -149,6 +149,11 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ),
     ("cmd-k cmd-0", "editor.fold_all", Some("editor")),
     ("cmd-k cmd-j", "editor.unfold_all", Some("editor")),
+    (
+        "cmd-k cmd-x",
+        "editor.trim_trailing_whitespace",
+        Some("editor"),
+    ),
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
     ("f2", "lsp.rename", Some("editor")),
     ("cmd-.", "lsp.code_actions", Some("editor")),
