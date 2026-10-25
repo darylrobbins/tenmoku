@@ -2375,6 +2375,9 @@ fn client_capabilities() -> ClientCapabilities {
             document_highlight: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
             }),
+            linked_editing_range: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
             call_hierarchy: Some(lsp_types::CallHierarchyClientCapabilities {
                 dynamic_registration: dynamic,
             }),

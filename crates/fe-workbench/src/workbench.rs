@@ -328,6 +328,7 @@ impl Workbench {
         let links = settings.links;
         let color_decorators = settings.color_decorators;
         let lightbulb = settings.lightbulb;
+        let linked_editing = settings.linked_editing;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
         let welcome = launch.root.is_none() && launch.file.is_none();
@@ -648,6 +649,7 @@ impl Workbench {
         workbench.lsp.links_on.set(links);
         workbench.lsp.color_decorators_on.set(color_decorators);
         workbench.lsp.lightbulb_on.set(lightbulb);
+        workbench.lsp.linked_editing_on.set(linked_editing);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);
         if inline_blame {

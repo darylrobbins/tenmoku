@@ -204,6 +204,9 @@
         "links": {
           "default": true,
           "description": "Underline language servers' links (URLs and file paths) under the\npointer while cmd (ctrl off macOS) is held, and open them on\ncmd-click.",
+        "linked_editing": {
+          "default": false,
+          "description": "Rename an HTML tag's pair as you type in the open or close tag, and\nother ranges a language server links (`textDocument/linkedEditingRange`).",
           "type": "boolean"
         },
         "minimap": {
@@ -1062,6 +1065,7 @@
         "lightbulb": true,
         "line_height": 1.6,
         "links": true,
+        "linked_editing": false,
         "minimap": {
           "enabled": true,
           "max_column": 120,

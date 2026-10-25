@@ -99,6 +99,7 @@ mod hover;
 mod identity;
 mod inlay_hint;
 mod launcher;
+pub mod linked_editing;
 mod manager;
 mod navigation;
 mod notify;
@@ -149,6 +150,7 @@ pub use launcher::{
     ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, PullDiagnostics,
     ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
+pub use linked_editing::LinkedEditing;
 pub use lsp_types::FileChangeType;
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;

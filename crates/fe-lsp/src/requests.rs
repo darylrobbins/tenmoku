@@ -77,6 +77,7 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         | "typeHierarchy/subtypes" => timeouts.references,
         "textDocument/hover"
         | "textDocument/documentHighlight"
+        | "textDocument/linkedEditingRange"
         | "textDocument/documentSymbol"
         | "textDocument/foldingRange"
         | "textDocument/inlayHint"

@@ -479,6 +479,9 @@ pub struct EditorSettings {
     /// Draw a small square in the colour before each colour a language
     /// server finds in the text (CSS, SCSS, Tailwind…).
     pub color_decorators: bool,
+    /// Rename an HTML tag's pair as you type in the open or close tag, and
+    /// other ranges a language server links (`textDocument/linkedEditingRange`).
+    pub linked_editing: bool,
     /// Code action kinds to run, in order, when you save a file, before
     /// `format_on_save`, such as `["source.organizeImports", "source.fixAll"]`.
     pub code_actions_on_save: Vec<String>,
@@ -692,6 +695,7 @@ impl Default for EditorSettings {
             code_lens: true,
             links: true,
             color_decorators: true,
+            linked_editing: false,
             code_actions_on_save: Vec::new(),
             auto_close_pairs: true,
             auto_save: AutoSave::default(),

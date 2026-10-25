@@ -47,6 +47,9 @@
 # Draw a small square in the colour before each colour a language server finds
 # in the text (CSS, SCSS, Tailwind…).
 # color_decorators = true
+# Rename an HTML tag's pair as you type in the open or close tag, and other
+# ranges a language server links (textDocument/linkedEditingRange).
+# linked_editing = false
 
 # Code action kinds to run, in order, when you save a file, before
 # format_on_save, such as ["source.organizeImports", "source.fixAll"].

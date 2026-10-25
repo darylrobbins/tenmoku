@@ -572,6 +572,10 @@ pub(crate) struct Lsp {
     inlay_hints: inlay_hints::Slots,
     /// Whether `editor.code_lens` is on (set from the settings each reload).
     pub(crate) code_lens_on: std::cell::Cell<bool>,
+    /// Whether `editor.linked_editing` is on (set from the settings each reload).
+    pub(crate) linked_editing_on: std::cell::Cell<bool>,
+    /// The active editor's linked editing.
+    linked: linked_editing::Linked,
     /// Whether `editor.lightbulb` is on (set from the settings each reload).
     pub(crate) lightbulb_on: std::cell::Cell<bool>,
     /// The active editor's lightbulb.
@@ -783,6 +787,8 @@ impl Lsp {
             inlay_hints: Default::default(),
             code_lens_on: std::cell::Cell::new(true),
             lightbulb_on: std::cell::Cell::new(true),
+            linked_editing_on: std::cell::Cell::new(false),
+            linked: Default::default(),
             lightbulb: Default::default(),
             folds: Default::default(),
             lenses: Default::default(),
@@ -1376,6 +1382,7 @@ impl Workbench {
         let editors = self.open_editors(cx);
         self.sync_save_hooks(cx);
         self.sync_highlights(cx);
+        self.sync_linked_editing(cx);
         self.sync_lightbulb(cx);
         self.sync_inlay_hints(cx);
         self.sync_lenses(cx);
@@ -2578,6 +2585,8 @@ impl Global for TestClock {}
 mod highlights;
 #[path = "lsp_lightbulb.rs"]
 mod lightbulb;
+#[path = "lsp_linked_editing.rs"]
+mod linked_editing;
 
 #[path = "lsp_colors.rs"]
 mod colors;

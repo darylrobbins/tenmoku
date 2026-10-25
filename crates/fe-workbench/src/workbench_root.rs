@@ -241,6 +241,9 @@ impl Workbench {
         (self.lsp.color_decorators_on).set(event.settings.editor.color_decorators);
         self.lsp.lightbulb_on.set(event.settings.editor.lightbulb);
         self.lsp
+            .linked_editing_on
+            .set(event.settings.editor.linked_editing);
+        self.lsp
             .semantic_highlighting_on
             .set(event.settings.editor.semantic_highlighting);
         self.sync_save_hooks(cx);
