@@ -182,6 +182,8 @@ pub struct Pane {
     save_keys: Rc<RefCell<SaveKeys>>,
     /// Hears each viewer tab's [`FileViewerEvent::EditRequested`].
     viewer_events: HashMap<TabId, Subscription>,
+    /// The item whose activation the vim buffer registry was last told of.
+    logged_active: Option<TabId>,
     /// Reads of the files of viewer tabs being converted to editors.
     conversions: HashMap<TabId, Task<()>>,
     /// The zoom of each SVG viewer tab replaced by an editor
@@ -307,6 +309,7 @@ impl Pane {
             this: cx.weak_entity(),
             save_keys: Rc::default(),
             viewer_events: HashMap::new(),
+            logged_active: None,
             conversions: HashMap::new(),
             svg_zooms: HashMap::new(),
             text_reads: HashMap::new(),
@@ -534,8 +537,18 @@ impl Pane {
         self.state.set_active(ix);
         self.error = None;
         self.sync_tabs(cx);
+        self.note_activation(ix, cx);
         self.note_shown(cx);
         cx.notify();
+    }
+
+    /// Notes for the vim buffer registry that the tab at `ix` was shown by
+    /// a way that doesn't run [`PaneView::activated`].
+    fn note_activation(&mut self, ix: usize, cx: &mut App) {
+        if let Some(item) = self.state.items().get(ix) {
+            self.logged_active = Some(item.id());
+            vim_log::record(&self.this, vim_log::Kind::Activated, &**item, cx);
+        }
     }
 
     /// A tab per item, reusing the tab of an item still open. Each editor,
@@ -543,15 +556,28 @@ impl Pane {
     /// the settings say.
     fn sync_tabs(&mut self, cx: &mut App) {
         let old = std::mem::take(&mut self.tabs);
+        let mut added = Vec::new();
         self.tabs = (self.state.items().iter())
             .map(|item| {
                 let id = item.id();
                 old.iter()
                     .find(|tab| tab.id() == id)
                     .cloned()
-                    .unwrap_or_else(|| Tab::of(&**item, cx))
+                    .unwrap_or_else(|| {
+                        added.push(item.boxed_clone());
+                        Tab::of(&**item, cx)
+                    })
             })
             .collect();
+        for item in &added {
+            vim_log::record(&self.this, vim_log::Kind::Added, &**item, cx);
+        }
+        for tab in old
+            .iter()
+            .filter(|tab| !self.tabs.iter().any(|t| t.id() == tab.id()))
+        {
+            vim_log::record(&self.this, vim_log::Kind::Removed, tab.item(), cx);
+        }
         let minimap = fe_gpui::minimap_options(&self.settings);
         for editor in self.tabs.iter().filter_map(Tab::editor) {
             configs::read(editor, cx);
@@ -788,6 +814,7 @@ impl Pane {
         self.state.insert(ix, item, cx);
         if was_active {
             self.state.set_active(ix);
+            self.note_activation(ix, cx);
         }
         self.take_item(ix + 1, window, cx);
         if was_active && had_focus {
@@ -1420,7 +1447,11 @@ impl Pane {
             .position(|tab| tab.path.as_deref() == Some(path))
     }
 
-    fn new_editor(&mut self, mut model: EditorModel, cx: &mut Context<Self>) -> Entity<EditorView> {
+    pub(crate) fn new_editor(
+        &mut self,
+        mut model: EditorModel,
+        cx: &mut Context<Self>,
+    ) -> Entity<EditorView> {
         if model.tab_size() != self.settings.tab_size {
             model.set_tab_size(self.settings.tab_size);
         }
@@ -1808,6 +1839,7 @@ impl PaneView for Pane {
         if let Some(preview) = editor.and_then(|editor| markdown_preview::in_place(editor, cx)) {
             window.focus(&preview.focus_handle(cx), cx);
         }
+        self.note_activation(ix, cx);
         if !self.landing {
             self.navigations += 1;
         }
@@ -1826,6 +1858,14 @@ impl PaneView for Pane {
         }
         let before = self.tabs.len();
         self.sync_tabs(cx);
+        // The active item may change with the items, as when a layout is
+        // restored, with no activation to say so.
+        let active = self.state.active();
+        if let Some(ix) = active
+            && self.state.items().get(ix).map(|item| item.id()) != self.logged_active
+        {
+            self.note_activation(ix, cx);
+        }
         if self.tabs.len() < before {
             self.navigations += 1;
         }
@@ -2361,4 +2401,9 @@ mod auto_close_tests {
         reload(&workbench, true, cx);
         assert_eq!(auto_close(&workbench, cx), [true, true]);
     }
+}
+
+/// Tab transitions, noted as they happen for the vim buffer registry.
+mod vim_log {
+    pub(crate) use crate::workbench::vim_host::vim_buffers::{Kind, record};
 }

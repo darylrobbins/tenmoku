@@ -56,7 +56,7 @@ use crate::dock::{DockOp, DockPanel, ProblemsOp};
 mod vim_pick;
 
 #[path = "vim_buffers.rs"]
-mod vim_buffers;
+pub(crate) mod vim_buffers;
 
 #[path = "vim_windows.rs"]
 mod vim_windows;

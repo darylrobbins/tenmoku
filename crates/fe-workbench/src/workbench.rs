@@ -907,7 +907,7 @@ mod workbench_palettes;
 mod workbench_chrome;
 
 #[path = "vim_host.rs"]
-mod vim_host;
+pub(crate) mod vim_host;
 
 #[path = "git_commands.rs"]
 pub(crate) mod git_commands;

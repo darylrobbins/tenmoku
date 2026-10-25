@@ -36,19 +36,20 @@
 //! runs them on the active pane, whose shown tab is the current buffer if
 //! it's a file's.
 //!
-//! Known limits: the workspace's notifications come once per update, so
-//! within one update, of several tabs shown by anything but these
-//! commands `#` sees the last, a tab opened and closed again gets no
-//! number, and tabs opened together are numbered in pane order. Noting
-//! each as it happens needs the panes to say so.
+//! Each pane notes its tabs' transitions (added, shown, removed) as they
+//! happen, in `Pane::activated` and `Pane::items_changed`'s tab sync, so
+//! several in one update are numbered and noted in order; the workspace's
+//! notifications, once per update, only bring the registry to read them.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use fe_buffer::BufferId;
 use fe_gpui::EditorView;
+use fe_gpui::FileViewer;
 use fe_vim::{BufferAddress, BufferCommand, BufferTarget};
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, WeakEntity, Window};
+use kiln_shell::ItemHandle;
 use kiln_shell::PaneView as _;
 
 use super::message;
@@ -59,16 +60,72 @@ const E23: &str = "E23: No alternate file";
 const E85: &str = "E85: There is no listed buffer";
 const E516: &str = "E516: No buffers were deleted";
 
+/// A tab transition a pane noted at its mutation site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Added,
+    Activated,
+    Removed,
+}
+
+/// A transition, with the tab's item as it was then, and its order among
+/// every pane's.
+pub(crate) struct Logged {
+    seq: u64,
+    kind: Kind,
+    path: Option<PathBuf>,
+    buffer: Option<BufferId>,
+    /// Whether the item is a buffer: an editor, or a viewer of a file.
+    listed: bool,
+}
+
+/// A transition noted, with the pane it was in.
+pub(crate) struct Pending {
+    pane: WeakEntity<Pane>,
+    entry: Logged,
+}
+
+/// Notes that `item` of `pane` had `kind` happen to it. The window reads
+/// them as it next follows its workbench, in the order they happened,
+/// whether or not the pane is then still in it.
+pub(crate) fn record(pane: &WeakEntity<Pane>, kind: Kind, item: &dyn ItemHandle, cx: &mut App) {
+    let editor = item.downcast_ref::<EditorView>();
+    let buffer = editor.map(|editor| editor.read(cx).model().buffer().id());
+    let path = item.path(cx);
+    let listed =
+        buffer.is_some() || (item.downcast_ref::<FileViewer>().is_some() && path.is_some());
+    let all = cx.default_global::<VimBuffers>();
+    all.seq += 1;
+    let entry = Logged {
+        seq: all.seq,
+        kind,
+        path,
+        buffer,
+        listed,
+    };
+    all.pending.push(Pending {
+        pane: pane.clone(),
+        entry,
+    });
+}
+
 /// Each window's buffers, by its workbench.
 #[derive(Default)]
 struct VimBuffers {
     windows: HashMap<EntityId, WindowBuffers>,
+    /// The last transition's order.
+    seq: u64,
+    /// Transitions noted and not yet read, in order.
+    pending: Vec<Pending>,
 }
 
 impl Global for VimBuffers {}
 
 struct WindowBuffers {
     workbench: WeakEntity<Workbench>,
+    /// The panes this window has had, so a pane closed since its last
+    /// transition is still its.
+    panes: std::collections::HashSet<EntityId>,
     /// To the window's workspace changing.
     _watch: Option<Subscription>,
     buffers: Buffers,
@@ -212,18 +269,54 @@ impl Workbench {
                 workbench.note_vim_buffer(cx)
             })
         });
-        let all = cx.default_global::<VimBuffers>();
+        cx.default_global::<VimBuffers>();
+        // Every transition the panes noted, in the order they happened,
+        // before the final state: a tab that came and went has a number.
+        // A pane that is gone and was never seen is taken to be this
+        // window's.
+        let live: Vec<EntityId> = self.panes(cx).iter().map(Entity::entity_id).collect();
+        let all = cx.global_mut::<VimBuffers>();
         all.windows
             .retain(|_, window| window.workbench.upgrade().is_some());
         let window = (all.windows.entry(id)).or_insert_with(|| WindowBuffers {
             workbench,
             _watch: None,
+            panes: Default::default(),
             buffers: Buffers::default(),
         });
+        window.panes.extend(live.iter().copied());
         if watch.is_some() {
             window._watch = watch;
         }
+        // Known limit (T337 carries the fix): a transition is owned by the
+        // window that has seen its pane. A pane added and removed within one
+        // update before any registry read was seen by none, so with several
+        // windows it replays into whichever reads next, which may not be the
+        // one it was in. Panes don't yet carry their workbench.
+        let pending = std::mem::take(&mut all.pending);
+        let (mine, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|pending| {
+            let pane = pending.pane.entity_id();
+            let seen = |window: &WindowBuffers| window.panes.contains(&pane);
+            if all.windows[&id].panes.contains(&pane) {
+                return true;
+            }
+            pending.pane.upgrade().is_none() && !all.windows.values().any(seen)
+        });
+        all.pending = rest;
+        let window = all.windows.get_mut(&id).expect("just inserted");
         let buffers = &mut window.buffers;
+        let mut mine = mine;
+        mine.sort_by_key(|pending| pending.entry.seq);
+        for Pending { pane, entry } in mine {
+            let pane = pane.entity_id();
+            if !entry.listed || entry.kind == Kind::Removed {
+                continue;
+            }
+            let number = buffers.number(entry.path.as_deref(), entry.buffer);
+            if entry.kind == Kind::Activated {
+                buffers.show(pane, number);
+            }
+        }
         for tab in tabs {
             tab.number = buffers.number(tab.path.as_deref(), tab.buffer);
         }
@@ -510,3 +603,7 @@ fn find_named(name: &str, rounds: &[&[(u32, &Path)]], root: Option<&Path>) -> Re
 #[cfg(test)]
 #[path = "vim_buffers_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "vim_buffers_transition_tests.rs"]
+mod transition_tests;
