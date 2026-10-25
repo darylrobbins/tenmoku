@@ -131,6 +131,9 @@ pub struct Pane {
     /// for a look, to land in the preview tab, or to stay. An open to stay
     /// is for good: a later open for a look doesn't undo it.
     intents: HashMap<PathBuf, Intent>,
+    /// Where the tab of a file being read goes once it lands, if not at
+    /// the end ([`Pane::open_after`]).
+    place_after: HashMap<PathBuf, usize>,
     /// The file opened last and why it couldn't be read, shown in the
     /// active tab's place until another tab is shown.
     error: Option<(PathBuf, String)>,
@@ -283,6 +286,7 @@ impl Pane {
             opening: None,
             reads: HashMap::new(),
             intents: HashMap::new(),
+            place_after: HashMap::new(),
             error: None,
             reveal: None,
             open_serial: 0,
@@ -951,6 +955,31 @@ impl Pane {
         self.open_at(path, None, window, cx);
     }
 
+    /// [`Pane::open`], the tab of a file not open yet placed before the tab
+    /// now at `after` once it lands, however many reads are in flight, and
+    /// shown and focused.
+    pub(crate) fn open_after(
+        &mut self,
+        path: PathBuf,
+        after: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.position(&path).is_some() {
+            return self.open(path, window, cx);
+        }
+        let before = self.tabs.len();
+        self.open(path.clone(), window, cx);
+        match self.position(&path) {
+            // Opened at once, over the text another pane holds.
+            Some(ix) if ix == before => self.reorder_item(ix, Some(after), window, cx),
+            Some(_) => {}
+            None => {
+                self.place_after.insert(path, after);
+            }
+        }
+    }
+
     /// [`Pane::open`] for a look: a new tab is the pane's preview, in
     /// italics, in the place of the preview there is, which closes
     /// ([`PaneView::add_preview`]). A tab open already just shows. Once
@@ -1014,12 +1043,17 @@ impl Pane {
     ) {
         self.reveal = None;
         self.open_serial += 1;
+        // Where the tab goes, if it's placed ([`Pane::open_after`]): kept
+        // below by an open that waits, and dropped by any other.
+        let place = self.place_after.remove(&path);
         // An open to stay still pending is for good.
         let preview = preview && self.intents.get(&path) != Some(&Intent::Keep);
         if crate::open::any_reserved() {
             let identity = crate::open::file_identity(&path);
             if let Some((_, over)) = crate::open::reserved(&path, identity.as_deref()) {
                 self.note_intent(&path, preview);
+                self.place_after
+                    .extend(place.map(|after| (path.clone(), after)));
                 return self.open_once_saved(path, reveal, over, window, cx);
             }
         }
@@ -1052,6 +1086,13 @@ impl Pane {
                 self.add(model, cx);
                 self.tabs.len() - 1
             };
+            let ix = match place {
+                Some(after) if !preview => {
+                    self.reorder_item(ix, Some(after), window, cx);
+                    self.position(&path).unwrap_or(ix)
+                }
+                _ => ix,
+            };
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
                 self.apply(&reveal, ix, window, cx);
@@ -1066,6 +1107,8 @@ impl Pane {
         window.focus(self.state.focus(), cx);
         cx.notify();
         self.note_intent(&path, preview);
+        self.place_after
+            .extend(place.map(|after| (path.clone(), after)));
         if self.reads.contains_key(&path) {
             return;
         }
@@ -1121,8 +1164,11 @@ impl Pane {
                 pane.update_in(cx, |pane, window, cx| {
                     pane.reads.remove(&path);
                     let intent = pane.intents.remove(&path);
+                    let place = pane.place_after.remove(&path);
                     if pane.opening.as_ref() == Some(&path) {
                         pane.opening = None;
+                        pane.place_after
+                            .extend(place.map(|after| (path.clone(), after)));
                         let preview = intent == Some(Intent::Preview);
                         pane.open_tab(path, reveal, preview, window, cx);
                     } else {
@@ -1176,6 +1222,7 @@ impl Pane {
     ) {
         self.reads.remove(&path);
         let intent = self.intents.remove(&path);
+        let place_after = self.place_after.remove(&path);
         let preview = intent == Some(Intent::Preview);
         let last = self.opening.as_ref() == Some(&path);
         if last {
@@ -1203,7 +1250,9 @@ impl Pane {
                     if preview {
                         return self.replace_preview(item, cx);
                     }
-                    let ix = self.state.push(item, cx);
+                    let at = place_after.unwrap_or(usize::MAX);
+                    // Not shown: the active tab stays the same one.
+                    let ix = self.state.insert(at, item, cx);
                     self.sync_tabs(cx);
                     ix
                 });

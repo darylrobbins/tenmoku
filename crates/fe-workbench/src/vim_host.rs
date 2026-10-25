@@ -61,6 +61,9 @@ pub(crate) mod vim_buffers;
 #[path = "vim_windows.rs"]
 mod vim_windows;
 
+#[path = "vim_tabs.rs"]
+mod vim_tabs;
+
 #[path = "vim_filter.rs"]
 pub(super) mod vim_filter;
 
@@ -202,14 +205,15 @@ impl Workbench {
             | HostCommand::ReplaceInFiles { .. }
             | HostCommand::Pick(_)
             | HostCommand::Buffer(_)
-            | HostCommand::Window(_)) => self.run_window_command(&editor, command, window, cx),
+            | HostCommand::Window(_)
+            | HostCommand::Tab(_)) => self.run_window_command(&editor, command, window, cx),
         }
     }
 
     /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
     /// `:cclose`, `:Replace`, the lists to pick from (`:marks`), the
     /// buffer list's (`:b`, `:bn`, `:bd`) and the panes' (`:sp`, `:on`,
-    /// `:clo`), typed in `editor`, which act on the window
+    /// `:clo`) and tabs' (`:tabn`, `:tabc`), typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
@@ -241,6 +245,7 @@ impl Workbench {
             HostCommand::Window(command) => {
                 self.run_vim_window_command(editor, command, window, cx)
             }
+            HostCommand::Tab(command) => self.run_vim_tab_command(editor, command, window, cx),
             _ => {}
         }
     }

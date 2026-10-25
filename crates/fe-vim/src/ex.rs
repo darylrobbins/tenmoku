@@ -101,6 +101,8 @@ pub(crate) mod normal;
 mod pick;
 pub use pick::{BufferRow, Pick, PickRow, PickThen};
 mod table;
+mod tabs;
+pub use tabs::TabCommand;
 mod windows;
 pub(crate) use table::filter::refusal as shell_refusal;
 pub use table::filter::{REFUSED as SHELL_REFUSED, ShellCommand, ShellPart};
@@ -337,6 +339,10 @@ pub enum HostCommand {
     /// `:sp`, `:vs`, `:new`, `:vne`, `:on` and `:clo`: the host's windows,
     /// its panes, split or closed (`ex/windows.rs`).
     Window(WindowCommand),
+    /// `:tabnew`, `:tabn`, `:tabp`, `:tabc`, `:tabo`, `:tabfir` and
+    /// `:tabl`: the host's editor tabs, as VSCodeVim maps them
+    /// (`ex/tabs.rs`).
+    Tab(TabCommand),
     /// `:{range}!{cmd}`: `rows` (from 0) run through `command`, whose
     /// output takes their place ([`crate::VimState::apply_filter`]); asked
     /// for by `actor`, which fe-vim lets only [`Actor::User`] be, for the
@@ -522,6 +528,7 @@ fn command_end(piece: &str) -> Option<usize> {
             && (host(name).is_some()
                 || buffers::kind(name).is_some()
                 || windows::kind(name).is_some()
+                || tabs::kind(name).is_some()
                 || name == "Replace"
                 || is_diff(name)
                 || global::kind(name).is_some()
@@ -715,6 +722,9 @@ fn command(
     }
     if let Some(kind) = windows::kind(name) {
         return windows::parse(kind, range, after);
+    }
+    if let Some(kind) = tabs::kind(name) {
+        return tabs::parse(kind, range, after);
     }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
@@ -1345,7 +1355,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
                 "a buffer command in :g or :normal".into(),
             ));
         }
-        ExCommand::Host(HostCommand::Window(_))
+        ExCommand::Host(HostCommand::Window(_) | HostCommand::Tab(_))
             if global::running() || target.state.normal_suspended.is_some() =>
         {
             // As a buffer command: the rest would run in the window left

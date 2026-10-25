@@ -161,7 +161,8 @@ pub(super) fn host_command(
         | HostCommand::ReplaceInFiles { .. }
         | HostCommand::Pick(_)
         | HostCommand::Buffer(_)
-        | HostCommand::Window(_) => workbench.run_window_command(&editor, command, window, cx),
+        | HostCommand::Window(_)
+        | HostCommand::Tab(_) => workbench.run_window_command(&editor, command, window, cx),
     }
 }
 

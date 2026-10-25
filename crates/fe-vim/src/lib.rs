@@ -845,7 +845,7 @@ pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
     Address, Base, BufferAddress, BufferCommand, BufferRow, BufferTarget, Ex, ExCommand, ExError,
     HostCommand, LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
-    WindowCommand,
+    TabCommand, WindowCommand,
 };
 pub use feature::filter::FilterArgs;
 pub use headless::{FeedError, HeadlessVim};
