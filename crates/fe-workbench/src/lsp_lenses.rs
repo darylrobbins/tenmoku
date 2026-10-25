@@ -204,7 +204,9 @@ impl Workbench {
                     });
                 }
             }
-            if slot.no_provider == Some(server) || slot.key == Some(version) {
+            // An answer with no opening's identity is discarded, and the
+            // ask is made again once the identity turns active.
+            if identity.is_none() || slot.no_provider == Some(server) || slot.key == Some(version) {
                 continue;
             }
             // The first ask goes at once; later ones wait for the text to
