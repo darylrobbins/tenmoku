@@ -147,6 +147,9 @@ pub struct Pane {
     navigations: u64,
     /// Set while a file's read lands, whose tab shown isn't a navigation.
     landing: bool,
+    /// Where focus goes once the file opened last lands, for an open made
+    /// from a panel that keeps it. Dropped by any other open or navigation.
+    keep_focus: Option<FocusHandle>,
     /// The editor shown in the active tab's place, as [`Pane::note_shown`]
     /// last saw it, and how many times it has changed: see
     /// [`Revealed::shown`].
@@ -295,6 +298,7 @@ impl Pane {
             open_serial: 0,
             navigations: 0,
             landing: false,
+            keep_focus: None,
             shown: None,
             shown_serial: 0,
             revealed: None,
@@ -1090,6 +1094,22 @@ impl Pane {
         }
     }
 
+    /// [`Pane::open_at`] for a panel that keeps focus: a file still to be
+    /// read doesn't take it once it lands, unless the user has navigated.
+    pub(crate) fn open_at_keeping_focus(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_tab(path.clone(), reveal, false, window, cx);
+        if self.opening.as_ref() == Some(&path) {
+            self.keep_focus = Some(focus);
+        }
+    }
+
     fn open_tab(
         &mut self,
         path: PathBuf,
@@ -1098,6 +1118,7 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.keep_focus = None;
         self.reveal = None;
         self.open_serial += 1;
         // Where the tab goes, if it's placed ([`Pane::open_after`]): kept
@@ -1286,6 +1307,7 @@ impl Pane {
         let place_after = self.place_after.remove(&path);
         let preview = intent == Some(Intent::Preview);
         let last = self.opening.as_ref() == Some(&path);
+        let keep = self.keep_focus.take_if(|_| last);
         if last {
             self.opening = None;
         }
@@ -1345,6 +1367,9 @@ impl Pane {
                     cx.emit(PaneEvent::Activated);
                 }
             }
+        }
+        if let Some(focus) = keep {
+            window.focus(&focus, cx);
         }
         self.note_shown(cx);
         cx.notify();
@@ -2031,6 +2056,7 @@ impl PaneView for Pane {
         self.note_activation(ix, cx);
         if !self.landing {
             self.navigations += 1;
+            self.keep_focus = None;
         }
         self.opening = None;
         // A read this replaces opens without its reveal.

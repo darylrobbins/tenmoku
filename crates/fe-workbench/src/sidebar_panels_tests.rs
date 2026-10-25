@@ -24,7 +24,7 @@ fn base() -> [(
     Icon,
     &'static str,
     DockOp,
-); 8] {
+); 9] {
     [
         (
             DockPanel::Explorer,
@@ -89,6 +89,14 @@ fn base() -> [(
             Icon::FileDiff,
             "ai.show_changes",
             DockOp::ShowAiChanges,
+        ),
+        (
+            DockPanel::CallHierarchy,
+            "Call Hierarchy",
+            "call_hierarchy",
+            Icon::ListTree,
+            "nav.show_call_hierarchy",
+            DockOp::ShowHierarchy,
         ),
     ]
 }
@@ -233,6 +241,7 @@ fn the_rail_always_has_the_base_four() {
             DockPanel::Problems,
             DockPanel::History,
             DockPanel::AiChanges,
+            DockPanel::CallHierarchy,
         ]
     );
 }
@@ -318,8 +327,9 @@ fn each_panels_show_command_shows_it(cx: &mut TestAppContext) {
         dispatch(panel.show_command(), cx);
         assert_eq!(shown(&workbench, cx).1, panel);
     }
-    // Every show command was tried.
-    assert_eq!(order.len(), PANELS.len());
+    // Every show command was tried, but Call Hierarchy's, which needs a
+    // language server (its own tests show it).
+    assert_eq!(order.len() + 1, PANELS.len());
 }
 
 /// The Git Log, Source Control's Graph, listed by Source Control's button.

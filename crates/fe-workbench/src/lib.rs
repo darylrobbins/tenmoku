@@ -32,6 +32,7 @@ mod git;
 mod git_panel;
 mod go_to_line;
 mod inline_edit;
+mod hierarchy_panel;
 mod language_picker;
 pub mod loader;
 mod lsp;
@@ -110,6 +111,7 @@ pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch, window_layouts};
 
 use chat_panel::ChatPanel;
+use hierarchy_panel::HierarchyPanel;
 use workbench::git_commands::{git_history::HistoryPanel, git_log::GitLogPanel};
 
 /// The key context the workbench's root element sets.

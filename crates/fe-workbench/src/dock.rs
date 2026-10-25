@@ -12,7 +12,8 @@
 //! shows it with Changes expanded, `git.log` with Graph. The References, Problems,
 //! History and Chat buttons join the rail once their panel has shown; the
 //! History panel is made the first time `git.file_history` runs
-//! ([`Dock::set_history`]), the others with the dock. With vim on,
+//! ([`Dock::set_history`]), the others with the dock; the Call Hierarchy panel
+//! is made by `nav.show_call_hierarchy` ([`Dock::set_hierarchy`]). With vim on,
 //! `<C-w>h`/`l`/`j` past the panes' edge focus what the dock shows
 //! ([`Dock::focus_active`], `dock_focus.rs`).
 //!
@@ -31,8 +32,8 @@ use gpui::{
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId, ViewContainer, ViewSpec};
 
 use crate::{
-    ChatPanel, GitLogPanel, GitPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel,
-    ReferencesPanel,
+    ChatPanel, GitLogPanel, GitPanel, HierarchyPanel, HistoryPanel, OutlinePanel, PANEL_WIDTH,
+    ProjectPanel, ReferencesPanel,
     ai_changes_panel::AiChangesPanel,
     search_panel::{self, SearchPanel},
 };
@@ -62,6 +63,7 @@ impl DockPanel {
     pub const AiChanges: DockPanel = crate::ai_changes_panel::SIDEBAR.panel;
     pub const History: DockPanel = crate::workbench::git_commands::git_history::SIDEBAR.panel;
     pub const Chat: DockPanel = crate::chat_panel::SIDEBAR.panel;
+    pub const CallHierarchy: DockPanel = crate::hierarchy_panel::SIDEBAR.panel;
 }
 
 impl DockPanel {
@@ -137,6 +139,7 @@ const PANELS: &[&SidebarPanel] = &[
     &problems_panel::SIDEBAR,
     &crate::workbench::git_commands::git_history::SIDEBAR,
     &crate::ai_changes_panel::SIDEBAR,
+    &crate::hierarchy_panel::SIDEBAR,
 ];
 
 const _: () = {
@@ -231,6 +234,12 @@ dock_item!(
     HistoryPanel::title
 );
 dock_item!(ChatPanel, crate::chat_panel::SIDEBAR);
+// Titled with the symbol at its root.
+dock_item!(
+    HierarchyPanel,
+    crate::hierarchy_panel::SIDEBAR,
+    HierarchyPanel::title
+);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -257,6 +266,8 @@ pub struct Dock {
     problems: Entity<ProblemsPanel>,
     /// Made the first time it's asked for.
     history: Option<Entity<HistoryPanel>>,
+    /// Made the first time it's asked for.
+    hierarchy: Option<Entity<HierarchyPanel>>,
     /// Made with the dock.
     git_log: Option<Entity<GitLogPanel>>,
     /// Made the first time it's asked for.
@@ -390,6 +401,7 @@ impl Dock {
             references,
             problems,
             history: None,
+            hierarchy: None,
             git_log: Some(git_log),
             chat: Some(chat),
             ai_changes: None,
@@ -473,6 +485,22 @@ impl Dock {
     pub(crate) fn set_history(&mut self, history: Entity<HistoryPanel>, cx: &mut Context<Self>) {
         self.state.add_panel(history.clone(), cx);
         self.history = Some(history);
+        cx.notify();
+    }
+
+    pub(crate) fn hierarchy(&self) -> Option<&Entity<HierarchyPanel>> {
+        self.hierarchy.as_ref()
+    }
+
+    /// Registers `hierarchy`, the Call Hierarchy panel made on first use,
+    /// as [`Dock::set_history`] does the History panel.
+    pub(crate) fn set_hierarchy(
+        &mut self,
+        hierarchy: Entity<HierarchyPanel>,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.add_panel(hierarchy.clone(), cx);
+        self.hierarchy = Some(hierarchy);
         cx.notify();
     }
 
@@ -799,6 +827,9 @@ pub(crate) enum DockOp {
     /// `git.log` and `git.log_all`, once they have asked for the list:
     /// show Source Control with Graph expanded and focused.
     ShowGitLog,
+    /// `nav.show_call_hierarchy`, once it has made the panel and its root
+    /// has landed.
+    ShowHierarchy,
     /// The Chat button, and `chat.open` once it has made the panel.
     ShowChat,
     /// `ai.show_changes`, and a changeset set: shows the AI Changes panel.

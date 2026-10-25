@@ -50,6 +50,8 @@ gpui.workspace = true
 libc.workspace = true
 log.workspace = true
 # The extension language servers' consent file.
+# A call hierarchy item's call sites are LSP ranges.
+lsp-types.workspace = true
 serde.workspace = true
 # The hash of a script an extension's language server runs.
 sha2 = "0.10"

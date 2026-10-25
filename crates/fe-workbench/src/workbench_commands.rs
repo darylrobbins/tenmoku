@@ -1016,6 +1016,20 @@ impl Workbench {
         self.nav_command(NavOp::Related(Related::Implementation), cx);
     }
 
+    /// Show Call Hierarchy
+    #[command(id = "nav.show_call_hierarchy")]
+    fn show_call_hierarchy_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.show_call_hierarchy(cx.window, cx.cx);
+    }
+
+    /// Toggle Incoming and Outgoing Calls
+    #[command(id = "hierarchy.toggle_direction")]
+    fn toggle_hierarchy_direction_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_hierarchy_direction(cx.window, cx.cx);
+    }
+
     /// Go to Symbol in Workspace…
     #[command(id = "nav.workspace_symbols")]
     fn workspace_symbols(&mut self, cx: &mut Cx<Self>) {

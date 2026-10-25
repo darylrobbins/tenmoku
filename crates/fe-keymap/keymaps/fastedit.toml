@@ -704,6 +704,11 @@ command = "editor.peek_references"
 context = "editor"
 
 [[bindings]]
+keys = "shift-alt-h"
+command = "nav.show_call_hierarchy"
+context = "workbench && !terminal"
+
+[[bindings]]
 keys = "secondary-t"
 command = "nav.workspace_symbols"
 context = "workbench"
