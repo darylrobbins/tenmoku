@@ -1415,6 +1415,37 @@ impl Pane {
         self.close_active_item(window, cx);
     }
 
+    /// Closes every tab but the active one: Close Other Tabs and vim's
+    /// `:tabo`. A tab with unsaved changes stays open, as Close Tab leaves
+    /// it, unless `force` or another tab, in this pane or another, shows
+    /// its buffer still open. Returns how many it kept.
+    pub fn close_others(&mut self, force: bool, window: &mut Window, cx: &mut App) -> usize {
+        let state = self.pane();
+        let Some(active) = state.active_item().map(|item| item.id()) else {
+            return 0;
+        };
+        let closing: Vec<_> = (state.items().iter())
+            .map(|item| item.id())
+            .filter(|id| *id != active)
+            .collect();
+        let mut kept = 0;
+        for id in closing {
+            let state = self.pane();
+            let Some(ix) = state.position(id) else {
+                continue;
+            };
+            // Asked as each closes: of two tabs showing one buffer, both
+            // closing, the second is its last.
+            let item = &state.items()[ix];
+            if !force && item.is_dirty(cx) && !state.shown_elsewhere(&**item, cx) {
+                kept += 1;
+            } else {
+                self.take_item(ix, window, cx);
+            }
+        }
+        kept
+    }
+
     /// Closes the tabs of the editors on `buffers`, whose buffers the host
     /// removed, without asking: there's nothing left to save.
     pub(crate) fn discard_buffers(

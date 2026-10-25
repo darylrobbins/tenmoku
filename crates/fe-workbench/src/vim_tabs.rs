@@ -30,7 +30,7 @@ use fe_editor::EditorModel;
 use fe_gpui::EditorView;
 use fe_vim::TabCommand;
 use gpui::{Context, Entity, Window};
-use kiln_shell::{ItemHandle, PaneView as _};
+use kiln_shell::PaneView as _;
 
 use super::message;
 use crate::{Pane, Workbench};
@@ -100,7 +100,7 @@ impl Workbench {
 
     /// `:tabo`: the tabs of `pane` but the active one closed, those with
     /// changes kept (`E445`) unless `force`, or another tab shows their
-    /// text.
+    /// text: [`Pane::close_others`], as Close Other Tabs.
     fn vim_tab_only(
         &mut self,
         pane: &Entity<Pane>,
@@ -108,49 +108,18 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let items = pane.read(cx).pane().items();
-        if items.len() < 2 {
+        if pane.read(cx).pane().items().len() < 2 {
             return Err(ONLY_ONE.to_owned());
         }
-        let Some(active) = pane.read(cx).active_item().map(|item| item.id()) else {
-            return Ok(());
-        };
-        let others = self.pane_group(cx).panes();
-        // Each tab to close, and whether it's to be kept: it has changes
-        // no other tab, here or in another pane, shows.
-        let elsewhere: Vec<_> = (others.iter())
-            .filter(|other| ***other != *pane)
-            .flat_map(|other| other.read(cx).pane().items())
-            .collect();
-        let closing: Vec<_> = (items.iter())
-            .filter(|item| item.id() != active)
-            .map(|item| {
-                let shares = |other: &dyn ItemHandle| {
-                    other.id() != item.id() && other.shares_document(&**item, cx)
-                };
-                let shown = (items.iter()).any(|other| shares(&**other))
-                    || (elsewhere.iter()).any(|other| shares(&***other));
-                (item.id(), !force && item.is_dirty(cx) && !shown)
-            })
-            .collect();
-        let mut kept = false;
-        for (id, keep) in closing {
-            if keep {
-                kept = true;
-                continue;
-            }
-            pane.update(cx, |pane, cx| {
-                let items = pane.pane().items();
-                if let Some(ix) = items.iter().position(|item| item.id() == id) {
-                    pane.take_item(ix, window, cx);
-                }
-                cx.notify();
-            });
-        }
+        let kept = pane.update(cx, |pane, cx| {
+            let kept = pane.close_others(force, window, cx);
+            cx.notify();
+            kept
+        });
         self.track_editors(cx);
         match kept {
-            true => Err(E445.to_owned()),
-            false => Ok(()),
+            0 => Ok(()),
+            _ => Err(E445.to_owned()),
         }
     }
 }

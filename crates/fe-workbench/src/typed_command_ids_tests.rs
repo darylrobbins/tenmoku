@@ -16,6 +16,11 @@ use crate::{Launch, Workbench};
 /// Each moved command's ID, title and key context, as its registry had them.
 const MOVED: &[(&str, &str, &str)] = &[
     ("workbench.close_tab", "Close Tab", "workbench"),
+    (
+        "workbench.close_other_tabs",
+        "Close Other Tabs",
+        "workbench",
+    ),
     ("workbench.next_tab", "Next Tab", "workbench"),
     ("workbench.previous_tab", "Previous Tab", "workbench"),
     ("pane.split_right", "Split Right", "workbench"),

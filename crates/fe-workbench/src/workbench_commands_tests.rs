@@ -131,8 +131,17 @@ fn the_tab_commands_run_from_the_palette(cx: &mut TestAppContext) {
         let picker = palette(&workbench, cx).expect("the palette shows");
         cx.simulate_input(&title.to_lowercase());
         draw(cx);
-        let first = picker.read_with(cx, |picker, _| picker.delegate.matches()[0].title.clone());
-        assert_eq!(first.as_ref(), title);
+        // The title may match others too, listed before it, as "close tab"
+        // matches Close Other Tabs.
+        let ix = picker.read_with(cx, |picker, _| {
+            let matches = picker.delegate.matches();
+            matches
+                .iter()
+                .position(|entry| entry.title.as_ref() == title)
+        });
+        let ix = ix.unwrap_or_else(|| panic!("{title} matches"));
+        (0..ix).for_each(|_| cx.simulate_keystrokes("down"));
+        draw(cx);
         cx.simulate_keystrokes("enter");
         draw(cx);
         assert!(palette(&workbench, cx).is_none());

@@ -336,6 +336,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "window.toggle_fullscreen",
     "window.zoom",
     "workbench.clear_recent",
+    "workbench.close_other_tabs",
     "workbench.close_tab",
     "workbench.keep_editor",
     "workbench.new_file",

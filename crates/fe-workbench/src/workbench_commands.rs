@@ -40,6 +40,14 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| pane.close_active(window, cx));
     }
 
+    /// Close Other Tabs
+    #[command(id = "workbench.close_other_tabs")]
+    fn close_other_tabs(&mut self, cx: &mut Cx<Self>) {
+        self.on_active_pane(cx, |pane, window, cx| {
+            pane.close_others(false, window, cx);
+        });
+    }
+
     /// Reopen Closed Editor
     #[command(id = "workbench.reopen_closed_editor")]
     fn reopen_closed_editor(&mut self, cx: &mut Cx<Self>) {

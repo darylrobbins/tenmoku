@@ -251,6 +251,8 @@ impl CommandCatalog for Catalog {
 #[cfg(test)]
 mod ai_changes_panel_tests;
 #[cfg(test)]
+mod close_others_tests;
+#[cfg(test)]
 mod closed_editors_tests;
 #[cfg(test)]
 mod command_catalog_tests;

@@ -548,6 +548,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     click(action(&left, 2, cx), cx);
     let titles = [
         "Close Tab",
+        "Close Other Tabs",
         "Close Pane",
         "Split Right",
         "Split Down",
@@ -578,6 +579,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     };
     assert_eq!(shortcut("Split Right"), label("⌘\\", "Super+\\"));
     assert_eq!(shortcut("Close Tab"), label("⌘W", "Super+W"));
+    assert_eq!(shortcut("Close Other Tabs"), None);
     assert_eq!(shortcut("Close Pane"), None);
     assert_eq!(shortcut("Toggle Breadcrumbs"), None);
 

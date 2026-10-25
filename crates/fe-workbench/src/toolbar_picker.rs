@@ -36,8 +36,9 @@ use crate::{
 };
 
 /// The pane commands "…" lists, as `(command, title)`.
-const PANE_COMMANDS: [(&str, &str); 9] = [
+const PANE_COMMANDS: [(&str, &str); 10] = [
     ("workbench.close_tab", "Close Tab"),
+    ("workbench.close_other_tabs", "Close Other Tabs"),
     ("pane.close", "Close Pane"),
     ("pane.split_right", "Split Right"),
     ("pane.split_down", "Split Down"),
