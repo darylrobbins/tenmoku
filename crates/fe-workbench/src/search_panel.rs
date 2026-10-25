@@ -21,7 +21,8 @@
 //!
 //! The results list takes focus (`search.focus_results`, or down from the
 //! query) and moves through the file and match rows with
-//! `search.select_next` and `search.select_previous`;
+//! `search.select_next` and `search.select_previous`, or to the first and
+//! the last shown row with `search.select_first` and `search.select_last`;
 //! `search.open_selected` opens the selected match, or a file's first.
 //! Clicking a file's row collapses its group, or expands it, as
 //! `search.collapse_or_parent` and `search.expand_or_first_child` do, which
@@ -848,6 +849,8 @@ impl SearchPanel {
             Some(SearchOp::FocusResults) => return self.focus_results(window, cx),
             Some(SearchOp::SelectNext) => return self.select_next(true, cx),
             Some(SearchOp::SelectPrevious) => return self.select_next(false, cx),
+            Some(SearchOp::SelectFirst) => return self.select_end(false, cx),
+            Some(SearchOp::SelectLast) => return self.select_end(true, cx),
             Some(SearchOp::OpenSelected) => {
                 if let Some(ix) = self.selected {
                     self.open(self.layout, ix, window, cx);
@@ -1174,6 +1177,13 @@ impl SearchPanel {
         };
         if let Some(ix) = next {
             self.select(ix, cx);
+        }
+    }
+
+    /// Selects the last shown row, if `last`, or else the first.
+    fn select_end(&mut self, last: bool, cx: &mut Context<Self>) {
+        if let Some(end) = self.rows.len().checked_sub(1) {
+            self.select(if last { end } else { 0 }, cx);
         }
     }
 
@@ -2208,6 +2218,8 @@ pub(crate) enum SearchOp {
     FocusResults,
     SelectNext,
     SelectPrevious,
+    SelectFirst,
+    SelectLast,
     OpenSelected,
     /// Left in the results.
     CollapseOrParent,
@@ -2291,6 +2303,18 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
             "Select Previous Result",
             results,
             SelectPrevious,
+        ),
+        (
+            "search.select_first",
+            "Select First Result",
+            results,
+            SelectFirst,
+        ),
+        (
+            "search.select_last",
+            "Select Last Result",
+            results,
+            SelectLast,
         ),
         (
             "search.open_selected",

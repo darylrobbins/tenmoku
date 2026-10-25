@@ -539,6 +539,22 @@ impl Workbench {
         self.references_command(cx, |panel, _, cx| panel.move_selection(1, cx));
     }
 
+    /// Select First Reference
+    ///
+    /// The References panel does it itself while focused.
+    #[command(id = "references_panel.select_first", context = "ReferencesPanel")]
+    pub(crate) fn select_first_reference(&mut self, cx: &mut Cx<Self>) {
+        self.references_command(cx, |panel, _, cx| panel.select_end(false, cx));
+    }
+
+    /// Select Last Reference
+    ///
+    /// The References panel does it itself while focused.
+    #[command(id = "references_panel.select_last", context = "ReferencesPanel")]
+    pub(crate) fn select_last_reference(&mut self, cx: &mut Cx<Self>) {
+        self.references_command(cx, |panel, _, cx| panel.select_end(true, cx));
+    }
+
     /// Open Reference
     ///
     /// The References panel does it itself while focused.
@@ -563,6 +579,18 @@ impl Workbench {
     #[command(id = "problems.select_previous", context = "problems_panel")]
     fn select_previous_problem(&mut self, cx: &mut Cx<Self>) {
         self.problems_command(ProblemsOp::SelectPrevious, cx);
+    }
+
+    /// Select First Problem
+    #[command(id = "problems.select_first", context = "problems_panel")]
+    fn select_first_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::SelectFirst, cx);
+    }
+
+    /// Select Last Problem
+    #[command(id = "problems.select_last", context = "problems_panel")]
+    fn select_last_problem(&mut self, cx: &mut Cx<Self>) {
+        self.problems_command(ProblemsOp::SelectLast, cx);
     }
 
     /// Open Problem
@@ -1125,9 +1153,11 @@ impl Workbench {
     /// workbench's for going to a diagnostic. See [`Workbench::in_context`].
     fn problems_command(&mut self, op: ProblemsOp, cx: &mut Cx<Self>) {
         let context = match op {
-            ProblemsOp::SelectNext | ProblemsOp::SelectPrevious | ProblemsOp::Open => {
-                problems_panel::KEY_CONTEXT
-            }
+            ProblemsOp::SelectNext
+            | ProblemsOp::SelectPrevious
+            | ProblemsOp::SelectFirst
+            | ProblemsOp::SelectLast
+            | ProblemsOp::Open => problems_panel::KEY_CONTEXT,
             ProblemsOp::Show | ProblemsOp::Next | ProblemsOp::Previous => crate::KEY_CONTEXT,
         };
         self.in_context(context, cx, |this, window, cx| {

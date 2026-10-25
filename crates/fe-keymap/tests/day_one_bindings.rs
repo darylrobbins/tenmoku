@@ -182,6 +182,7 @@ fn card(os: Os) -> Vec<(&'static str, &'static str, ContextStack)> {
         ("enter", "search.open_selected", search_results(false)),
         ("k", "search.select_previous", search_results(true)),
         ("j", "search.select_next", search_results(true)),
+        ("o", "search.open_selected", search_results(true)),
         ("f2", "project_panel.rename", tree(false)),
         (
             keys("cmd-backspace", "ctrl-backspace"),
@@ -204,6 +205,7 @@ fn card(os: Os) -> Vec<(&'static str, &'static str, ContextStack)> {
         ("enter", "problems.open", problems(false)),
         ("k", "problems.select_previous", problems(true)),
         ("j", "problems.select_next", problems(true)),
+        ("o", "problems.open", problems(true)),
         ("ctrl-r", "workbench.open_recent", plain_editor()),
         (
             keys("cmd-k escape", "ctrl-k escape"),

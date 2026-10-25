@@ -839,9 +839,11 @@ fn the_default_keymap_binds_the_references_commands() {
         ]
     );
     let panel = "ReferencesPanel";
-    assert_eq!(bound("references_panel.select_prev"), one("up", panel));
-    assert_eq!(bound("references_panel.select_next"), one("down", panel));
-    assert_eq!(bound("references_panel.open"), one("enter", panel));
+    let vim = "ReferencesPanel && vim";
+    let two = |keys: &str, vim_keys: &str| [one(keys, panel), one(vim_keys, vim)].concat();
+    assert_eq!(bound("references_panel.select_prev"), two("up", "k"));
+    assert_eq!(bound("references_panel.select_next"), two("down", "j"));
+    assert_eq!(bound("references_panel.open"), two("enter", "o"));
 }
 
 #[gpui::test]

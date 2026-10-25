@@ -1,6 +1,7 @@
 //! Find All References (shift-alt-F12) on the right dock: the uses of the
 //! word at the active editor's caret, grouped by file, which open at the use
-//! when clicked, or with Enter on the selected one.
+//! when clicked, or with Enter on the selected one. With vim on, the panel's
+//! key context has the `vim` flag, for the list keys bound in vim's style.
 //!
 //! `nav.find_references` builds a [`NavRequest`] for the active editor's
 //! caret and runs [`Navigation::references`] on the background executor.
@@ -38,14 +39,18 @@ use fe_nav::{
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, UiTheme};
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render,
+    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
 
 use crate::{
     DockPanel, Workbench,
-    workbench_commands::{OpenReference, SelectNextReference, SelectPreviousReference, invoked_in},
+    workbench_commands::{
+        OpenReference, SelectFirstReference, SelectLastReference, SelectNextReference,
+        SelectPreviousReference, invoked_in,
+    },
 };
 
 /// Find references' results in the sidebar: on the rail once it has shown.
@@ -62,6 +67,9 @@ pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel 
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "ReferencesPanel";
+
+/// The flag the panel's key context has while vim is on.
+const VIM_FLAG: &str = "vim";
 
 /// A function that decodes a host's locations of type `L`.
 type Decode<L> = fn(
@@ -376,6 +384,18 @@ impl ReferencesPanel {
         self.select(refs[to], cx);
     }
 
+    /// Selects the last reference, if `last`, or else the first, and
+    /// scrolls it into view.
+    pub(crate) fn select_end(&mut self, last: bool, cx: &mut Context<Self>) {
+        let mut refs = (self.rows.iter().enumerate())
+            .filter(|(_, row)| matches!(row, Row::Ref(..)))
+            .map(|(ix, _)| ix);
+        let end = if last { refs.next_back() } else { refs.next() };
+        if let Some(ix) = end {
+            self.select(ix, cx);
+        }
+    }
+
     fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = Some(ix);
         self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
@@ -422,6 +442,17 @@ impl ReferencesPanel {
         if let Some(ix) = self.selected {
             self.open(self.generation, ix, window, cx);
         }
+    }
+
+    /// Its element's key context: [`KEY_CONTEXT`], with the `vim` flag
+    /// while vim is on.
+    fn key_context(&self, cx: &App) -> KeyContext {
+        let mut context = KeyContext::default();
+        context.add(KEY_CONTEXT);
+        if fe_gpui::vim_enabled(cx) {
+            context.add(VIM_FLAG);
+        }
+        context
     }
 
     fn render_rows(
@@ -593,7 +624,7 @@ impl Render for ReferencesPanel {
         .flex_1();
         div()
             .track_focus(&self.focus)
-            .key_context(KEY_CONTEXT)
+            .key_context(self.key_context(cx))
             // Its commands, the workbench's typed commands, which the panel
             // does itself while focused, where their context holds.
             .on_action(cx.listener(|panel, _: &SelectPreviousReference, _, cx| {
@@ -604,6 +635,16 @@ impl Render for ReferencesPanel {
             .on_action(cx.listener(|panel, _: &SelectNextReference, _, cx| {
                 if invoked_in(KEY_CONTEXT, cx) {
                     panel.move_selection(1, cx)
+                }
+            }))
+            .on_action(cx.listener(|panel, _: &SelectFirstReference, _, cx| {
+                if invoked_in(KEY_CONTEXT, cx) {
+                    panel.select_end(false, cx)
+                }
+            }))
+            .on_action(cx.listener(|panel, _: &SelectLastReference, _, cx| {
+                if invoked_in(KEY_CONTEXT, cx) {
+                    panel.select_end(true, cx)
                 }
             }))
             .on_action(cx.listener(|panel, _: &OpenReference, window, cx| {

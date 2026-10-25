@@ -78,6 +78,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "vim_line && text_input"
                         | "project_panel"
                         | "ReferencesPanel"
+                        | "ReferencesPanel && vim"
                         | "search_results"
                         | "search_results && vim"
                         | "project_panel && vim"

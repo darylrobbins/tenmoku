@@ -443,6 +443,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "editor || find_bar"
                             | "project_panel"
                             | "ReferencesPanel"
+                            | "ReferencesPanel && vim"
                             | "search_results"
                             | "search_results && vim"
                             | "project_panel && vim"

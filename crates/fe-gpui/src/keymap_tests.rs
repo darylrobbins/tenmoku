@@ -338,6 +338,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "vim_line && text_input"
                         | "project_panel"
                         | "ReferencesPanel"
+                        | "ReferencesPanel && vim"
                         | "search_results"
                         | "search_results && vim"
                         | "project_panel && vim"

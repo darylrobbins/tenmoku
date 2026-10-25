@@ -11,7 +11,8 @@
 //! and one in another file opens it, in the active pane if no pane shows
 //! it, with the caret at its row's start. `problems.select_next` and
 //! `problems.select_previous` move the selection over the problems and
-//! their related rows.
+//! their related rows, and `problems.select_first` and
+//! `problems.select_last` go to the first and the last of them.
 //!
 //! The workbench lists the problems again whenever an open editor changes,
 //! as a diagnostic arriving or clearing notifies it, and as tabs open and
@@ -111,6 +112,10 @@ pub(crate) enum ProblemsOp {
     Show,
     SelectNext,
     SelectPrevious,
+    /// Selects the first problem or related row.
+    SelectFirst,
+    /// Selects the last problem or related row.
+    SelectLast,
     /// Opens the selected problem.
     Open,
     /// `diagnostics.next`, on the active editor.
@@ -395,6 +400,20 @@ impl ProblemsPanel {
                 .unwrap_or(first),
         };
         self.select(to, cx);
+    }
+
+    /// Selects the last problem or related row, if `last`, or else the
+    /// first.
+    fn select_end(&mut self, last: bool, cx: &mut Context<Self>) {
+        let problems = self.selectable_rows();
+        let end = if last {
+            problems.last()
+        } else {
+            problems.first()
+        };
+        if let Some(&ix) = end {
+            self.select(ix, cx);
+        }
     }
 
     fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -867,6 +886,8 @@ impl Workbench {
             ProblemsOp::SelectPrevious => {
                 panel.update(cx, |panel, cx| panel.move_selection(false, cx))
             }
+            ProblemsOp::SelectFirst => panel.update(cx, |panel, cx| panel.select_end(false, cx)),
+            ProblemsOp::SelectLast => panel.update(cx, |panel, cx| panel.select_end(true, cx)),
             ProblemsOp::Open => {
                 if let Some(target) = panel.read(cx).selected_target() {
                     self.open_problem(target, window, cx);

@@ -257,6 +257,8 @@ mod command_catalog_tests;
 #[cfg(test)]
 mod extension_snippets_tests;
 #[cfg(test)]
+mod list_vim_keys_tests;
+#[cfg(test)]
 mod lsp_consent_relaunch_tests;
 #[cfg(test)]
 mod lsp_consent_tests;

@@ -855,6 +855,24 @@ keys = "j"
 command = "search.select_next"
 context = "search_results && vim"
 
+# Search's results with vim on: the tree's `gg`, `G` and `o`, as every list
+# has them. `G` goes to the last shown row, a collapsed file's lines being
+# hidden; `o` does what enter does.
+[[bindings]]
+keys = "g g"
+command = "search.select_first"
+context = "search_results && vim"
+
+[[bindings]]
+keys = "shift-g"
+command = "search.select_last"
+context = "search_results && vim"
+
+[[bindings]]
+keys = "o"
+command = "search.open_selected"
+context = "search_results && vim"
+
 # Panes, as VS Code binds them. The secondary-k chords sit beside the
 # editor's secondary-k secondary-0 and secondary-k secondary-j: a chord's
 # second key picks the binding.
@@ -1121,6 +1139,33 @@ keys = "enter"
 command = "references_panel.open"
 context = "ReferencesPanel"
 
+# Find references' results with vim on: the tree's `j`, `k`, `gg`, `G` and
+# `o`, as every list has them; `o` does what enter does.
+[[bindings]]
+keys = "k"
+command = "references_panel.select_prev"
+context = "ReferencesPanel && vim"
+
+[[bindings]]
+keys = "j"
+command = "references_panel.select_next"
+context = "ReferencesPanel && vim"
+
+[[bindings]]
+keys = "g g"
+command = "references_panel.select_first"
+context = "ReferencesPanel && vim"
+
+[[bindings]]
+keys = "shift-g"
+command = "references_panel.select_last"
+context = "ReferencesPanel && vim"
+
+[[bindings]]
+keys = "o"
+command = "references_panel.open"
+context = "ReferencesPanel && vim"
+
 # Problems, as VS Code binds them. Off macOS ctrl-shift-m is read as vim's
 # <C-m>, so there it's off in an editor with vim on; f8 is no vim key. In an
 # editor in vim's normal mode, with nothing pending, nvim's `]d` and `[d`.
@@ -1216,6 +1261,24 @@ context = "ai_changes"
 keys = "alt-["
 command = "ai.changes_previous_file"
 context = "ai_changes"
+
+# The Problems panel's list with vim on: the tree's `gg`, `G` and `o`, as
+# every list has them. `gg` and `G` go to the first and last problem or
+# related row; `o` does what enter does.
+[[bindings]]
+keys = "g g"
+command = "problems.select_first"
+context = "problems_panel && vim"
+
+[[bindings]]
+keys = "shift-g"
+command = "problems.select_last"
+context = "problems_panel && vim"
+
+[[bindings]]
+keys = "o"
+command = "problems.open"
+context = "problems_panel && vim"
 
 # The Outline panel's list, when it has focus, which `outline.show` gives
 # it. With vim on, neo-tree's and nvim-tree's keys, as the other lists have
