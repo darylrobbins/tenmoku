@@ -197,6 +197,8 @@ fn card(os: Os) -> Vec<(&'static str, &'static str, ContextStack)> {
         ("shift-f8", "diagnostics.previous", plain_editor()),
         ("] d", "diagnostics.next", vim_editor("normal")),
         ("[ d", "diagnostics.previous", vim_editor("normal")),
+        ("] q", "diagnostics.next", vim_editor("normal")),
+        ("[ q", "diagnostics.previous", vim_editor("normal")),
         ("up", "problems.select_previous", problems(false)),
         ("down", "problems.select_next", problems(false)),
         ("enter", "problems.open", problems(false)),
@@ -384,7 +386,7 @@ fn vim_safe() {
 
             for binding in added {
                 let keys = binding.keys.to_string();
-                let nvim_d = keys == "] d" || keys == "[ d";
+                let nvim_d = ["] d", "[ d", "] q", "[ q"].contains(&keys.as_str());
                 let first = &binding.keys.keystrokes()[0];
                 for mode in VIM_MODES {
                     // In an editor of its own and inside each panel's frame,
