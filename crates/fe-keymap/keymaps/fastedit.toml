@@ -1939,3 +1939,30 @@ context = "peek && editor"
 keys = "escape"
 command = "peek.close"
 context = "editor && peek_shown && !completion && vim.mode != insert && vim.mode != replace"
+
+# Keyboard column (box) selection, as VS Code binds it on macOS; elsewhere
+# its ctrl-shift-alt-arrow keys collide with Duplicate Rows, so none.
+
+[[bindings]]
+keys = "cmd-shift-alt-left"
+command = "editor.column_select_left"
+context = "editor && !vim.enabled"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-shift-alt-right"
+command = "editor.column_select_right"
+context = "editor && !vim.enabled"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-shift-alt-up"
+command = "editor.column_select_up"
+context = "editor && !vim.enabled"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-shift-alt-down"
+command = "editor.column_select_down"
+context = "editor && !vim.enabled"
+platform = "macos"

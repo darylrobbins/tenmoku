@@ -64,6 +64,10 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         "window.minimize",
         "editor.add_carets_at_all_occurrences",
         "editor.join_lines",
+        "editor.column_select_left",
+        "editor.column_select_right",
+        "editor.column_select_up",
+        "editor.column_select_down",
     ];
     let mut expected: BTreeSet<_> = commands(&macos)
         .into_iter()

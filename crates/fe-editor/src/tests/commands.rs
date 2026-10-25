@@ -106,6 +106,16 @@ fn every_editor_command_is_registered() {
         ]
         .map(|name| format!("editor.{name}")),
     );
+    // The keyboard column selection commands; none edits.
+    expected.extend(
+        [
+            "column_select_left",
+            "column_select_right",
+            "column_select_up",
+            "column_select_down",
+        ]
+        .map(|name| format!("editor.{name}")),
+    );
     // The row commands, which no key binds yet; each edits.
     let rows = [
         "indent",

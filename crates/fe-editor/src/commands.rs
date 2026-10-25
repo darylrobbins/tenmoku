@@ -556,6 +556,7 @@ pub fn registry() -> Registry<Editor> {
         )
         .context(ContextPredicate::identifier(CONTEXT));
     crate::multi_cursor::register(&mut registry);
+    crate::column_select::register(&mut registry);
     crate::rows::register(&mut registry);
     crate::comment::register(&mut registry);
     crate::smart_select::register(&mut registry);

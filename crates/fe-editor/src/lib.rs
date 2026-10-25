@@ -23,6 +23,7 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 mod auto_indent;
 pub mod auto_save;
 mod case_transform;
+mod column_select;
 pub mod commands;
 mod comment;
 pub mod completion;
@@ -130,6 +131,9 @@ pub struct EditorModel {
     /// Char column, within its display row, each selection's head tries to
     /// keep while moving vertically.
     goals: Vec<Option<usize>>,
+    /// The keyboard box selection under way, if any; any selection change
+    /// but its own ends it.
+    column_box: Option<column_select::ColumnBox>,
     tab_size: usize,
     /// What tab, indent and outdent use; `None` for `tab_size` spaces.
     indent_style: Option<IndentStyle>,
@@ -193,6 +197,7 @@ impl EditorModel {
             snapshot,
             selections,
             goals: Vec::new(),
+            column_box: None,
             tab_size: 4,
             indent_style,
             path: disk::PathLink::new(path),
@@ -252,6 +257,7 @@ impl EditorModel {
             snapshot,
             selections: self.selections.clone(),
             goals: Vec::new(),
+            column_box: None,
             tab_size: self.tab_size,
             indent_style: self.indent_style,
             path: Rc::clone(self.path.latest()),
@@ -805,6 +811,7 @@ impl EditorModel {
     pub fn set_selections(&mut self, selections: impl IntoIterator<Item = ResolvedSelection>) {
         self.end_typing();
         self.goals.clear();
+        self.column_box = None;
         self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
         self.forget_auto_closed();
         self.follow_snippet();
