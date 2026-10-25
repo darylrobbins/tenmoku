@@ -55,6 +55,11 @@ impl KeyOwner for VimKeys {
         // cmd while a panel has focus.
         crate::element::hover_with_modifiers(modifiers, window, cx);
     }
+
+    fn chord_changed(&self, window: &mut Window, cx: &mut App) {
+        // The which-key popup lists what goes on from a chord held.
+        crate::vim::which_key::chord_changed(window, cx);
+    }
 }
 
 /// The namespace of vim's key context keys: `vim_mode` is `vim.mode`.

@@ -18,7 +18,7 @@
 //! abandoned, neither run nor typed, once focus leaves that element, the
 //! window closes, or a keystroke comes from anywhere else. Focus that
 //! leaves and comes back before the next frame is drawn goes unseen; see
-//! `PendingChord::start`.
+//! `HeldChord::start`.
 //!
 //! An app can take part through a [`KeyOwner`], such as a modal editing
 //! layer that owns the focused editor's keys: it stamps the context each
@@ -28,7 +28,9 @@
 //! Without one, all of that is the plain behaviour above. An element can
 //! also keep keystrokes from the keymap while it reads them itself: see
 //! [`HOLDS_KEYS`], or [`HOLDS_ALL_KEYS`] to keep the platform modifier's
-//! keystrokes too.
+//! keystrokes too. What goes on from a chord held, for a which-key popup,
+//! is [`pending_continuations`]; the owner hears of each change to it
+//! ([`KeyOwner::chord_changed`]).
 //!
 //! [`RunCommand`]: crate::commands::RunCommand
 
@@ -39,7 +41,7 @@ use gpui::{
     WeakFocusHandle, Window,
 };
 use kiln_command::{ContextFrame, ContextStack, Invocation};
-use kiln_core::{Key, KeyOutcome, Keymap, Keystroke, Matcher, Modifiers};
+use kiln_core::{Continuation, Key, KeyOutcome, Keymap, Keystroke, Matcher, Modifiers};
 
 use crate::command_actions::dispatch_invocation;
 
@@ -117,6 +119,15 @@ pub trait KeyOwner: 'static {
     fn modifiers_released(&self, modifiers: &gpui::Modifiers, window: &mut Window, cx: &mut App) {
         let _ = (modifiers, window, cx);
     }
+
+    /// The chord held in `window` may have changed: it started, went on or
+    /// ended. Called after each keystroke the keymap sees, its effects
+    /// over but for the element's own key listeners, which come after;
+    /// after a chord times out; and once one is abandoned as focus leaves
+    /// its element. [`pending_continuations`] says what's held now.
+    fn chord_changed(&self, window: &mut Window, cx: &mut App) {
+        let _ = (window, cx);
+    }
 }
 
 /// The plain behaviour, for when no owner is set.
@@ -161,7 +172,7 @@ pub fn register_context_namespace(cx: &mut App, namespace: impl Into<SharedStrin
 struct KeyInput {
     matcher: Matcher,
     /// The chord the matcher holds pending, if any.
-    pending: Option<PendingChord>,
+    pending: Option<HeldChord>,
     /// Set while swallowed keystrokes are re-delivered, which the matcher
     /// has seen already.
     redelivering: bool,
@@ -195,20 +206,36 @@ impl Target {
     }
 }
 
-struct PendingChord {
+/// The keys that go on from the chord held for the focused element
+/// ([`pending_continuations`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingChord {
+    /// The chord's keystrokes so far.
+    pub held: Vec<Keystroke>,
+    /// What goes on from them ([`Keymap::continuations`]).
+    pub next: Vec<Continuation>,
+    /// The context its last keystroke was matched in, which the next is
+    /// expected in.
+    pub stack: ContextStack,
+}
+
+struct HeldChord {
     target: Target,
     /// The GPUI keystrokes of the chord, to re-deliver if it fails.
     swallowed: Vec<gpui::Keystroke>,
+    /// The context its last keystroke was matched in.
+    stack: ContextStack,
     /// Ends the chord; dropping it cancels that.
     _timeout: Task<()>,
     /// Abandons the chord when focus leaves its element.
     _focus_out: Option<Subscription>,
 }
 
-impl PendingChord {
+impl HeldChord {
     fn start(
         target: Target,
         swallowed: Vec<gpui::Keystroke>,
+        stack: ContextStack,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -238,13 +265,15 @@ impl PendingChord {
         // signal, or once every focus move goes through a wrapper of ours.
         let focus_out = window.focused(cx).map(|focus| {
             // Dropped with the chord, so it fires only for this one.
-            window.on_focus_out(&focus, cx, |_, _, cx| {
+            window.on_focus_out(&focus, cx, |_, window, cx| {
                 cx.global_mut::<KeyInput>().abandon();
+                chord_changed(window, cx);
             })
         });
         Self {
             target,
             swallowed,
+            stack,
             _timeout: timeout,
             _focus_out: focus_out,
         }
@@ -276,15 +305,20 @@ pub fn init(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
     });
 }
 
-/// Swaps the keymap, as on hot reload, dropping any chord in progress.
-/// Menus [`crate::menus::install`]ed are reinstalled, so their shortcuts
+/// Swaps the keymap, as on hot reload, dropping any chord in progress
+/// ([`KeyOwner::chord_changed`]). Menus [`crate::menus::install`]ed are reinstalled, so their shortcuts
 /// follow; without any, it touches neither GPUI's menus nor its keymap.
 /// Windows redraw, so anything drawn from the keymap follows too. Call
 /// after [`init`].
 pub fn set_keymap(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
     let input = cx.global_mut::<KeyInput>();
     input.matcher.set_keymap(keymap);
-    input.pending = None;
+    if let Some(chord) = input.pending.take() {
+        // Unless the swap comes from inside that window's own update.
+        (chord.target.window)
+            .update(cx, |_, window, cx| chord_changed(window, cx))
+            .ok();
+    }
     crate::menus::refresh(cx);
     cx.refresh_windows();
 }
@@ -302,6 +336,32 @@ pub fn chord_pending(cx: &App) -> bool {
         .is_some_and(|input| input.pending.is_some() || !input.matcher.pending().is_empty())
 }
 
+/// The chord held for `window`'s focused element and what goes on from it,
+/// in the context its last keystroke was matched in; `None` if none is,
+/// or one is for another window or element.
+pub fn pending_continuations(window: &Window, cx: &App) -> Option<PendingChord> {
+    let input = cx.try_global::<KeyInput>()?;
+    let chord = input.pending.as_ref()?;
+    if chord.target != Target::of(window, cx) {
+        return None;
+    }
+    let held = input.matcher.pending().to_vec();
+    let next = input.matcher.keymap().continuations(&held, &chord.stack);
+    Some(PendingChord {
+        held,
+        next,
+        stack: chord.stack.clone(),
+    })
+}
+
+/// Tells the owner the chord held may have changed
+/// ([`KeyOwner::chord_changed`]).
+fn chord_changed(window: &mut Window, cx: &mut App) {
+    if let Some(owner) = owner(cx) {
+        owner.chord_changed(window, cx);
+    }
+}
+
 fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     if cx
         .try_global::<KeyInput>()
@@ -316,6 +376,12 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     if window.has_active_prompt() {
         return;
     }
+    match_keystroke(event, window, cx);
+    chord_changed(window, cx);
+}
+
+/// Matches `event`'s keystroke, for [`on_keystroke`].
+fn match_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     crate::focus::watch(window, cx);
     let target = Target::of(window, cx);
     let input = cx.global_mut::<KeyInput>();
@@ -330,7 +396,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     let owner = owner(cx);
     let owner = owner.as_deref().unwrap_or(&NoOwner);
     let gpui_stack = context_stack(&event.context_stack, cx);
-    let (stack, held) = owner.live_stack(gpui_stack.clone(), window, cx);
+    let (mut stack, held) = owner.live_stack(gpui_stack.clone(), window, cx);
     if held {
         // The owner's key listener has it.
         return;
@@ -368,7 +434,8 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         // one, in the context they leave: they may have started one of the
         // owner's commands, which then holds it.
         replay(owner, std::mem::take(&mut swallowed), window, cx);
-        let (stack, held) = owner.live_stack(gpui_stack, window, cx);
+        let held;
+        (stack, held) = owner.live_stack(gpui_stack, window, cx);
         if held {
             return;
         }
@@ -400,12 +467,12 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
             // Find): the chord carries on where focus is now, and ends if
             // it leaves that.
             let target = Target::of(window, cx);
-            let chord = PendingChord::start(target, Vec::new(), window, cx);
+            let chord = HeldChord::start(target, Vec::new(), stack, window, cx);
             cx.global_mut::<KeyInput>().pending = Some(chord);
         }
         KeyOutcome::Pending => {
             swallowed.push(event.keystroke.clone());
-            let chord = PendingChord::start(target, swallowed, window, cx);
+            let chord = HeldChord::start(target, swallowed, stack, window, cx);
             cx.global_mut::<KeyInput>().pending = Some(chord);
             cx.stop_propagation();
         }
@@ -420,30 +487,36 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
 fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
     handle
         .update(cx, |_, window, cx| {
-            let target = Target::of(window, cx);
-            let input = cx.global_mut::<KeyInput>();
-            let Some(chord) = input.pending.take() else {
-                return;
-            };
-            let outcome = input.matcher.flush();
-            if chord.target != target {
-                return;
-            }
-            let owner = owner(cx);
-            let owner = owner.as_deref().unwrap_or(&NoOwner);
-            match outcome {
-                // The owner's: the keys go to it.
-                KeyOutcome::Dispatch(invocation) if owner.owns(&invocation) => {
-                    replay(owner, chord.swallowed, window, cx)
-                }
-                KeyOutcome::Dispatch(invocation) => dispatch(invocation, window, cx),
-                KeyOutcome::Unmatched(_) => replay(owner, chord.swallowed, window, cx),
-                KeyOutcome::Pending | KeyOutcome::DispatchPending(_) => {
-                    unreachable!("flush ends the chord")
-                }
-            }
+            end_chord(window, cx);
+            chord_changed(window, cx);
         })
         .ok();
+}
+
+/// Ends the pending chord as its timeout does, for [`on_timeout`].
+fn end_chord(window: &mut Window, cx: &mut App) {
+    let target = Target::of(window, cx);
+    let input = cx.global_mut::<KeyInput>();
+    let Some(chord) = input.pending.take() else {
+        return;
+    };
+    let outcome = input.matcher.flush();
+    if chord.target != target {
+        return;
+    }
+    let owner = owner(cx);
+    let owner = owner.as_deref().unwrap_or(&NoOwner);
+    match outcome {
+        // The owner's: the keys go to it.
+        KeyOutcome::Dispatch(invocation) if owner.owns(&invocation) => {
+            replay(owner, chord.swallowed, window, cx)
+        }
+        KeyOutcome::Dispatch(invocation) => dispatch(invocation, window, cx),
+        KeyOutcome::Unmatched(_) => replay(owner, chord.swallowed, window, cx),
+        KeyOutcome::Pending | KeyOutcome::DispatchPending(_) => {
+            unreachable!("flush ends the chord")
+        }
+    }
 }
 
 /// Runs `invocation` on the focused element, synchronously, as GPUI's own

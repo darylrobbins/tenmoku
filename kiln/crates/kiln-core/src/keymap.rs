@@ -119,6 +119,18 @@ impl Binding {
     }
 }
 
+/// A key that goes on from keystrokes held for a chord
+/// ([`Keymap::continuations`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Continuation {
+    /// The keystroke after the held ones.
+    pub next: Keystroke,
+    /// What the held keystrokes and `next` run, if a binding ends there.
+    pub command: Option<CommandId>,
+    /// Whether longer bindings go on past `next`.
+    pub longer: bool,
+}
+
 /// The effective bindings, in the order they were read: each layer top to
 /// bottom, the defaults first.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -200,6 +212,54 @@ impl Keymap {
             .filter_map(|(ix, binding)| Some(((binding.depth(stack)?, ix), binding)))
             .max_by_key(|(rank, _)| *rank)
             .map(|(_, binding)| binding.invocation(stack))
+    }
+
+    /// The keys that go on from `held`, the keystrokes of a chord in
+    /// progress, in `stack`: one [`Continuation`] per next key of the
+    /// bindings whose context holds there and whose keys start with `held`
+    /// and are longer, in the order of their first binding. Its command is
+    /// the one the [`crate::Matcher`] would dispatch for the keys up to it,
+    /// by the same precedence (the deepest context match, then the later
+    /// layer, then the later entry).
+    pub fn continuations(&self, held: &[Keystroke], stack: &ContextStack) -> Vec<Continuation> {
+        // Each next key's continuation, with the rank of the binding that
+        // gave its command.
+        let mut next: Vec<(Continuation, Option<(usize, usize)>)> = Vec::new();
+        for (ix, binding) in self.bindings.iter().enumerate() {
+            let keys = binding.keys.keystrokes();
+            if keys.len() <= held.len() || !keys.starts_with(held) {
+                continue;
+            }
+            let Some(depth) = binding.depth(stack) else {
+                continue;
+            };
+            let key = keys[held.len()];
+            let at = match next
+                .iter()
+                .position(|(continuation, _)| continuation.next == key)
+            {
+                Some(at) => at,
+                None => {
+                    let continuation = Continuation {
+                        next: key,
+                        command: None,
+                        longer: false,
+                    };
+                    next.push((continuation, None));
+                    next.len() - 1
+                }
+            };
+            let (continuation, rank) = &mut next[at];
+            if keys.len() > held.len() + 1 {
+                continuation.longer = true;
+            } else if rank.is_none_or(|best| (depth, ix) > best) {
+                *rank = Some((depth, ix));
+                continuation.command = Some(binding.command.clone());
+            }
+        }
+        next.into_iter()
+            .map(|(continuation, _)| continuation)
+            .collect()
     }
 }
 

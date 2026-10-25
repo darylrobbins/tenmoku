@@ -3012,6 +3012,9 @@ mod remap_tests;
 mod which_key_tests;
 
 #[cfg(test)]
+mod which_key_chord_tests;
+
+#[cfg(test)]
 mod remap_cmd_tests;
 
 #[cfg(test)]

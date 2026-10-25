@@ -55,7 +55,9 @@ pub use extension::{
     ApiVersion, AppKind, ExtensionApi, ExtensionSet, License, LicenseClass, LicenseNotice,
     Manifest, load_manifest,
 };
-pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
+pub use keymap::{
+    Binding, CatalogError, CommandCatalog, Continuation, Entry, Keymap, KeymapLayer, Location,
+};
 pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
 pub use label::{macos_label, pc_label, shortcut_label};
 pub use layers::{Layer, load_layer, merge, parse_layer};
