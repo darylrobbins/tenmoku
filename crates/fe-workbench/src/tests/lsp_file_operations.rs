@@ -530,3 +530,6 @@ fn participants_edits_to_one_file_are_joined(cx: &mut TestAppContext) {
         "mod again;\n// moved\npub fn f() {}\n"
     );
 }
+
+#[path = "../lsp_file_operations_tests.rs"]
+mod lsp_file_operations_tests;

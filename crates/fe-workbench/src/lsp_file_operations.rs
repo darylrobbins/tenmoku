@@ -90,22 +90,26 @@ fn by_folder(path: &Path) -> Option<PathBuf> {
 }
 
 /// `edits`, servers' answers in server order, with each file's text edits
-/// in one entry, where the first server's for it was: a server's that
+/// in one entry, where the first server's for it was, within a run between
+/// two other entries (creating, renaming or deleting a file), which stay as
+/// they are and keep text edits either side of them apart: a server's that
 /// overlap those kept, or are for another version of the buffer or in
-/// another encoding, are left out (and logged). Other entries (creating,
-/// renaming or deleting a file) stay as they are.
+/// another encoding, are left out (and logged).
 fn joined(edits: Vec<FileEdits>) -> Vec<FileEdits> {
     let mut kept: Vec<(Option<PathBuf>, FileEdits)> = Vec::new();
+    // Where the current run of text edits starts in `kept`.
+    let mut run = 0;
     for file in edits {
         let text = |target: &EditTarget| {
             matches!(target, EditTarget::Open { .. } | EditTarget::Closed { .. })
         };
         if !text(&file.target) {
             kept.push((None, file));
+            run = kept.len();
             continue;
         }
         let key = resolve(&file.path).unwrap_or_else(|| file.path.clone());
-        let same = (kept.iter_mut())
+        let same = (kept[run..].iter_mut())
             .find(|(path, _)| path.as_ref() == Some(&key))
             .map(|(_, kept)| kept);
         match same {
