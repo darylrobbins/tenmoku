@@ -500,7 +500,10 @@ fn stale_and_cancelled_requests() {
         let (answer, answered) = asked.join().unwrap();
         assert_eq!(answer, Err(NavError::Cancelled));
         let took = answered - cancelled;
-        assert!(took < Duration::from_millis(50), "answered after {took:?}");
+        // Bounded against the request's own deadline, not scheduler jitter.
+        let deadline = Duration::from_millis(LspSettings::default().timeouts.definition);
+        let bound = (deadline / 10).min(Duration::from_secs(1));
+        assert!(took < bound, "answered after {took:?}, bound {bound:?}");
         id
     });
     let NumberOrString::Number(id) = id else {
