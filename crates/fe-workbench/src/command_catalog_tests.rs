@@ -294,6 +294,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "nav.goto_implementation",
     "nav.goto_type_definition",
     "nav.show_call_hierarchy",
+    "nav.show_type_hierarchy",
     "nav.workspace_symbols",
     "outline.show",
     "pane.close",

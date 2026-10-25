@@ -1023,6 +1023,13 @@ impl Workbench {
         self.show_call_hierarchy(cx.window, cx.cx);
     }
 
+    /// Show Type Hierarchy
+    #[command(id = "nav.show_type_hierarchy")]
+    fn show_type_hierarchy_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.show_type_hierarchy(cx.window, cx.cx);
+    }
+
     /// Toggle Incoming and Outgoing Calls
     #[command(id = "hierarchy.toggle_direction")]
     fn toggle_hierarchy_direction_command(&mut self, cx: &mut Cx<Self>) {

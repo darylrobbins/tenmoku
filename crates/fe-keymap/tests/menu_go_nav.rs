@@ -44,6 +44,7 @@ fn go_menu_lists_navigation_commands() {
             "nav.goto_implementation",
             "editor.peek_references",
             "nav.show_call_hierarchy",
+            "nav.show_type_hierarchy",
             "nav.find_references",
             "-",
             "workbench.next_tab",

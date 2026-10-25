@@ -92,7 +92,7 @@ fn base() -> [(
         ),
         (
             DockPanel::CallHierarchy,
-            "Call Hierarchy",
+            "Hierarchy",
             "call_hierarchy",
             Icon::ListTree,
             "nav.show_call_hierarchy",

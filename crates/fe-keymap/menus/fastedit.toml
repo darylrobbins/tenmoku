@@ -455,6 +455,10 @@ title = "Show Call Hierarchy"
 command = "nav.show_call_hierarchy"
 
 [[menus.items]]
+title = "Show Type Hierarchy"
+command = "nav.show_type_hierarchy"
+
+[[menus.items]]
 title = "Find All References"
 command = "nav.find_references"
 

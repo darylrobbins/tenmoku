@@ -10,12 +10,12 @@ use serde_json::{Value, json};
 use super::{HierarchyPanel, Mode};
 use crate::{DockPanel, tests::lsp::Lsp};
 
-const PREPARE: &str = "textDocument/prepareCallHierarchy";
-const INCOMING: &str = "callHierarchy/incomingCalls";
-const OUTGOING: &str = "callHierarchy/outgoingCalls";
+pub(super) const PREPARE: &str = "textDocument/prepareCallHierarchy";
+pub(super) const INCOMING: &str = "callHierarchy/incomingCalls";
+pub(super) const OUTGOING: &str = "callHierarchy/outgoingCalls";
 
 /// `b` calls `a` twice; `c` calls `b`.
-const MAIN: &str = "fn a() {}\nfn b() { a(); a(); }\nfn c() { b(); }\n";
+pub(super) const MAIN: &str = "fn a() {}\nfn b() { a(); a(); }\nfn c() { b(); }\n";
 
 fn script(provider: bool) -> Script {
     let mut init = initialize_result(Some(PositionEncodingKind::UTF16));
@@ -29,12 +29,12 @@ fn script(provider: bool) -> Script {
     }
 }
 
-fn range(line: u32, from: u32, to: u32) -> Value {
+pub(super) fn range(line: u32, from: u32, to: u32) -> Value {
     json!({ "start": { "line": line, "character": from }, "end": { "line": line, "character": to } })
 }
 
 /// A function item named `name` on `line` of `src/z.rs`.
-fn item(s: &Lsp, name: &str, line: u32) -> Value {
+pub(super) fn item(s: &Lsp, name: &str, line: u32) -> Value {
     json!({
         "name": name,
         "kind": 12,
@@ -51,7 +51,7 @@ fn call(key: &str, item: Value, sites: &[Value]) -> Value {
     json!({ key: item, "fromRanges": sites })
 }
 
-fn reply(s: &Lsp, method: &str, result: Value) {
+pub(super) fn reply(s: &Lsp, method: &str, result: Value) {
     s.fake
         .set_reply(method, Scripted::now(Reply::Result(result)));
 }
@@ -76,7 +76,7 @@ fn setup(cx: &mut TestAppContext, provider: bool) -> Lsp {
     s
 }
 
-fn panel(s: &Lsp) -> Entity<HierarchyPanel> {
+pub(super) fn panel(s: &Lsp) -> Entity<HierarchyPanel> {
     (s.workbench).read_with(&s.cx, |w, cx| {
         w.dock()
             .read(cx)
@@ -86,12 +86,12 @@ fn panel(s: &Lsp) -> Entity<HierarchyPanel> {
     })
 }
 
-fn texts(s: &Lsp) -> Vec<String> {
+pub(super) fn texts(s: &Lsp) -> Vec<String> {
     let panel = panel(s);
     panel.read_with(&s.cx, |panel, _| panel.texts())
 }
 
-fn requests(s: &Lsp, method: &str) -> Vec<Value> {
+pub(super) fn requests(s: &Lsp, method: &str) -> Vec<Value> {
     (s.fake.records().iter())
         .filter_map(|record| match record {
             Record::Request {
@@ -103,13 +103,13 @@ fn requests(s: &Lsp, method: &str) -> Vec<Value> {
 }
 
 /// The names of the items the requests of `method` were about.
-fn asked_about(s: &Lsp, method: &str) -> Vec<String> {
+pub(super) fn asked_about(s: &Lsp, method: &str) -> Vec<String> {
     (requests(s, method).iter())
         .map(|params| params["item"]["name"].as_str().unwrap().to_owned())
         .collect()
 }
 
-fn toasts(s: &Lsp) -> Vec<String> {
+pub(super) fn toasts(s: &Lsp) -> Vec<String> {
     let layer = s.workbench.read_with(&s.cx, |w, _| w.toasts().clone());
     layer.read_with(&s.cx, |layer, _| {
         (layer.queue().shown().iter())
@@ -118,13 +118,13 @@ fn toasts(s: &Lsp) -> Vec<String> {
     })
 }
 
-fn press(s: &mut Lsp, key: &str) {
+pub(super) fn press(s: &mut Lsp, key: &str) {
     let panel = panel(s);
     s.cx.update(|window, cx| panel.update(cx, |panel, cx| panel.press(key, window, cx)));
     s.draw();
 }
 
-fn tick(s: &mut Lsp, by: Duration) {
+pub(super) fn tick(s: &mut Lsp, by: Duration) {
     s.cx.executor().advance_clock(by);
     s.clock.advance(by);
     s.draw();
@@ -145,7 +145,7 @@ fn show(s: &mut Lsp, rows: usize) {
 }
 
 /// The active editor's primary selection, in bytes.
-fn selection(s: &Lsp) -> std::ops::Range<usize> {
+pub(super) fn selection(s: &Lsp) -> std::ops::Range<usize> {
     let editor = (s.workbench)
         .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
         .unwrap();
@@ -391,7 +391,7 @@ fn panel_is_on_the_rail_after_first_use(cx: &mut TestAppContext) {
     assert!(on_rail(&s));
 }
 
-fn panel_focused(s: &mut Lsp) -> bool {
+pub(super) fn panel_focused(s: &mut Lsp) -> bool {
     let panel = panel(s);
     s.cx.update(|window, cx| panel.focus_handle(cx).is_focused(window))
 }
