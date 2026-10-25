@@ -1090,6 +1090,21 @@ keys = "secondary-v"
 command = "project_panel.paste"
 context = "project_panel"
 
+# Project tree: filter by name, as neo-tree's `/` and nvim-tree's live
+# filter (`f`, cleared with `F`) do. `/` opens a box whose text narrows the
+# rows to the names holding it, ignoring case, with their folders; Enter
+# keeps the filter and escape in the box clears it, as `F` does. nvim-tree's
+# `f` stays free; `F` is shift-f here.
+[[bindings]]
+keys = "/"
+command = "project_panel.filter"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "shift-f"
+command = "project_panel.clear_filter"
+context = "project_panel && vim"
+
 # Find references' results, when they have focus.
 [[bindings]]
 keys = "up"

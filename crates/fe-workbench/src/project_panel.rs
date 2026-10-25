@@ -16,7 +16,8 @@
 //! The file operations on the selected row (new file and folder, rename,
 //! move to the Trash, duplicate, copy path) are in [`ops`]; expanding and
 //! collapsing every folder, toggling ignored entries and refreshing are in
-//! [`nav`]; cutting, copying and pasting entries are in [`clipboard`].
+//! [`nav`]; cutting, copying and pasting entries are in [`clipboard`];
+//! filtering the rows by name is in [`filter`].
 
 use std::{
     cell::Cell,
@@ -63,7 +64,7 @@ pub(crate) const FOLDERS: kiln_shell::ViewId = kiln_shell::ViewId("folders");
 pub(crate) const KEY_CONTEXT: &str = "project_panel";
 
 /// [`KEY_CONTEXT`] with vim on, for its netrw and nvim-tree keys, unless
-/// the name field is open.
+/// the name field or the filter's box is open.
 const VIM_KEY_CONTEXT: &str = "project_panel vim";
 
 /// The sidebar's width as built. Its panels fill its column, however
@@ -180,6 +181,8 @@ pub struct ProjectPanel {
     /// Each row the last frame drew dimmed as cut, by name.
     #[cfg(test)]
     drawn_cut: Vec<String>,
+    /// The filter by name, while it's set.
+    filter: Option<filter::Filter>,
     _watch: Option<Task<()>>,
 }
 
@@ -226,6 +229,7 @@ impl ProjectPanel {
             clipboard: clipboard::Clipboard::default(),
             #[cfg(test)]
             drawn_cut: Vec::new(),
+            filter: None,
             _watch: None,
         };
         panel.start(show_ignored, cx);
@@ -310,6 +314,7 @@ impl ProjectPanel {
         self.selected_hint = 0;
         self.revealing = None;
         self.edit = None;
+        self.filter = None;
         self.start(self.show_ignored, cx);
         cx.notify();
     }
@@ -398,11 +403,13 @@ impl ProjectPanel {
         self.reconcile(cx);
         self.advance_reveal(cx);
         self.advance_expansion(cx);
+        self.refilter(cx);
     }
 
     /// Forgets nodes the tree removed (a watcher batch or a listing can).
     /// If the selected one went, selects the row now at its index,
-    /// `selected`, clamped to the last row.
+    /// `selected`, clamped to the last row: in a filtered list the nearest
+    /// match, or none with none left.
     fn removed(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
         let State::Open(tree) = &self.state else {
             return;
@@ -420,8 +427,11 @@ impl ProjectPanel {
         }
         let last = tree.row_count().checked_sub(1);
         self.selected = None;
-        if let (Some(ix), Some(last)) = (selected, last) {
-            self.select_row(ix.min(last), cx);
+        let near = selected
+            .zip(last)
+            .and_then(|(ix, last)| self.nearest_match(ix.min(last)));
+        if let Some(ix) = near {
+            self.select_row(ix, cx);
         }
     }
 
@@ -438,9 +448,11 @@ impl ProjectPanel {
         tree.rows(0..tree.row_count()).position(|row| row.id == id)
     }
 
-    /// The selected row's index, if it's shown.
+    /// The selected row's index, if it's shown, and the filter doesn't
+    /// hide it: what acts on the selection acts on a row the list shows.
     fn selected_index(&self) -> Option<usize> {
-        Self::index_of(self.tree()?, self.selected, self.selected_hint)
+        let ix = Self::index_of(self.tree()?, self.selected, self.selected_hint)?;
+        self.shows(ix).then_some(ix)
     }
 
     /// Selects row `ix` and scrolls it into view.
@@ -451,12 +463,19 @@ impl ProjectPanel {
         self.selected = Some(row.id);
         self.selected_hint = ix;
         self.scroll
-            .scroll_to_item(self.list_ix(ix), ScrollStrategy::Nearest);
+            .scroll_to_item(self.list_pos(ix), ScrollStrategy::Nearest);
         cx.notify();
     }
 
-    /// Selects the first row, or the last, for vim's `gg` and `G`.
+    /// Selects the first row, or the last, for vim's `gg` and `G`: the
+    /// first or last match in a filtered list.
     fn select_end(&mut self, last: bool, cx: &mut Context<Self>) {
+        if let Some(found) = self.end_match(last) {
+            if let Some(ix) = found {
+                self.select_row(ix, cx);
+            }
+            return;
+        }
         let Some(count) = self
             .tree()
             .map(FileTree::row_count)
@@ -468,8 +487,15 @@ impl ProjectPanel {
     }
 
     /// Up and Down: moves the selection by `delta` rows, clamped, or
-    /// selects the first row if none is.
+    /// selects the first row if none is. In a filtered list it moves to
+    /// the next or previous match ([`Self::step_match`]).
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if let Some(found) = self.step_match(delta) {
+            if let Some(ix) = found {
+                self.select_row(ix, cx);
+            }
+            return;
+        }
         let Some(last) = self.tree().and_then(|tree| tree.row_count().checked_sub(1)) else {
             return;
         };
@@ -512,7 +538,8 @@ impl ProjectPanel {
     }
 
     /// Right: expands the selected directory if it's collapsed, as a click
-    /// does, and otherwise selects its first child, if it has one.
+    /// does, and otherwise selects its first child the list shows, if it
+    /// has one.
     fn expand_or_first_child(&mut self, cx: &mut Context<Self>) {
         let Some(ix) = self.selected_index() else {
             return;
@@ -529,9 +556,12 @@ impl ProjectPanel {
         }
         let id = row.id;
         if row.expanded {
-            let child = tree.rows(ix + 1..ix + 2).next();
-            if child.is_some_and(|child| child.depth > row.depth) {
-                self.select_row(ix + 1, cx);
+            let depth = row.depth;
+            let child = self.next_shown(ix).filter(|&child| {
+                (tree.rows(child..child + 1).next()).is_some_and(|child| child.depth > depth)
+            });
+            if let Some(child) = child {
+                self.select_row(child, cx);
             }
         } else if !self.expanding.contains(&id) {
             self.click(id, cx);
@@ -613,8 +643,10 @@ impl ProjectPanel {
         }
         self.cancel_reveal();
         self.selected = Some(file);
-        if let Some(ix) = self.selected_index() {
-            self.select_row(ix, cx);
+        match self.selected_index() {
+            Some(ix) => self.select_row(ix, cx),
+            // The filter hides it: the line above the rows says so.
+            None => self.revealed_hidden(file),
         }
         cx.notify();
     }
@@ -750,13 +782,18 @@ impl ProjectPanel {
         self.reconcile(cx);
         self.advance_reveal(cx);
         self.advance_expansion(cx);
+        self.refilter(cx);
     }
 
     /// Runs a panel command; others go on to the workbench. While the name
-    /// field has focus, the field takes the keys ([`Self::run_in_field`]).
+    /// field or the filter's box has focus, it takes the keys
+    /// ([`Self::run_in_field`], [`Self::run_in_filter`]).
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         if self.field_focused(window, cx) {
             return self.run_in_field(run, window, cx);
+        }
+        if self.filter_focused(window, cx) {
+            return self.run_in_filter(run, window, cx);
         }
         let op = op(run, cx);
         // The user moved on. Toggling ignored entries carries a pending
@@ -781,18 +818,31 @@ impl ProjectPanel {
             Some(PanelOp::CopyRelativePath) => self.copy_path(true, cx),
             Some(PanelOp::ExpandAll) => self.expand_all(cx),
             Some(PanelOp::CollapseAll) => self.collapse_all(cx),
-            Some(PanelOp::ToggleIgnored) => self.toggle_ignored(cx),
+            Some(PanelOp::ToggleIgnored) => {
+                // The new tree's rows are other nodes: the filter goes
+                // first, so what's expanded carries over as it was.
+                self.clear_filter(window, cx);
+                self.toggle_ignored(cx)
+            }
             Some(PanelOp::Refresh) => self.refresh(cx),
             Some(PanelOp::Cut) => self.clip(clipboard::ClipKind::Cut, cx),
             Some(PanelOp::Copy) => self.clip(clipboard::ClipKind::Copy, cx),
             Some(PanelOp::Paste) => self.paste(window, cx),
+            Some(PanelOp::Filter) => self.start_filter(window, cx),
+            Some(PanelOp::ClearFilter) => self.clear_filter(window, cx),
             None => cx.propagate(),
+        }
+        if matches!(
+            op,
+            Some(PanelOp::NewFile | PanelOp::NewFolder | PanelOp::Rename)
+        ) {
+            self.scroll_to_field();
         }
     }
 
-    /// The list's rows in `range`: the tree's, with the name field in
-    /// place of the row being renamed or as a row of its own for a new
-    /// entry ([`Self::field_row`]).
+    /// The list's rows in `range`: the tree's, or those the filter shows,
+    /// with the name field in place of the row being renamed or as a row of
+    /// its own for a new entry ([`Self::list_field`]).
     fn render_rows(
         &mut self,
         range: Range<usize>,
@@ -806,17 +856,17 @@ impl ProjectPanel {
         #[cfg(test)]
         self.built.push(range.clone());
         let git = !self.git_files.is_empty() || !self.git_dirs.is_empty();
-        let field = self.field_row();
+        let field = self.list_field();
         let renaming = (self.edit.as_ref())
             .filter(|edit| edit.kind == EditKind::Rename)
             .map(|edit| edit.node);
-        // The tree's rows the list's range shows: those after a new entry's
-        // field are one further down the list.
-        let tree_ix = |ix: usize| match field {
+        // The rows the list's range shows: those after a new entry's field
+        // are one further down the list.
+        let row_ix = |ix: usize| match field {
             Some((at, _)) if ix > at => ix - 1,
             _ => ix,
         };
-        let shown = tree_ix(range.start)..tree_ix(range.end);
+        let shown = self.list_rows(row_ix(range.start)..row_ix(range.end));
         #[cfg(test)]
         let mut drawn = Vec::new();
         let mut seen = None;
@@ -824,9 +874,8 @@ impl ProjectPanel {
         #[cfg(test)]
         let mut drawn_cut = Vec::new();
         let theme = fe_ui::ui_theme(cx);
-        let mut rows: Vec<gpui::AnyElement> = tree
-            .rows(shown.clone())
-            .zip(shown)
+        let mut rows: Vec<gpui::AnyElement> = (shown.into_iter())
+            .filter_map(|ix| Some((tree.rows(ix..ix + 1).next()?, ix)))
             .map(|(row, ix)| {
                 let id = row.id;
                 let selected = self.selected == Some(id);
@@ -942,21 +991,28 @@ impl Render for ProjectPanel {
         .map_or("PROJECT".into(), |name| {
             name.to_string_lossy().to_uppercase()
         });
+        let field = self.list_field().is_some();
         let body = match &self.state {
             State::NoFolder => self.message("No folder open".into(), cx),
             State::Opening => div().into_any_element(),
             State::Failed(message) => self.message(message.clone(), cx),
-            State::Open(tree) => uniform_list(
+            State::Open(_) if self.filtered().is_some_and(|view| view.is_empty()) && !field => {
+                self.message(filter::NO_MATCHES.into(), cx)
+            }
+            State::Open(_) => uniform_list(
                 "project-rows",
-                tree.row_count() + usize::from(self.field_row().is_some()),
+                self.list_count() + usize::from(field),
                 cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
             )
             .track_scroll(&self.scroll)
             .flex_1()
             .into_any_element(),
         };
-        // Vim's tree keys are off while the name field takes typing.
-        let context = if fe_gpui::vim_enabled(cx) && self.edit.is_none() {
+        let filter = self.render_filter(cx);
+        // Vim's tree keys are off while the name field or the filter's box
+        // takes typing.
+        let typing = self.edit.is_some() || self.filter_typing();
+        let context = if fe_gpui::vim_enabled(cx) && !typing {
             VIM_KEY_CONTEXT
         } else {
             KEY_CONTEXT
@@ -978,6 +1034,7 @@ impl Render for ProjectPanel {
             .text_color(theme.text)
             .text_size(px(12.))
             .child(div().flex_none().px_3().py_2().child(title))
+            .children(filter)
             .child(body)
             .children((self.status.clone()).map(|status| self.message(status, cx)))
     }
@@ -1037,6 +1094,8 @@ pub(crate) enum PanelOp {
     Cut,
     Copy,
     Paste,
+    Filter,
+    ClearFilter,
 }
 
 /// The [`CommandTarget`] of panel commands: the op to do.
@@ -1154,6 +1213,18 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
         ("project_panel.cut", "Cut", KEY_CONTEXT, Cut),
         ("project_panel.copy", "Copy", KEY_CONTEXT, Copy),
         ("project_panel.paste", "Paste", KEY_CONTEXT, Paste),
+        (
+            "project_panel.filter",
+            "Filter by Name…",
+            KEY_CONTEXT,
+            Filter,
+        ),
+        (
+            "project_panel.clear_filter",
+            "Clear Filter",
+            KEY_CONTEXT,
+            ClearFilter,
+        ),
     ];
     let mut registry = Registry::new();
     for (id, title, context, op) in commands {
@@ -1219,8 +1290,9 @@ impl ProjectPanel {
     /// Where row `ix` was laid out in the last frame, from the list's bounds,
     /// scroll offset and measured row height.
     pub(crate) fn row_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
-        let count = self.tree()?.row_count() + usize::from(self.field_row().is_some());
-        let ix = self.list_ix(ix);
+        self.tree()?;
+        let count = self.list_count() + usize::from(self.field_row().is_some());
+        let ix = self.list_pos(ix);
         let state = self.scroll.0.borrow();
         let list = state.base_handle.bounds();
         let height = state.last_item_size?.contents.height / count as f32;
@@ -1268,6 +1340,13 @@ mod clipboard;
 #[cfg(test)]
 #[path = "project_panel_clipboard_tests.rs"]
 mod project_panel_clipboard_tests;
+
+#[path = "project_panel_filter.rs"]
+mod filter;
+
+#[cfg(test)]
+#[path = "project_panel_filter_tests.rs"]
+mod project_panel_filter_tests;
 
 #[cfg(test)]
 #[path = "project_panel_hover_tests.rs"]
