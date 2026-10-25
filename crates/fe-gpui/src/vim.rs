@@ -151,6 +151,10 @@ use crate::{
     view::synced_syntax,
 };
 
+pub(crate) mod which_key;
+
+pub use which_key::{set_host_commands, set_vim_which_key};
+
 /// How long a yank's text stays highlighted: nvim's `vim.hl.on_yank` default.
 const YANK_FLASH: Duration = Duration::from_millis(150);
 
@@ -349,6 +353,8 @@ struct Vim {
     replace_with_register: bool,
     /// `vim.remap` and `vim.leader`, built.
     remaps: Arc<RemapSet>,
+    /// `vim.which_key` and `vim.which_key_delay_ms`.
+    which_key: which_key::WhichKeySettings,
     /// The editor holding keys for a longer map: one at a time, as only the
     /// focused editor takes keys.
     remap_wait: Option<RemapWait>,
@@ -1719,8 +1725,22 @@ impl EditorView {
     /// replay holds for such a command, a keystroke waits, in any mode, to
     /// go on as typed once the map is over
     /// ([`EditorView::release_held_keys`]): it can't come between the map's
-    /// keys, nor see the context the command runs in change.
+    /// keys, nor see the context the command runs in change. A prefix it
+    /// leaves waiting shows the which-key popup after a delay
+    /// ([`EditorView::which_key_after_key`]).
     fn feed_vim(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let taken = self.feed_vim_key(keystroke, window, cx);
+        self.which_key_after_key(window, cx);
+        taken
+    }
+
+    /// [`EditorView::feed_vim`] but for the which-key popup.
+    fn feed_vim_key(
         &mut self,
         keystroke: &gpui::Keystroke,
         window: &mut Window,
@@ -1937,6 +1957,8 @@ impl EditorView {
     /// or a click. With no window focusing it, what it holds resolves, as
     /// keys that came in at `origin`.
     fn wait_for_remap_later(&self, origin: Option<ReplayOrigin>, cx: &mut Context<Self>) {
+        // A prefix the replay left waits for its which-key popup too.
+        self.which_key_later(cx);
         let view = cx.weak_entity();
         cx.defer(move |cx| {
             let Some(view) = view.upgrade() else {
@@ -2000,6 +2022,8 @@ impl EditorView {
         };
         state.remap_timeout();
         self.replay_vim_from(origin.or(dropped), cx);
+        self.settle_which_key();
+        self.which_key_later(cx);
         cx.notify();
     }
 
@@ -2853,6 +2877,10 @@ impl EditorView {
     pub(crate) fn run_vim(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
         let ok = self.run_vim_once(invocation, cx);
         self.replay_vim(cx);
+        if self.settle_which_key() {
+            cx.notify();
+        }
+        self.which_key_later(cx);
         ok
     }
 
@@ -2979,6 +3007,9 @@ mod macro_tests;
 mod remap_insert_tests;
 #[cfg(test)]
 mod remap_tests;
+
+#[cfg(test)]
+mod which_key_tests;
 
 #[cfg(test)]
 mod remap_cmd_tests;

@@ -149,6 +149,12 @@
 # How long, in milliseconds, a ! filter or :r ! may run before it is killed
 # and changes nothing.
 # filter_time_limit = 10000
+# true: a popup lists the keys that go on from a pending prefix (g, z, <leader>,
+# a remap's first keys), once which_key_delay_ms passes with no key.
+# which_key = true
+# How long, in milliseconds, a prefix waits for its next key before the
+# which-key popup shows. 0 shows it at once.
+# which_key_delay_ms = 200
 # The key <leader> stands for in a remap, in vim notation.
 # leader = "\\"
 # Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", "i", "c", or a

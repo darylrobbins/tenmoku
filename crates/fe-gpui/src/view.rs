@@ -127,6 +127,8 @@ pub struct EditorView {
     /// An open vim search line's preview, and the view to put back
     /// ([`EditorView::preview_search`]).
     pub(crate) search_preview: Option<crate::vim::SearchPreview>,
+    /// The which-key popup, or its wait ([`crate::vim::which_key`]).
+    pub(crate) which_key: crate::vim::which_key::WhichKeyPopup,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
     /// Vim stays off here whatever the switch says
@@ -393,6 +395,7 @@ impl EditorView {
             yank_seen: 0,
             yank_flash: None,
             search_preview: None,
+            which_key: Default::default(),
             vim_generation: 0,
             vim_off: false,
             vim_replaying: false,
@@ -1753,6 +1756,7 @@ impl Render for EditorView {
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
         self.sync_vim(cx);
+        self.settle_which_key();
         // Vim left insert mode, or came on or went off, while composing.
         self.drop_stale_composition();
         self.sync_find(cx);
@@ -1824,6 +1828,7 @@ impl Render for EditorView {
             .child(crate::completion_menu::menu_layer(cx))
             .child(crate::signature_help::popover_layer(cx))
             .child(overlay_layer(cx))
+            .children(crate::vim::which_key::popup_layer(self, cx))
     }
 }
 

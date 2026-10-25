@@ -969,6 +969,19 @@
           "default": false,
           "description": "true: with `ignorecase` on, a typed search pattern with an uppercase\nletter matches case (`*` and `#` still ignore it), as nvim's\n'smartcase' does.",
           "type": "boolean"
+        },
+        "which_key": {
+          "default": true,
+          "description": "true: a popup lists the keys that go on from a pending prefix (`g`,\n`z`, `<leader>`, a remap's first keys) with what each does, as\nwhich-key.nvim's does, once `which_key_delay_ms` passes with no key.",
+          "type": "boolean"
+        },
+        "which_key_delay_ms": {
+          "default": 200,
+          "description": "How long, in milliseconds, a prefix waits for its next key before the\nwhich-key popup shows (which-key.nvim's default). 0 shows it at once.",
+          "format": "uint64",
+          "maximum": 5000,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1144,7 +1157,9 @@
         "remap": [],
         "replace_with_register": false,
         "shell": "",
-        "smartcase": false
+        "smartcase": false,
+        "which_key": true,
+        "which_key_delay_ms": 200
       },
       "description": "Vim mode."
     },

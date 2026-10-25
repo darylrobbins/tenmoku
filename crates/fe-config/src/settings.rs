@@ -268,6 +268,14 @@ pub struct VimSettings {
     /// killed and nothing changes.
     #[schemars(range(min = 100))]
     pub filter_time_limit: u64,
+    /// true: a popup lists the keys that go on from a pending prefix (`g`,
+    /// `z`, `<leader>`, a remap's first keys) with what each does, as
+    /// which-key.nvim's does, once `which_key_delay_ms` passes with no key.
+    pub which_key: bool,
+    /// How long, in milliseconds, a prefix waits for its next key before the
+    /// which-key popup shows (which-key.nvim's default). 0 shows it at once.
+    #[schemars(range(min = 0, max = 5000))]
+    pub which_key_delay_ms: u64,
     /// The leader key `<leader>` stands for in a remap, in vim notation
     /// (`"<Space>"` works).
     pub leader: String,
@@ -291,6 +299,8 @@ impl Default for VimSettings {
             regex_time_limit: 2000,
             shell: String::new(),
             filter_time_limit: 10_000,
+            which_key: true,
+            which_key_delay_ms: 200,
             leader: "\\".to_string(),
             remap: Vec::new(),
         }
