@@ -292,6 +292,8 @@ pub struct Workbench {
     /// pane again: what an ask that a round trip through another pane
     /// supersedes compares.
     pub(crate) activations: u64,
+    /// Zen Mode: see [`zen_mode`].
+    pub(crate) zen: zen_mode::ZenMode,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -514,6 +516,7 @@ impl Workbench {
             shell: shell.clone(),
             breadcrumbs: Cell::new(true),
             bounds: Cell::new(Some(window.window_bounds())),
+            zen_sidebar: Cell::new(None),
         });
         workspace.update(cx, |workspace, _| {
             let keys = layout_keys.clone();
@@ -611,6 +614,7 @@ impl Workbench {
             #[cfg(test)]
             git_routed: Vec::new(),
             activations: 0,
+            zen: zen_mode::ZenMode::new(cx),
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -854,6 +858,9 @@ struct LayoutKeys {
     breadcrumbs: Cell<bool>,
     /// The window's bounds, as they last changed.
     bounds: Cell<Option<WindowBounds>>,
+    /// While Zen Mode is on, whether the sidebar showed before it, until
+    /// it's shown or hidden meanwhile.
+    zen_sidebar: Cell<Option<bool>>,
 }
 
 /// The active item of `pane`, if it's a diff view.
@@ -919,6 +926,9 @@ mod hot_exit;
 
 #[path = "toast.rs"]
 pub(crate) mod toast;
+
+#[path = "zen_mode.rs"]
+pub(crate) mod zen_mode;
 
 #[cfg(test)]
 #[path = "terminal_no_rail_tests.rs"]

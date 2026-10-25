@@ -345,6 +345,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.save_as",
     "workbench.show_config_problems",
     "workbench.show_extensions",
+    "workbench.toggle_zen_mode",
     "workbench.trust_folder",
     "workbench.untrust_folder",
 ];

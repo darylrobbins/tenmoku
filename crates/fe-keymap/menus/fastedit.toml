@@ -369,6 +369,10 @@ separator = true
 title = "Toggle Full Screen"
 command = "window.toggle_fullscreen"
 
+[[menus.items]]
+title = "Toggle Zen Mode"
+command = "workbench.toggle_zen_mode"
+
 [[menus]]
 name = "Go"
 

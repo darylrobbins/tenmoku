@@ -151,6 +151,17 @@
 # tab, or pinning it keeps it open.
 # preview_tabs = true
 
+[workbench.zen_mode]
+# What Zen Mode (cmd-k z, ctrl-k z off macOS, again to leave it) hides
+# beyond the docks, the panels and the activity rail, which it always hides.
+# Hide the panes' tab strips and breadcrumbs.
+# hide_tabs = true
+# Hide the status bar.
+# hide_status_bar = true
+# Center the editors, with margins of a fifth of the window's width on each
+# side.
+# center_layout = true
+
 [theme]
 # dark, light, or system to follow the system's appearance. Your own colours
 # go in theme.toml beside this file; its appearance says whether it replaces

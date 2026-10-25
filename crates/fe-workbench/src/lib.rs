@@ -246,3 +246,5 @@ mod theme_tests;
 mod typed_command_ids_tests;
 #[cfg(test)]
 mod workbench_commands_tests;
+#[cfg(test)]
+mod zen_mode_tests;

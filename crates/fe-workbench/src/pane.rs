@@ -1677,6 +1677,15 @@ impl Render for Pane {
             self.message("No open files".into(), cx)
         };
         let drop_layer = self.state.drop_layer(cx);
+        // Zen Mode can leave the tab strip out, the toolbar with it.
+        let (tab_row, toolbar_row) = match self.state.tab_bar_hidden() {
+            false => {
+                let tab_row = self.tab_row(tab_bar, cx).into_any_element();
+                let toolbar_row = self.toolbar_row(cx).map(IntoElement::into_any_element);
+                (Some(tab_row), toolbar_row)
+            }
+            true => (None, None),
+        };
         Self::attach(div(), cx)
             .track_focus(self.state.focus())
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
@@ -1695,8 +1704,8 @@ impl Render for Pane {
             .flex_col()
             .bg(fe_ui::ui_theme(cx).background)
             .child(self.state.record_bounds())
-            .child(self.tab_row(tab_bar, cx))
-            .children(self.toolbar_row(cx))
+            .children(tab_row)
+            .children(toolbar_row)
             .children(self.find_row(cx))
             .child(
                 div()

@@ -382,11 +382,41 @@ pub struct WorkbenchSettings {
     /// tab, in italics, that the next one replaces. Editing it,
     /// double-clicking it or its tab, or pinning it keeps it open.
     pub preview_tabs: bool,
+    /// Zen Mode: the editor alone, VS Code's `zenMode.*`.
+    pub zen_mode: ZenModeSettings,
 }
 
 impl Default for WorkbenchSettings {
     fn default() -> Self {
-        Self { preview_tabs: true }
+        Self {
+            preview_tabs: true,
+            zen_mode: ZenModeSettings::default(),
+        }
+    }
+}
+
+/// `[workbench.zen_mode]`: what Zen Mode hides beyond the docks, the
+/// panels and the activity rail, which it always hides, after VS Code's
+/// `zenMode.*` settings, with its defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ZenModeSettings {
+    /// Hide the panes' tab strips and breadcrumbs.
+    pub hide_tabs: bool,
+    /// Hide the status bar.
+    pub hide_status_bar: bool,
+    /// Center the editors, with margins of a fifth of the window's width on
+    /// each side.
+    pub center_layout: bool,
+}
+
+impl Default for ZenModeSettings {
+    fn default() -> Self {
+        Self {
+            hide_tabs: true,
+            hide_status_bar: true,
+            center_layout: true,
+        }
     }
 }
 

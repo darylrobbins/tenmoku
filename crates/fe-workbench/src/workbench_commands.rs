@@ -46,6 +46,13 @@ impl Workbench {
         self.reopen_closed(cx.window, cx.cx);
     }
 
+    /// Toggle Zen Mode
+    #[command(id = "workbench.toggle_zen_mode")]
+    fn toggle_zen_mode_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_zen_mode(cx.window, cx.cx);
+    }
+
     /// Next Tab
     #[command(id = "workbench.next_tab")]
     fn next_tab(&mut self, cx: &mut Cx<Self>) {

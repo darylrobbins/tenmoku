@@ -916,6 +916,36 @@
           "default": true,
           "description": "Whether a file single-clicked in the project tree opens in a preview\ntab, in italics, that the next one replaces. Editing it,\ndouble-clicking it or its tab, or pinning it keeps it open.",
           "type": "boolean"
+        },
+        "zen_mode": {
+          "$ref": "#/$defs/ZenModeSettings",
+          "default": {
+            "center_layout": true,
+            "hide_status_bar": true,
+            "hide_tabs": true
+          },
+          "description": "Zen Mode: the editor alone, VS Code's `zenMode.*`."
+        }
+      },
+      "type": "object"
+    },
+    "ZenModeSettings": {
+      "description": "`[workbench.zen_mode]`: what Zen Mode hides beyond the docks, the\npanels and the activity rail, which it always hides, after VS Code's\n`zenMode.*` settings, with its defaults.",
+      "properties": {
+        "center_layout": {
+          "default": true,
+          "description": "Center the editors, with margins of a fifth of the window's width on\neach side.",
+          "type": "boolean"
+        },
+        "hide_status_bar": {
+          "default": true,
+          "description": "Hide the status bar.",
+          "type": "boolean"
+        },
+        "hide_tabs": {
+          "default": true,
+          "description": "Hide the panes' tab strips and breadcrumbs.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1053,7 +1083,12 @@
     "workbench": {
       "$ref": "#/$defs/WorkbenchSettings",
       "default": {
-        "preview_tabs": true
+        "preview_tabs": true,
+        "zen_mode": {
+          "center_layout": true,
+          "hide_status_bar": true,
+          "hide_tabs": true
+        }
       },
       "description": "The workbench: its panes and tabs."
     }

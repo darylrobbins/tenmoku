@@ -192,6 +192,7 @@ impl Workbench {
     /// changed it, so reloading for any other key keeps a toggle.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.preview_tabs = event.settings.workbench.preview_tabs;
+        self.follow_zen_settings(&event.settings.workbench.zen_mode);
         let visible = event.settings.status_bar.visible;
         if visible != event.previous.status_bar.visible {
             self.set_status_bar_visible(visible, cx);

@@ -285,6 +285,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Reopen Closed Editor",
         "workbench",
     ),
+    ("workbench.toggle_zen_mode", "Toggle Zen Mode", "workbench"),
 ];
 
 #[gpui::test]

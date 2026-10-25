@@ -92,6 +92,7 @@ impl Workbench {
     /// though without saving it (see [`crate::save_toggles_to`]).
     pub fn set_status_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.status_bar_visible = visible;
+        self.note_zen_status_bar();
         self.show_status_bar(cx);
         cx.notify();
     }
@@ -417,6 +418,7 @@ impl Workbench {
                 cx,
             );
         });
+        self.follow_zen_tabs(pane, cx);
         let requested = cx.subscribe_in(
             pane,
             window,
@@ -689,6 +691,8 @@ impl Workbench {
     /// Has the workspace save the layout if its shape changed: fastedit's
     /// keys changed ([`LayoutKeys`]).
     pub(super) fn layout_keys_changed(&mut self, cx: &mut Context<Self>) {
+        // Either dock notified: Zen Mode notes one shown or hidden.
+        self.note_zen_chrome(cx);
         self.workspace.update(cx, |_, cx| cx.notify());
     }
 
@@ -892,9 +896,14 @@ impl LayoutKeys {
             ("sidebar", dock_layout::position_name(sidebar.position())),
             ("terminal", dock_layout::position_name(terminal.position())),
         ]);
+        let mut dock = sidebar.save(cx);
+        // As it was before Zen Mode hid it, unless shown or hidden since.
+        if let Some(before) = self.zen_sidebar.get() {
+            dock["visible"] = Value::from(before);
+        }
         let mut keys = vec![
             ("docks", docks),
-            ("dock", sidebar.save(cx)),
+            ("dock", dock),
             ("terminal_dock", terminal_dock_sizes(&terminal.save(cx))),
             ("breadcrumbs", Value::from(self.breadcrumbs.get())),
         ];

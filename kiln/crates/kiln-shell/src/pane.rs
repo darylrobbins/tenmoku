@@ -236,6 +236,9 @@ pub struct PaneState<V> {
     id: EntityId,
     view: WeakEntity<V>,
     emptied: bool,
+    /// Whether the view leaves its tab strip out: see
+    /// [`PaneState::set_tab_bar_hidden`].
+    tab_bar_hidden: bool,
 }
 
 impl<V: PaneView> PaneState<V> {
@@ -259,6 +262,7 @@ impl<V: PaneView> PaneState<V> {
             id: cx.entity_id(),
             view: cx.weak_entity(),
             emptied: false,
+            tab_bar_hidden: false,
         }
     }
 
@@ -332,6 +336,22 @@ impl<V: PaneView> PaneState<V> {
     /// Makes `ix` the active index, without focusing anything.
     pub fn set_active(&mut self, ix: usize) {
         self.active = ix;
+    }
+
+    /// Has the view leave its tab strip out, or draw it again: its items
+    /// stay, and switching them by command still works, but nothing drops
+    /// on the strip while it's out. [`ItemPane`] follows it; a host's own
+    /// view reads [`PaneState::tab_bar_hidden`].
+    pub fn set_tab_bar_hidden(&mut self, hidden: bool) {
+        self.tab_bar_hidden = hidden;
+        if hidden {
+            self.tab_bar_bounds.set(Bounds::default());
+        }
+    }
+
+    /// Whether the view leaves its tab strip out.
+    pub fn tab_bar_hidden(&self) -> bool {
+        self.tab_bar_hidden
     }
 
     /// Joins a group of panes, `peers`.
@@ -454,8 +474,8 @@ impl<V: PaneView> PaneState<V> {
         record(&self.tab_bar_bounds)
     }
 
-    /// Where a tab dragged to `at` would drop: in the tab strip, or on the
-    /// content area, by the last frame's layout.
+    /// Where a tab dragged to `at` would drop: in the tab strip, unless
+    /// it's out, or on the content area, by the last frame's layout.
     pub fn drop_target(&self, at: Point<Pixels>) -> Option<DropTarget> {
         if !self.bounds().contains(&at) {
             return None;
@@ -463,6 +483,9 @@ impl<V: PaneView> PaneState<V> {
         let content = self.content_bounds.get();
         if content.contains(&at) {
             return Some(DropTarget::Content(DropZone::at(content, at)));
+        }
+        if self.tab_bar_hidden {
+            return None;
         }
         Some(DropTarget::TabBar(insertion(&self.tab_layout(), at.x)))
     }
@@ -948,7 +971,15 @@ impl Render for ItemPane {
             Some(item) => item.to_any_view().into_any_element(),
             None => div().into_any_element(),
         };
-        let tab_bar = self.state.tab_bar(cx);
+        let tab_bar = (!self.state.tab_bar_hidden).then(|| {
+            div()
+                .relative()
+                .flex_none()
+                .w_full()
+                .h(TAB_HEIGHT)
+                .child(self.state.tab_bar(cx))
+                .child(self.state.record_tab_bar_bounds())
+        });
         div()
             .track_focus(&self.state.focus)
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
@@ -967,15 +998,7 @@ impl Render for ItemPane {
             .flex_col()
             .bg(ui.background)
             .child(self.state.record_bounds())
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .w_full()
-                    .h(TAB_HEIGHT)
-                    .child(tab_bar)
-                    .child(self.state.record_tab_bar_bounds()),
-            )
+            .children(tab_bar)
             .child(
                 div()
                     .relative()
