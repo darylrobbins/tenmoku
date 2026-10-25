@@ -101,9 +101,9 @@ fn references(cx: &mut TestAppContext) {
         cx.notify();
     });
 
-    // Three references, in three files, the panel focused on the first;
+    // Three references (Find All References is shift-alt-f12 since Mac T1150), in three files, the panel focused on the first;
     // then vim on.
-    keys("shift-f12", cx);
+    keys("shift-alt-f12", cx);
     cx.update(|_, cx| set_vim_enabled(cx, true));
     draw(cx);
     let panel = workbench.read_with(cx, |workbench, cx| {
