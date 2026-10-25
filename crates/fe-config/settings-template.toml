@@ -44,6 +44,10 @@
 # while cmd (ctrl off macOS) is held, and open them on cmd-click.
 # links = true
 
+# Draw a small square in the colour before each colour a language server finds
+# in the text (CSS, SCSS, Tailwind…).
+# color_decorators = true
+
 # Code action kinds to run, in order, when you save a file, before
 # format_on_save, such as ["source.organizeImports", "source.fixAll"].
 # code_actions_on_save = []

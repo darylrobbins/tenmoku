@@ -216,6 +216,8 @@ pub struct EditorView {
     pub(crate) inlay_hint_host: Option<std::rc::Rc<dyn crate::inlay_hints::InlayHintHost>>,
     /// The hints the last frame painted: their index and window bounds.
     pub(crate) inlay_hints_bounds: Vec<(usize, Bounds<Pixels>)>,
+    /// The host's colour swatches ([`crate::color_swatches`]).
+    pub(crate) color_swatches: crate::color_swatches::Swatches,
     /// The suggestion losing focus dropped, with the buffer's version then,
     /// for a palette pick that accepts it if the buffer hasn't changed since
     /// ([`ghost_text`]).
@@ -299,6 +301,9 @@ pub struct EditorView {
     /// The inlay hints the last frame painted: their text and boxes.
     #[cfg(test)]
     pub(crate) painted_inlay_hints: Vec<(String, Bounds<Pixels>)>,
+    /// The colour swatches the last frame painted.
+    #[cfg(test)]
+    pub(crate) painted_swatches: Vec<crate::color_swatches::Painted>,
     /// The minimap the last frame painted.
     #[cfg(test)]
     pub(crate) painted_minimap: Option<crate::element::minimap::Painted>,
@@ -417,6 +422,7 @@ impl EditorView {
             inlay_hints: Default::default(),
             inlay_hint_host: None,
             inlay_hints_bounds: Vec::new(),
+            color_swatches: Default::default(),
             blurred_ghost_text: None,
             ghost_text_subscriptions: Vec::new(),
             reported_top: 0.,
@@ -459,6 +465,8 @@ impl EditorView {
             painted_ghost: None,
             #[cfg(test)]
             painted_inlay_hints: Vec::new(),
+            #[cfg(test)]
+            painted_swatches: Vec::new(),
             #[cfg(test)]
             painted_minimap: None,
             #[cfg(test)]

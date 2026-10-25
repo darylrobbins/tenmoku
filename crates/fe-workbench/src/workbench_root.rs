@@ -238,6 +238,7 @@ impl Workbench {
             .set(event.settings.editor.inlay_hints);
         self.lsp.code_lens_on.set(event.settings.editor.code_lens);
         self.lsp.links_on.set(event.settings.editor.links);
+        (self.lsp.color_decorators_on).set(event.settings.editor.color_decorators);
         self.lsp.lightbulb_on.set(event.settings.editor.lightbulb);
         self.lsp
             .semantic_highlighting_on

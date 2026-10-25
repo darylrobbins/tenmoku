@@ -577,6 +577,10 @@ pub(crate) struct Lsp {
     pub(crate) links_on: std::cell::Cell<bool>,
     /// The document links of each open buffer.
     links: links::Links,
+    /// Whether `editor.color_decorators` is on (set from the settings each reload).
+    pub(crate) color_decorators_on: std::cell::Cell<bool>,
+    /// The document colours of each open buffer.
+    colors: colors::Colors,
     /// Whether `editor.semantic_highlighting` is on (set from the settings each reload).
     pub(crate) semantic_highlighting_on: std::cell::Cell<bool>,
     /// Every shown buffer's semantic tokens.
@@ -753,6 +757,8 @@ impl Lsp {
             lenses: Default::default(),
             links_on: std::cell::Cell::new(true),
             links: Default::default(),
+            color_decorators_on: std::cell::Cell::new(true),
+            colors: Default::default(),
             semantic_highlighting_on: std::cell::Cell::new(true),
             semantic_tokens: Default::default(),
             code_actions_on_save: Rc::default(),
@@ -1343,6 +1349,7 @@ impl Workbench {
         self.sync_inlay_hints(cx);
         self.sync_lenses(cx);
         self.sync_links(cx);
+        self.sync_colors(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
@@ -2539,6 +2546,8 @@ mod highlights;
 #[path = "lsp_lightbulb.rs"]
 mod lightbulb;
 
+#[path = "lsp_colors.rs"]
+mod colors;
 #[path = "lsp_inlay_hints.rs"]
 mod inlay_hints;
 #[path = "lsp_lenses.rs"]

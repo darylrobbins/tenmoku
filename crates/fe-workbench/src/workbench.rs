@@ -321,6 +321,7 @@ impl Workbench {
         let inlay_hints = settings.inlay_hints;
         let code_lens = settings.code_lens;
         let links = settings.links;
+        let color_decorators = settings.color_decorators;
         let lightbulb = settings.lightbulb;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
@@ -637,6 +638,7 @@ impl Workbench {
         workbench.lsp.inlay_hints_on.set(inlay_hints);
         workbench.lsp.code_lens_on.set(code_lens);
         workbench.lsp.links_on.set(links);
+        workbench.lsp.color_decorators_on.set(color_decorators);
         workbench.lsp.lightbulb_on.set(lightbulb);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);

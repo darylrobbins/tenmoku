@@ -17,6 +17,7 @@
 //! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`. An
 //! editor is a kiln-shell pane item ([`pane_item`]).
 
+pub mod color_swatches;
 pub mod commands;
 pub mod completion_menu;
 pub mod diff_view;
@@ -37,6 +38,7 @@ mod timing;
 mod view;
 mod vim;
 
+pub use color_swatches::ColorSwatch;
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
 pub use fe_config::{

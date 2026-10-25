@@ -459,6 +459,9 @@ pub struct EditorSettings {
     /// pointer while cmd (ctrl off macOS) is held, and open them on
     /// cmd-click.
     pub links: bool,
+    /// Draw a small square in the colour before each colour a language
+    /// server finds in the text (CSS, SCSS, Tailwind…).
+    pub color_decorators: bool,
     /// Code action kinds to run, in order, when you save a file, before
     /// `format_on_save`, such as `["source.organizeImports", "source.fixAll"]`.
     pub code_actions_on_save: Vec<String>,
@@ -671,6 +674,7 @@ impl Default for EditorSettings {
             lightbulb: true,
             code_lens: true,
             links: true,
+            color_decorators: true,
             code_actions_on_save: Vec::new(),
             auto_close_pairs: true,
             auto_save: AutoSave::default(),

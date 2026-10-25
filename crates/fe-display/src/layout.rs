@@ -764,12 +764,41 @@ pub fn layout_frame_with_annotation_column<M: TextMeasure>(
     highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
     fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
+    layout_frame_with_annotation_column_and_hints(
+        input,
+        annotation_width,
+        blocks,
+        inlay,
+        &[],
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_annotation_column`], with `hints`
+/// drawn as [`layout_frame_with_hints`] draws them.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_with_annotation_column_and_hints<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    annotation_width: f32,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    hints: &[Inlay<M::Style>],
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
     lay_out_frame(
         input,
         Some(annotation_width),
         blocks,
         inlay,
-        &[],
+        hints,
         measure,
         long_rows,
         widths,

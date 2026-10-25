@@ -100,7 +100,11 @@ fn next_id() -> u64 {
 /// Where each of `offsets`, in the buffer at `from`, is in `snapshot`: after
 /// text inserted at it, and `None` if an edit replaced or deleted text
 /// strictly around it.
-fn follow(snapshot: &BufferSnapshot, from: Version, offsets: &[usize]) -> Vec<Option<usize>> {
+pub(crate) fn follow(
+    snapshot: &BufferSnapshot,
+    from: Version,
+    offsets: &[usize],
+) -> Vec<Option<usize>> {
     // Compacted away: the offsets can't be carried, so the hints go.
     if from < snapshot.oldest_version() {
         return vec![None; offsets.len()];

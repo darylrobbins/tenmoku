@@ -44,6 +44,9 @@
 //! - [`LspManager::document_links`] asks for an open buffer's
 //!   [`DocumentLink`]s, and [`LspManager::resolve_document_link`] fills in
 //!   a link's target.
+//! - [`LspManager::document_colors`] asks for the [`ColorInformation`]s an
+//!   open buffer's text spells, and [`LspManager::color_presentations`] for
+//!   the [`ColorPresentation`]s that write one.
 //! - [`LspManager::semantic_tokens`] asks for an open buffer's
 //!   [`SemanticTokens`], in full or as a delta of the last ones: byte
 //!   ranges of the buffer's version, with the names the server's legend
@@ -81,6 +84,7 @@ mod code_lens;
 mod completion;
 mod diagnostics;
 mod document;
+mod document_color;
 pub mod document_highlight;
 mod document_link;
 mod encoding;
@@ -127,6 +131,7 @@ pub use diagnostics::{
     Diagnostic, DiagnosticTag, FileDiagnostic, Related, Severity, decode_file_diagnostics,
 };
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
+pub use document_color::{ColorInformation, ColorPresentation};
 pub use document_highlight::{DocumentHighlight, HighlightKind};
 pub use document_link::DocumentLink;
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};

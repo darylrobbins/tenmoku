@@ -2372,6 +2372,9 @@ fn client_capabilities() -> ClientCapabilities {
                 dynamic_registration: dynamic,
                 tooltip_support: Some(true),
             }),
+            color_provider: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
             // Full and delta; ranges only help with huge files.
             semantic_tokens: Some(SemanticTokensClientCapabilities {
                 dynamic_registration: dynamic,

@@ -130,6 +130,8 @@ pub(crate) struct FrameLayout {
     ghost: ghost_text::Placed,
     /// The hints the frame laid out, shaped small.
     inlay_hints: Vec<crate::inlay_hints::Shown>,
+    /// The colour swatches the frame laid out.
+    color_swatches: Vec<crate::color_swatches::Shown>,
     /// The minimap beside the text, if it shows ([`minimap`]).
     pub(crate) minimap: Option<minimap::Placed>,
     /// Sticky scroll's band of pinned headers, if it pins any
@@ -702,6 +704,7 @@ impl Element for EditorElement {
             view.sync_visual();
             view.sync_yank_flash();
             view.sync_inlay_hints();
+            view.sync_color_swatches();
             // Caught up with edits made through another view of the buffer:
             // count them.
             view.sync_find(cx);
@@ -830,19 +833,23 @@ impl Element for EditorElement {
             None => input,
         };
         let gutter = view.gutter;
-        let hints = crate::inlay_hints::inlays(view);
+        // The swatches' gaps after the hints, so a hint at a swatch's
+        // offset comes first; the hints' indexes are the view's.
+        let mut hints = crate::inlay_hints::inlays(view);
+        let first_swatch = hints.len();
+        hints.extend(crate::color_swatches::inlays(view));
         let unnecessary = unnecessary_ranges(&model.diagnostics());
         let queried = decorations::Queried::default();
         // The colours of the frame's `Foreground` decorations, found once
         // the frame's rows are known.
         let foreground: std::cell::RefCell<Vec<StyledSpan<Hsla>>> = Default::default();
         let mut lay_out = |input: &FrameInput<Hsla>| match gutter {
-            // fe-display lays hints out only beside no annotation column.
-            true if annotation_width > 0. => layout::layout_frame_with_annotation_column(
+            true if annotation_width > 0. => layout::layout_frame_with_annotation_column_and_hints(
                 input,
                 annotation_width,
                 &blocks,
                 inlay.as_ref(),
+                &hints,
                 &mut shaper,
                 &mut long_rows,
                 &mut glyph_widths,
@@ -1107,6 +1114,7 @@ impl Element for EditorElement {
             host_x,
         );
         let inlay_hints = crate::inlay_hints::layout(&frame, view, &mut small);
+        let color_swatches = crate::color_swatches::layout(&frame, view, first_swatch);
         let annotations = annotation_column::layout(&frame, view, &mut shaper, em);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
@@ -1193,6 +1201,7 @@ impl Element for EditorElement {
             proposal_texts: mem::take(proposal_texts),
             ghost,
             inlay_hints,
+            color_swatches,
             minimap: None,
             sticky_scroll: None,
             prepaint_started: started,
@@ -1459,6 +1468,8 @@ impl Element for EditorElement {
         let mut inlay_hints_bounds = Vec::new();
         #[cfg(test)]
         let mut painted_inlay_hints = Vec::new();
+        #[cfg(test)]
+        let mut painted_swatches = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -1579,6 +1590,14 @@ impl Element for EditorElement {
                         &mut inlay_hints_bounds,
                         #[cfg(test)]
                         &mut painted_inlay_hints,
+                    );
+                    crate::color_swatches::paint(
+                        &layout.color_swatches,
+                        &layout,
+                        &theme,
+                        window,
+                        #[cfg(test)]
+                        &mut painted_swatches,
                     );
                     #[cfg(test)]
                     decorations::note("text");
@@ -1775,6 +1794,7 @@ impl Element for EditorElement {
                 view.painted_proposals = painted_proposals;
                 view.painted_ghost = painted_ghost;
                 view.painted_inlay_hints = painted_inlay_hints;
+                view.painted_swatches = painted_swatches;
                 view.painted_minimap = painted_minimap;
                 view.painted_sticky_scroll = painted_sticky_scroll;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();

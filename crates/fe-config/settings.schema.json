@@ -142,6 +142,11 @@
           "description": "Show language servers' code lenses (\"3 references\", \"Run\") above rows.",
           "type": "boolean"
         },
+        "color_decorators": {
+          "default": true,
+          "description": "Draw a small square in the colour before each colour a language\nserver finds in the text (CSS, SCSS, Tailwind…).",
+          "type": "boolean"
+        },
         "font_family": {
           "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
@@ -1024,6 +1029,7 @@
         "bracket_pair_colors": true,
         "code_actions_on_save": [],
         "code_lens": true,
+        "color_decorators": true,
         "font_ligatures": false,
         "font_size": 13.0,
         "format_on_save": false,
