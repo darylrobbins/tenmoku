@@ -7,6 +7,7 @@ const NAMES: &[&str] = &[
     "attribute",
     "comment",
     "comment.documentation",
+    "comment.documentation.code",
     "constant",
     "constant.builtin",
     "constant.enum_member",

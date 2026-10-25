@@ -1,5 +1,5 @@
-//! Markdown inside Rust doc comments: link text is highlighted by an injected
-//! `rustdoc_inline` layer, prose and code spans keep the comment colour.
+//! Markdown inside Rust doc comments: code spans are highlighted by an injected
+//! `rustdoc_inline` layer, prose keeps the comment colour.
 
 #![cfg(all(feature = "rust", feature = "markdown"))]
 
@@ -41,9 +41,9 @@ fn has(found: &[(String, &str)], text: &str, highlight: &str) {
 fn line_doc_comment_spans_and_links() {
     let found = spans("/// Uses `Vec` and [`Option`].\nfn a() {}\n");
     has(&found, "/// Uses ", "comment.documentation");
-    has(&found, "Vec", "comment.documentation");
+    has(&found, "`Vec`", "comment.documentation.code");
     has(&found, " and ", "comment.documentation");
-    has(&found, "`Option`", "markup.link");
+    has(&found, "`Option`", "comment.documentation.code");
     has(&found, ".\n", "comment.documentation");
     has(&found, "fn", "keyword");
 }
@@ -52,7 +52,7 @@ fn line_doc_comment_spans_and_links() {
 fn inner_doc_comment_spans() {
     let found = spans("//! Crate `x`.\n");
     has(&found, "//! Crate ", "comment.documentation");
-    has(&found, "x", "comment.documentation");
+    has(&found, "`x`", "comment.documentation.code");
     has(&found, ".\n", "comment.documentation");
 }
 
@@ -60,7 +60,7 @@ fn inner_doc_comment_spans() {
 fn block_doc_comment_spans() {
     let found = spans("/** A `y` here */\nfn a() {}\n");
     has(&found, "/** A ", "comment.documentation");
-    has(&found, "y", "comment.documentation");
+    has(&found, "`y`", "comment.documentation.code");
     has(&found, " here */", "comment.documentation");
 }
 

@@ -74,6 +74,7 @@ minimap_gutter_deleted = "#d6a2a7"
 [syntax]
 "attribute" = "#986801"
 "comment" = "#a0a1a7"
+"comment.documentation.code" = "#383a42"
 "constant" = "#986801"
 "constant.enum_member" = "#0184bc"
 "constructor" = "#c18401"

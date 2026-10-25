@@ -1,5 +1,5 @@
-//! Rust doc comments colour only link text, as VS Code does: code spans, their
-//! backticks and escapes stay in the comment colour. `.md` files keep theirs.
+//! Rust doc comments colour link text and code spans, as VS Code does: escapes
+//! and emphasis stay in the comment colour. `.md` files keep theirs.
 
 #![cfg(all(feature = "rust", feature = "markdown"))]
 
@@ -47,7 +47,7 @@ fn none_of(found: &[(String, &str)], highlights: &[&str]) {
 }
 
 #[test]
-fn code_spans_escapes_and_emphasis_keep_the_comment_colour() {
+fn escapes_and_emphasis_keep_the_comment_colour() {
     let found = spans(
         "rust",
         "/// Uses `Vec` and [`Option`], \\_ *e*.\nfn a() {}\n",
@@ -62,8 +62,8 @@ fn code_spans_escapes_and_emphasis_keep_the_comment_colour() {
             "emphasis",
         ],
     );
-    has(&found, "Vec", "comment.documentation");
-    has(&found, "`Option`", "markup.link");
+    has(&found, "`Vec`", "comment.documentation.code");
+    has(&found, "`Option`", "comment.documentation.code");
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn inner_and_block_doc_comments_agree() {
     for text in ["//! A `x`.\n", "/** A `x` */\nfn a() {}\n"] {
         let found = spans("rust", text);
         none_of(&found, &["markup.raw", "punctuation.delimiter"]);
-        has(&found, "x", "comment.documentation");
+        has(&found, "`x`", "comment.documentation.code");
     }
 }
 
@@ -79,11 +79,4 @@ fn inner_and_block_doc_comments_agree() {
 fn markdown_files_still_colour_code_spans() {
     let found = spans("markdown", "Uses `Vec` here.\n");
     has(&found, "Vec", "markup.raw");
-}
-
-#[test]
-fn doc_comment_code_span_keeps_comment_colour() {
-    let found = spans("rust", "/// Uses `Vec` here.\nfn a() {}\n");
-    none_of(&found, &["markup.raw", "punctuation.delimiter"]);
-    has(&found, "`Vec`", "comment.documentation");
 }
