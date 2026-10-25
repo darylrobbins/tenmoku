@@ -1196,6 +1196,10 @@ impl Pane {
                     } else {
                         pane.restores.remove(&path);
                     }
+                    // Whoever waits on the read is told it is over, even
+                    // when another open or an activation has taken the
+                    // pane's place since.
+                    cx.notify();
                 })
                 .ok();
             }

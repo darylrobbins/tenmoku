@@ -425,6 +425,19 @@ impl Workbench {
             BufferAddress::Last if last > 0 => Ok(last),
             BufferAddress::Last => Err(E16.to_owned()),
         };
+        let address_of = address;
+        // A range's buffers: backwards is E493 before an end past the last
+        // buffer is E16, as nvim says.
+        let checked_range = |first: BufferAddress, last: BufferAddress| {
+            let loose = |address: BufferAddress| match address {
+                BufferAddress::Number(number) => Ok(number),
+                address => address_of(address),
+            };
+            if loose(first)? > loose(last)? {
+                return Err(E493.to_owned());
+            }
+            Ok((address(first)?, address(last)?))
+        };
         let alternate =
             || (buffers.alternate(pane.entity_id(), current)).ok_or_else(|| E23.to_owned());
         let root = self.root.clone();
@@ -447,8 +460,35 @@ impl Workbench {
                 last,
                 command,
             } => {
-                let (first, last) = (address(first)?, address(last)?);
-                if first > last {
+                checked_range(first, last)?;
+                self.vim_buffer_command(editor, *command, window, cx)
+            }
+            BufferCommand::Ordered {
+                first,
+                last: end,
+                command,
+            } => {
+                // Only the order, in the editor's lines as nvim reads a count
+                // address there: `:1,9bn` has a count that isn't a buffer.
+                let (caret, lines) = editor.read_with(cx, |editor, _| {
+                    let model = editor.model();
+                    let text = model.text();
+                    let head = model.primary_selection().head();
+                    (
+                        text.offset_to_point(head).row + 1,
+                        // A newline ending the text starts no line.
+                        match text.offset_to_point(text.len()) {
+                            end if end.column == 0 && end.row > 0 => end.row,
+                            end => end.row + 1,
+                        },
+                    )
+                });
+                let resolve = |address: BufferAddress| match address {
+                    BufferAddress::Number(number) => number,
+                    BufferAddress::Current => caret,
+                    BufferAddress::Last => lines,
+                };
+                if resolve(first) > resolve(end) {
                     return Err(E493.to_owned());
                 }
                 self.vim_buffer_command(editor, *command, window, cx)
@@ -546,10 +586,7 @@ impl Workbench {
                     BufferTarget::Number(number) => vec![number],
                     BufferTarget::Name(name) => vec![named(&name, true)?],
                     BufferTarget::Range { first, last } => {
-                        let (first, last) = (address(first)?, address(last)?);
-                        if first > last {
-                            return Err(E493.to_owned());
-                        }
+                        let (first, last) = checked_range(first, last)?;
                         (first..=last).collect()
                     }
                 };
@@ -792,3 +829,7 @@ mod transition_tests;
 #[cfg(test)]
 #[path = "vim_buffers_followup_tests.rs"]
 mod followup_tests;
+
+#[cfg(test)]
+#[path = "vim_buffers_cancel_tests.rs"]
+mod cancel_tests;

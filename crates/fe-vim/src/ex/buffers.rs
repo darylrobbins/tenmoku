@@ -69,6 +69,14 @@ pub enum BufferCommand {
         last: BufferAddress,
         command: Box<BufferCommand>,
     },
+    /// `command` after the host has checked the order of the range `first`
+    /// to `last` alone, as for `:.,1bn`: E493 backwards, and a number past
+    /// the last buffer is fine.
+    Ordered {
+        first: BufferAddress,
+        last: BufferAddress,
+        command: Box<BufferCommand>,
+    },
 }
 
 /// The buffer a [`BufferCommand`] names.
@@ -173,25 +181,31 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
             }
         }
         Kind::Next | Kind::Previous => {
-            let range_count = range_count(range)?;
+            let bounds = bounds(range, false)?;
             let count = match args {
-                "" => range_count,
+                "" => range_count(range)?,
                 args => count(args)?,
             };
-            match kind {
-                Kind::Next => BufferCommand::Next(count),
-                _ => BufferCommand::Previous(count),
-            }
+            checked(
+                bounds,
+                match kind {
+                    Kind::Next => BufferCommand::Next(count),
+                    _ => BufferCommand::Previous(count),
+                },
+            )
         }
         Kind::First | Kind::Last if !args.is_empty() => {
             return Err(ExError::Trailing(args.to_string()));
         }
         Kind::First | Kind::Last => {
-            range_count(range)?;
-            match kind {
-                Kind::First => BufferCommand::First,
-                _ => BufferCommand::Last,
-            }
+            let bounds = bounds(range, false)?;
+            checked(
+                bounds,
+                match kind {
+                    Kind::First => BufferCommand::First,
+                    _ => BufferCommand::Last,
+                },
+            )
         }
         Kind::Delete => {
             let bounds = bounds(range, true)?;
@@ -274,14 +288,12 @@ fn count(args: &str) -> Result<u32, ExError> {
 }
 
 /// `:bn`'s and `:bp`'s count from `range`, its last address: 1 with none,
-/// and for 0. Unlike `:b`'s, the range is checked here alone, as nvim does
-/// for these: a negative address is E16 and a backwards one E493, but one
-/// past the last buffer is fine.
+/// and for 0. Only a number is one; the range itself is checked by
+/// [`bounds`].
 fn range_count(range: &[Address]) -> Result<u32, ExError> {
     let Some(address) = range.last() else {
         return Ok(1);
     };
-    bounds(range, false)?;
     match address.base {
         Base::Line(line) => Ok(u32::try_from(line).unwrap_or(0).max(1)),
         _ => Err(ExError::Unsupported("a count other than a number".into())),
@@ -289,10 +301,11 @@ fn range_count(range: &[Address]) -> Result<u32, ExError> {
 }
 
 /// The first and last buffer of `range`, its last two addresses (a single
-/// one is both, `%` is all), or none for an empty range. A negative address
-/// is E16, and 0 too if `from_one`, where a number starts at 1. Two numbers
-/// the wrong way round are E493, but with `from_one` that is the host's to
-/// say after E16 for one past the last buffer.
+/// one is both, `%` is all), or none for an empty range (and for `%` unless
+/// `from_one`). Two numbers the wrong way round are E493, before any
+/// address is checked as nvim does; then a negative address is E16, and 0
+/// too if `from_one`, where a number starts at 1. Symbolic addresses, and
+/// numbers past the last buffer, are the host's to check.
 fn bounds(
     range: &[Address],
     from_one: bool,
@@ -312,37 +325,56 @@ fn bounds(
         [.., first, _] => first,
         _ => last,
     };
-    if [first, last]
-        .iter()
-        .any(|address| !address.parts.is_empty())
-    {
-        return Err(offsets());
-    }
-    let numbers = |address: &Address| match (address.parts.is_empty(), &address.base) {
-        (true, Base::Line(line)) => Some(*line),
+    let number = |address: &Address| match address.base {
+        Base::Line(line) => Some(line),
         _ => None,
     };
+    if let (Some(a), Some(b)) = (number(first), number(last))
+        && a > b
+    {
+        return Err(ExError::Backwards);
+    }
+    // A symbolic first is at least 1, so a last before that is backwards.
+    if matches!(first.base, Base::Current | Base::Last)
+        && matches!(number(last), Some(line) if line < 1)
+    {
+        return Err(ExError::Backwards);
+    }
     for address in [first, last] {
-        if let Some(line) = numbers(address)
+        if let Some(line) = number(address)
             && (line < 0 || from_one && line == 0)
         {
             return Err(ExError::InvalidRange);
         }
     }
-    if !from_one && matches!((numbers(first), numbers(last)), (Some(a), Some(b)) if a > b) {
-        return Err(ExError::Backwards);
+    let resolve = |address: &Address| match address.base {
+        Base::Line(0) => Ok(BufferAddress::Number(0)),
+        _ => self::address(address),
+    };
+    Ok(Some((resolve(first)?, resolve(last)?)))
+}
+
+/// `command`, with the range `bounds` for the host to check the order of
+/// if it can't tell.
+fn checked(
+    bounds: Option<(BufferAddress, BufferAddress)>,
+    command: BufferCommand,
+) -> BufferCommand {
+    match bounds {
+        Some((first, last)) if !ordered(first, last) => BufferCommand::Ordered {
+            first,
+            last,
+            command: Box::new(command),
+        },
+        _ => command,
     }
-    if !from_one {
-        return Ok(None);
-    }
-    Ok(Some((address(first)?, address(last)?)))
 }
 
 /// Whether the buffers `first` to `last` are certainly not backwards, with
 /// their numbers: those with a `.` or `$` are the host's to compare.
 fn ordered(first: BufferAddress, last: BufferAddress) -> bool {
     matches!((first, last), (BufferAddress::Number(a), BufferAddress::Number(b)) if a <= b)
-        || first == BufferAddress::Number(1)
+        || matches!(first, BufferAddress::Number(0 | 1))
         || first == last
 }
 

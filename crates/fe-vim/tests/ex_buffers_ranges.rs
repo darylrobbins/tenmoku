@@ -6,6 +6,7 @@
 //!   (`:2147483648bn` wraps to one), but `:0bn`, `:0,2bf` are fine.
 //! - `:9b`, `:9b 2` and `:1,9bd` are E16 (past the highest buffer), but
 //!   `:9bn`, `:9bf` and `:1,9bn` are not: the host's to say for `:b`/`:bd`.
+//! - `:2,0b`, `:3,0bd 1` and `:9,1b` are E493, not E16: backwards comes first.
 //! - `:2,1bn`, `:2,1bf`, `:2,1bl`, `:2,1bn 1`, `:2,1b`, `:2,1bd` are E493.
 //!   (nvim only asks to swap when typed; here it is E493 as when sourced.)
 //! - `:99999999999bn` is a count of 1215752191, the 32 bits it keeps.
@@ -46,9 +47,7 @@ fn buffer_ranges_match_nvim() {
         "0,2b",
         "0,2bd",
         "0,0b",
-        "2,0b",
         "0,2b 3",
-        "3,0bd 1",
         "2147483648bn",
         "2147483648b",
         "2147483648bd 2",
@@ -56,7 +55,7 @@ fn buffer_ranges_match_nvim() {
         assert_eq!(error(line), "E16: Invalid range", ":{line}");
     }
     for line in [
-        "2,1bn", "2,1bN", "2,1bp", "2,1bf", "2,1br", "2,1bl", "2,1bn 1", "99,3bn",
+        "2,1bn", "2,1bN", "2,1bp", "2,1bf", "2,1br", "2,1bl", "2,1bn 1", "99,3bn", "2,1b", "2,1bd",
     ] {
         assert_eq!(error(line), "E493: Backwards range given", ":{line}");
     }
@@ -70,17 +69,6 @@ fn buffer_ranges_match_nvim() {
     let switch = |target| BufferCommand::Switch(target);
     let number = |number| BufferTarget::Number(number);
     assert_eq!(host("9b 2"), ranged(n(9), n(9), switch(number(2))),);
-    assert_eq!(
-        host("2,1b"),
-        ranged(
-            n(2),
-            n(1),
-            switch(BufferTarget::Range {
-                first: n(1),
-                last: n(1)
-            })
-        )
-    );
     assert_eq!(
         host("$,.b"),
         ranged(
@@ -155,4 +143,42 @@ fn escaped_trailing_blank_is_kept() {
             force: false
         }
     );
+}
+
+#[test]
+fn backwards_error_precedes_endpoint_error() {
+    for line in [
+        "2,0b", "3,0bd 1", "9,1b", "9,1bd", "2,0bn", "2,0bf", ".,0b", "$,0bd", ".,0bn",
+    ] {
+        assert_eq!(error(line), "E493: Backwards range given", ":{line}");
+    }
+    // Not backwards, the endpoint is the error.
+    assert_eq!(error("0,0b"), "E16: Invalid range");
+}
+
+#[test]
+fn symbolic_ranges_match_nvim() {
+    // Accepted: the range is ignored, or overridden by the argument.
+    assert_eq!(host("%bf"), BufferCommand::First);
+    assert_eq!(host("$bl"), BufferCommand::Last);
+    assert_eq!(host(".bf"), BufferCommand::First);
+    assert_eq!(host(".bn 2"), BufferCommand::Next(2));
+    assert_eq!(host("%bn 2"), BufferCommand::Next(2));
+    // The count must be a number, as before.
+    assert!(error(".bn").contains("not supported"));
+    // Backwards where a symbol is an end is the host's to say.
+    let ordered = host(".,1bn");
+    assert_eq!(
+        ordered,
+        BufferCommand::Ordered {
+            first: BufferAddress::Current,
+            last: n(1),
+            command: Box::new(BufferCommand::Next(1)),
+        }
+    );
+    assert!(matches!(host("$,1bf"), BufferCommand::Ordered { .. }));
+    // Certainly ordered, not wrapped.
+    for line in ["1,.bf", "0,.bf"] {
+        assert!(!format!("{:?}", host(line)).contains("Ordered"), ":{line}");
+    }
 }
