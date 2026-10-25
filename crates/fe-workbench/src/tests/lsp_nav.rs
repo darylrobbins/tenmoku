@@ -180,7 +180,7 @@ fn goto_definition_before_and_after_ready(cx: &mut gpui::TestAppContext) {
         ]))),
     );
     caret_on_call(&mut s);
-    s.cx.simulate_keystrokes("shift-f12");
+    s.cx.simulate_keystrokes("shift-alt-f12");
     let panel = s
         .workbench
         .read_with(&s.cx, |w, cx| w.dock().read(cx).references().clone());

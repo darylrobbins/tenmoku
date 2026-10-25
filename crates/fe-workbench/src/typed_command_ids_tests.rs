@@ -287,6 +287,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("workbench.toggle_zen_mode", "Toggle Zen Mode", "workbench"),
     ("editor.peek_definition", "Peek Definition", "editor"),
+    ("editor.peek_references", "Peek References", "editor"),
     ("peek.close", "Close Peek", "peek || peek_shown"),
     ("peek.open", "Open Peeked Definition", "peek"),
 ];

@@ -23,6 +23,9 @@
 //! opens nothing; one with no definitions says so in a toast, as go to
 //! definition does in its picker. In a diff's side, which the pane doesn't
 //! draw a peek over, it goes to the definition instead.
+//!
+//! Peek References (`editor.peek_references`, shift-F12) opens the same
+//! widget on the uses of the word at the caret: see [`references`].
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
@@ -41,7 +44,10 @@ use gpui::{
     px,
 };
 
-use crate::{Pane, PaneEvent, Workbench, loader, pane::Reveal};
+use crate::{Pane, PaneEvent, ReferencesPanel, Workbench, loader, pane::Reveal};
+
+#[path = "peek_references.rs"]
+mod references;
 
 /// The key context of the peek, around its excerpt's editor.
 pub(crate) const KEY_CONTEXT: &str = "peek";
@@ -75,11 +81,21 @@ pub(crate) struct Peek {
     editor: WeakEntity<EditorView>,
 }
 
-/// One definition the peek can show.
+/// One definition, or reference, the peek can show.
 pub(crate) struct Target {
     location: Location,
     /// Its path as the answer gave it, and 1-based line, for the list.
     label: SharedString,
+}
+
+impl Target {
+    fn at(location: Location) -> Self {
+        let label = format!("{}:{}", location.rel.display(), location.row + 1);
+        Self {
+            location,
+            label: label.into(),
+        }
+    }
 }
 
 /// Where a target is now: the file as the pane would open it, the
@@ -226,6 +242,9 @@ pub(crate) struct PeekView {
     placed: Placement,
     targets: Vec<Target>,
     selected: usize,
+    /// Peek References' list, which its targets follow
+    /// ([`references`]).
+    references: Option<Entity<ReferencesPanel>>,
     /// The selected target's file.
     path: Option<PathBuf>,
     excerpt: Option<Excerpt>,
@@ -248,6 +267,7 @@ pub(crate) struct PeekView {
     /// Reading them.
     _baselines: Task<()>,
     _observe: Subscription,
+    _references: Vec<Subscription>,
 }
 
 /// Where `editor`'s caret is and its text's version, for an answer to land
@@ -283,18 +303,22 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let targets = (items.into_iter()).map(|item| Target::at(item.location));
+        self.open_peek_on(editor, targets.collect(), None, window, cx);
+    }
+
+    /// Opens a peek in `editor` on `targets`, as [`Workbench::open_peek`],
+    /// or on what `references` finds as it finds it, that list focused.
+    fn open_peek_on(
+        &mut self,
+        editor: &Entity<EditorView>,
+        targets: Vec<Target>,
+        references: Option<Entity<ReferencesPanel>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.pane().clone();
         close(&pane, false, window, cx);
-        let targets: Vec<Target> = (items.into_iter())
-            .map(|item| {
-                let location = item.location;
-                let label = format!("{}:{}", location.rel.display(), location.row + 1);
-                Target {
-                    location,
-                    label: label.into(),
-                }
-            })
-            .collect();
         // The files the locations on disk are in, each once.
         let mut on_disk: Vec<PathBuf> = (targets.iter())
             .filter(|target| target.location.snapshot.is_none())
@@ -302,11 +326,10 @@ impl Workbench {
             .collect();
         on_disk.sort();
         on_disk.dedup();
-        let Some(source) =
-            (targets.first()).and_then(|first| self.peek_source(&first.location, cx))
-        else {
+        let source = (targets.first()).and_then(|first| self.peek_source(&first.location, cx));
+        if source.is_none() && references.is_none() {
             return;
-        };
+        }
         let (row, placed, version, shown) = {
             let view = editor.read(cx);
             let model = view.model();
@@ -328,6 +351,9 @@ impl Workbench {
         let (weak_pane, weak_editor) = (pane.downgrade(), editor.downgrade());
         let view = cx.new(|cx| {
             let observe = cx.observe_in(editor, window, PeekView::editor_changed);
+            let followed = (references.as_ref())
+                .map(|panel| PeekView::follow(panel, window, cx))
+                .unwrap_or_default();
             #[cfg(test)]
             let hold = HOLD_BASELINES.with(|hold| hold.borrow_mut().take());
             let baselines = cx.spawn_in(window, async move |view, cx| {
@@ -350,6 +376,7 @@ impl Workbench {
                 placed,
                 targets,
                 selected: 0,
+                references,
                 path: None,
                 excerpt: None,
                 error: None,
@@ -362,9 +389,16 @@ impl Workbench {
                 baselines: HashMap::new(),
                 _baselines: baselines,
                 _observe: observe,
+                _references: followed,
             };
-            window.focus(&view.focus, cx);
-            view.show(0, source, window, cx);
+            let focus = match &view.references {
+                Some(panel) => panel.focus_handle(cx),
+                None => view.focus.clone(),
+            };
+            window.focus(&focus, cx);
+            if let Some(source) = source {
+                view.show(0, source, window, cx);
+            }
             view
         });
         pane.update(cx, |pane, cx| {
@@ -633,7 +667,9 @@ impl PeekView {
     ) {
         self.baselines.extend(read);
         let ix = self.selected;
-        let on_disk = self.targets[ix].location.snapshot.is_none();
+        // Peek References' may have none yet.
+        let target = self.targets.get(ix);
+        let on_disk = target.is_some_and(|target| target.location.snapshot.is_none());
         let shared = self.excerpt.as_ref().is_some_and(|excerpt| !excerpt.read);
         let mapped = (self.path.as_ref()).is_some_and(|path| self.baselines.contains_key(path));
         if on_disk && shared && mapped {
@@ -745,7 +781,11 @@ impl PeekView {
             source.reveal = map_through(baseline, open.text(), target.location.range.clone());
         }
         // Kept for the next excerpt as this one goes.
-        if self.focus.contains_focused(window, cx) {
+        let excerpt = self
+            .excerpt
+            .as_ref()
+            .map(|excerpt| excerpt.view.focus_handle(cx));
+        if excerpt.is_some_and(|excerpt| excerpt.contains_focused(window, cx)) {
             window.focus(&self.focus, cx);
         }
         self.show(ix, source, window, cx);
@@ -971,7 +1011,8 @@ impl DecorationProvider for Highlight {
 impl Render for PeekView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
-        let name = crate::pane::file_name(self.shown_path(cx).as_deref());
+        // Peek References' has none until a reference is found.
+        let name = (self.shown_path(cx)).map(|path| crate::pane::file_name(Some(&path)));
         let place =
             (self.excerpt.as_ref()).map(|excerpt| format!("{}:{}", excerpt.line, excerpt.column));
         let header = div()
@@ -985,7 +1026,7 @@ impl Render for PeekView {
             .bg(ui.panel_background)
             .border_b_1()
             .border_color(ui.border)
-            .child(div().text_color(ui.text).child(name))
+            .children(name.map(|name| div().text_color(ui.text).child(name)))
             .children(place.map(|place| div().text_color(ui.muted_text).child(place)))
             .child(div().flex_1())
             .child(
@@ -999,7 +1040,19 @@ impl Render for PeekView {
                     .debug_selector(|| "peek-close".into())
                     .on_click(cx.listener(|view, _, window, cx| view.dismiss(window, cx))),
             );
-        let list = (self.targets.len() > 1).then(|| {
+        // Peek References' list, in place of the definitions'.
+        let references = self.references.clone().map(|panel| {
+            div()
+                .id("peek-list")
+                .flex_shrink_0()
+                .w(LIST_WIDTH)
+                .h_full()
+                .flex()
+                .border_r_1()
+                .border_color(ui.border)
+                .child(panel)
+        });
+        let list = (references.is_none() && self.targets.len() > 1).then(|| {
             let rows = self.targets.iter().enumerate().map(|(ix, target)| {
                 div()
                     .id(("peek-row", ix))
@@ -1062,6 +1115,7 @@ impl Render for PeekView {
                     .min_h_0()
                     .flex()
                     .flex_row()
+                    .children(references)
                     .children(list)
                     .child(
                         div()

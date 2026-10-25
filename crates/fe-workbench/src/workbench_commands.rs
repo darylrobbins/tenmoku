@@ -657,6 +657,12 @@ impl Workbench {
         });
     }
 
+    /// Peek References
+    #[command(id = "editor.peek_references", context = "editor")]
+    fn peek_references_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, Self::peek_references);
+    }
+
     /// Close Peek
     #[command(id = "peek.close", context = "peek || peek_shown")]
     fn close_peek_command(&mut self, cx: &mut Cx<Self>) {

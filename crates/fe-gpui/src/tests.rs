@@ -219,7 +219,8 @@ const CASES: &[Case] = &[
 /// checked by its `git_keys`, and `cmd-alt-g b` by its
 /// `blame_annotation_keys`. The Markdown preview keys (`cmd-shift-v`,
 /// `cmd-k v`) by its `markdown_preview_bindings`. Peek Definition's
-/// `alt-f12` by its `peek_keys`.
+/// `alt-f12` by its `peek_keys`, and Peek References' `shift-f12` by its
+/// `peek_references_keys`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
     "cmd-alt-]",
@@ -243,6 +244,7 @@ const DEDICATED: &[&str] = &[
     "cmd-shift-v",
     "cmd-k v",
     "alt-f12",
+    "shift-f12",
 ];
 
 fn run_case(case: &Case) {

@@ -306,7 +306,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
     let before = (rail.to_vec(), false);
     assert_eq!(tabs(cx), before, "no References tab yet");
 
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let state = dock.read_with(cx, |dock, _| {
         (dock.is_visible(), dock.active(), dock.title())
@@ -363,7 +363,7 @@ fn results_stream_grouped_by_file(cx: &mut TestAppContext) {
     let release_one = hold(&panel, cx);
     caret_on(&workbench, "helper", cx);
 
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let finding = Some("Finding references to `helper`…".to_owned());
     assert_eq!(shown(&panel, cx), []);
@@ -424,7 +424,7 @@ fn search_provider_end_to_end(cx: &mut TestAppContext) {
     ]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
 
     let panel = references(&workbench, cx);
@@ -469,7 +469,7 @@ fn click_and_enter_open_a_reference(cx: &mut TestAppContext) {
     ]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -546,7 +546,7 @@ fn a_new_run_cancels_the_old(cx: &mut TestAppContext) {
     let panel = references(&workbench, cx);
     let _held = hold(&panel, cx);
     caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     assert_eq!(fake.calls(), 1);
     let first = panel.read_with(cx, |panel, _| panel.cancel_flag());
@@ -554,7 +554,7 @@ fn a_new_run_cancels_the_old(cx: &mut TestAppContext) {
 
     focus_editor(&workbench, cx);
     caret_on(&workbench, "other", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     assert!(first.load(Ordering::Relaxed), "the first run is cancelled");
     settle(cx);
     let rows = shown(&panel, cx);
@@ -611,7 +611,7 @@ fn opening_records_where_the_caret_moved_to(cx: &mut TestAppContext) {
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -650,7 +650,7 @@ fn moving_to_an_unopened_reference_end_is_recorded(cx: &mut TestAppContext) {
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let locations = panel.read_with(cx, |panel, _| panel.locations());
@@ -705,7 +705,7 @@ fn empty_states(cx: &mut TestAppContext) {
     let fake = Fake::default().add(&workbench, cx_);
     focus_editor(&workbench, cx_);
     caret_on(&workbench, "helper", cx_);
-    cx_.simulate_keystrokes("shift-f12");
+    cx_.simulate_keystrokes("shift-alt-f12");
     settle(cx_);
     let panel = references(&workbench, cx_);
     assert_eq!(status(&panel, cx_).as_deref(), Some("No folder open"));
@@ -730,7 +730,7 @@ fn empty_states(cx: &mut TestAppContext) {
         editor
             .unwrap()
             .update(cx, |editor, _| editor.model_mut().set_cursor(at));
-        cx.simulate_keystrokes("shift-f12");
+        cx.simulate_keystrokes("shift-alt-f12");
         settle(cx);
         (header(&panel, cx), status(&panel, cx).unwrap())
     };
@@ -771,7 +771,7 @@ fn only_visible_rows_are_built(cx: &mut TestAppContext) {
         .answer("helper", vec![files], false)
         .add(&workbench, cx);
     caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let count = shown(&panel, cx).len();
@@ -827,7 +827,10 @@ fn the_default_keymap_binds_the_references_commands() {
     assert_eq!(
         bound("nav.find_references"),
         vec![
-            ("shift-f12".to_owned(), "workbench && !terminal".to_owned()),
+            (
+                "alt-shift-f12".to_owned(),
+                "workbench && !terminal".to_owned()
+            ),
             (
                 "g r r".to_owned(),
                 "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
@@ -853,7 +856,7 @@ fn shift_f12_drops_a_definition_still_to_land(cx: &mut TestAppContext) {
     caret_on(&workbench, "helper", cx);
     cx.simulate_keystrokes("f12");
     settle(cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
 
     // The definition's answer lands after shift-F12: it neither jumps nor
@@ -897,7 +900,7 @@ fn a_clamped_reference_counts_as_where_the_caret_landed(cx: &mut TestAppContext)
         .answer("helper", batches, false)
         .add(&workbench, cx);
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     assert_eq!(shown(&panel, cx).len(), 5);
@@ -942,7 +945,7 @@ fn a_landing_is_followed_in_its_own_pane(cx: &mut TestAppContext) {
         right
     );
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -985,7 +988,7 @@ fn back_and_forward_while_a_reference_is_read(cx: &mut TestAppContext) {
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -1037,7 +1040,7 @@ fn a_reference_landing_in_another_pane_meanwhile(cx: &mut TestAppContext) {
         workbench.pane_group(cx).panes()[0].clone()
     });
     caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -1092,7 +1095,7 @@ fn asked_for_at_the_end_of_a_reference(cx: &mut TestAppContext) {
     editor
         .unwrap()
         .update(cx, |editor, _| editor.model_mut().set_cursor(end));
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -1118,7 +1121,7 @@ fn another_reference_opened_while_one_is_read(cx: &mut TestAppContext) {
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let rows = shown(&panel, cx);
@@ -1157,7 +1160,7 @@ fn moving_back_to_an_earlier_opened_end_is_recorded(cx: &mut TestAppContext) {
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let locations = panel.read_with(cx, |panel, _| panel.locations());
@@ -1197,7 +1200,7 @@ fn moving_to_the_end_of_a_superseded_reference_is_recorded(cx: &mut TestAppConte
     let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
     let (workbench, cx) = opened(cx, &root, "src/main.rs");
     let caret = caret_on(&workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(&workbench, cx);
     let locations = panel.read_with(cx, |panel, _| panel.locations());

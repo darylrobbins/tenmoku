@@ -41,6 +41,7 @@ fn go_menu_lists_navigation_commands() {
             "nav.goto_declaration",
             "nav.goto_type_definition",
             "nav.goto_implementation",
+            "editor.peek_references",
             "nav.find_references",
             "-",
             "workbench.next_tab",
@@ -70,7 +71,8 @@ fn go_navigation_shortcuts_follow_the_default_keymap() {
         ("nav.forward", "ctrl-shift--"),
         ("nav.workspace_symbols", "cmd-t"),
         ("nav.goto_definition", "f12"),
-        ("nav.find_references", "shift-f12"),
+        ("editor.peek_references", "shift-f12"),
+        ("nav.find_references", "shift-alt-f12"),
     ] {
         let item = bar
             .menu("Go")

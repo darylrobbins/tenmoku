@@ -537,10 +537,16 @@ keys = { macos = "cmd-f12", default = "ctrl-f12" }
 command = "nav.goto_implementation"
 context = "workbench && !terminal"
 
-# Peek Definition, as VS Code binds it; its own keys are at the end.
+# Peek Definition and Peek References, as VS Code binds them; the peek's
+# own keys are at the end.
 [[bindings]]
 keys = "alt-f12"
 command = "editor.peek_definition"
+context = "editor"
+
+[[bindings]]
+keys = "shift-f12"
+command = "editor.peek_references"
 context = "editor"
 
 [[bindings]]
@@ -548,8 +554,9 @@ keys = "secondary-t"
 command = "nav.workspace_symbols"
 context = "workbench"
 
+# Find All References, as VS Code binds it: shift-f12 peeks at them.
 [[bindings]]
-keys = "shift-f12"
+keys = "shift-alt-f12"
 command = "nav.find_references"
 context = "workbench && !terminal"
 

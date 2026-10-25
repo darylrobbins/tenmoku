@@ -1,6 +1,6 @@
-//! Find references (shift-F12) on the right dock: the uses of the word at
-//! the active editor's caret, grouped by file, which open at the use when
-//! clicked, or with Enter on the selected one.
+//! Find All References (shift-alt-F12) on the right dock: the uses of the
+//! word at the active editor's caret, grouped by file, which open at the use
+//! when clicked, or with Enter on the selected one.
 //!
 //! `nav.find_references` builds a [`NavRequest`] for the active editor's
 //! caret and runs [`Navigation::references`] on the background executor.
@@ -12,8 +12,12 @@
 //! workbench does, cancels the run.
 //!
 //! The results stay, whatever the dock shows meanwhile, until the next
-//! shift-F12, or until the workbench is re-rooted: their paths are relative
-//! to the root they were found in.
+//! shift-alt-F12, or until the workbench is re-rooted: their paths are
+//! relative to the root they were found in.
+//!
+//! Peek References (shift-F12) runs a panel of its own in the peek's list
+//! ([`ReferencesPanel::peeked`]): there a click selects a reference, and a
+//! double-click or Enter asks the peek to open it ([`OpenPeeked`]).
 
 mod landing;
 
@@ -33,10 +37,10 @@ use fe_nav::{
 };
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle, WeakEntity,
-    Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
 use crate::{
@@ -109,9 +113,16 @@ pub struct ReferencesPanel {
     /// A `Row::Ref`'s index in `rows`.
     selected: Option<usize>,
     scroll: UniformListScrollHandle,
+    /// In a peek's list: see [`ReferencesPanel::peeked`].
+    peeked: bool,
     #[cfg(test)]
     pub(crate) test: TestHooks,
 }
+
+/// A peek's panel asks it to open the selected reference.
+pub(crate) struct OpenPeeked;
+
+impl EventEmitter<OpenPeeked> for ReferencesPanel {}
 
 impl ReferencesPanel {
     /// A panel with no results, opening them through `workbench`.
@@ -131,9 +142,18 @@ impl ReferencesPanel {
             references: 0,
             selected: None,
             scroll: UniformListScrollHandle::new(),
+            peeked: false,
             #[cfg(test)]
             test: TestHooks::default(),
         }
+    }
+
+    /// A panel for a peek's list: a click on a reference selects it, and a
+    /// double-click or Enter emits [`OpenPeeked`] rather than opening it.
+    pub(crate) fn peeked(workbench: WeakEntity<Workbench>, cx: &mut App) -> Self {
+        let mut panel = Self::new(workbench, cx);
+        panel.peeked = true;
+        panel
     }
 
     /// Cancels the running search and clears its results, for a new
@@ -168,7 +188,7 @@ impl ReferencesPanel {
 
     /// Cancels the running search, and finds the uses of `word`, the word at
     /// `request`'s caret, once `ready` closes.
-    fn run(
+    pub(crate) fn run(
         &mut self,
         request: NavRequest,
         word: String,
@@ -282,6 +302,25 @@ impl ReferencesPanel {
         cx.notify();
     }
 
+    /// The references' locations, in the order the rows list them.
+    pub(crate) fn found(&self) -> impl Iterator<Item = &fe_nav::Location> {
+        (self.files.iter()).flat_map(|file| file.refs.iter().map(|reference| &reference.location))
+    }
+
+    /// Which of [`ReferencesPanel::found`] is selected.
+    pub(crate) fn selected_reference(&self) -> Option<usize> {
+        let selected = self.selected?;
+        let refs = self.rows[..selected].iter();
+        Some(refs.filter(|row| matches!(row, Row::Ref(..))).count())
+    }
+
+    /// What the status says, once the run is over with no reference found.
+    pub(crate) fn found_none(&self) -> Option<String> {
+        let over = !matches!(self.status, Status::Idle | Status::Running);
+        let (text, _) = self.status().filter(|_| over && self.references == 0)?;
+        Some(text)
+    }
+
     /// The line above the status: the word the results are of.
     fn header(&self) -> Option<String> {
         let word = self.word.as_ref()?;
@@ -358,6 +397,9 @@ impl ReferencesPanel {
             return;
         };
         self.select(ix, cx);
+        if self.peeked {
+            return cx.emit(OpenPeeked);
+        }
         let location = self.files[file].refs[reference].location.clone();
         let Some(workbench) = self.workbench.upgrade() else {
             return;
@@ -439,7 +481,14 @@ impl ReferencesPanel {
                             .when(dimmed, |row| row.opacity(0.5))
                             .when(self.selected == Some(ix), |row| row.bg(selected_bg))
                             .hover(move |row| row.bg(ui.row_hover))
-                            .on_click(cx.listener(move |panel, _, window, cx| {
+                            .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                                // In a peek, a click shows the reference.
+                                if panel.peeked && event.click_count() < 2 {
+                                    if generation == panel.generation {
+                                        panel.select(ix, cx);
+                                    }
+                                    return;
+                                }
                                 panel.open(generation, ix, window, cx)
                             }))
                             .child(
@@ -562,13 +611,14 @@ impl Render for ReferencesPanel {
                     panel.open_selected(window, cx)
                 }
             }))
-            .debug_selector(|| "sidebar-panel".into())
+            .when(!self.peeked, |panel| {
+                panel.debug_selector(|| "sidebar-panel".into()).border_l_1()
+            })
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
             .flex_col()
-            .border_l_1()
             .border_color(ui.border)
             .bg(ui.panel_background)
             .text_color(ui.text)

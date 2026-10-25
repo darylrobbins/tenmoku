@@ -33,7 +33,7 @@ struct Found {
 /// Puts the caret on `helper` in main.rs and finds its references.
 fn find(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Found {
     let caret = caret_on(workbench, "helper", cx);
-    cx.simulate_keystrokes("shift-f12");
+    cx.simulate_keystrokes("shift-alt-f12");
     settle(cx);
     let panel = references(workbench, cx);
     let rows = shown(&panel, cx);

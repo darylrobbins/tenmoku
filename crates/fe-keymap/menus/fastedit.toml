@@ -419,6 +419,10 @@ title = "Go to Implementations"
 command = "nav.goto_implementation"
 
 [[menus.items]]
+title = "Peek References"
+command = "editor.peek_references"
+
+[[menus.items]]
 title = "Find All References"
 command = "nav.find_references"
 

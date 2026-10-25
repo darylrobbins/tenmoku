@@ -239,7 +239,8 @@ fn terminal_keys() {
     let terminal = fe_terminal_view::KEY_CONTEXT;
     for (keys, command) in [
         ("f12", "nav.goto_definition"),
-        ("shift-f12", "nav.find_references"),
+        ("shift-f12", "editor.peek_references"),
+        ("shift-alt-f12", "nav.find_references"),
         ("ctrl--", "nav.back"),
         ("ctrl-shift--", "nav.forward"),
     ] {
