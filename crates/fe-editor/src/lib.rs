@@ -32,6 +32,7 @@ mod disk;
 pub mod ghost_text;
 pub mod indent_guides;
 mod indent_style;
+mod join_lines;
 mod line_sort;
 mod multi_cursor;
 pub mod occurrences;

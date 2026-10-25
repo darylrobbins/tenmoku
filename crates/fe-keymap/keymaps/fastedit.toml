@@ -226,6 +226,12 @@ command = "editor.outdent"
 context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
 
 [[bindings]]
+keys = "ctrl-j"
+command = "editor.join_lines"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
 keys = "alt-up"
 command = "editor.move_rows_up"
 context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"

@@ -373,6 +373,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.move_line_end",
     "editor.move_line_start",
     "editor.move_right",
+    "editor.join_lines",
     "editor.move_rows_down",
     "editor.move_rows_up",
     "editor.move_up",
@@ -474,6 +475,7 @@ fn the_line_sort_commands_have_their_ids_and_titles() {
         ("editor.sort_lines_ascending", "Sort Lines Ascending"),
         ("editor.sort_lines_descending", "Sort Lines Descending"),
         ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
+        ("editor.join_lines", "Join Lines"),
     ] {
         let meta = registry.commands().find(|meta| meta.id.as_str() == id);
         assert_eq!(

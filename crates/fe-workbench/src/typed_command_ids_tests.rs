@@ -649,6 +649,7 @@ const EDITOR_LINE_COMMANDS: &[(&str, &str)] = &[
     ("editor.sort_lines_ascending", "Sort Lines Ascending"),
     ("editor.sort_lines_descending", "Sort Lines Descending"),
     ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
+    ("editor.join_lines", "Join Lines"),
 ];
 
 #[test]

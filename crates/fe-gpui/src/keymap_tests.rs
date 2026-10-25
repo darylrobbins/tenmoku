@@ -108,6 +108,11 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
     ),
     (
+        "ctrl-j",
+        "editor.join_lines",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
         "alt-up",
         "editor.move_rows_up",
         Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
