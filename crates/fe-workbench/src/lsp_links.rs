@@ -19,9 +19,12 @@ use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
 
 use fe_buffer::{Anchor, BufferId, PointUtf16, Version};
 use fe_command::Source;
-use fe_gpui::EditorView;
+use fe_gpui::{EditorView, FileViewer};
 use fe_lsp::{DocumentLink, IncarnationId, LspError, ServerId, SessionId};
-use gpui::{AppContext as _, Context, Entity, EntityId, Subscription, Task, Window};
+use gpui::{
+    AnyWindowHandle, AppContext as _, Context, Entity, EntityId, Subscription, Task, WeakEntity,
+    Window,
+};
 
 use crate::{
     Workbench,
@@ -100,9 +103,39 @@ impl Slot {
 #[derive(Default)]
 pub(super) struct Links {
     slots: HashMap<BufferId, Slot>,
-    /// Watching the pane for a file link's row to be revealed, to move the
-    /// caret to its column ([`Workbench::land_link_column`]).
-    landing: Option<Subscription>,
+    /// The column each pane's last file link is yet to land
+    /// ([`Workbench::land_link_column`]), one per pane: another link
+    /// opened in the same pane supersedes it, one in another pane doesn't.
+    landings: HashMap<EntityId, Landing>,
+}
+
+/// A file link's column, waiting for its row to be shown in a pane.
+struct Landing {
+    pane: WeakEntity<Pane>,
+    window: AnyWindowHandle,
+    path: PathBuf,
+    /// 0-based, and the column in UTF-16 units.
+    row: u32,
+    column: u32,
+    /// The [`Pane::open_serial`] of the open it is for. A Save As holding
+    /// the file has the pane open it again once it's done, with a new one.
+    serial: u64,
+    /// The pane was reading the file, or waiting on a Save As for it, when
+    /// last looked at.
+    opening: bool,
+    /// A Save As held the file when it was opened, so the pane opens it
+    /// again, once, when that is over.
+    held: bool,
+    /// Watching the pane, and a viewer's index for the row.
+    watching: Vec<Subscription>,
+    viewer: Option<EntityId>,
+}
+
+/// What a step of a [`Landing`] came to.
+enum Landed {
+    Done,
+    /// Wait for the pane's next change, and, if there is one, the viewer's.
+    Wait(Option<Entity<FileViewer>>),
 }
 
 impl Workbench {
@@ -461,10 +494,18 @@ impl Workbench {
                     within_row: true,
                 });
                 let opened = path.clone();
+                // Any open of the pane supersedes the last link's landing.
+                let held = held_by_save_as(&path);
+                workbench
+                    .update(cx, |workbench, _| {
+                        workbench.lsp.links.landings.remove(&pane.entity_id());
+                    })
+                    .ok();
                 pane.update(cx, |pane, cx| pane.open_at(opened, reveal, window, cx));
                 if let Some(place) = place.filter(|(_, column)| *column > 0) {
+                    let handle = window.window_handle();
                     (workbench.update(cx, |workbench, cx| {
-                        workbench.land_link_column(&pane, path, place, cx)
+                        workbench.land_link_column(&pane, handle, path, place, held, cx)
                     }))
                     .ok();
                 }
@@ -477,63 +518,218 @@ impl Workbench {
     /// Once `pane` has revealed the row of `place` for the open last made,
     /// moves the caret along it to `place`'s column, in UTF-16 units of the
     /// row as its editor decoded it (BOM, encoding and line endings as
-    /// loaded, unsaved edits and all). Nothing if another open supersedes
-    /// it, or the caret has moved since.
+    /// loaded, unsaved edits and all); in a viewer, once its index has the
+    /// row, by reopening the file at the byte column. Nothing if another
+    /// open in the pane supersedes it, or the caret has moved since. An
+    /// open of another pane keeps its own.
     fn land_link_column(
         &mut self,
         pane: &Entity<Pane>,
+        window: AnyWindowHandle,
         path: PathBuf,
-        place: (u32, usize),
+        (row, column): (u32, u32),
+        held: bool,
         cx: &mut Context<Self>,
     ) {
-        let serial = pane.read(cx).open_serial();
-        self.lsp.links.landing = None;
-        if self.try_land_link_column(pane, serial, &path, place, cx) {
-            return;
-        }
-        let watch = cx.observe(pane, move |workbench, pane, cx| {
-            if workbench.try_land_link_column(&pane, serial, &path, place, cx) {
-                workbench.lsp.links.landing = None;
-            }
-        });
-        self.lsp.links.landing = Some(watch);
+        let landing = Landing {
+            pane: pane.downgrade(),
+            window,
+            path,
+            row,
+            column,
+            serial: pane.read(cx).open_serial(),
+            opening: false,
+            held,
+            watching: Vec::new(),
+            viewer: None,
+        };
+        let id = pane.entity_id();
+        self.lsp.links.landings.remove(&id);
+        self.step_landing(id, landing, cx);
     }
 
-    /// [`Self::land_link_column`]'s step: whether it's done, landed or not.
+    /// Steps `landing` of the pane `id`, and, unless it's done, keeps it
+    /// watching.
+    fn step_landing(&mut self, id: EntityId, mut landing: Landing, cx: &mut Context<Self>) {
+        let Some(pane) = landing.pane.upgrade() else {
+            return;
+        };
+        let Landed::Wait(viewer) = self.try_land_link_column(&pane, &mut landing, cx) else {
+            return;
+        };
+        if landing.watching.is_empty() {
+            landing
+                .watching
+                .push(cx.observe(&pane, move |workbench, _, cx| {
+                    if let Some(landing) = workbench.lsp.links.landings.remove(&id) {
+                        workbench.step_landing(id, landing, cx);
+                    }
+                }));
+        }
+        if let Some(viewer) = viewer.filter(|viewer| landing.viewer != Some(viewer.entity_id())) {
+            landing.viewer = Some(viewer.entity_id());
+            landing
+                .watching
+                .push(cx.observe(&viewer, move |workbench, _, cx| {
+                    if let Some(landing) = workbench.lsp.links.landings.remove(&id) {
+                        workbench.step_landing(id, landing, cx);
+                    }
+                }));
+        }
+        self.lsp.links.landings.insert(id, landing);
+    }
+
+    /// [`Self::land_link_column`]'s step.
     fn try_land_link_column(
         &mut self,
         pane: &Entity<Pane>,
-        serial: u64,
-        path: &std::path::Path,
-        (row, column): (u32, usize),
+        landing: &mut Landing,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Landed {
+        let (row, column) = (landing.row, landing.column);
+        let pane_entity = pane;
         let pane = pane.read(cx);
-        if pane.open_serial() != serial {
-            return true;
+        if pane.open_serial() != landing.serial {
+            // Only the end of the Save As holding the file has the pane
+            // open it again for the same link, once: any other open, or one
+            // while it still holds, supersedes.
+            let continued = landing.held
+                && landing.opening
+                && !held_by_save_as(&landing.path)
+                && pane.open_serial() == landing.serial + 1;
+            if !continued {
+                return Landed::Done;
+            }
+            landing.held = false;
+            landing.serial = pane.open_serial();
         }
-        let Some(revealed) = pane.revealed().filter(|revealed| revealed.serial == serial) else {
-            // Still being read; a viewer's reveal is never an editor's.
-            return !pane.is_opening(path);
+        landing.opening = pane.is_opening(&landing.path);
+        if landing.opening {
+            return Landed::Wait(None);
+        }
+        let Some(revealed) = pane
+            .revealed()
+            .filter(|revealed| revealed.serial == landing.serial)
+        else {
+            return self.land_in_viewer(pane_entity, landing, cx);
         };
         let editor = (pane.tabs().iter())
             .filter_map(|tab| tab.editor())
             .find(|editor| editor.entity_id() == revealed.editor)
             .cloned();
         let Some(editor) = editor else {
-            return true;
+            return Landed::Done;
         };
-        if editor.read(cx).model().primary_selection() != revealed.selection {
-            return true;
+        if editor.read(cx).model().path() != Some(landing.path.as_path())
+            || editor.read(cx).model().primary_selection() != revealed.selection
+        {
+            return Landed::Done;
         }
         editor.update(cx, |view, cx| {
             let text = view.model().text();
-            let offset = text.point_utf16_to_offset(PointUtf16::new(row, column as u32));
+            let offset = text.point_utf16_to_offset(PointUtf16::new(row, column));
             view.model_mut().set_cursor(offset);
             cx.notify();
         });
-        true
+        Landed::Done
     }
+
+    /// For a file shown in a viewer: once its index has the row, reopens
+    /// the file at the byte column the UTF-16 one is in the row's text, if
+    /// the caret is still where the open put it.
+    fn land_in_viewer(
+        &mut self,
+        pane: &Entity<Pane>,
+        landing: &Landing,
+        cx: &mut Context<Self>,
+    ) -> Landed {
+        let pane = pane.read(cx);
+        let viewer = pane.active().and_then(|ix| {
+            let tab = &pane.tabs()[ix];
+            (tab.path.as_deref() == Some(landing.path.as_path()))
+                .then(|| tab.viewer().cloned())
+                .flatten()
+        });
+        let Some(viewer) = viewer else {
+            return Landed::Done;
+        };
+        let (row, column) = (landing.row, landing.column);
+        let found = viewer.read_with(cx, |viewer, _| {
+            let text = viewer.model().text();
+            // A building index's last row is a placeholder, its text not
+            // read yet.
+            let last = text.row_count() - 1;
+            if row > last || (row == last && viewer.is_polling()) {
+                // Wait for the index, then give up: the open put the caret
+                // at the end.
+                return (!viewer.is_polling()).then_some(None);
+            }
+            let start = text.row_start(row);
+            if viewer.model().selection() != (start..start) {
+                return Some(None);
+            }
+            let wanted = (column as usize).saturating_mul(4).saturating_add(4);
+            let end = start + (text.row_len(row) as usize).min(wanted);
+            let row_text: String = text.chunks_in_range(start..end).collect();
+            Some(Some((utf16_to_byte(&row_text, column), start)))
+        });
+        match found {
+            None => Landed::Wait(Some(viewer)),
+            Some(None) => Landed::Done,
+            Some(Some((byte, start))) => {
+                let reveal = Reveal {
+                    row,
+                    columns: byte..byte,
+                    within_row: true,
+                };
+                let (window, path, serial) = (landing.window, landing.path.clone(), landing.serial);
+                let Some(pane) = landing.pane.upgrade() else {
+                    return Landed::Done;
+                };
+                cx.spawn(async move |_, cx| {
+                    cx.update_window(window, |_, window, cx| {
+                        pane.update(cx, |pane, cx| {
+                            // Still the open's viewer, its caret unmoved?
+                            let unmoved = pane.open_serial() == serial
+                                && pane.active().is_some_and(|ix| {
+                                    let tab = &pane.tabs()[ix];
+                                    tab.path.as_deref() == Some(path.as_path())
+                                        && tab.viewer().is_some_and(|viewer| {
+                                            viewer.read(cx).model().selection() == (start..start)
+                                        })
+                                });
+                            if unmoved {
+                                pane.open_at(path, Some(reveal), window, cx);
+                            }
+                        });
+                    })
+                    .ok();
+                })
+                .detach();
+                Landed::Done
+            }
+        }
+    }
+}
+
+/// Whether a Save As holds `path` as its destination.
+fn held_by_save_as(path: &std::path::Path) -> bool {
+    crate::open::any_reserved()
+        && crate::open::reserved(path, crate::open::file_identity(path).as_deref()).is_some()
+}
+
+/// The byte offset in `row` of the `units`th UTF-16 unit, clamped to the
+/// row and out of surrogate pairs.
+fn utf16_to_byte(row: &str, units: u32) -> usize {
+    let mut seen = 0u32;
+    for (at, ch) in row.char_indices() {
+        let width = ch.len_utf16() as u32;
+        if seen + width > units {
+            return at;
+        }
+        seen += width;
+    }
+    row.len()
 }
 
 /// Sets `editor`'s link ranges and redraws it, so a hover under a still
@@ -546,21 +742,33 @@ fn give_links(editor: &Entity<EditorView>, ranges: Vec<Range<usize>>, cx: &mut C
 }
 
 /// The 0-based row and column a fragment `L12`, `L12,5` or `12,5` names in
-/// 1-based numbers, the column 1 if it names none.
-fn line_column(fragment: &str) -> Option<(u32, usize)> {
+/// 1-based numbers, the column 1 if it names none. Numbers past `u32` are
+/// `u32::MAX`, which the row and the editor clamp.
+fn line_column(fragment: &str) -> Option<(u32, u32)> {
     let numbers = fragment.strip_prefix('L').unwrap_or(fragment);
     let (line, column) = match numbers.split_once(',') {
         Some((line, column)) => (line, Some(column)),
         None => (numbers, None),
     };
-    let line: u32 = line.parse().ok()?;
-    let column: usize = match column {
-        Some(column) => column.parse().ok()?,
+    let column = match column {
+        Some(column) => number(column)?,
         None => 1,
     };
-    Some((line.checked_sub(1)?, column.saturating_sub(1)))
+    Some((number(line)?.checked_sub(1)?, column.saturating_sub(1)))
+}
+
+/// The decimal `digits`, saturating at `u32::MAX`.
+fn number(digits: &str) -> Option<u32> {
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse().unwrap_or(u32::MAX))
 }
 
 #[cfg(test)]
 #[path = "lsp_links_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lsp_links_landing_tests.rs"]
+mod landing_tests;
