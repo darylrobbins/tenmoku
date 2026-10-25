@@ -682,6 +682,10 @@ mod remap_host_tests;
 #[path = "vim_day_one_tests.rs"]
 mod day_one_tests;
 
+#[cfg(test)]
+#[path = "vim_ls_tests.rs"]
+mod vim_ls_tests;
+
 /// Leaves `text` as `editor`'s vim message.
 pub(super) fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {
     editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));

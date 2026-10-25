@@ -6,6 +6,8 @@
 //!   current window; with nothing, the current one (nothing changes).
 //! - `:[N]bn[ext][!] [N]`, `:[N]bN[ext][!] [N]` and `:[N]bp[revious][!]
 //!   [N]`: the `N`th listed buffer after (before) the current, wrapping.
+//! - `:ls[!]`, `:buffers[!]` and `:files[!]`: the open files in a picker
+//!   (`Pick::buffers`), a row switching to it as `:b N` does.
 //! - `:bf[irst][!]`, `:br[ewind][!]` and `:bl[ast][!]`: the first or last
 //!   listed buffer.
 //! - `:[N]bd[elete][!] [N|name|#|%]`, `:{N,M}bd` and `:%bd`: the buffers
@@ -48,6 +50,9 @@ pub enum BufferCommand {
     First,
     /// `:bl[ast]`: the last listed buffer.
     Last,
+    /// `:ls`, `:buffers` and `:files` (with `!` or not): the host lists its
+    /// open files in a picker ([`super::Pick::buffers`]).
+    List,
 }
 
 /// The buffer a [`BufferCommand`] names.
@@ -89,6 +94,7 @@ pub(super) enum Kind {
     Delete,
     First,
     Last,
+    List,
 }
 
 /// The buffer command `name` abbreviates, by nvim's shortest forms
@@ -103,6 +109,7 @@ pub(super) fn kind(name: &str) -> Option<Kind> {
         _ if is("bdelete", 2) => Kind::Delete,
         _ if is("bfirst", 2) || is("brewind", 2) => Kind::First,
         _ if is("blast", 2) => Kind::Last,
+        "ls" | "buffers" | "files" => Kind::List,
         _ => return None,
     })
 }
@@ -123,6 +130,17 @@ pub(super) fn parse(kind: Kind, range: &[Address], after: &str) -> Result<ExComm
         return Err(ExError::Unsupported("+cmd".into()));
     }
     let command = match kind {
+        Kind::List => {
+            if !range.is_empty() {
+                return Err(ExError::NoRange);
+            }
+            // Flags (`:ls u`) filter nvim's list; the picker lists every
+            // open file, as `:ls!` does.
+            if !args.is_empty() {
+                return Err(ExError::Unsupported(":ls flags".into()));
+            }
+            BufferCommand::List
+        }
         Kind::Buffer => {
             let target = match args {
                 "" => match range.last() {

@@ -843,8 +843,8 @@ pub use cmdline::search_preview_limit;
 pub use cmdline::set_search_preview_limit;
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
-    Address, Base, BufferAddress, BufferCommand, BufferTarget, Ex, ExCommand, ExError, HostCommand,
-    LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
+    Address, Base, BufferAddress, BufferCommand, BufferRow, BufferTarget, Ex, ExCommand, ExError,
+    HostCommand, LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
     WindowCommand,
 };
 pub use feature::filter::FilterArgs;

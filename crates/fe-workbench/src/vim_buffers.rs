@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 use fe_buffer::BufferId;
 use fe_gpui::EditorView;
 use fe_gpui::FileViewer;
-use fe_vim::{BufferAddress, BufferCommand, BufferTarget};
+use fe_vim::{BufferAddress, BufferCommand, BufferRow, BufferTarget, Pick};
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, WeakEntity, Window};
 use kiln_shell::ItemHandle;
 use kiln_shell::PaneView as _;
@@ -401,6 +401,52 @@ impl Workbench {
             find_named(name, rounds, root.as_deref())
         };
         match command {
+            BufferCommand::List => {
+                let alternate = buffers.alternate(pane.entity_id(), current);
+                let rows = listed.iter().map(|&number| {
+                    let of = || tabs.iter().filter(|tab| tab.number == number);
+                    // The caret's line in the current pane's tab, else the
+                    // first, an editor's or a viewer's.
+                    let here = of().filter(|tab| tab.pane == pane);
+                    let line = (here.chain(of()))
+                        .find_map(|tab| {
+                            let item = &tab.pane.read(cx).tabs()[tab.ix];
+                            if let Some(editor) = item.editor() {
+                                let model = editor.read(cx).model();
+                                let head = model.primary_selection().head();
+                                return Some(model.text().offset_to_point(head).row + 1);
+                            }
+                            let viewer = item.viewer()?.read(cx).model();
+                            Some(viewer.text().offset_to_point(viewer.head()).row + 1)
+                        })
+                        .unwrap_or(1);
+                    let entry = buffers.entry(number);
+                    let path = entry.and_then(|entry| entry.path.as_deref());
+                    let name = match path {
+                        Some(path) => root
+                            .as_deref()
+                            .and_then(|root| path.strip_prefix(root).ok())
+                            .unwrap_or(path),
+                        None => Path::new(""),
+                    };
+                    let name = match name.as_os_str().is_empty() {
+                        true => "[No Name]".to_owned(),
+                        false => name.display().to_string(),
+                    };
+                    BufferRow {
+                        number,
+                        current: Some(number) == current,
+                        alternate: Some(number) == alternate,
+                        active: of().any(|tab| tab.pane.read(cx).active() == Some(tab.ix)),
+                        modified: of().any(|tab| tab.dirty),
+                        name,
+                        line,
+                    }
+                });
+                let pick = Pick::buffers(rows);
+                self.show_vim_pick(editor, pick, window, cx);
+                Ok(())
+            }
             BufferCommand::Switch(target) => {
                 let number = match target {
                     BufferTarget::Current => return Ok(()),

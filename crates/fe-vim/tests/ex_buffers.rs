@@ -194,7 +194,7 @@ fn delete_buffers() {
 #[test]
 fn other_b_names_are_unchanged() {
     // nvim's `:bufdo`, `:bmodified`, `:bunload`, `:bwipeout`, `:ball`,
-    // `:badd` and `:buffers` (`:ls`): not buffer commands here.
+    // `:badd`: not buffer commands here.
     for line in [
         "bufdo",
         "bufd",
@@ -208,7 +208,6 @@ fn other_b_names_are_unchanged() {
         "ball",
         "bad",
         "badd",
-        "buffers",
         "bfoo",
         "bnexts",
     ] {

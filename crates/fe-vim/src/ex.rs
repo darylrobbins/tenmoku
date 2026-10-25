@@ -99,7 +99,7 @@ pub(crate) mod global;
 mod lines;
 pub(crate) mod normal;
 mod pick;
-pub use pick::{Pick, PickRow, PickThen};
+pub use pick::{BufferRow, Pick, PickRow, PickThen};
 mod table;
 mod windows;
 pub(crate) use table::filter::refusal as shell_refusal;

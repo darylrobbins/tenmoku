@@ -40,6 +40,8 @@ pub enum PickThen {
     /// Go to the byte column on the row (both from 0), as the list it is in
     /// is at.
     At { row: u32, column: u32 },
+    /// Switch to buffer `N`, as `:b N` does.
+    Buffer(u32),
 }
 
 impl PickThen {
@@ -80,12 +82,67 @@ impl PickThen {
                 Invocation::new(command)
                     .args(serde_json::json!({"motion": motion, "extend": false}))
             }
+            Self::Buffer(number) => {
+                let command = CommandId::parse("vim.ex_line").expect("vim command IDs are valid");
+                Invocation::new(command).args(serde_json::json!({"text": format!("b {number}")}))
+            }
             Self::Put(name) => {
                 let command = CommandId::parse("vim.put").expect("vim command IDs are valid");
                 Invocation::new(command).args(serde_json::json!({"register": name}))
             }
         }
     }
+}
+
+impl Pick {
+    /// What `:ls` shows: a row per open file in `buffers`, as the host
+    /// reads them, with the columns number, flags, name and line.
+    pub fn buffers(buffers: impl IntoIterator<Item = BufferRow>) -> Self {
+        let rows = buffers.into_iter().map(|buffer| {
+            let flag = |on: bool, ch: char| on.then_some(ch);
+            let flags: String = [
+                flag(buffer.current, '%'),
+                flag(buffer.alternate, '#'),
+                flag(buffer.active, 'a'),
+                flag(!buffer.active, 'h'),
+                flag(buffer.modified, '+'),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let cells = vec![
+                buffer.number.to_string(),
+                flags,
+                buffer.name,
+                format!("line {}", buffer.line),
+            ];
+            PickRow {
+                cells,
+                then: PickThen::Buffer(buffer.number),
+            }
+        });
+        Self {
+            title: "Buffers",
+            header: "Buffers",
+            rows: rows.collect(),
+        }
+    }
+}
+
+/// An open file, as the host tells `:ls` about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BufferRow {
+    pub number: u32,
+    /// The buffer is the one the window shows (`%`).
+    pub current: bool,
+    /// The buffer the window showed before it (`#`).
+    pub alternate: bool,
+    /// Some window shows it (`a`); otherwise it is hidden (`h`).
+    pub active: bool,
+    pub modified: bool,
+    pub name: String,
+    /// The caret's line, from 1.
+    pub line: u32,
 }
 
 /// `text` with control characters as `^X` and DEL as `^?`, as nvim shows
