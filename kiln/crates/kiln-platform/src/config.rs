@@ -96,6 +96,11 @@ pub trait ConfigSource: 'static {
     /// what changed. A batch may name only other sources' files.
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App);
 
+    /// Called after [`SharedKeymap::update`] swaps the keymap in use, before
+    /// the diagnostics are published: for a source whose problems depend on
+    /// the keymap (a reload of the keymap's own file calls `reload` instead).
+    fn keymap_changed(&mut self, _cx: &mut App) {}
+
     /// Its files' problems now.
     fn diagnostics(&self) -> Vec<Diagnostic> {
         Vec::new()
@@ -302,6 +307,12 @@ struct Running(Rc<Sources>);
 
 impl Global for Running {}
 
+/// Set when [`SharedKeymap::update`] swaps the keymap while the sources
+/// are borrowed (a batch applying): the batch tells them once it's done.
+struct KeymapPending;
+
+impl Global for KeymapPending {}
+
 /// The keymap store a [`ConfigService`] reloads, shared so the app can
 /// reach it after the service starts ([`ConfigService::keymap_store`]):
 /// to lay new default layers under the user's file, say, as commands are
@@ -386,19 +397,31 @@ impl SharedKeymap {
         let Some(event) = event else {
             return;
         };
-        if event.keymap != event.previous {
+        let swapped = event.keymap != event.previous;
+        let running = cx.try_global::<Running>().map(|running| running.0.clone());
+        if swapped {
             keys::init(cx, event.keymap);
-        }
-        if event.diagnostics != previous {
-            log_diagnostics_as(log_target(cx), &event.diagnostics);
-            let running = cx.try_global::<Running>().map(|running| running.0.clone());
             // Borrowed only while a batch applies, which publishes once
             // it's done.
-            if let Some(sources) = running
-                && let Ok(sources) = sources.try_borrow()
-            {
-                publish(&sources, cx);
+            match running.as_ref().map(|sources| sources.try_borrow_mut()) {
+                Some(Ok(mut sources)) => {
+                    for source in sources.iter_mut() {
+                        source.keymap_changed(cx);
+                    }
+                }
+                Some(Err(_)) => cx.set_global(KeymapPending),
+                None => {}
             }
+        }
+        let changed = event.diagnostics != previous;
+        if changed {
+            log_diagnostics_as(log_target(cx), &event.diagnostics);
+        }
+        if (changed || swapped)
+            && let Some(sources) = running
+            && let Ok(sources) = sources.try_borrow()
+        {
+            publish(&sources, cx);
         }
     }
 }
@@ -611,6 +634,15 @@ fn apply(sources: &Sources, batch: &[PathBuf], cx: &mut App) {
         let diagnostics = source.diagnostics();
         if diagnostics != previous {
             log_diagnostics_as(log_target(cx), &diagnostics);
+        }
+    }
+    // A source swapped the keymap while this batch had the sources
+    // borrowed: the ones before it have found their problems against the
+    // old one.
+    if cx.has_global::<KeymapPending>() {
+        cx.remove_global::<KeymapPending>();
+        for source in sources.iter_mut() {
+            source.keymap_changed(cx);
         }
     }
     publish(&sources, cx);

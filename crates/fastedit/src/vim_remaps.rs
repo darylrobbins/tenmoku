@@ -305,11 +305,6 @@ impl ConfigSource for VimRemaps {
         self.build(Some(cx));
     }
 
-    /// Known limit (T223): the keymap conflict warnings are recomputed
-    /// here, when a watched file changes or the keymap in use has changed
-    /// by the time of a reload. A keymap swapped by `SharedKeymap::update`
-    /// (extension bindings) doesn't call the sources, so its warnings wait
-    /// for the next reload.
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         let named = self.paths().iter().any(|path| changed.contains(path));
         // The settings' source reloads first, so these are the new ones.
@@ -325,6 +320,12 @@ impl ConfigSource for VimRemaps {
         if named {
             self.read_vimrc();
         }
+        self.build(Some(cx));
+    }
+
+    /// A keymap swapped by `SharedKeymap::update` (extension bindings)
+    /// recomputes the keymap conflict warnings, which are then published.
+    fn keymap_changed(&mut self, cx: &mut App) {
         self.build(Some(cx));
     }
 
@@ -490,7 +491,8 @@ mod tests {
     use gpui::TestAppContext;
     use kiln::{
         Config,
-        platform::config::{BatchSender, batch_channel},
+        core::{KeymapLayer, KeymapStore},
+        platform::config::{BatchSender, ConfigService, batch_channel},
     };
     use tempfile::TempDir;
 
@@ -800,6 +802,79 @@ mod tests {
         edit(&files.project(), "", &[files.project()], &sender, cx);
         assert_eq!(places(&warnings(&files.settings(), cx)), in_user);
         assert_eq!(warnings(&files.project(), cx), []);
+    }
+
+    /// A keymap layer binding `keys` to a command in the editor's insert mode.
+    fn insert_layer(keys: &str) -> Vec<kiln::core::KeymapLayer> {
+        let source = format!(
+            "[[bindings]]\nkeys = \"{keys}\"\ncommand = \"editor.undo\"\n\
+             context = \"editor && vim.mode == insert\"\n"
+        );
+        let (layer, issues) = KeymapLayer::parse(Path::new("ext.toml"), &source, None);
+        assert_eq!(issues, []);
+        vec![layer.unwrap()]
+    }
+
+    #[gpui::test]
+    fn keymap_update_refreshes_conflict_warnings(cx: &mut TestAppContext) {
+        let files = Files::new("", Some("inoremap jk <Esc>\n"));
+        let store = fe_config::SettingsStore::load(Some(files.settings()), Some(files.project()));
+        let remaps = VimRemaps::new(Some(files.vimrc()), &store);
+        let keymap = KeymapStore::with_defaults(Vec::new(), Vec::new(), None, None);
+        let (_sender, batches) = batch_channel();
+        let service = ConfigService::new().keymap(keymap).source(remaps);
+        let shared = service.keymap_store().unwrap();
+        cx.update(|cx| drop(service.start_with(batches, cx)));
+        cx.run_until_parked();
+        assert_eq!(warnings(&files.vimrc(), cx), []);
+
+        // An update that binds the left side adds the warning, unreloaded.
+        cx.update(|cx| {
+            shared.update(cx, |store| {
+                store.set_defaults(insert_layer("j k"), Vec::new(), None)
+            })
+        });
+        let found = warnings(&files.vimrc(), cx);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].line, 1);
+
+        // And one that removes it clears the warning.
+        cx.update(|cx| shared.update(cx, |store| store.set_defaults(Vec::new(), Vec::new(), None)));
+        assert_eq!(warnings(&files.vimrc(), cx), []);
+    }
+
+    #[gpui::test]
+    fn keymap_update_in_a_batch_refreshes_earlier_sources(cx: &mut TestAppContext) {
+        let files = Files::new("", Some("inoremap jk <Esc>\n"));
+        let store = fe_config::SettingsStore::load(Some(files.settings()), Some(files.project()));
+        let remaps = VimRemaps::new(Some(files.vimrc()), &store);
+        let keymap = KeymapStore::with_defaults(Vec::new(), Vec::new(), None, None);
+        let (sender, batches) = batch_channel();
+        let service = ConfigService::new().keymap(keymap).source(remaps);
+        let shared = service.keymap_store().unwrap();
+        // A source after the remaps, whose batch changes the keymap.
+        let trigger = files.dir.path().join("trigger");
+        let bound = std::rc::Rc::new(std::cell::Cell::new(false));
+        let service = service.on_change(vec![trigger.clone()], move |_, cx| {
+            bound.set(!bound.get());
+            let layers = if bound.get() {
+                insert_layer("j k")
+            } else {
+                Vec::new()
+            };
+            shared.update(cx, |store| store.set_defaults(layers, Vec::new(), None));
+        });
+        let _task = cx.update(|cx| service.start_with(batches, cx));
+        cx.run_until_parked();
+        assert_eq!(warnings(&files.vimrc(), cx), []);
+
+        sender.send(vec![trigger.clone()]);
+        cx.run_until_parked();
+        assert_eq!(warnings(&files.vimrc(), cx).len(), 1);
+
+        sender.send(vec![trigger]);
+        cx.run_until_parked();
+        assert_eq!(warnings(&files.vimrc(), cx), []);
     }
 
     #[gpui::test]
