@@ -67,6 +67,8 @@ pub struct EditorView {
     /// The host's column left of the line numbers
     /// ([`EditorView::set_gutter_annotations`]).
     pub(crate) annotations: Option<crate::gutter_annotations::Annotated>,
+    /// The host's links ([`EditorView::set_link_ranges`]).
+    pub(crate) links: crate::link_ranges::LinkRanges,
     /// How far the content is scrolled, in pixels (both ≥ 0).
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
@@ -354,6 +356,7 @@ impl EditorView {
             sticky_reveal: None,
             sticky_scopes: None,
             annotations: None,
+            links: Default::default(),
             scroll: Point::default(),
             autoscroll: true,
             band_spares_caret: false,
@@ -990,6 +993,7 @@ impl EditorView {
             // A bound click places the caret, then runs its command there as
             // its key would, from the view: it neither drags nor extends.
             self.cancel_vim(cx);
+            self.note_clicked_link(event.position);
             self.split_session(fe_vim::Splits::Moves, |model| model.set_cursor(offset), cx);
             self.drag = None;
             // The command may take the view away; a move finds it again.
@@ -1183,8 +1187,8 @@ impl EditorView {
     }
 
     /// Finds the hover range for the pointer at `position`, `None` if it's
-    /// off the text, with `modifiers` held: the word under it, if their
-    /// click is bound. Not while dragging.
+    /// off the text, with `modifiers` held: the link under it, or else the
+    /// word, if their click is bound. Not while dragging.
     pub(crate) fn hover_at(
         &mut self,
         position: Option<Point<Pixels>>,
@@ -1195,7 +1199,7 @@ impl EditorView {
         let range = position
             .filter(|_| self.drag.is_none())
             .filter(|_| self.click_command(modifiers, window, cx).is_some())
-            .and_then(|position| self.word_under(position));
+            .and_then(|position| (self.link_under(position)).or_else(|| self.word_under(position)));
         self.set_hover(range, cx);
     }
 
@@ -1216,12 +1220,15 @@ impl EditorView {
 
     /// Once a frame is drawn: drops a hover range an edit or a scroll made
     /// stale, and finds one still standing again under the still pointer,
-    /// which a change of layout or keymap may have moved or unbound.
+    /// which a change of layout or keymap may have moved or unbound, or new
+    /// link ranges may have made.
     pub(crate) fn reconcile_hover(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.hover.is_none() {
+        // New links may lie under a pointer that found nothing.
+        let links_changed = self.take_links_changed();
+        if self.hover.is_none() && !links_changed {
             return;
         }
-        if self.hover_range().is_none() {
+        if self.hover.is_some() && self.hover_range().is_none() {
             self.set_hover(None, cx);
             return;
         }

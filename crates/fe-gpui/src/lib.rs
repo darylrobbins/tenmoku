@@ -28,6 +28,7 @@ mod image_viewer;
 pub mod inlay_hints;
 pub mod keymap;
 pub mod lens;
+mod link_ranges;
 pub mod menu;
 pub mod pane_item;
 pub mod signature_help;

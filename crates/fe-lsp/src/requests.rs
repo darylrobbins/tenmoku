@@ -72,6 +72,8 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         | "textDocument/documentHighlight"
         | "textDocument/inlayHint"
         | "textDocument/codeLens"
+        | "textDocument/documentLink"
+        | "documentLink/resolve"
         | "textDocument/semanticTokens/full"
         | "textDocument/semanticTokens/full/delta" => timeouts.hover,
         "textDocument/codeAction" => timeouts.code_action,

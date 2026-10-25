@@ -573,6 +573,10 @@ pub(crate) struct Lsp {
     lightbulb: lightbulb::Lightbulb,
     /// The code lenses of each open buffer.
     lenses: lenses::Lenses,
+    /// Whether `editor.links` is on (set from the settings each reload).
+    pub(crate) links_on: std::cell::Cell<bool>,
+    /// The document links of each open buffer.
+    links: links::Links,
     /// Whether `editor.semantic_highlighting` is on (set from the settings each reload).
     pub(crate) semantic_highlighting_on: std::cell::Cell<bool>,
     /// Every shown buffer's semantic tokens.
@@ -747,6 +751,8 @@ impl Lsp {
             lightbulb_on: std::cell::Cell::new(true),
             lightbulb: Default::default(),
             lenses: Default::default(),
+            links_on: std::cell::Cell::new(true),
+            links: Default::default(),
             semantic_highlighting_on: std::cell::Cell::new(true),
             semantic_tokens: Default::default(),
             code_actions_on_save: Rc::default(),
@@ -1336,6 +1342,7 @@ impl Workbench {
         self.sync_lightbulb(cx);
         self.sync_inlay_hints(cx);
         self.sync_lenses(cx);
+        self.sync_links(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
@@ -2536,6 +2543,8 @@ mod lightbulb;
 mod inlay_hints;
 #[path = "lsp_lenses.rs"]
 mod lenses;
+#[path = "lsp_links.rs"]
+mod links;
 
 #[path = "lsp_semantic_tokens.rs"]
 mod semantic_tokens;

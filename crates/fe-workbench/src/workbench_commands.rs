@@ -702,6 +702,12 @@ impl Workbench {
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {
+        // Over a language server's link, as a cmd-click there is, the link
+        // opens instead.
+        let source = kiln::current_invocation(cx.cx).map(|invocation| invocation.source);
+        if self.open_link_for_definition(source, cx.window, cx.cx) {
+            return self.ran(cx);
+        }
         self.nav_command(NavOp::GotoDefinition, cx);
     }
 
@@ -729,6 +735,13 @@ impl Workbench {
     #[command(id = "peek.open", context = "peek")]
     fn open_from_peek_command(&mut self, cx: &mut Cx<Self>) {
         self.in_context(crate::peek::KEY_CONTEXT, cx, Self::open_from_peek);
+    }
+
+    /// Open Link
+    #[command(id = "editor.open_link", context = "editor")]
+    fn open_link(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.in_editor(cx, |this, window, cx| this.open_link_at_caret(window, cx));
     }
 
     /// Go to Declaration

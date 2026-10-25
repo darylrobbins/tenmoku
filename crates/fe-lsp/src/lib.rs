@@ -41,6 +41,9 @@
 //! - [`LspManager::inlay_hints`] asks for the [`InlayHint`]s in a byte range of
 //!   an open buffer, and [`LspManager::resolve_inlay_hint`] fills in a hint's
 //!   tooltip and edits.
+//! - [`LspManager::document_links`] asks for an open buffer's
+//!   [`DocumentLink`]s, and [`LspManager::resolve_document_link`] fills in
+//!   a link's target.
 //! - [`LspManager::semantic_tokens`] asks for an open buffer's
 //!   [`SemanticTokens`], in full or as a delta of the last ones: byte
 //!   ranges of the buffer's version, with the names the server's legend
@@ -79,6 +82,7 @@ mod completion;
 mod diagnostics;
 mod document;
 pub mod document_highlight;
+mod document_link;
 mod encoding;
 mod event;
 mod file_operations;
@@ -124,6 +128,7 @@ pub use diagnostics::{
 };
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use document_highlight::{DocumentHighlight, HighlightKind};
+pub use document_link::DocumentLink;
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, MessageReply, Refresh, ServerId, ServerStatus};
 pub use hover::Hover;

@@ -75,13 +75,13 @@ use lsp_types::{
     CodeActionLiteralSupport, CodeLensClientCapabilities, CodeLensWorkspaceClientCapabilities,
     CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
     DiagnosticClientCapabilities, DiagnosticTag, DidChangeConfigurationParams,
-    DidChangeWatchedFilesClientCapabilities, DynamicRegistrationClientCapabilities,
-    FailureHandlingKind, GeneralClientCapabilities, GotoCapability, HoverClientCapabilities,
-    InitializeParams, InitializeResult, InitializedParams, InlayHintClientCapabilities,
-    InlayHintResolveClientCapabilities, InlayHintWorkspaceClientCapabilities, MarkupKind,
-    NumberOrString, ParameterInformationSettings, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, RenameClientCapabilities,
-    ResourceOperationKind, SemanticTokensClientCapabilities,
+    DidChangeWatchedFilesClientCapabilities, DocumentLinkClientCapabilities,
+    DynamicRegistrationClientCapabilities, FailureHandlingKind, GeneralClientCapabilities,
+    GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
+    InlayHintClientCapabilities, InlayHintResolveClientCapabilities,
+    InlayHintWorkspaceClientCapabilities, MarkupKind, NumberOrString, ParameterInformationSettings,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
+    RenameClientCapabilities, ResourceOperationKind, SemanticTokensClientCapabilities,
     SemanticTokensClientCapabilitiesRequests, SemanticTokensFullOptions,
     SemanticTokensWorkspaceClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
     SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
@@ -2367,6 +2367,10 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             code_lens: Some(CodeLensClientCapabilities {
                 dynamic_registration: dynamic,
+            }),
+            document_link: Some(DocumentLinkClientCapabilities {
+                dynamic_registration: dynamic,
+                tooltip_support: Some(true),
             }),
             // Full and delta; ranges only help with huge files.
             semantic_tokens: Some(SemanticTokensClientCapabilities {

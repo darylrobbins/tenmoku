@@ -320,6 +320,7 @@ impl Workbench {
         let code_actions_on_save = settings.code_actions_on_save.clone();
         let inlay_hints = settings.inlay_hints;
         let code_lens = settings.code_lens;
+        let links = settings.links;
         let lightbulb = settings.lightbulb;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
@@ -635,6 +636,7 @@ impl Workbench {
         *workbench.lsp.code_actions_on_save.borrow_mut() = code_actions_on_save;
         workbench.lsp.inlay_hints_on.set(inlay_hints);
         workbench.lsp.code_lens_on.set(code_lens);
+        workbench.lsp.links_on.set(links);
         workbench.lsp.lightbulb_on.set(lightbulb);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);

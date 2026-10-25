@@ -455,6 +455,10 @@ pub struct EditorSettings {
     pub lightbulb: bool,
     /// Show language servers' code lenses ("3 references", "Run") above rows.
     pub code_lens: bool,
+    /// Underline language servers' links (URLs and file paths) under the
+    /// pointer while cmd (ctrl off macOS) is held, and open them on
+    /// cmd-click.
+    pub links: bool,
     /// Code action kinds to run, in order, when you save a file, before
     /// `format_on_save`, such as `["source.organizeImports", "source.fixAll"]`.
     pub code_actions_on_save: Vec<String>,
@@ -666,6 +670,7 @@ impl Default for EditorSettings {
             semantic_highlighting: true,
             lightbulb: true,
             code_lens: true,
+            links: true,
             code_actions_on_save: Vec::new(),
             auto_close_pairs: true,
             auto_save: AutoSave::default(),

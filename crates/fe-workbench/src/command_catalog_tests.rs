@@ -411,6 +411,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.move_word_left",
     "editor.move_word_right",
     "editor.newline",
+    "editor.open_link",
     "editor.outdent",
     "editor.page_down",
     "editor.page_up",

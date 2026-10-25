@@ -40,6 +40,10 @@
 # Show language servers' code lenses ("3 references", "Run") above rows.
 # code_lens = true
 
+# Underline language servers' links (URLs and file paths) under the pointer
+# while cmd (ctrl off macOS) is held, and open them on cmd-click.
+# links = true
+
 # Code action kinds to run, in order, when you save a file, before
 # format_on_save, such as ["source.organizeImports", "source.fixAll"].
 # code_actions_on_save = []
