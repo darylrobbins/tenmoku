@@ -2206,6 +2206,7 @@ dependencies = [
  "fe-fileview",
  "fe-text",
  "icu_collator",
+ "icu_properties",
  "imara-diff",
  "kiln-command",
  "log",

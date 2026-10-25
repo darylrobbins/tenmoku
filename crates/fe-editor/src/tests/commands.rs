@@ -126,6 +126,9 @@ fn every_editor_command_is_registered() {
             "sort_lines_ascending",
             "sort_lines_descending",
             "delete_duplicate_lines",
+            "transform_uppercase",
+            "transform_lowercase",
+            "transform_titlecase",
         ]
         .map(|name| format!("editor.{name}")),
     );
@@ -151,6 +154,9 @@ fn every_editor_command_is_registered() {
         "sort_lines_ascending",
         "sort_lines_descending",
         "delete_duplicate_lines",
+        "transform_uppercase",
+        "transform_lowercase",
+        "transform_titlecase",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

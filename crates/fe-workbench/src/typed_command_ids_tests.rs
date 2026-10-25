@@ -660,3 +660,19 @@ fn the_editor_registry_lists_the_line_sort_commands() {
         assert_eq!(meta.title, title, "{id}");
     }
 }
+
+/// The editor's own registry lists the case transform commands with these IDs
+/// and titles.
+#[test]
+fn the_editor_registry_lists_the_case_transform_commands() {
+    let registry = fe_editor::commands::registry();
+    for (id, title) in [
+        ("editor.transform_uppercase", "Transform to Uppercase"),
+        ("editor.transform_lowercase", "Transform to Lowercase"),
+        ("editor.transform_titlecase", "Transform to Title Case"),
+    ] {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        let meta = meta.unwrap_or_else(|| panic!("{id} is registered"));
+        assert_eq!(meta.title, title, "{id}");
+    }
+}

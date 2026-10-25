@@ -22,6 +22,7 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 mod auto_indent;
 pub mod auto_save;
+mod case_transform;
 pub mod commands;
 mod comment;
 pub mod completion;

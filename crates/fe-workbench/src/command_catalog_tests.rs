@@ -408,6 +408,9 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.sort_lines_descending",
     "editor.split_selection_into_lines",
     "editor.tab",
+    "editor.transform_lowercase",
+    "editor.transform_titlecase",
+    "editor.transform_uppercase",
     "editor.toggle_comment",
     "editor.toggle_soft_wrap",
     "editor.trigger_completion",
@@ -444,6 +447,24 @@ const LISTED_IN_THE_PROJECT_PANEL: &[&str] = &[
     "project_panel.select_next",
     "project_panel.select_prev",
 ];
+
+/// The case commands are registered with these IDs and titles.
+#[test]
+fn the_case_transform_commands_have_their_ids_and_titles() {
+    let registry = fe_editor::commands::registry();
+    for (id, title) in [
+        ("editor.transform_uppercase", "Transform to Uppercase"),
+        ("editor.transform_lowercase", "Transform to Lowercase"),
+        ("editor.transform_titlecase", "Transform to Title Case"),
+    ] {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        assert_eq!(
+            meta.map(|meta| meta.title.to_string()),
+            Some(title.to_string()),
+            "{id}"
+        );
+    }
+}
 
 /// The sort and dedupe line commands are registered with these IDs and titles.
 #[test]

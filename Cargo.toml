@@ -159,6 +159,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 icu_collator = "2"
+icu_properties = "2"
 unicode-segmentation = "1"
 
 # The platform keychain behind kiln-core's KeychainStore (src/secrets.rs):
