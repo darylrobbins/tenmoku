@@ -808,6 +808,45 @@ fn a_late_look_never_drops_a_newer_entry(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn reopen_keeps_clipboard_after_stale_existence_check(cx: &mut TestAppContext) {
+    let dir = project(&[("a.txt", ""), ("b.txt", "")]);
+    let root = dir.path();
+    let (workbench, cx) = open_root(cx, root, true);
+    let panel = focus_panel(&workbench, cx);
+    let a = root.join("a.txt");
+    select(&panel, root, "a.txt", cx);
+    press("c", cx);
+    // Deleted: a look at the disk starts, and is held...
+    fs::remove_file(&a).unwrap();
+    let seen = panel.update(cx, |panel, cx| {
+        panel.apply_fs_changes(&[FsChange::Path(a.clone())], cx);
+        panel.clip_seen()
+    });
+    // ...while it's made again and the tree is opened anew.
+    fs::write(&a, "").unwrap();
+    panel.update(cx, |panel, cx| panel.set_show_ignored(true, cx));
+    // Its answer, that it was gone, is about the old tree.
+    panel.update(cx, |panel, cx| panel.clip_looked(seen, Ok(false), cx));
+    cx.run_until_parked();
+    assert_eq!(clipboard(&panel, cx), Some((false, "a.txt".into())));
+}
+
+#[gpui::test]
+fn reopen_drops_clipboard_that_is_still_gone(cx: &mut TestAppContext) {
+    let dir = project(&[("a.txt", ""), ("b.txt", "")]);
+    let root = dir.path();
+    let (workbench, cx) = open_root(cx, root, true);
+    let panel = focus_panel(&workbench, cx);
+    select(&panel, root, "a.txt", cx);
+    press("x", cx);
+    // Deleted with no watcher batch, so nothing has asked about it yet.
+    fs::remove_file(root.join("a.txt")).unwrap();
+    panel.update(cx, |panel, cx| panel.set_show_ignored(true, cx));
+    cx.run_until_parked();
+    assert_eq!(clipboard(&panel, cx), None);
+}
+
+#[gpui::test]
 fn a_moved_symlinks_target_keeps_its_edits(cx: &mut TestAppContext) {
     let mut s = Lsp::with_scripts(cx, participant(), Script::default());
     s.set_trust(true);

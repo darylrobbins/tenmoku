@@ -391,6 +391,13 @@ impl ProjectPanel {
         tree.find(tree.root_path().join(&clip.rel))
     }
 
+    /// The tree is opened anew: a look at the disk that began under the old
+    /// one no longer counts, and the new one reconciles the entry once it's
+    /// listed ([`Self::drop_gone_clip`]).
+    pub(super) fn clip_reopened(&mut self) {
+        self.clipboard.seen += 1;
+    }
+
     /// Drops the entry to paste once it's gone. When the tree may say so
     /// (the nearest folder above it that's loaded is listed, and up to
     /// date, without it), the disk is asked, off this thread: a tree that

@@ -315,6 +315,7 @@ impl ProjectPanel {
         self.revealing = None;
         self.edit = None;
         self.filter = None;
+        self.clip_reopened();
         self.start(self.show_ignored, cx);
         cx.notify();
     }
@@ -343,6 +344,8 @@ impl ProjectPanel {
                 State::Failed(format!("Cannot open {}: {error}", root.display()))
             }
         };
+        // The entry to paste may be gone from the tree just opened.
+        self.drop_gone_clip(cx);
         self.advance_reveal(cx);
         self.advance_expansion(cx);
         cx.notify();
