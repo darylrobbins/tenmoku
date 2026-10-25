@@ -60,9 +60,12 @@ pub struct OutlinePanel {
     /// reparsed: the editor catches up as it renders.
     behind: bool,
     scroll: UniformListScrollHandle,
-    /// Never focused: the panel takes no keys, but a dock's panel is
-    /// focusable.
+    /// Focused by `outline.show`, for its keys (`outline_panel_keys.rs`).
     focus: gpui::FocusHandle,
+    selection: keys::Selection,
+    /// Whether the panel had focus as it last rendered, which outlines the
+    /// selected row.
+    focused: bool,
     #[cfg(test)]
     counters: TestCounters,
     _observe: Option<Subscription>,
@@ -86,6 +89,8 @@ impl OutlinePanel {
             behind: false,
             scroll: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
+            selection: keys::Selection::default(),
+            focused: false,
             #[cfg(test)]
             counters: TestCounters::default(),
             _observe: None,
@@ -108,6 +113,7 @@ impl OutlinePanel {
             })
         });
         self.outline = None;
+        self.clear_selection();
         self.generation += 1;
         self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
         self.refresh(cx);
@@ -218,8 +224,9 @@ impl OutlinePanel {
             .filter(|current| current.entity_id() == editor)
             .and_then(|current| current.read(cx).syntax().map(Syntax::language));
         if current.is_some_and(|current| std::ptr::eq(current, language)) {
-            self.outline = Some((outline, language));
+            let old = self.outline.replace((outline, language));
             self.generation += 1;
+            self.keep_selection(old.as_ref().map(|(outline, _)| outline), cx);
         }
         self.refresh(cx);
         cx.notify();
@@ -283,6 +290,7 @@ impl OutlinePanel {
         let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) else {
             return;
         };
+        self.selection.row = Some(ix);
         editor.update(cx, |editor, cx| editor.select_and_reveal(start..start, cx));
         window.focus(&editor.focus_handle(cx), cx);
     }
@@ -298,6 +306,7 @@ impl OutlinePanel {
         // A symbol's signature or type, dimmed after its name.
         let dim = cx.theme().colors.text.muted;
         let ui = fe_ui::ui_theme(cx);
+        let (selected, focused) = (self.selection.row, self.focused);
         let items = self.items();
         range
             .filter_map(|ix| {
@@ -307,6 +316,8 @@ impl OutlinePanel {
                         .depth(item.depth as usize)
                         .icon(symbol_icon(item.kind))
                         .detail(item.detail.clone(), dim)
+                        .selected(selected == Some(ix))
+                        .focused(focused)
                         .on_click(cx.listener(move |panel, _, window, cx| {
                             panel.jump(generation, ix, window, cx)
                         })),
@@ -354,9 +365,10 @@ fn thousands(n: usize) -> String {
 }
 
 impl Render for OutlinePanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.counters.built.clear();
+        self.focused = self.focus.contains_focused(window, cx);
         let ui = fe_ui::ui_theme(cx);
         let count = self.items().len();
         // Each outline's rows have their own IDs, so a click pressed on a
@@ -376,7 +388,10 @@ impl Render for OutlinePanel {
                 .text_color(ui.muted_text)
                 .child(text)
         };
-        div()
+        let panel = div().track_focus(&self.focus);
+        <Self as kiln::ViewCommands>::attach(panel, cx)
+            .key_context(self.key_context(cx))
+            .on_key_down(cx.listener(|panel, event, _, cx| panel.count_key(event, cx)))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
             .min_w_0()
@@ -393,6 +408,13 @@ impl Render for OutlinePanel {
             .when_some(self.footer(), |panel, footer| panel.child(muted(footer)))
     }
 }
+
+#[path = "outline_panel_keys.rs"]
+mod keys;
+
+#[cfg(test)]
+#[path = "outline_panel_keys_tests.rs"]
+mod keys_tests;
 
 /// What the tests count.
 #[cfg(test)]

@@ -84,6 +84,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "problems_panel"
                         | "ai_changes"
                         | "problems_panel && vim"
+                        | "outline_panel"
+                        | "outline_panel && vim"
                         | "find_bar && replace_input && text_input"
                         | "editor && vim.mode == normal && !vim.pending"
                         | "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"

@@ -135,8 +135,8 @@ fn shows_the_active_tabs_outline(cx: &mut TestAppContext) {
     assert_eq!(shown, expected(&rust, cx));
     assert_eq!(message(&outline, cx), None);
 
-    // cmd-shift-o from the editor shows the outline, in the Explorer, focus
-    // staying put.
+    // cmd-shift-o from the editor shows the outline, in the Explorer,
+    // focused for its keys.
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
@@ -147,7 +147,7 @@ fn shows_the_active_tabs_outline(cx: &mut TestAppContext) {
         dock.read_with(cx, |dock, _| dock.active()),
         DockPanel::Explorer
     );
-    assert!(focused(&rust, cx));
+    assert!(cx.update(|window, cx| outline.focus_handle(cx).is_focused(window)));
 
     open(&workbench, &paths[1], cx);
     let markdown = active_editor(&workbench, cx);

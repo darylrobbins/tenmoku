@@ -1217,6 +1217,50 @@ keys = "alt-["
 command = "ai.changes_previous_file"
 context = "ai_changes"
 
+# The Outline panel's list, when it has focus, which `outline.show` gives
+# it. With vim on, neo-tree's and nvim-tree's keys, as the other lists have
+# them; a count typed first (`3j`, `5G`) moves that many rows, or to that
+# row.
+[[bindings]]
+keys = "up"
+command = "outline.select_previous"
+context = "outline_panel"
+
+[[bindings]]
+keys = "down"
+command = "outline.select_next"
+context = "outline_panel"
+
+[[bindings]]
+keys = "enter"
+command = "outline.open_selected"
+context = "outline_panel"
+
+[[bindings]]
+keys = "k"
+command = "outline.select_previous"
+context = "outline_panel && vim"
+
+[[bindings]]
+keys = "j"
+command = "outline.select_next"
+context = "outline_panel && vim"
+
+[[bindings]]
+keys = "g g"
+command = "outline.select_first"
+context = "outline_panel && vim"
+
+[[bindings]]
+keys = "shift-g"
+command = "outline.select_last"
+context = "outline_panel && vim"
+
+[[bindings]]
+keys = "o"
+command = "outline.open_selected"
+context = "outline_panel && vim"
+
 # Dismiss every notification: VS Code's chord. Off macOS ctrl-k is read as
 # vim's <C-k>, so there it's off in an editor with vim on.
 [[bindings]]

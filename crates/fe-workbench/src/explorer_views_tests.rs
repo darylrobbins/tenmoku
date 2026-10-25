@@ -190,14 +190,18 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
     assert_eq!(shown(&workbench, cx).1, DockPanel::Search);
 
     // The outline's command shows the Explorer with the outline expanded,
-    // focus going to the editor from the search panel it hid.
+    // focus going to the outline from the search panel it hid.
+    let outline = workbench.read_with(cx, |workbench, cx| {
+        workbench.dock().read(cx).outline().focus_handle(cx)
+    });
     dispatch("outline.show", cx);
     assert_eq!(
         shown(&workbench, cx),
         (true, DockPanel::Explorer, "Explorer".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(false), Some(false)]);
-    assert!(editor_focused(&workbench, cx));
+    assert!(cx.update(|window, _| outline.is_focused(window)));
+    assert!(!editor_focused(&workbench, cx));
 
     // Both collapsed, and the dock hidden, it shows the outline again,
     // leaving the tree collapsed.
@@ -211,7 +215,8 @@ fn show_project_and_outline_show_show_the_explorer(cx: &mut TestAppContext) {
         (true, DockPanel::Explorer, "Explorer".to_owned())
     );
     assert_eq!(collapsed(&workbench, cx), [Some(true), Some(false)]);
-    assert!(editor_focused(&workbench, cx));
+    assert!(cx.update(|window, _| outline.is_focused(window)));
+    assert!(!editor_focused(&workbench, cx));
 
     // dock.show_project shows it with the tree expanded and focused, the
     // outline as it was.

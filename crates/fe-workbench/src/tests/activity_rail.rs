@@ -164,7 +164,11 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(state(&dock, cx), (true, DockPanel::Explorer));
     assert_eq!(ops(&dock, cx), before);
-    assert!(editor_focused(&workbench, cx));
+    let outline = dock.read_with(cx, |dock, cx| dock.outline().focus_handle(cx));
+    assert!(
+        cx.update(|window, _| outline.is_focused(window)),
+        "as cmd-shift-o left it"
+    );
 
     // The header strip of tabs is gone.
     let source = include_str!("../dock.rs");

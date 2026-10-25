@@ -150,7 +150,7 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
     assert!(input_focused(&search, cx));
 
     // With a file open, the Explorer's button focuses the tree, and the
-    // outline's key its editor.
+    // outline's key the outline.
     run("needle", cx);
     let row = result_center(&search, 1, cx);
     cx.simulate_click(row, Modifiers::none());
@@ -163,7 +163,13 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
             assert!(panel_focused(cx));
         } else {
             cx.simulate_keystrokes("cmd-shift-o");
-            assert!(editor(&workbench, cx).2, "the editor has focus");
+            let outline = workbench.read_with(cx, |workbench, cx| {
+                workbench.dock().read(cx).outline().focus_handle(cx)
+            });
+            assert!(
+                cx.update(|window, _| outline.is_focused(window)),
+                "the outline has focus"
+            );
         }
         assert_eq!(state(cx), (true, DockPanel::Explorer));
         cx.simulate_keystrokes("cmd-b");

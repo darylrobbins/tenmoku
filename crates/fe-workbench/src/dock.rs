@@ -6,10 +6,10 @@
 //! [`ViewContainer`] of two views, the project tree (Folders) over the
 //! outline (collapsed until shown or expanded), whose collapse and weights
 //! the dock's saved state keeps; `dock.show_project` shows it, and
-//! `outline.show` shows it with the outline expanded. Source Control is
-//! another, of the git changes (Changes) over the repository's log
-//! (Graph), both expanded ([`source_control`]): `git.show_changes` shows it
-//! with Changes expanded, `git.log` with Graph. The References, Problems,
+//! `outline.show` shows it with the outline expanded and focused. Source
+//! Control is another, of the git changes (Changes) over the repository's
+//! log (Graph), both expanded ([`source_control`]): `git.show_changes`
+//! shows it with Changes expanded, `git.log` with Graph. The References, Problems,
 //! History and Chat buttons join the rail once their panel has shown; the
 //! History panel is made the first time `git.file_history` runs
 //! ([`Dock::set_history`]), the others with the dock. With vim on,
@@ -551,6 +551,7 @@ impl Dock {
             DockOp::ShowOutline => {
                 self.show(DockPanel::Explorer, window, cx);
                 Self::set_collapsed(&self.explorer, crate::outline_panel::VIEW, false, cx);
+                (self.outline).update(cx, |outline, cx| outline.focus_from_show(window, cx));
                 true
             }
             DockOp::ShowGitLog => {
@@ -780,7 +781,8 @@ mod source_control_views_tests;
 pub(crate) enum DockOp {
     ShowSearch,
     ShowProject,
-    /// `outline.show`: shows the Explorer with its outline expanded.
+    /// `outline.show`: shows the Explorer with its outline expanded and
+    /// focused.
     ShowOutline,
     /// The References button: shows the last results, finding none.
     ShowReferences,

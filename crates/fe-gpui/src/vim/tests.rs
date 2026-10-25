@@ -449,6 +449,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "problems_panel"
                             | "ai_changes"
                             | "problems_panel && vim"
+                            | "outline_panel"
+                            | "outline_panel && vim"
                             | "find_bar && replace_input && text_input"
                             | "editor && vim.mode == normal && !vim.pending"
                             | "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
