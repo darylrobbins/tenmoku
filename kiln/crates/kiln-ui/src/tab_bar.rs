@@ -109,6 +109,7 @@ pub struct Tab {
     preview: bool,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
+    on_middle_click: Option<ClickHandler>,
     drag: DragHooks,
 }
 
@@ -127,6 +128,7 @@ impl Tab {
             preview: false,
             on_click: None,
             on_close: None,
+            on_middle_click: None,
             drag: Vec::new(),
         }
     }
@@ -211,6 +213,16 @@ impl Tab {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_close = Some(Box::new(handler));
+        self
+    }
+
+    /// Called when the tab is clicked with the middle button, as VS Code
+    /// closes a tab. The close button's own click doesn't reach it.
+    pub fn on_middle_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_middle_click = Some(Box::new(handler));
         self
     }
 
@@ -347,6 +359,13 @@ impl RenderOnce for Tab {
             )
             .child(close)
             .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
+            .when_some(self.on_middle_click, |tab, on_middle_click| {
+                tab.on_aux_click(move |event, window, cx| {
+                    if event.is_middle_click() {
+                        on_middle_click(event, window, cx);
+                    }
+                })
+            })
             .map(|tab| apply(tab, self.drag))
     }
 }

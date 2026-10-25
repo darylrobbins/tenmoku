@@ -263,6 +263,8 @@ mod lsp_consent_relaunch_tests;
 #[cfg(test)]
 mod lsp_consent_tests;
 #[cfg(test)]
+mod middle_click_close_tests;
+#[cfg(test)]
 mod panel_width_tests;
 #[cfg(test)]
 mod settings_editor_controls_tests;

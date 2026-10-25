@@ -600,11 +600,20 @@ impl<V: PaneView> PaneState<V> {
         let tabs: Vec<_> = (self.tabs(cx).into_iter().zip(&self.items))
             .enumerate()
             .map(|(ix, (tab, item))| {
+                // The × and a middle click close the same way.
+                let close = Rc::new(cx.listener(
+                    move |view: &mut V, _: &ClickEvent, window, cx| {
+                        view.activate_item(ix, window, cx);
+                        view.close_active_item(window, cx);
+                        cx.notify();
+                    },
+                ));
                 let label = item.tab_title(cx);
                 let dragged = DraggedTab {
                     pane: pane.clone(),
                     item: item.id(),
                 };
+                let (x, middle) = (close.clone(), close);
                 tab.on_drag(dragged, move |_, _, _, cx| {
                     cx.new(|_| TabGhost(label.clone()))
                 })
@@ -618,11 +627,8 @@ impl<V: PaneView> PaneState<V> {
                         cx.notify();
                     }),
                 )
-                .on_close(cx.listener(move |view: &mut V, _, window, cx| {
-                    view.activate_item(ix, window, cx);
-                    view.close_active_item(window, cx);
-                    cx.notify();
-                }))
+                .on_close(move |event, window, cx| x(event, window, cx))
+                .on_middle_click(move |event, window, cx| middle(event, window, cx))
             })
             .collect();
         TabBar::new("tabs", &ui)
