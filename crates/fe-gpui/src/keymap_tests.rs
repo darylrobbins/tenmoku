@@ -352,6 +352,8 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "editor && vim.mode == normal && !vim.pending && !vim.replace_with_register"
                         | "editor && vim.visual && !vim.replace_with_register"
                         | "workbench && !terminal && !vim_line && !(editor && vim.enabled)"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel) && vim && !editor && !text_input"
+                        | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
                 )
             )
     };

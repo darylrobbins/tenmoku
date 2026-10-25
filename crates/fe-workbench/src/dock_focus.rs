@@ -11,6 +11,9 @@ use kiln_shell::{DockPosition, DockView as _};
 
 use crate::{Direction, Workbench};
 
+#[path = "dock_leave.rs"]
+mod dock_leave;
+
 impl Workbench {
     /// Focuses the dock shown on `direction`'s side of the panes, true if
     /// there's one to focus.

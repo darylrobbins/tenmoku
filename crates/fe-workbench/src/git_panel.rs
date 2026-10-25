@@ -85,7 +85,7 @@ use fe_ui::{Button, Checkbox, Icon, IconButton, ROW_HEIGHT, TextInput, Tooltip, 
 use fe_vim::{CommandLineKind, Mode};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Modifiers,
+    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, Modifiers,
     ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
@@ -99,6 +99,11 @@ use crate::{
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
+
+/// The flag the panel's key context has while vim is on, which the window
+/// keys leaving the panel need (`dock.focus_left` and the rest). The commit
+/// box, an editor, keeps vim's own keys.
+const VIM_FLAG: &str = "vim";
 
 /// The hue of added and untracked files' letters: the accent's, turned
 /// green.
@@ -418,6 +423,17 @@ fn length_hints(text: &Text) -> Vec<(u32, String, Tint)> {
         }
     }
     hints
+}
+
+/// The panel element's key context: [`KEY_CONTEXT`], with the `vim` flag
+/// while vim is on.
+fn key_context(cx: &App) -> KeyContext {
+    let mut context = KeyContext::default();
+    context.add(KEY_CONTEXT);
+    if fe_gpui::vim_enabled(cx) {
+        context.add(VIM_FLAG);
+    }
+    context
 }
 
 /// The kind of command line `editor`'s vim has open, if any.
@@ -1946,7 +1962,7 @@ impl Render for GitPanel {
         let error = matches!(self.status, Status::Failed(_));
         div()
             .track_focus(&self.focus)
-            .key_context(KEY_CONTEXT)
+            .key_context(key_context(cx))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::on_run_command))
             .debug_selector(|| "sidebar-panel".into())

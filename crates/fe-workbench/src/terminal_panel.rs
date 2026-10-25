@@ -26,9 +26,9 @@ use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalVie
 use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, TAB_HEIGHT, Tooltip};
 use gpui::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
-    div, prelude::FluentBuilder as _, px, svg,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Window, div, prelude::FluentBuilder as _, px, svg,
 };
 use kiln_shell::{DockItem, PanelId};
 
@@ -47,6 +47,14 @@ const TAB_LIST_WIDTH: gpui::Pixels = px(160.);
 
 /// The panel's id in the bottom dock.
 pub(crate) const TERMINAL: PanelId = PanelId("terminal");
+
+/// The key context the panel's element sets, around the sessions' own
+/// (`terminal`) and the find row's.
+pub(crate) const KEY_CONTEXT: &str = "terminal_panel";
+
+/// The flag the panel's key context has while vim is on, which the window
+/// keys leaving the panel need (`dock.focus_up` and the rest).
+const VIM_FLAG: &str = "vim";
 
 /// What the panel tells the workbench.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +105,11 @@ pub struct TerminalPanel {
     /// hands focus to the active session as the panel draws, starting one
     /// if there's none.
     focus: FocusHandle,
+    /// Whether a window key moved focus here from the sidebar, and focus
+    /// has stayed in the panel since: `<C-w>` back out goes there.
+    pub(crate) from_sidebar: bool,
+    /// To focus leaving the panel, which forgets `from_sidebar`.
+    focus_out: Option<Subscription>,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
     shell: Option<(String, Vec<String>)>,
@@ -127,6 +140,8 @@ impl TerminalPanel {
             settings: TerminalSettings::default(),
             find: None,
             focus: cx.focus_handle(),
+            from_sidebar: false,
+            focus_out: None,
             #[cfg(test)]
             shell: None,
             #[cfg(test)]
@@ -655,6 +670,11 @@ impl Render for TerminalPanel {
         // takes focus. Shown with no session, as by a rail click after the
         // shell exited: start one.
         let focused = self.focus.is_focused(window);
+        if self.focus_out.is_none() {
+            self.focus_out = Some(cx.on_focus_out(&self.focus, window, |panel, _, _, _| {
+                panel.from_sidebar = false;
+            }));
+        }
         self.start(window, cx);
         if focused {
             self.focus_active(window, cx);
@@ -668,8 +688,14 @@ impl Render for TerminalPanel {
         let view = self.view().cloned();
         let ui = fe_ui::ui_theme(cx);
         let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
+        let mut context = KeyContext::default();
+        context.add(KEY_CONTEXT);
+        if fe_gpui::vim_enabled(cx) {
+            context.add(VIM_FLAG);
+        }
         div()
             .track_focus(&self.focus)
+            .key_context(context)
             .size_full()
             .flex()
             .flex_col()

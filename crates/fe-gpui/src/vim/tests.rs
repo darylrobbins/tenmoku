@@ -462,6 +462,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "vim_line && text_input"
                             | "editor"
                             | "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+                            | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel) && vim && !editor && !text_input"
+                            | "(project_panel || outline_panel || ReferencesPanel || problems_panel || search_results || git_panel || terminal_panel) && vim && !editor && !text_input"
                     )
                 ),
             "{diagnostic:?}"

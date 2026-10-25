@@ -410,6 +410,41 @@ impl Workbench {
         self.focus_next_pane(false, cx.window, cx.cx);
     }
 
+    /// Focus Left of Dock
+    #[command(id = "dock.focus_left")]
+    fn focus_left_of_dock(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_from_dock(Direction::Left, cx.window, cx.cx);
+    }
+
+    /// Focus Right of Dock
+    #[command(id = "dock.focus_right")]
+    fn focus_right_of_dock(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_from_dock(Direction::Right, cx.window, cx.cx);
+    }
+
+    /// Focus Above Dock
+    #[command(id = "dock.focus_up")]
+    fn focus_above_dock(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_from_dock(Direction::Up, cx.window, cx.cx);
+    }
+
+    /// Focus Below Dock
+    #[command(id = "dock.focus_down")]
+    fn focus_below_dock(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_from_dock(Direction::Down, cx.window, cx.cx);
+    }
+
+    /// Focus Active Editor
+    #[command(id = "dock.focus_editor")]
+    fn focus_editor_from_dock_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_editor_from_dock(cx.window, cx.cx);
+    }
+
     /// Grow Dock
     #[command(id = "dock.grow")]
     fn grow_dock(&mut self, cx: &mut Cx<Self>) {
