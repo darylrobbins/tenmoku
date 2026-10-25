@@ -33,7 +33,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::{BufferId, HunkId, HunkStatus, ProposedChange, TransactionId};
+use fe_buffer::{BufferId, HunkId, HunkStatus, ProposedChange, TransactionId, Version};
 use fe_command::Source;
 use fe_editor::{ChangesetError, Counts, FileEntry, RevertOutcome, Summary};
 use fe_gpui::{EditorView, ProposalEvent};
@@ -117,6 +117,9 @@ pub(crate) struct AiChanges {
     told: usize,
     /// A file being read for a row that was clicked.
     opening: Option<Subscription>,
+    /// The buffers of tabs showing new files still pending, by file: made
+    /// to review them, not to keep. A decision closes them.
+    previews: Vec<(PathBuf, BufferId)>,
 }
 
 impl AiChanges {
@@ -130,6 +133,7 @@ impl AiChanges {
             editors: HashMap::new(),
             told: 0,
             opening: None,
+            previews: Vec::new(),
         }
     }
 }
@@ -491,6 +495,21 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The turn it replaces leaves no review tabs behind.
+        let previews: Vec<BufferId> = (self.ai_changes.as_ref())
+            .map(|state| state.previews.iter().map(|(_, buffer)| *buffer).collect())
+            .unwrap_or_default();
+        if !previews.is_empty() {
+            for pane in self
+                .pane_group(cx)
+                .panes()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                pane.update(cx, |pane, cx| pane.discard_buffers(&previews, window, cx));
+            }
+        }
         self.ai_changes = Some(AiChanges::new(changeset));
         self.ai_changes_panel(cx);
         self.sync_ai_changes(cx);
@@ -665,13 +684,31 @@ impl Workbench {
     /// tabs of those removed, and has every editor drawn again after a
     /// decision changed their text or proposals.
     fn land_ai_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (made, removed): (Vec<_>, Vec<_>) = match self.ai_changes.as_mut() {
+        let editors = self.ai_editors(cx);
+        let (made, mut removed): (Vec<_>, Vec<_>) = match self.ai_changes.as_mut() {
             Some(state) => (
                 std::mem::take(&mut state.made.buffers),
                 std::mem::take(&mut state.made.removed),
             ),
             None => return,
         };
+        if let Some(state) = self.ai_changes.as_mut() {
+            // Previews of files no longer pending go: a file accepted gets
+            // its own tab, one rejected has none.
+            let pending: Vec<PathBuf> = with_editors(&editors, &mut state.made, cx, |set| {
+                (state.changeset.files(set).into_iter())
+                    .filter(|entry| entry.is_new && entry.counts.pending > 0)
+                    .map(|entry| entry.path)
+                    .collect()
+            });
+            state.previews.retain(|(path, buffer)| {
+                let keep = pending.contains(path);
+                if !keep {
+                    removed.push(*buffer);
+                }
+                keep
+            });
+        }
         let pane = self.pane().clone();
         for (path, buffer) in made {
             pane.update(cx, |pane, cx| {
@@ -760,11 +797,12 @@ impl Workbench {
 
     /// Reverts what the turn accepted. A file edited since is restored only
     /// after asking, naming the files; the answer holds for those files of
-    /// this changeset and no others, so a turn that replaced it meanwhile, or
-    /// a file edited since the question, asks again.
+    /// this changeset and no others, as their buffers were when asked, so a
+    /// turn that replaced it meanwhile, or a file edited or reopened since
+    /// the question, asks again.
     fn revert_ai_turn(
         &mut self,
-        confirmed: Vec<PathBuf>,
+        confirmed: Vec<(PathBuf, Option<(BufferId, Version)>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -789,7 +827,8 @@ impl Workbench {
         if edited.is_empty() {
             return;
         }
-        if edited.iter().all(|path| confirmed.contains(path)) {
+        let marks = self.buffer_marks(&edited, cx);
+        if marks.iter().all(|mark| confirmed.contains(mark)) {
             if let Some(state) = self.ai_changes.as_mut() {
                 with_editors(&editors, &mut state.made, cx, |set| {
                     state.changeset.revert_forced(set)
@@ -826,7 +865,7 @@ impl Workbench {
                     let same = (workbench.ai_changes.as_ref())
                         .is_some_and(|state| state.generation == generation);
                     if same {
-                        workbench.revert_ai_turn(edited, window, cx);
+                        workbench.revert_ai_turn(marks, window, cx);
                     }
                 })
                 .ok();
@@ -834,8 +873,30 @@ impl Workbench {
         .detach();
     }
 
+    /// Each of `paths` with the identity and version of the buffer an open
+    /// editor shows for it, `None` if none does.
+    fn buffer_marks(
+        &self,
+        paths: &[PathBuf],
+        cx: &App,
+    ) -> Vec<(PathBuf, Option<(BufferId, Version)>)> {
+        let editors = self.ai_editors(cx);
+        (paths.iter())
+            .map(|path| {
+                let mark = editors.iter().find_map(|editor| {
+                    let model = editor.read(cx).model();
+                    (model.path() == Some(path.as_path()))
+                        .then(|| (model.buffer().id(), model.buffer().version()))
+                });
+                (path.clone(), mark)
+            })
+            .collect()
+    }
+
     /// Opens `path`, a file of the changeset, in the active pane, shows its
-    /// proposal in its editor and moves to its first pending hunk.
+    /// proposal in its editor and moves to its first pending hunk. A new
+    /// file not yet accepted is accepted, which makes its buffer in a tab to
+    /// review; an accepted one shows its tab.
     pub(crate) fn open_ai_file(
         &mut self,
         path: PathBuf,
@@ -845,11 +906,44 @@ impl Workbench {
         let Some(state) = self.ai_changes.as_mut() else {
             return;
         };
+        state.opening = None;
         if state.changeset.proposal(&path).is_none() {
+            if state.changeset.new_file_text(&path).is_some() {
+                self.open_ai_new_file(path, window, cx);
+            }
             return;
         }
-        state.opening = None;
         let pane = self.pane().clone();
+        if crate::loader::is_svg(&path) {
+            // Text, not the viewer ordinary routing opens for an SVG.
+            pane.update(cx, |pane, cx| pane.open_as_text(path.clone(), window, cx));
+            if Self::shows_text(&pane, &path, cx) {
+                return self.land_ai_file(&pane, &path, window, cx);
+            }
+            let watched = path.clone();
+            let (serial, navigations) = {
+                let read = pane.read(cx);
+                (read.open_serial(), read.navigations())
+            };
+            let opening = cx.observe_in(&pane, window, move |workbench, pane, window, cx| {
+                let read = pane.read(cx);
+                let current = read.open_serial() == serial && read.navigations() == navigations;
+                if current && !Self::shows_text(&pane, &watched, cx) {
+                    return;
+                }
+                if let Some(state) = workbench.ai_changes.as_mut() {
+                    state.opening = None;
+                }
+                // The user moved on meanwhile: show nothing.
+                if current {
+                    workbench.land_ai_file(&pane, &watched, window, cx);
+                }
+            });
+            if let Some(state) = self.ai_changes.as_mut() {
+                state.opening = Some(opening);
+            }
+            return;
+        }
         pane.update(cx, |pane, cx| pane.open_at(path.clone(), None, window, cx));
         if !pane.read(cx).is_opening(&path) {
             return self.land_ai_file(&pane, &path, window, cx);
@@ -873,6 +967,59 @@ impl Workbench {
         }
     }
 
+    /// Whether `pane` has an editor tab on `path`.
+    fn shows_text(pane: &Entity<Pane>, path: &Path, cx: &App) -> bool {
+        (pane.read(cx).tabs().iter())
+            .filter_map(|tab| tab.editor())
+            .any(|editor| editor.read(cx).model().path() == Some(path))
+    }
+
+    /// Reviews the new file `path`: a pending one opens a tab on a copy of
+    /// its text, deciding nothing; an accepted one has its tab shown. Either
+    /// is shown in whichever pane has it.
+    fn open_ai_new_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let panes: Vec<Entity<Pane>> = self.pane_group(cx).panes().into_iter().cloned().collect();
+        let tab = |panes: &[Entity<Pane>], cx: &App| {
+            panes.iter().find_map(|pane| {
+                let at = pane.read(cx).tabs().iter().position(|tab| {
+                    (tab.editor()).is_some_and(|e| e.read(cx).model().path() == Some(&path))
+                })?;
+                Some((pane.clone(), at))
+            })
+        };
+        let editors = self.ai_editors(cx);
+        let pending = self.ai_changes.as_mut().is_some_and(|state| {
+            with_editors(&editors, &mut state.made, cx, |set| {
+                (state.changeset.files(set).into_iter())
+                    .any(|entry| entry.path == path && entry.counts.pending > 0)
+            })
+        });
+        if pending
+            && tab(&panes, cx).is_none()
+            && let Some(state) = self.ai_changes.as_mut()
+            && let Some(text) = state.changeset.new_file_text(&path)
+        {
+            // Not yet accepted: its text to look at, read-only, for the
+            // decision's own buttons to replace or close.
+            let buffer = fe_buffer::Buffer::new(text);
+            state.previews.push((path.clone(), buffer.id()));
+            let model = fe_editor::EditorModel::new(buffer, Some(path.clone()));
+            let pane = self.pane().clone();
+            pane.update(cx, |pane, cx| pane.add(model, cx));
+            let editor = pane.read(cx).active_editor().cloned();
+            if let Some(editor) = editor {
+                editor.update(cx, |editor, cx| editor.set_read_only(true, cx));
+            }
+        }
+        if let Some((pane, at)) = tab(&panes, cx) {
+            pane.update(cx, |pane, cx| pane.activate(at, window, cx));
+            let editor = pane.read(cx).active_editor().cloned();
+            if let Some(editor) = editor {
+                window.focus(&editor.focus_handle(cx), cx);
+            }
+        }
+    }
+
     /// Shows the proposal of `path` in the editor of `pane`'s on it, at its
     /// first pending hunk, focused. A buffer reopened since its tab closed
     /// is followed first.
@@ -889,16 +1036,19 @@ impl Workbench {
         else {
             return;
         };
-        let editor = {
+        let (editor, at) = {
             let pane = pane.read(cx);
-            (pane.active_editor().into_iter())
-                .chain(pane.tabs().iter().filter_map(|tab| tab.editor()))
-                .find(|editor| editor.read(cx).model().path() == Some(path))
-                .cloned()
+            let at = (pane.tabs().iter()).position(|tab| {
+                (tab.editor()).is_some_and(|editor| editor.read(cx).model().path() == Some(path))
+            });
+            (at.and_then(|at| pane.tabs()[at].editor().cloned()), at)
         };
-        let Some(editor) = editor else {
+        let (Some(editor), Some(at)) = (editor, at) else {
             return;
         };
+        // A tab in the background (an SVG viewer replaced where it was) is
+        // brought forward.
+        pane.update(cx, |pane, cx| pane.activate(at, window, cx));
         if editor.read(cx).model().buffer().id() != buffer {
             return;
         }
