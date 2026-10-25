@@ -3,7 +3,8 @@
 use super::{Ex, split, table};
 
 /// The full names of the commands `ex.rs`, `lines.rs`, `global.rs`,
-/// `normal.rs` and `buffers.rs` take (those of the table are added from [`table::COMMANDS`]).
+/// `normal.rs`, `buffers.rs` and `windows.rs` take (those of the table are
+/// added from [`table::COMMANDS`]).
 /// Each must parse as a command; a test holds the list to that.
 const NAMES: &[&str] = &[
     "Explore",
@@ -18,6 +19,7 @@ const NAMES: &[&str] = &[
     "browse",
     "buffer",
     "cclose",
+    "close",
     "copen",
     "copy",
     "delete",
@@ -32,17 +34,22 @@ const NAMES: &[&str] = &[
     "lclose",
     "lopen",
     "move",
+    "new",
     "nohlsearch",
     "normal",
     "oldfiles",
+    "only",
     "qall",
     "quit",
     "quitall",
     "saveas",
     "sort",
+    "split",
     "substitute",
     "t",
     "vglobal",
+    "vnew",
+    "vsplit",
     "wall",
     "write",
     "wq",

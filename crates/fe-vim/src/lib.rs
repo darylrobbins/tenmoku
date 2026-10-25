@@ -392,6 +392,10 @@
 //!   `:bN[ext]`, `:bp[revious]`, `:bd[elete][!]`, `:bf[irst]`, `:br[ewind]`
 //!   and `:bl[ast]` leave a [`HostCommand::Buffer`], read as nvim reads
 //!   them (`ex/buffers.rs`), for the host to run over its open files.
+//! - Nor are the windows': `:sp[lit] [file]`, `:vs[plit] [file]`,
+//!   `:new`, `:vne[w]`, `:on[ly][!]` and `:clo[se][!]` leave a
+//!   [`HostCommand::Window`] (`ex/windows.rs`), for the host to run over
+//!   its panes.
 //! - Nor are shell commands: `:{range}!{cmd}` and `:[line]r[ead] !{cmd}`
 //!   leave a [`HostCommand::Filter`] or [`HostCommand::ReadCommand`], whose
 //!   output the host hands back to [`VimState::apply_filter`] or
@@ -841,6 +845,7 @@ pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{
     Address, Base, BufferAddress, BufferCommand, BufferTarget, Ex, ExCommand, ExError, HostCommand,
     LineSearch, Part, Pick, PickRow, PickThen, SHELL_REFUSED, ShellCommand, ShellPart,
+    WindowCommand,
 };
 pub use feature::filter::FilterArgs;
 pub use headless::{FeedError, HeadlessVim};

@@ -380,7 +380,8 @@ pub(super) fn host_command(
         | HostCommand::CloseProblems
         | HostCommand::ReplaceInFiles { .. }
         | HostCommand::Pick(_)
-        | HostCommand::Buffer(_) => workbench.run_window_command(&editor, command, window, cx),
+        | HostCommand::Buffer(_)
+        | HostCommand::Window(_) => workbench.run_window_command(&editor, command, window, cx),
     }
 }
 

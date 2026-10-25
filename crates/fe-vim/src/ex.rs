@@ -4,8 +4,9 @@
 //! the host's commands. The commands ([`ExCommand`]):
 //!
 //! - `:{range}` alone, `:d[elete]`, `:noh[lsearch]`, `:s[ubstitute]`, `:&`
-//!   and `:&&`, the host's `:w :q :wq :x :e :qa :wa`, and its buffer
-//!   list's `:b :bn :bp :bd :bf :bl` (`buffers.rs`).
+//!   and `:&&`, the host's `:w :q :wq :x :e :qa :wa`, its buffer list's
+//!   `:b :bn :bp :bd :bf :bl` (`buffers.rs`), and its windows' `:sp :vs
+//!   :new :vne :on :clo` (`windows.rs`).
 //! - `:y[ank] [x] [count]`: the range's lines (the cursor's by default; with
 //!   a count, that many from the range's last) yanked linewise into
 //!   register `x` (`"` and `0` without one); the cursor stays.
@@ -100,8 +101,10 @@ pub(crate) mod normal;
 mod pick;
 pub use pick::{Pick, PickRow, PickThen};
 mod table;
+mod windows;
 pub(crate) use table::filter::refusal as shell_refusal;
 pub use table::filter::{REFUSED as SHELL_REFUSED, ShellCommand, ShellPart};
+pub use windows::WindowCommand;
 
 /// A parsed ex line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,6 +334,9 @@ pub enum HostCommand {
     /// `:b`, `:bn`, `:bp`, `:bd`, `:bf` and `:bl`: the host's buffers,
     /// its open files, switched or deleted (`ex/buffers.rs`).
     Buffer(BufferCommand),
+    /// `:sp`, `:vs`, `:new`, `:vne`, `:on` and `:clo`: the host's windows,
+    /// its panes, split or closed (`ex/windows.rs`).
+    Window(WindowCommand),
     /// `:{range}!{cmd}`: `rows` (from 0) run through `command`, whose
     /// output takes their place ([`crate::VimState::apply_filter`]); asked
     /// for by `actor`, which fe-vim lets only [`Actor::User`] be, for the
@@ -515,6 +521,7 @@ fn command_end(piece: &str) -> Option<usize> {
         || !name.is_empty()
             && (host(name).is_some()
                 || buffers::kind(name).is_some()
+                || windows::kind(name).is_some()
                 || name == "Replace"
                 || is_diff(name)
                 || global::kind(name).is_some()
@@ -705,6 +712,9 @@ fn command(
     let mut check = |both| check.take().map_or(Ok(()), |check| check(both));
     if let Some(kind) = buffers::kind(name) {
         return buffers::parse(kind, range, after);
+    }
+    if let Some(kind) = windows::kind(name) {
+        return windows::parse(kind, range, after);
     }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
@@ -1333,6 +1343,15 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
             // run in the buffer left (`ex/buffers.rs`).
             return Err(ExError::Unsupported(
                 "a buffer command in :g or :normal".into(),
+            ));
+        }
+        ExCommand::Host(HostCommand::Window(_))
+            if global::running() || target.state.normal_suspended.is_some() =>
+        {
+            // As a buffer command: the rest would run in the window left
+            // (`ex/windows.rs`).
+            return Err(ExError::Unsupported(
+                "a window command in :g or :normal".into(),
             ));
         }
         ExCommand::Host(mut command) => {

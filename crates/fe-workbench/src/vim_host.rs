@@ -17,6 +17,9 @@
 //! run over the window's open files, numbered as nvim numbers buffers:
 //! see [`vim_buffers`].
 //!
+//! The window commands, `:sp`, `:vs`, `:new`, `:vne`, `:on` and `:clo`,
+//! run as the pane commands over the window's panes: see [`vim_windows`].
+//!
 //! `!` filters and `:r !{cmd}` run through the user's shell, off the UI
 //! thread, only from the user's own keys in a trusted folder: see
 //! [`vim_filter`].
@@ -54,6 +57,9 @@ mod vim_pick;
 
 #[path = "vim_buffers.rs"]
 mod vim_buffers;
+
+#[path = "vim_windows.rs"]
+mod vim_windows;
 
 #[path = "vim_filter.rs"]
 pub(super) mod vim_filter;
@@ -195,13 +201,15 @@ impl Workbench {
             | HostCommand::CloseProblems
             | HostCommand::ReplaceInFiles { .. }
             | HostCommand::Pick(_)
-            | HostCommand::Buffer(_)) => self.run_window_command(&editor, command, window, cx),
+            | HostCommand::Buffer(_)
+            | HostCommand::Window(_)) => self.run_window_command(&editor, command, window, cx),
         }
     }
 
     /// Runs the day-one features' commands, `:Ex`, `:oldfiles`, `:copen`,
-    /// `:cclose`, `:Replace`, the lists to pick from (`:marks`) and the
-    /// buffer list's (`:b`, `:bn`, `:bd`), typed in `editor`, which act on the window
+    /// `:cclose`, `:Replace`, the lists to pick from (`:marks`), the
+    /// buffer list's (`:b`, `:bn`, `:bd`) and the panes' (`:sp`, `:on`,
+    /// `:clo`), typed in `editor`, which act on the window
     /// whichever editor they are typed in: a tab's, a diff view's side or the
     /// commit box. Any other command runs nothing.
     pub(super) fn run_window_command(
@@ -229,6 +237,9 @@ impl Workbench {
             HostCommand::Pick(pick) => self.show_vim_pick(editor, pick, window, cx),
             HostCommand::Buffer(command) => {
                 self.run_vim_buffer_command(editor, command, window, cx)
+            }
+            HostCommand::Window(command) => {
+                self.run_vim_window_command(editor, command, window, cx)
             }
             _ => {}
         }
@@ -610,19 +621,32 @@ impl Workbench {
         let Some((pane, _)) = self.tab_of(editor, cx) else {
             return;
         };
+        match self.vim_path(editor, path, cx) {
+            Ok((resolved, _)) => pane.update(cx, |pane, cx| pane.open(resolved, window, cx)),
+            Err(error) => message(editor, error, cx),
+        }
+    }
+
+    /// `path` typed in `editor` resolved as [`resolve`] does, against the
+    /// folder (else the editor's file's), and whether an editor is open on
+    /// it: its tab keeps its spelling of the path, so it is reused, not
+    /// opened a second time.
+    fn vim_path(
+        &self,
+        editor: &Entity<EditorView>,
+        path: &str,
+        cx: &App,
+    ) -> Result<(PathBuf, bool), String> {
         let folder = (self.root.clone()).or_else(|| editor.path(cx)?.parent().map(Path::to_owned));
-        let resolved = match resolve(path, folder.as_deref()) {
-            Ok(resolved) => resolved,
-            Err(error) => return message(editor, error, cx),
-        };
-        // A tab already on this file keeps its spelling of the path, so it
-        // is reused, not opened a second time.
+        let resolved = resolve(path, folder.as_deref())?;
         let wanted = identity(&resolved);
-        let resolved = (self.file_editors(cx).iter())
+        let open = (self.file_editors(cx).iter())
             .filter_map(|open| open.path(cx).map(|path| path.to_path_buf()))
-            .find(|open| *open == resolved || (wanted.is_some() && identity(open) == wanted))
-            .unwrap_or(resolved);
-        pane.update(cx, |pane, cx| pane.open(resolved, window, cx));
+            .find(|open| *open == resolved || (wanted.is_some() && identity(open) == wanted));
+        Ok(match open {
+            Some(open) => (open, true),
+            None => (resolved, false),
+        })
     }
 }
 
