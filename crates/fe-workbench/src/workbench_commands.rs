@@ -649,6 +649,26 @@ impl Workbench {
         self.nav_command(NavOp::GotoDefinition, cx);
     }
 
+    /// Peek Definition
+    #[command(id = "editor.peek_definition", context = "editor")]
+    fn peek_definition(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| {
+            this.run_nav_op(NavOp::PeekDefinition, window, cx)
+        });
+    }
+
+    /// Close Peek
+    #[command(id = "peek.close", context = "peek || peek_shown")]
+    fn close_peek_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("peek || peek_shown", cx, Self::close_peek);
+    }
+
+    /// Open Peeked Definition
+    #[command(id = "peek.open", context = "peek")]
+    fn open_from_peek_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::peek::KEY_CONTEXT, cx, Self::open_from_peek);
+    }
+
     /// Go to Declaration
     #[command(id = "nav.goto_declaration")]
     fn go_to_declaration(&mut self, cx: &mut Cx<Self>) {

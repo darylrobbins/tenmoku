@@ -286,6 +286,9 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     ("workbench.toggle_zen_mode", "Toggle Zen Mode", "workbench"),
+    ("editor.peek_definition", "Peek Definition", "editor"),
+    ("peek.close", "Close Peek", "peek || peek_shown"),
+    ("peek.open", "Open Peeked Definition", "peek"),
 ];
 
 #[gpui::test]

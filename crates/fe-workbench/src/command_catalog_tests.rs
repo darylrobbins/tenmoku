@@ -387,6 +387,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.page_down",
     "editor.page_up",
     "editor.paste",
+    "editor.peek_definition",
     "editor.redo",
     "editor.save",
     "editor.select_all",

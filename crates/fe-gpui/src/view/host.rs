@@ -22,12 +22,13 @@
 //!
 //! Blocks are laid out by fe-display's block layer and painted by
 //! [`crate::element`]'s `host_blocks`: their rows are screen rows, which the
-//! scroll position counts.
+//! scroll position counts. A reserve block paints nothing: the host draws
+//! over it, where [`EditorView::reserved_blocks`] says each frame put it.
 
 use fe_command::{Invocation, Value};
 use fe_editor::decorations::Tint;
 use fe_vim::{CommandLineKind, Ex, ExCommand, Mode, Step, VimKey, VimState};
-use gpui::{Context, EventEmitter, SharedString, px};
+use gpui::{Bounds, Context, EventEmitter, Pixels, SharedString, px};
 
 use super::EditorView;
 use crate::vim;
@@ -61,6 +62,22 @@ pub enum HostBlockKind {
         lines: Vec<SharedString>,
         tint: Tint,
     },
+    /// Blank rows the view paints nothing on, for the host to draw an
+    /// element over: see [`EditorView::reserved_blocks`].
+    Reserve,
+}
+
+/// Where a frame laid out a [`HostBlockKind::Reserve`] block, in window
+/// coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReservedBlock {
+    /// The host's.
+    pub id: u64,
+    /// Its rows, across the editor's width, gutter and all: above or below
+    /// the view, in part or whole, when it's scrolled out.
+    pub bounds: Bounds<Pixels>,
+    /// The editor's text and gutter, which clip it.
+    pub clip: Bounds<Pixels>,
 }
 
 /// What an [`EditorView`] tells its subscribers.
@@ -133,6 +150,28 @@ impl EditorView {
 
     pub fn blocks(&self) -> &[HostBlock] {
         &self.blocks
+    }
+
+    /// Adds `flag` to the editor's key context, or takes it out: for a
+    /// host's keys while it shows something in the editor, such as a
+    /// widget over a reserve block.
+    pub fn set_key_context_flag(&mut self, flag: &'static str, on: bool, cx: &mut Context<Self>) {
+        let had = self.key_flags.contains(&flag);
+        match (on, had) {
+            (true, false) => self.key_flags.push(flag),
+            (false, true) => self.key_flags.retain(|&had| had != flag),
+            _ => return,
+        }
+        cx.notify();
+    }
+
+    /// The reserve blocks the frame being drawn places, in view or not
+    /// (one above a row a fold hides isn't placed), set as the editor is
+    /// prepainted: an element prepainted after it in the same frame finds
+    /// them where they are now, scrolled with the text. Those of the last
+    /// frame until then.
+    pub fn reserved_blocks(&self) -> &[ReservedBlock] {
+        &self.reserved
     }
 
     /// How far down the view is scrolled, in screen rows: display rows and

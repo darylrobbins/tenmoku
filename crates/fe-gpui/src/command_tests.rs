@@ -145,6 +145,13 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
             ("shift-enter".to_string(), "editor.newline", false),
             ("escape".to_string(), "chat.stop", false),
         ])
+        // Peek Definition's, in its widget and the excerpt in it.
+        .chain([
+            ("escape".to_string(), "peek.close", false),
+            ("escape".to_string(), "peek.close", false),
+            ("enter".to_string(), "peek.open", false),
+            ("escape".to_string(), "peek.close", false),
+        ])
         .collect();
     assert_eq!(others, context_free);
     for binding in bindings {

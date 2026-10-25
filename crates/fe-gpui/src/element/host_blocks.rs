@@ -4,6 +4,9 @@
 //! diagonal hatch, or a band of text on its tint. Positions down the frame
 //! go by screen row, so a block's rows push the text's down ([`row_at`]).
 //!
+//! A reserve block paints nothing: where it's laid out is published for
+//! the host to draw over ([`reserved`]).
+//!
 //! The view's lens rows ([`crate::lens`]) are blocks too, a row each above
 //! their rows ([`lens_blocks`]), with their items from the row's first
 //! non-blank column ([`lens_layout`]).
@@ -20,14 +23,14 @@ use fe_display::{
 use fe_editor::decorations::Tint;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, Hsla,
-    MouseMoveEvent, PathBuilder, Pixels, Window, fill, point, px, size,
+    MouseExitEvent, MouseMoveEvent, PathBuilder, Pixels, Window, fill, point, px, size,
 };
 
-use super::{FrameLayout, Line, Shaper};
+use super::{FrameLayout, Line, PointerOutside, Shaper};
 use crate::{
     EditorTheme, EditorView,
     lens::{self, Lens, LensItem, PaintedRow},
-    view::HostBlockKind,
+    view::{HostBlockKind, ReservedBlock},
 };
 
 /// Lens rows' block ids: this plus the lens's index in the frame's
@@ -131,15 +134,20 @@ struct PlacedItem {
 
 /// The lens rows in view, each item shaped by `small` in the muted text
 /// colour from its row's first non-blank column, as `shaper` measures the
-/// row's indentation, then ` | ` between them.
+/// row's indentation, then ` | ` between them. Only as much is measured and
+/// shaped as can show: the indentation is counted in columns up to the
+/// view's right edge, items starting past it are left out, and a title
+/// longer than [`MAX_SHAPED_ROW_BYTES`] is shaped around the view only, as
+/// a long line of a text block is ([`slice`]), measured by `widths`.
 pub(super) fn lens_layout(
     frame: &Frame<Line>,
     lenses: &[Lens],
     view: &EditorView,
     shaper: &mut Shaper,
     small: &mut Shaper,
+    widths: &mut dyn CharWidth,
 ) -> Vec<PlacedLens> {
-    let (text, tab_size) = (view.model.text(), view.model.tab_size());
+    let (text, tab_size) = (view.model.text(), view.model.tab_size().max(1));
     let color = view.theme.gutter_foreground;
     let run = |text: &str| {
         [StyleRun {
@@ -148,6 +156,9 @@ pub(super) fn lens_layout(
         }]
     };
     let text_area = frame.text_bounds();
+    let space = shaper.shape(" ", &run(" ")).width();
+    // How far from column 0 the view reaches.
+    let reach = frame.scroll.x + frame.width;
     let mut out = Vec::new();
     for laid in &frame.blocks {
         let ix = laid
@@ -162,11 +173,18 @@ pub(super) fn lens_layout(
         }
         let start = text.row_start(lens.row);
         let row = start..start + text.row_len(lens.row) as usize;
-        let indent: String = (text.chunks_in_range(row).flat_map(str::chars))
-            .take_while(|&ch| ch == ' ' || ch == '\t')
-            .collect();
-        let indent = ExpandedRow::new(&indent, tab_size);
-        let mut x = frame.view_x(f64::from(shaper.shape(indent.text(), &run("")).width()));
+        let mut columns = 0;
+        for ch in text.chunks_in_range(row).flat_map(str::chars) {
+            match ch {
+                ' ' => columns += 1,
+                '\t' => columns += tab_size - columns % tab_size,
+                _ => break,
+            }
+            if columns as f32 * space > reach {
+                break;
+            }
+        }
+        let mut x = frame.view_x(f64::from(columns as f32 * space));
         let y = laid.rect.y;
         let mut placed = PlacedLens {
             rect: laid.rect,
@@ -180,17 +198,41 @@ pub(super) fn lens_layout(
                 placed.separators.push((Vec2 { x, y }, line));
                 x += width;
             }
-            let line = small.shape(&item.title, &run(&item.title));
+            if x >= frame.width {
+                break;
+            }
+            let title = &item.title;
+            let (line, width, offset) = match title.len() > MAX_SHAPED_ROW_BYTES {
+                true => {
+                    let mut widths = Scaled(&mut *widths, LENS_SCALE);
+                    let width = clusters(title, &mut widths)
+                        .last()
+                        .map_or(0., |(_, _, end)| end);
+                    // The view's left edge, from the title's start.
+                    let left = text_area.x - x;
+                    let (range, offset) = slice(title, frame, left, &mut widths);
+                    let shown = &title[range];
+                    (small.shape(shown, &run(shown)), width as f32, offset as f32)
+                }
+                false => {
+                    let line = small.shape(title, &run(title));
+                    let width = line.width();
+                    (line, width, 0.)
+                }
+            };
             let rect = Rect {
                 x,
                 y,
-                width: line.width(),
+                width,
                 height: frame.line_height,
             };
             x += rect.width;
             placed.items.push(PlacedItem {
                 item: item.clone(),
-                at: Vec2 { x: rect.x, y },
+                at: Vec2 {
+                    x: rect.x + offset,
+                    y,
+                },
                 line,
                 shown: (rect.intersect(laid.rect)).and_then(|rect| rect.intersect(text_area)),
                 hitbox: None,
@@ -199,6 +241,20 @@ pub(super) fn lens_layout(
         out.push(placed);
     }
     out
+}
+
+/// Another measure's widths, scaled: the editor font's for a lens's
+/// smaller text.
+struct Scaled<'a>(&'a mut dyn CharWidth, f32);
+
+impl CharWidth for Scaled<'_> {
+    fn char_width(&mut self, ch: char) -> f32 {
+        self.0.char_width(ch) * self.1
+    }
+
+    fn cluster_width(&mut self, cluster: &str) -> f32 {
+        self.0.cluster_width(cluster) * self.1
+    }
 }
 
 /// Puts a hitbox over the part of each lens item in view.
@@ -213,10 +269,19 @@ pub(super) fn insert_lens_hitboxes(
     }
 }
 
+/// Whether the pointer is over `hitbox`: not once it has left the window,
+/// where GPUI keeps its last position.
+fn lens_hovered(hitbox: &Hitbox, window: &Window, cx: &App) -> bool {
+    let id = window.window_handle().window_id();
+    let outside =
+        (cx.try_global::<PointerOutside>()).is_some_and(|outside| outside.0.contains(&id));
+    !outside && hitbox.is_hovered(window)
+}
+
 /// Paints the lens rows, each clipped to its row inside the text area, the
 /// item under the pointer underlined with a pointing hand, noting in
 /// `painted` the part of each row and item in view, which a click goes by.
-/// The pointer moving onto or off an item redraws.
+/// The pointer moving onto or off an item, or out of the window, redraws.
 pub(super) fn paint_lenses(
     placed: &[PlacedLens],
     layout: &FrameLayout,
@@ -228,6 +293,8 @@ pub(super) fn paint_lenses(
     let text_area = layout.frame.text_bounds();
     let mut hovered = Vec::new();
     for lens in placed {
+        #[cfg(test)]
+        let mut underlined = Vec::new();
         let bounds = layout.bounds(lens.rect);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for (at, line) in &lens.separators {
@@ -239,8 +306,10 @@ pub(super) fn paint_lenses(
                 let Some(hitbox) = &item.hitbox else {
                     continue;
                 };
-                let over = hitbox.is_hovered(window);
+                let over = lens_hovered(hitbox, window, cx);
                 hovered.push((hitbox.clone(), over));
+                #[cfg(test)]
+                underlined.push(over);
                 if over {
                     let line = &item.line.layout;
                     let (ascent, descent) = (line.ascent, line.descent);
@@ -259,22 +328,71 @@ pub(super) fn paint_lenses(
                 items: (lens.items.iter())
                     .filter_map(|item| Some((item.item.clone(), layout.bounds(item.shown?))))
                     .collect(),
+                #[cfg(test)]
+                underlined,
+                #[cfg(test)]
+                shaped: (lens.items.iter())
+                    .map(|item| item.line.layout.len)
+                    .collect(),
             });
         }
     }
     if !hovered.is_empty() {
-        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _| {
-            let moved = (hovered.iter()).any(|(hitbox, over)| hitbox.is_hovered(window) != *over);
+        let any_over = hovered.iter().any(|(_, over)| *over);
+        window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+            let moved =
+                (hovered.iter()).any(|(hitbox, over)| lens_hovered(hitbox, window, cx) != *over);
             if phase == DispatchPhase::Bubble && moved {
                 window.refresh();
             }
         });
+        // GPUI keeps the pointer's last position: the underline goes as the
+        // editor notes it left.
+        if any_over {
+            window.on_mouse_event(move |_: &MouseExitEvent, phase, window, _| {
+                if phase == DispatchPhase::Bubble {
+                    window.refresh();
+                }
+            });
+        }
     }
 }
 
 /// The view's block a frame's block of `id` is, if it's one of the host's.
 fn host_block(view: &EditorView, id: u64) -> Option<&crate::view::HostBlock> {
     view.blocks.get(usize::try_from(id).ok()?)
+}
+
+/// The reserve blocks the frame's block map places, in view or not,
+/// across the frame's width, with the frame they're clipped to, placed in
+/// the window by `to_window`.
+pub(super) fn reserved(
+    frame: &Frame<Line>,
+    view: &EditorView,
+    to_window: impl Fn(Rect) -> Bounds<Pixels>,
+) -> Vec<ReservedBlock> {
+    let clip = to_window(Rect {
+        x: 0.,
+        y: 0.,
+        width: frame.width,
+        height: frame.height,
+    });
+    (view.blocks.iter().enumerate())
+        .filter(|(_, block)| block.kind == HostBlockKind::Reserve)
+        .filter_map(|(ix, block)| {
+            let rows = frame.block_map.screen_rows(ix as u64)?;
+            Some(ReservedBlock {
+                id: block.id,
+                bounds: to_window(Rect {
+                    x: 0.,
+                    y: frame.line_height * rows.start as f32 - frame.scroll.y,
+                    width: frame.width,
+                    height: frame.line_height * rows.len() as f32,
+                }),
+                clip,
+            })
+        })
+        .collect()
 }
 
 /// The display row laid out at `y` in the frame, if a row this frame shows
@@ -469,6 +587,8 @@ pub(super) fn layout(
                     lines: Vec::new(),
                 },
                 HostBlockKind::Filler => PlacedKind::Filler,
+                // The host draws over it.
+                HostBlockKind::Reserve => return None,
             };
             Some(Placed {
                 #[cfg(test)]

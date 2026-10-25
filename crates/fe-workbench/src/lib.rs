@@ -43,6 +43,7 @@ mod pane;
 mod pane_drag;
 mod pane_group;
 mod pane_toolbar;
+mod peek;
 mod persist;
 mod picker;
 mod project_panel;

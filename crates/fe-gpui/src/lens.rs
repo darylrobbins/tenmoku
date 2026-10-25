@@ -56,4 +56,10 @@ pub(crate) fn join(lenses: impl IntoIterator<Item = Lens>) -> Vec<Lens> {
 pub(crate) struct PaintedRow {
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) items: Vec<(LensItem, Bounds<Pixels>)>,
+    /// Of the items in view, whether each was drawn underlined, for tests.
+    #[cfg(test)]
+    pub(crate) underlined: Vec<bool>,
+    /// The bytes of each item's title shaped, for tests.
+    #[cfg(test)]
+    pub(crate) shaped: Vec<usize>,
 }

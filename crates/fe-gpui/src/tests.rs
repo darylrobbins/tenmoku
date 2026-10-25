@@ -218,7 +218,8 @@ const CASES: &[Case] = &[
 /// `lsp_bindings`. The git keys (`alt-f3`, `shift-alt-f3`, `cmd-alt-z`) are
 /// checked by its `git_keys`, and `cmd-alt-g b` by its
 /// `blame_annotation_keys`. The Markdown preview keys (`cmd-shift-v`,
-/// `cmd-k v`) by its `markdown_preview_bindings`.
+/// `cmd-k v`) by its `markdown_preview_bindings`. Peek Definition's
+/// `alt-f12` by its `peek_keys`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
     "cmd-alt-]",
@@ -241,6 +242,7 @@ const DEDICATED: &[&str] = &[
     "cmd-alt-g b",
     "cmd-shift-v",
     "cmd-k v",
+    "alt-f12",
 ];
 
 fn run_case(case: &Case) {

@@ -166,6 +166,9 @@ pub struct Pane {
     toolbar: Toolbar,
     /// Made by the first `find.show`.
     find: Option<FindBar>,
+    /// The Peek Definition widget open in one of the pane's editors, drawn
+    /// while that editor shows ([`crate::peek`]).
+    pub(crate) peek: Option<crate::peek::Peek>,
     /// The window the last frame drew the pane in, which a viewer's
     /// request to edit its file prompts in.
     window: Option<AnyWindowHandle>,
@@ -288,6 +291,7 @@ impl Pane {
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             toolbar: Toolbar::default(),
             find: None,
+            peek: None,
             window: None,
             this: cx.weak_entity(),
             save_keys: Rc::default(),
@@ -394,7 +398,7 @@ impl Pane {
     /// The active tab, whatever shows in its place. By its item, which
     /// kiln-shell has changed before [`PaneView::items_changed`] brings the
     /// tabs in step.
-    fn active_tab(&self) -> Option<&Tab> {
+    pub(crate) fn active_tab(&self) -> Option<&Tab> {
         let id = self.state.active_item()?.id();
         self.tabs.iter().find(|tab| tab.id() == id)
     }
@@ -1438,21 +1442,25 @@ impl Reveal {
         }
     }
 
-    /// Selects the range, widened to char boundaries (a byte match can
-    /// split a char), against the editor's text as it is now, and scrolls
-    /// to it; `select_and_reveal` clamps a stale one.
+    /// The range in `text`, widened to char boundaries (a byte match can
+    /// split a char).
+    pub(crate) fn range(&self, text: &fe_text::Text) -> Range<usize> {
+        let start = text.row_start(self.row);
+        let limit = if self.within_row {
+            text.row_len(self.row) as usize
+        } else {
+            usize::MAX
+        };
+        let column = |column: usize| start + column.min(limit);
+        text.clip_offset(column(self.columns.start), Bias::Left)
+            ..text.clip_offset(column(self.columns.end), Bias::Right)
+    }
+
+    /// Selects the range ([`Reveal::range`]) against the editor's text as
+    /// it is now, and scrolls to it; `select_and_reveal` clamps a stale one.
     fn select(&self, editor: &Entity<EditorView>, cx: &mut App) {
         editor.update(cx, |editor, cx| {
-            let text = editor.model().text();
-            let start = text.row_start(self.row);
-            let limit = if self.within_row {
-                text.row_len(self.row) as usize
-            } else {
-                usize::MAX
-            };
-            let column = |column: usize| start + column.min(limit);
-            let range = text.clip_offset(column(self.columns.start), Bias::Left)
-                ..text.clip_offset(column(self.columns.end), Bias::Right);
+            let range = self.range(editor.model().text());
             editor.select_and_reveal(range, cx);
         });
     }
@@ -1639,6 +1647,7 @@ impl PaneView for Pane {
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.window = Some(window.window_handle());
+        crate::peek::sync(self, cx);
         self.state.end_hover(cx);
         let tab_bar = self.state.tab_bar(cx);
         let body = if let Some(path) = &self.opening {
@@ -1714,6 +1723,7 @@ impl Render for Pane {
                     .min_h_0()
                     .child(self.state.record_content_bounds())
                     .child(body)
+                    .children(crate::peek::layer(self))
                     .children(drop_layer),
             )
             .children(self.state.drop_hint(cx))

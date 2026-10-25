@@ -189,6 +189,11 @@ pub struct EditorView {
     pub(crate) line_operates: bool,
     /// The host's blocks between the rows ([`host::HostBlock`]).
     pub(crate) blocks: Vec<HostBlock>,
+    /// Where the frame laid out the reserve blocks among them.
+    pub(crate) reserved: Vec<host::ReservedBlock>,
+    /// The host's flags in the key context
+    /// ([`EditorView::set_key_context_flag`]).
+    pub(crate) key_flags: Vec<&'static str>,
     /// The proposed changes shown as diff blocks ([`proposal`]).
     pub(crate) proposals: Vec<std::rc::Rc<std::cell::RefCell<fe_buffer::ProposedChange>>>,
     /// The buttons in the proposals' blocks the last frame painted: the
@@ -399,6 +404,8 @@ impl EditorView {
             read_only: false,
             line_operates: false,
             blocks: Vec::new(),
+            reserved: Vec::new(),
+            key_flags: Vec::new(),
             proposals: Vec::new(),
             proposal_buttons: Vec::new(),
             lens_providers: Vec::new(),
@@ -1729,6 +1736,9 @@ impl Render for EditorView {
         if self.shows_open_hunk() {
             key_context.add("proposal");
         }
+        for &flag in &self.key_flags {
+            key_context.add(flag);
+        }
         if self.completion_subscriptions.is_empty() {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
@@ -1877,7 +1887,7 @@ impl EditorView {
 }
 
 pub use ghost_text::GhostTextEvent;
-pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
+pub use host::{EditorViewEvent, HostBlock, HostBlockKind, ReservedBlock};
 pub use minimap::minimap_options;
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;
@@ -1885,6 +1895,9 @@ pub(crate) use proposal_commands::{ProposalCommands, registry as proposal_regist
 
 #[cfg(test)]
 mod ime_tests;
+
+#[cfg(test)]
+mod lens_bounds_tests;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod primary_selection_tests;

@@ -1075,8 +1075,14 @@ impl Element for EditorElement {
             font: shaper.font.clone(),
             font_size: font_size * host_blocks::LENS_SCALE,
         };
-        let mut lens_rows =
-            host_blocks::lens_layout(&frame, &lenses, view, &mut shaper, &mut small);
+        let mut lens_rows = host_blocks::lens_layout(
+            &frame,
+            &lenses,
+            view,
+            &mut shaper,
+            &mut small,
+            &mut glyph_widths,
+        );
         let mut proposals = proposal::layout(
             &frame,
             &hunks,
@@ -1123,9 +1129,12 @@ impl Element for EditorElement {
         let pinned =
             sticky_scroll::pinned(view, &scopes, blocks, scroll_y, line_height_f32, keep_above);
 
+        let reserved = host_blocks::reserved(&frame, view, to_window);
+
         let kept = kept_scroll.unwrap_or(frame.scroll);
         let scroll = point(px(kept.x), px(kept.y));
         self.view.update(cx, |view, cx| {
+            view.reserved = reserved;
             // Scrolled to reveal the caret, say: what the popover was found
             // under has moved, and it isn't drawn from this frame on
             // ([`crate::hover::popover_layer`]).

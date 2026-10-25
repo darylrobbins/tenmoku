@@ -121,6 +121,11 @@ pub(crate) struct Requests {
 }
 
 impl Requests {
+    /// The newest request's cancel flag: set once a newer one starts.
+    pub(crate) fn current(&self) -> &Arc<AtomicBool> {
+        &self.cancel
+    }
+
     pub(crate) fn next(&mut self) -> (u64, Arc<AtomicBool>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::default();
@@ -156,6 +161,9 @@ pub(crate) struct Nav {
     applying: Option<Task<()>>,
     pub(crate) history: NavHistory,
     pub(crate) goto: Requests,
+    /// While a peek is asked for, intercepts Esc in its editor, which cancels it
+    /// ([`Workbench::goto_definition`]).
+    pub(crate) peek_escape: Option<gpui::Subscription>,
     pub(crate) definitions: Entity<Picker<DefinitionsPicker>>,
     pub(crate) symbols: Entity<Picker<SymbolsPicker>>,
     /// Builds started.
@@ -202,6 +210,7 @@ impl Nav {
             applying: None,
             history: NavHistory::default(),
             goto: Requests::default(),
+            peek_escape: None,
             definitions,
             symbols,
             #[cfg(test)]
@@ -668,8 +677,9 @@ impl Workbench {
 
     pub(crate) fn run_nav_op(&mut self, op: NavOp, window: &mut Window, cx: &mut Context<Self>) {
         match op {
-            NavOp::GotoDefinition => self.goto_definition(None, window, cx),
-            NavOp::Related(kind) => self.goto_definition(Some(kind), window, cx),
+            NavOp::GotoDefinition => self.goto_definition(None, false, window, cx),
+            NavOp::PeekDefinition => self.goto_definition(None, true, window, cx),
+            NavOp::Related(kind) => self.goto_definition(Some(kind), false, window, cx),
             NavOp::WorkspaceSymbols => self.toggle_symbols(window, cx),
             NavOp::Back | NavOp::Forward => {
                 // A go-to-definition still running would jump from elsewhere.
@@ -694,23 +704,33 @@ impl Workbench {
     }
 
     /// Go to definition, or to the declaration, type definition or
-    /// implementations `related` names.
+    /// implementations `related` names; or, if `peek`, peek at the
+    /// definitions in the editor ([`crate::peek`]).
     fn goto_definition(
         &mut self,
         related: Option<Related>,
+        peek: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Not in a diff's side, which the pane doesn't show a peek over: as
+        // go to definition there.
+        let peek = peek && self.can_peek(cx);
         if self.nav_state.root.is_none() {
-            return self.show_definitions(Vec::new(), "No folder open".into(), window, cx);
+            let editor = self.active_editor(cx).cloned().filter(|_| peek);
+            return self.no_definitions(editor.as_ref(), "No folder open".into(), window, cx);
         }
         let Some(request) = self.nav_request(cx) else {
             return;
         };
         // Where the request was made, which a jump goes back to.
-        let editor = self.active_editor(cx).map(Entity::entity_id);
+        let editor = self.active_editor(cx).cloned();
         let from = self.caret_place(cx);
-        self.run_nav(
+        // A peek opens under the caret only if it's still where it asked.
+        let asked = editor
+            .as_ref()
+            .map(|editor| crate::peek::asked_at(editor, cx));
+        let started = self.run_nav(
             |nav| &mut nav.goto,
             move |navigation, cancel| {
                 let answer = match related {
@@ -722,22 +742,55 @@ impl Workbench {
             window,
             cx,
             move |workbench, (word, answer), window, cx| {
+                // Esc in the editor no longer drops it.
+                workbench.nav_state.peek_escape = None;
                 // Another tab shows now: the answer is for one left.
-                if workbench.active_editor(cx).map(Entity::entity_id) == editor {
-                    workbench.definitions_landed(from, related, word, answer, window, cx);
+                let id = editor.as_ref().map(Entity::entity_id);
+                if workbench.active_editor(cx).map(Entity::entity_id) != id {
+                    return;
                 }
+                let peek = editor.filter(|_| peek);
+                // Asked where the caret was, in the editor the pane shows.
+                let moved = |editor: &Entity<_>| Some(crate::peek::asked_at(editor, cx)) != asked;
+                if peek.as_ref().is_some_and(moved) || (peek.is_some() && !workbench.can_peek(cx)) {
+                    return;
+                }
+                workbench.definitions_landed(from, related, word, answer, peek, window, cx);
             },
         );
+        // Until it lands or another replaces it, Esc in the editor drops
+        // it, whatever else Esc does there: closing the completion menu or
+        // vim's insert session, say.
+        self.nav_state.peek_escape = None;
+        if started
+            && peek
+            && let Some(editor) = self.active_editor(cx)
+        {
+            let focus = editor.focus_handle(cx);
+            let cancel = self.nav_state.goto.current().clone();
+            let workbench = cx.entity().downgrade();
+            // Ahead of the key's dispatch, which a bound Esc stops.
+            let escape = cx.intercept_keystrokes(move |event, window, cx| {
+                let pending = !cancel.load(Ordering::Relaxed);
+                if event.keystroke.key == "escape" && pending && focus.is_focused(window) {
+                    (workbench.update(cx, |workbench, _| workbench.nav_state.goto.next())).ok();
+                }
+            });
+            self.nav_state.peek_escape = Some(escape);
+        }
     }
 
     /// Jumps to an unambiguous definition, recording `from`, or lists the
-    /// definitions, or says there are none.
+    /// definitions, or says there are none. With a `peek` editor, any
+    /// definitions open in a peek there instead.
+    #[allow(clippy::too_many_arguments)]
     fn definitions_landed(
         &mut self,
         from: Option<Place>,
         related: Option<Related>,
         word: Option<String>,
         answer: Result<Answer<Definitions>, NavError>,
+        peek: Option<Entity<fe_gpui::EditorView>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -757,11 +810,11 @@ impl Workbench {
                     Some(word) => format!("No {noun} found for `{word}`"),
                     None => "No symbol at the caret".to_owned(),
                 };
-                return self.show_definitions(Vec::new(), status, window, cx);
+                return self.no_definitions(peek.as_ref(), status, window, cx);
             }
             Err(error) => {
                 let status = format!("Go to {verb} failed: {error}");
-                return self.show_definitions(Vec::new(), status, window, cx);
+                return self.no_definitions(peek.as_ref(), status, window, cx);
             }
         };
         show_source(&self.status_bar().clone(), &answer.provider, cx);
@@ -772,6 +825,11 @@ impl Workbench {
             unambiguous,
             partial,
         } = answer.value;
+        if let Some(editor) = &peek
+            && !items.is_empty()
+        {
+            return self.open_peek(editor, items, window, cx);
+        }
         if unambiguous && let Some(first) = items.first() {
             return self.jump_from(from, &first.location, window, cx);
         }
@@ -783,7 +841,31 @@ impl Workbench {
             (Some(word), 0) => format!("No {noun} found for `{word}`{by}"),
             (Some(word), count) => format!("{count} {noun}s of `{word}`{by}"),
         };
+        if peek.is_some() {
+            return self.no_definitions(peek.as_ref(), status, window, cx);
+        }
         self.show_definitions(items, status, window, cx);
+    }
+
+    /// Says `status`, there being no definitions: in the definitions
+    /// picker, or for a peek in `peek`, in a toast, opening nothing, closing
+    /// a peek open in that editor, and leaving focus where it is unless it
+    /// was in that peek.
+    fn no_definitions(
+        &mut self,
+        peek: Option<&Entity<fe_gpui::EditorView>>,
+        status: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::workbench::toast;
+        match peek {
+            Some(editor) => {
+                self.close_peek_in(editor, window, cx);
+                toast::show(cx, toast::Toast::info(status));
+            }
+            None => self.show_definitions(Vec::new(), status, window, cx),
+        }
     }
 
     /// Shows the definitions picker, focused, in place of any other palette.
@@ -830,6 +912,7 @@ impl Workbench {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NavOp {
     GotoDefinition,
+    PeekDefinition,
     Related(Related),
     WorkspaceSymbols,
     Back,

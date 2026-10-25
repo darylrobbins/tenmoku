@@ -319,11 +319,14 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     };
     // `find.show`, the `lsp.`, `git.` and `markdown.` commands are the
     // workbench's too, though bound in `editor` (or the Changes panel); so
-    // are the chat's, bound in the composer.
+    // are the chat's, bound in the composer, and Peek Definition and the
+    // peek's, bound in `editor` and its widget.
     let find = |binding: &&fe_keymap::Binding| {
         let command = binding.command.as_str();
         command.starts_with("find.")
             || command.starts_with("chat.")
+            || command.starts_with("peek.")
+            || command == "editor.peek_definition"
             || command.starts_with("lsp.")
             || command.starts_with("git.")
             || command.starts_with("markdown.")

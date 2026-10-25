@@ -537,6 +537,12 @@ keys = { macos = "cmd-f12", default = "ctrl-f12" }
 command = "nav.goto_implementation"
 context = "workbench && !terminal"
 
+# Peek Definition, as VS Code binds it; its own keys are at the end.
+[[bindings]]
+keys = "alt-f12"
+command = "editor.peek_definition"
+context = "editor"
+
 [[bindings]]
 keys = "secondary-t"
 command = "nav.workspace_symbols"
@@ -1901,3 +1907,28 @@ context = "chat_composer && editor"
 keys = "escape"
 command = "chat.stop"
 context = "chat_composer && editor"
+
+# Peek Definition's widget: escape closes it and enter opens its file. The
+# excerpt is an editor inside `peek`, and the deepest context wins, so in it
+# these name both frames: being last, they win over the editor's and vim's
+# own at the same depth. In the editor showing it (`peek_shown`), escape
+# closes it too, but for the completion menu's and vim's insert session's.
+[[bindings]]
+keys = "escape"
+command = "peek.close"
+context = "peek"
+
+[[bindings]]
+keys = "escape"
+command = "peek.close"
+context = "peek && editor"
+
+[[bindings]]
+keys = "enter"
+command = "peek.open"
+context = "peek && editor"
+
+[[bindings]]
+keys = "escape"
+command = "peek.close"
+context = "editor && peek_shown && !completion && vim.mode != insert && vim.mode != replace"

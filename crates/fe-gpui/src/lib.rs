@@ -63,6 +63,7 @@ pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
 pub use view::minimap_options;
 pub use view::{GlyphKind, GutterGlyph};
+pub use view::{HostBlock, HostBlockKind, ReservedBlock};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_vim_clipboard, set_vim_enabled, set_vim_incsearch,
     set_vim_jump_on_s, set_vim_remaps, set_vim_replace_with_register, set_vim_search_case,
