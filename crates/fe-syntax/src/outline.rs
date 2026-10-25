@@ -15,14 +15,14 @@
 use std::{
     cell::{OnceCell, RefCell},
     collections::HashMap,
-    ops::{Range, RangeInclusive},
+    ops::{ControlFlow, Range, RangeInclusive},
     sync::{Arc, OnceLock},
 };
 
 use fe_buffer::{Text, Version};
 use tree_sitter::{
-    Node, Query, QueryCapture, QueryCursor, QueryPredicate, QueryPredicateArg,
-    StreamingIterator as _, Tree,
+    Node, Query, QueryCapture, QueryCursor, QueryCursorOptions, QueryCursorState, QueryPredicate,
+    QueryPredicateArg, StreamingIterator as _, Tree,
 };
 
 use crate::{Language, Syntax, syntax::chunks};
@@ -30,6 +30,11 @@ use crate::{Language, Syntax, syntax::chunks};
 /// The most items an [`Outline`] holds. A file with more lists the first
 /// ones found and sets [`Outline::truncated`].
 pub const MAX_OUTLINE_ITEMS: usize = 10_000;
+
+/// How many hundred operations the query takes rooted at one node for
+/// [`items_containing`] before it stops: a container's members past a
+/// thousand or so.
+const MAX_OPERATIONS_AT: usize = 100;
 
 /// Names longer than this many chars are cut.
 const MAX_NAME_CHARS: usize = 200;
@@ -233,6 +238,63 @@ pub fn outline_scopes(
     Ok(scopes_of(text, &found, rows))
 }
 
+/// What `each` makes of the [`outline`] items whose node contains `offset`,
+/// innermost first, skipping those it gives `None`, and a bound on the
+/// nodes visited finding them.
+///
+/// Rather than over the file, the query runs rooted at each ancestor of
+/// the offset's leaf in turn, starting only there, and the items it finds
+/// around the offset are kept, the first pattern winning on a node, as in
+/// the outline. Kinds only a whole-file lookup tells apart, a C++ method
+/// from a function, may be either. A pattern rooted at a container lists
+/// its children, an impl's methods, so each ancestor's run stops after
+/// [`MAX_OPERATIONS_AT`] hundred operations: past a thousand or so
+/// members, an item only such a pattern lists (a Kotlin secondary
+/// constructor; a Swift init, deinit, subscript or protocol method; a Ruby
+/// alias) is missed (T241).
+///
+/// The bound counts each ancestor, plus each run's operations rounded up
+/// to the next hundred, as tree-sitter reports them. Finding the leaf is
+/// tree-sitter's descent by byte, as for
+/// [`larger_syntax_node`](crate::larger_syntax_node).
+pub(crate) fn items_containing<R>(
+    syntax: &Syntax,
+    offset: usize,
+    mut each: impl FnMut(&Text, &str, OutlineKind, Node) -> Option<R>,
+) -> Result<(Vec<R>, usize), NoOutline> {
+    let job = outline_job(syntax)?;
+    let text = &job.text;
+    if offset >= text.len() {
+        return Ok((Vec::new(), 0));
+    }
+    let compiled = job.query.outline(job.language);
+    let mut items: HashMap<usize, Found<'_>> = HashMap::new();
+    let mut visited = 0;
+    let mut node = (job.tree.root_node()).descendant_for_byte_range(offset, offset + 1);
+    while let Some(ancestor) = node {
+        let (found, _, hundreds) =
+            find_counted(job.language, compiled, &job.tree, text, Find::At(ancestor));
+        visited += 1 + 100 * (hundreds + 1);
+        for found in found {
+            if !found.range.contains(&offset) {
+                continue;
+            }
+            match items.get(&found.node.id()) {
+                Some(kept) if kept.pattern <= found.pattern => {}
+                _ => _ = items.insert(found.node.id(), found),
+            }
+        }
+        node = ancestor.parent();
+    }
+    let mut items: Vec<Found<'_>> = items.into_values().collect();
+    // They nest: innermost first.
+    items.sort_by_key(|found| (std::cmp::Reverse(found.range.start), found.range.end));
+    let items = (items.into_iter())
+        .filter_map(|found| each(text, job.language.name(), found.kind, found.node))
+        .collect();
+    Ok((items, visited))
+}
+
 /// The items of `found` spanning two rows or more that overlap `rows`, as
 /// `header..=last`, sorted by header, the outermost of each header.
 fn scopes_of(text: &Text, found: &[Found<'_>], rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
@@ -401,13 +463,17 @@ impl OutlineJob {
 }
 
 /// Which items [`find`] finds.
-enum Find {
+enum Find<'tree> {
     /// Every one, up to [`MAX_OUTLINE_ITEMS`].
     All,
     /// Only those whose node overlaps these bytes, however many, for
     /// scopes: their kinds may be wrong. The query runs over just these
     /// bytes, and other matches are dropped before their predicates run.
     Overlapping(Range<usize>),
+    /// Only those whose pattern is rooted at this node, for
+    /// [`items_containing`], until the query has taken
+    /// [`MAX_OPERATIONS_AT`] hundred operations: their kinds may be wrong.
+    At(Node<'tree>),
 }
 
 /// Runs `compiled` over `tree` and returns the items `what` asks for, in no
@@ -418,8 +484,21 @@ fn find<'tree>(
     compiled: &Compiled,
     tree: &'tree Tree,
     text: &Text,
-    what: Find,
+    what: Find<'tree>,
 ) -> (Vec<Found<'tree>>, bool) {
+    let (found, truncated, _) = find_counted(language, compiled, tree, text, what);
+    (found, truncated)
+}
+
+/// [`find`], with how many hundred operations the query took when it's
+/// [`Find::At`] a node, up to [`MAX_OPERATIONS_AT`]; 0 otherwise.
+fn find_counted<'tree>(
+    language: &Language,
+    compiled: &Compiled,
+    tree: &'tree Tree,
+    text: &Text,
+    what: Find<'tree>,
+) -> (Vec<Found<'tree>>, bool, usize) {
     let context = Context {
         text,
         root: tree.root_node(),
@@ -429,16 +508,36 @@ fn find<'tree>(
         lua_targets: RefCell::default(),
     };
     let mut cursor = QueryCursor::new();
+    let mut start = tree.root_node();
+    let counted = matches!(what, Find::At(_));
     let overlapping = match what {
         Find::All => None,
         Find::Overlapping(bytes) => {
             cursor.set_byte_range(bytes.clone());
             Some(bytes)
         }
+        Find::At(node) => {
+            cursor.set_max_start_depth(Some(0));
+            start = node;
+            None
+        }
+    };
+    // Tree-sitter calls this every hundred operations.
+    let mut hundreds = 0;
+    let mut progress = |_: &QueryCursorState| {
+        hundreds += 1;
+        match hundreds < MAX_OPERATIONS_AT {
+            true => ControlFlow::Continue(()),
+            false => ControlFlow::Break(()),
+        }
+    };
+    let options = match counted {
+        true => QueryCursorOptions::new().progress_callback(&mut progress),
+        false => QueryCursorOptions::new(),
     };
     // Predicates like `#match?` read node text straight from the rope.
     let source = |node: Node| chunks(text, node.byte_range());
-    let mut matches = cursor.matches(&compiled.query, tree.root_node(), source);
+    let mut matches = cursor.matches_with_options(&compiled.query, start, source, options);
     let mut found: Vec<Found<'_>> = Vec::new();
     let mut by_node: HashMap<usize, usize> = HashMap::new();
     let mut truncated = false;
@@ -559,10 +658,11 @@ fn find<'tree>(
             section,
         });
     }
+    drop(matches);
     if !truncated {
         extend_to_sections(&mut found);
     }
-    (found, truncated)
+    (found, truncated, hundreds)
 }
 
 /// An item as the query found it, before nesting.

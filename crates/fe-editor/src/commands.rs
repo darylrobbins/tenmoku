@@ -67,6 +67,12 @@ pub trait EditorHost {
     fn larger_syntax_node(&self, _range: Range<usize>) -> Option<Range<usize>> {
         None
     }
+    /// The functions and classes whose node contains `offset`, innermost
+    /// first, as `fe_syntax::definition_objects` finds them; none (the
+    /// default) if there are none or syntax isn't known.
+    fn definition_objects(&self, _offset: usize) -> Vec<SyntaxObject> {
+        Vec::new()
+    }
     /// The (opener, closer) pairs typing an opener closes in the buffer's
     /// language; none (the default) if it isn't known.
     fn auto_pairs(&self) -> &[(char, char)] {
@@ -93,6 +99,20 @@ pub trait EditorHost {
     fn scroll(&mut self, request: ScrollRequest) {
         let _ = request;
     }
+}
+
+/// A function or class around an offset, for text objects, from
+/// [`EditorHost::definition_objects`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SyntaxObject {
+    /// A function or method, else a class, struct, enum, interface, trait,
+    /// impl or type.
+    pub function: bool,
+    /// The bytes of its node.
+    pub outer: Range<usize>,
+    /// The bytes of its body, without braces or the whitespace at its
+    /// edges; `None` for a declaration without one.
+    pub inner: Option<Range<usize>>,
 }
 
 /// What a view shows: its first visible row of the text and how many whole

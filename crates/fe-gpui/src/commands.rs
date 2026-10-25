@@ -19,7 +19,7 @@ use fe_command::{
 };
 use fe_editor::{
     CommentTokens, IndentSuggestion,
-    commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport},
+    commands::{Editor, EditorHost, EditorTarget, ScrollRequest, SyntaxObject, Viewport},
 };
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::{Syntax, SyntaxDriver};
@@ -350,6 +350,19 @@ impl EditorHost for ViewHost<'_> {
 
     fn larger_syntax_node(&self, range: Range<usize>) -> Option<Range<usize>> {
         fe_syntax::larger_syntax_node(self.syntax?, range)
+    }
+
+    fn definition_objects(&self, offset: usize) -> Vec<SyntaxObject> {
+        let Some(syntax) = self.syntax else {
+            return Vec::new();
+        };
+        (fe_syntax::definition_objects(syntax, offset).into_iter())
+            .map(|object| SyntaxObject {
+                function: object.kind == fe_syntax::DefinitionKind::Function,
+                outer: object.outer,
+                inner: object.inner,
+            })
+            .collect()
     }
 
     fn comment_tokens(&self) -> Option<CommentTokens> {
@@ -885,3 +898,6 @@ mod comment_host_tests;
 #[cfg(test)]
 #[path = "pairs_host_tests.rs"]
 mod pairs_host_tests;
+#[cfg(test)]
+#[path = "syntax_objects_tests.rs"]
+mod syntax_objects_tests;
