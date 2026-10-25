@@ -326,6 +326,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                 Some(
                     "workbench"
                         | "workbench && !terminal"
+                        | "zen_mode"
                         | "terminal"
                         | "picker"
                         | "text_input"

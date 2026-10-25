@@ -719,12 +719,18 @@ keys = "secondary-b"
 command = "dock.toggle"
 context = "workbench"
 
-# Zen Mode, as VS Code binds it; the same chord leaves it. VS Code's escape
-# escape isn't bound: as a chord it would hold every lone escape back (T1173).
+# Zen Mode, as VS Code binds it; the same chord leaves it, and so does escape
+# escape. A lone escape still runs its own binding at once (closing Find,
+# cancelling a selection) and the chord keeps listening for a second.
 [[bindings]]
 keys = "secondary-k z"
 command = "workbench.toggle_zen_mode"
 context = "workbench"
+
+[[bindings]]
+keys = "escape escape"
+command = "workbench.toggle_zen_mode"
+context = "zen_mode"
 
 [[bindings]]
 keys = "secondary-shift-o"

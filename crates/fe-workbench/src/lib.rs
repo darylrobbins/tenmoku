@@ -281,4 +281,6 @@ mod typed_command_ids_tests;
 #[cfg(test)]
 mod workbench_commands_tests;
 #[cfg(test)]
+mod zen_mode_escape_tests;
+#[cfg(test)]
 mod zen_mode_tests;

@@ -1,7 +1,7 @@
 //! Zen Mode: `workbench.toggle_zen_mode` (`cmd-k z`) hides the docks, the
 //! rail and, as `[workbench.zen_mode]` says, the status bar and the tab
 //! strips, centering the panes; toggling it again puts the chrome back as
-//! it was. Escape keeps its own keys in it.
+//! it was. Escape keeps its own keys in it, and a second one leaves it.
 
 use std::{fs, sync::Arc};
 
@@ -16,7 +16,7 @@ use crate::{Launch, Pane, Workbench, tests::open};
 
 /// A workbench on a folder with `a.rs` open, focused, and the terminal's
 /// shell `/bin/sh`.
-fn opened(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
+pub(super) fn opened(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
     cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.rs");
@@ -55,13 +55,13 @@ fn zen_settings(zen_mode: ZenModeSettings) -> Settings {
     settings
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
-fn keys(keys: &str, cx: &mut VisualTestContext) {
+pub(super) fn keys(keys: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(keys);
     draw(cx);
 }
@@ -107,11 +107,11 @@ const ZEN: Shown = Shown {
     tabs: false,
 };
 
-fn zen(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+pub(super) fn zen(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
     workbench.read_with(cx, |workbench, _| workbench.zen_mode())
 }
 
-fn pane(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Pane> {
+pub(super) fn pane(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Pane> {
     workbench.read_with(cx, |workbench, _| workbench.pane().clone())
 }
 
@@ -274,10 +274,9 @@ fn escape_is_not_delayed_in_zen(cx: &mut TestAppContext) {
     keys("escape x", cx);
     assert!(!find_open(cx));
     assert_eq!(text(cx), "xfn a() {}\n");
-    keys("escape escape", cx);
-    assert!(zen(&workbench, cx));
 
-    // It's left by its chord, or its command.
+    // It's left by its chord (escape escape is in zen_mode_escape_tests), or
+    // its command.
     keys("cmd-k z", cx);
     assert!(!zen(&workbench, cx));
     keys("cmd-k z", cx);

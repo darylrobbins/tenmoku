@@ -53,7 +53,9 @@ fn stack(vim: Option<&str>) -> ContextStack {
 fn resolve(keymap: &Keymap, key: &str, stack: &ContextStack) -> String {
     let mut matcher = Matcher::new(keymap.clone());
     match matcher.push(Keystroke::parse(key).unwrap(), stack) {
-        KeyOutcome::Dispatch(invocation) => invocation.command.as_str().to_owned(),
+        KeyOutcome::Dispatch(invocation) | KeyOutcome::DispatchPending(invocation) => {
+            invocation.command.as_str().to_owned()
+        }
         KeyOutcome::Pending => "pending".to_owned(),
         KeyOutcome::Unmatched(_) => "unmatched".to_owned(),
     }

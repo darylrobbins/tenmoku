@@ -1,6 +1,5 @@
 //! Zen Mode's keys: `secondary-k z` toggles it in the workbench, inside the
-//! panes' `zen_mode` frame too, where escape starts no chord (VS Code's
-//! `escape escape` is T1173's); and its View menu item after Toggle Full
+//! panes' `zen_mode` frame too, where `escape escape` leaves it as well; and its View menu item after Toggle Full
 //! Screen.
 
 use std::path::Path;
@@ -47,24 +46,22 @@ fn run(keymap: &Keymap, os: Os, keys: &str, stack: &ContextStack) -> Option<Stri
 }
 
 #[test]
-fn secondary_k_z_toggles_and_no_escape_chord_is_bound() {
+fn secondary_k_z_toggles_and_escape_escape_resolves_in_zen() {
     for os in [Os::MacOs, Os::Linux] {
         let keymap = keymap(os);
         for zen in [false, true] {
             let toggled = run(&keymap, os, "secondary-k z", &stack(zen));
             assert_eq!(toggled.as_deref(), Some(COMMAND), "{os:?} zen {zen}");
         }
-        // VS Code's escape escape would hold every lone escape back.
-        let escape = KeySequence::parse_for("escape", os).unwrap();
-        let escape = escape.keystrokes()[0];
-        let chords: Vec<String> = (keymap.bindings().iter())
-            .filter(|binding| {
-                let keys = binding.keys.keystrokes();
-                keys.len() > 1 && keys[0] == escape
-            })
-            .map(|binding| format!("{} {}", binding.keys, binding.command.as_str()))
-            .collect();
-        assert_eq!(chords, Vec::<String>::new(), "{os:?}");
+        // escape escape leaves zen only in the zen_mode context.
+        let left = run(&keymap, os, "escape escape", &stack(true));
+        assert_eq!(left.as_deref(), Some(COMMAND), "{os:?}");
+        let outside = run(&keymap, os, "escape escape", &stack(false));
+        assert_eq!(
+            outside.as_deref(),
+            Some("editor.single_selection"),
+            "{os:?}"
+        );
     }
 }
 
@@ -83,7 +80,9 @@ fn a_lone_escape_in_zen_runs_at_once() {
             (stack(true), "editor.single_selection"),
         ] {
             let mut matcher = Matcher::new(keymap.clone());
-            let KeyOutcome::Dispatch(ran) = matcher.push(escape, &stack) else {
+            let (KeyOutcome::Dispatch(ran) | KeyOutcome::DispatchPending(ran)) =
+                matcher.push(escape, &stack)
+            else {
                 panic!("{os:?}: a lone escape runs at once");
             };
             assert_eq!(ran.command.as_str(), command, "{os:?}");

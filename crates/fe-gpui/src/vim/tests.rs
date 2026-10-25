@@ -433,6 +433,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                     Some(
                         "workbench"
                             | "workbench && !terminal"
+                            | "zen_mode"
                             | "terminal"
                             | "picker"
                             | "text_input"

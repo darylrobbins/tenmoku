@@ -384,6 +384,25 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
             dispatch(invocation, window, cx);
             cx.stop_propagation();
         }
+        // A prefix with a binding of its own runs at once, and the chord
+        // carries on: the prefix is spent, so a failed chord or a timeout
+        // never replays it. The owner's takes the key, which goes on to
+        // its key listener.
+        KeyOutcome::DispatchPending(invocation) => {
+            let owned = owner.owns(&invocation);
+            if owned {
+                replay(owner, swallowed, window, cx);
+            } else {
+                dispatch(invocation, window, cx);
+                cx.stop_propagation();
+            }
+            // The prefix's action may have moved focus (`escape` closing
+            // Find): the chord carries on where focus is now, and ends if
+            // it leaves that.
+            let target = Target::of(window, cx);
+            let chord = PendingChord::start(target, Vec::new(), window, cx);
+            cx.global_mut::<KeyInput>().pending = Some(chord);
+        }
         KeyOutcome::Pending => {
             swallowed.push(event.keystroke.clone());
             let chord = PendingChord::start(target, swallowed, window, cx);
@@ -419,7 +438,9 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
                 }
                 KeyOutcome::Dispatch(invocation) => dispatch(invocation, window, cx),
                 KeyOutcome::Unmatched(_) => replay(owner, chord.swallowed, window, cx),
-                KeyOutcome::Pending => unreachable!("flush ends the chord"),
+                KeyOutcome::Pending | KeyOutcome::DispatchPending(_) => {
+                    unreachable!("flush ends the chord")
+                }
             }
         })
         .ok();

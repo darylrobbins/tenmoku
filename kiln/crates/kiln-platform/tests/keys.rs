@@ -741,3 +741,70 @@ fn holds_keys_still_matches_the_platform_modifier(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("x");
     assert_eq!(keys_seen(&log), ["x"]);
 }
+
+/// A pad inside an `outer` frame.
+struct Framed {
+    pad: Entity<Pad>,
+}
+
+impl Render for Framed {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .key_context(KeyContext::parse("outer").unwrap())
+            .child(self.pad.clone())
+    }
+}
+
+/// `escape` runs `pad.cancel` in the pad, and `escape escape` runs
+/// `outer.leave` in the frame around it.
+const PREFIX_KEYS: &str = r#"
+[[bindings]]
+keys = "escape"
+command = "pad.cancel"
+context = "pad"
+
+[[bindings]]
+keys = "escape escape"
+command = "outer.leave"
+context = "outer"
+"#;
+
+#[gpui::test]
+fn a_dispatched_prefix_is_never_replayed_or_flushed_again(cx: &mut TestAppContext) {
+    init(cx, PREFIX_KEYS);
+    let (framed, cx) = cx.add_window_view(|_, cx| Framed {
+        pad: cx.new(|cx| Pad::new("pad", cx)),
+    });
+    let pad = framed.update(cx, |framed, _| framed.pad.clone());
+    let log = pad.update(cx, |pad, _| pad.log.clone());
+    cx.update(|window, cx| {
+        let handle = pad.read(cx).focus.clone();
+        window.focus(&handle, cx);
+    });
+    cx.run_until_parked();
+
+    // One escape runs at once and keeps listening; the timeout does nothing.
+    cx.simulate_keystrokes("escape");
+    assert_eq!(ran(&log), ["pad.cancel"]);
+    assert!(cx.update(|_, cx| chord_pending(cx)));
+    time_out(cx);
+    assert_eq!(ran(&log), Vec::<String>::new());
+    assert_eq!(keys_seen(&log), Vec::<String>::new());
+    assert!(!cx.update(|_, cx| chord_pending(cx)));
+
+    // A second escape within the timeout runs the chord.
+    cx.simulate_keystrokes("escape escape");
+    assert_eq!(ran(&log), ["pad.cancel", "outer.leave"]);
+    time_out(cx);
+    assert_eq!(ran(&log), Vec::<String>::new());
+
+    // Another key fails the chord: it is typed alone, and the escape neither
+    // runs again nor reaches the view.
+    cx.simulate_keystrokes("escape x");
+    assert_eq!(ran(&log), ["pad.cancel"]);
+    assert_eq!(keys_seen(&log), ["x"]);
+    assert_eq!(typed(&log), "x");
+    time_out(cx);
+    assert_eq!(ran(&log), Vec::<String>::new());
+}

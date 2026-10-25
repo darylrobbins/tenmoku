@@ -245,7 +245,7 @@ impl SaveKeys {
         if matches!(&outcome, KeyOutcome::Unmatched(keys) if keys.len() > 1) {
             outcome = matcher.push(keystroke, &in_editor);
         }
-        matches!(outcome, KeyOutcome::Dispatch(run) if run.command.as_str() == SAVE)
+        matches!(outcome, KeyOutcome::Dispatch(run) | KeyOutcome::DispatchPending(run) if run.command.as_str() == SAVE)
     }
 }
 

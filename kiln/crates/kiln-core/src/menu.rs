@@ -391,7 +391,12 @@ pub fn shortcuts(
         for (ix, &keystroke) in keystrokes.iter().enumerate() {
             outcome = matcher.push(keystroke, stack);
             // Run or failed before its last key: something else took them.
-            if ix + 1 < keystrokes.len() && outcome != KeyOutcome::Pending {
+            if ix + 1 < keystrokes.len()
+                && !matches!(
+                    outcome,
+                    KeyOutcome::Pending | KeyOutcome::DispatchPending(_)
+                )
+            {
                 outcome = KeyOutcome::Unmatched(Vec::new());
                 break;
             }
@@ -399,7 +404,9 @@ pub fn shortcuts(
         if outcome == KeyOutcome::Pending {
             outcome = matcher.flush();
         }
+        // A key that runs its binding and keeps listening still runs it.
         let runs = matches!(&outcome, KeyOutcome::Dispatch(invocation)
+            | KeyOutcome::DispatchPending(invocation)
             if &invocation.command == command && &invocation.args == args);
         if runs {
             found.push(binding.keys.clone());
