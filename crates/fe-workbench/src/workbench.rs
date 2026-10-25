@@ -350,8 +350,10 @@ impl Workbench {
             cx.new(|cx| ProjectPanel::new(launch.root, project_panel::show_ignored(cx), cx));
         let problems = cx.weak_entity();
         let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, cx));
+        let owner = cx.entity_id();
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, cx);
+            pane.owned_by(owner);
             match launch.file {
                 None if welcome => pane.add(EditorModel::new(Buffer::new(WELCOME), None), cx),
                 None => {}

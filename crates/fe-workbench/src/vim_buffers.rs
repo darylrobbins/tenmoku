@@ -82,13 +82,21 @@ pub(crate) struct Logged {
 /// A transition noted, with the pane it was in.
 pub(crate) struct Pending {
     pane: WeakEntity<Pane>,
+    /// The workbench the pane was made for, if it knew.
+    owner: Option<EntityId>,
     entry: Logged,
 }
 
 /// Notes that `item` of `pane` had `kind` happen to it. The window reads
 /// them as it next follows its workbench, in the order they happened,
 /// whether or not the pane is then still in it.
-pub(crate) fn record(pane: &WeakEntity<Pane>, kind: Kind, item: &dyn ItemHandle, cx: &mut App) {
+pub(crate) fn record(
+    pane: &WeakEntity<Pane>,
+    owner: Option<EntityId>,
+    kind: Kind,
+    item: &dyn ItemHandle,
+    cx: &mut App,
+) {
     let editor = item.downcast_ref::<EditorView>();
     let buffer = editor.map(|editor| editor.read(cx).model().buffer().id());
     let path = item.path(cx);
@@ -105,6 +113,7 @@ pub(crate) fn record(pane: &WeakEntity<Pane>, kind: Kind, item: &dyn ItemHandle,
     };
     all.pending.push(Pending {
         pane: pane.clone(),
+        owner,
         entry,
     });
 }
@@ -288,13 +297,15 @@ impl Workbench {
         if watch.is_some() {
             window._watch = watch;
         }
-        // Known limit (T337 carries the fix): a transition is owned by the
-        // window that has seen its pane. A pane added and removed within one
-        // update before any registry read was seen by none, so with several
-        // windows it replays into whichever reads next, which may not be the
-        // one it was in. Panes don't yet carry their workbench.
+        // A transition is its pane's workbench's, even if the pane came and
+        // went before any read. A pane that doesn't know its workbench is
+        // the window that has seen it, else (if gone and never seen) the
+        // reader's.
         let pending = std::mem::take(&mut all.pending);
         let (mine, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|pending| {
+            if let Some(owner) = pending.owner {
+                return owner == id;
+            }
             let pane = pending.pane.entity_id();
             let seen = |window: &WindowBuffers| window.panes.contains(&pane);
             if all.windows[&id].panes.contains(&pane) {
@@ -307,7 +318,7 @@ impl Workbench {
         let buffers = &mut window.buffers;
         let mut mine = mine;
         mine.sort_by_key(|pending| pending.entry.seq);
-        for Pending { pane, entry } in mine {
+        for Pending { pane, entry, .. } in mine {
             let pane = pane.entity_id();
             if !entry.listed || entry.kind == Kind::Removed {
                 continue;

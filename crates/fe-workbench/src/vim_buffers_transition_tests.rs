@@ -3,7 +3,7 @@
 
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use kiln_shell::PaneView as _;
 
 use super::super::super::vim_host_tests::{draw, window, write};
@@ -125,4 +125,42 @@ fn a_restored_active_tab_is_shown_before_the_next(cx: &mut TestAppContext) {
         })
     });
     assert_eq!(alternate, Some(2));
+}
+
+fn count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+    workbench.update(cx, |workbench, cx| {
+        let mut tabs = workbench.buffer_tabs(cx);
+        workbench.vim_buffers(&mut tabs, cx, |buffers| buffers.numbered.len())
+    })
+}
+
+#[gpui::test]
+fn a_pane_closed_before_a_read_replays_into_its_own_window(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), &["a.txt", "b.txt"]);
+    let (a, mut a_cx) = window(cx, dir.path(), &["a.txt"]);
+    let (b, mut b_cx) = window(cx, dir.path(), &["a.txt", "b.txt"]);
+    assert_eq!(count(&a, &mut a_cx), 1);
+    assert_eq!(count(&b, &mut b_cx), 2);
+
+    // A pane of B's added to and closed in one update, with a tab of its
+    // own, before any read: none of B's windows' registries has seen it.
+    b_cx.update(|_, cx| {
+        let first = b.read(cx).pane().clone();
+        let peer = first.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)));
+        peer.update(cx, |pane, cx| {
+            pane.add(EditorModel::new(Buffer::new("x"), None), cx)
+        });
+        drop(peer);
+    });
+    assert_eq!(count(&a, &mut a_cx), 1);
+    // B's replay numbered the closed pane's tab, and kept its alternate.
+    assert_eq!(count(&b, &mut b_cx), 3);
+    let pane = b.read_with(&b_cx, |workbench, _| workbench.pane().clone());
+    let alternate = b.update(&mut b_cx, |workbench, cx| {
+        workbench.vim_buffers(&mut [], cx, |buffers| {
+            buffers.alternate(pane.entity_id(), Some(2))
+        })
+    });
+    assert_eq!(alternate, Some(1));
 }

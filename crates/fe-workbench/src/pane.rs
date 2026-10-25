@@ -187,6 +187,9 @@ pub struct Pane {
     viewer_events: HashMap<TabId, Subscription>,
     /// The item whose activation the vim buffer registry was last told of.
     logged_active: Option<TabId>,
+    /// The workbench this pane was made for, which owns the transitions it
+    /// notes for the vim buffer registry even after the pane is gone.
+    owner: Option<EntityId>,
     /// Reads of the files of viewer tabs being converted to editors.
     conversions: HashMap<TabId, Task<()>>,
     /// The zoom of each SVG viewer tab replaced by an editor
@@ -314,6 +317,7 @@ impl Pane {
             save_keys: Rc::default(),
             viewer_events: HashMap::new(),
             logged_active: None,
+            owner: None,
             conversions: HashMap::new(),
             svg_zooms: HashMap::new(),
             text_reads: HashMap::new(),
@@ -328,11 +332,17 @@ impl Pane {
         }
     }
 
+    /// Makes the pane `owner`'s, a workbench's: see [`Pane::owner`].
+    pub(crate) fn owned_by(&mut self, owner: EntityId) {
+        self.owner = Some(owner);
+    }
+
     /// A pane like this one, empty, opening editors as it does.
     pub(crate) fn new_peer(&self, cx: &mut Context<Self>) -> Self {
         let mut pane = Self::new(self.theme.clone(), self.settings.clone(), cx);
         pane.state.set_peers(self.state.peers().clone());
         pane.closed = self.closed.clone();
+        pane.owner = self.owner;
         pane
     }
 
@@ -551,7 +561,13 @@ impl Pane {
     fn note_activation(&mut self, ix: usize, cx: &mut App) {
         if let Some(item) = self.state.items().get(ix) {
             self.logged_active = Some(item.id());
-            vim_log::record(&self.this, vim_log::Kind::Activated, &**item, cx);
+            vim_log::record(
+                &self.this,
+                self.owner,
+                vim_log::Kind::Activated,
+                &**item,
+                cx,
+            );
         }
     }
 
@@ -574,13 +590,19 @@ impl Pane {
             })
             .collect();
         for item in &added {
-            vim_log::record(&self.this, vim_log::Kind::Added, &**item, cx);
+            vim_log::record(&self.this, self.owner, vim_log::Kind::Added, &**item, cx);
         }
         for tab in old
             .iter()
             .filter(|tab| !self.tabs.iter().any(|t| t.id() == tab.id()))
         {
-            vim_log::record(&self.this, vim_log::Kind::Removed, tab.item(), cx);
+            vim_log::record(
+                &self.this,
+                self.owner,
+                vim_log::Kind::Removed,
+                tab.item(),
+                cx,
+            );
         }
         let minimap = fe_gpui::minimap_options(&self.settings);
         for editor in self.tabs.iter().filter_map(Tab::editor) {
