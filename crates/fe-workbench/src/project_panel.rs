@@ -16,7 +16,7 @@
 //! The file operations on the selected row (new file and folder, rename,
 //! move to the Trash, duplicate, copy path) are in [`ops`]; expanding and
 //! collapsing every folder, toggling ignored entries and refreshing are in
-//! [`nav`].
+//! [`nav`]; cutting, copying and pasting entries are in [`clipboard`].
 
 use std::{
     cell::Cell,
@@ -83,7 +83,8 @@ pub enum PanelEvent {
     FsChanged(Vec<FsChange>),
     /// The root opened: its tree shows.
     Opened,
-    /// The panel renamed `from`, a file or a folder, to `to`: the editors
+    /// The panel renamed `from`, a file or a folder, to `to`, or moved it
+    /// there (a paste of a cut entry): the editors
     /// of it, or of a file in it, are to take the paths `moves` planned for
     /// them before the rename ([`crate::Workbench::plan_rename`]).
     Renamed {
@@ -174,6 +175,11 @@ pub struct ProjectPanel {
     expansion: Option<nav::Expansion>,
     /// The panel's last word on an operation, under its rows.
     status: Option<String>,
+    /// The entry cut or copied, to paste.
+    clipboard: clipboard::Clipboard,
+    /// Each row the last frame drew dimmed as cut, by name.
+    #[cfg(test)]
+    drawn_cut: Vec<String>,
     _watch: Option<Task<()>>,
 }
 
@@ -217,6 +223,9 @@ impl ProjectPanel {
             show_ignored,
             expansion: None,
             status: None,
+            clipboard: clipboard::Clipboard::default(),
+            #[cfg(test)]
+            drawn_cut: Vec::new(),
             _watch: None,
         };
         panel.start(show_ignored, cx);
@@ -380,6 +389,7 @@ impl ProjectPanel {
         tree.apply(changes);
         let changed = tree.version() != version;
         self.removed(selected, cx);
+        self.drop_gone_clip(cx);
         // Something changed, so failed listings may succeed now.
         self.epoch += 1;
         if changed {
@@ -726,6 +736,7 @@ impl ProjectPanel {
         let selected = Self::index_of(tree, self.selected, self.selected_hint);
         tree.fill(dir, listed);
         self.removed(selected, cx);
+        self.drop_gone_clip(cx);
         if !failed {
             self.epoch += 1;
         } else if started == Some(self.epoch) {
@@ -772,6 +783,9 @@ impl ProjectPanel {
             Some(PanelOp::CollapseAll) => self.collapse_all(cx),
             Some(PanelOp::ToggleIgnored) => self.toggle_ignored(cx),
             Some(PanelOp::Refresh) => self.refresh(cx),
+            Some(PanelOp::Cut) => self.clip(clipboard::ClipKind::Cut, cx),
+            Some(PanelOp::Copy) => self.clip(clipboard::ClipKind::Copy, cx),
+            Some(PanelOp::Paste) => self.paste(window, cx),
             None => cx.propagate(),
         }
     }
@@ -806,6 +820,9 @@ impl ProjectPanel {
         #[cfg(test)]
         let mut drawn = Vec::new();
         let mut seen = None;
+        let cut = self.cut_node();
+        #[cfg(test)]
+        let mut drawn_cut = Vec::new();
         let theme = fe_ui::ui_theme(cx);
         let mut rows: Vec<gpui::AnyElement> = tree
             .rows(shown.clone())
@@ -829,7 +846,8 @@ impl ProjectPanel {
                     .depth(row.depth)
                     .icon(icon)
                     .focused(focused)
-                    .ignored(row.ignored)
+                    // A cut row is dimmed as an ignored one is.
+                    .ignored(row.ignored || cut == Some(id))
                     .error(row.error.is_some())
                     .selected(selected)
                     .on_click(cx.listener(move |panel, event, _, cx| panel.clicked(id, event, cx)));
@@ -843,6 +861,10 @@ impl ProjectPanel {
                 if let Some((kind, badge)) = status {
                     let color = git_panel::letter_color(kind, &theme);
                     element = element.label_color(color).badge(badge, color);
+                }
+                #[cfg(test)]
+                if cut == Some(id) {
+                    drawn_cut.push(row.name.to_string_lossy().into_owned());
                 }
                 #[cfg(test)]
                 drawn.push((row.name.to_string_lossy().into_owned(), {
@@ -860,7 +882,10 @@ impl ProjectPanel {
             rows.insert(at - range.start, self.render_field(depth, icon, cx));
         }
         #[cfg(test)]
-        self.drawn_status.extend(drawn);
+        {
+            self.drawn_status.extend(drawn);
+            self.drawn_cut.extend(drawn_cut);
+        }
         if let Some(ix) = seen {
             self.selected_hint = ix;
             #[cfg(test)]
@@ -908,6 +933,7 @@ impl Render for ProjectPanel {
             self.built.clear();
             self.drawn_selected = None;
             self.drawn_status.clear();
+            self.drawn_cut.clear();
         }
         let title = match &self.state {
             State::Open(tree) => tree.root_path().file_name(),
@@ -1008,6 +1034,9 @@ pub(crate) enum PanelOp {
     CollapseAll,
     ToggleIgnored,
     Refresh,
+    Cut,
+    Copy,
+    Paste,
 }
 
 /// The [`CommandTarget`] of panel commands: the op to do.
@@ -1122,6 +1151,9 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             ToggleIgnored,
         ),
         ("project_panel.refresh", "Refresh", KEY_CONTEXT, Refresh),
+        ("project_panel.cut", "Cut", KEY_CONTEXT, Cut),
+        ("project_panel.copy", "Copy", KEY_CONTEXT, Copy),
+        ("project_panel.paste", "Paste", KEY_CONTEXT, Paste),
     ];
     let mut registry = Registry::new();
     for (id, title, context, op) in commands {
@@ -1211,6 +1243,11 @@ impl ProjectPanel {
     pub(crate) fn drawn_status(&self) -> Vec<(String, DrawnStatus)> {
         self.drawn_status.clone()
     }
+
+    /// Each row the last frame drew dimmed as cut, by name.
+    pub(crate) fn drawn_cut(&self) -> Vec<String> {
+        self.drawn_cut.clone()
+    }
 }
 
 #[path = "project_panel_ops.rs"]
@@ -1224,6 +1261,13 @@ mod nav;
 #[cfg(test)]
 #[path = "project_panel_nav_tests.rs"]
 mod nav_tests;
+
+#[path = "project_panel_clipboard.rs"]
+mod clipboard;
+
+#[cfg(test)]
+#[path = "project_panel_clipboard_tests.rs"]
+mod project_panel_clipboard_tests;
 
 #[cfg(test)]
 #[path = "project_panel_hover_tests.rs"]

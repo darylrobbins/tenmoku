@@ -1055,6 +1055,41 @@ keys = "g r"
 command = "project_panel.refresh"
 context = "project_panel && vim"
 
+# Project tree: cut, copy and paste of files and folders, as nvim-tree's
+# `x`, `c` and `p` and VS Code's explorer's cmd/ctrl-x, -c and -v do. A
+# paste goes in the selected folder, or beside the selected file; a name
+# that's taken gets VS Code's " copy" suffix. While the name field is
+# open, cmd/ctrl-x, -c and -v cut, copy and paste its text instead.
+[[bindings]]
+keys = "x"
+command = "project_panel.cut"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "c"
+command = "project_panel.copy"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "p"
+command = "project_panel.paste"
+context = "project_panel && vim"
+
+[[bindings]]
+keys = "secondary-x"
+command = "project_panel.cut"
+context = "project_panel"
+
+[[bindings]]
+keys = "secondary-c"
+command = "project_panel.copy"
+context = "project_panel"
+
+[[bindings]]
+keys = "secondary-v"
+command = "project_panel.paste"
+context = "project_panel"
+
 # Find references' results, when they have focus.
 [[bindings]]
 keys = "up"

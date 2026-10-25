@@ -232,7 +232,7 @@ impl ProjectPanel {
 
     /// Expands directory `dir` once it's listed, unless it's the root or
     /// expanded already.
-    fn expand(&mut self, dir: NodeId, cx: &mut Context<Self>) {
+    pub(super) fn expand(&mut self, dir: NodeId, cx: &mut Context<Self>) {
         let Some(row) = self.tree().and_then(|tree| tree.row(dir)) else {
             return;
         };
@@ -252,8 +252,9 @@ impl ProjectPanel {
 
     /// Runs a command while the name field has focus: Enter runs the
     /// operation, the `text_input` edits and the panel's left and right
-    /// edit the field and move its caret, and the panel's other keys do
-    /// nothing, so typing reaches only the field. Others go on to the
+    /// edit the field and move its caret, the panel's cut, copy and paste
+    /// (cmd/ctrl-x, -c and -v) are the field's, and the panel's other keys
+    /// do nothing, so typing reaches only the field. Others go on to the
     /// workbench.
     pub(super) fn run_in_field(
         &mut self,
@@ -268,6 +269,9 @@ impl ProjectPanel {
             Some(PanelOp::Open) => return self.commit_edit(window, cx),
             Some(PanelOp::CollapseOrParent) => Box::new(text_field::Left),
             Some(PanelOp::ExpandOrFirstChild) => Box::new(text_field::Right),
+            Some(PanelOp::Cut) => Box::new(text_field::Cut),
+            Some(PanelOp::Copy) => Box::new(text_field::Copy),
+            Some(PanelOp::Paste) => Box::new(text_field::Paste),
             Some(_) => return,
             None => match picker::op(run, cx) {
                 Some(PaletteOp::Backspace) => Box::new(text_field::Backspace),
@@ -766,14 +770,14 @@ impl ProjectPanel {
 
     /// `path`, under the tree's (canonical) `root`, as the panel hands it
     /// out.
-    fn shown(&self, path: &Path, root: &Path) -> Option<PathBuf> {
+    pub(super) fn shown(&self, path: &Path, root: &Path) -> Option<PathBuf> {
         let rel = path.strip_prefix(root).ok()?;
         Some(self.root.as_ref()?.join(rel))
     }
 
     /// Brings the tree, if it's open, up to date with a change at `shown`,
     /// as the watcher's batch would.
-    fn changed(&mut self, shown: &Path, cx: &mut Context<Self>) {
+    pub(super) fn changed(&mut self, shown: &Path, cx: &mut Context<Self>) {
         self.apply_fs_changes(&[FsChange::Path(shown.to_owned())], cx);
     }
 
@@ -878,7 +882,7 @@ impl ProjectPanel {
 
 /// Makes `edits`, language servers' for a rename, in `window`'s workbench;
 /// edits that can't be made are logged, and the rename goes on.
-fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui::App) {
+pub(super) fn apply_edits(edits: Vec<FileEdits>, window: &Window, cx: &mut gpui::App) {
     if edits.is_empty() {
         return;
     }
@@ -904,7 +908,7 @@ fn failure(error: &io::Error, name: &str) -> String {
 
 /// The device and inode of the entry at `path`, a symlink itself rather
 /// than its target; `None` if there's none.
-fn entry_identity(path: &std::path::Path) -> Option<(u64, u64)> {
+pub(super) fn entry_identity(path: &std::path::Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt as _;
     let metadata = std::fs::symlink_metadata(path).ok()?;
     Some((metadata.dev(), metadata.ino()))
@@ -927,7 +931,7 @@ static STARTED: AtomicU64 = AtomicU64::new(0);
 pub(super) struct Running(u64);
 
 impl Running {
-    fn start(path: PathBuf) -> Arc<Running> {
+    pub(super) fn start(path: PathBuf) -> Arc<Running> {
         let id = STARTED.fetch_add(1, Ordering::Relaxed);
         RUNNING.lock().unwrap().push((id, path));
         Arc::new(Running(id))
@@ -963,7 +967,7 @@ fn stem_len(name: &str) -> usize {
 }
 
 /// `text` with its first letter in upper case.
-fn capitalized(text: &str) -> String {
+pub(super) fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()

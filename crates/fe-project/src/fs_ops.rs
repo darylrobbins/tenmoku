@@ -349,6 +349,9 @@ enum Point {
     /// A copy is complete, and its folders are about to get their
     /// permissions.
     Copied,
+    /// A paste opened the folder it goes in and checked it isn't inside
+    /// the entry, and is about to copy or move the entry there.
+    Pasting,
     /// The `.trashinfo` of an entry to trash was written, and the entry is
     /// about to move.
     #[cfg(target_os = "linux")]
@@ -829,25 +832,217 @@ pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
     let kind = listing::stat_at(&target.parent, target.name)?.kind;
-    let dir = &target.parent;
-    for n in 1..10_000 {
-        let name = copy_name(target.name, kind == EntryKind::Dir, n);
+    let name = copy_first_free(&target, kind, &target.parent, 1)?;
+    Ok(target.path.with_file_name(name))
+}
+
+/// Copies the entry at `path` into folder `dir`, as a paste of a copied
+/// entry does, and returns the copy's path. It takes its own name there, or
+/// should that be taken, the first free one of its copies' names, as
+/// [`duplicate`] names them (`name copy.ext`, then `name copy 2.ext`, …):
+/// so a copy pasted where it is ends up beside itself. Nothing is ever
+/// replaced. Otherwise it copies as [`duplicate`] does.
+///
+/// A folder can't be copied into itself or a folder in it: that fails with
+/// [`io::ErrorKind::InvalidInput`] before anything is made. The folder is
+/// checked by what it is, up through its parents, not by how its path is
+/// spelled, so another spelling of it (on a volume that ignores case) is
+/// refused too. Should it be moved into the entry once checked, the copy
+/// still never copies what it has made.
+pub fn copy_into(root: &Path, path: &Path, dir: &Path) -> io::Result<PathBuf> {
+    let root = Root::open(root)?;
+    let target = root.resolve(path)?;
+    let source = listing::stat_at(&target.parent, target.name)?;
+    let dir_names = names_under(&root.path, dir)?;
+    let to = root.open_dir(&dir_names)?;
+    if source.kind == EntryKind::Dir && within(&to, source.id, &root)? {
+        return Err(invalid("a folder can't be copied into itself"));
+    }
+    reach(Point::Pasting)?;
+    let name = copy_first_free(&target, source.kind, &to, 0)?;
+    let mut copy = root.path.clone();
+    copy.extend(&dir_names);
+    copy.push(name);
+    Ok(copy)
+}
+
+/// Copies `target`, of `kind`, into folder `to` under the first free name
+/// of [`paste_name_n`]'s from the `first`th on, and returns that name.
+fn copy_first_free(
+    target: &Target<'_>,
+    kind: EntryKind,
+    to: &File,
+    first: u32,
+) -> io::Result<OsString> {
+    for n in first..10_000 {
+        let name = paste_name_n(target.name, kind == EntryKind::Dir, n);
         let mut copying = Copying::default();
-        match copy_new(dir, target.name, kind, dir, &name, true, &mut copying)? {
+        match copy_new(
+            &target.parent,
+            target.name,
+            kind,
+            to,
+            &name,
+            true,
+            &mut copying,
+        )? {
             Copied::Done | Copied::Skipped => {}
             Copied::Taken => continue,
         }
         reach(Point::Copied)?;
-        if let Err(err) = set_modes(dir, &name, &copying) {
-            discard(dir, &name, &copying.owned);
+        if let Err(err) = set_modes(to, &name, &copying) {
+            discard(to, &name, &copying.owned);
             return Err(err);
         }
-        return Ok(target.path.with_file_name(name));
+        return Ok(name);
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
         "no free name for a copy",
     ))
+}
+
+/// Whether folder `dir` is the folder `entry` is, or inside it: by what
+/// each folder is, from `dir` up through `..` until the root's or the top
+/// of the file system.
+fn within(dir: &File, entry: Identity, root: &Root) -> io::Result<bool> {
+    let top = listing::identity(&root.dir)?;
+    let mut at = dir.try_clone()?;
+    loop {
+        let id = listing::identity(&at)?;
+        if id == entry {
+            return Ok(true);
+        }
+        if id == top {
+            return Ok(false);
+        }
+        let up = open_subdir(&at, OsStr::new(".."))?;
+        if listing::identity(&up)? == id {
+            return Ok(false);
+        }
+        at = up;
+    }
+}
+
+/// The name a paste of the entry at `path` into folder `dir` would take
+/// there now: its own, or should that be taken, the first free one of its
+/// copies' names, as [`copy_into`] picks it. It's only looked up, so it may
+/// be taken by the time it's used: [`move_into`] then fails rather than
+/// replace what's there. A paste into the folder the entry is in names a
+/// copy.
+pub fn paste_name(root: &Path, path: &Path, dir: &Path) -> io::Result<OsString> {
+    let root = Root::open(root)?;
+    let target = root.resolve(path)?;
+    let kind = listing::stat_at(&target.parent, target.name)?.kind;
+    let dir = root.open_dir(&names_under(&root.path, dir)?)?;
+    for n in 0..10_000 {
+        let name = paste_name_n(target.name, kind == EntryKind::Dir, n);
+        match listing::stat_at(&dir, &name) {
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(name),
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no free name for a copy",
+    ))
+}
+
+/// Moves the entry at `from` into folder `dir`, named `name` there (a
+/// single component, as [`paste_name`] gives; it needn't be UTF-8), as a
+/// paste of a cut entry does, and returns its new path. Moving it to where
+/// it is does nothing.
+///
+/// An entry already at the new path fails with
+/// [`io::ErrorKind::AlreadyExists`], checked atomically with the move:
+/// nothing is ever replaced. A folder can't move into itself or a folder in
+/// it ([`io::ErrorKind::InvalidInput`]), checked by what the folders are, as
+/// [`copy_into`] checks; should the folders be moved meanwhile, the system
+/// refuses that move too. An entry can't move to another file system. The
+/// entry and the folder are both found through the root's handles, and the
+/// move is made between them.
+pub fn move_into(
+    root: &Path,
+    from: &Path,
+    dir: &Path,
+    name: impl AsRef<OsStr>,
+) -> io::Result<PathBuf> {
+    let name = name.as_ref();
+    validate_os_component(name)?;
+    let root = Root::open(root)?;
+    let target = root.resolve(from)?;
+    let source = listing::stat_at(&target.parent, target.name)?;
+    let dir_names = names_under(&root.path, dir)?;
+    let to_dir = root.open_dir(&dir_names)?;
+    if source.kind == EntryKind::Dir && within(&to_dir, source.id, &root)? {
+        return Err(invalid("a folder can't be moved into itself"));
+    }
+    let mut to = root.path.clone();
+    to.extend(&dir_names);
+    to.push(name);
+    let same_folder = listing::identity(&to_dir)? == listing::identity(&target.parent)?;
+    if same_folder && name == target.name {
+        return Ok(to);
+    }
+    reach(Point::Pasting)?;
+    if let Err(err) = rename_noreplace(&target.parent, target.name, &to_dir, name) {
+        // The system's refusal of a folder moved inside itself since.
+        if source.kind == EntryKind::Dir && within(&to_dir, source.id, &root).unwrap_or(false) {
+            return Err(invalid("a folder can't be moved into itself"));
+        }
+        return Err(err);
+    }
+    Ok(to)
+}
+
+/// Whether there's an entry at `path` under the root, a symlink counting
+/// as one. It's looked for through the root's handles: a symlinked folder
+/// on the way fails with [`io::ErrorKind::InvalidInput`] rather than being
+/// followed, and a folder on the way that's missing, or that's a file,
+/// means there's none.
+pub fn exists(root: &Path, path: &Path) -> io::Result<bool> {
+    let root = Root::open(root)?;
+    let found = (root.resolve(path))
+        .and_then(|target| listing::stat_at(&target.parent, target.name).map(drop));
+    match found {
+        Ok(()) => Ok(true),
+        Err(err)
+            if matches!(
+                err.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// [`validate_component`] for a name that may not be UTF-8: one that isn't
+/// is refused only for a `/` or a NUL in it, or for being empty.
+fn validate_os_component(name: &OsStr) -> Result<(), NameError> {
+    if let Some(name) = name.to_str() {
+        return validate_component(name);
+    }
+    let bytes = name.as_bytes();
+    if bytes.contains(&0) {
+        return Err(NameError::Nul);
+    }
+    if bytes.contains(&b'/') {
+        return Err(NameError::Separator);
+    }
+    Ok(())
+}
+
+/// The `n`th name a pasted entry tries: its own, then its copies'
+/// ([`copy_name`]).
+fn paste_name_n(name: &OsStr, folder: bool, n: u32) -> OsString {
+    if n == 0 {
+        name.to_owned()
+    } else {
+        copy_name(name, folder, n)
+    }
 }
 
 /// The longest name, in bytes, on the file systems served (`NAME_MAX`).
@@ -1091,6 +1286,16 @@ fn copy_new(
                         Some(kind) => kind,
                         None => listing::stat_at(&source, &child)?.kind,
                     };
+                    // A folder this copy made, there now: a paste's target
+                    // folder moved into what it copies. Never copied, so
+                    // the copy can't copy itself.
+                    let made = || {
+                        listing::stat_at(&source, &child)
+                            .is_ok_and(|stat| copying.owned.contains(&stat.id))
+                    };
+                    if kind == EntryKind::Dir && made() {
+                        continue;
+                    }
                     copying.path.push(child.clone());
                     let copied = copy_new(&source, &child, kind, &copy, &child, false, copying);
                     copying.path.pop();
@@ -1534,6 +1739,74 @@ fn rename_exclusive(from_dir: &File, from: &CStr, to_dir: &File, to: &CStr) -> i
 #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
 fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
     Err(io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+/// Pastes racing another process that moves the folder pasted in into
+/// the entry pasted, once it's checked.
+#[cfg(test)]
+mod paste_race_tests {
+    use std::{
+        fs, io,
+        path::{Path, PathBuf},
+    };
+
+    use super::{Point, copy_into, move_into, race_tests};
+
+    /// A temporary directory and its canonical path.
+    fn temp() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fs::canonicalize(dir.path()).unwrap();
+        (dir, path)
+    }
+
+    /// Every path under `root`, relative and sorted, folders with a `/`.
+    fn snapshot(root: &Path) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut dirs = vec![root.to_owned()];
+        while let Some(dir) = dirs.pop() {
+            for entry in fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                let rel = super::relative_path(root, &path);
+                if path.is_dir() {
+                    out.push(format!("{rel}/"));
+                    dirs.push(path);
+                } else {
+                    out.push(rel);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn a_copy_never_copies_itself_when_its_folder_moves_into_the_entry() {
+        let (_dir, root) = temp();
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::write(root.join("a/f.txt"), "f").unwrap();
+        fs::create_dir(root.join("x")).unwrap();
+        let (from, to) = (root.join("x"), root.join("a/x"));
+        race_tests::at(Point::Pasting, move || fs::rename(from, to).unwrap());
+        copy_into(&root, &root.join("a"), &root.join("x")).unwrap();
+        // The folder copied into, inside `a`, is copied once, without the
+        // copy in it.
+        assert_eq!(
+            snapshot(&root),
+            ["a/", "a/f.txt", "a/x/", "a/x/a/", "a/x/a/f.txt", "a/x/a/x/"]
+        );
+    }
+
+    #[test]
+    fn a_move_into_a_folder_moved_into_the_entry_is_refused() {
+        let (_dir, root) = temp();
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir(root.join("x")).unwrap();
+        let (from, to) = (root.join("x"), root.join("a/x"));
+        race_tests::at(Point::Pasting, move || fs::rename(from, to).unwrap());
+        let moved = move_into(&root, &root.join("a"), &root.join("x"), "a");
+        assert_eq!(moved.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(snapshot(&root), ["a/", "a/x/"]);
+    }
 }
 
 #[cfg(test)]
