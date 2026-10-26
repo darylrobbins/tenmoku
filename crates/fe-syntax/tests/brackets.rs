@@ -54,7 +54,7 @@ fn rust_pairs() {
 fn recovery_and_other_languages() {
     let s = parse("python", "foo(bar(1), 2\n");
     assert_eq!(pair(&s, 3), None);
-    assert_eq!(pair(&s, 7), Some((7, 9)));
+    assert_eq!(pair(&s, 7), None);
 
     let s = parse("json", "{\"a\": [1, 2]}");
     assert_eq!(pair(&s, 6), Some((6, 11)));
@@ -74,6 +74,7 @@ fn wide_parent_is_linear() {
     // Best of several interleaved runs: a load spike hits one sample, not the
     // minimum of all of them, while quadratic pairing would fail every run.
     let mut parse_time = Duration::MAX;
+    let mut first_time = Duration::MAX;
     let mut pair_time = Duration::MAX;
     for _ in 0..5 {
         let mut syntax = Syntax::new(language_by_name("json").unwrap(), &snapshot);
@@ -82,13 +83,19 @@ fn wide_parent_is_linear() {
         parse_time = parse_time.min(started.elapsed());
 
         let started = Instant::now();
+        // The first lookup in a parse steps through the children once, to
+        // keep the parent's pairs; later ones read them.
         let found = pair(&syntax, 0);
+        first_time = first_time.min(started.elapsed());
+        assert_eq!(found, Some((0, text.len() - 1)));
+        let started = Instant::now();
+        let found = pair(&syntax, text.len() - 1);
         pair_time = pair_time.min(started.elapsed());
         assert_eq!(found, Some((0, text.len() - 1)));
     }
     assert!(
-        pair_time * 20 < parse_time,
-        "pairing took {pair_time:?}, parsing {parse_time:?}"
+        first_time * 2 < parse_time && pair_time * 20 < parse_time,
+        "pairing took {first_time:?} then {pair_time:?}, parsing {parse_time:?}"
     );
 }
 
@@ -347,4 +354,63 @@ fn wide_pairing_is_kept_until_the_reparse() {
         depths(&s, &buffer.snapshot().text().to_string(), len - 3..len),
         [(len - 2, 1), (len - 1, 0)]
     );
+}
+
+#[test]
+fn wide_parent_pairs_past_the_old_scan_limit() {
+    // Early elements of a wide array: the outer pair is 5,000+ siblings apart
+    // and an inner pair sits inside it.
+    let numbers: Vec<String> = (0..5_000).map(|n| n.to_string()).collect();
+    let text = format!("[[1,[2]],{}]", numbers.join(","));
+    let s = parse("json", &text);
+    assert_eq!(pair(&s, 0), Some((0, text.len() - 1)));
+    assert_eq!(pair(&s, text.len() - 1), Some((0, text.len() - 1)));
+    assert_eq!(pair(&s, 1), Some((1, 7)));
+    assert_eq!(pair(&s, 7), Some((1, 7)));
+    assert_eq!(pair(&s, 4), Some((4, 6)));
+    let inside = fe_syntax::enclosing_bracket_pair(&s, 3).unwrap();
+    assert_eq!((inside.open.start, inside.close.start), (1, 7));
+    let outer = fe_syntax::enclosing_bracket_pair(&s, 10).unwrap();
+    assert_eq!((outer.open.start, outer.close.start), (0, text.len() - 1));
+}
+
+#[test]
+fn nothing_pairs_beneath_an_error_ancestor() {
+    // Unclosed call: the complete `(1)` is nested in an ERROR ancestor.
+    let s = parse("python", "foo(bar(1), (2)\n");
+    for offset in [0, 3, 7, 9, 12, 14] {
+        let found = pair(&s, offset);
+        let root = s.tree().unwrap().root_node();
+        let node = root.descendant_for_byte_range(offset, offset + 1).unwrap();
+        let mut error = false;
+        let mut at = Some(node);
+        while let Some(n) = at {
+            error |= n.is_error();
+            at = n.parent();
+        }
+        if error {
+            assert_eq!(found, None, "offset {offset}");
+        }
+    }
+}
+
+#[cfg(feature = "sql")]
+#[test]
+fn sibling_pairs_in_a_wide_parent_keep_their_nesting() {
+    // A column definition holds its REFERENCES and CHECK lists as flat
+    // siblings; the first list is wider than the scan limit.
+    let names: Vec<String> = (0..5_000).map(|n| format!("c{n}")).collect();
+    let text = format!(
+        "CREATE TABLE t (a int REFERENCES r ({}) CHECK (a > (1)));",
+        names.join(", ")
+    );
+    let s = parse("sql", &text);
+    let open = text.find("(c0").unwrap();
+    let close = text.find(") CHECK").unwrap();
+    let check = text.find("(a >").unwrap();
+    let check_close = text.rfind("))").unwrap();
+    assert_eq!(pair(&s, open), Some((open, close)));
+    assert_eq!(pair(&s, close), Some((open, close)));
+    assert_eq!(pair(&s, check), Some((check, check_close)));
+    assert_eq!(pair(&s, check_close), Some((check, check_close)));
 }

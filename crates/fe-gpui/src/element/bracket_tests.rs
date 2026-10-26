@@ -55,56 +55,56 @@ fn xs(rects: &[Bounds<Pixels>]) -> Vec<Pixels> {
 
 #[gpui::test]
 fn outlines_both(cx: &mut TestAppContext) {
-    let (view, cx) = editor("f(a)\n", Some("main.rs"), cx);
-    view.update(cx, |view, _| view.model.set_cursor(1));
+    let (view, cx) = editor("fn f() { (a) }\n", Some("main.rs"), cx);
+    view.update(cx, |view, _| view.model.set_cursor(9));
     draw(&view, cx);
     let rects = painted(&view, cx);
     assert_eq!(rects.len(), 2);
-    assert_eq!(xs(&rects), lefts(&view, &[1, 3], cx));
+    assert_eq!(xs(&rects), lefts(&view, &[9, 11], cx));
     assert!(rects.iter().all(|rect| rect.size.width > px(0.)));
 
-    // `f((x)a)`, the caret after the new `)`: the new pair, once parsed.
+    // `((x)a)`, the caret after the new `)`: the new pair, once parsed.
     view.update(cx, |view, cx| {
-        view.model.set_cursor(2);
+        view.model.set_cursor(10);
         view.model.insert("(x)");
         view.changed(cx);
     });
-    let stale = lefts(&view, &[1, 3], cx);
+    let stale = lefts(&view, &[9, 11], cx);
     draw(&view, cx);
     assert_ne!(xs(&painted(&view, cx)), stale, "never the old pair");
     cx.run_until_parked();
     draw(&view, cx);
     let rects = painted(&view, cx);
     assert_eq!(rects.len(), 2);
-    assert_eq!(xs(&rects), lefts(&view, &[2, 4], cx));
+    assert_eq!(xs(&rects), lefts(&view, &[10, 12], cx));
 }
 
 #[gpui::test]
 fn nothing_to_outline(cx: &mut TestAppContext) {
-    let (view, cx) = editor("f(a)\n", Some("main.rs"), cx);
+    let (view, cx) = editor("fn f() { (a) }\n", Some("main.rs"), cx);
     let none = |view: &Entity<EditorView>, cx: &mut VisualTestContext, why: &str| {
         draw(view, cx);
         assert!(painted(view, cx).is_empty(), "{why}");
     };
-    view.update(cx, |view, _| view.model.set_cursor(1));
+    view.update(cx, |view, _| view.model.set_cursor(9));
     draw(&view, cx);
     assert_eq!(painted(&view, cx).len(), 2);
 
-    view.update(cx, |view, _| view.model.select_range(1..2, false));
+    view.update(cx, |view, _| view.model.select_range(9..10, false));
     none(&view, cx, "a selection");
     view.update(cx, |view, _| {
         let caret = |at| ResolvedSelection {
             range: at..at,
             reversed: false,
         };
-        view.model.set_selections([caret(1), caret(3)]);
+        view.model.set_selections([caret(9), caret(11)]);
     });
     none(&view, cx, "two carets");
     view.update(cx, |view, _| view.model.set_cursor(0));
     none(&view, cx, "a caret off the brackets");
 
-    let (plain, cx) = editor("f(a)\n", None, cx);
-    plain.update(cx, |view, _| view.model.set_cursor(1));
+    let (plain, cx) = editor("fn f() { (a) }\n", None, cx);
+    plain.update(cx, |view, _| view.model.set_cursor(9));
     none(&plain, cx, "plain text");
 
     // The `)` is scrolled out of view: only the `(` is outlined.

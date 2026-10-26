@@ -25,11 +25,13 @@ pub struct BracketPair {
 ///
 /// None without a tree, when no bracket is at `offset`, when the counterpart
 /// is missing or is a `MISSING` node of error recovery, or when the brackets are
-/// children of an `ERROR` node (a pair inside a node that is itself in an
-/// `ERROR` node is still paired). Work is linear in the parent's child count.
+/// inside an `ERROR` node, at any depth. Work is linear in the parent's child
+/// count.
 ///
-/// Past 4,096 siblings between a bracket and its counterpart the pair is taken
-/// from the parent's far end without counting nesting.
+/// Counterparts more than 4,096 siblings away are found from the parent's
+/// paired brackets, kept until the tree is edited or reparsed (as for
+/// [`bracket_depths`]), so only the first lookup in a parse steps through the
+/// parent's children.
 ///
 /// Known limit: injected layers (Markdown code fences, HTML `<script>`) are
 /// not looked at, only the root tree.
@@ -39,7 +41,7 @@ pub fn bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketPair> {
     [(offset, offset + 1)]
         .into_iter()
         .chain(ending)
-        .find_map(|(start, end)| pair_of(root, start, end))
+        .find_map(|(start, end)| pair_of(syntax, root, start, end))
 }
 
 /// The innermost pair enclosing `offset`: its opening bracket ends at or
@@ -48,14 +50,15 @@ pub fn bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketPair> {
 /// pair with a `MISSING` bracket isn't one, and brackets that are children of
 /// an `ERROR` node are skipped.
 ///
-/// None without a tree or when no pair encloses `offset`. Past 4,096 siblings
-/// after `offset`, a wide parent's remaining brackets are not looked at.
+/// None without a tree or when no pair encloses `offset`. A node with more
+/// than 4,096 children is looked at through its cached paired brackets, as in
+/// [`bracket_pair`].
 pub fn enclosing_bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketPair> {
     let root = syntax.tree()?.root_node();
     let mut ancestor = root.descendant_for_byte_range(offset, offset);
     while let Some(node) = ancestor {
         if !node.is_error()
-            && let Some(pair) = enclosing_among_children(node, offset)
+            && let Some(pair) = enclosing_among_children(syntax, node, offset)
         {
             return Some(pair);
         }
@@ -64,14 +67,16 @@ pub fn enclosing_bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketP
     None
 }
 
-fn enclosing_among_children(parent: Node, offset: usize) -> Option<BracketPair> {
+fn enclosing_among_children(syntax: &Syntax, parent: Node, offset: usize) -> Option<BracketPair> {
+    if parent.child_count() as usize > SCAN_LIMIT {
+        return enclosing_among_wide_children(syntax, parent, offset);
+    }
     let mut cursor = parent.walk();
     if !cursor.goto_first_child() {
         return None;
     }
     // Open brackets: kind and node, innermost last.
     let mut open: Vec<(&str, Node)> = Vec::new();
-    let mut after = 0usize;
     loop {
         let node = cursor.node();
         if let Some((other, opens)) = bracket_kind(node) {
@@ -92,38 +97,80 @@ fn enclosing_among_children(parent: Node, offset: usize) -> Option<BracketPair> 
                 }
             }
         }
-        if node.start_byte() >= offset {
-            after += 1;
-            if after > SCAN_LIMIT {
-                return None;
-            }
-        }
         if !cursor.goto_next_sibling() {
             return None;
         }
     }
 }
 
-fn pair_of(root: Node, start: usize, end: usize) -> Option<BracketPair> {
+/// [`enclosing_among_children`] for a node with many children, from its
+/// cached paired brackets.
+fn enclosing_among_wide_children(
+    syntax: &Syntax,
+    parent: Node,
+    offset: usize,
+) -> Option<BracketPair> {
+    let mut cursor = parent.walk();
+    let paired = syntax.wide_brackets(parent.id(), || children_paired(&mut cursor));
+    // The first child ending past `offset`: the children before it end at or
+    // before `offset`, the ones from it on start at or after it (brackets are
+    // a byte wide).
+    let boundary = cursor
+        .goto_first_child_for_byte(offset)
+        .unwrap_or(parent.child_count() as usize);
+    let split = paired.partition_point(|&(at, _)| at < boundary);
+    // The innermost open before the boundary that nothing before it closes.
+    let mut depth = 0usize;
+    let opening = paired[..split].iter().rev().find_map(|&(at, opens)| {
+        if !opens {
+            depth += 1;
+            None
+        } else if depth == 0 {
+            Some(at)
+        } else {
+            depth -= 1;
+            None
+        }
+    })?;
+    let mut depth = 0usize;
+    let closing = paired[split..].iter().find_map(|&(at, opens)| {
+        if opens {
+            depth += 1;
+            None
+        } else if depth == 0 {
+            Some(at)
+        } else {
+            depth -= 1;
+            None
+        }
+    })?;
+    Some(BracketPair {
+        open: parent.child(opening as u32)?.byte_range(),
+        close: parent.child(closing as u32)?.byte_range(),
+    })
+}
+
+fn pair_of(syntax: &Syntax, root: Node, start: usize, end: usize) -> Option<BracketPair> {
     // Descend with one cursor: `Node::parent` and `descendant_for_byte_range`
     // each cost a pass over a wide parent's children.
     let mut cursor = root.walk();
     let mut in_error = false;
+    // The leaf's parent and its index among the parent's children.
+    let mut parent = None;
     loop {
         let node = cursor.node();
         if node.child_count() == 0 {
             break;
         }
-        if !cursor.goto_first_child_for_byte(start).is_some() {
-            return None;
-        }
+        let index = cursor.goto_first_child_for_byte(start)?;
+        parent = Some((node, index));
         // Tree-sitter picks the first child ending after `start`, which may
         // start later: a bracket must start exactly there.
         let child = cursor.node();
         if child.start_byte() > start || child.end_byte() < end {
             return None;
         }
-        in_error = node.is_error();
+        in_error |= node.is_error();
     }
     let node = cursor.node();
     if node.is_named() || node.byte_range() != (start..end) {
@@ -147,37 +194,11 @@ fn pair_of(root: Node, start: usize, end: usize) -> Option<BracketPair> {
     // Walk from the bracket towards its counterpart, one cursor step per
     // sibling, counting nested brackets of the same kind on the way. Past
     // `SCAN_LIMIT` siblings, `scan` gives up.
-    let at = cursor.clone();
     let counterpart = match scan(&mut cursor, opens, kind, other) {
         Some(found) => found?,
         None => {
-            // A parent this wide has no flat runs of brackets in practice:
-            // take the first bracket of the other kind from its far end.
-            cursor = at;
-            cursor.goto_parent();
-            let jumped = if opens {
-                cursor.goto_last_child()
-            } else {
-                cursor.goto_first_child()
-            };
-            if !jumped {
-                return None;
-            }
-            let far = if opens {
-                Direction::Back
-            } else {
-                Direction::Forward
-            };
-            let found = scan_from_here(&mut cursor, far, other)?;
-            let past = if opens {
-                found.start_byte() >= end
-            } else {
-                found.end_byte() <= start
-            };
-            if !past {
-                return None;
-            }
-            found
+            let (parent, index) = parent?;
+            wide_counterpart(syntax, parent, index, opens)?
         }
     };
 
@@ -406,13 +427,47 @@ fn children_paired(cursor: &mut TreeCursor) -> Vec<(usize, bool)> {
     paired
 }
 
-/// How many siblings [`scan`] steps over before giving up.
+/// How many siblings [`scan`] steps over before giving up, and how many
+/// children make a node wide for [`bracket_depths`].
 const SCAN_LIMIT: usize = 4096;
 
-#[derive(Clone, Copy)]
-enum Direction {
-    Forward,
-    Back,
+/// The counterpart of the paired bracket that is child `index` of `parent`,
+/// from the parent's cached paired brackets, None when it isn't paired.
+fn wide_counterpart<'t>(
+    syntax: &Syntax,
+    parent: Node<'t>,
+    index: usize,
+    opens: bool,
+) -> Option<Node<'t>> {
+    let paired = syntax.wide_brackets(parent.id(), || children_paired(&mut parent.walk()));
+    let at = paired.binary_search_by_key(&index, |&(at, _)| at).ok()?;
+    let mut depth = 0usize;
+    let counterpart = if opens {
+        paired[at + 1..].iter().find_map(|&(at, opens)| {
+            if opens {
+                depth += 1;
+                None
+            } else if depth == 0 {
+                Some(at)
+            } else {
+                depth -= 1;
+                None
+            }
+        })
+    } else {
+        paired[..at].iter().rev().find_map(|&(at, opens)| {
+            if !opens {
+                depth += 1;
+                None
+            } else if depth == 0 {
+                Some(at)
+            } else {
+                depth -= 1;
+                None
+            }
+        })
+    }?;
+    parent.child(counterpart as u32)
 }
 
 /// Steps from the bracket at `cursor` over its later (`opens`) or earlier
@@ -443,27 +498,6 @@ fn scan<'t>(
                 return Some(Some(cursor.node()));
             }
             depth -= 1;
-        }
-    }
-    None
-}
-
-/// The first sibling of kind `id` at or after `cursor`, stepping in `direction`.
-fn scan_from_here<'t>(
-    cursor: &mut TreeCursor<'t>,
-    direction: Direction,
-    id: u16,
-) -> Option<Node<'t>> {
-    for _ in 0..SCAN_LIMIT {
-        if cursor.node().kind_id() == id {
-            return Some(cursor.node());
-        }
-        let moved = match direction {
-            Direction::Forward => cursor.goto_next_sibling(),
-            Direction::Back => cursor.goto_previous_sibling(),
-        };
-        if !moved {
-            return None;
         }
     }
     None
