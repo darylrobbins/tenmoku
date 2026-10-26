@@ -277,8 +277,13 @@ pub struct VimSettings {
     #[schemars(range(min = 0, max = 5000))]
     pub which_key_delay_ms: u64,
     /// The leader key `<leader>` stands for in a remap, in vim notation
-    /// (`"<Space>"` works).
+    /// (`"<Space>"` works). Left at `"\\"`, a preset's leader applies.
     pub leader: String,
+    /// A bundled set of remaps loaded beneath the vimrc and `[[vim.remap]]`,
+    /// which replace any of its maps for the same keys: `"none"`, plain vim,
+    /// or `"lazyvim"`, LazyVim's, with `<Space>` as the leader unless
+    /// `leader` is set.
+    pub preset: VimPreset,
     /// Key remaps, as vim's `:map` makes them. Each is a `[[vim.remap]]`
     /// table; a later one for the same keys in the same mode replaces an
     /// earlier one.
@@ -302,6 +307,7 @@ impl Default for VimSettings {
             which_key: true,
             which_key_delay_ms: 200,
             leader: "\\".to_string(),
+            preset: VimPreset::default(),
             remap: Vec::new(),
         }
     }
@@ -374,6 +380,18 @@ pub enum VimClipboard {
     /// Yanks, deletes and puts that name no register use the system clipboard.
     #[serde(rename = "unnamedplus")]
     Unnamedplus,
+}
+
+/// `vim.preset`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum VimPreset {
+    /// Plain vim: no maps but the user's, and `\` as the leader.
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    /// LazyVim's maps, with `<Space>` as the leader.
+    #[serde(rename = "lazyvim")]
+    Lazyvim,
 }
 
 /// Settings for the status bar.

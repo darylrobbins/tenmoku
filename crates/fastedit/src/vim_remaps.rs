@@ -2,6 +2,7 @@
 //! (`~/.config/fastedit/vimrc`, the subset [`fe_vim::parse_vimrc`] reads)
 //! and the settings' `[[vim.remap]]` table with `vim.leader`, built into
 //! one set for every editor and reloaded when any of their files changes.
+//! Beneath them, a bundled preset (`vim.preset`) in the same vimrc subset.
 //! Their problems go to the config problems list, each at its line: see
 //! `docs/decisions/vim-remaps.md` §1(c) and §7.
 //!
@@ -17,8 +18,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fe_config::{Diagnostic, Settings, SettingsStore, Severity, VimRemap, VimRemapMode};
-use fe_vim::{Remap, RemapMode, RemapSet, parse_keys, parse_vimrc};
+use fe_config::{Diagnostic, Settings, SettingsStore, Severity, VimPreset, VimRemap, VimRemapMode};
+use fe_vim::{Remap, RemapMode, RemapSet, Vimrc, parse_keys, parse_vimrc_with_leader};
 use gpui::{App, Global};
 use kiln::{GlobalSettings, platform::config::ConfigSource};
 use std::sync::Arc;
@@ -31,6 +32,36 @@ use toml::{
 /// bigger.
 const MAX_BYTES: u64 = 1 << 20;
 
+/// `vim.leader`'s default, which a preset's leader replaces.
+const DEFAULT_LEADER: &str = "\\";
+
+/// A bundled preset: a vimrc-subset file loaded beneath the user's maps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Preset {
+    /// The file name its problems are listed against.
+    pub(crate) name: &'static str,
+    pub(crate) text: &'static str,
+    /// What `<leader>` is while `vim.leader` is left at its default.
+    pub(crate) leader: &'static str,
+}
+
+/// Every bundled preset.
+pub(crate) const PRESETS: &[(VimPreset, Preset)] = &[(
+    VimPreset::Lazyvim,
+    Preset {
+        name: "lazyvim.vimrc",
+        text: include_str!("../presets/lazyvim.vimrc"),
+        leader: "<Space>",
+    },
+)];
+
+/// The bundled preset `preset` loads, none for plain vim.
+fn bundled(preset: VimPreset) -> Option<Preset> {
+    (PRESETS.iter())
+        .find(|(name, _)| *name == preset)
+        .map(|(_, preset)| *preset)
+}
+
 /// The records every editor's set was last built from, and the leader.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RemapsInUse {
@@ -40,8 +71,8 @@ pub(crate) struct RemapsInUse {
 
 impl Global for RemapsInUse {}
 
-/// The vimrc's maps first, then the settings' `vim.remap` entries, so that
-/// for the same mode and keys the table wins.
+/// The preset's maps first, then the vimrc's, then the settings'
+/// `vim.remap` entries, so that for the same mode and keys the later wins.
 pub(crate) struct VimRemaps {
     vimrc: Option<PathBuf>,
     /// The settings files, the user's first: a later one's `vim.remap` or
@@ -51,17 +82,31 @@ pub(crate) struct VimRemaps {
     /// file with errors keeps its last good table, empty until it has
     /// loaded once, so it keeps that text here.
     accepted: Vec<String>,
-    /// The vimrc's maps: as last read, or as last read well while it
-    /// can't be read.
+    /// The vimrc's text: as last read, or as last read well while it
+    /// can't be read. It's parsed as the set is built, since with a
+    /// preset its `<leader>` starts as the leader in use.
+    vimrc_text: String,
+    /// The error reading the vimrc, while it can't be read.
+    vimrc_error: Option<Diagnostic>,
+    /// The vimrc's maps, as last built.
     vimrc_remaps: Vec<Remap>,
     /// The line each of `vimrc_remaps` was written on.
     vimrc_lines: Vec<usize>,
     /// A warning for each of the vimrc's problems, or the one error
     /// reading it.
     vimrc_diagnostics: Vec<Diagnostic>,
-    /// The settings' `vim.remap` and `vim.leader`, as last seen.
+    /// The settings' `vim.remap`, `vim.leader` and `vim.preset`, as last
+    /// seen.
     table: Vec<VimRemap>,
     leader: String,
+    preset: VimPreset,
+    /// The preset `vim.preset` names: [`bundled`], but for tests.
+    presets: fn(VimPreset) -> Option<Preset>,
+    /// The preset's maps, the line each was written on, and a warning for
+    /// each of its problems, against its name; as last built.
+    preset_remaps: Vec<Remap>,
+    preset_lines: Vec<usize>,
+    preset_diagnostics: Vec<Diagnostic>,
     /// A warning for each `vim.remap` entry that can't load, and for a
     /// `vim.leader` that can't be read, at its line.
     table_diagnostics: Vec<Diagnostic>,
@@ -70,7 +115,7 @@ pub(crate) struct VimRemaps {
     /// The keymap the conflicts were last found against.
     keymap: Option<Arc<fe_gpui::fe_keymap::Keymap>>,
     /// A warning for each insert or cmdline map the keymap hides, at the
-    /// vimrc line that wrote it.
+    /// vimrc (or preset) line that wrote it.
     vimrc_conflicts: Vec<Diagnostic>,
 }
 
@@ -95,11 +140,18 @@ impl VimRemaps {
                 .map(str::to_owned)
                 .collect(),
             settings_files,
+            vimrc_text: String::new(),
+            vimrc_error: None,
             vimrc_remaps: Vec::new(),
             vimrc_lines: Vec::new(),
             vimrc_diagnostics: Vec::new(),
             table: vim.remap.clone(),
             leader: vim.leader.clone(),
+            preset: vim.preset,
+            presets: bundled,
+            preset_remaps: Vec::new(),
+            preset_lines: Vec::new(),
+            preset_diagnostics: Vec::new(),
             table_diagnostics: Vec::new(),
             keymap_file: fe_gpui::fe_keymap::user_keymap_path(),
             keymap: None,
@@ -111,54 +163,93 @@ impl VimRemaps {
     }
 
     /// Reads the vimrc, a missing one being empty. One that can't be read
-    /// keeps the maps last read, with one error at its first line.
+    /// keeps the text last read, with one error at its first line.
     fn read_vimrc(&mut self) {
         let Some(path) = &self.vimrc else {
             return;
         };
         match read(path) {
             Ok(text) => {
-                let vimrc = parse_vimrc(&text);
-                self.vimrc_remaps = vimrc.remaps;
-                self.vimrc_lines = vimrc.lines;
-                self.vimrc_diagnostics = (vimrc.issues.into_iter())
-                    .map(|issue| at_line(path, Severity::Warning, issue.line, issue.message))
-                    .collect();
+                self.vimrc_text = text;
+                self.vimrc_error = None;
             }
             Err(message) => {
-                self.vimrc_diagnostics = vec![at_line(path, Severity::Error, 1, message)];
+                self.vimrc_error = Some(at_line(path, Severity::Error, 1, message));
             }
         }
     }
 
-    /// Takes `vim.remap` and `vim.leader` from the settings in use,
-    /// returning whether they changed, and the text the store accepted of
-    /// each file.
+    /// Parses the preset's text and the vimrc's with `<leader>` starting
+    /// as `leader`, readable vim notation.
+    fn parse_files(&mut self, preset: Option<Preset>, leader: &str) {
+        let issues = |path: &Path, vimrc: &Vimrc| {
+            (vimrc.issues.iter())
+                .map(|issue| at_line(path, Severity::Warning, issue.line, issue.message.clone()))
+                .collect()
+        };
+        match preset {
+            Some(preset) => {
+                let parsed = parse_with_leader(preset.text, leader);
+                self.preset_diagnostics = issues(Path::new(preset.name), &parsed);
+                self.preset_remaps = parsed.remaps;
+                self.preset_lines = parsed.lines;
+            }
+            None => {
+                self.preset_remaps.clear();
+                self.preset_lines.clear();
+                self.preset_diagnostics.clear();
+            }
+        }
+        let Some(path) = &self.vimrc else {
+            return;
+        };
+        let parsed = parse_with_leader(&self.vimrc_text, leader);
+        self.vimrc_diagnostics = match &self.vimrc_error {
+            Some(error) => vec![error.clone()],
+            None => issues(path, &parsed),
+        };
+        self.vimrc_remaps = parsed.remaps;
+        self.vimrc_lines = parsed.lines;
+    }
+
+    /// Takes `vim.remap`, `vim.leader` and `vim.preset` from the settings
+    /// in use, returning whether they changed, and the text the store
+    /// accepted of each file.
     fn take_settings(&mut self, cx: &App) -> bool {
         let Some(global) = cx.try_global::<GlobalSettings<Settings>>() else {
             return false;
         };
         self.accepted = kiln::platform::config::accepted_sources::<Settings>(cx);
         let vim = &global.settings().vim;
-        if vim.remap == self.table && vim.leader == self.leader {
+        if vim.remap == self.table && vim.leader == self.leader && vim.preset == self.preset {
             return false;
         }
         self.table = vim.remap.clone();
         self.leader = vim.leader.clone();
+        self.preset = vim.preset;
         true
     }
 
-    /// Builds the set: the vimrc's records, then the table's. With `cx`,
-    /// gives it to every editor unless it's the one they have. Then finds
-    /// the settings' problems in their files.
+    /// Builds the set: the preset's records, the vimrc's, then the
+    /// table's. With `cx`, gives it to every editor unless it's the one
+    /// they have. Then finds the settings' problems in their files.
     ///
-    /// The vimrc's records were checked as it was read, its `<leader>`s
-    /// put in, so they load whatever `vim.leader` is. A `vim.leader` that
-    /// can't be read is one problem, and the entries naming `<leader>` are
-    /// left out, each with its own.
+    /// The leader is `vim.leader`, or the preset's while `vim.leader` is
+    /// left at its default. The preset's and the vimrc's records are
+    /// checked as they are parsed, their `<leader>`s put in: the preset's
+    /// as the leader, and, with a preset, the vimrc's starting as it, as
+    /// LazyVim sets `mapleader` before the user's config; with none, the
+    /// vimrc's own (`\` until it sets one), whatever `vim.leader` is. A
+    /// `vim.leader` that can't be read is one problem, and the entries
+    /// naming `<leader>` are left out, each with its own.
     fn build(&mut self, cx: Option<&mut App>) {
         let mut problems = Vec::new();
-        let readable = match parse_keys(&self.leader) {
+        let preset = (self.presets)(self.preset);
+        let leader = match preset {
+            Some(preset) if self.leader == DEFAULT_LEADER => preset.leader,
+            _ => &self.leader,
+        };
+        let readable = match parse_keys(leader) {
             Ok(_) => true,
             Err(error) => {
                 problems.push(Problem::Leader(error.to_string()));
@@ -167,11 +258,20 @@ impl VimRemaps {
         };
         // Any leader will do for records that name none.
         let leader = if readable {
-            self.leader.clone()
+            leader.to_owned()
         } else {
-            "\\".to_owned()
+            preset
+                .map_or(DEFAULT_LEADER, |preset| preset.leader)
+                .to_owned()
         };
-        let mut remaps = self.vimrc_remaps.clone();
+        let vimrc_leader = if preset.is_some() {
+            leader.as_str()
+        } else {
+            DEFAULT_LEADER
+        };
+        self.parse_files(preset, vimrc_leader);
+        let mut remaps = self.preset_remaps.clone();
+        remaps.extend_from_slice(&self.vimrc_remaps);
         // The entry each of the table's records is, in order.
         let mut entries = Vec::new();
         for (entry, remap) in self.table.iter().enumerate() {
@@ -198,14 +298,22 @@ impl VimRemaps {
             }
             _ => RemapSet::new(&in_use.remaps, &in_use.leader).1,
         };
-        let first = self.vimrc_remaps.len();
+        // The preset's records, then the vimrc's, then the table's.
+        let in_vimrc = self.preset_remaps.len();
+        let first = in_vimrc + self.vimrc_remaps.len();
         self.vimrc_conflicts.clear();
         if let Some(keymap) = in_use_keymap {
             let conflicts =
                 fe_gpui::remap_keymap_conflicts(&keymap, &in_use.remaps, &in_use.leader);
             for conflict in conflicts {
                 let message = conflict_message(&conflict);
-                if let Some(&line) = self.vimrc_lines.get(conflict.index)
+                if let (Some(&line), Some(preset)) = (self.preset_lines.get(conflict.index), preset)
+                {
+                    let path = Path::new(preset.name);
+                    self.vimrc_conflicts
+                        .push(at_line(path, Severity::Warning, line, message));
+                } else if let Some(&line) =
+                    (conflict.index.checked_sub(in_vimrc)).and_then(|at| self.vimrc_lines.get(at))
                     && conflict.index < first
                 {
                     let path = self.vimrc.clone().unwrap_or_default();
@@ -330,7 +438,8 @@ impl ConfigSource for VimRemaps {
     }
 
     fn diagnostics(&self) -> Vec<Diagnostic> {
-        (self.vimrc_diagnostics.iter())
+        (self.preset_diagnostics.iter())
+            .chain(&self.vimrc_diagnostics)
             .chain(&self.table_diagnostics)
             .chain(&self.vimrc_conflicts)
             .cloned()
@@ -364,6 +473,13 @@ fn read(path: &Path) -> Result<String, String> {
         ));
     }
     String::from_utf8(bytes).map_err(|_| "cannot read the file: it isn't valid UTF-8".to_owned())
+}
+
+/// What `text`, in the vimrc subset, loads as when `<leader>` starts as
+/// `leader`, readable vim notation: its keys, as `[[vim.remap]]` reads
+/// them.
+fn parse_with_leader(text: &str, leader: &str) -> Vimrc {
+    parse_vimrc_with_leader(text, &parse_keys(leader).unwrap_or_default())
 }
 
 /// What a map the keymap hides says in the config problems list.
@@ -484,10 +600,14 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
 }
 
 #[cfg(test)]
+#[path = "vim_preset_tests.rs"]
+mod vim_preset_tests;
+
+#[cfg(test)]
 mod tests {
     use std::fs;
 
-    use fe_vim::{Lookup, VimKey};
+    use fe_vim::{Lookup, VimKey, parse_vimrc};
     use gpui::TestAppContext;
     use kiln::{
         Config,
@@ -500,12 +620,12 @@ mod tests {
 
     /// A config directory holding `settings` and, if given, `vimrc`, and
     /// a project's settings file beside it.
-    struct Files {
-        dir: TempDir,
+    pub(super) struct Files {
+        pub(super) dir: TempDir,
     }
 
     impl Files {
-        fn new(settings: &str, vimrc: Option<&str>) -> Self {
+        pub(super) fn new(settings: &str, vimrc: Option<&str>) -> Self {
             let files = Self {
                 dir: tempfile::tempdir().unwrap(),
             };
@@ -516,15 +636,15 @@ mod tests {
             files
         }
 
-        fn settings(&self) -> PathBuf {
+        pub(super) fn settings(&self) -> PathBuf {
             self.dir.path().join("settings.toml")
         }
 
-        fn vimrc(&self) -> PathBuf {
+        pub(super) fn vimrc(&self) -> PathBuf {
             self.dir.path().join("vimrc")
         }
 
-        fn project(&self) -> PathBuf {
+        pub(super) fn project(&self) -> PathBuf {
             self.dir.path().join("project.toml")
         }
     }
@@ -556,7 +676,7 @@ mod tests {
     }
 
     /// Writes `text` to `path` and sends a batch naming `batch`.
-    fn edit(
+    pub(super) fn edit(
         path: &Path,
         text: &str,
         batch: &[PathBuf],
@@ -569,7 +689,7 @@ mod tests {
     }
 
     /// What `from` maps to in normal mode in the set every editor has.
-    fn normal(from: &str, cx: &mut TestAppContext) -> Option<Vec<VimKey>> {
+    pub(super) fn normal(from: &str, cx: &mut TestAppContext) -> Option<Vec<VimKey>> {
         cx.update(|cx| {
             let in_use = cx.global::<RemapsInUse>();
             let (set, _) = RemapSet::new(&in_use.remaps, &in_use.leader);
@@ -580,12 +700,12 @@ mod tests {
         })
     }
 
-    fn keys(text: &str) -> Option<Vec<VimKey>> {
+    pub(super) fn keys(text: &str) -> Option<Vec<VimKey>> {
         Some(parse_keys(text).unwrap())
     }
 
     /// The config problems list's diagnostics for `path`.
-    fn problems(path: &Path, cx: &mut TestAppContext) -> Vec<Diagnostic> {
+    pub(super) fn problems(path: &Path, cx: &mut TestAppContext) -> Vec<Diagnostic> {
         cx.update(|cx| {
             (kiln::platform::config::diagnostics(cx).iter())
                 .filter(|diagnostic| diagnostic.file == path)
@@ -596,7 +716,7 @@ mod tests {
 
     /// The warnings for `path`: this source's, not the settings store's
     /// errors.
-    fn warnings(path: &Path, cx: &mut TestAppContext) -> Vec<Diagnostic> {
+    pub(super) fn warnings(path: &Path, cx: &mut TestAppContext) -> Vec<Diagnostic> {
         let mut found = problems(path, cx);
         found.retain(|diagnostic| diagnostic.severity == Severity::Warning);
         found
@@ -805,7 +925,7 @@ mod tests {
     }
 
     /// A keymap layer binding `keys` to a command in the editor's insert mode.
-    fn insert_layer(keys: &str) -> Vec<kiln::core::KeymapLayer> {
+    pub(super) fn insert_layer(keys: &str) -> Vec<kiln::core::KeymapLayer> {
         let source = format!(
             "[[bindings]]\nkeys = \"{keys}\"\ncommand = \"editor.undo\"\n\
              context = \"editor && vim.mode == insert\"\n"

@@ -40,7 +40,7 @@ pub use settings::{
     ChatEffort, ChatSettings, EditorSettings, ExtensionsSettings, PROJECT_CHAT, PROJECT_EXTENSIONS,
     PROJECT_TERMINAL_SHELL, PROJECT_VIM_USER_ONLY, Settings, SettingsEvent, SettingsStore,
     StickyScrollModel, StickyScrollSettings, TerminalSettings, ThemeModeSetting, ThemeSettings,
-    TreeSettings, VimRemap, VimRemapMode, VimRemapModes, VimSettings, settings_schema,
+    TreeSettings, VimPreset, VimRemap, VimRemapMode, VimRemapModes, VimSettings, settings_schema,
 };
 pub use settings_edit::{SettingEditError, SettingScope, reset_setting, set_setting};
 pub use settings_model::{

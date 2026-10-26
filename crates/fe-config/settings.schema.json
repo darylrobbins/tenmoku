@@ -826,6 +826,21 @@
         }
       ]
     },
+    "VimPreset": {
+      "description": "`vim.preset`.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Plain vim: no maps but the user's, and `\\` as the leader.",
+          "type": "string"
+        },
+        {
+          "const": "lazyvim",
+          "description": "LazyVim's maps, with `<Space>` as the leader.",
+          "type": "string"
+        }
+      ]
+    },
     "VimRemap": {
       "description": "One `[[vim.remap]]` entry.",
       "properties": {
@@ -940,8 +955,13 @@
         },
         "leader": {
           "default": "\\",
-          "description": "The leader key `<leader>` stands for in a remap, in vim notation\n(`\"<Space>\"` works).",
+          "description": "The leader key `<leader>` stands for in a remap, in vim notation\n(`\"<Space>\"` works). Left at `\"\\\\\"`, a preset's leader applies.",
           "type": "string"
+        },
+        "preset": {
+          "$ref": "#/$defs/VimPreset",
+          "default": "none",
+          "description": "A bundled set of remaps loaded beneath the vimrc and `[[vim.remap]]`,\nwhich replace any of its maps for the same keys: `\"none\"`, plain vim,\nor `\"lazyvim\"`, LazyVim's, with `<Space>` as the leader unless\n`leader` is set."
         },
         "regex_time_limit": {
           "default": 2000,
@@ -1157,6 +1177,7 @@
         "incsearch": true,
         "jump_on_s": false,
         "leader": "\\",
+        "preset": "none",
         "regex_time_limit": 2000,
         "remap": [],
         "replace_with_register": false,

@@ -1,4 +1,6 @@
-use fe_vim::{Remap, RemapMode, Vimrc, VimrcIssue, parse_vimrc};
+use fe_vim::{
+    Remap, RemapMode, VimKey, Vimrc, VimrcIssue, parse_keys, parse_vimrc, parse_vimrc_with_leader,
+};
 
 const N: RemapMode = RemapMode::Normal;
 const X: RemapMode = RemapMode::Visual;
@@ -521,5 +523,29 @@ let mapleader = \"\\<C-@>\"
             remap(&[N], "e", "f", false),
             remap(&[N], "g", "h", false),
         ]
+    );
+}
+
+#[test]
+fn vimrc_with_leader_starts_from_it() {
+    let text = "nnoremap <leader>a x\nlet mapleader = \",\"\nnnoremap <leader>b y\n";
+    let ctrl_i = parse_vimrc_with_leader(text, &[VimKey::Ctrl('i')]);
+    assert_eq!(ctrl_i.issues, []);
+    assert_eq!(
+        ctrl_i.remaps,
+        [
+            remap(&[N], "<C-i>a", "x", false),
+            remap(&[N], ",b", "y", false)
+        ]
+    );
+    assert_eq!(parse_keys("<C-i>a").unwrap()[0], VimKey::Ctrl('i'));
+    // Kept as its keys: not `<Tab>`, and an empty one is no keys.
+    let empty = parse_vimrc_with_leader(text, &[]);
+    assert_eq!(empty.remaps[0], remap(&[N], "a", "x", false));
+    let newline = parse_vimrc_with_leader(text, &[VimKey::Char('\n')]);
+    assert_eq!(newline.remaps[0], remap(&[N], "\na", "x", false));
+    assert_eq!(
+        parse_vimrc_with_leader(text, &[VimKey::Char('\\')]),
+        parse_vimrc(text)
     );
 }

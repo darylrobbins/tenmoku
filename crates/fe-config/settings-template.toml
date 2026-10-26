@@ -158,8 +158,13 @@
 # How long, in milliseconds, a prefix waits for its next key before the
 # which-key popup shows. 0 shows it at once.
 # which_key_delay_ms = 200
-# The key <leader> stands for in a remap, in vim notation.
+# The key <leader> stands for in a remap, in vim notation. Left at "\\", a
+# preset's leader applies.
 # leader = "\\"
+# A bundled set of remaps beneath your vimrc and [[vim.remap]], which replace
+# any of its maps for the same keys: "none" (plain vim) or "lazyvim" (LazyVim's,
+# with <Space> as the leader).
+# preset = "none"
 # Remaps, as vim's :map makes them. mode is "n", "x" (or "v"), "o", "i", "c", or a
 # list of them; recursive = true remaps the keys `to` produces too.
 # [[vim.remap]]

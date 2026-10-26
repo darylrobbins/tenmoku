@@ -95,8 +95,15 @@ const COMMANDS: &[(&str, usize, Command)] = &[
 /// Reads `text` line by line. Each record is checked as `RemapSet::new`
 /// checks it, and one it rejects is left out, with its issue at its line.
 pub fn parse_vimrc(text: &str) -> Vimrc {
+    parse_vimrc_with_leader(text, &[VimKey::Char('\\')])
+}
+
+/// [`parse_vimrc`], with `<leader>` starting as `leader` rather than `\`,
+/// as when a preset sets `mapleader` before the vimrc runs; a `let
+/// mapleader` changes it from there.
+pub fn parse_vimrc_with_leader(text: &str, leader: &[VimKey]) -> Vimrc {
     let mut parser = Parser {
-        leader: "\\".to_string(),
+        leader: leader.iter().copied().map(notation).collect(),
         vimrc: Vimrc::default(),
     };
     for (index, line) in text.lines().enumerate() {

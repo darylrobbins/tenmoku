@@ -864,7 +864,7 @@ pub use remap::{
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
-pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc};
+pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc, parse_vimrc_with_leader};
 pub use which_key::{BUILTIN_KEYS, BuiltinKeys, WhichKey, WhichKeyEntry, WhichKeyLabel};
 
 /// Every frame [`VimState::stamp`] can make of `frame`, an editor's frame
