@@ -210,6 +210,9 @@ impl SaveJob {
         ensure_regular(&path)?;
         let now = resolve(&path)?;
         ensure_regular(&now)?;
+        // The rename lands on `target`, which a retargeted link no longer
+        // names.
+        ensure_regular(&target)?;
         if !overwrite && (DiskStamp::of(&path)? != found || (!fresh && now != target)) {
             return Err(SaveError::ChangedOnDisk);
         }
@@ -924,6 +927,51 @@ mod tests {
             );
             std::fs::remove_file(&a).unwrap();
             std::fs::write(&a, "a").unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_target_that_became_a_fifo_as_the_link_moved_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b, link) = (
+            dir.path().join("a.txt"),
+            dir.path().join("b.txt"),
+            dir.path().join("link.txt"),
+        );
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+
+        for overwrite in [false, true] {
+            let mut job = job(&link, "mine");
+            job.overwrite = overwrite;
+            let result = job.run_with(
+                || {
+                    std::fs::remove_file(&a).unwrap();
+                    let made = std::process::Command::new("mkfifo").arg(&a).status();
+                    assert!(made.unwrap().success(), "mkfifo");
+                    std::fs::remove_file(&link).unwrap();
+                    std::os::unix::fs::symlink(&b, &link).unwrap();
+                },
+                || {},
+            );
+            let error = match result {
+                Err(SaveError::Io(error)) => error,
+                _ => panic!("expected an I/O error, overwrite={overwrite}"),
+            };
+            assert_ne!(error.kind(), io::ErrorKind::Other, "{error}");
+            assert!(!std::fs::metadata(&a).unwrap().is_file());
+            assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                3,
+                "temp gone"
+            );
+            std::fs::remove_file(&a).unwrap();
+            std::fs::write(&a, "a").unwrap();
+            std::fs::remove_file(&link).unwrap();
+            std::os::unix::fs::symlink(&a, &link).unwrap();
         }
     }
 
