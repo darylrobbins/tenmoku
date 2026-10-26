@@ -147,10 +147,11 @@ fn server_tokens_recolour_and_follow_edits(cx: &mut TestAppContext) {
     type_in(&mut s, &editor, "a");
     wait(&mut s, Duration::from_millis(100));
     assert_eq!(asked(&s).len(), 1);
-    wait(&mut s, REST);
-    s.fake.wait_for("the delta request", |records| {
-        records
-            .iter()
+    // The REST timer is armed from a spawned task, so an advance that runs
+    // first misses it: advance again each pass until the request is sent.
+    s.until("the delta request", |s| {
+        s.cx.executor().advance_clock(REST);
+        (s.fake.records().iter())
             .any(|r| matches!(r, Record::Request { method, .. } if method == DELTA))
     });
     let sent = asked(&s);
