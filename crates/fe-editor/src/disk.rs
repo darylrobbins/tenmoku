@@ -320,45 +320,49 @@ fn copy_xattrs(_: &Path, _: &std::fs::File) {}
 /// `FileManager.replaceItemAt` does. A failure is logged and the save goes on.
 #[cfg(target_os = "macos")]
 fn keep_creation_date(original: &Path, new: &std::fs::File) {
-    use std::os::fd::AsRawFd;
     let set = std::fs::metadata(original).and_then(|metadata| {
-        let since = metadata
-            .created()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(io::Error::other)?;
+        // The signed fields, so a date before 1970 is kept too.
+        use std::os::macos::fs::MetadataExt;
         let mut time = TimeSpec {
-            tv_sec: since.as_secs() as i64,
-            tv_nsec: since.subsec_nanos() as i64,
+            tv_sec: metadata.st_birthtime(),
+            tv_nsec: metadata.st_birthtime_nsec(),
         };
-        let mut list = AttrList {
-            bitmapcount: ATTR_BIT_MAP_COUNT,
-            reserved: 0,
-            commonattr: ATTR_CMN_CRTIME,
-            volattr: 0,
-            dirattr: 0,
-            fileattr: 0,
-            forkattr: 0,
-        };
-        // SAFETY: the descriptor is open, and the buffer holds the one
-        // `timespec` that `commonattr` names.
-        match unsafe {
-            fsetattrlist(
-                new.as_raw_fd(),
-                &mut list,
-                (&mut time as *mut TimeSpec).cast(),
-                std::mem::size_of::<TimeSpec>(),
-                0,
-            )
-        } {
-            0 => Ok(()),
-            _ => Err(io::Error::last_os_error()),
-        }
+        set_creation_date(new, &mut time)
     });
     if let Err(error) = set {
         log::warn!(
             "{}: its creation date wasn't kept: {error}",
             original.display()
         );
+    }
+}
+
+/// Sets the creation date of `file` to `time`.
+#[cfg(target_os = "macos")]
+fn set_creation_date(file: &std::fs::File, time: &mut TimeSpec) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut list = AttrList {
+        bitmapcount: ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: ATTR_CMN_CRTIME,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // SAFETY: the descriptor is open, and the buffer holds the one
+    // `timespec` that `commonattr` names.
+    match unsafe {
+        fsetattrlist(
+            file.as_raw_fd(),
+            &mut list,
+            (time as *mut TimeSpec).cast(),
+            std::mem::size_of::<TimeSpec>(),
+            0,
+        )
+    } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
     }
 }
 
@@ -708,6 +712,26 @@ mod tests {
     use fe_buffer::Buffer;
 
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_creation_date_before_1970_is_kept() {
+        use std::os::macos::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = (dir.path().join("old"), dir.path().join("new"));
+        let old_file = std::fs::File::create(&old).unwrap();
+        let new_file = std::fs::File::create(&new).unwrap();
+        let mut time = TimeSpec {
+            tv_sec: -100_000_000,
+            tv_nsec: 5,
+        };
+        set_creation_date(&old_file, &mut time).unwrap();
+        assert_eq!(std::fs::metadata(&old).unwrap().st_birthtime(), time.tv_sec);
+        keep_creation_date(&old, &new_file);
+        let metadata = std::fs::metadata(&new).unwrap();
+        assert_eq!(metadata.st_birthtime(), -100_000_000);
+        assert_eq!(metadata.st_birthtime_nsec(), 5);
+    }
 
     fn job(path: &Path, text: &str) -> SaveJob {
         let model = EditorModel::open(path).unwrap();

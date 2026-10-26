@@ -290,6 +290,9 @@ struct HistoryEntry {
     origin: Origin,
     batches: Vec<AppliedBatch>,
     undone: Option<Undone>,
+    /// The line endings before and after, for the entry
+    /// [`Buffer::change_line_ending`] records.
+    line_ending: Option<(LineEnding, LineEnding)>,
 }
 
 struct Undone {
@@ -427,6 +430,7 @@ impl Buffer {
             origin,
             batches: Vec::new(),
             undone: None,
+            line_ending: None,
         });
         id
     }
@@ -531,6 +535,41 @@ impl Buffer {
 
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
         self.line_ending = line_ending;
+    }
+
+    /// Changes the line ending as one undoable step of `origin`: undo
+    /// returns the previous ending, redo sets this one again. Returns
+    /// `None`, recording nothing, if the buffer already has it.
+    pub fn change_line_ending(
+        &mut self,
+        line_ending: LineEnding,
+        origin: Origin,
+    ) -> Option<TransactionId> {
+        if self.line_ending == line_ending {
+            return None;
+        }
+        self.close_open_transaction();
+        self.discard_redos(&origin);
+        let id = self.next_transaction_id();
+        *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
+        self.history.push_back(HistoryEntry {
+            id,
+            origin: origin.clone(),
+            batches: Vec::new(),
+            undone: None,
+            line_ending: Some((self.line_ending, line_ending)),
+        });
+        self.line_ending = line_ending;
+        self.trim_history(&origin, None);
+        Some(id)
+    }
+
+    /// Follows the entry at `ix` being undone or redone: sets the line
+    /// ending it changed.
+    fn note_line_ending(&mut self, ix: usize, applied: bool) {
+        if let Some((before, after)) = self.history[ix].line_ending {
+            self.line_ending = if applied { after } else { before };
+        }
     }
 
     /// Whether the text, line ending or encoding differs from the last
@@ -935,6 +974,7 @@ impl Buffer {
             origin: origin.clone(),
             batches: Vec::new(),
             undone: None,
+            line_ending: None,
         });
         self.open = Some(OpenTransaction {
             id,
@@ -1027,6 +1067,7 @@ impl Buffer {
         });
         let (id, origin) = (entry.id, entry.origin.clone());
         self.note_restore(id, false);
+        self.note_line_ending(ix, false);
         *self.history_bytes.entry(origin.clone()).or_default() += added;
         *self.redoable.entry(origin.clone()).or_default() += 1;
         for batch in &batches {
@@ -1072,6 +1113,7 @@ impl Buffer {
         let added = entry_bytes(entry);
         let (id, origin) = (entry.id, entry.origin.clone());
         self.note_restore(id, true);
+        self.note_line_ending(ix, true);
         let held = self.history_bytes.entry(origin.clone()).or_default();
         *held = *held - removed + added;
         if let Some(count) = self.redoable.get_mut(&origin) {
@@ -1095,7 +1137,12 @@ impl Buffer {
     /// Bookkeeping for a fresh batch from `origin`: discards the origin's
     /// redo history and counts the batch's bytes.
     fn charge_batch(&mut self, origin: &Origin, batch: &AppliedBatch) {
-        // A fresh edit discards this origin's redo history.
+        self.discard_redos(origin);
+        *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(batch);
+    }
+
+    /// A fresh change discards `origin`'s redo history.
+    fn discard_redos(&mut self, origin: &Origin) {
         if self.redoable.remove(origin).is_some_and(|count| count > 0) {
             let mut freed = 0;
             self.history.retain(|entry| {
@@ -1109,7 +1156,6 @@ impl Buffer {
                 *held -= freed;
             }
         }
-        *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(batch);
     }
 
     fn record(&mut self, origin: Origin, batch: AppliedBatch) -> TransactionId {
@@ -1134,6 +1180,7 @@ impl Buffer {
             origin: origin.clone(),
             batches: vec![batch],
             undone: None,
+            line_ending: None,
         });
         self.trim_history(&origin, None);
         id

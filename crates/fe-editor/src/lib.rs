@@ -31,6 +31,7 @@ pub mod completion;
 pub mod decorations;
 pub mod diagnostics;
 mod disk;
+mod eol_commands;
 pub mod ghost_text;
 pub mod indent_guides;
 mod indent_style;

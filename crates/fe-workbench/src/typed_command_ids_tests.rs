@@ -723,3 +723,26 @@ fn the_editor_registry_lists_the_case_transform_commands() {
         assert_eq!(meta.title, title, "{id}");
     }
 }
+
+/// The end of line commands are registered with these IDs and titles.
+#[test]
+fn the_end_of_line_commands_have_their_ids_and_titles() {
+    let registry = fe_editor::commands::registry();
+    for (id, title) in [
+        (
+            "editor.set_end_of_line_lf",
+            "Change End of Line Sequence to LF",
+        ),
+        (
+            "editor.set_end_of_line_crlf",
+            "Change End of Line Sequence to CRLF",
+        ),
+    ] {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        assert_eq!(
+            meta.map(|meta| meta.title.to_string()),
+            Some(title.to_string()),
+            "{id}"
+        );
+    }
+}

@@ -141,6 +141,8 @@ fn every_editor_command_is_registered() {
             "transform_uppercase",
             "transform_lowercase",
             "transform_titlecase",
+            "set_end_of_line_lf",
+            "set_end_of_line_crlf",
         ]
         .map(|name| format!("editor.{name}")),
     );
@@ -171,6 +173,8 @@ fn every_editor_command_is_registered() {
         "transform_uppercase",
         "transform_lowercase",
         "transform_titlecase",
+        "set_end_of_line_lf",
+        "set_end_of_line_crlf",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();
