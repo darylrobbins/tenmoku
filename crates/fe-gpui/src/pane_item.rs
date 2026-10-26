@@ -19,7 +19,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use fe_buffer::{Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, Version};
+use fe_buffer::{
+    Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, FileEncoding, Version,
+};
 use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved, auto_save::SaveReason};
 
 use fe_command::{Invocation, Value};
@@ -427,6 +429,35 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
+        self.save_in(reason, None, window, cx)
+    }
+
+    /// [`EditorView::save`], writing the file in `encoding`, which becomes
+    /// the buffer's once the save is recorded, before any save queued
+    /// behind it starts. Until then the buffer keeps its own encoding, and
+    /// a save that fails leaves it so: one queued behind this one writes in
+    /// whichever the buffer has when it starts. A char `encoding` can't
+    /// represent fails it, as any save in an encoding fails on one, and so
+    /// does a save that isn't recorded ([`EditorModel::finish_save`]): the
+    /// file changed on disk after it was written.
+    pub fn save_in_encoding(
+        &mut self,
+        encoding: FileEncoding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
+        self.save_in(SaveReason::Explicit, Some(encoding), window, cx)
+    }
+
+    /// [`EditorView::save_with`], in `encoding` if one is given (see
+    /// [`EditorView::save_in_encoding`]).
+    fn save_in(
+        &mut self,
+        reason: SaveReason,
+        encoding: Option<FileEncoding>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
         let (previous, guard) = self.queue_save();
         let edits = self.edits_allowed(reason);
         let ask = reason == SaveReason::Explicit;
@@ -437,7 +468,7 @@ impl EditorView {
             if edits {
                 self.apply_save_fixes(self.save_fixes, cx);
             }
-            self.model.prepare_save(false)
+            prepare_save_in(&mut self.model, encoding)
         });
         let editor = cx.entity();
         let window = window.window_handle();
@@ -470,7 +501,7 @@ impl EditorView {
                     }
                 })?;
             }
-            let saved = save_asking(this, job, ask.then_some(window), cx).await;
+            let saved = save_asking(this, job, encoding, ask.then_some(window), cx).await;
             drop(guard);
             saved
         })
@@ -698,20 +729,35 @@ impl EditorView {
     }
 }
 
+/// Prepares a save of `model`'s buffer, in `encoding` if one is given,
+/// without changing the buffer's own.
+fn prepare_save_in(model: &mut EditorModel, encoding: Option<FileEncoding>) -> io::Result<SaveJob> {
+    let Some(encoding) = encoding else {
+        return model.prepare_save(false);
+    };
+    let own = model.buffer().encoding();
+    model.buffer_mut().set_encoding(encoding);
+    let job = model.prepare_save(false);
+    model.buffer_mut().set_encoding(own);
+    job
+}
+
 /// A save of `this`'s buffer, from `job` if it was prepared, else of the
-/// text as it is now. If the file changed on disk and the user, asked in
-/// `window`, says to overwrite it, the same text is saved over it: what was
-/// typed since stays unsaved. With no `window` it doesn't ask: the conflict
-/// is the error.
+/// text as it is now, in `encoding` if one is given, which becomes the
+/// buffer's once the save is recorded. If the file changed on disk and the
+/// user, asked in `window`, says to overwrite it, the same text is saved
+/// over it: what was typed since stays unsaved. With no `window` it doesn't
+/// ask: the conflict is the error.
 async fn save_asking(
     this: &WeakEntity<EditorView>,
     job: Option<io::Result<SaveJob>>,
+    encoding: Option<FileEncoding>,
     window: Option<AnyWindowHandle>,
     cx: &mut AsyncApp,
 ) -> gpui::Result<()> {
     let job = match job {
         Some(job) => job,
-        None => this.update(cx, |view, _| view.model.prepare_save(false))?,
+        None => this.update(cx, |view, _| prepare_save_in(&mut view.model, encoding))?,
     }?;
     let name = file_name(Some(job.path()));
     let saved = match run(job.clone(), cx).await {
@@ -733,7 +779,26 @@ async fn save_asking(
         saved => saved,
     };
     let saved = saved.map_err(io::Error::from)?;
-    this.update(cx, |view, _| view.model.finish_save(saved))?;
+    let recorded = this.update(cx, |view, _| {
+        let recorded = view.model.finish_save(saved);
+        if let Some(encoding) = encoding
+            && recorded
+        {
+            view.model.buffer_mut().set_encoding(encoding);
+        }
+        recorded
+    })?;
+    // In an encoding, the buffer keeps its own unless the save is its.
+    if let Some(encoding) = encoding
+        && !recorded
+    {
+        return Err(io::Error::other(format!(
+            "the file changed on disk after it was written in {}; \
+             the buffer keeps its encoding",
+            encoding.label()
+        ))
+        .into());
+    }
     Ok(())
 }
 

@@ -18,6 +18,9 @@
 //! While that editor has vim's command line open, the line shows in the
 //! bar's place, even with the bar hidden: see [`vim_line`].
 //!
+//! A click on an editor's encoding item runs `workbench.change_encoding`
+//! ([`crate::encoding_picker`]), which the editor's own items don't name.
+//!
 //! Its commands, `view.toggle_status_bar` and `language.select`, are those
 //! of [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`], with
 //! `vim_line.cancel` in the line's. Their handlers only name an op: the
@@ -37,6 +40,8 @@ use kiln_shell::{
     ItemHandle, ItemId,
     status::{self, StatusItems},
 };
+
+use crate::encoding_picker::CHANGE_ENCODING;
 
 pub(crate) use built_in::{PLAIN_TEXT, language_label};
 
@@ -96,8 +101,8 @@ impl StatusItem {
     pub const CURSOR: &str = built_in::CURSOR;
     /// `Spaces: 4`: priority 200.
     pub const INDENT: &str = built_in::INDENT;
-    /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or `windows-1252`:
-    /// priority 300.
+    /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or `windows-1252`;
+    /// a click runs `workbench.change_encoding`: priority 300.
     pub const ENCODING: &str = built_in::ENCODING;
     /// `LF` or `CRLF`: priority 400.
     pub const LINE_ENDING: &str = built_in::LINE_ENDING;
@@ -201,8 +206,17 @@ impl StatusBar {
                 }
                 .into()
             });
-        self.items
-            .merged(item.status_items(cx).into_iter().chain(recording))
+        let mut own = item.status_items(cx);
+        if self.editor.is_some() {
+            for item in &mut own {
+                if item.id == StatusItem::ENCODING && item.command.is_none() {
+                    let change = Invocation::of(CHANGE_ENCODING).expect("a valid command ID");
+                    item.command = Some(change);
+                    item.tooltip = Some("Select Encoding".into());
+                }
+            }
+        }
+        self.items.merged(own.into_iter().chain(recording))
     }
 }
 

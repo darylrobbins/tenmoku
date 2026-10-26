@@ -20,7 +20,7 @@ use std::{
     time::Instant,
 };
 
-use fe_buffer::Buffer;
+use fe_buffer::{Buffer, DecodedFile, DiskStamp, FileEncoding};
 use fe_fileview::{FileView, LineIndex};
 
 /// Files this large or larger open read-only in a viewer, unread.
@@ -190,6 +190,14 @@ pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
         Err(error) => return Err(error),
     };
     Buffer::from_file(file).map(Some)
+}
+
+/// Reads `path` again, decoded in `encoding` rather than the one detected
+/// ([`Buffer::read_file_with`]), for a buffer to reload it, with its stamp
+/// taken before reading. A missing file is an error: there's nothing to
+/// reopen.
+pub fn read_with(path: &Path, encoding: FileEncoding) -> io::Result<(DecodedFile, DiskStamp)> {
+    Buffer::read_file_with(File::open(path)?, encoding)
 }
 
 /// The buffer [`read`] read, or for a missing file an empty one that knows

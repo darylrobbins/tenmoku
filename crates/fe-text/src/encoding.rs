@@ -2,7 +2,8 @@
 //!
 //! [`Text::from_reader_detecting`] picks the encoding from a BOM, then from
 //! the zero bytes of a BOM-less UTF-16 file, then from whether the start of the file is valid UTF-8, and otherwise from a
-//! `chardetng` guess. [`Text::write_encoded`] writes text back in a
+//! `chardetng` guess; [`Text::from_reader_with`] reads in an encoding
+//! given instead. [`Text::write_encoded`] writes text back in a
 //! [`FileEncoding`], failing rather than substituting a char the encoding
 //! can't represent.
 
@@ -51,7 +52,7 @@ impl FileEncoding {
     }
 }
 
-/// What [`Text::from_reader_detecting`] read.
+/// What [`Text::from_reader_detecting`] or [`Text::from_reader_with`] read.
 #[derive(Clone, Debug)]
 pub struct DecodedFile {
     pub text: Text,
@@ -311,7 +312,45 @@ impl Text {
             .read_to_end(&mut head)?;
         let (file_encoding, bom_len) = detect_head(&head);
         head.drain(..bom_len);
+        Self::decode_in(head, reader, file_encoding)
+    }
 
+    /// Like [`Text::from_reader_detecting`], but decodes in `encoding`'s
+    /// [`Encoding`] whatever the file holds, as the same stream, malformed
+    /// input becoming U+FFFD and reported in [`DecodedFile::replaced`].
+    ///
+    /// A BOM at the start is dropped only if it's that encoding's own (a
+    /// UTF-8 or UTF-16 one); [`DecodedFile::encoding`]'s `bom` then says
+    /// whether there was one, whatever `encoding.bom` asked for: it
+    /// describes the file. Another encoding's BOM decodes as text.
+    pub fn from_reader_with(
+        mut reader: impl Read,
+        encoding: FileEncoding,
+    ) -> io::Result<DecodedFile> {
+        // The longest BOM, UTF-8's.
+        let mut head = Vec::with_capacity(3);
+        (&mut reader).take(3).read_to_end(&mut head)?;
+        let bom = match Encoding::for_bom(&head) {
+            Some((found, bom_len)) if found == encoding.encoding => {
+                head.drain(..bom_len);
+                true
+            }
+            _ => false,
+        };
+        let file_encoding = FileEncoding {
+            encoding: encoding.encoding,
+            bom,
+        };
+        Self::decode_in(head, reader, file_encoding)
+    }
+
+    /// Decodes `head`, the start of the file with any BOM dropped, then
+    /// the rest of `reader`, in `file_encoding`.
+    fn decode_in(
+        head: Vec<u8>,
+        reader: impl Read,
+        file_encoding: FileEncoding,
+    ) -> io::Result<DecodedFile> {
         let mut replaced = false;
         let (text, line_ending) = if file_encoding.encoding == UTF_8 {
             Self::decode_stream(head, reader, |bytes, eof, out| {

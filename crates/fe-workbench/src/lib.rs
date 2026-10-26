@@ -23,6 +23,7 @@ mod disk_sync;
 mod dock;
 mod dock_focus;
 mod dock_layout;
+mod encoding_picker;
 mod extension_snippets;
 mod extensions_picker;
 mod find_bar;

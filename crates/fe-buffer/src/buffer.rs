@@ -144,7 +144,9 @@ pub struct SaveSnapshot {
     text: Text,
     line_ending: LineEnding,
     encoding: FileEncoding,
-    replaced_on_read: bool,
+    /// The encoding the file was read in, if reading decoded malformed
+    /// bytes to U+FFFD.
+    replaced_on_read: Option<FileEncoding>,
 }
 
 impl SaveSnapshot {
@@ -174,7 +176,7 @@ impl SaveSnapshot {
     /// only on success, as `EditorModel::save` does.
     pub fn write_to(&self, out: impl std::io::Write) -> std::io::Result<()> {
         let text = &self.text;
-        if self.replaced_on_read
+        if let Some(read_in) = self.replaced_on_read
             && text
                 .chunks()
                 .any(|chunk| chunk.contains(char::REPLACEMENT_CHARACTER))
@@ -184,7 +186,7 @@ impl SaveSnapshot {
                 format!(
                     "the file had bytes that aren't valid {}, shown as U+FFFD; \
                      saving would replace them",
-                    self.encoding.label()
+                    read_in.label()
                 ),
             ));
         }
@@ -206,6 +208,14 @@ impl SaveSnapshot {
                 }
                 EncodeError::Io(error) => error,
             })
+    }
+
+    /// The same snapshot, to be written in `encoding`: what saving would
+    /// write after [`Buffer::set_encoding`]. Writing it to
+    /// [`std::io::sink`] tells whether that save would be refused, and why.
+    pub fn in_encoding(mut self, encoding: FileEncoding) -> Self {
+        self.encoding = encoding;
+        self
     }
 }
 
@@ -368,6 +378,19 @@ impl Buffer {
         Ok(buffer)
     }
 
+    /// Reads `file` as [`Buffer::from_file`] does, but decoded in
+    /// `encoding` rather than the one detected (see
+    /// [`Text::from_reader_with`]), and saves back in it.
+    pub fn from_file_with(file: File, encoding: FileEncoding) -> io::Result<Self> {
+        let (decoded, stamp) = Self::read_file_with(file, encoding)?;
+        let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
+        buffer.encoding = decoded.encoding;
+        buffer.saved_encoding = decoded.encoding;
+        buffer.replaced_on_read = decoded.replaced;
+        buffer.disk_stamp = Some(Some(stamp));
+        Ok(buffer)
+    }
+
     /// Restores `backup` (see [`BackupStore`](crate::BackupStore)) over
     /// `disk`, the file it was of as it is now, or `None` when the buffer
     /// was untitled or the file is gone.
@@ -465,6 +488,19 @@ impl Buffer {
     pub fn read_file(file: File) -> io::Result<(DecodedFile, DiskStamp)> {
         let stamp = DiskStamp::from_metadata(&file.metadata()?)?;
         let decoded = Text::from_reader_detecting(io::BufReader::with_capacity(256 * 1024, file))?;
+        Ok((decoded, stamp))
+    }
+
+    /// Reads and decodes `file` in `encoding`, as
+    /// [`Buffer::from_file_with`] does, for [`Buffer::reload`], with its
+    /// stamp taken before reading.
+    pub fn read_file_with(
+        file: File,
+        encoding: FileEncoding,
+    ) -> io::Result<(DecodedFile, DiskStamp)> {
+        let stamp = DiskStamp::from_metadata(&file.metadata()?)?;
+        let reader = io::BufReader::with_capacity(256 * 1024, file);
+        let decoded = Text::from_reader_with(reader, encoding)?;
         Ok((decoded, stamp))
     }
 
@@ -639,6 +675,15 @@ impl Buffer {
         self.encoding
     }
 
+    /// Has the next save write in `encoding`, BOM included. The buffer
+    /// needs saving until then, unless `encoding` is the one it was saved
+    /// in (see [`Buffer::is_dirty`]). A save refuses text the encoding
+    /// can't represent, leaving the buffer as it is, still in `encoding`;
+    /// check first with [`SaveSnapshot::in_encoding`].
+    pub fn set_encoding(&mut self, encoding: FileEncoding) {
+        self.encoding = encoding;
+    }
+
     /// Writes the text with the buffer's line endings in its encoding, as
     /// [`SaveSnapshot::write_to`] does, refusing as it does. Call
     /// [`Buffer::did_save`] once it's safely on disk.
@@ -654,7 +699,7 @@ impl Buffer {
             text: self.snapshot.text.clone(),
             line_ending: self.line_ending,
             encoding: self.encoding,
-            replaced_on_read: self.replaced_on_read,
+            replaced_on_read: self.replaced_on_read.then_some(self.encoding),
         }
     }
 
@@ -1539,5 +1584,93 @@ fn chunks_equal<'a>(a: impl Iterator<Item = &'a str>, b: impl Iterator<Item = &'
             return false;
         }
         (x, y) = (&x[n..], &y[n..]);
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use fe_text::{Encoding, FileEncoding};
+
+    use super::Buffer;
+
+    fn windows_1252() -> FileEncoding {
+        FileEncoding {
+            encoding: Encoding::for_label(b"windows-1252").unwrap(),
+            bom: false,
+        }
+    }
+
+    #[test]
+    fn a_file_read_with_an_encoding_saves_back_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin.txt");
+        std::fs::write(&path, b"caf\xe9\n").unwrap();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let buffer = Buffer::from_file_with(file, windows_1252()).unwrap();
+        assert_eq!(buffer.text().to_string(), "café\n");
+        assert_eq!(buffer.encoding(), windows_1252());
+        assert!(!buffer.is_dirty());
+        assert!(buffer.disk_stamp().is_some());
+        let mut out = Vec::new();
+        buffer.write_to(&mut out).unwrap();
+        assert_eq!(out, b"caf\xe9\n");
+    }
+
+    #[test]
+    fn setting_the_encoding_needs_a_save() {
+        let mut buffer = Buffer::new("café");
+        buffer.set_encoding(windows_1252());
+        assert!(buffer.is_dirty());
+        let mut out = Vec::new();
+        buffer.write_to(&mut out).unwrap();
+        assert_eq!(out, b"caf\xe9");
+        buffer.did_save();
+        assert!(!buffer.is_dirty());
+        // Back to what it was saved in.
+        buffer.set_encoding(FileEncoding::UTF8);
+        assert!(buffer.is_dirty());
+        buffer.set_encoding(windows_1252());
+        assert!(!buffer.is_dirty());
+    }
+
+    #[test]
+    fn a_snapshot_in_another_encoding_tells_why_it_would_be_refused() {
+        let buffer = Buffer::new("ok\na€");
+        let latin = buffer.save_snapshot().in_encoding(windows_1252());
+        latin.write_to(std::io::sink()).unwrap();
+        assert_eq!(buffer.encoding(), FileEncoding::UTF8);
+
+        let latin2 = FileEncoding {
+            encoding: Encoding::for_label(b"iso-8859-2").unwrap(),
+            bom: false,
+        };
+        let error = (buffer.save_snapshot().in_encoding(latin2))
+            .write_to(std::io::sink())
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            error.to_string(),
+            "'€' (U+20AC) on line 2, column 2 can't be saved in ISO-8859-2"
+        );
+    }
+
+    #[test]
+    fn a_lossy_read_is_refused_naming_the_encoding_it_was_read_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin.txt");
+        std::fs::write(&path, b"caf\xe9").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        let buffer = Buffer::from_file_with(file, FileEncoding::UTF8).unwrap();
+        assert_eq!(buffer.text().to_string(), "caf\u{FFFD}");
+
+        let error = (buffer.save_snapshot().in_encoding(windows_1252()))
+            .write_to(std::io::sink())
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the file had bytes that aren't valid UTF-8, shown as U+FFFD; \
+             saving would replace them"
+        );
     }
 }

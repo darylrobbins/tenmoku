@@ -346,6 +346,21 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("editor.peek_references", "Peek References", "editor"),
     ("peek.close", "Close Peek", "peek || peek_shown"),
     ("peek.open", "Open Peeked Definition", "peek"),
+    (
+        "workbench.change_encoding",
+        "Change File Encoding",
+        "workbench",
+    ),
+    (
+        "workbench.reopen_with_encoding",
+        "Reopen Editor with Encoding…",
+        "workbench",
+    ),
+    (
+        "workbench.save_with_encoding",
+        "Save with Encoding…",
+        "workbench",
+    ),
 ];
 
 #[gpui::test]

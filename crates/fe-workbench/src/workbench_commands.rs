@@ -17,6 +17,7 @@ use crate::{
     ai_changes_panel::{self, AiChangesOp},
     dock::{DockOp, ProblemsOp, problems_panel},
     dock_layout,
+    encoding_picker::EncodingAction,
     git::git_conflicts::{Side, Which},
     nav::NavOp,
     open::OpenOp,
@@ -756,6 +757,27 @@ impl Workbench {
     #[command(id = "language.select")]
     fn select_language_mode(&mut self, cx: &mut Cx<Self>) {
         self.select_language(cx.window, cx.cx);
+    }
+
+    /// Change File Encoding
+    #[command(id = "workbench.change_encoding")]
+    fn change_encoding_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.change_encoding(cx.window, cx.cx);
+    }
+
+    /// Reopen Editor with Encoding…
+    #[command(id = "workbench.reopen_with_encoding")]
+    fn reopen_with_encoding_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_encoding_for_active(EncodingAction::Reopen, cx.window, cx.cx);
+    }
+
+    /// Save with Encoding…
+    #[command(id = "workbench.save_with_encoding")]
+    fn save_with_encoding_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_encoding_for_active(EncodingAction::Save, cx.window, cx.cx);
     }
 
     /// Change Color Theme…
