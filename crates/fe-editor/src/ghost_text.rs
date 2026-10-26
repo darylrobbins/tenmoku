@@ -25,7 +25,11 @@ use crate::{CharClass, EditorModel};
 pub struct GhostText {
     buffer: BufferId,
     anchor: Anchor,
+    /// As offered.
     text: Arc<str>,
+    /// `text` with the buffer's LF line endings: what matching,
+    /// boundaries and insertion lengths use.
+    lf: Arc<str>,
     origin: Origin,
 }
 
@@ -38,10 +42,17 @@ impl GhostText {
         text: impl Into<Arc<str>>,
         origin: Origin,
     ) -> Self {
+        let text: Arc<str> = text.into();
+        let lf = if text.contains('\r') {
+            text.replace("\r\n", "\n").replace('\r', "\n").into()
+        } else {
+            Arc::clone(&text)
+        };
         Self {
             buffer: snapshot.id(),
             anchor: snapshot.anchor_before(offset),
-            text: text.into(),
+            lf,
+            text,
             origin,
         }
     }
@@ -73,7 +84,8 @@ impl GhostText {
     }
 
     /// The part of the suggestion still to show at `model`'s caret, or
-    /// `None` if it's over: see the module docs.
+    /// `None` if it's over: see the module docs. Line endings are the
+    /// buffer's LF, however the suggestion was offered.
     pub fn remaining(&self, model: &EditorModel) -> Option<&str> {
         let current = model.snapshot();
         if !self.maps_into(current) {
@@ -88,10 +100,10 @@ impl GhostText {
         }
         let (anchor, caret) = (current.resolve(&self.anchor), selection.range.start);
         let typed = caret.checked_sub(anchor)?;
-        let live = typed < self.text.len()
-            && self.text.is_char_boundary(typed)
-            && current.text().range_eq(anchor..caret, &self.text[..typed]);
-        live.then(|| &self.text[typed..])
+        let live = typed < self.lf.len()
+            && self.lf.is_char_boundary(typed)
+            && current.text().range_eq(anchor..caret, &self.lf[..typed]);
+        live.then(|| &self.lf[typed..])
     }
 
     /// Whether the suggestion still shows at `model`'s caret.

@@ -248,3 +248,35 @@ fn ends_without_editing() {
     assert_eq!(stale.remaining(&model), None);
     assert_eq!(refreshed.remaining(&model), Some("o"));
 }
+
+#[test]
+fn crlf_and_lone_cr_follow_the_buffers_lf() {
+    for offered in ["a\r\nb", "a\rb"] {
+        let mut model = parse("|Z");
+        let g = ghost(&model, offered);
+        assert_eq!(g.text(), offered);
+        assert_eq!(g.remaining(&model), Some("a\nb"));
+        // Typing consumes it through the line break.
+        model.insert("a\n");
+        assert_eq!(g.remaining(&model), Some("b"));
+        model.backspace();
+        model.backspace();
+        assert_eq!(g.remaining(&model), Some("a\nb"));
+
+        // Partial acceptance keeps the rest live, caret before Z.
+        assert!(g.accept_line(&mut model).is_some());
+        assert_eq!(model.text().to_string(), "a\nZ");
+        assert_eq!(model.primary_selection().head(), 2);
+        assert_eq!(g.remaining(&model), Some("b"));
+        assert!(g.accept(&mut model).is_some());
+        assert_eq!(model.text().to_string(), "a\nbZ");
+        assert_eq!(model.primary_selection().head(), 3);
+
+        // Whole acceptance.
+        let mut model = parse("|Z");
+        let g = ghost(&model, offered);
+        assert!(g.accept(&mut model).is_some());
+        assert_eq!(model.text().to_string(), "a\nbZ");
+        assert_eq!(model.primary_selection().head(), 3);
+    }
+}
