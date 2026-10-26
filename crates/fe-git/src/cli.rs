@@ -52,9 +52,14 @@ pub(crate) fn run_raw(
     envs: &[(&str, &Path)],
 ) -> Result<Output, GitError> {
     let mut command = Command::new("git");
-    // Paths are literal file names, never pathspec patterns.
+    // Paths are literal file names, never pathspec patterns. Not for
+    // `stash`, which is never given paths: `push --include-untracked`
+    // cleans with a `:/` pathspec of its own, which would then name no
+    // file, leaving behind the untracked files it stashed.
+    if args.first().is_none_or(|arg| arg != "stash") {
+        command.arg("--literal-pathspecs");
+    }
     command
-        .arg("--literal-pathspecs")
         .arg("-C")
         .arg(workdir)
         .args(args)

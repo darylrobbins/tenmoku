@@ -5,7 +5,7 @@
 //! on the vim line and routed here by fe-vim's host commands. Either way it
 //! becomes a [`GitOp`] that [`Workbench::run_git_op`] hands to its
 //! feature's module: `git_diff`, `git_stage`, `git_commit`, `git_blame`,
-//! `git_branch`, [`git_history`] or [`git_log`], each with a `run` that
+//! `git_branch`, [`git_stash`], [`git_history`] or [`git_log`], each with a `run` that
 //! answers `Not supported yet: <title>` until its card fills it in.
 //!
 //! The ex forms follow the plugins vim users know them from: fugitive's
@@ -42,6 +42,8 @@ mod commit_rows;
 pub(crate) mod git_history;
 #[path = "git_log.rs"]
 pub(crate) mod git_log;
+#[path = "git_stash.rs"]
+pub(crate) mod git_stash;
 
 /// A git or diff command: each is a typed command of the workbench's, a
 /// method in `workbench_commands.rs` with its id and title.
@@ -70,6 +72,10 @@ pub(crate) enum GitCommand {
     FileHistory,
     Log,
     LogAll,
+    Stash,
+    StashIncludeUntracked,
+    StashPop,
+    StashApply,
 }
 
 use GitCommand::*;
@@ -84,6 +90,7 @@ pub(crate) enum Feature {
     Branch,
     History,
     Log,
+    Stash,
 }
 
 impl GitCommand {
@@ -114,6 +121,10 @@ impl GitCommand {
             FileHistory => "Git: File History",
             Log => "Git: Log",
             LogAll => "Git: Log (All Branches)",
+            Stash => "Git: Stash",
+            StashIncludeUntracked => "Git: Stash (Include Untracked)",
+            StashPop => "Git: Pop Stash…",
+            StashApply => "Git: Apply Stash…",
         }
     }
 
@@ -127,6 +138,7 @@ impl GitCommand {
             SwitchBranch | CreateBranch => Feature::Branch,
             FileHistory => Feature::History,
             Log | LogAll => Feature::Log,
+            Stash | StashIncludeUntracked | StashPop | StashApply => Feature::Stash,
         }
     }
 }
@@ -314,6 +326,7 @@ impl Workbench {
             Feature::Branch => git_branch::run(self, op, window, cx),
             Feature::History => git_history::run(self, op, window, cx),
             Feature::Log => git_log::run(self, op, window, cx),
+            Feature::Stash => git_stash::run(self, op, window, cx),
         }
     }
 

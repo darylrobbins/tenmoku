@@ -112,7 +112,7 @@ fn palette(
 }
 
 /// The card's commands: id and palette title.
-const CARD: [(&str, &str); 19] = [
+const CARD: [(&str, &str); 23] = [
     ("git.diff_index", "Git: Compare with Index"),
     ("git.diff_head", "Git: Compare with HEAD"),
     ("diff.compare_file", "Compare Active File With…"),
@@ -132,6 +132,13 @@ const CARD: [(&str, &str); 19] = [
     ("git.open_line_commit", "Git: Open Line's Commit Change"),
     ("git.switch_branch", "Git: Switch Branch…"),
     ("git.create_branch", "Git: Create Branch…"),
+    ("git.stash", "Git: Stash"),
+    (
+        "git.stash_include_untracked",
+        "Git: Stash (Include Untracked)",
+    ),
+    ("git.stash_pop", "Git: Pop Stash…"),
+    ("git.stash_apply", "Git: Apply Stash…"),
 ];
 
 #[gpui::test]

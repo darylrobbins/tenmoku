@@ -370,6 +370,30 @@ impl Workbench {
         self.run_typed_git(GitCommand::LogAll, cx);
     }
 
+    /// Git: Stash
+    #[command(id = "git.stash")]
+    fn git_stash(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Stash, cx);
+    }
+
+    /// Git: Stash (Include Untracked)
+    #[command(id = "git.stash_include_untracked")]
+    fn git_stash_include_untracked(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::StashIncludeUntracked, cx);
+    }
+
+    /// Git: Pop Stash…
+    #[command(id = "git.stash_pop")]
+    fn git_stash_pop(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::StashPop, cx);
+    }
+
+    /// Git: Apply Stash…
+    #[command(id = "git.stash_apply")]
+    fn git_stash_apply(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::StashApply, cx);
+    }
+
     /// Grow Pane Width
     #[command(id = "pane.grow_width")]
     fn grow_pane_width(&mut self, cx: &mut Cx<Self>) {
