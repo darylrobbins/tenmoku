@@ -174,6 +174,31 @@ fn link_survives_save_as_reservation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn tab_navigation_during_save_as_reservation_cancels_the_link(cx: &mut TestAppContext) {
+    let (_dir, root, workbench, cx) = project(cx, &[("a.rs", "ab\ncd\n"), ("b.rs", "xy\nzw\n")]);
+    let (a, b) = (root.join("a.rs"), root.join("b.rs"));
+    follow(&workbench, &b, "L1", cx);
+    draw(cx);
+    let saving = crate::open::reserve(
+        fe_buffer::Buffer::new("").id(),
+        a.clone(),
+        crate::open::file_identity(&a),
+    );
+    follow(&workbench, &a, "L2,2", cx);
+    draw(cx);
+
+    // The user goes back to the tab that is open.
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate(0, window, cx)));
+    drop(saving);
+    draw(cx);
+    draw(cx);
+    assert_eq!(caret(&pane, &a, cx), None, "the old link did not open");
+    let active = pane.read_with(cx, |pane, _| pane.active());
+    assert_eq!(active, Some(0));
+}
+
+#[gpui::test]
 fn oversized_fragment_column_is_clamped(cx: &mut TestAppContext) {
     let (_dir, root, workbench, cx) = project(cx, &[("a.rs", "abc\ndef\n")]);
     let path = root.join("a.rs");
@@ -671,4 +696,102 @@ fn a_round_trip_between_tabs_with_no_draw_drops_the_link_open(cx: &mut TestAppCo
     }
     assert_eq!(requests(&s, RESOLVE), 1);
     assert_eq!(at(&s), caret, "the link opened nothing");
+}
+
+/// Opens the resolvable link and the file link, each in the update of
+/// `before`, which makes the editor's tab or pane the active one again from
+/// another that was; then lets everything settle: both must land on lib.rs.
+fn open_right_after(
+    cx: &mut TestAppContext,
+    away: impl Fn(&mut Lsp, &Entity<Pane>),
+    before: impl Fn(&mut Workbench, &Entity<Pane>, &mut gpui::Window, &mut gpui::Context<Workbench>),
+) {
+    let (mut s, editor) = setup(cx, Duration::ZERO);
+    let (main, lib) = (s.path("src/main.rs"), s.path("src/lib.rs"));
+    s.open("src/other.rs");
+    s.open("src/main.rs");
+    s.draw();
+    for offset in [bytes_of("lib.rs").start + 2, bytes_of("see").start + 1] {
+        let pane = s.workbench.read_with(&s.cx, |w, _| w.pane().clone());
+        away(&mut s, &pane);
+        s.draw();
+        s.cx.update(|window, cx| {
+            s.workbench.update(cx, |workbench, cx| {
+                before(workbench, &pane, window, cx);
+                workbench.open_link_at(&editor, offset, false, window, cx);
+            })
+        });
+        until_ticking(&mut s, "lib.rs", |s| at(s).0 == lib);
+        s.open("src/main.rs");
+        assert_eq!(at(&s).0, main);
+    }
+}
+
+#[gpui::test]
+fn an_open_right_after_pane_activation_succeeds(cx: &mut TestAppContext) {
+    open_right_after(
+        cx,
+        |s, _| run("pane.split_right", &mut s.cx),
+        |workbench, pane, window, cx| workbench.activate(pane.clone(), window, cx),
+    );
+}
+
+#[gpui::test]
+fn an_open_right_after_tab_activation_succeeds(cx: &mut TestAppContext) {
+    open_right_after(
+        cx,
+        |s, pane| {
+            s.cx.update(|window, cx| {
+                pane.update(cx, |pane, cx| {
+                    let home = pane.active().unwrap();
+                    pane.activate(1 - home, window, cx);
+                    cx.notify();
+                })
+            })
+        },
+        |_, pane, window, cx| {
+            pane.update(cx, |pane, cx| {
+                pane.activate(0, window, cx);
+                cx.notify();
+            })
+        },
+    );
+}
+
+#[gpui::test]
+fn a_workspace_pane_round_trip_drops_the_link_open(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, Duration::from_secs(1));
+    let main = s.path("src/main.rs");
+    s.draw();
+    run("pane.split_right", &mut s.cx);
+    let panes = s.workbench.read_with(&s.cx, |w, cx| w.panes(cx));
+    let (home, away) = (panes[0].clone(), panes[1].clone());
+    s.cx.update(|window, cx| {
+        s.workbench
+            .update(cx, |w, cx| w.activate(home.clone(), window, cx))
+    });
+    s.draw();
+    let see = bytes_of("see").start + 1;
+    let ftp = bytes_of("lib.rs").start + 2;
+
+    // Across the resolution, then the file check: the workspace goes to the
+    // other pane and back, with the workbench none the wiser.
+    for offset in [ftp, see] {
+        s.cx.update(|window, cx| {
+            let workspace = s.workbench.read(cx).workspace().clone();
+            s.workbench.update(cx, |w, cx| {
+                w.open_link_at(&editor, offset, false, window, cx);
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.activate(away.clone(), window, cx);
+                workspace.activate(home.clone(), window, cx);
+            });
+        });
+        s.clock.advance(Duration::from_secs(2));
+        for _ in 0..20 {
+            s.clock.advance(Duration::from_millis(100));
+            s.draw();
+        }
+        assert_eq!(at(&s).0, main, "the link opened nothing");
+    }
 }

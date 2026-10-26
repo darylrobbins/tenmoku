@@ -103,6 +103,10 @@ pub struct Workspace<P: PaneView = ItemPane> {
     new_pane: NewPane<P>,
     /// The active pane and its active item when last followed.
     shown: (EntityId, Option<ItemId>),
+    /// How many times the active pane changed, counted as it happens, not
+    /// when the host hears [`WorkspaceEvent::ActiveChanged`]; a tab changing
+    /// in the pane is the pane's to count.
+    changes: u64,
     /// Per pane: its notifications, its activation and tabs dropped on it.
     panes: HashMap<EntityId, [Subscription; 3]>,
     /// The app's root key context, which the docks' rail tooltips look the
@@ -178,6 +182,7 @@ impl<P: PaneView> Workspace<P> {
             title: SharedString::default(),
             new_pane: Box::new(new_pane),
             shown,
+            changes: 0,
             panes: HashMap::new(),
             context,
             docks: HashMap::new(),
@@ -437,6 +442,12 @@ impl<P: PaneView> Workspace<P> {
         self.follow_active(window, cx);
     }
 
+    /// How many times the active pane has changed, counted at the change: what the host reads to tell a change made in
+    /// its own update from one it hears of later.
+    pub fn changes(&self) -> u64 {
+        self.changes
+    }
+
     /// Makes `pane`, already in the group, the active pane, focusing its
     /// active item, or the pane while it's empty; the titles follow, and
     /// the host hears [`WorkspaceEvent::ActiveChanged`] if it's another.
@@ -565,6 +576,9 @@ impl<P: PaneView> Workspace<P> {
         });
         let shown = (self.active.entity_id(), active_item_id(&self.active, cx));
         if shown != self.shown {
+            if shown.0 != self.shown.0 {
+                self.changes += 1;
+            }
             self.shown = shown;
             cx.emit(WorkspaceEvent::ActiveChanged);
         }

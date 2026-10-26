@@ -504,6 +504,7 @@ impl Workbench {
         search.update(cx, |search, _| search.set_pane(weak));
         self.active = pane;
         self.activations += 1;
+        self.link_epoch += 1;
     }
 
     /// Makes `pane` the active pane, which files open in, and focuses it.

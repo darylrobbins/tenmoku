@@ -122,11 +122,11 @@ pub(super) struct Links {
 struct Origin {
     editor: EntityId,
     generation: u64,
-    /// [`Workbench::activations`], the active pane's [`Pane::open_serial`]
+    /// [`Workbench::link_epoch`], the active pane's [`Pane::open_serial`]
     /// and [`Pane::navigations`], and the caret, when it started: a
     /// navigation since, even a round trip to another tab or pane, changes
     /// one of them.
-    activations: u64,
+    epoch: u64,
     serial: u64,
     navigations: u64,
     caret: usize,
@@ -426,7 +426,7 @@ impl Workbench {
         let origin = Origin {
             editor: editor.entity_id(),
             generation: self.lsp.links.opens,
-            activations: self.activations,
+            epoch: self.link_epoch(cx),
             serial: self.pane().read(cx).open_serial(),
             navigations: self.pane().read(cx).navigations(),
             caret: editor.read(cx).model().primary_selection().head(),
@@ -486,13 +486,19 @@ impl Workbench {
         true
     }
 
+    /// What an activation changes synchronously, in the workbench or in the
+    /// workspace, not the deferred events [`Self::activations`] also counts.
+    fn link_epoch(&self, cx: &gpui::App) -> u64 {
+        self.link_epoch + self.workspace().read(cx).changes()
+    }
+
     /// Whether the open that started at `origin` is still the latest, with
     /// no navigation since: its editor the active one, as it was, with the
     /// caret where it was.
     fn link_open_current(&self, origin: Origin, cx: &Context<Self>) -> bool {
         let active = self.active_editor(cx);
         origin.generation == self.lsp.links.opens
-            && origin.activations == self.activations
+            && origin.epoch == self.link_epoch(cx)
             && origin.serial == self.pane().read(cx).open_serial()
             && origin.navigations == self.pane().read(cx).navigations()
             && active.map(|editor| editor.entity_id()) == Some(origin.editor)
@@ -605,6 +611,7 @@ impl Workbench {
                     return;
                 }
                 let serial = pane.read(cx).open_serial();
+                let navigations = pane.read(cx).navigations();
                 let (workbench, pane) = (workbench.clone(), pane.clone());
                 let handle = window.window_handle();
                 cx.spawn(async move |cx| {
@@ -616,7 +623,8 @@ impl Workbench {
                             .update(cx, |workbench, cx| {
                                 let id = pane.entity_id();
                                 let current = workbench.lsp.links.tickets.get(&id) == Some(&ticket)
-                                    && pane.read(cx).open_serial() == serial;
+                                    && pane.read(cx).open_serial() == serial
+                                    && pane.read(cx).navigations() == navigations;
                                 if current {
                                     workbench
                                         .continue_link_open(&pane, path, reveal, place, window, cx);

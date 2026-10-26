@@ -297,6 +297,11 @@ pub struct Workbench {
     /// pane again: what an ask that a round trip through another pane
     /// supersedes compares.
     pub(crate) activations: u64,
+    /// Like [`Self::activations`], but advanced only where the workbench
+    /// makes a pane active, synchronously, never by the workspace's queued
+    /// [`WorkspaceEvent::ActiveChanged`]: what a link open captured in the
+    /// same update as an activation compares.
+    pub(crate) link_epoch: u64,
     /// Zen Mode: see [`zen_mode`].
     pub(crate) zen: zen_mode::ZenMode,
 }
@@ -626,6 +631,7 @@ impl Workbench {
             #[cfg(test)]
             git_routed: Vec::new(),
             activations: 0,
+            link_epoch: 0,
             zen: zen_mode::ZenMode::new(cx),
         };
         // Under test, the chrome's window moves are recorded, not made.
