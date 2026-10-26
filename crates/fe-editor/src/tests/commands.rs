@@ -149,6 +149,13 @@ fn every_editor_command_is_registered() {
         ]
         .map(|name| format!("editor.{name}")),
     );
+    // The fold level and recursive fold commands; none edits.
+    expected.extend(
+        (1..=7)
+            .map(|level| format!("fold_level_{level}"))
+            .chain(["fold_recursively".into(), "unfold_recursively".into()])
+            .map(|name| format!("editor.{name}")),
+    );
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",

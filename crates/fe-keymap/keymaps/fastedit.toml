@@ -323,6 +323,53 @@ keys = "secondary-k secondary-j"
 command = "editor.unfold_all"
 context = "editor"
 
+# VS Code's chords: fold the candidates at one nesting level, 1 the
+# outermost, or the one at the caret and everything in it.
+[[bindings]]
+keys = "secondary-k secondary-1"
+command = "editor.fold_level_1"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-2"
+command = "editor.fold_level_2"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-3"
+command = "editor.fold_level_3"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-4"
+command = "editor.fold_level_4"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-5"
+command = "editor.fold_level_5"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-6"
+command = "editor.fold_level_6"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-7"
+command = "editor.fold_level_7"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-["
+command = "editor.fold_recursively"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-]"
+command = "editor.unfold_recursively"
+context = "editor"
+
 # VS Code's chord: trim the trailing whitespace of every row.
 [[bindings]]
 keys = "secondary-k secondary-x"

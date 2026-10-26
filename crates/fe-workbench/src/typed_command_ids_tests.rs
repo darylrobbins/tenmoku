@@ -773,3 +773,25 @@ fn the_indentation_commands_have_their_ids_and_titles() {
         );
     }
 }
+
+/// The fold level and recursive fold commands are registered with these IDs
+/// and titles.
+#[test]
+fn the_fold_level_commands_have_their_ids_and_titles() {
+    let registry = fe_editor::commands::registry();
+    let levels = (1..=7).map(|level| {
+        (
+            format!("editor.fold_level_{level}"),
+            format!("Fold Level {level}"),
+        )
+    });
+    let recursive = [
+        ("editor.fold_recursively", "Fold Recursively"),
+        ("editor.unfold_recursively", "Unfold Recursively"),
+    ]
+    .map(|(id, title)| (id.to_string(), title.to_string()));
+    for (id, title) in levels.chain(recursive) {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        assert_eq!(meta.map(|meta| meta.title.to_string()), Some(title), "{id}");
+    }
+}

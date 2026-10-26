@@ -136,6 +136,9 @@ impl Case {
     }
 }
 
+/// Blocks seven deep, the caret below them all.
+const DEEP: &str = "a\n b\n  c\n   d\n    e\n     f\n      g\n       h\nz|";
+
 /// Every default binding. `bindings_are_all_tested` fails if one is missing.
 const CASES: &[Case] = &[
     // Moving.
@@ -188,6 +191,18 @@ const CASES: &[Case] = &[
     case("cmd-k cmd-0", "a:\n  b|\nc:\n  d", "a:|\n  b\nc:\n  d").folds(&[(0, 1), (2, 3)]),
     case("cmd-k cmd-j", "a:\n  b|\nc:\n  d", "a:|\n  b\nc:\n  d")
         .keys("cmd-k cmd-0 cmd-k cmd-j")
+        .folds(&[]),
+    // A level folds the blocks that many deep, as indentation nests them.
+    case("cmd-k cmd-1", DEEP, DEEP).folds(&[(0, 7)]),
+    case("cmd-k cmd-2", DEEP, DEEP).folds(&[(1, 7)]),
+    case("cmd-k cmd-3", DEEP, DEEP).folds(&[(2, 7)]),
+    case("cmd-k cmd-4", DEEP, DEEP).folds(&[(3, 7)]),
+    case("cmd-k cmd-5", DEEP, DEEP).folds(&[(4, 7)]),
+    case("cmd-k cmd-6", DEEP, DEEP).folds(&[(5, 7)]),
+    case("cmd-k cmd-7", DEEP, DEEP).folds(&[(6, 7)]),
+    case("cmd-k cmd-[", "a:|\n  b:\n    c\nd", "a:|\n  b:\n    c\nd").folds(&[(0, 2), (1, 2)]),
+    case("cmd-k cmd-]", "a:|\n  b:\n    c\nd", "a:|\n  b:\n    c\nd")
+        .keys("cmd-k cmd-[ cmd-k cmd-]")
         .folds(&[]),
     case("cmd-k cmd-x", "a  \nb\t\nc|", "a\nb\nc|"),
     // Every cursor gets the command.

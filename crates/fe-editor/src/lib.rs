@@ -32,6 +32,7 @@ pub mod decorations;
 pub mod diagnostics;
 mod disk;
 mod eol_commands;
+mod fold_levels;
 pub mod ghost_text;
 mod indent_convert;
 pub mod indent_guides;
