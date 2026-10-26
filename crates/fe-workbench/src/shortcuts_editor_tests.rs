@@ -1103,8 +1103,15 @@ fn editor_states_clash_with_the_editor(cx: &mut TestAppContext) {
     let accept = lines_of(&editor, "ghost_text.accept_word", cx);
     let accept = accept[0].keys.clone().unwrap();
     let word = notes_for(&editor, &accept, cx);
+    // Cmd-right on macOS is the editor's line end; ctrl-right elsewhere is
+    // its word motion.
+    let motion = if cfg!(target_os = "macos") {
+        "editor.move_line_end"
+    } else {
+        "editor.move_word_right"
+    };
     assert!(
-        note("ghost_text.accept_word", &word).contains("editor.move_word_right"),
+        note("ghost_text.accept_word", &word).contains(motion),
         "{word:?}"
     );
 
