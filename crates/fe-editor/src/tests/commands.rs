@@ -165,6 +165,7 @@ fn every_editor_command_is_registered() {
     );
     expected.push("editor.transpose_letters".to_string());
     expected.push("editor.go_to_last_edit_location".to_string());
+    expected.push("editor.move_last_selection_to_next_find_match".to_string());
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",
