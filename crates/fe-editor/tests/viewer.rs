@@ -258,7 +258,6 @@ fn refuses_edits() {
         "editor.shrink_selection",
         "editor.detect_indentation",
         "editor.go_to_last_edit_location",
-        "editor.move_last_selection_to_next_find_match",
         "editor.nonexistent",
         "find.next",
     ];

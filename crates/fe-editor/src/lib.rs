@@ -42,7 +42,6 @@ mod indent_style;
 mod join_lines;
 mod last_edit;
 mod line_sort;
-mod move_to_match;
 mod multi_cursor;
 pub mod occurrences;
 mod pairs;

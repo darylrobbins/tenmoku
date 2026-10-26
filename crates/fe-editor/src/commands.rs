@@ -571,7 +571,6 @@ pub fn registry() -> Registry<Editor> {
     crate::delete_extent::register(&mut registry);
     crate::transpose::register(&mut registry);
     crate::last_edit::register(&mut registry);
-    crate::move_to_match::register(&mut registry);
     crate::plugin_access::allow_plugins(&mut registry);
     registry
 }

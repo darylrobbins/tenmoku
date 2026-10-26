@@ -207,7 +207,7 @@ impl EditorModel {
 
     /// Turns each caret into a selection of the word around it, unless it's
     /// on whitespace. Returns whether there was a caret.
-    pub(crate) fn seed_carets(&mut self) -> bool {
+    fn seed_carets(&mut self) -> bool {
         let selections = self.selections();
         if !selections
             .iter()
@@ -244,7 +244,7 @@ impl EditorModel {
 
     /// The primary selection's text, and whether it's a whole word; `None`
     /// for a caret.
-    pub(crate) fn needle(&self) -> Option<(String, bool)> {
+    fn needle(&self) -> Option<(String, bool)> {
         let primary = self.primary_selection();
         if primary.range.is_empty() {
             return None;
@@ -459,7 +459,7 @@ impl EditorModel {
 }
 
 /// Whether `range` overlaps any of `selections`, sorted and disjoint.
-pub(crate) fn overlaps(selections: &[ResolvedSelection], range: Range<usize>) -> bool {
+fn overlaps(selections: &[ResolvedSelection], range: Range<usize>) -> bool {
     let ix = selections.partition_point(|selection| selection.range.end <= range.start);
     selections
         .get(ix)

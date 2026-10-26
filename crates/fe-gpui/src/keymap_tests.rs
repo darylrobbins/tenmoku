@@ -86,11 +86,6 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         Some("editor && !vim.enabled"),
     ),
     (
-        "cmd-k cmd-d",
-        "editor.move_last_selection_to_next_find_match",
-        Some("editor && !vim.enabled"),
-    ),
-    (
         "cmd-shift-l",
         "editor.select_all_occurrences",
         Some("editor && !vim.enabled"),
