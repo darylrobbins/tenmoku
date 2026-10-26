@@ -15,7 +15,7 @@
 //! (1-based); `http`, `https` and `mailto` go to the system's opener; any
 //! other scheme is refused with a toast.
 
-use std::{collections::HashMap, ops::Range, path::PathBuf, time::Duration};
+use std::{borrow::Cow, collections::HashMap, ops::Range, path::PathBuf, time::Duration};
 
 use fe_buffer::{Anchor, BufferId, PointUtf16, Version};
 use fe_command::Source;
@@ -111,6 +111,9 @@ pub(super) struct Links {
     /// open still waiting on a resolve or a file check when another starts
     /// is superseded.
     opens: u64,
+    /// The link open each pane last made, by count: one waiting on a Save As
+    /// is dropped if the pane makes another.
+    tickets: HashMap<EntityId, u64>,
 }
 
 /// Where a link open started: its editor, and its place in
@@ -137,15 +140,10 @@ struct Landing {
     /// 0-based, and the column in UTF-16 units.
     row: u32,
     column: u32,
-    /// The [`Pane::open_serial`] of the open it is for. A Save As holding
-    /// the file has the pane open it again once it's done, with a new one.
+    /// The [`Pane::open_serial`] of the open it is for.
     serial: u64,
-    /// The pane was reading the file, or waiting on a Save As for it, when
-    /// last looked at.
+    /// The pane was reading the file when last looked at.
     opening: bool,
-    /// A Save As held the file when it was opened, so the pane opens it
-    /// again, once, when that is over.
-    held: bool,
     /// Watching the pane, and a viewer's index for the row.
     watching: Vec<Subscription>,
     viewer: Option<EntityId>,
@@ -581,26 +579,79 @@ impl Workbench {
                     columns: 0..0,
                     within_row: true,
                 });
-                let opened = path.clone();
-                // Any open of the pane supersedes the last link's landing.
-                let held = held_by_save_as(&path);
-                workbench
-                    .update(cx, |workbench, _| {
-                        workbench.lsp.links.landings.remove(&pane.entity_id());
+                let ticket = (workbench.update(cx, |workbench, _| {
+                    workbench.lsp.links.landings.remove(&pane.entity_id());
+                    // Any open of the pane supersedes the last link's.
+                    let ticket = workbench
+                        .lsp
+                        .links
+                        .tickets
+                        .entry(pane.entity_id())
+                        .or_default();
+                    *ticket += 1;
+                    *ticket
+                }))
+                .unwrap_or(0);
+                // A Save As holding the file has the open wait for it:
+                // continued here, not by the pane, so what is the
+                // continuation is known, and an open of the pane's own
+                // that comes first is not mistaken for it.
+                if held_by_save_as(&path).is_none() {
+                    workbench
+                        .update(cx, |workbench, cx| {
+                            workbench.continue_link_open(&pane, path, reveal, place, window, cx)
+                        })
+                        .ok();
+                    return;
+                }
+                let serial = pane.read(cx).open_serial();
+                let (workbench, pane) = (workbench.clone(), pane.clone());
+                let handle = window.window_handle();
+                cx.spawn(async move |cx| {
+                    while let Some(over) = held_by_save_as(&path) {
+                        over.recv().await.ok();
+                    }
+                    cx.update_window(handle, |_, window, cx| {
+                        workbench
+                            .update(cx, |workbench, cx| {
+                                let id = pane.entity_id();
+                                let current = workbench.lsp.links.tickets.get(&id) == Some(&ticket)
+                                    && pane.read(cx).open_serial() == serial;
+                                if current {
+                                    workbench
+                                        .continue_link_open(&pane, path, reveal, place, window, cx);
+                                }
+                            })
+                            .ok();
                     })
                     .ok();
-                pane.update(cx, |pane, cx| pane.open_at(opened, reveal, window, cx));
-                if let Some(place) = place.filter(|(_, column)| *column > 0) {
-                    let handle = window.window_handle();
-                    (workbench.update(cx, |workbench, cx| {
-                        workbench.land_link_column(&pane, handle, path, place, held, cx)
-                    }))
-                    .ok();
-                }
+                })
+                .detach();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Opens `path` in `pane` for a link, once nothing holds it, and, for a
+    /// column, lands it ([`Self::land_link_column`]).
+    fn continue_link_open(
+        &mut self,
+        pane: &Entity<Pane>,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        place: Option<(u32, u32)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lsp.links.landings.remove(&pane.entity_id());
+        pane.update(cx, |pane, cx| {
+            pane.open_at(path.clone(), reveal, window, cx)
+        });
+        if let Some(place) = place.filter(|(_, column)| *column > 0) {
+            let handle = window.window_handle();
+            self.land_link_column(pane, handle, path, place, cx);
+        }
     }
 
     /// Once `pane` has revealed the row of `place` for the open last made,
@@ -616,7 +667,6 @@ impl Workbench {
         window: AnyWindowHandle,
         path: PathBuf,
         (row, column): (u32, u32),
-        held: bool,
         cx: &mut Context<Self>,
     ) {
         let landing = Landing {
@@ -627,7 +677,6 @@ impl Workbench {
             column,
             serial: pane.read(cx).open_serial(),
             opening: false,
-            held,
             watching: Vec::new(),
             viewer: None,
         };
@@ -678,18 +727,8 @@ impl Workbench {
         let pane_entity = pane;
         let pane = pane.read(cx);
         if pane.open_serial() != landing.serial {
-            // Only the end of the Save As holding the file has the pane
-            // open it again for the same link, once: any other open, or one
-            // while it still holds, supersedes.
-            let continued = landing.held
-                && landing.opening
-                && !held_by_save_as(&landing.path)
-                && pane.open_serial() == landing.serial + 1;
-            if !continued {
-                return Landed::Done;
-            }
-            landing.held = false;
-            landing.serial = pane.open_serial();
+            // Any other open supersedes.
+            return Landed::Done;
         }
         landing.opening = pane.is_opening(&landing.path);
         if landing.opening {
@@ -756,40 +795,55 @@ impl Workbench {
             if viewer.model().selection() != (start..start) {
                 return Some(None);
             }
-            let wanted = (column as usize).saturating_mul(4).saturating_add(4);
-            let end = start + (text.row_len(row) as usize).min(wanted);
-            let row_text: String = text.chunks_in_range(start..end).collect();
-            Some(Some((utf16_to_byte(&row_text, column), start)))
+            let len = text.row_len(row) as usize;
+            Some(Some((text.share(), start, len)))
         });
         match found {
             None => Landed::Wait(Some(viewer)),
             Some(None) => Landed::Done,
-            Some(Some((byte, start))) => {
-                let reveal = Reveal {
-                    row,
-                    columns: byte..byte,
-                    within_row: true,
-                };
+            Some(Some((source, start, len))) => {
                 let (window, path, serial) = (landing.window, landing.path.clone(), landing.serial);
                 let Some(pane) = landing.pane.upgrade() else {
                     return Landed::Done;
                 };
+                let viewer = viewer.entity_id();
+                // The row can be gigabytes long: read in chunks off the main
+                // thread, and the open checked again once that is done.
                 cx.spawn(async move |_, cx| {
+                    let byte = cx
+                        .background_spawn(async move {
+                            let chunks = source.chunks_in_range(start..start + len);
+                            utf16_to_byte_chunks(chunks, column)
+                        })
+                        .await;
                     cx.update_window(window, |_, window, cx| {
-                        pane.update(cx, |pane, cx| {
-                            // Still the open's viewer, its caret unmoved?
-                            let unmoved = pane.open_serial() == serial
-                                && pane.active().is_some_and(|ix| {
-                                    let tab = &pane.tabs()[ix];
-                                    tab.path.as_deref() == Some(path.as_path())
-                                        && tab.viewer().is_some_and(|viewer| {
-                                            viewer.read(cx).model().selection() == (start..start)
-                                        })
-                                });
-                            if unmoved {
-                                pane.open_at(path, Some(reveal), window, cx);
-                            }
-                        });
+                        // Still the open's viewer, its caret unmoved?
+                        let ix = {
+                            let pane = pane.read(cx);
+                            pane.active().filter(|&ix| {
+                                let tab = &pane.tabs()[ix];
+                                let unmoved = (tab.viewer())
+                                    .filter(|v| v.entity_id() == viewer)
+                                    .is_some_and(|v| {
+                                        v.read(cx).model().selection() == (start..start)
+                                    });
+                                pane.open_serial() == serial
+                                    && tab.path.as_deref() == Some(path.as_path())
+                                    && unmoved
+                            })
+                        };
+                        // Placed in the viewer as it is: opening it again
+                        // would show its tab and take the focus.
+                        if let Some(ix) = ix {
+                            let state = fe_command::Value::from_iter([
+                                ("row", fe_command::Value::from(row)),
+                                ("column", fe_command::Value::from(byte)),
+                                ("within_row", fe_command::Value::from(true)),
+                            ]);
+                            pane.update(cx, |pane, cx| {
+                                pane.tabs()[ix].item().apply_state(&state, window, cx)
+                            });
+                        }
                     })
                     .ok();
                 })
@@ -800,24 +854,30 @@ impl Workbench {
     }
 }
 
-/// Whether a Save As holds `path` as its destination.
-fn held_by_save_as(path: &std::path::Path) -> bool {
-    crate::open::any_reserved()
-        && crate::open::reserved(path, crate::open::file_identity(path).as_deref()).is_some()
+/// Closes once the Save As holding `path` as its destination lets go, if one does.
+fn held_by_save_as(path: &std::path::Path) -> Option<async_channel::Receiver<()>> {
+    if !crate::open::any_reserved() {
+        return None;
+    }
+    crate::open::reserved(path, crate::open::file_identity(path).as_deref()).map(|(_, over)| over)
 }
 
-/// The byte offset in `row` of the `units`th UTF-16 unit, clamped to the
-/// row and out of surrogate pairs.
-fn utf16_to_byte(row: &str, units: u32) -> usize {
-    let mut seen = 0u32;
-    for (at, ch) in row.char_indices() {
-        let width = ch.len_utf16() as u32;
-        if seen + width > units {
-            return at;
+/// The byte offset in a row, given as its `chunks`, of the `units`th UTF-16
+/// unit, clamped to the row and out of surrogate pairs: read a chunk at a
+/// time, so a long row is never held whole.
+fn utf16_to_byte_chunks<'a>(chunks: impl Iterator<Item = Cow<'a, str>>, units: u32) -> usize {
+    let (mut seen, mut base) = (0u32, 0usize);
+    for chunk in chunks {
+        for (at, ch) in chunk.char_indices() {
+            let width = ch.len_utf16() as u32;
+            if seen.saturating_add(width) > units {
+                return base + at;
+            }
+            seen += width;
         }
-        seen += width;
+        base += chunk.len();
     }
-    row.len()
+    base
 }
 
 /// Sets `editor`'s link ranges and redraws it, so a hover under a still

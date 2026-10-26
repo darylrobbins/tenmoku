@@ -267,7 +267,7 @@ fn a_queued_viewer_landing_checks_the_open_again(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         let handle = window.window_handle();
         workbench.update(cx, |workbench, cx| {
-            workbench.land_link_column(&pane, handle, path.clone(), (0, 5), false, cx)
+            workbench.land_link_column(&pane, handle, path.clone(), (0, 5), cx)
         });
         pane.update(cx, |pane, cx| pane.open(other.clone(), window, cx));
     });
@@ -280,6 +280,114 @@ fn a_queued_viewer_landing_checks_the_open_again(cx: &mut TestAppContext) {
         Some(other),
         "the stale landing doesn't take the tab back"
     );
+}
+
+#[gpui::test]
+fn independent_open_after_reservation_release_cancels_landing(cx: &mut TestAppContext) {
+    let (_dir, root, workbench, cx) = project(cx, &[("a.rs", "ab\ncd\n")]);
+    let path = root.join("a.rs");
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    // The target is open already.
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx)));
+    draw(cx);
+    let saving = crate::open::reserve(
+        fe_buffer::Buffer::new("").id(),
+        path.clone(),
+        crate::open::file_identity(&path),
+    );
+    follow(&workbench, &path, "L2,2", cx);
+    draw(cx);
+    // The Save As is over; before the link's open continues, another open
+    // of the file comes, at the first row.
+    drop(saving);
+    cx.update(|window, cx| {
+        let reveal = crate::pane::Reveal {
+            row: 0,
+            columns: 0..0,
+            within_row: true,
+        };
+        pane.update(cx, |pane, cx| {
+            pane.open_at(path.clone(), Some(reveal), window, cx)
+        });
+    });
+    draw(cx);
+    assert_ne!(caret(&pane, &path, cx), Some(4), "the old column landed");
+}
+
+#[gpui::test]
+fn delayed_landing_keeps_focus(cx: &mut TestAppContext) {
+    let (text, start, last) = large_text("é x 😀y\n");
+    let (_dir, root, workbench, cx) = project(cx, &[("big.rs", &text)]);
+    let path = root.join("big.rs");
+    test_support::lower_threshold(&root, THRESHOLD, true);
+    follow(&workbench, &path, &format!("L{},7", last + 1), cx);
+    draw(cx);
+    let first = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let viewer: Entity<FileViewer> = first
+        .read_with(cx, |pane, _| pane.tabs()[pane.active()?].viewer().cloned())
+        .expect("a viewer is shown");
+    // The index holds while another pane takes the focus.
+    let steps = test_support::take_steps(&path);
+    run("pane.split_right", cx);
+    let panes = workbench.read_with(cx, |workbench, cx| workbench.panes(cx));
+    let second = panes.iter().find(|pane| **pane != first).unwrap().clone();
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| {
+            workbench.activate(second.clone(), window, cx)
+        })
+    });
+    draw(cx);
+    let focused = |pane: &Entity<Pane>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| pane.focus_handle(cx).contains_focused(window, cx))
+    };
+    assert!(focused(&second, cx) && !focused(&first, cx));
+    drop(steps);
+    until("the caret on the `y`", cx, |cx| {
+        viewer.read_with(cx, |viewer, _| {
+            viewer.model().selection() == (start + 9..start + 9)
+        })
+    });
+    assert!(focused(&second, cx), "the landing took the focus");
+    assert!(!focused(&first, cx));
+}
+
+#[gpui::test]
+fn oversized_column_on_long_row_is_bounded(cx: &mut TestAppContext) {
+    // One row of 1 MiB, past several chunks of the index.
+    let tail = "x".repeat(1 << 20);
+    let (text, start, last) = large_text(&format!("{tail}\n"));
+    let (_dir, root, workbench, cx) = project(cx, &[("big.rs", &text)]);
+    let path = root.join("big.rs");
+    test_support::lower_threshold(&root, THRESHOLD, true);
+    follow(&workbench, &path, &format!("L{},4294967295", last + 1), cx);
+    draw(cx);
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let viewer: Entity<FileViewer> = pane
+        .read_with(cx, |pane, _| pane.tabs()[pane.active()?].viewer().cloned())
+        .expect("a viewer is shown");
+    drop(test_support::take_steps(&path));
+    // The end of the row, found chunk by chunk.
+    until("the caret at the end of the row", cx, |cx| {
+        viewer.read_with(cx, |viewer, _| {
+            viewer.model().selection() == (start + tail.len()..start + tail.len())
+        })
+    });
+}
+
+#[test]
+fn utf16_columns_are_read_over_chunks() {
+    let chunks = || {
+        ["a😀", "é", "b"]
+            .into_iter()
+            .map(std::borrow::Cow::Borrowed)
+    };
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), 0), 0);
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), 1), 1);
+    // Inside a surrogate pair: before it.
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), 2), 1);
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), 3), 5);
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), 4), 7);
+    assert_eq!(super::utf16_to_byte_chunks(chunks(), u32::MAX), 8);
 }
 
 const LINKS: &str = "textDocument/documentLink";
