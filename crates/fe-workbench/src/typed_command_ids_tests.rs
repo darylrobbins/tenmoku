@@ -746,3 +746,30 @@ fn the_end_of_line_commands_have_their_ids_and_titles() {
         );
     }
 }
+
+/// The indentation commands are registered with these IDs and titles.
+#[test]
+fn the_indentation_commands_have_their_ids_and_titles() {
+    let registry = fe_editor::commands::registry();
+    for (id, title) in [
+        (
+            "editor.convert_indentation_to_spaces",
+            "Convert Indentation to Spaces",
+        ),
+        (
+            "editor.convert_indentation_to_tabs",
+            "Convert Indentation to Tabs",
+        ),
+        (
+            "editor.detect_indentation",
+            "Detect Indentation from Content",
+        ),
+    ] {
+        let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+        assert_eq!(
+            meta.map(|meta| meta.title.to_string()),
+            Some(title.to_string()),
+            "{id}"
+        );
+    }
+}

@@ -33,6 +33,7 @@ pub mod diagnostics;
 mod disk;
 mod eol_commands;
 pub mod ghost_text;
+mod indent_convert;
 pub mod indent_guides;
 mod indent_style;
 mod join_lines;

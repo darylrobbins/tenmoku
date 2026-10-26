@@ -565,6 +565,7 @@ pub fn registry() -> Registry<Editor> {
     crate::trim_whitespace::register(&mut registry);
     crate::case_transform::register(&mut registry);
     crate::eol_commands::register(&mut registry);
+    crate::indent_convert::register(&mut registry);
     crate::plugin_access::allow_plugins(&mut registry);
     registry
 }

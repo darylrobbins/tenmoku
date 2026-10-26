@@ -245,6 +245,7 @@ fn refuses_edits() {
         "editor.single_selection",
         "editor.expand_selection",
         "editor.shrink_selection",
+        "editor.detect_indentation",
         "editor.nonexistent",
         "find.next",
     ];

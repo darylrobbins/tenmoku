@@ -143,6 +143,9 @@ fn every_editor_command_is_registered() {
             "transform_titlecase",
             "set_end_of_line_lf",
             "set_end_of_line_crlf",
+            "convert_indentation_to_spaces",
+            "convert_indentation_to_tabs",
+            "detect_indentation",
         ]
         .map(|name| format!("editor.{name}")),
     );
@@ -175,6 +178,8 @@ fn every_editor_command_is_registered() {
         "transform_titlecase",
         "set_end_of_line_lf",
         "set_end_of_line_crlf",
+        "convert_indentation_to_spaces",
+        "convert_indentation_to_tabs",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();
@@ -714,4 +719,43 @@ fn undoing_and_redoing_a_replacement_by_the_same_text_reports_nothing() {
         assert_eq!(dispatched.transactions.len(), 1, "{command}");
         assert_eq!(state(&model), before, "{command}");
     }
+}
+
+#[test]
+fn indentation_commands_report_style_only_changes() {
+    use crate::IndentStyle;
+    let mut host = HeadlessHost::new();
+    // Text edited: Changed. Style alone: Notify. Neither: Nothing.
+    let mut model = parse("a\n\tb\n");
+    model.set_indent_style(Some(IndentStyle::Tabs));
+    for (id, expected) in [
+        ("editor.convert_indentation_to_spaces", Effect::Changed),
+        ("editor.convert_indentation_to_spaces", Effect::Nothing),
+        ("editor.convert_indentation_to_tabs", Effect::Changed),
+    ] {
+        let dispatched = dispatch(&mut model, &mut host, id, Value::Null);
+        assert_eq!(dispatched.effect, expected, "{id}");
+    }
+    let mut model = parse("a\n  b\n  c\n  d\n  e\n  f\n");
+    model.set_indent_style(Some(IndentStyle::Tabs));
+    let detect = |model: &mut EditorModel, host: &mut HeadlessHost| {
+        dispatch(model, host, "editor.detect_indentation", Value::Null)
+    };
+    assert_eq!(
+        detect(&mut model, &mut host),
+        Dispatched::new(Effect::Notify)
+    );
+    assert_eq!(
+        detect(&mut model, &mut host),
+        Dispatched::new(Effect::Nothing)
+    );
+    // Conversion with nothing to rewrite still moves the style.
+    let mut model = parse("a\nb\n");
+    let converted = dispatch(
+        &mut model,
+        &mut host,
+        "editor.convert_indentation_to_tabs",
+        Value::Null,
+    );
+    assert_eq!(converted.effect, Effect::Notify);
 }
