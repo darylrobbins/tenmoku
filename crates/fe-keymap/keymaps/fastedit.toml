@@ -270,6 +270,13 @@ keys = "secondary-shift-\\"
 command = "editor.go_to_bracket"
 context = "editor"
 
+# Cursor Undo, as VS Code binds cursorUndo; Cursor Redo has no key. Vim
+# keeps its own ctrl-u and u.
+[[bindings]]
+keys = "secondary-u"
+command = "editor.cursor_undo"
+context = "editor && !vim.enabled"
+
 [[bindings]]
 keys = "backspace"
 command = "editor.backspace"

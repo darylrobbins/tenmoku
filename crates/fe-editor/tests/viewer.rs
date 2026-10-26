@@ -252,6 +252,8 @@ fn refuses_edits() {
         "editor.add_carets_at_all_occurrences",
         "editor.split_selection_into_lines",
         "editor.single_selection",
+        "editor.cursor_undo",
+        "editor.cursor_redo",
         "editor.expand_selection",
         "editor.shrink_selection",
         "editor.detect_indentation",

@@ -28,6 +28,7 @@ mod column_select;
 pub mod commands;
 mod comment;
 pub mod completion;
+mod cursor_history;
 pub mod decorations;
 mod delete_extent;
 pub mod diagnostics;
@@ -187,6 +188,8 @@ pub struct EditorModel {
     /// Where the user's last edit ended; shared with splits (see
     /// [`last_edit`]).
     last_edit: last_edit::LastEdit,
+    /// The selections Cursor Undo and Cursor Redo step through.
+    cursor_history: cursor_history::CursorHistory,
 }
 
 impl EditorModel {
@@ -231,6 +234,7 @@ impl EditorModel {
             expand_history: None,
             snippet: None,
             last_edit: Rc::default(),
+            cursor_history: Default::default(),
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -291,6 +295,7 @@ impl EditorModel {
             expand_history: None,
             snippet: None,
             last_edit: Rc::clone(&self.last_edit),
+            cursor_history: Default::default(),
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
@@ -829,7 +834,9 @@ impl EditorModel {
         self.end_typing();
         self.goals.clear();
         self.column_box = None;
-        self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
+        let selections = SelectionSet::from_resolved(&self.snapshot, selections);
+        self.record_cursor_history(&selections);
+        self.selections = selections;
         self.forget_auto_closed();
         self.follow_snippet();
     }
@@ -838,7 +845,7 @@ impl EditorModel {
     pub fn set_cursor(&mut self, offset: usize) {
         let offset = self.text().clip_offset(offset, Bias::Left);
         self.goals.clear();
-        self.set_selections([caret(offset)]);
+        self.set_selections_moving([caret(offset)]);
     }
 
     /// Selects `range`; `reversed` puts the head at its start.
@@ -937,7 +944,7 @@ impl EditorModel {
                 caret(new_head)
             });
         }
-        self.set_selections(moved);
+        self.set_selections_moving(moved);
         // Merging can change the count; goals only survive if it didn't.
         self.goals = if goals.len() == self.selections.len() {
             goals

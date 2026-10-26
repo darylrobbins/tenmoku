@@ -382,6 +382,8 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.copy",
     "editor.cut",
     "editor.delete",
+    "editor.cursor_redo",
+    "editor.cursor_undo",
     "editor.delete_duplicate_lines",
     "editor.delete_rows",
     "editor.delete_word_left",

@@ -106,6 +106,8 @@ fn every_editor_command_is_registered() {
         ]
         .map(|name| format!("editor.{name}")),
     );
+    // Cursor Undo and Cursor Redo; neither edits.
+    expected.extend(["editor.cursor_undo", "editor.cursor_redo"].map(String::from));
     // The keyboard column selection commands; none edits.
     expected.extend(
         [
