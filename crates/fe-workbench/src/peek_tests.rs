@@ -1503,3 +1503,8 @@ fn esc_closing_the_completion_menu_cancels_a_pending_peek(cx: &mut TestAppContex
     s.draw();
     assert!(peek(&s.workbench, &mut s.cx).is_none(), "cancelled");
 }
+
+// Declared from here rather than `peek.rs`, so these also build against
+// a `peek.rs` from before their fixes, to show what each one fixes.
+#[path = "peek_robustness_tests.rs"]
+mod peek_robustness_tests;

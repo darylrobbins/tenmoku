@@ -29,13 +29,14 @@
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 
-use fe_buffer::{Anchor, Buffer, BufferSnapshot, ResolvedSelection, Version};
+use fe_buffer::{Anchor, Bias, Buffer, BufferSnapshot, ResolvedSelection, Version};
 use fe_editor::{
-    EditorModel,
+    EditorModel, Hunk, TextDiff,
     decorations::{Decoration, DecorationKind, DecorationProvider, Tint},
 };
 use fe_gpui::{EditorTheme, EditorView, HostBlock, HostBlockKind};
 use fe_nav::Location;
+use fe_text::Text;
 use gpui::{
     AnyElement, App, AppContext as _, AvailableSpace, ContentMask, Context, Entity, FocusHandle,
     Focusable as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
@@ -43,6 +44,7 @@ use gpui::{
     Styled as _, Subscription, Task, WeakEntity, Window, canvas, div, prelude::FluentBuilder as _,
     px,
 };
+use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
 
 use crate::{Pane, PaneEvent, ReferencesPanel, Workbench, loader, pane::Reveal};
 
@@ -110,11 +112,26 @@ struct Source {
 /// The excerpt of a target: a read-only editor on its file.
 struct Excerpt {
     view: Entity<EditorView>,
-    /// The definition's 1-based line and column, for the header.
-    line: u32,
-    column: usize,
+    /// Where the definition starts, in its text as edited since.
+    start: Anchor,
     /// Its text is the file as read, not an open editor's buffer.
     read: bool,
+}
+
+impl Excerpt {
+    /// The definition's 1-based line and column where it is now, for the
+    /// header.
+    fn place(&self, cx: &App) -> (u32, usize) {
+        let model = self.view.read(cx).model();
+        let text = model.text();
+        let start = model.snapshot().resolve(&self.start);
+        let row = text.offset_to_point(start).row;
+        let column = text
+            .slice_to_string(text.row_start(row)..start)
+            .chars()
+            .count();
+        (row + 1, column + 1)
+    }
 }
 
 /// What Enter or a double-click opens: the selected target's file, with
@@ -197,34 +214,411 @@ fn reserve(editor: &mut EditorView, above: u32, rows: u32, cx: &mut Context<Edit
     editor.set_blocks(blocks, cx);
 }
 
-/// `range` of `old` where it is in `new`, by their row diff: its row moved
-/// by the rows added and removed above it, the same columns; on a row the
-/// diff changed, the first row of what replaced it.
-fn map_through(old: &str, new: &fe_text::Text, range: Range<usize>) -> Reveal {
-    let old_text = fe_text::Text::new(old);
-    let start = old_text.clip_offset(range.start.min(old.len()), fe_buffer::Bias::Left);
-    let point = old_text.offset_to_point(start);
-    let column = start - old_text.row_start(point.row);
-    let diff = fe_editor::text_diff::TextDiff::new(old, &new.to_string());
-    let mut delta: i64 = 0;
-    for hunk in diff.hunks() {
-        if hunk.left.contains(&point.row) {
-            return Reveal {
-                row: hunk.right.start,
-                columns: 0..0,
-                within_row: true,
-            };
+/// `range` of `old`, a target's file as read, where it is in `new`, the
+/// buffer open on it now. Each end follows a byte of the definition
+/// ([`Mapper`]): the start its first, so text inserted at it goes before
+/// it, and the end its last, so text inserted there goes after it, as
+/// [`Workbench::target_of`] maps. Where either byte is gone or can't be
+/// followed, the definition's rows are found again, whole ([`Mapper::find`]);
+/// where they aren't there just once, it's its start if that was followed,
+/// else the row the start would be near.
+fn map_through(old: &str, new: &Text, range: Range<usize>) -> Reveal {
+    let new_string = new.to_string();
+    let old_text = Text::new(old);
+    let clip = |offset: usize, bias| old_text.clip_offset(offset.min(old.len()), bias);
+    let start = clip(range.start, Bias::Left);
+    let range = start..clip(range.end, Bias::Right).max(start);
+    let mapper = Mapper::new(old, &old_text, &new_string, new);
+    let start = mapper.map(range.start, Bias::Right);
+    let end = match range.is_empty() {
+        true => start,
+        false => mapper.map(range.end, Bias::Left),
+    };
+    // Bytes in order follow in order, so an end at or before the start is
+    // lost too.
+    if let (Ok(start), Ok(end)) = (&start, end)
+        && (end > *start || range.is_empty())
+    {
+        return Reveal::bytes(*start..end);
+    }
+    if let Some(found) = mapper.find(range) {
+        return Reveal::bytes(found);
+    }
+    match start {
+        Ok(start) => Reveal::bytes(start..start),
+        Err(near) => Reveal {
+            row: near,
+            columns: 0..0,
+            within_row: false,
+        },
+    }
+}
+
+/// Over this many bytes on either side, rows a row diff changed aren't
+/// diffed by token.
+const TOKEN_DIFF_BYTES: usize = 64 * 1024;
+
+/// How many rows around a definition [`Mapper::find`] adds on each side to
+/// tell where it is.
+const FIND_CONTEXT_ROWS: u32 = 8;
+
+/// Follows bytes of `old` into `new`: in the rows the two start and end
+/// with alike, where they are; in the rows between, by their row diff, at
+/// the same column of a row it kept, and by a diff of their tokens
+/// ([`tokens`]) in rows it changed. A byte either diff drops, or that isn't
+/// the same byte where it lands, isn't followed.
+struct Mapper<'a> {
+    old: &'a str,
+    old_text: &'a Text,
+    new: &'a str,
+    new_text: &'a Text,
+    /// The bytes of whole rows the texts start with alike, and end with.
+    prefix: usize,
+    suffix: usize,
+    /// The rows between, in each, and their row diff: `None` if either is
+    /// too large to diff.
+    between: Option<(Text, Text, TextDiff)>,
+}
+
+impl<'a> Mapper<'a> {
+    fn new(old: &'a str, old_text: &'a Text, new: &'a str, new_text: &'a Text) -> Self {
+        let (a, b) = (old.as_bytes(), new.as_bytes());
+        let alike = a.iter().zip(b).take_while(|(a, b)| a == b).count();
+        let prefix = (a[..alike].iter())
+            .rposition(|&c| c == b'\n')
+            .map_or(0, |at| at + 1);
+        let limit = a.len().min(b.len()) - prefix;
+        let alike = (a.iter().rev().zip(b.iter().rev()))
+            .take(limit)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let starts_row = |text: &[u8], at: usize| at == prefix || text[at - 1] == b'\n';
+        let suffix = match starts_row(a, a.len() - alike) && starts_row(b, b.len() - alike) {
+            true => alike,
+            false => {
+                let from = a.len() - alike;
+                let first = a[from..].iter().position(|&c| c == b'\n');
+                first.map_or(0, |at| alike - at - 1)
+            }
+        };
+        let (old_between, new_between) = (
+            &old[prefix..old.len() - suffix],
+            &new[prefix..new.len() - suffix],
+        );
+        let small =
+            old_between.len().max(new_between.len()) <= fe_editor::text_diff::MAX_DIFF_BYTES;
+        let between = small.then(|| {
+            let diff = TextDiff::new(old_between, new_between);
+            (Text::new(old_between), Text::new(new_between), diff)
+        });
+        Self {
+            old,
+            old_text,
+            new,
+            new_text,
+            prefix,
+            suffix,
+            between,
         }
-        if hunk.left.end > point.row {
+    }
+
+    /// Where `offset` of `old` is in `new`: before the byte at it for
+    /// [`Bias::Right`], after the byte before it for [`Bias::Left`]. Else
+    /// `Err`, with the row of `new` it'd be near.
+    fn map(&self, offset: usize, bias: Bias) -> Result<usize, u32> {
+        match bias {
+            Bias::Right if offset >= self.old.len() => Ok(self.new.len()),
+            Bias::Right => self.follow(offset),
+            Bias::Left if offset == 0 => Ok(0),
+            Bias::Left => self.follow(offset - 1).map(|at| at + 1),
+        }
+    }
+
+    /// Where the byte at `at` of `old` is in `new`.
+    fn follow(&self, at: usize) -> Result<usize, u32> {
+        let (old_len, new_len) = (self.old.len(), self.new.len());
+        let to = if at < self.prefix {
+            Ok(at)
+        } else if at >= old_len - self.suffix {
+            Ok(at + new_len - old_len)
+        } else {
+            let rows = self.new_text.offset_to_point(self.prefix).row;
+            (self.follow_between(at - self.prefix))
+                .map(|to| to + self.prefix)
+                .map_err(|row| row + rows)
+        }?;
+        match self.new.as_bytes().get(to) == Some(&self.old.as_bytes()[at]) {
+            true => Ok(to),
+            false => Err(self.new_text.offset_to_point(to.min(new_len)).row),
+        }
+    }
+
+    /// Where the byte at `at` of the old rows between is in the new.
+    fn follow_between(&self, at: usize) -> Result<usize, u32> {
+        let Some((old, new, diff)) = &self.between else {
+            let row = |offset| self.old_text.offset_to_point(offset).row;
+            return Err(row(self.prefix + at) - row(self.prefix));
+        };
+        let row = old.offset_to_point(at).row;
+        let mut delta: i64 = 0;
+        for hunk in diff.hunks() {
+            if hunk.left.contains(&row) {
+                return follow_in_hunk(hunk, old, new, at);
+            }
+            if hunk.left.start > row {
+                break;
+            }
+            delta += hunk.right.len() as i64 - hunk.left.len() as i64;
+        }
+        let moved = (i64::from(row) + delta) as u32;
+        match moved < new.row_count() {
+            true => Ok(new.row_start(moved) + (at - old.row_start(row))),
+            false => Err(new.row_count().saturating_sub(1)),
+        }
+    }
+}
+
+/// Where the byte at `at` of `old`, in rows `hunk` changed, is in `new`, by
+/// a diff of the rows' tokens ([`tokens`]). Past [`TOKEN_DIFF_BYTES`], by
+/// the whole words the rows start and end with alike, and by token between
+/// those, if that's within it. In a word a diff of them changed, as one
+/// word, by the bytes it starts and ends with alike. Else `Err`, with the
+/// row of `new` it'd be near.
+fn follow_in_hunk(hunk: &Hunk, old: &Text, new: &Text, at: usize) -> Result<usize, u32> {
+    let row = old.offset_to_point(at).row - hunk.left.start;
+    let near = hunk.right.start + row.min(hunk.right.len().saturating_sub(1) as u32);
+    let span = |text: &Text, rows: &Range<u32>| {
+        let end = |row| match row < text.row_count() {
+            true => text.row_start(row),
+            false => text.len(),
+        };
+        end(rows.start)..end(rows.end)
+    };
+    let (from, to) = (span(old, &hunk.left), span(new, &hunk.right));
+    let (was, is) = (
+        old.slice_to_string(from.clone()),
+        new.slice_to_string(to.clone()),
+    );
+    let at = at - from.start;
+    let (head, tail) = match was.len().max(is.len()) <= TOKEN_DIFF_BYTES {
+        true => (0, 0),
+        false => {
+            let (head, tail) = alike_ends(&was, &is, true);
+            if at < head {
+                return Ok(to.start + at);
+            }
+            if at >= was.len() - tail {
+                return Ok(to.end - (was.len() - at));
+            }
+            (head, tail)
+        }
+    };
+    let (was, is) = (&was[head..was.len() - tail], &is[head..is.len() - tail]);
+    if was.len().max(is.len()) > TOKEN_DIFF_BYTES {
+        return Err(near);
+    }
+    let (at, to) = (at - head, to.start + head..to.end - tail);
+    let (before, after) = (Tokens(tokens(was)), Tokens(tokens(is)));
+    let starts = |tokens: &Tokens| {
+        let lens = tokens.0.iter().map(|token| token.len());
+        lens.scan(0, |at, len| Some(std::mem::replace(at, *at + len)))
+            .collect::<Vec<_>>()
+    };
+    let (before_starts, after_starts) = (starts(&before), starts(&after));
+    let ix = before_starts.partition_point(|&start| start <= at) - 1;
+    let input = InternedInput::new(before, after);
+    let mut delta: i64 = 0;
+    let span = |starts: &[usize], len: usize, tokens: Range<u32>| {
+        let end = |ix: u32| starts.get(ix as usize).copied().unwrap_or(len);
+        end(tokens.start)..end(tokens.end)
+    };
+    for hunk in Diff::compute(Algorithm::Myers, &input).hunks() {
+        if hunk.before.contains(&(ix as u32)) {
+            if hunk.before.len() != 1 || hunk.after.len() != 1 {
+                return Err(near);
+            }
+            let changed = span(&before_starts, was.len(), hunk.before);
+            let into = span(&after_starts, is.len(), hunk.after);
+            return follow_by_ends(&was[changed.clone()], &is[into.clone()], at - changed.start)
+                .map(|at| to.start + into.start + at)
+                .ok_or(near);
+        }
+        if hunk.before.start > ix as u32 {
             break;
         }
-        delta += hunk.right.len() as i64 - hunk.left.len() as i64;
+        delta += hunk.after.len() as i64 - hunk.before.len() as i64;
     }
-    Reveal {
-        row: (i64::from(point.row) + delta).max(0) as u32,
-        columns: column..column + range.len(),
-        within_row: true,
+    let moved = (ix as i64 + delta) as usize;
+    Ok(to.start + after_starts[moved] + (at - before_starts[ix]))
+}
+
+/// Where the byte at `at` of `was`, a token that became `is`, is in `is`:
+/// in as many bytes as they start with alike, from their start, and in as
+/// many as they end with alike, from their end ([`alike_ends`]).
+fn follow_by_ends(was: &str, is: &str, at: usize) -> Option<usize> {
+    let (head, tail) = alike_ends(was, is, false);
+    if at < head {
+        Some(at)
+    } else if at >= was.len() - tail {
+        Some(is.len() - (was.len() - at))
+    } else {
+        None
     }
+}
+
+/// How many bytes `a` and `b` start with alike, and end with after those,
+/// in whole chars, and in whole `words` too if asked: so that what's alike
+/// doesn't end, or start, in the middle of a word of either.
+fn alike_ends(a: &str, b: &str, words: bool) -> (usize, usize) {
+    let splits = |text: &str, at: usize| {
+        words
+            && text[..at].chars().next_back().is_some_and(is_word)
+            && text[at..].chars().next().is_some_and(is_word)
+    };
+    let agree = |a: &mut dyn Iterator<Item = u8>, b: &mut dyn Iterator<Item = u8>| {
+        a.zip(b).take_while(|(a, b)| a == b).count()
+    };
+    let mut head = agree(&mut a.bytes(), &mut b.bytes());
+    while !a.is_char_boundary(head) || !b.is_char_boundary(head) {
+        head -= 1;
+    }
+    while splits(a, head) || splits(b, head) {
+        head = a[..head].char_indices().next_back().map_or(0, |(at, _)| at);
+    }
+    let mut tail =
+        agree(&mut a.bytes().rev(), &mut b.bytes().rev()).min(a.len().min(b.len()) - head);
+    while !a.is_char_boundary(a.len() - tail) || !b.is_char_boundary(b.len() - tail) {
+        tail -= 1;
+    }
+    while splits(a, a.len() - tail) || splits(b, b.len() - tail) {
+        tail -= a[a.len() - tail..].chars().next().map_or(0, char::len_utf8);
+    }
+    (head, tail)
+}
+
+/// A text's tokens, for a diff of them: words, runs of white space, and
+/// each other char.
+struct Tokens<'a>(Vec<&'a str>);
+
+impl<'a> TokenSource for Tokens<'a> {
+    type Token = &'a str;
+    type Tokenizer = std::vec::IntoIter<&'a str>;
+
+    fn tokenize(&self) -> Self::Tokenizer {
+        self.0.clone().into_iter()
+    }
+
+    fn estimate_tokens(&self) -> u32 {
+        self.0.len() as u32
+    }
+}
+
+/// Whether `c` is in a word, for [`tokens`].
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `text` split into [`Tokens`].
+fn tokens(text: &str) -> Vec<&str> {
+    let class = |c: char| match c {
+        c if is_word(c) => 0,
+        c if c.is_whitespace() => 1,
+        _ => 2,
+    };
+    let mut out = Vec::new();
+    let (mut start, mut last) = (0, None);
+    for (at, c) in text.char_indices() {
+        let kind = class(c);
+        if at > start && (kind == 2 || last != Some(kind)) {
+            out.push(&text[start..at]);
+            start = at;
+        }
+        last = Some(kind);
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
+impl Mapper<'_> {
+    /// `range` of `old` found again in `new`, where [`Mapper::map`] lost
+    /// it: where its rows are, whole, in `new` just once, with as many rows
+    /// around them as it takes to tell, up to [`FIND_CONTEXT_ROWS`] on each
+    /// side. Where the texts were diffed, only in rows the diff says are new
+    /// ([`Mapper::fresh`]); where not, with a row around them at least.
+    /// `None` where they aren't there, or are in more than one place.
+    fn find(&self, range: Range<usize>) -> Option<Range<usize>> {
+        let (old, old_text) = (self.old, self.old_text);
+        let rows = old_text.row_count();
+        let row_of = |offset| old_text.offset_to_point(offset).row;
+        let (mut first, mut last) = (row_of(range.start), row_of(range.start));
+        if !range.is_empty() {
+            last = row_of(old_text.clip_offset(range.end - 1, Bias::Left));
+        }
+        if self.between.is_none() {
+            if first == 0 && last + 1 >= rows {
+                return None;
+            }
+            (first, last) = (first.saturating_sub(1), (last + 1).min(rows - 1));
+        }
+        let row_end = |row: u32| match row + 1 < rows {
+            true => old_text.row_start(row + 1),
+            false => old.len(),
+        };
+        for _ in 0..=FIND_CONTEXT_ROWS {
+            let from = old_text.row_start(first);
+            let fresh = |at: usize| self.fresh(at + range.start - from);
+            match whole_rows(self.new, &old[from..row_end(last)], fresh) {
+                (Some(at), false) => return Some(at + range.start - from..at + range.end - from),
+                (None, _) => return None,
+                (Some(_), true) => {}
+            }
+            if first == 0 && last + 1 >= rows {
+                return None;
+            }
+            (first, last) = (first.saturating_sub(1), (last + 1).min(rows - 1));
+        }
+        None
+    }
+
+    /// Whether `at` of `new` is in rows the row diff says are new: not
+    /// rows it kept, which are other rows of `old`. Without a diff, any.
+    fn fresh(&self, at: usize) -> bool {
+        let Some((_, new, diff)) = &self.between else {
+            return true;
+        };
+        if at < self.prefix || at >= self.new.len() - self.suffix {
+            return false;
+        }
+        let row = new.offset_to_point(at - self.prefix).row;
+        diff.hunks().iter().any(|hunk| hunk.right.contains(&row))
+    }
+}
+
+/// Where `rows`, whole rows of a text, are whole rows of `text`, at places
+/// `ok`: the first, and whether there's another. Rows that don't end in a
+/// line break end the text they're from, and end a row of `text`.
+fn whole_rows(text: &str, rows: &str, ok: impl Fn(usize) -> bool) -> (Option<usize>, bool) {
+    let Some(first) = rows.chars().next() else {
+        return (None, false);
+    };
+    let bytes = text.as_bytes();
+    let starts_row = |at: usize| at == 0 || matches!(bytes[at - 1], b'\n' | b'\r');
+    let ends_row = |end: usize| {
+        rows.ends_with('\n') || end == text.len() || matches!(bytes[end], b'\n' | b'\r')
+    };
+    let (mut found, mut from) = (None, 0);
+    while let Some(at) = text[from..].find(rows).map(|at| from + at) {
+        if starts_row(at) && ends_row(at + rows.len()) && ok(at) {
+            if found.is_some() {
+                return (found, true);
+            }
+            found = Some(at);
+        }
+        from = at + first.len_utf8();
+    }
+    (found, false)
 }
 
 /// The widget: see the [module docs](self).
@@ -257,6 +651,9 @@ pub(crate) struct PeekView {
     focus: FocusHandle,
     /// The block's size in the last frame.
     size: Size<Pixels>,
+    /// The editor's text and gutter in the last frame: when they're
+    /// resized, the peek is shown whole again.
+    viewport: Option<Size<Pixels>>,
     /// Scrolls the editor once so the whole peek is in view.
     reveal: bool,
     closed: bool,
@@ -264,7 +661,10 @@ pub(crate) struct PeekView {
     /// peek opened ([`baseline`]): a buffer opened on one since maps the
     /// location through its edits ([`map_through`]).
     baselines: HashMap<PathBuf, Arc<str>>,
-    /// Reading them.
+    /// The files whose baselines are being read, and whether the selected
+    /// target waits for its file's to show ([`PeekView::place`]).
+    reading: Vec<PathBuf>,
+    waiting: bool,
     _baselines: Task<()>,
     _observe: Subscription,
     _references: Vec<Subscription>,
@@ -326,6 +726,7 @@ impl Workbench {
             .collect();
         on_disk.sort();
         on_disk.dedup();
+        let reading = on_disk.clone();
         let source = (targets.first()).and_then(|first| self.peek_source(&first.location, cx));
         if source.is_none() && references.is_none() {
             return;
@@ -384,9 +785,12 @@ impl Workbench {
                 theme,
                 focus: cx.focus_handle(),
                 size: Size::default(),
+                viewport: None,
                 reveal: true,
                 closed: false,
                 baselines: HashMap::new(),
+                reading,
+                waiting: false,
                 _baselines: baselines,
                 _observe: observe,
                 _references: followed,
@@ -397,7 +801,7 @@ impl Workbench {
             };
             window.focus(&focus, cx);
             if let Some(source) = source {
-                view.show(0, source, window, cx);
+                view.place(0, source, window, cx);
             }
             view
         });
@@ -569,7 +973,10 @@ pub(crate) fn layer(pane: &Pane) -> Option<impl IntoElement + use<>> {
             let (bounds, clip) = (block.bounds, block.clip);
             let reveal = view.update(cx, |view, _| {
                 view.size = bounds.size;
-                std::mem::take(&mut view.reveal)
+                // Resized, whether or not its rows are.
+                let was = view.viewport.replace(clip.size);
+                let resized = was.is_some_and(|was| was != clip.size);
+                std::mem::take(&mut view.reveal) || resized
             });
             let rows = view.read(cx).rows.max(1) as f32;
             let line_height = f32::from(bounds.size.height) / rows;
@@ -656,9 +1063,8 @@ impl PeekView {
         }
     }
 
-    /// The baselines are `read`: if the selected target's file is shown
-    /// from an editor opened on it since, its location on disk is mapped
-    /// into that buffer now ([`PeekView::select`]).
+    /// The baselines are `read`: a target waiting for its file's shows
+    /// now ([`PeekView::place`]).
     fn baselines_read(
         &mut self,
         read: Vec<(PathBuf, Arc<str>)>,
@@ -666,20 +1072,15 @@ impl PeekView {
         cx: &mut Context<Self>,
     ) {
         self.baselines.extend(read);
-        let ix = self.selected;
-        // Peek References' may have none yet.
-        let target = self.targets.get(ix);
-        let on_disk = target.is_some_and(|target| target.location.snapshot.is_none());
-        let shared = self.excerpt.as_ref().is_some_and(|excerpt| !excerpt.read);
-        let mapped = (self.path.as_ref()).is_some_and(|path| self.baselines.contains_key(path));
-        if on_disk && shared && mapped {
-            self.reselect(ix, window, cx);
+        self.reading.clear();
+        if std::mem::take(&mut self.waiting) {
+            self.reselect(self.selected, window, cx);
         }
     }
 
     /// The view shows `shown` rows now: the block fits them again, the
-    /// definition back in the excerpt's view, and the editor scrolls to
-    /// show it whole.
+    /// definition, where it is now, back in the excerpt's view, and the
+    /// editor scrolls to show it whole.
     fn refit(&mut self, shown: u32, editor: &Entity<EditorView>, cx: &mut Context<Self>) {
         let rows = fit(shown);
         if rows == self.rows {
@@ -691,7 +1092,8 @@ impl PeekView {
         editor.update(cx, |editor, cx| reserve(editor, above, rows, cx));
         let context = self.context();
         if let Some(excerpt) = &self.excerpt {
-            let top = (excerpt.line - 1).saturating_sub(context) as f32;
+            let (line, _) = excerpt.place(cx);
+            let top = (line - 1).saturating_sub(context) as f32;
             excerpt
                 .view
                 .update(cx, |view, cx| view.set_scroll_top(top, cx));
@@ -770,16 +1172,9 @@ impl PeekView {
         let target = &self.targets[ix];
         let source = (self.workbench.upgrade())
             .and_then(|workbench| workbench.read(cx).peek_source(&target.location, cx));
-        let Some(mut source) = source else {
+        let Some(source) = source else {
             return;
         };
-        // A location on disk, in a file opened since: where it is now.
-        let baseline = (target.location.snapshot.is_none())
-            .then(|| self.baselines.get(&source.path))
-            .flatten();
-        if let (Some(baseline), Some(open)) = (baseline, &source.open) {
-            source.reveal = map_through(baseline, open.text(), target.location.range.clone());
-        }
         // Kept for the next excerpt as this one goes.
         let excerpt = self
             .excerpt
@@ -788,17 +1183,54 @@ impl PeekView {
         if excerpt.is_some_and(|excerpt| excerpt.contains_focused(window, cx)) {
             window.focus(&self.focus, cx);
         }
+        self.place(ix, source, window, cx);
+    }
+
+    /// Shows the target at `ix`, found at `source`. A location on disk in a
+    /// file open in an editor is mapped from the file's baseline into its
+    /// buffer ([`map_through`]), and shows nothing until that's read; with
+    /// no baseline, it shows from the file as on disk, which the location
+    /// is in.
+    fn place(
+        &mut self,
+        ix: usize,
+        mut source: Source,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let location = &self.targets[ix].location;
+        if location.snapshot.is_none()
+            && let Some(open) = &source.open
+        {
+            match self.baselines.get(&source.path) {
+                Some(baseline) => {
+                    source.reveal = map_through(baseline, open.text(), location.range.clone());
+                }
+                None if self.reading.contains(&source.path) => {
+                    self.clear(ix, source.path);
+                    self.waiting = true;
+                    return cx.notify();
+                }
+                None => source.open = None,
+            }
+        }
         self.show(ix, source, window, cx);
+    }
+
+    /// Selects the target at `ix`, in the file at `path`, showing none yet.
+    fn clear(&mut self, ix: usize, path: PathBuf) {
+        self.selected = ix;
+        self.excerpt = None;
+        self.error = None;
+        self.loading = None;
+        self.waiting = false;
+        self.path = Some(path);
     }
 
     /// Shows the target at `ix`, found at `source`: sharing its open
     /// editor's buffer, or read from disk in the background.
     fn show(&mut self, ix: usize, source: Source, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected = ix;
-        self.excerpt = None;
-        self.error = None;
-        self.loading = None;
-        self.path = Some(source.path.clone());
+        self.clear(ix, source.path.clone());
         cx.notify();
         let Source { path, reveal, open } = source;
         if let Some(model) = open {
@@ -853,10 +1285,10 @@ impl PeekView {
         let text = model.text();
         let point = text.offset_to_point(range.start);
         let row_start = text.row_start(point.row);
-        let column = text.slice_to_string(row_start..range.start).chars().count() + 1;
         let snapshot = model.snapshot();
+        let highlight_start = snapshot.anchor_after(range.start);
         let highlight = Highlight {
-            start: snapshot.anchor_after(range.start),
+            start: highlight_start,
             end: snapshot.anchor_before(range.end),
             row: snapshot.anchor_after(row_start),
         };
@@ -882,8 +1314,7 @@ impl PeekView {
         }
         self.excerpt = Some(Excerpt {
             view,
-            line: point.row + 1,
-            column,
+            start: highlight_start,
             read,
         });
         cx.notify();
@@ -911,9 +1342,9 @@ impl PeekView {
     /// The header's text: the file's name and the definition's line:col.
     #[cfg(test)]
     pub(crate) fn header(&self, cx: &App) -> Option<String> {
-        let excerpt = self.excerpt.as_ref()?;
+        let (line, column) = self.excerpt.as_ref()?.place(cx);
         let name = crate::pane::file_name(self.shown_path(cx).as_deref());
-        Some(format!("{name} {}:{}", excerpt.line, excerpt.column))
+        Some(format!("{name} {line}:{column}"))
     }
 }
 
@@ -1013,8 +1444,10 @@ impl Render for PeekView {
         let ui = fe_ui::ui_theme(cx);
         // Peek References' has none until a reference is found.
         let name = (self.shown_path(cx)).map(|path| crate::pane::file_name(Some(&path)));
-        let place =
-            (self.excerpt.as_ref()).map(|excerpt| format!("{}:{}", excerpt.line, excerpt.column));
+        let place = (self.excerpt.as_ref()).map(|excerpt| {
+            let (line, column) = excerpt.place(cx);
+            format!("{line}:{column}")
+        });
         let header = div()
             .flex()
             .flex_row()
