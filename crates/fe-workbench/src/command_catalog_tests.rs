@@ -394,6 +394,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.expand_selection",
     "editor.fold",
     "editor.fold_all",
+    "editor.go_to_bracket",
     "editor.fold_level_1",
     "editor.fold_level_2",
     "editor.fold_level_3",

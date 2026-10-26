@@ -228,7 +228,7 @@ const CASES: &[Case] = &[
 /// cmd-i` (`editor.show_hover`) is `view::hover_tests::show_hover_command`'s,
 /// and `ctrl-space` (`editor.trigger_completion`) is
 /// `view::completion_tests::menu_opens_narrows_and_accepts`'. The row and
-/// comment keys (`cmd-]`, `cmd-[`, `cmd-shift-k`, `cmd-/`) are checked to resolve to their commands by
+/// comment keys (`cmd-]`, `cmd-[`, `cmd-shift-k`, `cmd-/`, `cmd-shift-\`) are checked to resolve to their commands by
 /// fe-keymap's `editing_bindings`, and the language-server keys (`f2`,
 /// `cmd-.`, `cmd-k cmd-f`, `cmd-shift-space`) by its
 /// `lsp_bindings`. The git keys (`alt-f3`, `shift-alt-f3`, `cmd-alt-z`) are
@@ -247,6 +247,7 @@ const DEDICATED: &[&str] = &[
     "cmd-[",
     "cmd-shift-k",
     "cmd-/",
+    "cmd-shift-\\",
     "f2",
     "cmd-.",
     "shift-alt-o",

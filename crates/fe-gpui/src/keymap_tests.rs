@@ -129,6 +129,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ),
     ("cmd-shift-k", "editor.delete_rows", Some("editor")),
     ("cmd-/", "editor.toggle_comment", Some("editor")),
+    ("cmd-shift-\\", "editor.go_to_bracket", Some("editor")),
     ("backspace", "editor.backspace", Some("editor")),
     ("shift-backspace", "editor.backspace", Some("editor")),
     ("delete", "editor.delete", Some("editor")),

@@ -263,6 +263,13 @@ keys = { macos = "cmd-/", default = "ctrl-/" }
 command = "editor.toggle_comment"
 context = "editor"
 
+# Go to Bracket, as VS Code binds jumpToBracket. `secondary-\` is
+# pane.split_right.
+[[bindings]]
+keys = "secondary-shift-\\"
+command = "editor.go_to_bracket"
+context = "editor"
+
 [[bindings]]
 keys = "backspace"
 command = "editor.backspace"

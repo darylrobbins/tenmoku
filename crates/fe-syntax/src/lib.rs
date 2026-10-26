@@ -43,7 +43,9 @@ mod runtime;
 mod select;
 mod syntax;
 
-pub use brackets::{BracketDepth, BracketPair, bracket_depths, bracket_pair};
+pub use brackets::{
+    BracketDepth, BracketPair, bracket_depths, bracket_pair, enclosing_bracket_pair,
+};
 pub use comment::{CommentTokens, auto_pairs, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};

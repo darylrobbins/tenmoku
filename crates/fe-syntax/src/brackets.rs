@@ -42,6 +42,68 @@ pub fn bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketPair> {
         .find_map(|(start, end)| pair_of(root, start, end))
 }
 
+/// The innermost pair enclosing `offset`: its opening bracket ends at or
+/// before `offset` and its closing one starts at or after it. Pairs are those
+/// of [`bracket_pair`]: brackets in strings and comments are not leaves, a
+/// pair with a `MISSING` bracket isn't one, and brackets that are children of
+/// an `ERROR` node are skipped.
+///
+/// None without a tree or when no pair encloses `offset`. Past 4,096 siblings
+/// after `offset`, a wide parent's remaining brackets are not looked at.
+pub fn enclosing_bracket_pair(syntax: &Syntax, offset: usize) -> Option<BracketPair> {
+    let root = syntax.tree()?.root_node();
+    let mut ancestor = root.descendant_for_byte_range(offset, offset);
+    while let Some(node) = ancestor {
+        if !node.is_error()
+            && let Some(pair) = enclosing_among_children(node, offset)
+        {
+            return Some(pair);
+        }
+        ancestor = node.parent();
+    }
+    None
+}
+
+fn enclosing_among_children(parent: Node, offset: usize) -> Option<BracketPair> {
+    let mut cursor = parent.walk();
+    if !cursor.goto_first_child() {
+        return None;
+    }
+    // Open brackets: kind and node, innermost last.
+    let mut open: Vec<(&str, Node)> = Vec::new();
+    let mut after = 0usize;
+    loop {
+        let node = cursor.node();
+        if let Some((other, opens)) = bracket_kind(node) {
+            if opens {
+                open.push((node.kind(), node));
+            } else if let Some(at) = open.iter().rposition(|&(kind, _)| kind == other) {
+                let (_, opening) = open[at];
+                open.truncate(at);
+                if !opening.is_missing()
+                    && !node.is_missing()
+                    && opening.end_byte() <= offset
+                    && node.start_byte() >= offset
+                {
+                    return Some(BracketPair {
+                        open: opening.byte_range(),
+                        close: node.byte_range(),
+                    });
+                }
+            }
+        }
+        if node.start_byte() >= offset {
+            after += 1;
+            if after > SCAN_LIMIT {
+                return None;
+            }
+        }
+        if !cursor.goto_next_sibling() {
+            return None;
+        }
+    }
+}
+
 fn pair_of(root: Node, start: usize, end: usize) -> Option<BracketPair> {
     // Descend with one cursor: `Node::parent` and `descendant_for_byte_range`
     // each cost a pass over a wide parent's children.

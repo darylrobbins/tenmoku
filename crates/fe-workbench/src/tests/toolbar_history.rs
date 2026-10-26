@@ -308,3 +308,26 @@ fn an_editor_jump_pushes_history(cx: &mut TestAppContext) {
     click_button(&pane, &offsets, false, cx);
     assert_eq!(at(&workbench, cx), (main, in_b));
 }
+
+#[gpui::test]
+fn go_to_bracket_is_a_jump(cx: &mut TestAppContext) {
+    let (_dir, root) = project();
+    let (workbench, cx) = opened(cx, &root);
+    let pane = active(&workbench, cx);
+    let offsets = button_offsets(&pane, cx);
+    let main = root.join("src/main.rs");
+
+    // Just before the call's `(`: the bracket's partner is the `)`.
+    let from = caret_at(&workbench, "util::helper", "util::helper".len(), cx);
+    let to = MAIN.find("();").unwrap() + 2;
+    cx.simulate_keystrokes("cmd-shift-\\");
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (main.clone(), to));
+    assert_eq!(nav(&pane, cx), (true, false));
+
+    click_button(&pane, &offsets, false, cx);
+    assert_eq!(at(&workbench, cx), (main.clone(), from));
+    assert_eq!(nav(&pane, cx), (false, true));
+    click_button(&pane, &offsets, true, cx);
+    assert_eq!(at(&workbench, cx), (main, to));
+}

@@ -286,6 +286,8 @@ mod fold_gutter_tests;
 #[cfg(test)]
 mod font_ligatures_tests;
 #[cfg(test)]
+mod go_to_bracket_tests;
+#[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]
 mod menu_tests;

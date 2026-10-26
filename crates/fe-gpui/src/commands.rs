@@ -52,6 +52,10 @@ thread_local! {
 /// Shows the hover popover at the caret ([`crate::hover`]).
 pub const SHOW_HOVER: &str = "editor.show_hover";
 
+/// Moves each caret to its bracket's partner, or to the close of the pair
+/// around it ([`EditorView::go_to_bracket`]).
+pub const GO_TO_BRACKET: &str = "editor.go_to_bracket";
+
 /// Saves the buffer: fe-editor's command, which the view runs off the main
 /// thread ([`EditorView::save_from_command`]).
 const SAVE: &str = "editor.save";
@@ -66,6 +70,7 @@ fn editor_registry() -> Registry<Editor> {
     for (id, title) in [
         (SHOW_HOVER, "Show Hover"),
         (signature_help::SHOW, "Show Signature Help"),
+        (GO_TO_BRACKET, "Go to Bracket"),
     ] {
         registry
             .register(id, title, |_: &mut EditorTarget<'_>, _: &Actor| {
@@ -643,6 +648,7 @@ impl EditorView {
         let failed = matches!(result, Err(DispatchError::Failed { .. }));
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
+            Ok(()) if invocation.command.as_str() == GO_TO_BRACKET => self.go_to_bracket(cx),
             Ok(()) if invocation.command.as_str() == signature_help::SHOW => {
                 self.ask_signature_help(signature_help::SignatureTrigger::Invoked, cx)
             }
@@ -664,6 +670,60 @@ impl EditorView {
             Err(error) => log::error!("{error}"),
         }
         !failed
+    }
+
+    /// `editor.go_to_bracket`: a caret next to a bracket goes to its partner,
+    /// on the same side of it ([`fe_syntax::bracket_pair`]); any other goes to
+    /// the closing bracket of the innermost pair around it. Every selection
+    /// moves on its own and collapses to a caret. Nothing moves without a
+    /// tree for the current text. A move is a jump: the host hears where the
+    /// primary selection was ([`EditorViewEvent::Jumped`]).
+    fn go_to_bracket(&mut self, cx: &mut Context<Self>) {
+        let Some(syntax) = synced_syntax(&self.syntax, &self.model) else {
+            return;
+        };
+        if syntax.needs_parse() {
+            return;
+        }
+        let selections = self.model.selections();
+        let target = |head: usize| {
+            if let Some(pair) = fe_syntax::bracket_pair(syntax, head) {
+                let (open, close) = (&pair.open, &pair.close);
+                return Some(if close.start == head {
+                    open.end
+                } else if open.start == head {
+                    close.end
+                } else if close.end == head {
+                    open.start
+                } else {
+                    close.start
+                });
+            }
+            fe_syntax::enclosing_bracket_pair(syntax, head).map(|pair| pair.close.start)
+        };
+        let heads: Vec<(usize, usize)> = (selections.iter())
+            .map(|selection| {
+                let head = if selection.reversed {
+                    selection.range.start
+                } else {
+                    selection.range.end
+                };
+                (head, target(head).unwrap_or(head))
+            })
+            .collect();
+        if heads.iter().all(|(head, to)| head == to) {
+            return;
+        }
+        let primary = selections.len() - 1;
+        let from = heads[primary].0;
+        self.record_vim_jump(cx);
+        self.model
+            .set_selections(heads.iter().map(|&(_, to)| fe_buffer::ResolvedSelection {
+                range: to..to,
+                reversed: false,
+            }));
+        self.changed(cx);
+        cx.emit(EditorViewEvent::Jumped { from });
     }
 
     /// Runs `invocation`, one of the proposal commands: dispatched through

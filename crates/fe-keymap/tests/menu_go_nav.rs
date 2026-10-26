@@ -35,6 +35,7 @@ fn go_menu_lists_navigation_commands() {
             "-",
             "quick_open.toggle",
             "go_to_line.toggle",
+            "editor.go_to_bracket",
             "nav.workspace_symbols",
             "-",
             "nav.goto_definition",
