@@ -211,6 +211,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("find.toggle_case", "Match Case", "find_bar"),
     ("find.toggle_whole_word", "Match Whole Word", "find_bar"),
     ("find.toggle_regex", "Use Regular Expression", "find_bar"),
+    (
+        "find.toggle_preserve_case",
+        "Toggle Preserve Case",
+        "find_bar",
+    ),
     ("find.toggle_replace", "Toggle Replace", "find_bar"),
     ("find.replace_next", "Replace", "find_bar"),
     ("find.replace_all", "Replace All", "find_bar"),

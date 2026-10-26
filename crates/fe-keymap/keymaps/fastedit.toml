@@ -697,6 +697,11 @@ keys = { macos = "alt-cmd-w", default = "alt-w" }
 command = "search.toggle_whole_word"
 context = "search_panel"
 
+[[bindings]]
+keys = { macos = "alt-cmd-p", default = "alt-p" }
+command = "search.toggle_preserve_case"
+context = "search_panel"
+
 # Search details: the include and exclude fields, as VS Code's
 # toggleQueryDetails. Off macOS no other binding takes ctrl-shift-j, and the
 # panel's context keeps it from vim's <C-J> in an editor.
@@ -1374,6 +1379,12 @@ context = "find_bar"
 [[bindings]]
 keys = { macos = "alt-cmd-r", default = "alt-r" }
 command = "find.toggle_regex"
+context = "find_bar"
+
+# Preserve Case, VS Code's AB toggle: a replacement takes each match's case.
+[[bindings]]
+keys = { macos = "alt-cmd-p", default = "alt-p" }
+command = "find.toggle_preserve_case"
 context = "find_bar"
 
 # Replace, as VS Code binds it on macOS, anywhere in the workbench: from a

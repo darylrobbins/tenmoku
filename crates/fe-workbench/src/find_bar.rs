@@ -17,7 +17,10 @@
 //! (with vim on, the one at the caret) and selects the next, and
 //! `find.replace_all` replaces every match in one edit, so one undo takes
 //! it all back. The replacement is literal unless the regex option is on,
-//! when `$1` and the like expand ([`Replacement::parse`]).
+//! when `$1` and the like expand ([`Replacement::parse`]). With Preserve
+//! Case on (`find.toggle_preserve_case`, the `AB` toggle in the replace
+//! row), each match's replacement, expanded, then takes the match's case
+//! ([`preserve_case::apply`]).
 //!
 //! The commands are the pane's typed commands ([`crate::find_commands`]),
 //! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
@@ -43,6 +46,7 @@ use gpui::{
 use crate::{
     Pane,
     picker::{self, PaletteOp},
+    preserve_case,
 };
 
 /// The key context the find bar's element sets.
@@ -94,6 +98,9 @@ pub(crate) struct FindBar {
     match_case: bool,
     whole_word: bool,
     regex: bool,
+    /// Whether a replacement takes the case of the match it replaces. It
+    /// changes no match, so toggling it doesn't search again.
+    preserve_case: bool,
     /// What the query makes; `None` while it's empty.
     pattern: Option<Result<Pattern, PatternError>>,
     /// Where a change to the query or an option finds from, in the buffer
@@ -126,6 +133,7 @@ impl FindBar {
             match_case: false,
             whole_word: false,
             regex: false,
+            preserve_case: false,
             pattern: None,
             anchor: None,
             left: None,
@@ -152,6 +160,17 @@ impl FindBar {
     #[cfg(test)]
     pub(crate) fn replace_input(&self) -> &Entity<TextInput> {
         &self.replace_input
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preserves_case(&self) -> bool {
+        self.preserve_case
+    }
+
+    /// Flips Preserve Case, which the next replace follows.
+    pub(crate) fn toggle_preserve_case(&mut self) {
+        self.status = None;
+        self.preserve_case = !self.preserve_case;
     }
 
     /// The query the input and options make.
@@ -265,7 +284,7 @@ impl FindBar {
             // Catching up with edits through another view of the buffer
             // first, so the offsets read are the text's as it is.
             editor.model_mut().sync_display();
-            let step = match self.plan_next(editor, &pattern, &with) {
+            let step = match self.plan_next(editor, &pattern, &with, self.preserve_case) {
                 Ok(step) => step,
                 Err(Interrupted) => {
                     self.status = Some(("Search took too long".into(), true));
@@ -303,11 +322,12 @@ impl FindBar {
         editor: &EditorView,
         pattern: &Pattern,
         with: &Replacement,
+        preserve_case: bool,
     ) -> Result<Step, Interrupted> {
         let mut deadline = Deadline::new();
         let current = match editor.is_read_only() {
             true => None,
-            false => current_match(editor, pattern, with, &mut deadline)?,
+            false => current_match(editor, pattern, with, preserve_case, &mut deadline)?,
         };
         let text = editor.model().text();
         let Some((range, new)) = current else {
@@ -336,7 +356,14 @@ impl FindBar {
         let with = self.replacement(cx);
         editor.update(cx, |editor, cx| {
             editor.model_mut().sync_display();
-            let edits = match replace_all(editor.model().text(), &pattern, &with) {
+            let text = editor.model().text();
+            let edits = match replace_all(text, &pattern, &with) {
+                Ok(edits) if self.preserve_case => (edits.into_iter())
+                    .map(|(range, new)| {
+                        let new = preserve_case::apply(&text.slice_to_string(range.clone()), &new);
+                        (range, new)
+                    })
+                    .collect(),
                 Ok(edits) => edits,
                 // Nothing changes, vim's mode and selection neither.
                 Err(Interrupted) => {
@@ -603,6 +630,14 @@ impl FindBar {
                     .children(toggles),
             );
         let replace_row = self.replacing.then(|| {
+            let preserve_case = div().debug_selector(|| "find-preserve-case".into()).child(
+                ToggleButton::new("find-preserve-case", "AB", ui)
+                    .on(self.preserve_case)
+                    .on_click(cx.listener(|pane, _, _, cx| {
+                        pane.update_find(|bar, _, _| bar.toggle_preserve_case(), cx);
+                        cx.notify();
+                    })),
+            );
             let buttons = [
                 (FindOp::ReplaceNext, "Replace", "find-replace"),
                 (FindOp::ReplaceAll, "Replace All", "find-replace-all"),
@@ -634,6 +669,7 @@ impl FindBar {
                         .gap_0p5()
                         // A replace keeps focus where it was too.
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                        .child(preserve_case)
                         .children(buttons),
                 )
         });
@@ -661,12 +697,13 @@ impl FindBar {
 }
 
 /// The match the primary selection is in `editor`, or with vim on the one
-/// starting at the caret, and its replacement by `with`; `Err` if
-/// `deadline` passed before both were known.
+/// starting at the caret, and its replacement by `with`, in the match's case
+/// with `preserve_case`; `Err` if `deadline` passed before both were known.
 fn current_match(
     editor: &EditorView,
     pattern: &Pattern,
     with: &Replacement,
+    preserve_case: bool,
     deadline: &mut Deadline,
 ) -> Result<Option<Edit>, Interrupted> {
     let text = editor.model().text();
@@ -687,6 +724,10 @@ fn current_match(
     if deadline.expired() {
         return Err(Interrupted);
     }
+    let replacement = replacement.map(|replacement| match preserve_case {
+        true => preserve_case::apply(&text.slice_to_string(range.clone()), &replacement),
+        false => replacement,
+    });
     Ok(replacement.map(|replacement| (range, normalize_newlines(replacement))))
 }
 
@@ -849,3 +890,7 @@ fn on_input_command(
 #[cfg(test)]
 #[path = "find_replace_tests.rs"]
 mod replace_tests;
+
+#[cfg(test)]
+#[path = "find_preserve_case_tests.rs"]
+mod preserve_case_tests;

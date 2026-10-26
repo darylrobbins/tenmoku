@@ -536,3 +536,22 @@ fn the_svg_view_as_text_commands_are_cataloged() {
         assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
     }
 }
+
+/// Preserve Case's commands, the find bar's typed one and the search
+/// panel's, are in the catalog with their titles and contexts.
+#[test]
+fn the_preserve_case_commands_are_in_the_catalog() {
+    let catalog = crate::command_catalog();
+    for id in ["find.toggle_preserve_case", "search.toggle_preserve_case"] {
+        let command = CommandId::parse(id).unwrap();
+        assert_eq!(catalog.check(&command, &Value::Null), Ok(()), "{id}");
+    }
+    let registry = crate::search_panel::registry();
+    let meta = (registry.commands()).find(|meta| meta.id.as_str() == "search.toggle_preserve_case");
+    let meta = meta.expect("search.toggle_preserve_case");
+    assert_eq!(meta.title.to_string(), "Toggle Preserve Case");
+    assert_eq!(
+        meta.context.as_ref().map(ToString::to_string).as_deref(),
+        Some("search_panel")
+    );
+}

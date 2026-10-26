@@ -79,6 +79,17 @@ impl Pane {
         self.find_command(FindOp::ToggleReplace, cx);
     }
 
+    // Not a [`FindOp`]: the terminal's find row, which runs those, has no
+    // replace.
+    /// Toggle Preserve Case
+    #[command(id = "find.toggle_preserve_case", context = "find_bar")]
+    pub(crate) fn toggle_preserve_case(&mut self, cx: &mut Cx<Self>) {
+        if applies(cx.cx) {
+            self.update_find(|bar, _, _| bar.toggle_preserve_case(), cx.cx);
+            cx.cx.notify();
+        }
+    }
+
     /// Replace
     #[command(id = "find.replace_next", context = "find_bar")]
     pub(crate) fn replace_next(&mut self, cx: &mut Cx<Self>) {

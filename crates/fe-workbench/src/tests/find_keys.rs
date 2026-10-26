@@ -13,7 +13,7 @@ use kiln_shell::{
 
 use crate::{Launch, Pane, Workbench};
 
-const TABLE: [(&str, &str, &str); 13] = [
+const TABLE: [(&str, &str, &str); 14] = [
     ("cmd-f", "find.show", "editor"),
     ("cmd-g", "find.next", "editor || find_bar"),
     ("cmd-shift-g", "find.previous", "editor || find_bar"),
@@ -23,6 +23,7 @@ const TABLE: [(&str, &str, &str); 13] = [
     ("alt-cmd-c", "find.toggle_case", "find_bar"),
     ("alt-cmd-w", "find.toggle_whole_word", "find_bar"),
     ("alt-cmd-r", "find.toggle_regex", "find_bar"),
+    ("alt-cmd-p", "find.toggle_preserve_case", "find_bar"),
     ("alt-cmd-f", "find.show_replace", "workbench"),
     ("cmd-!", "find.replace_next", "find_bar"),
     ("alt-cmd-enter", "find.replace_all", "find_bar"),

@@ -48,6 +48,7 @@ mod pane_toolbar;
 mod peek;
 mod persist;
 mod picker;
+mod preserve_case;
 mod project_panel;
 mod quick_open;
 mod references_panel;

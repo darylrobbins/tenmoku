@@ -15,7 +15,9 @@
 //! (its row's Replace button). Dismissing a file drops it from the results,
 //! so Replace All skips it. The files are matched again as they are then:
 //! see [`search_replace`]. Afterwards the status line says what was
-//! replaced, and the search runs again.
+//! replaced, and the search runs again. With Preserve Case on
+//! (`search.toggle_preserve_case`, the `AB` toggle beside the field), each
+//! match's expansion takes the match's case ([`preserve_case::apply`]).
 //!
 //! The results list takes focus (`search.focus_results`, or down from the
 //! query) and moves through the file and match rows with
@@ -86,9 +88,10 @@ use crate::{
     Pane,
     pane::Reveal,
     picker::{self, PaletteOp},
+    preserve_case,
     workbench_commands::{ReplaceAllInFiles, ReplaceInFiles, invoked_in},
 };
-use search_replace::{Boundary, Target, count};
+use search_replace::{Boundary, MakeEdits, Target, count};
 
 /// Project search in the sidebar: focused when shown, for its input.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
@@ -194,6 +197,9 @@ pub struct SearchPanel {
     regex: bool,
     match_case: bool,
     whole_word: bool,
+    /// Whether a replacement takes the case of the match it replaces. It
+    /// changes no match, so toggling it doesn't search again.
+    preserve_case: bool,
     options: SearchOptions,
     /// The current run's, which only its batches carry.
     generation: u64,
@@ -280,6 +286,7 @@ impl SearchPanel {
             regex: false,
             match_case: false,
             whole_word: false,
+            preserve_case: false,
             options: SearchOptions::default(),
             generation: 0,
             searched: None,
@@ -727,6 +734,12 @@ impl SearchPanel {
         cx.notify();
     }
 
+    /// Flips Preserve Case, which the next replacement follows.
+    fn toggle_preserve_case(&mut self, cx: &mut Context<Self>) {
+        self.preserve_case = !self.preserve_case;
+        cx.notify();
+    }
+
     /// The status line, and whether it's an error.
     pub fn status(&self) -> Option<(SharedString, bool)> {
         if let Some((notice, error)) = &self.notice {
@@ -829,6 +842,7 @@ impl SearchPanel {
                     .clone()
                     .update(cx, TextInput::submit);
             }
+            Some(SearchOp::TogglePreserveCase) => return self.toggle_preserve_case(cx),
             Some(SearchOp::ToggleReplace) => return self.toggle_replace(window, cx),
             Some(SearchOp::ToggleDetails) => return self.toggle_details(window, cx),
             Some(SearchOp::FocusResults) => return self.focus_results(window, cx),
@@ -984,13 +998,15 @@ impl SearchPanel {
         );
         let targets = self.targets(0..self.files.len());
         let boundary = self.boundary.clone();
+        let preserve_case = self.preserve_case;
         cx.spawn(async move |panel, cx| {
             if answer.await != Ok(0) {
                 return;
             }
             panel
                 .update(cx, |panel, cx| {
-                    panel.replace(boundary, targets, query, template, cx)
+                    let with = (template, preserve_case);
+                    panel.replace(boundary, targets, query, with, cx)
                 })
                 .ok();
         })
@@ -1040,19 +1056,20 @@ impl SearchPanel {
         let Some(query) = self.searched.clone() else {
             return;
         };
-        let template = self.replace.read(cx).text().to_owned();
+        let with = (self.replace.read(cx).text().to_owned(), self.preserve_case);
         let targets = self.targets(files);
-        self.replace(self.boundary.clone(), targets, query, template, cx);
+        self.replace(self.boundary.clone(), targets, query, with, cx);
     }
 
-    /// Replaces `query`'s matches in `targets` with `template`, then says
-    /// what it did and searches again.
+    /// Replaces `query`'s matches in `targets` with `with`'s template, in
+    /// each match's case if `with` says to preserve it, then says what it
+    /// did and searches again.
     fn replace(
         &mut self,
         boundary: Option<Boundary>,
         targets: Vec<Target>,
         query: SearchQuery,
-        template: String,
+        (template, preserve_case): (String, bool),
         cx: &mut Context<Self>,
     ) {
         let Some(boundary) = boundary else {
@@ -1060,7 +1077,8 @@ impl SearchPanel {
             cx.notify();
             return;
         };
-        let replacer = match Replacer::new(&query, &template) {
+        let replacer: Arc<dyn MakeEdits> = match Replacer::new(&query, &template) {
+            Ok(replacer) if preserve_case => Arc::new(Preserving(replacer)),
             Ok(replacer) => Arc::new(replacer),
             Err(error) => {
                 self.notice = Some((error.to_string(), true));
@@ -2053,6 +2071,19 @@ impl Render for SearchPanel {
                 .child(
                     div()
                         .flex_none()
+                        .pr_1()
+                        .debug_selector(|| "search-preserve-case".into())
+                        .child(
+                            ToggleButton::new("search-preserve-case", "AB", &ui)
+                                .on(self.preserve_case)
+                                .on_click(
+                                    cx.listener(|panel, _, _, cx| panel.toggle_preserve_case(cx)),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
                         .debug_selector(|| "search-replace-all".into())
                         .child(
                             ToggleButton::new("search-replace-all", "Replace All", &ui).on_click(
@@ -2144,12 +2175,32 @@ impl Render for SearchPanel {
     }
 }
 
+/// A project replacer whose expansions take the case of their matches.
+struct Preserving(Replacer);
+
+impl MakeEdits for Preserving {
+    fn edits(&self, text: &str) -> Vec<(Range<usize>, String)> {
+        let edits = self.0.edits(text).into_iter();
+        edits
+            .map(|(range, expansion)| {
+                // A byte regex can match inside a char: as the replace
+                // widens it, the case is of the chars it touches.
+                let start = text.floor_char_boundary(range.start);
+                let end = text.ceil_char_boundary(range.end.max(start));
+                let expansion = preserve_case::apply(&text[start..end], &expansion);
+                (range, expansion)
+            })
+            .collect()
+    }
+}
+
 /// What a search panel command asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchOp {
     ToggleRegex,
     ToggleCase,
     ToggleWholeWord,
+    TogglePreserveCase,
     /// Enter in the search panel's input: [`TextInput::submit`].
     Submit,
     ToggleReplace,
@@ -2204,6 +2255,12 @@ pub(crate) fn registry() -> Registry<SearchCommands> {
             "Toggle Whole Word",
             search,
             ToggleWholeWord,
+        ),
+        (
+            "search.toggle_preserve_case",
+            "Toggle Preserve Case",
+            search,
+            TogglePreserveCase,
         ),
         (
             "search.toggle_replace",
@@ -2439,3 +2496,7 @@ mod results_tree_tests;
 #[cfg(test)]
 #[path = "search_panel_details_tests.rs"]
 mod details_tests;
+
+#[cfg(test)]
+#[path = "search_preserve_case_tests.rs"]
+mod preserve_case_tests;

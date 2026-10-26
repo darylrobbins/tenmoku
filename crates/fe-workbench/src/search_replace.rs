@@ -71,6 +71,19 @@ use crate::{Workbench, lsp};
 /// How often to look again at a pane reading a file being replaced.
 const READ_WAIT: Duration = Duration::from_millis(10);
 
+/// What makes a file's replacements: each match in its text, in order, as
+/// a byte range, with what replaces it. A [`Replacer`], or one wrapped to
+/// keep each match's case ([`super::Preserving`]).
+pub(crate) trait MakeEdits: Send + Sync + 'static {
+    fn edits(&self, text: &str) -> Edits;
+}
+
+impl MakeEdits for Replacer {
+    fn edits(&self, text: &str) -> Edits {
+        Replacer::edits(self, text)
+    }
+}
+
 /// A file to replace in: its path, and as the results name it.
 #[derive(Clone, Debug)]
 pub(crate) struct Target {
@@ -149,10 +162,10 @@ pub(crate) fn count(n: usize, noun: &str) -> String {
 
 /// Replaces `replacer`'s matches in `targets`, the search's files beneath
 /// `boundary`: see the [module](self).
-pub(crate) async fn replace(
+pub(crate) async fn replace<R: MakeEdits + ?Sized>(
     boundary: Boundary,
     targets: Vec<Target>,
-    replacer: Arc<Replacer>,
+    replacer: Arc<R>,
     cx: &mut AsyncApp,
 ) -> Outcome {
     let mut outcome = Outcome::default();
@@ -186,7 +199,7 @@ pub(crate) async fn replace(
             if editors.is_empty() {
                 closed.push((target, rel, resolved));
             } else {
-                replace_open(&target, &editors, &replacer, &mut outcome, cx);
+                replace_open(&target, &editors, &*replacer, &mut outcome, cx);
             }
         }
         closed
@@ -199,7 +212,7 @@ pub(crate) async fn replace(
         async move {
             (closed.into_iter())
                 .map(|(target, rel, resolved)| {
-                    let read = read_closed(&boundary, &rel, &replacer);
+                    let read = read_closed(&boundary, &rel, &*replacer);
                     (target, rel, resolved, read)
                 })
                 .collect::<Vec<_>>()
@@ -214,7 +227,7 @@ pub(crate) async fn replace(
         let prepared = cx.update(|cx| {
             let editors = editors_of(&resolved, cx);
             if !editors.is_empty() {
-                replace_open(&target, &editors, &replacer, &mut outcome, cx);
+                replace_open(&target, &editors, &*replacer, &mut outcome, cx);
                 return Ok(None);
             }
             let (buffer, edits) = read?;
@@ -263,7 +276,7 @@ pub(crate) async fn replace(
                 .map(|editor| !editor.read(cx).model().is_dirty())
                 .collect();
             let mut live = Outcome::default();
-            replace_open(&target, &stale, &replacer, &mut live, cx);
+            replace_open(&target, &stale, &*replacer, &mut live, cx);
             if !live.skipped.is_empty() {
                 for (rel, why) in live.skipped {
                     outcome
@@ -630,7 +643,7 @@ async fn wait_unread(path: &Path, cx: &mut AsyncApp) {
 fn replace_open(
     target: &Target,
     editors: &[Entity<EditorView>],
-    replacer: &Replacer,
+    replacer: &(impl MakeEdits + ?Sized),
     outcome: &mut Outcome,
     cx: &mut App,
 ) {
@@ -706,7 +719,7 @@ fn coalesce(text: &str, edits: Edits) -> Edits {
 fn read_closed(
     boundary: &Boundary,
     rel: &Path,
-    replacer: &Replacer,
+    replacer: &(impl MakeEdits + ?Sized),
 ) -> Result<(Buffer, Edits), String> {
     let file = open_beneath(boundary, rel)?;
     let buffer = Buffer::from_file(file).map_err(|error| format!("can't read it: {error}"))?;
