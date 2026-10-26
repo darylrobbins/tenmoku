@@ -567,6 +567,7 @@ pub fn registry() -> Registry<Editor> {
     crate::eol_commands::register(&mut registry);
     crate::indent_convert::register(&mut registry);
     crate::fold_levels::register(&mut registry);
+    crate::last_edit::register(&mut registry);
     crate::plugin_access::allow_plugins(&mut registry);
     registry
 }

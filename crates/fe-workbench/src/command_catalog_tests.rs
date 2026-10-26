@@ -387,6 +387,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.fold_level_6",
     "editor.fold_level_7",
     "editor.fold_recursively",
+    "editor.go_to_last_edit_location",
     "editor.indent",
     "editor.move_document_end",
     "editor.move_document_start",
@@ -640,4 +641,16 @@ fn the_fold_level_commands_have_their_ids_and_titles() {
         let meta = registry.commands().find(|meta| meta.id.as_str() == id);
         assert_eq!(meta.map(|meta| meta.title.to_string()), Some(title), "{id}");
     }
+}
+
+/// Go to Last Edit Location is registered with this ID and title.
+#[test]
+fn go_to_last_edit_location_has_its_id_and_title() {
+    let registry = fe_editor::commands::registry();
+    let id = "editor.go_to_last_edit_location";
+    let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+    assert_eq!(
+        meta.map(|meta| meta.title.to_string()).as_deref(),
+        Some("Go to Last Edit Location")
+    );
 }

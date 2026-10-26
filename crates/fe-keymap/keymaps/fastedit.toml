@@ -376,6 +376,12 @@ keys = "secondary-k secondary-x"
 command = "editor.trim_trailing_whitespace"
 context = "editor"
 
+# VS Code's chord: back to where the last edit ended.
+[[bindings]]
+keys = "secondary-k secondary-q"
+command = "editor.go_to_last_edit_location"
+context = "editor"
+
 # VS Code's chord: the hover popover for what's at the caret.
 [[bindings]]
 keys = "secondary-k secondary-i"

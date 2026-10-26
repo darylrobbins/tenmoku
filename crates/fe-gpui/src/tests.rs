@@ -205,6 +205,7 @@ const CASES: &[Case] = &[
         .keys("cmd-k cmd-[ cmd-k cmd-]")
         .folds(&[]),
     case("cmd-k cmd-x", "a  \nb\t\nc|", "a\nb\nc|"),
+    case("cmd-k cmd-q", "a|\nb\nc", "ax|\nb\nc").keys("x down down cmd-k cmd-q"),
     // Every cursor gets the command.
     case("backspace", "a|b\nc|d", "|b\n|d"),
     case("alt-right", "|ab cd\n|ef gh", "ab| cd\nef| gh"),

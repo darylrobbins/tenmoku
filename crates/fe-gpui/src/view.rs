@@ -751,7 +751,11 @@ impl EditorView {
             |model| {
                 let edits = plan(model);
                 let at = edits.first()?.0.start;
-                model.buffer_mut().edit(edits, fe_buffer::Origin::User);
+                let mut buffer = model.buffer_mut();
+                let version = buffer.version();
+                buffer.edit(edits, fe_buffer::Origin::User);
+                buffer.note_edits_since(version);
+                drop(buffer);
                 let text = model.text();
                 let at = text.clip_offset(at, Bias::Left);
                 model.unfold_rows(text.offset_to_point(at).row..=text.offset_to_point(at).row);

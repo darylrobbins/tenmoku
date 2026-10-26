@@ -148,6 +148,26 @@ impl Workbench {
         edits: Vec<FileEdits>,
         cx: &mut Context<Self>,
     ) -> Result<AppliedEdits, String> {
+        self.apply_file_edits_as(edits, false, cx)
+    }
+
+    /// [`Workbench::apply_file_edits`] for an edit the user asked for (a
+    /// rename, a code action picked), which notes where it ended in each
+    /// open buffer as the user's last edit there.
+    pub(crate) fn apply_user_file_edits(
+        &mut self,
+        edits: Vec<FileEdits>,
+        cx: &mut Context<Self>,
+    ) -> Result<AppliedEdits, String> {
+        self.apply_file_edits_as(edits, true, cx)
+    }
+
+    fn apply_file_edits_as(
+        &mut self,
+        edits: Vec<FileEdits>,
+        by_user: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<AppliedEdits, String> {
         let mut applied = AppliedEdits { files: 0, edits: 0 };
         let mut edited = HashMap::new();
         let others = Self::other_workbenches(cx);
@@ -169,7 +189,7 @@ impl Workbench {
             let run = (run.into_iter())
                 .map(|file| Ok((file.path, resolve_depends(file.target, &done)?)))
                 .collect::<Result<_, String>>()?;
-            self.apply_text_edits(run, &others, &mut edited, &mut applied, cx)?;
+            self.apply_text_edits(run, by_user, &others, &mut edited, &mut applied, cx)?;
         }
         cx.notify();
         Ok(applied)
@@ -177,10 +197,12 @@ impl Workbench {
 
     /// Applies `run`, text edits between two operations, once each is
     /// checked, counting them in `applied`; `edited` has the buffers
-    /// earlier runs changed, and gets this one's.
+    /// earlier runs changed, and gets this one's. With `by_user`, notes
+    /// where the edits ended in each open buffer as the user's last edit.
     fn apply_text_edits(
         &mut self,
         run: Vec<(PathBuf, EditTarget)>,
+        by_user: bool,
         others: &[Entity<Workbench>],
         edited: &mut HashMap<BufferId, Edited>,
         applied: &mut AppliedEdits,
@@ -214,6 +236,7 @@ impl Workbench {
                 let model = view.model_mut();
                 model.sync_display();
                 let mut buffer = model.buffer_mut();
+                let version = buffer.version();
                 let base = buffer.current();
                 let mut change = ProposedChange::from_edits(base, edits, Origin::User);
                 // As made: clipped, line endings normalized, and no-ops
@@ -222,6 +245,9 @@ impl Workbench {
                     .map(|hunk| (hunk.range, hunk.new_text.len()))
                     .collect();
                 change.accept_all(&mut buffer);
+                if by_user {
+                    buffer.note_edits_since(version);
+                }
                 drop(buffer);
                 cx.notify();
                 (model.buffer().id(), model.buffer().version(), made)

@@ -673,8 +673,10 @@ fn replace_open(
             if matched > 0 {
                 let edits = coalesce(&text, matches);
                 let mut buffer = model.buffer_mut();
+                let version = buffer.version();
                 let mut change = ProposedChange::from_edits(buffer.current(), edits, Origin::User);
                 change.accept_all(&mut buffer);
+                buffer.note_edits_since(version);
             }
             cx.notify();
             matched

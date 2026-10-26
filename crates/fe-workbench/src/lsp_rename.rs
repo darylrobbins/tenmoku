@@ -151,7 +151,7 @@ impl Workbench {
         });
         let applied = answer
             .map_err(|error| reason(&error))
-            .and_then(|files| self.apply_file_edits(files, cx));
+            .and_then(|files| self.apply_user_file_edits(files, cx));
         match applied {
             Ok(_) => {
                 let editor = request.editor.upgrade();

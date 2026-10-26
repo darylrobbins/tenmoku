@@ -473,7 +473,11 @@ fn put(diff: &Entity<DiffView>, editor: &Entity<EditorView>, rows: Range<u32>, c
     let (span, replacement) = changed_span(right_text, &new_text);
     right.update(cx, |view, cx| {
         let model = view.model_mut();
-        model.buffer_mut().edit([(span, replacement)], Origin::User);
+        let mut buffer = model.buffer_mut();
+        let version = buffer.version();
+        buffer.edit([(span, replacement)], Origin::User);
+        buffer.note_edits_since(version);
+        drop(buffer);
         let text = model.text();
         let at = text.row_start(first.min(text.row_count().saturating_sub(1)));
         model.set_cursor(at);

@@ -220,7 +220,7 @@ impl Workbench {
                         Ok(action) => actioner
                             .edits(&action)
                             .map_err(|error| reason(&error))
-                            .and_then(|edits| workbench.apply_file_edits(edits, cx))
+                            .and_then(|edits| workbench.apply_user_file_edits(edits, cx))
                             .map(|_| actioner.run(&action)),
                         Err(error) => Err(reason(&error)),
                     };
@@ -339,7 +339,9 @@ impl CodeActionsPicker {
                 (Err(error), _) => Err(reason(&error)),
                 (Ok(_), None) => Err("the window has closed".to_owned()),
                 (Ok(edits), Some(workbench)) => workbench
-                    .update(cx, |workbench, cx| workbench.apply_file_edits(edits, cx))
+                    .update(cx, |workbench, cx| {
+                        workbench.apply_user_file_edits(edits, cx)
+                    })
                     .map(|_| self.actioner.run(&action)),
             },
             Err(error) => Err(reason(&error)),

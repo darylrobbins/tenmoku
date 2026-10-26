@@ -396,6 +396,10 @@ impl CompletionSession {
         debug_assert!(applied.is_ok(), "{applied:?}");
         let current = buffer.snapshot();
         let caret_at = current.resolve(&end);
+        // Before catching up, which may make a newer edit elsewhere.
+        if id.is_some() {
+            model.note_edit_at(current.anchor_at(caret_at, Bias::Left));
+        }
         // Undoing ends on the first batch, which puts back the typed text
         // or else the text the main edit replaced, around where the caret
         // was; redoing on the last, whose main edit the caret follows.

@@ -156,6 +156,8 @@ fn every_editor_command_is_registered() {
             .chain(["fold_recursively".into(), "unfold_recursively".into()])
             .map(|name| format!("editor.{name}")),
     );
+    // Go to Last Edit Location, which doesn't edit.
+    expected.push("editor.go_to_last_edit_location".to_string());
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",

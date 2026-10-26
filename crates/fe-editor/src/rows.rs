@@ -380,6 +380,8 @@ impl EditorModel {
             }
             let snapshot = buffer.snapshot();
             let selections = SelectionSet::from_resolved(&snapshot, selections);
+            // Before catching up, which may make a newer edit elsewhere.
+            self.note_edit(&selections);
             self.sync_snippet_mirrors(&mut buffer, Some(id));
             (selections, snapshot.version())
         };

@@ -38,6 +38,7 @@ mod indent_convert;
 pub mod indent_guides;
 mod indent_style;
 mod join_lines;
+mod last_edit;
 mod line_sort;
 mod multi_cursor;
 pub mod occurrences;
@@ -181,6 +182,9 @@ pub struct EditorModel {
     expand_history: Option<smart_select::ExpandHistory>,
     /// The snippet whose tabstops tab and shift-tab walk (see [`snippet`]).
     snippet: Option<snippet::SnippetSession>,
+    /// Where the user's last edit ended; shared with splits (see
+    /// [`last_edit`]).
+    last_edit: last_edit::LastEdit,
 }
 
 impl EditorModel {
@@ -224,6 +228,7 @@ impl EditorModel {
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
+            last_edit: Rc::default(),
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -283,6 +288,7 @@ impl EditorModel {
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
+            last_edit: Rc::clone(&self.last_edit),
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
@@ -330,6 +336,8 @@ impl EditorModel {
             display: &mut self.display,
             widths: &mut self.widths,
             events: &self.events,
+            last_edit: &self.last_edit,
+            by_user: self.origin == Origin::User,
         }
     }
 
@@ -1495,6 +1503,10 @@ impl EditorModel {
             }
             let snapshot = buffer.snapshot();
             let selections = SelectionSet::from_resolved(&snapshot, selections);
+            // Before catching up, which may make a newer edit elsewhere.
+            if id.is_some() {
+                self.note_edit(&selections);
+            }
             self.typing_left(&selections);
             // After the snapshot callers' offsets are in.
             self.sync_snippet_mirrors(&mut buffer, id);
@@ -1582,6 +1594,9 @@ pub struct BufferMut<'a> {
     display: &'a mut DisplayMap,
     widths: &'a mut Box<dyn CharWidth>,
     events: &'a Subscription,
+    /// The model's [`last_edit`], and whether its edits are the user's.
+    last_edit: &'a last_edit::LastEdit,
+    by_user: bool,
 }
 
 impl std::ops::Deref for BufferMut<'_> {

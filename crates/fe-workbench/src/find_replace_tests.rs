@@ -769,3 +769,34 @@ fn replace_all_over_many_empty_matches(cx: &mut TestAppContext) {
     let expected = format!("{}x", "ax\n".repeat(rows));
     assert!(text(&editor, cx) == expected);
 }
+
+/// A replacement is the user's last edit, with none before and over one:
+/// Go to Last Edit Location goes to its end.
+#[gpui::test]
+fn a_replacement_is_the_last_edit(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = opened(cx, &[("a.txt", "foo\nbar\nfoo\n")]);
+    let pane = pane(&workbench, cx);
+    let editor = editor(&pane, cx);
+    let last = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, _| editor.model().last_edit_location())
+    };
+    assert_eq!(last(cx), None);
+
+    run("find.show_replace", cx);
+    type_in(&pane, false, "foo", cx);
+    type_in(&pane, true, "baz", cx);
+    select(&editor, 0..3, cx);
+    run("find.replace_next", cx);
+    assert_eq!(text(&editor, cx), "baz\nbar\nfoo\n");
+    assert_eq!(last(cx), Some(3));
+
+    // Typing, then a replacement after it.
+    editor.update(cx, |editor, _| {
+        editor.model_mut().set_cursor(4);
+        editor.model_mut().insert("x");
+    });
+    assert_eq!(last(cx), Some(5));
+    run("find.replace_all", cx);
+    assert_eq!(text(&editor, cx), "baz\nxbar\nbaz\n");
+    assert_eq!(last(cx), Some(12));
+}

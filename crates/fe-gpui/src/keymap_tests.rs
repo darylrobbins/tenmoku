@@ -163,6 +163,11 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "editor.trim_trailing_whitespace",
         Some("editor"),
     ),
+    (
+        "cmd-k cmd-q",
+        "editor.go_to_last_edit_location",
+        Some("editor"),
+    ),
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
     ("f2", "lsp.rename", Some("editor")),
     ("cmd-.", "lsp.code_actions", Some("editor")),

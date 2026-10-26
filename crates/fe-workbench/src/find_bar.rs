@@ -830,7 +830,11 @@ fn apply(editor: &mut EditorView, edits: Vec<Edit>, cx: &mut Context<EditorView>
     model.sync_display();
     let last = edits.last().map_or(0, |(range, _)| range.end);
     let after = model.snapshot().anchor_after(last);
-    (model.buffer_mut()).with_transaction_aside(|buffer| buffer.edit(edits, Origin::User));
+    let mut buffer = model.buffer_mut();
+    let version = buffer.version();
+    buffer.with_transaction_aside(|buffer| buffer.edit(edits, Origin::User));
+    buffer.note_edits_since(version);
+    drop(buffer);
     let end = model.snapshot().resolve(&after);
     let row = model.text().offset_to_point(end).row;
     let row_start = model.text().row_start(row);
