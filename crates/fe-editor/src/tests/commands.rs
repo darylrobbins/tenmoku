@@ -129,6 +129,7 @@ fn every_editor_command_is_registered() {
     ];
     expected.extend(rows.map(|name| format!("editor.{name}")));
     expected.push("editor.toggle_comment".to_string());
+    expected.push("editor.toggle_block_comment".to_string());
     expected.extend([
         "editor.expand_selection".to_string(),
         "editor.shrink_selection".to_string(),
@@ -185,6 +186,7 @@ fn every_editor_command_is_registered() {
         "duplicate_rows",
         "delete_rows",
         "toggle_comment",
+        "toggle_block_comment",
         "sort_lines_ascending",
         "sort_lines_descending",
         "delete_duplicate_lines",

@@ -139,6 +139,10 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "cmd-u",
         "editor.cursor_undo",
         Some("editor && !vim.enabled"),
+    (
+        "shift-alt-a",
+        "editor.toggle_block_comment",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
     ),
     ("backspace", "editor.backspace", Some("editor")),
     ("shift-backspace", "editor.backspace", Some("editor")),

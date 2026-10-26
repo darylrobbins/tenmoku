@@ -284,6 +284,11 @@ command = "editor.cursor_undo"
 context = "editor && !vim.enabled"
 
 [[bindings]]
+keys = "shift-alt-a"
+command = "editor.toggle_block_comment"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
 keys = "backspace"
 command = "editor.backspace"
 context = "editor"

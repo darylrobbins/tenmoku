@@ -486,6 +486,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.transform_lowercase",
     "editor.transform_titlecase",
     "editor.transform_uppercase",
+    "editor.toggle_block_comment",
     "editor.toggle_comment",
     "editor.toggle_soft_wrap",
     "editor.trigger_completion",
