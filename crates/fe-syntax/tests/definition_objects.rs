@@ -328,9 +328,10 @@ fn definition_objects_is_bounded() {
         let found_kinds: Vec<_> = found.iter().map(|object| object.kind).collect();
         assert_eq!(found_kinds, kinds, "{at}");
         assert!(text[found[0].outer.clone()].starts_with(innermost), "{at}");
-        // The ancestors, each query's operations, capped on Big's
-        // methods at about 10,000, and the body's edge tokens.
-        assert!(work <= 20_000, "{at}: {work}");
+        // The ancestors, each query's operations and the body's edge
+        // tokens: Big's methods are found rooted at the method, not by
+        // listing the impl's.
+        assert!(work <= 5_000, "{at}: {work}");
     }
     let blank = definition_objects(&syntax, text.find("x();").unwrap());
     assert_eq!(&text[blank[0].inner.clone().unwrap()], "x();");
@@ -401,4 +402,168 @@ fn samples_match_the_whole_outline() {
         checked += 1;
     }
     assert!(checked >= 15, "{checked} samples checked");
+}
+
+/// The kinds and the start of the outer text of the objects around the
+/// first `at` after `after` in `text`, and the work finding them.
+fn kinds_at<'a>(
+    syntax: &Syntax,
+    text: &'a str,
+    after: &str,
+    at: &str,
+) -> (Vec<(DefinitionKind, &'a str)>, usize) {
+    let start = text.find(after).unwrap_or_else(|| panic!("{after:?}"));
+    let offset = start + text[start..].find(at).unwrap_or_else(|| panic!("{at:?}"));
+    let (found, work) = definition_objects_counted(syntax, offset);
+    let found = (found.into_iter())
+        .map(|object| {
+            let outer = &text[object.outer];
+            (
+                object.kind,
+                &outer[..outer.find('\n').unwrap_or(outer.len())],
+            )
+        })
+        .collect();
+    (found, work)
+}
+
+/// Members only a pattern rooted at their container captures, as a Kotlin
+/// secondary constructor, are found past thousands of others, within a
+/// bound on the work that doesn't grow with them.
+#[cfg(all(feature = "kotlin", feature = "swift", feature = "ruby"))]
+#[test]
+fn container_members_past_thousands_of_others() {
+    const MEMBERS: usize = 5_000;
+    const WORK: usize = 3_000;
+    let member = |language: &str, i: usize| match language {
+        "kotlin" => format!("    fun m{i}() {{ a({i}) }}\n"),
+        "swift" => format!("    func m{i}() {{ a({i}) }}\n"),
+        "swift protocol" => format!("    func m{i}()\n"),
+        _ => format!("  def m{i}\n    a({i})\n  end\n"),
+    };
+    let file = |language: &str, open: &str, last: &str, close: &str| {
+        let mut text = String::from(open);
+        (0..MEMBERS).for_each(|i| text.push_str(&member(language, i)));
+        text + last + close
+    };
+
+    let kotlin = file(
+        "kotlin",
+        "class Big {\n",
+        "    constructor(x: Int) {\n        b(x)\n    }\n",
+        "}\n",
+    );
+    let swift = file(
+        "swift",
+        "class Big {\n",
+        "    init(x: Int) {\n        b()\n    }\n    deinit {\n        c()\n    }\n    \
+         subscript(i: Int) -> Int {\n        return d()\n    }\n",
+        "}\n",
+    );
+    let protocol = file(
+        "swift protocol",
+        "protocol Big {\n",
+        "    func last(x: Int) -> Int\n    init(y: Int)\n    subscript(i: Int) -> Int { get }\n",
+        "}\n",
+    );
+    let ruby = file(
+        "ruby",
+        "class Big\n",
+        "  private def hidden\n    e\n  end\n  alias last m0\n",
+        "end\n",
+    );
+    let cases = [
+        (
+            "kotlin",
+            &kotlin,
+            "constructor",
+            "b(x)",
+            "constructor(x: Int) {",
+            "class Big {",
+        ),
+        (
+            "swift",
+            &swift,
+            "init",
+            "b()",
+            "init(x: Int) {",
+            "class Big {",
+        ),
+        ("swift", &swift, "deinit", "c()", "deinit {", "class Big {"),
+        (
+            "swift",
+            &swift,
+            "subscript",
+            "d()",
+            "subscript(i: Int) -> Int {",
+            "class Big {",
+        ),
+        (
+            "swift",
+            &protocol,
+            "func last",
+            "x: Int",
+            "func last(x: Int) -> Int",
+            "protocol Big {",
+        ),
+        (
+            "swift",
+            &protocol,
+            "init",
+            "y: Int",
+            "init(y: Int)",
+            "protocol Big {",
+        ),
+        (
+            "swift",
+            &protocol,
+            "subscript",
+            "get",
+            "subscript(i: Int) -> Int { get }",
+            "protocol Big {",
+        ),
+        (
+            "ruby",
+            &ruby,
+            "def hidden",
+            "e\n",
+            "def hidden",
+            "class Big",
+        ),
+        ("ruby", &ruby, "alias", "last", "alias last m0", "class Big"),
+    ];
+    for (language, text, after, at, member, class) in cases {
+        let syntax = parsed(language, text);
+        let (found, work) = kinds_at(&syntax, text, after, at);
+        assert_eq!(
+            found,
+            [(Function, member), (Class, class)],
+            "{language} {at}"
+        );
+        assert!(work <= WORK, "{language} {at}: {work}");
+    }
+}
+
+/// A body of one expression thousands of nodes deep down its left or right
+/// edge is found whole, at a cost of its edges' first levels, from the
+/// function's name.
+#[test]
+fn deep_edge_expressions_are_bounded() {
+    let left = format!("1{}", " + 1".repeat(3_000));
+    let right = format!("{}1", "- ".repeat(3_000));
+    let text =
+        format!("fn left() -> i64 {{\n    {left}\n}}\nfn right() -> i64 {{\n    {right}\n}}\n");
+    let syntax = parsed("rust", &text);
+    for (name, body) in [("left", &left), ("right", &right)] {
+        let offset = text.find(&format!("fn {name}")).unwrap() + 3;
+        let (found, work) = definition_objects_counted(&syntax, offset);
+        assert_eq!(found.len(), 1, "{name}");
+        assert_eq!(found[0].kind, Function, "{name}");
+        assert_eq!(
+            &text[found[0].inner.clone().unwrap()],
+            body.as_str(),
+            "{name}"
+        );
+        assert!(work <= 1_000, "{name}: {work}");
+    }
 }

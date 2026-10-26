@@ -246,17 +246,22 @@ pub fn outline_scopes(
 /// the offset's leaf in turn, starting only there, and the items it finds
 /// around the offset are kept, the first pattern winning on a node, as in
 /// the outline. Kinds only a whole-file lookup tells apart, a C++ method
-/// from a function, may be either. A pattern rooted at a container lists
-/// its children, an impl's methods, so each ancestor's run stops after
-/// [`MAX_OPERATIONS_AT`] hundred operations: past a thousand or so
-/// members, an item only such a pattern lists (a Kotlin secondary
-/// constructor; a Swift init, deinit, subscript or protocol method; a Ruby
-/// alias) is missed (T241).
+/// from a function, may be either.
+///
+/// A pattern rooted at a container lists its children, an impl's methods,
+/// so it runs as [`Rooted::contained`] has it instead: rooted at the item,
+/// with the container checked up the item's parents, so a member costs the
+/// same past any number of others. That takes a pattern whose path from its
+/// root to its item is nodes and fields alone; one with more on the way, an
+/// anchor, a sibling or a capture a predicate tests (a Lua assignment's
+/// targets, a make rule's, a C# constant), stays in the query, and each
+/// ancestor's run of it stops after [`MAX_OPERATIONS_AT`] hundred
+/// operations: past a thousand or so members, such an item is missed.
 ///
 /// The bound counts each ancestor, plus each run's operations rounded up
-/// to the next hundred, as tree-sitter reports them. Finding the leaf is
-/// tree-sitter's descent by byte, as for
-/// [`larger_syntax_node`](crate::larger_syntax_node).
+/// to the next hundred, as tree-sitter reports them, plus each parent a
+/// contained item's path looks at. Finding the leaf is tree-sitter's
+/// descent by byte, as for [`larger_syntax_node`](crate::larger_syntax_node).
 pub(crate) fn items_containing<R>(
     syntax: &Syntax,
     offset: usize,
@@ -267,21 +272,25 @@ pub(crate) fn items_containing<R>(
     if offset >= text.len() {
         return Ok((Vec::new(), 0));
     }
-    let compiled = job.query.outline(job.language);
+    let rooted = job.query.rooted(job.language);
+    let queries = [Some(&rooted.query), rooted.contained.as_ref()];
     let mut items: HashMap<usize, Found<'_>> = HashMap::new();
     let mut visited = 0;
     let mut node = (job.tree.root_node()).descendant_for_byte_range(offset, offset + 1);
     while let Some(ancestor) = node {
-        let (found, _, hundreds) =
-            find_counted(job.language, compiled, &job.tree, text, Find::At(ancestor));
-        visited += 1 + 100 * (hundreds + 1);
-        for found in found {
-            if !found.range.contains(&offset) {
-                continue;
-            }
-            match items.get(&found.node.id()) {
-                Some(kept) if kept.pattern <= found.pattern => {}
-                _ => _ = items.insert(found.node.id(), found),
+        visited += 1;
+        for compiled in queries.into_iter().flatten() {
+            let (found, _, work) =
+                find_counted(job.language, compiled, &job.tree, text, Find::At(ancestor));
+            visited += work;
+            for found in found {
+                if !found.range.contains(&offset) {
+                    continue;
+                }
+                match items.get(&found.node.id()) {
+                    Some(kept) if kept.pattern <= found.pattern => {}
+                    _ => _ = items.insert(found.node.id(), found),
+                }
             }
         }
         node = ancestor.parent();
@@ -490,8 +499,10 @@ fn find<'tree>(
     (found, truncated)
 }
 
-/// [`find`], with how many hundred operations the query took when it's
-/// [`Find::At`] a node, up to [`MAX_OPERATIONS_AT`]; 0 otherwise.
+/// [`find`], with a bound on its work when it's [`Find::At`] a node: the
+/// query's operations rounded up to the next hundred, up to
+/// [`MAX_OPERATIONS_AT`] hundred and one, plus the parents a
+/// [`Contained`] item's path looked at; 0 otherwise.
 fn find_counted<'tree>(
     language: &Language,
     compiled: &Compiled,
@@ -541,6 +552,7 @@ fn find_counted<'tree>(
     let mut found: Vec<Found<'_>> = Vec::new();
     let mut by_node: HashMap<usize, usize> = HashMap::new();
     let mut truncated = false;
+    let mut parents = 0;
     // Once truncated, the sections still open: headings past the cap
     // aren't listed, but they end those sections.
     let mut open: Option<OpenSections> = None;
@@ -582,6 +594,15 @@ fn find_counted<'tree>(
         let Some((kind, node)) = item else {
             continue;
         };
+        // A pattern rooted at the item stands for one rooted at its
+        // container, which the item's parents have to be.
+        let mut pattern = found_match.pattern_index;
+        if let Some(contained) = compiled.contained.get(pattern) {
+            if !contained.holds(node, &mut parents) {
+                continue;
+            }
+            pattern = contained.pattern;
+        }
         // A C prototype, int f(void);, declares a function, not a
         // variable, and isn't a definition.
         if kind == OutlineKind::Variable && names_function {
@@ -614,7 +635,6 @@ fn find_counted<'tree>(
                 None => continue,
             },
         };
-        let pattern = found_match.pattern_index;
         if let Some(&ix) = by_node.get(&node.id()) {
             let found = &mut found[ix];
             if pattern == found.pattern {
@@ -662,7 +682,11 @@ fn find_counted<'tree>(
     if !truncated {
         extend_to_sections(&mut found);
     }
-    (found, truncated, hundreds)
+    let work = match counted {
+        true => 100 * (hundreds + 1) + parents,
+        false => 0,
+    };
+    (found, truncated, work)
 }
 
 /// An item as the query found it, before nesting.
@@ -2144,6 +2168,7 @@ struct OutlineQuery {
     definitions: &'static [&'static str],
     outline: OnceLock<Compiled>,
     symbols: OnceLock<Compiled>,
+    rooted: OnceLock<Rooted>,
 }
 
 struct Compiled {
@@ -2153,6 +2178,95 @@ struct Compiled {
     /// Each pattern's predicates of ours, by pattern index. Tree-sitter
     /// checks its own, such as `#match?`.
     predicates: Vec<Vec<Predicate>>,
+    /// For [`Rooted::contained`], the outline pattern each pattern stands
+    /// for, by pattern index; empty for other queries.
+    contained: Vec<Contained>,
+}
+
+/// The outline query as [`items_containing`] runs it rooted at a node.
+struct Rooted {
+    /// The outline query without the patterns `contained` stands for, so
+    /// with the same pattern indices.
+    query: Compiled,
+    /// For each outline pattern that captures its item below its root, on
+    /// a path of nodes and fields alone, as `(class_body (function) @item)`,
+    /// a pattern per item capture rooted at the item, `(function) @item`,
+    /// which [`Contained`] checks the path of. `None` if there are none.
+    contained: Option<Compiled>,
+}
+
+/// What a pattern of [`Rooted::contained`] stands for: an outline pattern
+/// rooted at a container of its item.
+struct Contained {
+    /// The outline pattern's index.
+    pattern: usize,
+    /// The item's ancestors up to the outline pattern's root, innermost
+    /// first.
+    path: Vec<Step>,
+}
+
+/// An ancestor on a [`Contained`] item's path.
+struct Step {
+    /// Its kind, a named node's; any named node if `None`.
+    kind: Option<String>,
+    /// The field its child on the path is in, if the pattern names one.
+    field: Option<String>,
+    /// Fields it has to be without, as `!receiver`.
+    without: Vec<String>,
+}
+
+impl Contained {
+    /// Whether `item`'s ancestors are as the path has them, counting in
+    /// `parents` those looked at.
+    fn holds(&self, item: Node, parents: &mut usize) -> bool {
+        let mut child = item;
+        for step in &self.path {
+            *parents += 1;
+            let Some(parent) = child.parent() else {
+                return false;
+            };
+            let holds = parent.is_named()
+                && step.kind.as_ref().is_none_or(|kind| parent.kind() == kind)
+                && (step.field.as_ref())
+                    .is_none_or(|field| field_of(parent, child) == Some(field.as_str()))
+                && !(step.without.iter()).any(|field| parent.child_by_field_name(field).is_some());
+            if !holds {
+                return false;
+            }
+            child = parent;
+        }
+        true
+    }
+}
+
+/// The field `parent`'s child `child` is in, found by descending to it by
+/// byte rather than going through `parent`'s children.
+fn field_of<'tree>(parent: Node<'tree>, child: Node<'tree>) -> Option<&'tree str> {
+    let mut cursor = parent.walk();
+    if cursor
+        .goto_first_child_for_byte(child.start_byte())
+        .is_some()
+    {
+        loop {
+            if cursor.node() == child {
+                return cursor.field_name();
+            }
+            if cursor.node().start_byte() > child.start_byte() || !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    // An empty child, as a missing token, the descent can step over.
+    cursor.reset(parent);
+    cursor.goto_first_child();
+    loop {
+        if cursor.node() == child {
+            return cursor.field_name();
+        }
+        if !cursor.goto_next_sibling() {
+            return None;
+        }
+    }
 }
 
 /// What a query capture is.
@@ -2178,7 +2292,38 @@ impl OutlineQuery {
             definitions,
             outline: OnceLock::new(),
             symbols: OnceLock::new(),
+            rooted: OnceLock::new(),
         }
+    }
+
+    /// The outline query split for [`items_containing`], on first use. See
+    /// [`Rooted`].
+    fn rooted(&self, language: &Language) -> &Rooted {
+        self.rooted.get_or_init(|| {
+            let mut query = self.compile(language, "outline", &[self.parts]);
+            let source = self.parts.concat();
+            let mut derived = String::new();
+            let mut contained = Vec::new();
+            for pattern in 0..query.query.pattern_count() {
+                let start = query.query.start_byte_for_pattern(pattern);
+                let Some(items) = contained_items(&source, start) else {
+                    continue;
+                };
+                query.query.disable_pattern(pattern);
+                for (item, path) in items {
+                    derived.push_str(&item);
+                    derived.push('\n');
+                    contained.push(Contained { pattern, path });
+                }
+            }
+            let contained = (!contained.is_empty()).then(|| {
+                let mut compiled = self.compile_source(language, "contained outline", &derived);
+                assert_eq!(compiled.query.pattern_count(), contained.len());
+                compiled.contained = contained;
+                compiled
+            });
+            Rooted { query, contained }
+        })
     }
 
     /// The outline query compiled for `language`'s grammar, on first use.
@@ -2199,8 +2344,11 @@ impl OutlineQuery {
     /// tree-sitter nor [`Predicate`] knows, is a bug: it panics naming the
     /// language.
     fn compile(&self, language: &Language, what: &str, parts: &[&[&str]]) -> Compiled {
-        let source = parts.concat().concat();
-        let query = Query::new(&language.grammar, &source)
+        self.compile_source(language, what, &parts.concat().concat())
+    }
+
+    fn compile_source(&self, language: &Language, what: &str, source: &str) -> Compiled {
+        let query = Query::new(&language.grammar, source)
             .unwrap_or_else(|error| panic!("{} {what} query: {error}", self.language));
         let captures = query
             .capture_names()
@@ -2231,7 +2379,364 @@ impl OutlineQuery {
             query,
             captures,
             predicates,
+            contained: Vec::new(),
         }
+    }
+}
+
+/// For the outline pattern starting at `start` in `source`, if it captures
+/// its item below its root on a path of nodes and fields alone, each item
+/// capture's own pattern, with the pattern's predicates on it, and the
+/// path; `None` for a pattern rooted at its item, or one with more on the
+/// way, which tree-sitter has to match whole. See [`Rooted::contained`].
+fn contained_items(source: &str, start: usize) -> Option<Vec<(String, Vec<Step>)>> {
+    let mut reader = Reader {
+        source,
+        at: start,
+        predicates: Vec::new(),
+    };
+    let pattern = reader.pattern();
+    let mut items = Vec::new();
+    each_item(&pattern, &mut Vec::new(), &mut items);
+    let mut contained = Vec::with_capacity(items.len());
+    let mut below = false;
+    for (path, item) in items {
+        let mut captures = Vec::new();
+        captures_of(item, &mut captures);
+        // An item in an item, which the pattern's one match gives just
+        // one of.
+        if (captures.iter())
+            .filter(|c| c.starts_with("definition."))
+            .count()
+            > 1
+        {
+            return None;
+        }
+        let mut predicates = String::new();
+        for (bytes, tested) in &reader.predicates {
+            if !tested.iter().all(|capture| captures.contains(capture)) {
+                return None;
+            }
+            predicates.push(' ');
+            predicates.push_str(&source[bytes.clone()]);
+        }
+        let steps = path_to(&path, item)?;
+        below |= !steps.is_empty();
+        let item = &source[item.bytes.clone()];
+        let item = match predicates.is_empty() {
+            true => item.to_string(),
+            false => format!("({item}{predicates})"),
+        };
+        contained.push((item, steps));
+    }
+    below.then_some(contained)
+}
+
+/// The steps from the root of `path` down to `item`, innermost first, if
+/// it's nodes, alternations and fields alone. A group wrapping the pattern
+/// for its predicates counts for nothing.
+fn path_to(path: &[&Written<'_>], item: &Written<'_>) -> Option<Vec<Step>> {
+    let mut steps = Vec::new();
+    // The node the next is a child of, and the field that child is in.
+    let mut parent: Option<Step> = None;
+    let mut field: Option<&str> = None;
+    for (depth, written) in path.iter().copied().chain([item]).enumerate() {
+        if written.quantified || (depth < path.len() && !written.captures.is_empty()) {
+            return None;
+        }
+        if let Some(own) = written.field
+            && field.replace(own).is_some()
+        {
+            return None;
+        }
+        let next = match &written.expr {
+            _ if depth == path.len() => None,
+            Expr::Alternation(_) => continue,
+            Expr::Node(node) => {
+                if node.anchored || node.children.len() != 1 {
+                    return None;
+                }
+                if node.group {
+                    if depth > 0 {
+                        return None;
+                    }
+                    continue;
+                }
+                if node.kind.is_some_and(|kind| kind.contains('/')) {
+                    // A supertype's subtype.
+                    return None;
+                }
+                Some(Step {
+                    kind: node.kind.map(str::to_string),
+                    field: None,
+                    without: node.without.iter().map(|f| f.to_string()).collect(),
+                })
+            }
+            Expr::Other => return None,
+        };
+        match parent.as_mut() {
+            Some(parent) => parent.field = field.take().map(str::to_string),
+            None if field.is_some() => return None,
+            None => {}
+        }
+        steps.extend(parent.take());
+        parent = next;
+    }
+    steps.reverse();
+    Some(steps)
+}
+
+/// Each place in `written` with an item capture, `@definition.<kind>`,
+/// with what's around it, outermost first.
+fn each_item<'a, 's>(
+    written: &'a Written<'s>,
+    path: &mut Vec<&'a Written<'s>>,
+    items: &mut Vec<(Vec<&'a Written<'s>>, &'a Written<'s>)>,
+) {
+    if (written.captures.iter()).any(|capture| capture.starts_with("definition.")) {
+        items.push((path.clone(), written));
+    }
+    path.push(written);
+    for child in written.expr.children() {
+        each_item(child, path, items);
+    }
+    path.pop();
+}
+
+/// The captures in `written`, its own and its children's.
+fn captures_of<'s>(written: &Written<'s>, captures: &mut Vec<&'s str>) {
+    captures.extend_from_slice(&written.captures);
+    for child in written.expr.children() {
+        captures_of(child, captures);
+    }
+}
+
+/// A query pattern as written, read back from the query's source as far as
+/// [`contained_items`] needs.
+struct Written<'s> {
+    expr: Expr<'s>,
+    /// Its bytes in the source, the captures after it included, the field
+    /// before it and a quantifier not.
+    bytes: Range<usize>,
+    /// The field it's in, as `body:`.
+    field: Option<&'s str>,
+    /// Its captures, without the `@`.
+    captures: Vec<&'s str>,
+    /// Whether a `?`, `*` or `+` follows it.
+    quantified: bool,
+}
+
+enum Expr<'s> {
+    /// `(kind …)`, `(_ …)`, or a group, `((a) (b))`.
+    Node(WrittenNode<'s>),
+    /// `[a b]`.
+    Alternation(Vec<Written<'s>>),
+    /// A string, `_` or anything else without children.
+    Other,
+}
+
+struct WrittenNode<'s> {
+    /// `None` for `(_ …)` and a group.
+    kind: Option<&'s str>,
+    group: bool,
+    /// Its child patterns, not its predicates.
+    children: Vec<Written<'s>>,
+    /// Its `!field`s.
+    without: Vec<&'s str>,
+    /// Whether it has a `.` anchor.
+    anchored: bool,
+}
+
+impl<'s> Expr<'s> {
+    fn children(&self) -> &[Written<'s>] {
+        match self {
+            Expr::Node(node) => &node.children,
+            Expr::Alternation(alternatives) => alternatives,
+            Expr::Other => &[],
+        }
+    }
+}
+
+/// Reads a query's source for [`contained_items`]. The query has compiled,
+/// so it's well formed.
+struct Reader<'s> {
+    source: &'s str,
+    at: usize,
+    /// Each predicate read, `(#…)`, with the captures it tests.
+    predicates: Vec<(Range<usize>, Vec<&'s str>)>,
+}
+
+impl<'s> Reader<'s> {
+    /// The next byte past whitespace and comments.
+    fn peek(&mut self) -> Option<u8> {
+        let bytes = self.source.as_bytes();
+        loop {
+            match bytes.get(self.at)? {
+                b if b.is_ascii_whitespace() => self.at += 1,
+                b';' => {
+                    while bytes.get(self.at).is_some_and(|&b| b != b'\n') {
+                        self.at += 1;
+                    }
+                }
+                &b => return Some(b),
+            }
+        }
+    }
+
+    /// The byte after the next.
+    fn peek_second(&mut self) -> Option<u8> {
+        self.peek()?;
+        let mut ahead = Reader {
+            source: self.source,
+            at: self.at + 1,
+            predicates: Vec::new(),
+        };
+        ahead.peek()
+    }
+
+    /// A node kind, field or capture name, maybe empty.
+    fn word(&mut self) -> &'s str {
+        let start = self.at;
+        let bytes = self.source.as_bytes();
+        while (bytes.get(self.at))
+            .is_some_and(|&b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'))
+        {
+            self.at += 1;
+        }
+        &self.source[start..self.at]
+    }
+
+    fn string(&mut self) {
+        self.at += 1;
+        let bytes = self.source.as_bytes();
+        while let Some(&b) = bytes.get(self.at) {
+            self.at += if b == b'\\' { 2 } else { 1 };
+            if b == b'"' {
+                break;
+            }
+        }
+    }
+
+    fn pattern(&mut self) -> Written<'s> {
+        let mut field = None;
+        let first = self.peek();
+        let start = self.at;
+        let expr = match first {
+            Some(b'[') => {
+                self.at += 1;
+                let mut alternatives = Vec::new();
+                while self.peek().is_some_and(|b| b != b']') {
+                    alternatives.push(self.pattern());
+                }
+                self.at += 1;
+                Expr::Alternation(alternatives)
+            }
+            Some(b'(') => Expr::Node(self.node()),
+            Some(b'"') => {
+                self.string();
+                Expr::Other
+            }
+            _ => {
+                let word = self.word();
+                if word.is_empty() {
+                    // Not a pattern: skip a byte, so reading goes on.
+                    self.at += 1;
+                    Expr::Other
+                } else if self.peek() == Some(b':') {
+                    self.at += 1;
+                    field = Some(word);
+                    let mut written = self.pattern();
+                    written.field = field;
+                    return written;
+                } else {
+                    Expr::Other
+                }
+            }
+        };
+        let mut end = self.at;
+        let mut captures = Vec::new();
+        let mut quantified = false;
+        loop {
+            match self.peek() {
+                Some(b'?' | b'*' | b'+') => {
+                    self.at += 1;
+                    quantified = true;
+                }
+                Some(b'@') => {
+                    self.at += 1;
+                    captures.push(self.word());
+                    end = self.at;
+                }
+                _ => break,
+            }
+        }
+        Written {
+            expr,
+            bytes: start..end,
+            field,
+            captures,
+            quantified,
+        }
+    }
+
+    /// A node or group, at its `(`.
+    fn node(&mut self) -> WrittenNode<'s> {
+        self.at += 1;
+        let kind = match self.peek() {
+            Some(b) if b.is_ascii_alphanumeric() || b == b'_' => Some(self.word()),
+            _ => None,
+        };
+        let mut node = WrittenNode {
+            kind: kind.filter(|&kind| kind != "_"),
+            group: kind.is_none(),
+            children: Vec::new(),
+            without: Vec::new(),
+            anchored: false,
+        };
+        loop {
+            match self.peek() {
+                None => break,
+                Some(b')') => {
+                    self.at += 1;
+                    break;
+                }
+                Some(b'.') => {
+                    self.at += 1;
+                    node.anchored = true;
+                }
+                Some(b'!') => {
+                    self.at += 1;
+                    self.peek();
+                    node.without.push(self.word());
+                }
+                Some(b'(') if self.peek_second() == Some(b'#') => self.predicate(),
+                Some(_) => node.children.push(self.pattern()),
+            }
+        }
+        node
+    }
+
+    /// A predicate, at its `(`.
+    fn predicate(&mut self) {
+        let start = self.at;
+        self.at += 1;
+        let mut tested = Vec::new();
+        loop {
+            match self.peek() {
+                None => break,
+                Some(b')') => {
+                    self.at += 1;
+                    break;
+                }
+                Some(b'"') => self.string(),
+                Some(b'@') => {
+                    self.at += 1;
+                    tested.push(self.word());
+                }
+                Some(_) => self.at += 1,
+            }
+        }
+        self.predicates.push((start..self.at, tested));
     }
 }
 
@@ -2356,3 +2861,60 @@ fn query_for(language_name: &str) -> Option<&'static OutlineQuery> {
 #[cfg(test)]
 #[path = "outline_scope_tests.rs"]
 mod scope_tests;
+
+#[cfg(test)]
+mod contained_tests {
+    use super::*;
+    use crate::language_by_name;
+
+    /// Patterns rooted at a container whose path to their item is nodes and
+    /// fields alone run rooted at the item, each item capture of them its own
+    /// pattern; others stay whole. Every language's derived query compiles.
+    #[test]
+    fn container_patterns_run_rooted_at_their_items() {
+        let mut contained = Vec::new();
+        for query in &QUERIES {
+            let Some(language) = language_by_name(query.language) else {
+                continue;
+            };
+            let rooted = query.rooted(language);
+            let count = (rooted.contained.as_ref()).map_or(0, |c| c.query.pattern_count());
+            contained.push((query.language, count));
+        }
+        let count = |language: &str| contained.iter().find(|(l, _)| *l == language).unwrap().1;
+        // Class and enum bodies.
+        assert_eq!(count("kotlin"), 2);
+        // Class and enum bodies, and a protocol's.
+        assert_eq!(count("swift"), 3);
+        // Class, module and class << self bodies, directly or in private.
+        assert_eq!(count("ruby"), 6);
+        assert_eq!(count("rust"), 2);
+        // Not a C# constant, a field declaration's sibling deciding it.
+        assert_eq!(count("csharp"), 0);
+
+        // Lua's module tables have anchors in their item, which stays whole,
+        // and its targets' list a capture a predicate tests: it isn't
+        // contained.
+        let lua = query_for("lua").unwrap();
+        let source = lua.parts.concat();
+        let compiled = lua.outline(language_by_name("lua").unwrap());
+        let starts: Vec<_> = (0..compiled.query.pattern_count())
+            .map(|pattern| compiled.query.start_byte_for_pattern(pattern))
+            .collect();
+        let list = starts.iter().find(|&&start| {
+            source[start..].starts_with("((assignment_statement\n  (variable_list\n    name:")
+        });
+        assert_eq!(
+            contained_items(&source, *list.unwrap()).map(|items| items.len()),
+            None
+        );
+        let (item, path) = (starts.iter())
+            .find_map(|&start| {
+                contained_items(&source, start).filter(|items| items[0].1.len() == 1)
+            })
+            .map(|mut items| items.remove(0))
+            .unwrap();
+        assert!(item.starts_with("(assignment_statement"), "{item}");
+        assert_eq!(path[0].kind.as_deref(), Some("chunk"));
+    }
+}

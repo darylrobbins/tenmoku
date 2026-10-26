@@ -133,7 +133,8 @@ const MAX_HIDDEN_WHITESPACE: usize = 8;
 /// looked at.
 fn inner(text: &Text, body: Node, visited: &mut usize) -> Range<usize> {
     let count = body.child_count();
-    *visited += count as usize;
+    // Its first and last children.
+    *visited += 2;
     let braces = (count >= 2)
         .then(|| body.child(0).zip(body.child(count - 1)))
         .flatten()
@@ -146,8 +147,8 @@ fn inner(text: &Text, body: Node, visited: &mut usize) -> Range<usize> {
         return edges(body, body, visited);
     };
     let inside = 1..count - 1;
-    let first = (inside.clone()).find_map(|i| body.child(i).filter(|child| !blank(*child)));
-    let last = (inside.rev()).find_map(|i| body.child(i).filter(|child| !blank(*child)));
+    let first = not_blank(body, inside.clone(), visited);
+    let last = not_blank(body, inside.rev(), visited);
     match first.zip(last) {
         Some((first, last)) => edges(first, last, visited),
         None => open.end_byte()..open.end_byte(),
@@ -162,11 +163,9 @@ fn content_start(text: &Text, node: Node, depth: usize, visited: &mut usize) -> 
     let Some(first) = node.child(0).filter(|_| depth > 0) else {
         return node.start_byte();
     };
+    *visited += 1;
     if blank(first) {
-        let count = node.child_count();
-        *visited += count as usize;
-        return (1..count)
-            .find_map(|i| node.child(i).filter(|child| !blank(*child)))
+        return not_blank(node, 1..node.child_count(), visited)
             .map_or(node.start_byte(), |child| {
                 content_start(text, child, depth - 1, visited)
             });
@@ -186,22 +185,33 @@ fn content_end(text: &Text, node: Node, depth: usize, visited: &mut usize) -> us
     if depth == 0 || count == 0 {
         return node.end_byte();
     }
-    *visited += count as usize;
+    *visited += 1;
     let Some(last) = node.child(count - 1) else {
         return node.end_byte();
     };
     if blank(last) {
-        return (0..count - 1)
-            .rev()
-            .find_map(|i| node.child(i).filter(|child| !blank(*child)))
-            .map_or(node.end_byte(), |child| {
-                content_end(text, child, depth - 1, visited)
-            });
+        return not_blank(node, (0..count - 1).rev(), visited).map_or(node.end_byte(), |child| {
+            content_end(text, child, depth - 1, visited)
+        });
     }
     match whitespace(text, last.end_byte()..node.end_byte()) {
         true => content_end(text, last, depth - 1, visited),
         false => node.end_byte(),
     }
+}
+
+/// The first of `node`'s children at `indices` that isn't [`blank`],
+/// counting in `visited` each looked at: a long body's children past its
+/// edges aren't.
+fn not_blank<'tree>(
+    node: Node<'tree>,
+    mut indices: impl Iterator<Item = u32>,
+    visited: &mut usize,
+) -> Option<Node<'tree>> {
+    indices.find_map(|i| {
+        *visited += 1;
+        node.child(i).filter(|child| !blank(*child))
+    })
 }
 
 /// Whether `range` is a few bytes of whitespace or nothing: a node's edge
