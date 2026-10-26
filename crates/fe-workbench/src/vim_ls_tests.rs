@@ -116,12 +116,14 @@ fn fuzzy(cx: &mut TestAppContext) {
 }
 
 /// A window with no project folder lists the files by their whole paths,
-/// which the picker filters by.
+/// which the picker filters by. The filter matches the directory part too,
+/// whose random tempdir name is alphanumeric, so it types the `_` only one
+/// of the paths holds.
 #[gpui::test]
 fn without_a_root(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
-    for file in ["qz.txt", "wv.txt"] {
+    for file in ["under_score.txt", "plain.txt"] {
         std::fs::write(root.join(file), "one\n").unwrap();
     }
     let launch = crate::Launch {
@@ -131,7 +133,7 @@ fn without_a_root(cx: &mut TestAppContext) {
     let (workbench, cx, _) = crate::tests::open(cx, launch);
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
-    for file in ["qz.txt", "wv.txt"] {
+    for file in ["under_score.txt", "plain.txt"] {
         let path = root.join(file);
         cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
         draw(cx);
@@ -146,13 +148,13 @@ fn without_a_root(cx: &mut TestAppContext) {
         rows,
         [
             row(["1", "h", "[No Name]", "line 1"]),
-            row(["2", "#h", &name("qz.txt"), "line 1"]),
-            row(["3", "%a", &name("wv.txt"), "line 1"]),
+            row(["2", "#h", &name("under_score.txt"), "line 1"]),
+            row(["3", "%a", &name("plain.txt"), "line 1"]),
         ]
     );
-    cx.simulate_input("qz.t");
+    cx.simulate_input("_sc");
     let (rows, _) = shown(&workbench, cx).unwrap();
-    assert_eq!(rows, [row(["2", "#h", &name("qz.txt"), "line 1"])]);
+    assert_eq!(rows, [row(["2", "#h", &name("under_score.txt"), "line 1"])]);
 }
 
 /// A large file open in a viewer is listed with its caret's line.
