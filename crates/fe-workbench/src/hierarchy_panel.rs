@@ -920,6 +920,7 @@ impl Workbench {
             });
         let path = item.path.clone();
         let keep = focus.clone();
+        let still = panel.clone();
         let jump = move |workbench: &mut Self,
                          text: &Text,
                          window: &mut Window,
@@ -931,10 +932,14 @@ impl Workbench {
             // The pane gives the panel focus back once a file still to be
             // read lands.
             workbench.pane().clone().update(cx, |pane, cx| {
-                pane.open_at_keeping_focus(
+                pane.open_at_keeping_focus_while(
                     item.path.clone(),
                     Some(Reveal::bytes(bytes)),
                     keep.clone(),
+                    {
+                        let panel = still.clone();
+                        move |cx: &App| panel.upgrade().is_some_and(|p| p.read(cx).opened == token)
+                    },
                     window,
                     cx,
                 )
@@ -975,8 +980,16 @@ impl Workbench {
                         Ok(None) => return,
                         Err(error) => return toast::show(cx, Toast::error(error)),
                     };
+                    // The user may have moved focus elsewhere since pressing
+                    // Enter: the jump still lands, but focus stays there.
+                    let before = window.focused(cx);
+                    let owned = focus.contains_focused(window, cx);
                     jump(workbench, &text, window, cx);
-                    window.focus(&focus, cx);
+                    match before {
+                        _ if owned => window.focus(&focus, cx),
+                        Some(before) => window.focus(&before, cx),
+                        None => window.blur(cx),
+                    }
                 })
                 .ok();
         })

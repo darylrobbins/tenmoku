@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
-use gpui::{Entity, Focusable as _, TestAppContext};
+use gpui::{App, Entity, Focusable as _, TestAppContext, Window};
 use lsp_types::{CallHierarchyServerCapability, PositionEncodingKind, ServerCapabilities};
 use serde_json::{Value, json};
 
@@ -509,4 +509,135 @@ fn a_cancelled_expansion_can_be_retried(cx: &mut TestAppContext) {
     press(&mut s, "left");
     press(&mut s, "right");
     s.until("asked again", |s| asked_about(s, INCOMING).len() >= 3);
+}
+
+/// Asks for the first caller (in `y.rs`, not open) as Enter would, then at
+/// once runs `then` before the file's read can land.
+fn open_unopened_caller_then(s: &mut Lsp, then: impl FnOnce(&mut Window, &mut App)) {
+    std::fs::write(s.path("src/y.rs"), "fn y() { a(); }\n").unwrap();
+    let mut y = item(s, "y", 0);
+    y["uri"] = json!(s.uri("src/y.rs").to_string());
+    reply(s, INCOMING, json!([call("from", y, &[range(0, 9, 10)])]));
+    show(s, 2);
+    let panel = panel(s);
+    s.cx.update(|window, cx| {
+        panel.update(cx, |p, cx| p.open(vec![0], window, cx));
+        then(window, cx);
+    });
+}
+
+fn y_is_shown(s: &mut Lsp) -> bool {
+    let editor = (s.workbench).read_with(&s.cx, |w, cx| w.active_editor(cx).cloned());
+    editor.is_some_and(|editor| {
+        editor.read_with(&s.cx, |view, _| {
+            view.model().path().is_some_and(|p| p.ends_with("y.rs"))
+        })
+    })
+}
+
+#[gpui::test]
+fn a_file_landing_after_focus_moved_does_not_take_it_back(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    let workbench = s.workbench.clone();
+    // The user moves focus to the workbench (its other panels and the
+    // terminal are the same: not the hierarchy panel) after Enter.
+    open_unopened_caller_then(&mut s, |window, cx| {
+        window.focus(&workbench.read(cx).focus_handle(cx), cx);
+    });
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(!panel_focused(&mut s));
+}
+
+#[gpui::test]
+fn a_file_landing_for_a_superseded_request_does_not_take_focus(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    // Another row is opened (the root, whose file is open) before the
+    // read of the first lands, and the user then leaves the panel.
+    let workbench = s.workbench.clone();
+    open_unopened_caller_then(&mut s, |window, cx| {
+        let panel = (workbench.read(cx).dock().read(cx).hierarchy().cloned()).unwrap();
+        panel.update(cx, |p, cx| p.open(vec![], window, cx));
+        window.focus(&workbench.read(cx).focus_handle(cx), cx);
+    });
+    s.draw();
+    s.cx.executor().run_until_parked();
+    s.draw();
+    assert!(!y_is_shown(&mut s));
+    assert!(!panel_focused(&mut s));
+}
+
+/// Opens the unopened `y.rs` in the pane as the panel does once its own
+/// read has landed (the second stage), with the panel focused, then runs
+/// `then` before the pane's read of it can land.
+fn pane_loading_y_then(
+    s: &mut Lsp,
+    then: impl FnOnce(&Entity<HierarchyPanel>, &mut Window, &mut App),
+) {
+    std::fs::write(s.path("src/y.rs"), "fn y() { a(); }\n").unwrap();
+    show(s, 1);
+    let (panel, pane, path) = (
+        panel(s),
+        s.workbench.read_with(&s.cx, |w, _| w.pane().clone()),
+        s.path("src/y.rs"),
+    );
+    s.cx.update(|window, cx| {
+        let focus = panel.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        // The 5-argument form: these tests build against the pane as it was
+        // before the request check, to fail there.
+        pane.update(cx, |pane, cx| {
+            pane.open_at_keeping_focus(path, None, focus, window, cx)
+        });
+        then(&panel, window, cx);
+    });
+}
+
+#[gpui::test]
+fn a_pane_read_landing_after_focus_moved_does_not_take_it_back(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    let workbench = s.workbench.clone();
+    pane_loading_y_then(&mut s, |_, window, cx| {
+        window.focus(&workbench.read(cx).focus_handle(cx), cx);
+    });
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(!panel_focused(&mut s));
+}
+
+#[gpui::test]
+fn a_pane_read_landing_for_a_superseded_request_does_not_take_focus(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    let workbench = s.workbench.clone();
+    pane_loading_y_then(&mut s, |panel, window, cx| {
+        // Superseded, and focus moved: the panel's token no longer matches.
+        panel.update(cx, |p, _| p.opened += 1);
+        window.focus(&workbench.read(cx).focus_handle(cx), cx);
+    });
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(!panel_focused(&mut s));
+}
+
+#[gpui::test]
+fn a_pane_read_landing_for_a_superseded_request_leaves_a_blurred_window_blurred(
+    cx: &mut TestAppContext,
+) {
+    let mut s = setup(cx, true);
+    pane_loading_y_then(&mut s, |panel, window, cx| {
+        panel.update(cx, |p, _| p.opened += 1);
+        window.blur(cx);
+    });
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(s.cx.update(|window, cx| window.focused(cx).is_none()));
+}
+
+#[gpui::test]
+fn a_file_landing_in_a_blurred_window_leaves_it_blurred(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    open_unopened_caller_then(&mut s, |window, cx| window.blur(cx));
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(s.cx.update(|window, cx| window.focused(cx).is_none()));
 }

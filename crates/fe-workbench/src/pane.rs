@@ -149,7 +149,7 @@ pub struct Pane {
     landing: bool,
     /// Where focus goes once the file opened last lands, for an open made
     /// from a panel that keeps it. Dropped by any other open or navigation.
-    keep_focus: Option<FocusHandle>,
+    keep_focus: Option<KeepFocus>,
     /// The editor shown in the active tab's place, as [`Pane::note_shown`]
     /// last saw it, and how many times it has changed: see
     /// [`Revealed::shown`].
@@ -216,6 +216,13 @@ pub struct Pane {
 
 /// Saves the file, in the editor and in its preview shown in its place.
 const SAVE: &str = "editor.save";
+
+/// Where focus goes back to once a file opened from a panel lands.
+struct KeepFocus {
+    handle: FocusHandle,
+    /// Whether the panel's request is still the one asked last.
+    current: Box<dyn Fn(&App) -> bool>,
+}
 
 /// The keys typed in a Markdown preview shown in an editor's place,
 /// matched as the workbench's editor would match them, with the keymap
@@ -1066,6 +1073,43 @@ impl Pane {
         self.open_tab(path, reveal, false, window, cx);
     }
 
+    /// [`Pane::open_at`] for a panel that keeps focus: a file still to be
+    /// read doesn't take it once it lands, unless the user has navigated.
+    ///
+    /// Focus goes back only if `focus` still has it when the file lands:
+    /// otherwise the focus the user moved stays where it is.
+    #[cfg(test)]
+    pub(crate) fn open_at_keeping_focus(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_at_keeping_focus_while(path, reveal, focus, |_| true, window, cx);
+    }
+
+    /// [`Pane::open_at_keeping_focus`], also only while `current` says the
+    /// panel's request is still the one asked last.
+    pub(crate) fn open_at_keeping_focus_while(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        focus: FocusHandle,
+        current: impl Fn(&App) -> bool + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_tab(path.clone(), reveal, false, window, cx);
+        if self.opening.as_ref() == Some(&path) {
+            self.keep_focus = Some(KeepFocus {
+                handle: focus,
+                current: Box::new(current),
+            });
+        }
+    }
+
     /// [`Pane::open_at`] `closed`'s file, revealing its primary selection,
     /// and gives its editor back all its selections and its scroll once
     /// it's in the pane, shown or not: at once if it's open, else once its
@@ -1308,6 +1352,13 @@ impl Pane {
         let preview = intent == Some(Intent::Preview);
         let last = self.opening.as_ref() == Some(&path);
         let keep = self.keep_focus.take_if(|_| last);
+        let was_keeping = keep.is_some();
+        // Judged before the landing tab takes focus: who has it, and so
+        // who gets it back.
+        let before = window.focused(cx);
+        let keep =
+            keep.filter(|keep| keep.handle.contains_focused(window, cx) && (keep.current)(cx));
+        let kept_elsewhere = keep.is_none() && was_keeping;
         if last {
             self.opening = None;
         }
@@ -1368,8 +1419,15 @@ impl Pane {
                 }
             }
         }
-        if let Some(focus) = keep {
-            window.focus(&focus, cx);
+        if let Some(keep) = keep {
+            window.focus(&keep.handle, cx);
+        } else if kept_elsewhere {
+            // The panel lost focus or its request: the landing doesn't
+            // take what the user moved.
+            match before {
+                Some(before) => window.focus(&before, cx),
+                None => window.blur(cx),
+            }
         }
         self.note_shown(cx);
         cx.notify();
