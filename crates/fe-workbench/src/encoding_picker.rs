@@ -497,7 +497,7 @@ impl Workbench {
     }
 
     /// Reloads `editor`'s buffer from `file`, mapping the carets and
-    /// selections of every editor over the buffer onto the new text row by
+    /// selections of every editor over the buffer, in every window, onto the new text row by
     /// row ([`Remap`]), rather than leaving those inside the text that
     /// changed at its edges.
     fn reload_keeping_selections(
@@ -508,8 +508,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let buffer = editor.read(cx).model().buffer().id();
-        let mut editors = self.file_editors(cx);
-        editors.retain(|other| other.read(cx).model().buffer().id() == buffer);
+        let others = Self::other_workbenches(cx);
+        let mut editors: Vec<_> = (self.and_others(&others, cx))
+            .flat_map(|workbench| workbench.file_editors(cx))
+            .filter(|other| other.read(cx).model().buffer().id() == buffer)
+            .collect();
         if !editors.contains(editor) {
             editors.push(editor.clone());
         }

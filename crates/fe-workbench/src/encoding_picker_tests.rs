@@ -967,3 +967,61 @@ fn reopen_keeps_viewport(cx: &mut TestAppContext) {
     reopen_as_windows_1252(&workbench, &editor, cx);
     assert_eq!(editor.read_with(cx, |editor, _| editor.scroll_top()), top);
 }
+
+#[gpui::test]
+fn reopen_remaps_selections_of_editors_in_other_windows(cx: &mut TestAppContext) {
+    let bytes = b"caf\xE9 na\xEFve\n";
+    let (dir, paths) = project(&[("latin.txt", bytes)]);
+    let (workbench, editor, cx) = opened(cx, &dir, &paths[0]);
+    let shift_jis = choice("Japanese (Shift JIS)").unwrap();
+    at_once(&workbench, &editor, cx, |workbench, editor, _, cx| {
+        workbench.reopen_with_encoding(editor, shift_jis, cx)
+    });
+    draw(cx);
+
+    // Another window showing the same buffer.
+    let launch = Launch {
+        root: Some(dir.path().to_owned()),
+        file: None,
+    };
+    let (other, other_cx) = cx.add_window_view(move |window, cx| {
+        let theme = EditorTheme::default_dark(cx);
+        Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+    });
+    draw(other_cx);
+    let pane = other.read_with(other_cx, |workbench, _| workbench.pane().clone());
+    let model = editor.read_with(other_cx, |editor, _| editor.model().split());
+    let shared = other_cx.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            let shared = pane.new_editor(model, cx);
+            pane.add_item(Box::new(shared.clone()), cx);
+            shared
+        })
+    });
+    draw(other_cx);
+
+    let mojibake = text(&shared, other_cx);
+    let na = mojibake.find(" na").unwrap();
+    let selection = ResolvedSelection {
+        range: na..na + 3,
+        reversed: true,
+    };
+    shared.update(other_cx, |shared, _| {
+        shared.model_mut().set_selections([selection.clone()])
+    });
+
+    at_once(&workbench, &editor, other_cx, |workbench, editor, _, cx| {
+        workbench.reopen_with_encoding(editor, windows_1252(), cx)
+    });
+    draw(other_cx);
+    let correct = "café naïve\n";
+    assert_eq!(text(&shared, other_cx), correct);
+    let na = correct.find(" na").unwrap();
+    assert_eq!(
+        selections(&shared, other_cx),
+        [ResolvedSelection {
+            range: na..na + 3,
+            reversed: true,
+        }]
+    );
+}
