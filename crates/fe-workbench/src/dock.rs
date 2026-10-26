@@ -148,12 +148,17 @@ const _: () = {
         );
         ix += 1;
     }
-    // History, the one panel registered after the dock is made
-    // ([`Dock::set_history`]), is added at the rail's end: its place.
+    // History ([`Dock::set_history`]) and then AI Changes
+    // ([`Dock::set_ai_changes`]), the panels registered after the dock is
+    // made, are added at the rail's end, in that order: their places.
     assert!(
-        PANELS[PANELS.len() - 1].order
+        PANELS[PANELS.len() - 2].order
             == crate::workbench::git_commands::git_history::SIDEBAR.order,
-        "History, registered last, is last on the rail"
+        "History, registered last but one, is last but one on the rail"
+    );
+    assert!(
+        PANELS[PANELS.len() - 1].order == crate::ai_changes_panel::SIDEBAR.order,
+        "AI Changes, registered last, is last on the rail"
     );
 };
 
