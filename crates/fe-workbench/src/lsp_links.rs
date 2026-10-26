@@ -107,6 +107,26 @@ pub(super) struct Links {
     /// ([`Workbench::land_link_column`]), one per pane: another link
     /// opened in the same pane supersedes it, one in another pane doesn't.
     landings: HashMap<EntityId, Landing>,
+    /// The count of link opens started ([`Workbench::open_link_at`]): an
+    /// open still waiting on a resolve or a file check when another starts
+    /// is superseded.
+    opens: u64,
+}
+
+/// Where a link open started: its editor, and its place in
+/// [`Links::opens`].
+#[derive(Clone, Copy)]
+struct Origin {
+    editor: EntityId,
+    generation: u64,
+    /// [`Workbench::activations`], the active pane's [`Pane::open_serial`]
+    /// and [`Pane::navigations`], and the caret, when it started: a
+    /// navigation since, even a round trip to another tab or pane, changes
+    /// one of them.
+    activations: u64,
+    serial: u64,
+    navigations: u64,
+    caret: usize,
 }
 
 /// A file link's column, waiting for its row to be shown in a pane.
@@ -333,8 +353,8 @@ impl Workbench {
         }
     }
 
-    /// The link `editor` has at byte `offset`, with its buffer and the
-    /// version it was found at: one holding the char there, or else, if
+    /// The link `editor` has at byte `offset`, with its buffer, the version
+    /// it was found at and its range in the text now: one holding the char there, or else, if
     /// `at_end`, one ending there, as a caret just past it is.
     fn link_in(
         &self,
@@ -342,15 +362,15 @@ impl Workbench {
         offset: usize,
         at_end: bool,
         cx: &Context<Self>,
-    ) -> Option<(BufferId, Version, DocumentLink)> {
+    ) -> Option<(BufferId, Version, Range<usize>, DocumentLink)> {
         let view = editor.read(cx);
         let buffer = view.model().buffer().id();
         let slot = self.lsp.links.slots.get(&buffer)?;
         let current = slot.current(view);
-        let (_, link) = (current.iter())
+        let (range, link) = (current.iter())
             .find(|(range, _)| range.contains(&offset))
             .or_else(|| (current.iter()).find(|(range, _)| at_end && range.end == offset))?;
-        Some((buffer, slot.found?, (*link).clone()))
+        Some((buffer, slot.found?, range.clone(), (*link).clone()))
     }
 
     /// `editor.open_link`: opens the link at the active editor's caret, as
@@ -401,38 +421,63 @@ impl Workbench {
         if !self.lsp.links_on.get() {
             return false;
         }
-        let Some((buffer, version, link)) = self.link_in(editor, offset, at_end, cx) else {
+        let Some((buffer, found, range, link)) = self.link_in(editor, offset, at_end, cx) else {
             return false;
         };
+        self.lsp.links.opens += 1;
+        let origin = Origin {
+            editor: editor.entity_id(),
+            generation: self.lsp.links.opens,
+            activations: self.activations,
+            serial: self.pane().read(cx).open_serial(),
+            navigations: self.pane().read(cx).navigations(),
+            caret: editor.read(cx).model().primary_selection().head(),
+        };
         if link.target.is_some() {
-            self.follow_link(&link, window, cx);
+            self.follow_link(&link, Some(origin), window, cx);
             return true;
         }
         // A link without a target resolves first.
         let Some(manager) = self.lsp.manager.clone() else {
             return true;
         };
-        // Known limits (review F9, F10; follow-up T339): `version` is the
-        // one the links were found at, so after an edit, before the refresh
-        // 500 ms later, the server refuses the resolve as "buffer changed"
-        // and this says the link has no target. And neither this open nor
-        // `open_link_file`'s carries the pane it started in or a navigation
-        // token, so one that a pane switch or a newer open has overtaken
-        // still opens.
-        let reply = super::lock(&manager).resolve_document_link(buffer, version, link);
+        // The server resolves at the version it has: after an edit, before
+        // the refresh a rest later, the links are asked for again at the
+        // text now, and the one over `range` is the one resolved.
+        let version = editor.read(cx).model().snapshot().version();
+        let asked =
+            (version != found).then(|| super::lock(&manager).document_links(buffer, version));
         let handle = window.window_handle();
         cx.spawn(async move |workbench, cx| {
-            let resolved = reply.await;
+            let link = match asked {
+                None => Some(link),
+                Some(asked) => match asked.await {
+                    Ok(Some(links)) => links.into_iter().find(|asked| asked.range == range),
+                    _ => None,
+                },
+            };
+            let resolved = match link {
+                Some(link) => {
+                    let reply = super::lock(&manager).resolve_document_link(buffer, version, link);
+                    reply.await
+                }
+                None => Err(LspError::Unavailable("link gone".into())),
+            };
             cx.update_window(handle, |_, window, cx| {
                 workbench
-                    .update(cx, |workbench, cx| match resolved {
-                        Ok(link) if link.target.is_some() => {
-                            workbench.follow_link(&link, window, cx)
+                    .update(cx, |workbench, cx| {
+                        if !workbench.link_open_current(origin, cx) {
+                            return;
                         }
-                        Ok(_) => toast::show(cx, Toast::info("This link has no target")),
-                        Err(error) => {
-                            log::debug!("document link not resolved: {error}");
-                            toast::show(cx, Toast::info("This link has no target"));
+                        match resolved {
+                            Ok(link) if link.target.is_some() => {
+                                workbench.follow_link(&link, Some(origin), window, cx)
+                            }
+                            Ok(_) => toast::show(cx, Toast::info("This link has no target")),
+                            Err(error) => {
+                                log::debug!("document link not resolved: {error}");
+                                toast::show(cx, Toast::info("This link has no target"));
+                            }
                         }
                     })
                     .ok();
@@ -443,9 +488,30 @@ impl Workbench {
         true
     }
 
+    /// Whether the open that started at `origin` is still the latest, with
+    /// no navigation since: its editor the active one, as it was, with the
+    /// caret where it was.
+    fn link_open_current(&self, origin: Origin, cx: &Context<Self>) -> bool {
+        let active = self.active_editor(cx);
+        origin.generation == self.lsp.links.opens
+            && origin.activations == self.activations
+            && origin.serial == self.pane().read(cx).open_serial()
+            && origin.navigations == self.pane().read(cx).navigations()
+            && active.map(|editor| editor.entity_id()) == Some(origin.editor)
+            && active.is_some_and(|editor| {
+                editor.read(cx).model().primary_selection().head() == origin.caret
+            })
+    }
+
     /// Opens `link`'s target: a file in an editor tab, a web or mail
     /// address through the system's opener.
-    fn follow_link(&mut self, link: &DocumentLink, window: &mut Window, cx: &mut Context<Self>) {
+    fn follow_link(
+        &mut self,
+        link: &DocumentLink,
+        origin: Option<Origin>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(target) = link.target.clone() else {
             return;
         };
@@ -454,7 +520,7 @@ impl Workbench {
                 let Some((path, fragment)) = link.file_target() else {
                     return toast::show(cx, Toast::error(format!("Can't open {target}")));
                 };
-                self.open_link_file(path, fragment.as_deref(), window, cx);
+                self.open_link_file_from(path, fragment.as_deref(), origin, window, cx);
             }
             Some("http" | "https" | "mailto") => cx.open_url(&target),
             _ => toast::show(cx, Toast::error("Can't open link: unsupported scheme")),
@@ -466,10 +532,25 @@ impl Workbench {
     /// do, of the row as the editor has it ([`Self::land_link_column`]).
     /// One that isn't a file is said in a toast; one that can't be read,
     /// in the pane's.
+    #[cfg(test)]
     fn open_link_file(
         &mut self,
         path: PathBuf,
         fragment: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_link_file_from(path, fragment, None, window, cx);
+    }
+
+    /// [`Self::open_link_file`] for a link open that started at `origin`:
+    /// dropped if, when the file has been looked for, another has started
+    /// or the origin's editor is no longer the active one.
+    fn open_link_file_from(
+        &mut self,
+        path: PathBuf,
+        fragment: Option<&str>,
+        origin: Option<Origin>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -482,6 +563,13 @@ impl Workbench {
             let (is_file, path) =
                 (cx.background_spawn(async move { (path.is_file(), path) })).await;
             cx.update_window(handle, |_, window, cx| {
+                let current = (workbench.update(cx, |workbench, cx| {
+                    origin.is_none_or(|origin| workbench.link_open_current(origin, cx))
+                }))
+                .unwrap_or(false);
+                if !current {
+                    return;
+                }
                 if !is_file {
                     let name = path.file_name().unwrap_or(path.as_os_str());
                     let message = format!("Can't open {}", name.to_string_lossy());

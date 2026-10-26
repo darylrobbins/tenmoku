@@ -9,9 +9,15 @@ use std::{
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorView, FileViewer, commands::RunCommand};
-use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
+use gpui::{
+    Bounds, Entity, EntityInputHandler as _, Focusable as _, Modifiers, TestAppContext,
+    VisualTestContext,
+};
+use lsp_types::{DocumentLinkOptions, PositionEncodingKind, ServerCapabilities};
+use serde_json::{Value, json};
 
-use crate::{Launch, Workbench, loader::test_support, pane::Pane, tests::open};
+use crate::{Launch, Workbench, loader::test_support, pane::Pane, tests::lsp::Lsp, tests::open};
 
 /// The lowered large-file threshold.
 const THRESHOLD: u64 = 64 * 1024;
@@ -274,4 +280,287 @@ fn a_queued_viewer_landing_checks_the_open_again(cx: &mut TestAppContext) {
         Some(other),
         "the stale landing doesn't take the tab back"
     );
+}
+
+const LINKS: &str = "textDocument/documentLink";
+const RESOLVE: &str = "documentLink/resolve";
+const MAIN: &str = "// see lib.rs or ftp://h/f\nfn main() {}\n";
+
+fn script() -> Script {
+    let mut init = initialize_result(Some(PositionEncodingKind::UTF8));
+    init.capabilities = ServerCapabilities {
+        document_link_provider: Some(DocumentLinkOptions {
+            resolve_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        }),
+        ..init.capabilities
+    };
+    Script {
+        initialize: InitializeReply::Result(Box::new(init)),
+        ..Script::default()
+    }
+}
+
+fn bytes_of(needle: &str) -> std::ops::Range<usize> {
+    let start = MAIN.find(needle).unwrap();
+    start..start + needle.len()
+}
+
+fn range_of(needle: &str) -> Value {
+    let bytes = bytes_of(needle);
+    json!({
+        "start": { "line": 0, "character": bytes.start },
+        "end": { "line": 0, "character": bytes.end },
+    })
+}
+
+/// A workbench on `src/main.rs`, whose `lib.rs` link has no target (the
+/// server resolves it to `src/lib.rs`, after `resolve_delay`) and whose
+/// `ftp:` one has; the links shown.
+fn setup(cx: &mut TestAppContext, resolve_delay: Duration) -> (Lsp, Entity<EditorView>) {
+    let mut s = Lsp::with_fake_clock(cx, script(), Script::default());
+    let answer = json!([
+        { "range": range_of("lib.rs"), "data": { "id": 7 } },
+        { "range": range_of("ftp://h/f"), "target": "ftp://h/f" },
+        { "range": range_of("see"), "target": s.uri("src/lib.rs").to_string() },
+    ]);
+    s.fake
+        .set_reply(LINKS, Scripted::now(Reply::Result(answer)));
+    let resolved = json!({
+        "range": range_of("lib.rs"),
+        "target": s.uri("src/lib.rs").to_string(),
+        "data": { "id": 7 },
+    });
+    s.fake.set_reply(
+        RESOLVE,
+        Scripted {
+            reply: Reply::Result(resolved),
+            delay: resolve_delay,
+        },
+    );
+    s.set_trust(true);
+    std::fs::write(s.path("src/main.rs"), MAIN).unwrap();
+    std::fs::write(s.path("src/other.rs"), "other\n").unwrap();
+    s.open("src/main.rs");
+    let main = s.uri("src/main.rs");
+    s.fake
+        .wait_for_document(&main, "didOpen", |r| r.is_some_and(|r| r.open));
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .expect("main.rs is shown");
+    s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    s.draw();
+    until_ticking(&mut s, "the links", |s| {
+        editor.read_with(&s.cx, |view, _| view.link_ranges().len() == 3)
+    });
+    (s, editor)
+}
+
+fn until_ticking(s: &mut Lsp, what: &str, done: impl Fn(&mut Lsp) -> bool) {
+    s.until(what, |s| {
+        s.clock.advance(Duration::from_millis(20));
+        done(s)
+    });
+}
+
+fn requests(s: &Lsp, method: &str) -> usize {
+    (s.fake.records().iter())
+        .filter(|record| matches!(record, Record::Request { method: m, .. } if m == method))
+        .count()
+}
+
+fn toasts(s: &Lsp) -> Vec<String> {
+    let layer = s.workbench.read_with(&s.cx, |w, _| w.toasts().clone());
+    layer.read_with(&s.cx, |layer, _| {
+        (layer.queue().shown().iter())
+            .map(|entry| entry.toast.message.clone())
+            .collect()
+    })
+}
+
+fn at(s: &Lsp) -> (std::path::PathBuf, std::ops::Range<usize>) {
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .expect("a tab is shown");
+    editor.read_with(&s.cx, |view, _| {
+        let model = view.model();
+        (
+            model.path().unwrap().to_owned(),
+            model.primary_selection().range.clone(),
+        )
+    })
+}
+
+/// Types at the end of `editor`.
+fn type_at_end(s: &mut Lsp, editor: &Entity<EditorView>) {
+    editor.update(&mut s.cx, |view, cx| {
+        let end = view.model().text().len();
+        view.model_mut().set_cursor(end);
+        view.model_mut().insert("// x\n");
+        cx.notify();
+    });
+    s.draw();
+    // The server has the text now; the links' rest isn't over.
+    let main = s.uri("src/main.rs");
+    s.fake
+        .wait_for_document(&main, "didChange", |r| r.is_some());
+    s.clock.advance(Duration::from_millis(100));
+    s.draw();
+}
+
+fn cmd_click(s: &mut Lsp, editor: &Entity<EditorView>, offset: usize) {
+    let position = editor.update_in(&mut s.cx, |editor, window, cx| {
+        let caret = editor
+            .bounds_for_range(offset..offset, Bounds::default(), window, cx)
+            .expect("on screen");
+        gpui::point(caret.left() + gpui::px(1.), caret.center().y)
+    });
+    s.cx.simulate_mouse_move(position, None, Modifiers::command());
+    s.draw();
+    s.cx.simulate_click(position, Modifiers::command());
+    s.draw();
+}
+
+fn open_link_command(s: &mut Lsp) {
+    let context = ContextStack::new()
+        .with(ContextFrame::new(crate::KEY_CONTEXT))
+        .with(ContextFrame::new(fe_editor::commands::CONTEXT));
+    let run = RunCommand(Invocation::of("editor.open_link").unwrap().context(context));
+    s.cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    s.draw();
+}
+
+#[gpui::test]
+fn a_link_clicked_right_after_an_edit_opens_its_target(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, Duration::ZERO);
+    let lib = s.path("src/lib.rs");
+    let main = s.path("src/main.rs");
+    let asked = requests(&s, LINKS);
+
+    // Before the rest after the edit is over.
+    type_at_end(&mut s, &editor);
+    cmd_click(&mut s, &editor, bytes_of("lib.rs").start + 2);
+    until_ticking(&mut s, "lib.rs", |s| at(s).0 == lib);
+    assert!(requests(&s, LINKS) > asked, "asked at the text now");
+    assert!(toasts(&s).is_empty(), "{:?}", toasts(&s));
+
+    // And Open Link, from the caret.
+    s.open("src/main.rs");
+    assert_eq!(at(&s).0, main);
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .unwrap();
+    s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    type_at_end(&mut s, &editor);
+    let caret = bytes_of("lib.rs").start + 2;
+    editor.update(&mut s.cx, |view, _| view.model_mut().set_cursor(caret));
+    open_link_command(&mut s);
+    until_ticking(&mut s, "lib.rs again", |s| at(s).0 == lib);
+    assert!(toasts(&s).is_empty(), "{:?}", toasts(&s));
+    assert_eq!(requests(&s, RESOLVE), 2);
+}
+
+#[gpui::test]
+fn a_superseded_link_open_is_dropped(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, Duration::from_secs(1));
+    let other = s.path("src/other.rs");
+
+    // Resolving when another file takes the editor's place.
+    cmd_click(&mut s, &editor, bytes_of("lib.rs").start + 2);
+    s.open("src/other.rs");
+    assert_eq!(at(&s).0, other);
+    s.clock.advance(Duration::from_secs(2));
+    for _ in 0..20 {
+        s.clock.advance(Duration::from_millis(100));
+        s.draw();
+    }
+    assert_eq!(requests(&s, RESOLVE), 1);
+    assert_eq!(at(&s).0, other, "the link opened nothing");
+
+    // A file link whose existence check an open that came after overtakes:
+    // both start before either is looked at.
+    s.open("src/main.rs");
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .unwrap();
+    s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    s.draw();
+    let main = s.path("src/main.rs");
+    let see = bytes_of("see").start + 1;
+    let ftp = bytes_of("ftp://h/f").start + 1;
+    s.cx.update(|window, cx| {
+        s.workbench.update(cx, |workbench, cx| {
+            workbench.open_link_at(&editor, see, false, window, cx);
+            // A newer open starts, before the file is looked for.
+            workbench.open_link_at(&editor, ftp, false, window, cx);
+        })
+    });
+    s.draw();
+    for _ in 0..20 {
+        s.clock.advance(Duration::from_millis(100));
+        s.draw();
+    }
+    assert_eq!(at(&s).0, main, "the older check opened nothing");
+}
+
+#[gpui::test]
+fn a_link_open_overtaken_by_navigation_in_its_editor_is_dropped(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, Duration::from_secs(1));
+    let main = s.path("src/main.rs");
+    let wait = |s: &mut Lsp| {
+        s.clock.advance(Duration::from_secs(2));
+        for _ in 0..20 {
+            s.clock.advance(Duration::from_millis(100));
+            s.draw();
+        }
+    };
+
+    // The caret goes elsewhere in the file while the link resolves.
+    cmd_click(&mut s, &editor, bytes_of("lib.rs").start + 2);
+    editor.update(&mut s.cx, |view, _| view.model_mut().set_cursor(0));
+    s.draw();
+    wait(&mut s);
+    assert_eq!(requests(&s, RESOLVE), 1);
+    assert_eq!(at(&s), (main.clone(), 0..0), "the link opened nothing");
+
+    // Another file is shown, then this one again.
+    cmd_click(&mut s, &editor, bytes_of("lib.rs").start + 2);
+    let caret = at(&s);
+    s.open("src/other.rs");
+    s.draw();
+    s.open("src/main.rs");
+    s.draw();
+    assert_eq!(at(&s).0, main);
+    wait(&mut s);
+    assert_eq!(requests(&s, RESOLVE), 2);
+    assert_eq!(at(&s), caret, "the link opened nothing");
+}
+
+#[gpui::test]
+fn a_round_trip_between_tabs_with_no_draw_drops_the_link_open(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, Duration::from_secs(1));
+    let main = s.path("src/main.rs");
+    s.open("src/other.rs");
+    s.open("src/main.rs");
+    s.draw();
+    cmd_click(&mut s, &editor, bytes_of("lib.rs").start + 2);
+    let caret = at(&s);
+    assert_eq!(caret.0, main);
+
+    // To the other tab and back, within one update.
+    let pane = s.workbench.read_with(&s.cx, |w, _| w.pane().clone());
+    s.cx.update(|window, cx| {
+        let home = pane.read(cx).active().unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.activate(1 - home, window, cx);
+            pane.activate(home, window, cx);
+        });
+    });
+    s.clock.advance(Duration::from_secs(2));
+    for _ in 0..20 {
+        s.clock.advance(Duration::from_millis(100));
+        s.draw();
+    }
+    assert_eq!(requests(&s, RESOLVE), 1);
+    assert_eq!(at(&s), caret, "the link opened nothing");
 }
