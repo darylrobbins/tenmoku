@@ -154,3 +154,23 @@ fn undo_and_redo_run_as_the_invoking_actor() {
     vim.model_mut().sync_display();
     assert_eq!(vim.text(), "two\nnext");
 }
+
+#[test]
+fn a_command_after_ctrl_o_that_does_nothing_still_repaints() {
+    // `<Left>` at column 0 after `<C-o>`, as the keymap binds it: it moves
+    // nothing, but insert mode resumes, which the view must paint.
+    let mut vim = HeadlessVim::new("abc", (0, 0));
+    vim.feed("i<C-o>").unwrap();
+    assert!(vim.state().insert_pending());
+    let left = fe_command::Invocation::of("vim.move")
+        .unwrap()
+        .args(serde_json::json!({ "motion": "left" }))
+        .context(context(vim.state()));
+    let dispatched = vim.dispatch(&left).unwrap();
+    assert_eq!(vim.mode(), "insert");
+    assert_eq!(dispatched.effect, Effect::Changed);
+    // Outside `<C-o>` it stays nothing.
+    let mut vim = HeadlessVim::new("abc", (0, 0));
+    let left = left.context(context(vim.state()));
+    assert_eq!(vim.dispatch(&left).unwrap().effect, Effect::Nothing);
+}

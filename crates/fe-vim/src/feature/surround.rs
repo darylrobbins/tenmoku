@@ -70,7 +70,7 @@ use crate::{
     Change, Mode, Motion, Operator, Pending, Step, Target, TextObject, VimCommands, VimKey,
     VimTarget, VisualKind, cmdline, commands,
     feature::{Feature, FeaturePrefix},
-    history, insert, marks,
+    history, insert, line_motions, marks,
     motion::Cursor,
     operator::{self, Span},
     reducer::invocation,
@@ -526,7 +526,10 @@ pub(crate) fn surround_add(
     // Each caret's wraps: a block's are its rows'.
     let wraps: Vec<Vec<Wrap>> = match selected {
         true => vec![selection(target)?],
-        false => targets(target, &args),
+        // `af` and the like read the host's syntax, which the view holds.
+        false => line_motions::with_view(target, line_motions::object(args.target), |target| {
+            targets(target, &args)
+        }),
     };
     target.model.sync_display();
     let text = target.model.text().clone();

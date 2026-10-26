@@ -481,7 +481,9 @@ impl Motion {
 /// i< a< it at i` a` `` (`delimiters.rs`); `inner_entire` `a_entire`
 /// `inner_indent` `a_indent` `a_big_indent` are `ie ae ii ai aI`
 /// (`feature/objects.rs`); `inner_argument` `a_argument` are `ia aa`
-/// (`feature/argument.rs`); `comment` is `gc` after an operator, the run of
+/// (`feature/argument.rs`); `inner_function` `a_function` `inner_class`
+/// `a_class` are `if af ic ac`, from the host's syntax
+/// (`feature/definition.rs`); `comment` is `gc` after an operator, the run of
 /// commented rows around the caret, linewise (`feature/comment.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -517,6 +519,10 @@ pub enum TextObject {
     ABigIndent,
     InnerArgument,
     AArgument,
+    InnerFunction,
+    AFunction,
+    InnerClass,
+    AClass,
     Comment,
 }
 

@@ -8,7 +8,7 @@ use fe_text::Text;
 
 use crate::{
     TextObject, delimiters,
-    feature::{argument, objects},
+    feature::{argument, definition, objects},
     motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
     prose,
@@ -47,6 +47,9 @@ pub(crate) fn select(
             objects::select(text, offset, object, count, tab)
         }
         InnerArgument | AArgument => argument::select(text, offset, object, count),
+        InnerFunction | AFunction | InnerClass | AClass => {
+            definition::select(text, offset, object, count)
+        }
         // Which rows are commented is the host's to say:
         // `feature::comment::operate_object` acts over it instead.
         Comment => Span::Failed,
@@ -259,8 +262,16 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
             true => Cursor::whole(text, start),
             false => Cursor::at(text, start),
         };
-        while back.ix > 0 && back.class_on_row(back.ix - 1, big) == Some(Class::Blank) {
-            back.ix -= 1;
+        loop {
+            while back.ix > 0 && back.class_on_row(back.ix - 1, big) == Some(Class::Blank) {
+                back.ix -= 1;
+            }
+            // At a window's start that isn't the row's, the blanks may go
+            // on before it: read the row whole to see where they start.
+            if back.ix > 0 || back.line.start == text.row_start(back.row) {
+                break;
+            }
+            back.widen();
         }
         if back.ix > 0 {
             start = back.offset();

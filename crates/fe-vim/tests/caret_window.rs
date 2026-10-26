@@ -671,3 +671,22 @@ fn word_objects_take_a_run_joined_by_prepend_chars() {
         }
     }
 }
+
+/// `aw` on a last word with no blanks after it takes the blanks before it,
+/// however long a run they are, and isn't fooled by the window's start
+/// into taking them for the row's indent.
+#[test]
+fn a_word_takes_a_long_run_of_blanks_before_it() {
+    for blank in [" ", "\t"] {
+        let blanks = blank.repeat(1_000_000);
+        let row = format!("a{blanks}b");
+        let (_, _, register) = leave(&row, (0, row.len() - 1), "yaw");
+        assert!(register == format!("{blanks}b"), "yaw after {blank:?}s");
+        let (text, _, _) = leave(&row, (0, row.len() - 1), "daw");
+        assert_eq!(text, "a", "daw after {blank:?}s");
+        // Still not the indent.
+        let row = format!("{blanks}b");
+        let (_, _, register) = leave(&row, (0, row.len() - 1), "yaw");
+        assert_eq!(register, "b", "yaw after an indent of {blank:?}s");
+    }
+}

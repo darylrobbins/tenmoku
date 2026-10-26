@@ -19,13 +19,14 @@
 
 use std::{cell::RefCell, ops::Range};
 
-use fe_editor::commands::{HeadlessHost, Viewport};
+use fe_editor::commands::{HeadlessHost, SyntaxObject, Viewport};
 use fe_text::Text;
 
 use crate::{
-    CountArgs, Mode, MoveArgs, OperateArgs, Pending, Step, Target, VimKey, VimState, VimTarget,
+    CountArgs, Mode, MoveArgs, OperateArgs, Pending, SelectArgs, Step, Target, TextObject, VimKey,
+    VimState, VimTarget,
     args::{Motion, RangeClass},
-    feature::Feature,
+    feature::{Feature, definition},
     insert,
     motion::{Class, Cursor, Line},
     operator,
@@ -111,11 +112,13 @@ pub(crate) fn writes_numbered(_motion: Motion) -> bool {
     false
 }
 
-/// The command [`with_view`] runs: its motion and count.
+/// What the command [`with_view`] runs acts on.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Viewed {
-    motion: Motion,
-    count: Option<u32>,
+pub(crate) enum Viewed {
+    /// A motion, with its count.
+    Motion { motion: Motion, count: Option<u32> },
+    /// A text object.
+    Object(TextObject),
 }
 
 /// What a command's motions see of the view, while [`with_view`] runs.
@@ -141,6 +144,10 @@ struct View {
     /// In a visual mode, a motion moved the cursor but failed, which fails
     /// the key (stopping a macro) once the command ran.
     failed: bool,
+    /// For `af if ac ic`, the host's functions and classes around each
+    /// caret's head and anchor (and the vim cursor's and anchor's), by
+    /// offset.
+    definitions: Vec<(usize, Vec<SyntaxObject>)>,
 }
 
 thread_local! {
@@ -162,7 +169,9 @@ impl Drop for Restore {
 /// a visual mode is on and its cursor past a row's end, and if the
 /// `viewed` command's motion (with its count) is `gj` or `gk`, the display
 /// rows each caret goes from and to. Only those are looked up, never all
-/// the rows. Once `f` returns, a visual motion that moved but failed fails
+/// the rows. If its text object is `af if ac ic`, the host's functions and
+/// classes around each caret, for [`definitions`]; for no other command.
+/// Once `f` returns, a visual motion that moved but failed fails
 /// the key.
 pub(crate) fn with_view<'a, R>(
     target: &mut VimTarget<'a>,
@@ -182,22 +191,20 @@ pub(crate) fn with_view<'a, R>(
         .map(|(_, goals)| goals.clone());
     let columns = target.host.view_columns().unwrap_or(0..80);
     let hops = match viewed {
-        Some(Viewed {
+        Some(Viewed::Motion {
             motion: motion @ (Motion::DisplayDown | Motion::DisplayUp),
             count,
-            ..
         }) => hops(
             target,
             motion == Motion::DisplayDown,
             count.unwrap_or(1).max(1),
         ),
         // `g$` goes `count - 1` display rows down, `gm` stays on the row.
-        Some(Viewed {
+        Some(Viewed::Motion {
             motion: Motion::DisplayLineEnd,
             count,
-            ..
         }) => hops(target, true, count.unwrap_or(1).max(1) - 1),
-        Some(Viewed {
+        Some(Viewed::Motion {
             motion: Motion::DisplayMiddle,
             ..
         }) => hops(target, true, 0),
@@ -230,6 +237,8 @@ pub(crate) fn with_view<'a, R>(
             motion: Motion::LastNonBlank,
             count: Some(2..),
         }) => crate::folds::fold_rows(target.model),
+    let definitions = match viewed {
+        Some(Viewed::Object(object)) if definition::is_object(object) => definitions_around(target),
         _ => Vec::new(),
     };
     let view = View {
@@ -242,6 +251,7 @@ pub(crate) fn with_view<'a, R>(
         hops,
         alongs: Vec::new(),
         failed: false,
+        definitions,
     };
     let restore = Restore(VIEW.with(|cell| cell.replace(Some(view))));
     let result = f(target);
@@ -253,7 +263,7 @@ pub(crate) fn with_view<'a, R>(
 
 /// The command `vim.move` with `args` runs, for [`with_view`].
 pub(crate) fn moved(args: &MoveArgs) -> Option<Viewed> {
-    Some(Viewed {
+    Some(Viewed::Motion {
         motion: args.motion,
         count: args.count,
     })
@@ -262,11 +272,11 @@ pub(crate) fn moved(args: &MoveArgs) -> Option<Viewed> {
 /// The command `vim.operate` with `args` runs, for [`with_view`].
 pub(crate) fn operated(args: &OperateArgs) -> Option<Viewed> {
     match args.target {
-        Target::Motion(motion) => Some(Viewed {
+        Target::Motion(motion) => Some(Viewed::Motion {
             motion,
             count: args.count,
         }),
-        _ => None,
+        target => object(target),
     }
 }
 
@@ -277,12 +287,68 @@ pub(crate) fn operated(args: &OperateArgs) -> Option<Viewed> {
 pub(crate) fn repeated(state: &mut VimState, args: CountArgs) -> Option<Viewed> {
     insert::adopt_closing(state);
     match &state.last_change()?.change {
-        Change::Operate(operate) => operated(operate).map(|viewed| Viewed {
-            count: args.count.or(viewed.count),
-            ..viewed
+        Change::Operate(operate) => operated(operate).map(|viewed| match viewed {
+            Viewed::Motion { motion, count } => Viewed::Motion {
+                motion,
+                count: args.count.or(count),
+            },
+            object => object,
         }),
         _ => None,
     }
+}
+
+/// A command acting on `target` if it's a text object, for [`with_view`]:
+/// `ys{object}` and `!{object}`, which take no other part of the view.
+pub(crate) fn object(target: Target) -> Option<Viewed> {
+    match target {
+        Target::TextObject(object) => Some(Viewed::Object(object)),
+        _ => None,
+    }
+}
+
+/// The command `vim.select` with `args` runs, for [`with_view`].
+pub(crate) fn selected(args: &SelectArgs) -> Option<Viewed> {
+    Some(Viewed::Object(args.text_object))
+}
+
+/// The host's functions and classes around each caret's head and anchor,
+/// the head as the operator takes it (on its grapheme) too, and in a visual
+/// mode around the vim cursor and anchor: one lookup for each offset.
+fn definitions_around(target: &mut VimTarget<'_>) -> Vec<(usize, Vec<SyntaxObject>)> {
+    target.model.sync_display();
+    let mut offsets = Vec::new();
+    {
+        let text = target.model.text();
+        for selection in target.model.selections() {
+            let head = selection.head();
+            offsets.extend([head, Cursor::at(text, head).offset(), selection.tail()]);
+        }
+    }
+    if matches!(target.state.mode, Mode::Visual(_)) {
+        offsets.extend(target.state.visual_cursor(target.model));
+        offsets.extend(target.state.visual_anchor(target.model));
+    }
+    offsets.sort_unstable();
+    offsets.dedup();
+    (offsets.into_iter())
+        .map(|offset| (offset, target.host.definition_objects(offset)))
+        .collect()
+}
+
+/// The host's functions and classes around `offset`, innermost first, as
+/// the [`with_view`] running looked them up; none outside one, or for an
+/// offset it didn't look at.
+pub(crate) fn definitions(offset: usize) -> Vec<SyntaxObject> {
+    VIEW.with(|view| {
+        let view = view.borrow();
+        let found = view
+            .as_ref()
+            .and_then(|view| (view.definitions.iter()).find(|(at, _)| *at == offset));
+        found
+            .map(|(_, objects)| objects.clone())
+            .unwrap_or_default()
+    })
 }
 
 /// The vim cursor's offset if it's past the last character of its row.

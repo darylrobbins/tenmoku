@@ -36,6 +36,7 @@
 
 pub(crate) mod argument;
 pub(crate) mod comment;
+pub(crate) mod definition;
 pub(crate) mod exchange;
 pub(crate) mod filter;
 pub(crate) mod objects;
@@ -185,6 +186,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &changelist::FEATURE,
     &objects::FEATURE,
     &argument::FEATURE,
+    &definition::FEATURE,
     &surround::FEATURE,
     &replace_register::FEATURE,
     &comment::FEATURE,

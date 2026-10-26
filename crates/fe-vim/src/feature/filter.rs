@@ -393,7 +393,7 @@ pub(crate) fn run(
     }
     // Its motion made ready as `vim.operate` makes it: `gj`, `gk` and `g$`
     // over display rows, `zj` and `zk` among the host's folds and those
-    // closed.
+    // closed; or `af` and the like, the host's syntax around the carets.
     let motion = match args.target {
         Target::Motion(motion) => Some(motion),
         _ => None,
@@ -401,13 +401,14 @@ pub(crate) fn run(
     if let Some(motion) = motion {
         insert::began_line(target.state, motion);
     }
-    let viewed = motion.and_then(|motion| {
-        line_motions::moved(&MoveArgs {
+    let viewed = match motion {
+        Some(motion) => line_motions::moved(&MoveArgs {
             motion,
             extend: false,
             count: args.count,
-        })
-    });
+        }),
+        None => line_motions::object(args.target),
+    };
     line_motions::with_view(target, viewed, |target| {
         folds::with_candidates(target, motion, |target| run_over(target, actor, args))
     })

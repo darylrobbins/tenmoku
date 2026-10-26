@@ -51,15 +51,23 @@ pub(crate) fn run_operate(
 /// Runs `invocation` through `registry`, as a host runs each of vim's
 /// commands: [`Registry::dispatch`], then, if the command was the one
 /// `<C-o>` left insert mode for and it's done, back to insert mode
-/// ([`VimState::one_command`]), whether it worked or not.
+/// ([`VimState::one_command`]), whether it worked or not. Going back
+/// changes the mode and may move the carets, so a command that did nothing
+/// itself (`h` at column 0) still has the view painted again.
 pub fn dispatch(
     registry: &Registry<VimCommands>,
     target: &mut VimTarget<'_>,
     invocation: &Invocation,
 ) -> Result<Dispatched<TransactionId>, DispatchError> {
-    let dispatched = registry.dispatch(target, invocation);
+    let mut dispatched = registry.dispatch(target, invocation);
     if target.state.one_command.is_some() {
         insert::finish_one_command(target);
+        if target.state.one_command.is_none()
+            && let Ok(dispatched) = &mut dispatched
+            && dispatched.effect == Effect::Nothing
+        {
+            dispatched.effect = Effect::Changed;
+        }
     }
     dispatched
 }
@@ -563,7 +571,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.select",
             "Vim Select Text Object",
             |target: &mut VimTarget<'_>, _: &Actor, args: SelectArgs| {
-                line_motions::with_view(target, None, |target| visual::select_object(target, args))
+                let object = line_motions::selected(&args);
+                line_motions::with_view(target, object, |target| {
+                    visual::select_object(target, args)
+                })
             },
         )
         .expect("vim command IDs are valid and distinct")
