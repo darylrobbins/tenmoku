@@ -29,6 +29,7 @@ pub mod commands;
 mod comment;
 pub mod completion;
 pub mod decorations;
+mod delete_extent;
 pub mod diagnostics;
 mod disk;
 mod eol_commands;
@@ -1003,7 +1004,7 @@ impl EditorModel {
     }
 
     /// The offsets of the row containing `offset`, without its line break.
-    fn row_span(&self, offset: usize) -> Range<usize> {
+    pub(crate) fn row_span(&self, offset: usize) -> Range<usize> {
         let text = self.text();
         let row = text.offset_to_point(offset).row;
         let start = text.row_start(row);
@@ -1060,7 +1061,7 @@ impl EditorModel {
         }
     }
 
-    fn prev_grapheme(&self, offset: usize) -> usize {
+    pub(crate) fn prev_grapheme(&self, offset: usize) -> usize {
         let row = self.row_span(offset);
         if offset == row.start {
             return offset.saturating_sub(1);
@@ -1068,7 +1069,7 @@ impl EditorModel {
         self.grapheme_boundary(offset, &row, false)
     }
 
-    fn next_grapheme(&self, offset: usize) -> usize {
+    pub(crate) fn next_grapheme(&self, offset: usize) -> usize {
         let row = self.row_span(offset);
         if offset >= row.end {
             return (offset + 1).min(self.text().len());
@@ -1076,7 +1077,7 @@ impl EditorModel {
         self.grapheme_boundary(offset, &row, true)
     }
 
-    fn next_word(&self, offset: usize) -> usize {
+    pub(crate) fn next_word(&self, offset: usize) -> usize {
         let row = self.row_span(offset);
         if offset >= row.end {
             return (offset + 1).min(self.text().len());
@@ -1101,7 +1102,7 @@ impl EditorModel {
         end
     }
 
-    fn prev_word(&self, offset: usize) -> usize {
+    pub(crate) fn prev_word(&self, offset: usize) -> usize {
         let row = self.row_span(offset);
         if offset == row.start {
             return offset.saturating_sub(1);
@@ -1250,7 +1251,11 @@ impl EditorModel {
     }
 
     /// Deletes each selection, or for carets the range `around` gives.
-    fn delete_with(&mut self, around: impl Fn(&Self, usize) -> Range<usize>, typed: Option<Typed>) {
+    pub(crate) fn delete_with(
+        &mut self,
+        around: impl Fn(&Self, usize) -> Range<usize>,
+        typed: Option<Typed>,
+    ) {
         self.sync_display();
         let edits = self
             .selections()

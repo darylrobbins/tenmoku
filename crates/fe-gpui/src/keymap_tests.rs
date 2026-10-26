@@ -133,6 +133,21 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("shift-backspace", "editor.backspace", Some("editor")),
     ("delete", "editor.delete", Some("editor")),
     ("alt-backspace", "editor.delete_word_left", Some("editor")),
+    (
+        "alt-delete",
+        "editor.delete_word_right",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "cmd-backspace",
+        "editor.delete_all_left",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "ctrl-k",
+        "editor.delete_all_right",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
     ("enter", "editor.newline", Some("editor && !chat_composer")),
     ("tab", "editor.tab", Some("editor")),
     ("cmd-alt-[", "editor.fold", Some("editor")),

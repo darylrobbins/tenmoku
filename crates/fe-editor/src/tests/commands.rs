@@ -157,6 +157,10 @@ fn every_editor_command_is_registered() {
             .map(|name| format!("editor.{name}")),
     );
     // Go to Last Edit Location, which doesn't edit.
+    expected.extend(
+        ["delete_all_left", "delete_all_right", "delete_word_right"]
+            .map(|name| format!("editor.{name}")),
+    );
     expected.push("editor.go_to_last_edit_location".to_string());
     assert_eq!(ids, expected);
     let mutating = [
@@ -189,6 +193,9 @@ fn every_editor_command_is_registered() {
         "set_end_of_line_crlf",
         "convert_indentation_to_spaces",
         "convert_indentation_to_tabs",
+        "delete_all_left",
+        "delete_all_right",
+        "delete_word_right",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

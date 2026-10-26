@@ -243,9 +243,7 @@ fn keys_need_a_proposal(cx: &mut TestAppContext) {
     let events = events(&view, cx);
 
     // Nothing shown.
-    for key in ["cmd-y", "cmd-backspace"] {
-        keys(key, cx);
-    }
+    keys("cmd-y", cx);
     assert_eq!(text(&view, cx), TEXT);
     assert_eq!(*events.borrow(), []);
     assert!(
@@ -255,6 +253,19 @@ fn keys_need_a_proposal(cx: &mut TestAppContext) {
         "{:?}",
         seen.borrow()
     );
+    // cmd-backspace deletes to the row start there, rejecting nothing.
+    keys("cmd-backspace", cx);
+    assert_eq!(text(&view, cx), TEXT.replacen("r4", "4", 1));
+    assert_eq!(*events.borrow(), []);
+    assert!(
+        seen.borrow()
+            .iter()
+            .all(|i| !i.command.as_str().starts_with("proposal.")),
+        "{:?}",
+        seen.borrow()
+    );
+    keys("cmd-z", cx);
+    assert_eq!(text(&view, cx), TEXT);
 
     let (proposal, ids) = shown(&view, cx);
     keys("cmd-y", cx);
@@ -276,9 +287,7 @@ fn keys_need_a_proposal(cx: &mut TestAppContext) {
         view.update(cx, |view, cx| view.reject_hunk(id, cx).unwrap());
     }
     let before = events.len();
-    for key in ["cmd-y", "cmd-backspace"] {
-        keys(key, cx);
-    }
+    keys("cmd-y", cx);
     assert_eq!(text(&view, cx), TEXT);
     assert_eq!(before, 1);
 }

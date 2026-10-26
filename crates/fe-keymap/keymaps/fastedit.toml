@@ -284,6 +284,23 @@ command = "editor.delete_word_left"
 context = "editor"
 
 [[bindings]]
+keys = { macos = "alt-delete", default = "ctrl-delete" }
+command = "editor.delete_word_right"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "cmd-backspace"
+command = "editor.delete_all_left"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-k"
+command = "editor.delete_all_right"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
 keys = "enter"
 command = "editor.newline"
 context = "editor && !chat_composer"

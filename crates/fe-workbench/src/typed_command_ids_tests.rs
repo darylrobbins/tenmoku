@@ -692,6 +692,9 @@ const EDITOR_LINE_COMMANDS: &[(&str, &str)] = &[
     ("editor.sort_lines_descending", "Sort Lines Descending"),
     ("editor.delete_duplicate_lines", "Delete Duplicate Lines"),
     ("editor.join_lines", "Join Lines"),
+    ("editor.delete_all_left", "Delete All Left"),
+    ("editor.delete_all_right", "Delete All Right"),
+    ("editor.delete_word_right", "Delete Word Right"),
     (
         "editor.trim_trailing_whitespace",
         "Trim Trailing Whitespace",
