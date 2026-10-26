@@ -37,7 +37,6 @@ use fe_buffer::{
     Version,
 };
 use fe_gpui::EditorView;
-use fe_vim::Mode;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, Global, IntoElement as _,
     ParentElement as _, SharedString, Styled as _, WeakEntity, Window, div,
@@ -519,15 +518,14 @@ impl Workbench {
                 editor.update(cx, |editor, _| {
                     editor.model_mut().sync_display();
                     // Vim's visual ends, which it paints the selection from.
+                    // Also while a `/` or `?` command line suspends it.
                     let visual = editor.vim_state().and_then(|vim| {
-                        let Mode::Visual(kind) = vim.mode() else {
-                            return None;
-                        };
                         let model = editor.model();
-                        Some((kind, vim.visual_anchor(model)?, vim.visual_cursor(model)?))
+                        Some((vim.visual_anchor(model)?, vim.visual_cursor(model)?))
                     });
+                    let top = editor.scroll_top();
                     let model = editor.model();
-                    (model.text().clone(), model.selections(), visual)
+                    (model.text().clone(), model.selections(), visual, top)
                 })
             })
             .collect();
@@ -535,7 +533,7 @@ impl Workbench {
             editor.model_mut().reload(file, Some(stamp));
             cx.notify();
         });
-        for (editor, (old, selections, visual)) in editors.iter().zip(before) {
+        for (editor, (old, selections, visual, top)) in editors.iter().zip(before) {
             editor.update(cx, |editor, cx| {
                 let model = editor.model_mut();
                 model.sync_display();
@@ -549,13 +547,12 @@ impl Workbench {
                     })
                     .collect();
                 model.set_selections(selections);
-                if let Some((kind, anchor, cursor)) = visual {
+                if let Some((anchor, cursor)) = visual {
                     let (anchor, cursor) = (remap.offset(anchor), remap.offset(cursor));
-                    editor.update_vim(
-                        |vim, model| vim.select_visual(model, kind, anchor, cursor),
-                        cx,
-                    );
+                    editor.update_vim(|vim, model| vim.remap_visual(model, anchor, cursor), cx);
                 }
+                // The remap asks to reveal the caret; the scroll stays.
+                editor.set_scroll_top(top, cx);
                 cx.notify();
             });
         }

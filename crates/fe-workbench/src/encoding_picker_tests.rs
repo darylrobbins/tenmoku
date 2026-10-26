@@ -850,3 +850,120 @@ fn a_vim_visual_selection_keeps_its_place(cx: &mut TestAppContext) {
         }]
     );
 }
+
+/// A workbench with vim on showing `bytes`, reopened as Shift JIS and drawn,
+/// its editor focused.
+fn vim_reopened_as_shift_jis<'a>(
+    cx: &'a mut TestAppContext,
+    bytes: &[u8],
+) -> (
+    tempfile::TempDir,
+    Entity<Workbench>,
+    Entity<EditorView>,
+    &'a mut VisualTestContext,
+) {
+    let (dir, paths) = project(&[("latin.txt", bytes)]);
+    cx.update(|cx| {
+        fe_gpui::init(cx);
+        crate::init(cx);
+        fe_gpui::set_vim_enabled(cx, true);
+    });
+    let (workbench, editor, cx) = opened(cx, &dir, &paths[0]);
+    let shift_jis = choice("Japanese (Shift JIS)").unwrap();
+    at_once(&workbench, &editor, cx, |workbench, editor, _, cx| {
+        workbench.reopen_with_encoding(editor, shift_jis, cx)
+    });
+    draw(cx);
+    cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    (dir, workbench, editor, cx)
+}
+
+fn reopen_as_windows_1252(
+    workbench: &Entity<Workbench>,
+    editor: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+) {
+    at_once(workbench, editor, cx, |workbench, editor, _, cx| {
+        workbench.reopen_with_encoding(editor, windows_1252(), cx)
+    });
+    draw(cx);
+}
+
+#[gpui::test]
+fn reopen_keeps_search_suspended_visual(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) =
+        vim_reopened_as_shift_jis(cx, b"\x82\xA0\x82\xA2\x82\xA4\nabcdef\n");
+    cx.simulate_keystrokes("v l /");
+    draw(cx);
+    let held = |cx: &mut VisualTestContext| {
+        editor.read_with(cx, |editor, _| {
+            let vim = editor.vim_state().unwrap();
+            let model = editor.model();
+            (
+                matches!(vim.mode(), fe_vim::Mode::CmdLine(_)),
+                vim.visual_anchor(model),
+                vim.visual_cursor(model),
+                model.selections(),
+            )
+        })
+    };
+    let before = held(cx);
+    assert!(before.0, "the search command line is open");
+    assert_eq!(before.3.len(), 1);
+
+    reopen_as_windows_1252(&workbench, &editor, cx);
+    assert_eq!(
+        text(&editor, cx),
+        "\u{201a}\u{a0}\u{201a}\u{a2}\u{201a}\u{a4}\nabcdef\n"
+    );
+    let after = held(cx);
+    assert!(after.0, "the command line is still open");
+    // The ends sit in text the reopen rewrote: they stay where they were.
+    assert_eq!(after.1, before.1);
+    assert_eq!(after.2, before.2);
+    assert_eq!(after.3.len(), 1);
+    // Cancelling the search returns to the visual selection, remapped.
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    let resumed = held(cx);
+    assert!(!resumed.0, "the command line closed");
+    assert_eq!(resumed.1, after.1);
+    assert_eq!(resumed.2, after.2);
+    assert_eq!(resumed.3, after.3);
+}
+
+#[gpui::test]
+fn reopen_keeps_block_dollar_goal(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = vim_reopened_as_shift_jis(cx, b"abcdef\nabc\ncaf\xE9\n");
+    cx.simulate_keystrokes("l ctrl-v j $");
+    draw(cx);
+    let before = selections(&editor, cx);
+    assert_eq!(before.len(), 2, "one range per row");
+    assert_eq!(before[0].range, 1..6);
+    assert_eq!(before[1].range, 8..10);
+
+    reopen_as_windows_1252(&workbench, &editor, cx);
+    assert_eq!(text(&editor, cx), "abcdef\nabc\ncafé\n");
+    assert_eq!(selections(&editor, cx), before);
+    let mode = editor.read_with(cx, |editor, _| editor.vim_state().unwrap().mode());
+    assert_eq!(mode, fe_vim::Mode::Visual(fe_vim::VisualKind::Block));
+}
+
+#[gpui::test]
+fn reopen_keeps_viewport(cx: &mut TestAppContext) {
+    let mut bytes = b"top \xE9\n".to_vec();
+    for row in 0..200 {
+        bytes.extend_from_slice(format!("row {row}\n").as_bytes());
+    }
+    let (_dir, workbench, editor, cx) = vim_reopened_as_shift_jis(cx, &bytes);
+    cx.simulate_keystrokes("v l");
+    draw(cx);
+    // Scrolled away from the visual selection at the top.
+    editor.update(cx, |editor, cx| editor.set_scroll_top(100., cx));
+    draw(cx);
+    let top = editor.read_with(cx, |editor, _| editor.scroll_top());
+    assert!(top > 50., "scrolled to {top}");
+
+    reopen_as_windows_1252(&workbench, &editor, cx);
+    assert_eq!(editor.read_with(cx, |editor, _| editor.scroll_top()), top);
+}

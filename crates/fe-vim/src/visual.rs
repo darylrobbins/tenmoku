@@ -913,4 +913,101 @@ impl VimState {
         self.pending = Default::default();
         select(model, self, ends);
     }
+
+    /// Moves the visual ends to `anchor` and `cursor`, as a host does once
+    /// the text under them was replaced (each offset is taken at the
+    /// grapheme holding it, or a row's end). Unlike [`Self::select_visual`]
+    /// it keeps the cursor's goal column (a block extended with `$` stays so
+    /// on rows of other lengths) and the mode, also while a `/` or `?`
+    /// command line suspends the visual mode, with the command line and
+    /// pending input untouched. Returns whether a visual mode was held;
+    /// otherwise it does nothing.
+    pub fn remap_visual(&mut self, model: &mut EditorModel, anchor: usize, cursor: usize) -> bool {
+        model.sync_display();
+        let Some(held) = held_ends(model, self) else {
+            return false;
+        };
+        let text = model.text();
+        let clip = |offset: usize| position(text, offset.min(text.len()));
+        let ends = Ends {
+            anchor: clip(anchor),
+            cursor: clip(cursor),
+            ..held
+        };
+        if matches!(self.mode, Mode::Visual(_)) {
+            select(model, self, ends);
+        } else {
+            let snapshot = model.snapshot();
+            if let Some(visual) = &mut self.visual {
+                visual.anchor = snapshot.anchor_after(ends.anchor);
+                visual.cursor = snapshot.anchor_after(ends.cursor);
+                visual.along = None;
+            }
+            let selections = ends.selections(model.text(), model.tab_size().max(1));
+            model.set_selections(selections);
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod remap_tests {
+    //! `VimState::remap_visual` moves the visual ends keeping the goal and the
+    //! mode, also under a `/` or `?` command line.
+
+    use crate::{HeadlessVim, Mode, VisualKind};
+
+    fn selected(vim: &HeadlessVim) -> Vec<(usize, usize)> {
+        (vim.model().selections().iter())
+            .map(|selection| (selection.range.start, selection.range.end))
+            .collect()
+    }
+
+    #[test]
+    fn remap_moves_a_visual_selection() {
+        let mut vim = HeadlessVim::new("abcdef\nghi", (0, 1));
+        vim.feed("vl").unwrap();
+        let mut state = vim.state().clone();
+        assert!(state.remap_visual(vim.model_mut(), 2, 4));
+        assert_eq!(state.visual_anchor(vim.model()), Some(2));
+        assert_eq!(state.visual_cursor(vim.model()), Some(4));
+        assert_eq!(selected(&vim), [(2, 5)]);
+    }
+
+    #[test]
+    fn remap_outside_visual_does_nothing() {
+        let mut vim = HeadlessVim::new("abc", (0, 1));
+        let mut state = vim.state().clone();
+        assert!(!state.remap_visual(vim.model_mut(), 0, 2));
+        assert_eq!(state.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn remap_keeps_a_search_suspended_visual() {
+        let mut vim = HeadlessVim::new("abcdef\nghi", (0, 1));
+        vim.feed("vl/").unwrap();
+        assert!(matches!(vim.state().mode(), Mode::CmdLine(_)));
+        let mut state = vim.state().clone();
+        assert!(state.remap_visual(vim.model_mut(), 0, 3));
+        assert!(matches!(state.mode(), Mode::CmdLine(_)));
+        assert_eq!(state.visual_anchor(vim.model()), Some(0));
+        assert_eq!(state.visual_cursor(vim.model()), Some(3));
+        assert_eq!(selected(&vim), [(0, 4)]);
+    }
+
+    #[test]
+    fn remap_keeps_the_block_dollar_goal() {
+        let mut vim = HeadlessVim::new("abcdef\nabc", (0, 1));
+        vim.feed("<C-v>j$").unwrap();
+        let before = selected(&vim);
+        assert_eq!(before, [(1, 6), (8, 10)]);
+        let mut state = vim.state().clone();
+        let (anchor, cursor) = (
+            state.visual_anchor(vim.model()).unwrap(),
+            state.visual_cursor(vim.model()).unwrap(),
+        );
+        assert!(state.remap_visual(vim.model_mut(), anchor, cursor));
+        assert_eq!(state.mode(), Mode::Visual(VisualKind::Block));
+        assert_eq!(selected(&vim), before);
+    }
 }
