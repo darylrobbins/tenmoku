@@ -37,7 +37,10 @@ mod vim;
 
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
-pub use fe_config::{EditorSettings, SettingsEvent, StickyScrollSettings, theme::EditorPalette};
+pub use fe_config::{
+    EditorSettings, SettingsEvent, StickyScrollSettings, settings::RenderWhitespace,
+    theme::EditorPalette,
+};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
@@ -146,6 +149,10 @@ pub struct EditorTheme {
     pub sticky_scroll_shadow: Hsla,
     /// Behind a band row under the pointer.
     pub sticky_scroll_hover: Hsla,
+    /// The marks on spaces and tabs `render_whitespace` draws.
+    pub whitespace: Hsla,
+    /// The lines `rulers` draws.
+    pub ruler: Hsla,
     /// Sticky scroll's settings, `editor.sticky_scroll`: whether its band is
     /// drawn, how many rows it pins, where its scopes come from and whether
     /// its text scrolls sideways.
@@ -171,6 +178,10 @@ pub struct EditorTheme {
     /// Whether bracket pairs take `brackets`, from
     /// `editor.bracket_pair_colors`.
     pub bracket_pair_colors: bool,
+    /// Which spaces and tabs show a mark, from `editor.render_whitespace`.
+    pub render_whitespace: RenderWhitespace,
+    /// The columns a ruler is drawn at, from `editor.rulers`.
+    pub rulers: Vec<i32>,
     /// Behind the minimap.
     pub minimap_background: Hsla,
     /// The minimap's slider over the visible rows: at rest, under the
@@ -206,7 +217,8 @@ impl EditorTheme {
     }
 
     /// Takes the font family, size and line height from `settings`, and
-    /// whether indent guides are drawn and bracket pairs coloured.
+    /// whether indent guides, whitespace and rulers are drawn and bracket
+    /// pairs coloured.
     pub fn set_metrics(&mut self, settings: &EditorSettings, cx: &App) {
         self.font_family = font_family(settings, cx);
         self.font_features = if settings.font_ligatures {
@@ -219,6 +231,8 @@ impl EditorTheme {
         self.indent_guides = settings.indent_guides;
         self.bracket_pair_colors = settings.bracket_pair_colors;
         self.sticky_scroll = settings.sticky_scroll.clone();
+        self.render_whitespace = settings.render_whitespace;
+        self.rulers = settings.rulers.clone();
     }
 
     /// The editor's font: `font_family` with `font_features`.

@@ -111,6 +111,11 @@ colors! {
         sticky_scroll_shadow,
         /// Behind a band row under the pointer.
         sticky_scroll_hover,
+        /// The marks `editor.render_whitespace` draws on spaces and tabs, VS
+        /// Code's editorWhitespace.foreground.
+        whitespace,
+        /// The lines `editor.rulers` draws, VS Code's editorRuler.foreground.
+        ruler,
         /// The vim mode's segment in the status bar in normal mode, operator
         /// pending or while a jump is pending.
         vim_mode_normal,

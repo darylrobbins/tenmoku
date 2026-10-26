@@ -47,7 +47,9 @@ pub(crate) mod minimap;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
+mod rulers;
 pub(crate) mod sticky_scroll;
+mod whitespace;
 
 /// The frame's blocks: the lens rows and the host's ([`host_blocks`]), a
 /// lens before a host's block above the same row, the proposals' hunks
@@ -112,6 +114,10 @@ pub(crate) struct FrameLayout {
     pub(crate) decorations: Decorations,
     /// The indent guides over the frame's rows ([`indent_guides`]).
     pub(crate) indent_guides: Vec<indent_guides::Placed>,
+    /// The rulers' lines ([`rulers`]).
+    pub(crate) rulers: Vec<Bounds<Pixels>>,
+    /// The marks on spaces and tabs ([`whitespace`]).
+    pub(crate) whitespace: Vec<whitespace::Mark>,
     /// The host's blocks in view ([`host_blocks`]).
     host_blocks: Vec<host_blocks::Placed>,
     /// The lens rows in view ([`host_blocks::lens_layout`]).
@@ -1179,6 +1185,8 @@ impl Element for EditorElement {
             composition: composed,
             decorations: Decorations::default(),
             indent_guides: Vec::new(),
+            rulers: Vec::new(),
+            whitespace: Vec::new(),
             host_blocks: placed,
             lens_rows,
             proposals,
@@ -1205,6 +1213,8 @@ impl Element for EditorElement {
                 .retain(|placed| !matches!(placed.kind, DecorationKind::Gutter(_)));
         }
         layout.indent_guides = indent_guides::layout(&mut layout, view, window);
+        layout.rulers = rulers::layout(&mut layout, view, window);
+        layout.whitespace = whitespace::layout(&layout, view);
         let syntax = (view.syntax.as_ref().map(SyntaxDriver::syntax))
             .filter(|syntax| syntax.version() == view.model.snapshot().version());
         layout.minimap = match minimap_options {
@@ -1497,6 +1507,7 @@ impl Element for EditorElement {
                         &mut painted_proposals,
                     );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
+                    rulers::paint(&layout.rulers, theme.ruler, window);
                     indent_guides::paint(&layout.indent_guides, window);
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
@@ -1545,6 +1556,12 @@ impl Element for EditorElement {
                         let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
                     }
+                    whitespace::paint(
+                        &layout.whitespace,
+                        theme.whitespace,
+                        theme.font_size,
+                        window,
+                    );
                     ghost_text::paint(
                         &layout.ghost,
                         &layout,

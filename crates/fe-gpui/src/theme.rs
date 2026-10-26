@@ -3,12 +3,12 @@
 //! theme ([`set_editor_palette`]). fe-gpui doesn't read kiln's theme
 //! itself: the host turns it into a palette.
 
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use fe_config::theme::{Color, EditorPalette};
 use gpui::{App, Context, Global, Hsla, Pixels, SharedString, px, rgba};
 
-use crate::{EditorSettings, EditorTheme, EditorView, StickyScrollSettings};
+use crate::{EditorSettings, EditorTheme, EditorView, RenderWhitespace, StickyScrollSettings};
 
 impl EditorTheme {
     /// `palette`'s colours with the font and metrics of `settings`.
@@ -24,11 +24,14 @@ impl EditorTheme {
         let font_features = self.font_features.clone();
         let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
         let sticky_scroll = self.sticky_scroll.clone();
+        let (render_whitespace, rulers) = (self.render_whitespace, mem::take(&mut self.rulers));
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
         self.font_features = font_features;
         self.indent_guides = indent_guides;
         self.bracket_pair_colors = bracket_pair_colors;
         self.sticky_scroll = sticky_scroll;
+        self.render_whitespace = render_whitespace;
+        self.rulers = rulers;
     }
 
     /// `palette`'s colours with the given metrics.
@@ -72,6 +75,8 @@ impl EditorTheme {
             sticky_scroll_border: hsla(editor.sticky_scroll_border),
             sticky_scroll_shadow: hsla(editor.sticky_scroll_shadow),
             sticky_scroll_hover: hsla(editor.sticky_scroll_hover),
+            whitespace: hsla(editor.whitespace),
+            ruler: hsla(editor.ruler),
             sticky_scroll: StickyScrollSettings::default(),
             vim_mode_normal: hsla(editor.vim_mode_normal),
             vim_mode_insert: hsla(editor.vim_mode_insert),
@@ -82,6 +87,8 @@ impl EditorTheme {
             indent_guides: true,
             brackets: [editor.bracket_1, editor.bracket_2, editor.bracket_3].map(hsla),
             bracket_pair_colors: false,
+            render_whitespace: RenderWhitespace::default(),
+            rulers: Vec::new(),
             minimap_background: hsla(editor.minimap_background),
             minimap_slider: hsla(editor.minimap_slider),
             minimap_slider_hover: hsla(editor.minimap_slider_hover),

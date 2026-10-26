@@ -31,6 +31,10 @@ change_deleted = "#b05a64"
 # A thin line at each indent level, and the one of the caret's block.
 indent_guide = "#ffffff12"
 indent_guide_active = "#ffffff30"
+# The marks on spaces and tabs (editor.render_whitespace) and the rulers'
+# lines (editor.rulers), faint.
+whitespace = "#ffffff29"
+ruler = "#ffffff1f"
 # Sticky scroll: the band of pinned scope headers at the top of the editor,
 # the line under it when a theme shows one, the shadow fading down from it and
 # a row under the pointer. VS Code's editorStickyScroll.background (the

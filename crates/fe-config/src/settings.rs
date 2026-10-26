@@ -486,6 +486,30 @@ pub struct EditorSettings {
     /// Draw the font's ligatures, such as `=>` as ⇒ and `->` as →. Off, as in
     /// VS Code's `editor.fontLigatures`.
     pub font_ligatures: bool,
+    /// Which spaces and tabs show a mark, a dot or an arrow, in the theme's
+    /// `whitespace` colour, as VS Code's `editor.renderWhitespace`.
+    pub render_whitespace: RenderWhitespace,
+    /// A thin vertical line at each of these columns, in the theme's `ruler`
+    /// colour, as VS Code's `editor.rulers`. Columns of 0 or less are
+    /// ignored.
+    pub rulers: Vec<i32>,
+}
+
+/// `editor.render_whitespace`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderWhitespace {
+    /// No marks.
+    None,
+    /// Every space and tab except a single space between two words.
+    Boundary,
+    /// Only spaces and tabs inside a selection.
+    #[default]
+    Selection,
+    /// Only spaces and tabs after a row's last other character.
+    Trailing,
+    /// Every space and tab.
+    All,
 }
 
 /// `[editor.minimap]`: VS Code's `editor.minimap.*` settings, with its
@@ -652,6 +676,8 @@ impl Default for EditorSettings {
             minimap: MinimapSettings::default(),
             sticky_scroll: StickyScrollSettings::default(),
             font_ligatures: false,
+            render_whitespace: RenderWhitespace::default(),
+            rulers: Vec::new(),
         }
     }
 }

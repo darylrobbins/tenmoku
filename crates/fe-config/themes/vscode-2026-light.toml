@@ -105,6 +105,11 @@ change_modified = "#005FB8"
 change_deleted = "#AD0707"
 indent_guide = "#F7F7F740"
 indent_guide_active = "#EEEEEE"
+# The marks on spaces and tabs (editor.render_whitespace) and the rulers'
+# lines (editor.rulers): VS Code's built-in editorWhitespace.foreground and
+# editorRuler.foreground defaults.
+whitespace = "#33333333"
+ruler = "#d3d3d3"
 # Sticky scroll: the band of pinned scope headers at the top of the editor,
 # the line under it when a theme shows one, the shadow fading down from it and
 # a row under the pointer. VS Code's editorStickyScroll.background (the

@@ -209,6 +209,20 @@
           },
           "description": "The minimap: the whole file drawn small beside the text, VS Code's\n`editor.minimap.*`."
         },
+        "render_whitespace": {
+          "$ref": "#/$defs/RenderWhitespace",
+          "default": "selection",
+          "description": "Which spaces and tabs show a mark, a dot or an arrow, in the theme's\n`whitespace` colour, as VS Code's `editor.renderWhitespace`."
+        },
+        "rulers": {
+          "default": [],
+          "description": "A thin vertical line at each of these columns, in the theme's `ruler`\ncolour, as VS Code's `editor.rulers`. Columns of 0 or less are\nignored.",
+          "items": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "semantic_highlighting": {
           "default": true,
           "description": "Colour code with language servers' semantic tokens over the syntax\ncolours.",
@@ -556,6 +570,36 @@
         {
           "const": "fit",
           "description": "As `proportional` when the file fits the minimap's height, else\nshrunk as `fill`.",
+          "type": "string"
+        }
+      ]
+    },
+    "RenderWhitespace": {
+      "description": "`editor.render_whitespace`.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No marks.",
+          "type": "string"
+        },
+        {
+          "const": "boundary",
+          "description": "Every space and tab except a single space between two words.",
+          "type": "string"
+        },
+        {
+          "const": "selection",
+          "description": "Only spaces and tabs inside a selection.",
+          "type": "string"
+        },
+        {
+          "const": "trailing",
+          "description": "Only spaces and tabs after a row's last other character.",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "Every space and tab.",
           "type": "string"
         }
       ]
@@ -992,6 +1036,8 @@
           "side": "right",
           "size": "proportional"
         },
+        "render_whitespace": "selection",
+        "rulers": [],
         "semantic_highlighting": true,
         "soft_wrap": false,
         "sticky_scroll": {

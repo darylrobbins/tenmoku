@@ -67,6 +67,15 @@
 # colours.
 # bracket_pair_colors = true
 
+# Which spaces and tabs show a mark, in the theme's whitespace colour: "none",
+# "boundary" (all but a single space between words), "selection" (only those
+# selected), "trailing" (only those after a row's last other character) or
+# "all".
+# render_whitespace = "selection"
+
+# A thin vertical line at each of these columns, such as [80, 120].
+# rulers = []
+
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.
 # enabled = true
