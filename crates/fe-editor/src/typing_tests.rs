@@ -198,8 +198,28 @@ fn deletes_group() {
     }
     assert_eq!(render(&model), "|ree");
     undo(&mut model);
-    assert_eq!(model.text().to_string(), "one two three");
+    assert_eq!(render(&model), "one two |three", "back where the run began");
     assert_eq!(model.undo().unwrap(), None, "one step");
+
+    // Forward deletes undo to where they began, with one caret or several.
+    let mut model = parse("|hello");
+    let now = clock(&mut model);
+    for _ in 0..3 {
+        wait(&now, 100);
+        run(&mut model, "editor.delete", Value::Null);
+    }
+    assert_eq!(render(&model), "|lo");
+    undo(&mut model);
+    assert_eq!(render(&model), "|hello");
+    let mut model = parse("a|bc\nd|ef");
+    let now = clock(&mut model);
+    for _ in 0..2 {
+        wait(&now, 100);
+        run(&mut model, "editor.delete", Value::Null);
+    }
+    assert_eq!(render(&model), "a|\nd|");
+    undo(&mut model);
+    assert_eq!(render(&model), "a|bc\nd|ef");
 
     // Deleting a selection isn't typing: its own step.
     let mut model = parse("ab[cd]");

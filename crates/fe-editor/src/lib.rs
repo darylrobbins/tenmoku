@@ -1356,7 +1356,8 @@ impl EditorModel {
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().undo(|origin| origin == ours);
         let pick = self.caret_pick(&result).and_then(|pick| pick.undo);
-        self.place_carets_after_history_change(EditKind::Undo, pick);
+        let starts = self.typing_starts(&result);
+        self.place_carets_after_history_change(EditKind::Undo, pick, starts);
         self.produced(result)
     }
 
@@ -1366,7 +1367,7 @@ impl EditorModel {
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
         let pick = self.caret_pick(&result).and_then(|pick| pick.redo);
-        self.place_carets_after_history_change(EditKind::Redo, pick);
+        self.place_carets_after_history_change(EditKind::Redo, pick, None);
         self.produced(result)
     }
 
@@ -1377,6 +1378,20 @@ impl EditorModel {
             return None;
         };
         self.history.borrow().caret_picks.get(id).copied()
+    }
+
+    /// Where the run of deletes `result` undid began, if its carets are
+    /// known and the text is the length it was then ([`History::typing_starts`]).
+    fn typing_starts(
+        &self,
+        result: &Result<Option<TransactionId>, UndoError>,
+    ) -> Option<Vec<usize>> {
+        let Ok(Some(id)) = result else {
+            return None;
+        };
+        let history = self.history.borrow();
+        let (len, starts) = history.typing_starts.get(id)?;
+        (self.buffer.borrow().snapshot().text().len() == *len).then(|| starts.clone())
     }
 
     /// Has undoing and redoing transaction `id`, from this model or any
@@ -1435,9 +1450,14 @@ impl EditorModel {
     }
 
     /// Puts a caret at the end of each edit the last undo or redo batch
-    /// made, or, with `pick`, one where it says, if the batch still has
-    /// that many edits.
-    fn place_carets_after_history_change(&mut self, kind: EditKind, pick: Option<CaretAt>) {
+    /// made, or, with `starts`, one at each, or, with `pick`, one where it
+    /// says, if the batch still has that many edits.
+    fn place_carets_after_history_change(
+        &mut self,
+        kind: EditKind,
+        pick: Option<CaretAt>,
+        starts: Option<Vec<usize>>,
+    ) {
         let last = self
             .events
             .drain()
@@ -1456,6 +1476,7 @@ impl EditorModel {
         let carets = last.map(|edits| {
             let snapshot = self.buffer.borrow().snapshot();
             let heads: Vec<usize> = match pick {
+                _ if starts.is_some() => starts.unwrap_or_default(),
                 Some(at) if edits.len() == at.count => {
                     let new = &edits[at.edit].new;
                     vec![(new.start + at.offset).min(new.end)]
@@ -1778,6 +1799,11 @@ struct History {
     /// given one: accepted completions. Kept while the buffer lives, a few
     /// words each: fe-buffer doesn't say when it drops a transaction.
     caret_picks: HashMap<TransactionId, CaretPick>,
+    /// For runs of typing that delete: the text's length and the carets
+    /// when the run began, where undoing it puts them back, since the
+    /// restored text ends after a forward delete's caret. Kept as
+    /// `caret_picks` is.
+    typing_starts: HashMap<TransactionId, (usize, Vec<usize>)>,
     /// How many saves have been prepared: a run of typing in any model
     /// ends at one, so its snapshot is an undo step's edge.
     save_marks: u64,
@@ -1805,6 +1831,7 @@ impl History {
             batches: VecDeque::new(),
             models: Vec::new(),
             caret_picks: HashMap::new(),
+            typing_starts: HashMap::new(),
             save_marks: 0,
             stamped: None,
         }
