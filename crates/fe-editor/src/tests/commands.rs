@@ -128,6 +128,10 @@ fn every_editor_command_is_registered() {
         "delete_rows",
     ];
     expected.extend(rows.map(|name| format!("editor.{name}")));
+    expected.extend(
+        ["insert_line_below", "insert_line_above", "copy_rows_up"]
+            .map(|name| format!("editor.{name}")),
+    );
     expected.push("editor.toggle_comment".to_string());
     expected.push("editor.toggle_block_comment".to_string());
     expected.extend([
@@ -185,6 +189,9 @@ fn every_editor_command_is_registered() {
         "move_rows_down",
         "duplicate_rows",
         "delete_rows",
+        "insert_line_below",
+        "insert_line_above",
+        "copy_rows_up",
         "toggle_comment",
         "toggle_block_comment",
         "sort_lines_ascending",

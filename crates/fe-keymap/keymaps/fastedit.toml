@@ -260,6 +260,42 @@ context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)
 platform = "!macos"
 
 [[bindings]]
+keys = "cmd-enter"
+command = "editor.insert_line_below"
+context = "editor && !git_panel && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-enter"
+command = "editor.insert_line_below"
+context = "editor && !git_panel && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "cmd-shift-enter"
+command = "editor.insert_line_above"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-shift-enter"
+command = "editor.insert_line_above"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = "shift-alt-up"
+command = "editor.copy_rows_up"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-shift-alt-up"
+command = "editor.copy_rows_up"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
 keys = { macos = "cmd-shift-k", default = "ctrl-shift-k" }
 command = "editor.delete_rows"
 context = "editor"

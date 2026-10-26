@@ -132,6 +132,21 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "editor.duplicate_rows",
         Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
     ),
+    (
+        "cmd-enter",
+        "editor.insert_line_below",
+        Some("editor && !git_panel && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "cmd-shift-enter",
+        "editor.insert_line_above",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "shift-alt-up",
+        "editor.copy_rows_up",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
     ("cmd-shift-k", "editor.delete_rows", Some("editor")),
     ("cmd-/", "editor.toggle_comment", Some("editor")),
     ("cmd-shift-\\", "editor.go_to_bracket", Some("editor")),

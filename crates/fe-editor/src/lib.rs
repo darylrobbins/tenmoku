@@ -50,6 +50,7 @@ mod pairs;
 mod plugin_access;
 mod row_change_decorations;
 pub mod row_changes;
+mod row_insert;
 mod rows;
 pub mod scripted_ai;
 mod smart_select;

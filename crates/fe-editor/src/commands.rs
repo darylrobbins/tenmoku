@@ -588,6 +588,7 @@ pub fn registry() -> Registry<Editor> {
     crate::cursor_history::register(&mut registry);
     crate::column_select::register(&mut registry);
     crate::rows::register(&mut registry);
+    crate::row_insert::register(&mut registry);
     crate::comment::register(&mut registry);
     crate::smart_select::register(&mut registry);
     crate::line_sort::register(&mut registry);

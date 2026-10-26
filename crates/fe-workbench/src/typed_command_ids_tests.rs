@@ -846,6 +846,9 @@ const EDITOR_LINE_COMMANDS: &[(&str, &str)] = &[
     ("editor.delete_word_right", "Delete Word Right"),
     ("editor.transpose_letters", "Transpose Letters"),
     ("editor.toggle_block_comment", "Toggle Block Comment"),
+    ("editor.insert_line_below", "Insert Line Below"),
+    ("editor.insert_line_above", "Insert Line Above"),
+    ("editor.copy_rows_up", "Copy Rows Up"),
     (
         "editor.trim_trailing_whitespace",
         "Trim Trailing Whitespace",
