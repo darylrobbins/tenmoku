@@ -87,6 +87,11 @@
 # A thin vertical line at each of these columns, such as [80, 120].
 # rulers = []
 
+# The gutter's line numbers: "on", "off", "relative" (rows from the caret's,
+# which shows 0) or "hybrid" (relative, the caret's row showing its number).
+# :set number and :set relativenumber change one editor's.
+# line_numbers = "on"
+
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.
 # enabled = true

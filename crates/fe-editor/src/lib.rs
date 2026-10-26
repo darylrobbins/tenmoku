@@ -17,7 +17,7 @@ use fe_buffer::{
     Bias, Buffer, BufferEvent, BufferSnapshot, DiskStamp, EditKind, Origin, ResolvedSelection,
     Selection, SelectionSet, Subscription, Text, TransactionId, UndoError, Version,
 };
-use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
+use fe_display::{CharWidth, DisplayMap, ExpandedRow, LineNumbers, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 mod auto_indent;
@@ -258,7 +258,7 @@ impl EditorModel {
     }
 
     /// A second model over the same buffer, for a split: same path, tab size,
-    /// indent style, wrap, auto-closing, selections, diagnostics and decoration providers (the same
+    /// indent style, wrap, line numbers, auto-closing, selections, diagnostics and decoration providers (the same
     /// ones; providers added to either later aren't added to the other),
     /// but its own display rows with nothing folded. It shares this one's
     /// row changes, diff base and all, until [`EditorModel::own_row_changes`].
@@ -305,6 +305,7 @@ impl EditorModel {
             linked: None,
         };
         model.row_changes.track(&model.caught_up);
+        model.display.set_line_numbers(self.line_numbers());
         model.apply_wrap();
         model
     }
@@ -627,6 +628,38 @@ impl EditorModel {
 
     pub fn toggle_soft_wrap(&mut self) {
         self.set_soft_wrap(!self.soft_wrap);
+    }
+
+    /// Which numbers the gutter shows: vim's 'number' and
+    /// 'relativenumber'. Each row's number until set.
+    pub fn line_numbers(&self) -> LineNumbers {
+        self.display.line_numbers()
+    }
+
+    pub fn set_line_numbers(&mut self, line_numbers: LineNumbers) {
+        self.display.set_line_numbers(line_numbers);
+    }
+
+    /// vim's 'number': each row's number, or with 'relativenumber' the
+    /// caret's row's.
+    pub fn number(&self) -> bool {
+        self.line_numbers().number
+    }
+
+    pub fn set_number(&mut self, number: bool) {
+        let relative = self.line_numbers().relative;
+        self.set_line_numbers(LineNumbers { number, relative });
+    }
+
+    /// vim's 'relativenumber': how many rows each row is from the primary
+    /// caret's.
+    pub fn relative_number(&self) -> bool {
+        self.line_numbers().relative
+    }
+
+    pub fn set_relative_number(&mut self, relative: bool) {
+        let number = self.line_numbers().number;
+        self.set_line_numbers(LineNumbers { number, relative });
     }
 
     /// Where soft wrap wraps when it's on, in the unit of the char widths.

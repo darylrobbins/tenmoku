@@ -1,5 +1,6 @@
 //! `:se[t] {arg} …` (`:help :set`) for the options fastedit's editor
-//! holds: `wrap` (soft wrap), `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
+//! holds: `wrap` (soft wrap), `number`/`nu` and `relativenumber`/`rnu`
+//! (the gutter's numbers), `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
 //! (0 meaning tabstop), `expandtab`/`et` and `clipboard`/`cb` (`unnamedplus`
 //! or empty), and the search options `ignorecase`/`ic`, `smartcase`/`scs`
 //! and `incsearch`/`is` (bools, all held by the shared `Registers`; each
@@ -40,6 +41,8 @@ const MAX_TABSTOP: usize = 16;
 #[derive(Clone, Copy, PartialEq)]
 enum Opt {
     Wrap,
+    Number,
+    Relativenumber,
     Tabstop,
     Shiftwidth,
     Expandtab,
@@ -53,6 +56,8 @@ enum Opt {
 fn option(name: &str) -> Option<(Opt, &'static str)> {
     Some(match name {
         "wrap" => (Opt::Wrap, "wrap"),
+        "number" | "nu" => (Opt::Number, "number"),
+        "relativenumber" | "rnu" => (Opt::Relativenumber, "relativenumber"),
         "tabstop" | "ts" => (Opt::Tabstop, "tabstop"),
         "shiftwidth" | "sw" => (Opt::Shiftwidth, "shiftwidth"),
         "expandtab" | "et" => (Opt::Expandtab, "expandtab"),
@@ -119,10 +124,7 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
         }
     };
     let (which, full) = found;
-    let is_bool = matches!(
-        which,
-        Opt::Wrap | Opt::Expandtab | Opt::Ignorecase | Opt::Smartcase | Opt::Incsearch
-    );
+    let is_bool = is_bool(which);
     if !prefix.is_empty() && !is_bool {
         return Err(ExError::InvalidArgument(arg.to_string()));
     }
@@ -167,9 +169,24 @@ fn apply(target: &mut VimTarget<'_>, arg: &str, report: &mut Vec<String>) -> Res
     }
 }
 
+fn is_bool(which: Opt) -> bool {
+    matches!(
+        which,
+        Opt::Wrap
+            | Opt::Number
+            | Opt::Relativenumber
+            | Opt::Expandtab
+            | Opt::Ignorecase
+            | Opt::Smartcase
+            | Opt::Incsearch
+    )
+}
+
 fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
     match which {
         Opt::Wrap => target.model.soft_wrap(),
+        Opt::Number => target.model.number(),
+        Opt::Relativenumber => target.model.relative_number(),
         Opt::Ignorecase => target.registers.search_case().0,
         Opt::Smartcase => target.registers.search_case().1,
         Opt::Incsearch => target.registers.incsearch(),
@@ -180,12 +197,16 @@ fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
 /// nvim's message for `opt?`.
 fn show(target: &VimTarget<'_>, which: Opt, full: &str) -> String {
     match which {
-        Opt::Wrap | Opt::Expandtab | Opt::Ignorecase | Opt::Smartcase | Opt::Incsearch => {
-            match value_of(target, which) {
-                true => format!("  {full}"),
-                false => format!("no{full}"),
-            }
-        }
+        Opt::Wrap
+        | Opt::Number
+        | Opt::Relativenumber
+        | Opt::Expandtab
+        | Opt::Ignorecase
+        | Opt::Smartcase
+        | Opt::Incsearch => match value_of(target, which) {
+            true => format!("  {full}"),
+            false => format!("no{full}"),
+        },
         Opt::Tabstop => format!("  tabstop={}", target.model.tab_size()),
         Opt::Shiftwidth => format!("  shiftwidth={}", shiftwidth(target)),
         Opt::Clipboard => match target.registers.clipboard_unnamed() {
@@ -206,6 +227,8 @@ fn shiftwidth(target: &VimTarget<'_>) -> usize {
 fn set_bool(target: &mut VimTarget<'_>, which: Opt, on: bool) -> Result<(), ExError> {
     match which {
         Opt::Wrap => target.model.set_soft_wrap(on),
+        Opt::Number => target.model.set_number(on),
+        Opt::Relativenumber => target.model.set_relative_number(on),
         Opt::Ignorecase => {
             let (_, smart) = target.registers.search_case();
             target.registers.set_search_case(on, smart);

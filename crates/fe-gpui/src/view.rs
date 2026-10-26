@@ -2,7 +2,8 @@ use std::{ops::Range, time::Duration};
 
 use fe_buffer::{Bias, BufferSnapshot, Version};
 use fe_command::{ContextFrame, ContextStack, Invocation, Source};
-use fe_display::layout::RowLayout;
+use fe_config::settings::LineNumbersSetting;
+use fe_display::{LineNumbers, layout::RowLayout};
 use fe_editor::EditorModel;
 use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
@@ -22,6 +23,18 @@ use crate::{
     timing::FrameTimings,
     *,
 };
+
+/// The gutter's numbers `setting` (`editor.line_numbers`) shows: `on`
+/// is vim's `nu`, `relative` `nonu rnu` and `hybrid` `nu rnu`.
+pub fn line_numbers(setting: LineNumbersSetting) -> LineNumbers {
+    let (number, relative) = match setting {
+        LineNumbersSetting::On => (true, false),
+        LineNumbersSetting::Off => (false, false),
+        LineNumbersSetting::Relative => (false, true),
+        LineNumbersSetting::Hybrid => (true, true),
+    };
+    LineNumbers { number, relative }
+}
 
 /// How long a frame may spend reparsing before the parse moves to a
 /// background thread. Small edits to files of 10k lines reparse within it.
@@ -698,9 +711,9 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Applies a reload's settings. Soft wrap changes only if the reload
-    /// changed it, so a reload of anything else keeps the editor's `alt-z`
-    /// toggle.
+    /// Applies a reload's settings. Soft wrap and line numbers change only
+    /// if the reload changed them, so a reload of anything else keeps the
+    /// editor's `alt-z` toggle and `:set nu rnu`.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         let (settings, previous) = (&event.settings.editor, &event.previous.editor);
         if settings == previous {
@@ -709,6 +722,10 @@ impl EditorView {
         self.apply_settings(settings, cx);
         if settings.soft_wrap != previous.soft_wrap {
             self.model.set_soft_wrap(settings.soft_wrap);
+        }
+        if settings.line_numbers != previous.line_numbers {
+            self.model
+                .set_line_numbers(line_numbers(settings.line_numbers));
         }
     }
 

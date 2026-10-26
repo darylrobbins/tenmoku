@@ -75,6 +75,7 @@ pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
+pub use view::line_numbers;
 pub use view::minimap_options;
 pub use view::{GlyphKind, GutterGlyph};
 pub use view::{HostBlock, HostBlockKind, ReservedBlock};
@@ -292,6 +293,8 @@ mod font_ligatures_tests;
 mod go_to_bracket_tests;
 #[cfg(test)]
 mod keymap_tests;
+#[cfg(test)]
+mod line_numbers_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]

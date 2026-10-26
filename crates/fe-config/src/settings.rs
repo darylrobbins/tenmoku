@@ -538,6 +538,26 @@ pub struct EditorSettings {
     /// colour, as VS Code's `editor.rulers`. Columns of 0 or less are
     /// ignored.
     pub rulers: Vec<i32>,
+    /// The gutter's line numbers: `"on"` (absolute), `"off"`, `"relative"`
+    /// (rows from the caret's, as vim's `nonu rnu`) or `"hybrid"`
+    /// (relative, the caret's row absolute, as vim's `nu rnu`). `:set nu`
+    /// and `:set rnu` change one editor's.
+    pub line_numbers: LineNumbersSetting,
+}
+
+/// `editor.line_numbers`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LineNumbersSetting {
+    /// Each row's number.
+    #[default]
+    On,
+    /// No numbers.
+    Off,
+    /// How many rows each row is from the caret's, which shows 0.
+    Relative,
+    /// Relative, with the caret's row showing its number.
+    Hybrid,
 }
 
 /// `editor.render_whitespace`.
@@ -726,6 +746,7 @@ impl Default for EditorSettings {
             font_ligatures: false,
             render_whitespace: RenderWhitespace::default(),
             rulers: Vec::new(),
+            line_numbers: LineNumbersSetting::default(),
         }
     }
 }

@@ -42,6 +42,27 @@ pub struct DisplayMap {
     tab_size: usize,
     wrap: WrapMap,
     folds: FoldMap,
+    line_numbers: LineNumbers,
+}
+
+/// Which numbers the gutter shows, as vim's 'number' and 'relativenumber'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineNumbers {
+    /// Each row's number; with `relative`, only the caret's row's.
+    pub number: bool,
+    /// How many rows each row is from the primary caret's, counting a
+    /// closed fold as one row and a wrapped row once.
+    pub relative: bool,
+}
+
+impl Default for LineNumbers {
+    /// Each row's number.
+    fn default() -> Self {
+        Self {
+            number: true,
+            relative: false,
+        }
+    }
 }
 
 /// The text a [`DisplayMap`] shows.
@@ -98,6 +119,7 @@ impl DisplayMap {
             source,
             tab_size: tab_size.max(1),
             folds: FoldMap::default(),
+            line_numbers: LineNumbers::default(),
         };
         map.rebuild_folds();
         map
@@ -180,6 +202,24 @@ impl DisplayMap {
         self.source = Source::Buffer(snapshot.clone());
         self.folds
             .sync(&self.wrap, self.text().row_count(), &wrap_edits);
+    }
+
+    /// Which numbers the gutter shows; [`LineNumbers::default`] until set.
+    pub fn line_numbers(&self) -> LineNumbers {
+        self.line_numbers
+    }
+
+    pub fn set_line_numbers(&mut self, line_numbers: LineNumbers) {
+        self.line_numbers = line_numbers;
+    }
+
+    /// `buffer_row`'s line among those not folded away, a closed fold
+    /// counting as one: a hidden row is its fold's header's line. What
+    /// relative line numbers count in.
+    pub fn visible_line(&self, buffer_row: u32) -> u32 {
+        // A hidden row counts itself and the hidden rows before it in its
+        // fold, which brings it back to the header's line.
+        buffer_row - self.folds.hidden_buffer_rows_through(buffer_row)
     }
 
     pub fn wrap_width(&self) -> Option<f32> {

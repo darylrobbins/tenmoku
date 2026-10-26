@@ -120,6 +120,15 @@ impl FoldMap {
         visible_before.saturating_sub(1)
     }
 
+    /// How many of buffer rows `0..=buffer_row` are hidden.
+    pub(crate) fn hidden_buffer_rows_through(&self, buffer_row: u32) -> u32 {
+        self.hidden
+            .iter()
+            .take_while(|run| run.buffer_rows.start <= buffer_row)
+            .map(|run| run.buffer_rows.end.min(buffer_row + 1) - run.buffer_rows.start)
+            .sum()
+    }
+
     /// The run of hidden wrap rows containing `wrap_row`.
     pub(crate) fn hidden_run(&self, wrap_row: usize) -> Option<Range<usize>> {
         let index = self

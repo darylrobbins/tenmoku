@@ -201,14 +201,21 @@
           "minimum": 1.0,
           "type": "number"
         },
-        "links": {
-          "default": true,
-          "description": "Underline language servers' links (URLs and file paths) under the\npointer while cmd (ctrl off macOS) is held, and open them on\ncmd-click.",
+        "line_numbers": {
+          "$ref": "#/$defs/LineNumbersSetting",
+          "default": "on",
+          "description": "The gutter's line numbers: `\"on\"` (absolute), `\"off\"`, `\"relative\"`\n(rows from the caret's, as vim's `nonu rnu`) or `\"hybrid\"`\n(relative, the caret's row absolute, as vim's `nu rnu`). `:set nu`\nand `:set rnu` change one editor's."
+        },
         "linked_editing": {
           "default": false,
           "description": "Rename an HTML tag's pair as you type in the open or close tag, and\nother ranges a language server links (`textDocument/linkedEditingRange`).",
           "type": "boolean"
         },
+        "links": {
+          "default": true,
+          "type": "boolean"
+        },
+          "description": "Underline language servers' links (URLs and file paths) under the\npointer while cmd (ctrl off macOS) is held, and open them on\ncmd-click.",
         "minimap": {
           "$ref": "#/$defs/MinimapSettings",
           "default": {
@@ -280,6 +287,31 @@
         }
       },
       "type": "object"
+    },
+    "LineNumbersSetting": {
+      "description": "`editor.line_numbers`.",
+      "oneOf": [
+        {
+          "const": "on",
+          "description": "Each row's number.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "No numbers.",
+          "type": "string"
+        },
+        {
+          "const": "relative",
+          "description": "How many rows each row is from the caret's, which shows 0.",
+          "type": "string"
+        },
+        {
+          "const": "hybrid",
+          "description": "Relative, with the caret's row showing its number.",
+          "type": "string"
+        }
+      ]
     },
     "LspReadiness": {
       "description": "How a server's readiness is told.",
@@ -1084,8 +1116,9 @@
         "inline_blame": false,
         "lightbulb": true,
         "line_height": 1.6,
-        "links": true,
+        "line_numbers": "on",
         "linked_editing": false,
+        "links": true,
         "minimap": {
           "enabled": true,
           "max_column": 120,

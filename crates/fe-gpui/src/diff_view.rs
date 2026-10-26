@@ -211,6 +211,8 @@ impl DiffView {
         let titles = [left.title, right.title];
         let mut view = |mut model: EditorModel, read_only: bool, tints: &Rc<RefCell<DiffTints>>| {
             model.own_row_changes();
+            // Absolute numbers, whatever the editor split from shows.
+            model.set_line_numbers(fe_display::LineNumbers::default());
             model.add_decoration_provider(tints.clone());
             let theme = theme.clone();
             let settings = settings.clone();

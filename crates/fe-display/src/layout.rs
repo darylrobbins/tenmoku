@@ -1560,15 +1560,36 @@ fn lay_out_frame<M: TextMeasure>(
         rows.iter()
             .filter(|row| row.start == text.row_start(row.buffer_row))
     };
+    let numbers = display.line_numbers();
+    // Relative numbers count lines from the primary caret's. The rows
+    // starting a buffer row in a frame are consecutive lines: the rows
+    // between them are folded away.
+    let relative_from = (gutter && numbers.relative).then(|| {
+        let primary_row = text.offset_to_point(primary_head).row;
+        let first_line = first_rows()
+            .next()
+            .map_or(0, |row| display.visible_line(row.buffer_row));
+        (display.visible_line(primary_row), first_line)
+    });
     let line_numbers = first_rows()
-        .filter(|_| gutter)
-        .map(|row| {
+        .filter(|_| gutter && (numbers.number || numbers.relative))
+        .enumerate()
+        .map(|(ix, row)| {
             let style = if active_buffer_rows.binary_search(&row.buffer_row).is_ok() {
                 &styles.active_line_number
             } else {
                 &styles.line_number
             };
-            let line = shape(&(row.buffer_row + 1).to_string(), style);
+            let number = match relative_from {
+                Some((primary_line, first_line)) => {
+                    match (first_line + ix as u32).abs_diff(primary_line) {
+                        0 if numbers.number => row.buffer_row + 1,
+                        distance => distance,
+                    }
+                }
+                None => row.buffer_row + 1,
+            };
+            let line = shape(&number.to_string(), style);
             let origin = Vec2 {
                 x: fold_column_x - em * LINE_NUMBER_GAP_EMS - line.width(),
                 y: row_top(row.row),
@@ -1840,6 +1861,8 @@ mod hint_block_caret_tests;
 mod inlay_hints_tests;
 #[cfg(test)]
 mod inlay_tests;
+#[cfg(test)]
+mod line_number_modes_tests;
 #[cfg(test)]
 mod long_row_tests;
 #[cfg(test)]
