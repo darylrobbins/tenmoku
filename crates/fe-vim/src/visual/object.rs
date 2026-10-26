@@ -9,7 +9,9 @@ fn object_ends(text: &Text, span: Span, object: TextObject) -> Option<(usize, us
         // the position itself for a word object (an empty row).
         Span::Chars(range) if range.is_empty() => match object {
             InnerParen | InnerBrace | InnerBracket | InnerAngle => None,
-            InnerDoubleQuote | InnerSingleQuote => Some((range.start, range.start - 1)),
+            InnerDoubleQuote | InnerSingleQuote | InnerBacktick => {
+                Some((range.start, range.start - 1))
+            }
             _ => Some((range.start, range.start)),
         },
         // `i(` and `i{` end at a row's end when the bracket starts the next
@@ -72,6 +74,9 @@ pub(crate) fn select_object(
     }
     if crate::feature::definition::is_object(args.text_object) {
         return crate::feature::definition::select_visual(target, args);
+    }
+    if let Seek(object) = args.text_object {
+        return select_seek(target, object, args.count.unwrap_or(1).max(1));
     }
     let VimTarget { model, state, .. } = target;
     model.sync_display();
@@ -295,20 +300,7 @@ pub(crate) fn select_object(
             _ => return failed(state),
         }
     };
-    let keeps_block = matches!(
-        args.text_object,
-        InnerWord
-            | AWord
-            | InnerBigWord
-            | ABigWord
-            | InnerDoubleQuote
-            | ADoubleQuote
-            | InnerSingleQuote
-            | ASingleQuote
-            | InnerBacktick
-            | ABacktick
-    );
-    if ends.kind == VisualKind::Block && keeps_block {
+    if ends.kind == VisualKind::Block && keeps_block(args.text_object) {
         kind = VisualKind::Block;
     }
     let selected = Ends {
@@ -320,6 +312,68 @@ pub(crate) fn select_object(
     select(model, state, selected);
     state.failed |= ran_out;
     effect(true)
+}
+
+/// A seeking object (`in(`) in a visual mode: from one position, the
+/// `count`th pair's object, selected as its plain object's would be; over
+/// more, or over one an object selected (a one-char inside), the plain
+/// object, growing as it does.
+fn select_seek(
+    target: &mut VimTarget<'_>,
+    object: crate::SeekObject,
+    count: u32,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    let plain = crate::feature::seek::plain(object);
+    target.model.sync_display();
+    let ends = match ends(target.model, target.state) {
+        Some(ends) if ends.anchor == ends.cursor && !target.state.visual_by_object() => ends,
+        _ => {
+            let args = SelectArgs {
+                text_object: plain,
+                count: Some(count),
+            };
+            return select_object(target, args);
+        }
+    };
+    let VimTarget { model, state, .. } = target;
+    let text = model.text().clone();
+    let tab = model.tab_size().max(1);
+    let span = text_object::select(&text, ends.cursor, TextObject::Seek(object), count, tab);
+    let Some((anchor, cursor)) = object_ends(&text, span, plain) else {
+        return failed(state);
+    };
+    let kind = match ends.kind == VisualKind::Block && keeps_block(plain) {
+        true => VisualKind::Block,
+        false => VisualKind::Char,
+    };
+    let selected = Ends {
+        kind,
+        anchor,
+        cursor,
+        goal: None,
+    };
+    select(model, state, selected);
+    state.set_visual_by_object();
+    effect(true)
+}
+
+/// Whether the object keeps a blockwise selection a block: word and quote
+/// objects do.
+fn keeps_block(object: TextObject) -> bool {
+    use TextObject::*;
+    matches!(
+        object,
+        InnerWord
+            | AWord
+            | InnerBigWord
+            | ABigWord
+            | InnerDoubleQuote
+            | ADoubleQuote
+            | InnerSingleQuote
+            | ASingleQuote
+            | InnerBacktick
+            | ABacktick
+    )
 }
 
 /// `iw` (`iW` if `big`) in a visual mode, `count` items from the cursor at

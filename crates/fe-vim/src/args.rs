@@ -484,7 +484,9 @@ impl Motion {
 /// (`feature/argument.rs`); `inner_function` `a_function` `inner_class`
 /// `a_class` are `if af ic ac`, from the host's syntax
 /// (`feature/definition.rs`); `comment` is `gc` after an operator, the run of
-/// commented rows around the caret, linewise (`feature/comment.rs`).
+/// commented rows around the caret, linewise (`feature/comment.rs`);
+/// `seek` is `in( il(` and the like, the next or last pair's object
+/// (`feature/seek.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextObject {
@@ -524,6 +526,22 @@ pub enum TextObject {
     InnerClass,
     AClass,
     Comment,
+    Seek(SeekObject),
+}
+
+/// `in( an( il( al(`, and the same for `[ { <` and the quotes: the object
+/// of the next pair after the caret, or the `last` one before it, never the
+/// one holding it (`feature/seek.rs`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct SeekObject {
+    /// `l`: the last pair before the caret; else `n`, the next after it.
+    #[serde(default)]
+    pub last: bool,
+    /// `i`: the pair's inside; else `a`, the pair.
+    #[serde(default)]
+    pub inner: bool,
+    /// The pair, by its opening char: `( [ { <`, or a quote `" ' \``.
+    pub pair: char,
 }
 
 /// What an operator acts on.

@@ -298,6 +298,22 @@ impl Pending {
         self.commit(Target::Motion(motion))
     }
 
+    /// Commits `text_object`: `vim.select` in a visual mode, else
+    /// `vim.operate` with the pending operator.
+    pub(crate) fn object(mut self, text_object: TextObject) -> Step {
+        if self.visual {
+            self.end_count();
+            return invocation(
+                "vim.select",
+                SelectArgs {
+                    text_object,
+                    count: self.count,
+                },
+            );
+        }
+        self.commit(Target::TextObject(text_object))
+    }
+
     /// Waits on `prefix`, a feature's own, for the hook's next key
     /// ([`feature::prefix`]), the count ended.
     pub(crate) fn with_feature_prefix(mut self, prefix: FeaturePrefix) -> Step {
@@ -471,20 +487,19 @@ impl Pending {
                 Motion::TillForward(_) => Motion::TillForward(ch),
                 _ => Motion::TillBackward(ch),
             })),
-            Prefix::Object { inner } => match self.text_object(ch, inner) {
-                Some(text_object) if self.visual => {
-                    self.end_count();
-                    invocation(
-                        "vim.select",
-                        SelectArgs {
-                            text_object,
-                            count: self.count,
-                        },
-                    )
+            Prefix::Object { inner } => {
+                // A feature may wait on keys of its own first (`in(`).
+                if let Some(object) = text_object(ch, inner) {
+                    return self.object(object);
                 }
-                Some(object) => self.commit(Target::TextObject(object)),
-                None => Step::Cancel,
-            },
+                if let Some(step) = feature::object_prefix(&self, ch, inner) {
+                    return step;
+                }
+                match feature::object(&self, ch, inner) {
+                    Some(object) => self.object(object),
+                    None => Step::Cancel,
+                }
+            }
             Prefix::Replace if self.visual => {
                 self.operator = Some(Operator::Replace(ch));
                 self.commit(Target::Selection)
@@ -523,12 +538,6 @@ impl Pending {
             },
             _ => self.unmatched(prefix, key),
         }
-    }
-
-    /// The text object `ch` names after `i` (`inner`) or `a`: one of the
-    /// reducer's own, else the first feature's.
-    fn text_object(&self, ch: char, inner: bool) -> Option<TextObject> {
-        text_object(ch, inner).or_else(|| feature::object(self, ch, inner))
     }
 
     /// A key a prefix doesn't take: after `g` the features may, else it

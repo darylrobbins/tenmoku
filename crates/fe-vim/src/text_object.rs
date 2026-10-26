@@ -2,16 +2,17 @@
 //! `iw aw iW aW i( a( i{ a{ i" a" i' a'` cover around a caret, as nvim
 //! 0.12.4 selects them (the corpus records it).
 
-use std::ops::Range;
+use std::ops::{ControlFlow, Range};
 
 use fe_text::Text;
 
 use crate::{
     TextObject, delimiters,
-    feature::{argument, definition, objects},
+    feature::{argument, definition, objects, seek},
     motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
     prose,
+    search::Deadline,
 };
 
 /// What `object` covers around the caret at `offset`, `count` times.
@@ -50,6 +51,7 @@ pub(crate) fn select(
         InnerFunction | AFunction | InnerClass | AClass => {
             definition::select(text, offset, object, count)
         }
+        Seek(object) => seek::select(text, offset, object, count),
         // Which rows are commented is the host's to say:
         // `feature::comment::operate_object` acts over it instead.
         Comment => Span::Failed,
@@ -338,8 +340,21 @@ fn brackets_at(text: &Text, open: usize, pair: (u8, u8), inner: bool) -> Span {
     let Some(close) = unmatched(text, open, true, pair, rules) else {
         return Span::Failed;
     };
+    pair_span(text, open, close, inner, &Deadline::never()).unwrap_or(Span::Failed)
+}
+
+/// The pair from the bracket at `open` to its match at `close`: with its
+/// brackets, or `inner` its inside, as `i(` takes it; `None` if `deadline`
+/// passes while the row before `close` is read.
+pub(crate) fn pair_span(
+    text: &Text,
+    open: usize,
+    close: usize,
+    inner: bool,
+    deadline: &Deadline,
+) -> Option<Span> {
     if !inner {
-        return Span::Chars(open..close + 1);
+        return Some(Span::Chars(open..close + 1));
     }
     // An opening bracket ending its row starts the inside on the next row;
     // a closing one with only blanks before it ends it on the row before.
@@ -353,22 +368,64 @@ fn brackets_at(text: &Text, open: usize, pair: (u8, u8), inner: bool) -> Span {
     }
     let mut end = close;
     let close_row = text.offset_to_point(close).row;
-    let before_close = text.slice_to_string(text.row_start(close_row)..close);
-    let ends_row = close_row > open_row && before_close.bytes().all(|b| b == b' ' || b == b'\t');
+    let mut blanks = true;
+    if close_row > open_row {
+        each_byte(
+            text,
+            text.row_start(close_row)..close,
+            deadline,
+            |_, byte| {
+                blanks = byte == b' ' || byte == b'\t';
+                if blanks {
+                    ControlFlow::Continue(())
+                } else {
+                    ControlFlow::Break(())
+                }
+            },
+        )?;
+    }
+    let ends_row = close_row > open_row && blanks;
     if ends_row {
         end = row_end(close_row - 1);
     }
     if starts_row && ends_row && end >= start {
         let rows = text.offset_to_point(start).row..=text.offset_to_point(end).row;
-        return Span::Lines {
+        return Some(Span::Lines {
             rows,
             first_non_blank: true,
             from: Some(start),
-        };
+        });
     }
     // An empty inside is an empty range at its start: `di(` moves there,
     // `>i(` shifts its row.
-    Span::Chars(start..end.max(start))
+    Some(Span::Chars(start..end.max(start)))
+}
+
+/// How many bytes [`each_byte`] reads between looks at the deadline.
+pub(crate) const CHUNK: usize = 4096;
+
+/// Calls `each` with the offset and value of each byte of `range`, in
+/// order, until it breaks, looking at `deadline` every [`CHUNK`] bytes:
+/// `None` if it passed.
+pub(crate) fn each_byte(
+    text: &Text,
+    range: Range<usize>,
+    deadline: &Deadline,
+    mut each: impl FnMut(usize, u8) -> ControlFlow<()>,
+) -> Option<()> {
+    let mut at = range.start;
+    for chunk in text.chunks_in_range(range) {
+        for &byte in chunk.as_bytes() {
+            if (at + 1).is_multiple_of(CHUNK) && deadline.expired() {
+                return None;
+            }
+            if each(at, byte).is_break() {
+                return Some(());
+            }
+            at += 1;
+        }
+    }
+    Some(())
 }
 
 /// `i(` or `a(` typed in a visual mode over a selection of more than one
@@ -491,9 +548,17 @@ pub(crate) fn quotes(text: &Text, offset: usize, quote: u8, count: u32, inner: b
             (Some(_), None) => None,
         },
     };
-    let Some((open, close)) = pair else {
+    let Some(pair) = pair else {
         return Span::Failed;
     };
+    quoted(&scan, pair, count, inner)
+}
+
+/// The string on `scan`'s row from its quote at `open` to the one at
+/// `close` (indices into the row): its inside if `inner`, else the quotes
+/// and the blanks after, or with none, before; `2i"` takes the quotes only.
+fn quoted(scan: &Scan, (open, close): (usize, usize), count: u32, inner: bool) -> Span {
+    let bytes = &scan.bytes;
     let at = |ix: usize| scan.start + ix;
     if inner && count < 2 {
         return Span::Chars(at(open + 1)..at(close));

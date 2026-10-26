@@ -835,7 +835,7 @@ pub use args::{
     CancelArgs, CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JoinArgs,
     JumpChars, JumpMotion, MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs,
     PutArgs, RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern,
-    SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    SeekObject, SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use cmdline::SEARCH_PREVIEW_LIMIT;
 #[doc(hidden)]

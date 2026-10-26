@@ -17,7 +17,8 @@
 //! an operator with [`Pending::with_operator`] or commit one with
 //! [`Pending::operate`] (a doubled one, `gUU`, over
 //! [`Motion::Line`](crate::Motion::Line)); `object` maps the char after `i`
-//! or `a` to a text object. The variants for the M7 breadth cards are
+//! or `a` to a text object, and `object_prefix` may instead wait on keys
+//! of its own after it (`in(`, [`seek`]). The variants for the M7 breadth cards are
 //! already in place, each delegating to its stub module ([`prose`],
 //! [`line_motions`], [`delimiters`], [`g_operators`]; [`jumplist`] takes
 //! keys only).
@@ -41,6 +42,7 @@ pub(crate) mod exchange;
 pub(crate) mod filter;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
+pub(crate) mod seek;
 pub(crate) mod surround;
 
 use fe_command::Registry;
@@ -57,6 +59,9 @@ pub(crate) mod reindent;
 
 /// A feature's answer to the key after `[` or `]` (`true`).
 pub(crate) type BracketHook = fn(&Pending, bool, VimKey) -> Option<Step>;
+
+/// A feature's answer to the char after `i` or `a` (`true` for `i`).
+pub(crate) type ObjectPrefixHook = fn(&Pending, char, bool) -> Option<Step>;
 
 /// A feature's answer to the key after its own prefix.
 pub(crate) type PrefixHook = fn(&Pending, &FeaturePrefix, VimKey) -> Option<Step>;
@@ -144,6 +149,11 @@ pub(crate) struct Feature {
     /// The char after `i` or `a` (`true` for `i`) in operator-pending or a
     /// visual mode that the reducer maps to no text object.
     pub(crate) object: fn(&Pending, char, bool) -> Option<TextObject>,
+    /// The char after `i` or `a` (`true` for `i`), as for `object`, that
+    /// starts a prefix of the feature's own ([`Pending::with_feature_prefix`])
+    /// whose `prefix` hook then commits the object with
+    /// [`Pending::object`]; `None` if the feature has none.
+    pub(crate) object_prefix: Option<ObjectPrefixHook>,
     /// The key after a [`FeaturePrefix`], any feature's: `None` from a
     /// feature that doesn't own it, or for a key it refuses. `None` if the
     /// feature has no prefix of its own.
@@ -161,6 +171,7 @@ impl Feature {
         big_z: None,
         bracket: None,
         object: |_, _, _| None,
+        object_prefix: None,
         prefix: None,
         register: |_| {},
     };
@@ -192,6 +203,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &comment::FEATURE,
     &exchange::FEATURE,
     &filter::FEATURE,
+    &seek::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.
@@ -261,6 +273,14 @@ pub(crate) fn object(pending: &Pending, ch: char, inner: bool) -> Option<TextObj
     FEATURES
         .iter()
         .find_map(|feature| (feature.object)(pending, ch, inner))
+}
+
+/// The first feature's prefix for the char after `i` (`inner`) or `a`.
+pub(crate) fn object_prefix(pending: &Pending, ch: char, inner: bool) -> Option<Step> {
+    FEATURES
+        .iter()
+        .filter_map(|feature| feature.object_prefix)
+        .find_map(|hook| hook(pending, ch, inner))
 }
 
 /// Runs every feature's `register`.
