@@ -37,7 +37,10 @@ fn editor_on<'a>(
     cx.simulate_resize(size(px(800.), px(height)));
     cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
     view.update(cx, |view, cx| {
-        view.set_minimap(Some(MinimapOptions::default()), cx)
+        view.set_minimap(Some(MinimapOptions::default()), cx);
+        // A loaded debug frame can pass the wall-clock default and stop short;
+        // tests of the budget set their own.
+        view.minimap_cache.borrow_mut().budget = Duration::from_secs(3600);
     });
     draw(cx);
     (view, cx)
@@ -142,6 +145,7 @@ fn typing_and_inserting_a_row_rebuild_only_their_tile_and_those_below(cx: &mut T
     let runs = painted(&view, cx);
     view.update(cx, |view, cx| {
         view.minimap_cache.replace(Default::default());
+        view.minimap_cache.borrow_mut().budget = Duration::from_secs(3600);
         cx.notify();
     });
     draw(cx);

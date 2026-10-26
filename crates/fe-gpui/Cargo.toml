@@ -33,6 +33,9 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+# Tiles are built from complete highlights whatever the machine's load, as in
+# fe-syntax's own tests: a 2 ms query budget cuts them short under load.
+fe-syntax = { workspace = true, features = ["no-query-budget"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
