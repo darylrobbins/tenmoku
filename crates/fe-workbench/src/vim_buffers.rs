@@ -485,7 +485,8 @@ impl Workbench {
                 });
                 let resolve = |address: BufferAddress| match address {
                     BufferAddress::Number(number) => number,
-                    BufferAddress::Current => caret,
+                    // The final empty row after a terminating newline is no line.
+                    BufferAddress::Current => caret.min(lines),
                     BufferAddress::Last => lines,
                 };
                 if resolve(first) > resolve(end) {

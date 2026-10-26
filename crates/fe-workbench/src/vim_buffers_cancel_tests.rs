@@ -152,3 +152,26 @@ fn last_line_excludes_a_terminating_newline(cx: &mut TestAppContext) {
         Some("E493: Backwards range given".to_owned())
     );
 }
+
+#[gpui::test]
+fn current_line_clamps_to_logical_count_at_eof(cx: &mut TestAppContext) {
+    use super::super::super::vim_host_tests::{ex, message};
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), &["a.txt", "b.txt"]);
+    let (workbench, mut vcx) = window(cx, dir.path(), &["a.txt", "b.txt"]);
+    let cx = &mut vcx;
+    let line = |text: &str, cx: &mut VisualTestContext| {
+        ex(text, cx);
+        draw(cx);
+        message(&workbench, cx).map(|message| message.to_string())
+    };
+    assert_eq!(line("b 1", cx), None);
+    let editor = active(&workbench, cx);
+    // The caret ends on the final empty row after the newline.
+    editor.update(cx, |editor, cx| {
+        editor.model_mut().select_all();
+        editor.model_mut().insert("one\n");
+        cx.notify()
+    });
+    assert_eq!(line(".,$bf", cx), None);
+}
