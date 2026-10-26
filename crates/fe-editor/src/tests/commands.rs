@@ -161,6 +161,7 @@ fn every_editor_command_is_registered() {
         ["delete_all_left", "delete_all_right", "delete_word_right"]
             .map(|name| format!("editor.{name}")),
     );
+    expected.push("editor.transpose_letters".to_string());
     expected.push("editor.go_to_last_edit_location".to_string());
     assert_eq!(ids, expected);
     let mutating = [
@@ -196,6 +197,7 @@ fn every_editor_command_is_registered() {
         "delete_all_left",
         "delete_all_right",
         "delete_word_right",
+        "transpose_letters",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

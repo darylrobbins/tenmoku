@@ -301,6 +301,12 @@ context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)
 platform = "macos"
 
 [[bindings]]
+keys = "ctrl-t"
+command = "editor.transpose_letters"
+context = "editor && !vim.enabled"
+platform = "macos"
+
+[[bindings]]
 keys = "enter"
 command = "editor.newline"
 context = "editor && !chat_composer"

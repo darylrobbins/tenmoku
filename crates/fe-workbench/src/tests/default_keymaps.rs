@@ -66,6 +66,7 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         "editor.join_lines",
         "editor.delete_all_left",
         "editor.delete_all_right",
+        "editor.transpose_letters",
         "editor.column_select_left",
         "editor.column_select_right",
         "editor.column_select_up",

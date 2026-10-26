@@ -377,6 +377,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.delete_word_right",
     "editor.delete_all_left",
     "editor.delete_all_right",
+    "editor.transpose_letters",
     "editor.detect_indentation",
     "editor.duplicate_rows",
     "editor.expand_selection",
@@ -511,6 +512,7 @@ fn the_line_sort_commands_have_their_ids_and_titles() {
         ("editor.delete_all_left", "Delete All Left"),
         ("editor.delete_all_right", "Delete All Right"),
         ("editor.delete_word_right", "Delete Word Right"),
+        ("editor.transpose_letters", "Transpose Letters"),
         (
             "editor.trim_trailing_whitespace",
             "Trim Trailing Whitespace",

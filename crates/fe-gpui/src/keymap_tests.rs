@@ -148,6 +148,11 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "editor.delete_all_right",
         Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
     ),
+    (
+        "ctrl-t",
+        "editor.transpose_letters",
+        Some("editor && !vim.enabled"),
+    ),
     ("enter", "editor.newline", Some("editor && !chat_composer")),
     ("tab", "editor.tab", Some("editor")),
     ("cmd-alt-[", "editor.fold", Some("editor")),

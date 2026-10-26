@@ -52,6 +52,7 @@ pub mod scripted_ai;
 mod smart_select;
 pub mod snippet;
 pub mod text_diff;
+mod transpose;
 mod trim_whitespace;
 mod typing;
 mod viewer;
