@@ -178,3 +178,37 @@ fn stash_and_switch_then_pop() {
     assert_eq!(read(&root, "new.txt"), "new\n");
     assert_eq!(repo.stash_list().unwrap(), []);
 }
+
+#[test]
+fn a_message_that_says_nothing_to_save_is_still_stashed() {
+    let (_dir, _root, repo) = init();
+    repo.stash_push(Some("No local changes to save"), false)
+        .unwrap();
+    assert_eq!(
+        listed(&repo),
+        [(
+            0,
+            "No local changes to save".to_owned(),
+            Some("main".to_owned())
+        )]
+    );
+
+    // With no message, git's default holds the HEAD subject.
+    let (_dir, root, repo) = init();
+    git(&root, &["stash", "-q", "-u"]);
+    git(
+        &root,
+        &[
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "No local changes to save",
+        ],
+    );
+    git(&root, &["stash", "pop", "-q"]);
+    repo.stash_push(None, true).unwrap();
+    let entries = repo.stash_list().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].message.contains("No local changes to save"));
+}

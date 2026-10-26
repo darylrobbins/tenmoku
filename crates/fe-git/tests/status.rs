@@ -36,6 +36,35 @@ fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("run git")
 }
 
+/// Set in the child process a test reruns itself in.
+const ISOLATED: &str = "FE_GIT_STATUS_TEST_ISOLATED";
+
+/// `true` in the child process, where the test's body runs. In the test
+/// process itself, whose gix reads the developer's git config, runs test
+/// `name` in a child that sees no global or system config, fails if it
+/// fails, and returns `false`.
+fn isolated(name: &str) -> bool {
+    if std::env::var_os(ISOLATED).is_some() {
+        return true;
+    }
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([name, "--exact", "--nocapture", "--test-threads=1"])
+        .env(ISOLATED, "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .expect("rerun the test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{name} failed in isolation:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
+}
+
 /// A fresh repository with no commits.
 fn init() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -64,6 +93,9 @@ fn status(repo: &Repo) -> Vec<(PathBuf, ChangeKind)> {
 
 #[test]
 fn status_lists_each_kind_of_change_and_skips_ignored_and_touched_files() {
+    if !isolated("status_lists_each_kind_of_change_and_skips_ignored_and_touched_files") {
+        return;
+    }
     let (_dir, root) = init();
     write(&root, ".gitignore", b"*.log\n");
     write(&root, "modified.txt", b"one\n");
@@ -98,6 +130,9 @@ fn status_lists_each_kind_of_change_and_skips_ignored_and_touched_files() {
 
 #[test]
 fn unmerged_file_is_conflicted_and_status_leaves_the_index_alone() {
+    if !isolated("unmerged_file_is_conflicted_and_status_leaves_the_index_alone") {
+        return;
+    }
     let (_dir, root) = init();
     write(&root, "a.txt", b"base\n");
     git(&root, &["add", "."]);
@@ -123,6 +158,9 @@ fn unmerged_file_is_conflicted_and_status_leaves_the_index_alone() {
 
 #[test]
 fn head_text_and_head_id() {
+    if !isolated("head_text_and_head_id") {
+        return;
+    }
     let (_dir, root) = init();
     write(&root, "text.txt", b"committed\n");
     write(&root, "binary.bin", b"a\0b");
@@ -168,6 +206,9 @@ fn head_text_and_head_id() {
 
 #[test]
 fn discover_finds_the_repo_from_a_subdirectory_and_nothing_outside_one() {
+    if !isolated("discover_finds_the_repo_from_a_subdirectory_and_nothing_outside_one") {
+        return;
+    }
     let outside = tempfile::tempdir().unwrap();
     // A temp dir could sit inside a repository of its own; only check when it doesn't.
     if Command::new("git")

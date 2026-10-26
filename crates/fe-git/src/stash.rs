@@ -8,7 +8,9 @@ use std::process::Output;
 use crate::cli::{Access, run, run_raw};
 use crate::{GitError, Repo};
 
-/// What `git stash push` prints, exiting 0, when there's nothing to stash.
+/// All that `git stash push` prints, exiting 0, when there's nothing to
+/// stash. A stash that was made echoes its message after other text, so
+/// only the whole output is matched.
 const NOTHING_TO_SAVE: &str = "No local changes to save";
 
 /// Why a stash wasn't made, popped or applied.
@@ -67,7 +69,7 @@ impl Repo {
         if !output.status.success() {
             return Err(failed(&output));
         }
-        if String::from_utf8_lossy(&output.stdout).contains(NOTHING_TO_SAVE) {
+        if String::from_utf8_lossy(&output.stdout).trim() == NOTHING_TO_SAVE {
             return Err(StashError::NothingToStash);
         }
         Ok(())
