@@ -821,6 +821,18 @@ keys = "secondary-k z"
 command = "workbench.toggle_zen_mode"
 context = "workbench"
 
+# VS Code's workbench.action.editor.changeLanguageMode and
+# workbench.action.selectTheme.
+[[bindings]]
+keys = "secondary-k m"
+command = "language.select"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-t"
+command = "theme.select"
+context = "workbench"
+
 [[bindings]]
 keys = "escape escape"
 command = "workbench.toggle_zen_mode"
