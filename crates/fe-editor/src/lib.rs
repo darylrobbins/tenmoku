@@ -1381,7 +1381,7 @@ impl EditorModel {
     }
 
     /// Where the run of deletes `result` undid began, if its carets are
-    /// known and the text is the length it was then ([`History::typing_starts`]).
+    /// known ([`History::typing_starts`]), followed through every edit since.
     fn typing_starts(
         &self,
         result: &Result<Option<TransactionId>, UndoError>,
@@ -1389,9 +1389,10 @@ impl EditorModel {
         let Ok(Some(id)) = result else {
             return None;
         };
-        let history = self.history.borrow();
-        let (len, starts) = history.typing_starts.get(id)?;
-        (self.buffer.borrow().snapshot().text().len() == *len).then(|| starts.clone())
+        let mut history = self.history.borrow_mut();
+        history.record();
+        let (_, starts) = history.typing_starts.get(id)?;
+        Some(starts.iter().map(|(at, left)| at + left).collect())
     }
 
     /// Has undoing and redoing transaction `id`, from this model or any
@@ -1799,11 +1800,13 @@ struct History {
     /// given one: accepted completions. Kept while the buffer lives, a few
     /// words each: fe-buffer doesn't say when it drops a transaction.
     caret_picks: HashMap<TransactionId, CaretPick>,
-    /// For runs of typing that delete: the text's length and the carets
-    /// when the run began, where undoing it puts them back, since the
-    /// restored text ends after a forward delete's caret. Kept as
-    /// `caret_picks` is.
-    typing_starts: HashMap<TransactionId, (usize, Vec<usize>)>,
+    /// For runs of typing that delete: the carets when the run began, where
+    /// undoing it puts them back, since the restored text ends after a
+    /// forward delete's caret. Each is an offset in the text of the version
+    /// kept with it, which `record` carries through the edits since, as an
+    /// anchor goes, and how much of the run's deleted text lay before it,
+    /// which an undo restores there. Kept as `caret_picks` is.
+    typing_starts: HashMap<TransactionId, (Version, Vec<(usize, usize)>)>,
     /// How many saves have been prepared: a run of typing in any model
     /// ends at one, so its snapshot is an undo step's edge.
     save_marks: u64,
@@ -1849,11 +1852,25 @@ impl History {
     fn record(&mut self) {
         for event in self.events.drain() {
             let BufferEvent::Edited {
-                to, edits, text, ..
+                to,
+                edits,
+                text,
+                transaction,
+                kind,
+                ..
             } = event
             else {
                 continue;
             };
+            for (id, (version, starts)) in &mut self.typing_starts {
+                if to > *version {
+                    let own = *id == transaction && kind == EditKind::Edit;
+                    for (at, left) in starts.iter_mut() {
+                        *at = map_point(*at, &edits, own.then_some(left));
+                    }
+                    *version = to;
+                }
+            }
             let shapes = edits
                 .iter()
                 .map(|edit| Shape::of(edit, &self.last, &text))
@@ -1894,6 +1911,32 @@ impl History {
             self.batches.pop_front();
         }
     }
+}
+
+/// Where `offset` goes through `edits`: not into text inserted at it, and
+/// back to the start of text replaced around it. With `left`, edits of the
+/// run being followed, it adds to it the replaced text that lay before
+/// `offset`.
+fn map_point(offset: usize, edits: &[fe_buffer::Edit], mut left: Option<&mut usize>) -> usize {
+    let mut delta = 0isize;
+    for edit in edits {
+        if offset < edit.old.start {
+            break;
+        } else if edit.old.start < offset && offset <= edit.old.end {
+            if let Some(left) = left.as_deref_mut() {
+                *left += offset - edit.old.start;
+            }
+            if offset < edit.old.end {
+                return edit.new.start;
+            }
+        } else if offset == edit.old.start && offset < edit.old.end
+            || edit.old.is_empty() && offset == edit.old.start
+        {
+            return edit.new.start;
+        }
+        delta = edit.new.end as isize - edit.old.end as isize;
+    }
+    offset.saturating_add_signed(delta)
 }
 
 /// What deciding folds needs of one edit, from the texts before and after

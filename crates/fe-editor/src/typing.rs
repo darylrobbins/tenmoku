@@ -136,6 +136,7 @@ impl EditorModel {
             self.typing = Some(group);
             return id;
         }
+        let before = buffer.current().version();
         let starts = typed
             .filter(|typed| typed.kind == Kind::Delete)
             .and_then(|_| self.caret_starts());
@@ -145,7 +146,7 @@ impl EditorModel {
                 self.history
                     .borrow_mut()
                     .typing_starts
-                    .insert(transaction, starts);
+                    .insert(transaction, (before, starts));
             }
             self.typing = Some(TypingGroup {
                 transaction,
@@ -161,16 +162,13 @@ impl EditorModel {
         id
     }
 
-    /// The text's length and where the carets are, if no selection is.
-    fn caret_starts(&self) -> Option<(usize, Vec<usize>)> {
+    /// Where the carets are, if no selection is.
+    fn caret_starts(&self) -> Option<Vec<(usize, usize)>> {
         let selections = self.selections();
         selections
             .iter()
             .all(|selection| selection.range.is_empty())
-            .then(|| {
-                let starts = selections.iter().map(|s| s.range.start).collect();
-                (self.snapshot.text().len(), starts)
-            })
+            .then(|| (selections.iter()).map(|s| (s.range.start, 0)).collect())
     }
 
     /// Records the carets the last edit left, which the next keystroke must

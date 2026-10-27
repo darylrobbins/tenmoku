@@ -395,3 +395,140 @@ fn bad_steps_change_nothing() {
     );
     assert_eq!(text(&model), "aylxpha beta\ngamma\nthree\n");
 }
+
+fn step(
+    model: &mut EditorModel,
+    ai: &mut ScriptedAi,
+    step: Step,
+) -> Result<scripted_ai::Report, StepError> {
+    ai.step(model, &step)
+}
+
+#[test]
+fn finish_reports_a_conflict_over_a_held_return() {
+    let (mut model, mut ai) = model("alpha beta\n");
+    model.select_range(0..5, false);
+    play(&mut model, &mut ai, "stream");
+    step(&mut model, &mut ai, Step::Push("\r".into())).unwrap();
+    play(&mut model, &mut ai, "caret 1:3\ntype x");
+    let r = step(&mut model, &mut ai, Step::Finish);
+    assert_eq!(r, Err(StepError::Stream(StreamError::Conflict)), "{r:?}");
+    assert!(ai.stream().is_none());
+    assert_eq!(text(&model), "alxpha beta\n");
+}
+
+#[test]
+fn finish_reports_an_undone_stream() {
+    let (mut model, mut ai) = model("alpha beta\n");
+    model.select_range(0..5, false);
+    play(&mut model, &mut ai, "stream\npush ZZ");
+    step(&mut model, &mut ai, Step::Push("\r".into())).unwrap();
+    play(&mut model, &mut ai, "undo-ai");
+    let r = step(&mut model, &mut ai, Step::Finish);
+    assert_eq!(r, Err(StepError::Stream(StreamError::Undone)), "{r:?}");
+    assert_eq!(text(&model), "alpha beta\n");
+    assert!(touched(&model).is_empty());
+}
+
+#[test]
+fn a_held_return_over_a_selection_is_marked_and_undone() {
+    let (mut model, mut ai) = model("alpha beta\n");
+    model.select_range(0..5, false);
+    play(&mut model, &mut ai, "stream");
+    step(&mut model, &mut ai, Step::Push("\r".into())).unwrap();
+    step(&mut model, &mut ai, Step::Finish).unwrap();
+    assert_eq!(text(&model), "\n beta\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+    play(&mut model, &mut ai, "undo-ai");
+    assert_eq!(text(&model), "alpha beta\n");
+    assert!(touched(&model).is_empty());
+    play(&mut model, &mut ai, "redo-ai");
+    assert_eq!(text(&model), "\n beta\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+}
+
+#[test]
+fn a_held_return_inserted_is_marked_and_undone() {
+    let (mut model, mut ai) = model("alpha\n");
+    model.set_cursor(2);
+    play(&mut model, &mut ai, "stream");
+    step(&mut model, &mut ai, Step::Push("\r".into())).unwrap();
+    step(&mut model, &mut ai, Step::Finish).unwrap();
+    assert_eq!(text(&model), "al\npha\n");
+    assert!(!touched(&model).is_empty());
+    play(&mut model, &mut ai, "undo-ai");
+    assert_eq!(text(&model), "alpha\n");
+    assert!(touched(&model).is_empty());
+    play(&mut model, &mut ai, "redo-ai");
+    assert_eq!(text(&model), "al\npha\n");
+    assert!(!touched(&model).is_empty());
+}
+
+#[test]
+fn a_proposal_over_a_stream_keeps_its_marks_through_undo() {
+    let (mut model, mut ai) = model("one\ntwo\n");
+    model.select_range(0..4, false);
+    play(&mut model, &mut ai, "stream\npush ONE\\n\nfinish");
+    assert_eq!(text(&model), "ONE\ntwo\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+    play(&mut model, &mut ai, "propose 1-1 UNO\\n\naccept-hunk 1");
+    assert_eq!(text(&model), "UNO\ntwo\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+    play(&mut model, &mut ai, "undo");
+    assert_eq!(text(&model), "ONE\ntwo\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+    play(&mut model, &mut ai, "redo");
+    assert_eq!(text(&model), "UNO\ntwo\n");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+    play(&mut model, &mut ai, "undo\nundo-ai");
+    assert_eq!(text(&model), "one\ntwo\n");
+    assert!(touched(&model).is_empty());
+}
+
+#[test]
+fn a_first_chunk_equal_to_the_target_is_marked() {
+    let (mut model, mut ai) = model("old\nrest\n");
+    model.select_range(0..3, false);
+    play(&mut model, &mut ai, "stream\npush old");
+    assert_eq!(rows(&model, &touched(&model)), [(0, 0)]);
+}
+
+#[test]
+fn undone_deletes_follow_edits_of_other_origins() {
+    use fe_buffer::Origin;
+
+    // Length-changing edits: '!' at 0 and the last 'Y' gone keep the
+    // length, shifting the caret by one.
+    let (mut m, _ai) = self::model("abcdXY");
+    m.set_cursor(2);
+    m.delete_forward();
+    let origin = Origin::Ai {
+        agent: "x".into(),
+        session: "s".into(),
+    };
+    m.buffer_mut().edit([(0..0, "!"), (4..5, "")], origin);
+    assert_eq!(text(&m), "!abdX");
+    m.undo().unwrap();
+    assert_eq!(text(&m), "!abcdX");
+    assert_eq!(m.primary_selection().range, 3..3);
+
+    // An edit that changes the length overall.
+    let (mut m, _ai) = self::model("abcdXY");
+    m.set_cursor(2);
+    m.delete_forward();
+    let origin = Origin::Ai {
+        agent: "x".into(),
+        session: "s".into(),
+    };
+    m.buffer_mut().edit([(0..0, "!!")], origin);
+    m.undo().unwrap();
+    assert_eq!(text(&m), "!!abcdXY");
+    assert_eq!(m.primary_selection().range, 4..4);
+
+    // A backspace puts the caret after the restored char.
+    let (mut m, _ai) = self::model("abcd");
+    m.set_cursor(3);
+    m.backspace();
+    m.undo().unwrap();
+    assert_eq!(m.primary_selection().range, 3..3);
+}
