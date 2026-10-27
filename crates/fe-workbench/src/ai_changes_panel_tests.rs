@@ -791,6 +791,20 @@ fn with_new_file(
     &mut VisualTestContext,
     PathBuf,
 ) {
+    with_new_file_named(cx, "new.rs", "fn made() {}\n")
+}
+
+/// [`with_new_file`] for the file `name` proposed with `text`.
+fn with_new_file_named<'a>(
+    cx: &'a mut TestAppContext,
+    name: &str,
+    text: &str,
+) -> (
+    tempfile::TempDir,
+    Entity<Workbench>,
+    &'a mut VisualTestContext,
+    PathBuf,
+) {
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a.rs");
     std::fs::write(&a, TWO_FNS).unwrap();
@@ -800,9 +814,9 @@ fn with_new_file(
     };
     let (workbench, cx, _) = open(cx, launch);
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    let created = dir.path().join("new.rs");
+    let created = dir.path().join(name);
     let mut changeset = Changeset::new("turn", ai());
-    changeset.add_new_file(created.clone(), "fn made() {}\n");
+    changeset.add_new_file(created.clone(), text);
     workbench.update_in(cx, |workbench, window, cx| {
         workbench.set_changeset(changeset, window, cx)
     });
@@ -818,8 +832,16 @@ fn active_path(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Opt
 }
 
 fn click_new_row(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    click_row_named(workbench, "ai-changes-row-new.rs", cx)
+}
+
+fn click_row_named(
+    workbench: &Entity<Workbench>,
+    selector: &'static str,
+    cx: &mut VisualTestContext,
+) {
     draw(cx);
-    let bounds = cx.debug_bounds("ai-changes-row-new.rs").expect("drawn");
+    let bounds = cx.debug_bounds(selector).expect("drawn");
     let at = bounds.origin + gpui::point(gpui::px(24.), bounds.size.height - gpui::px(8.));
     cx.simulate_click(at, Modifiers::none());
     draw(cx);
@@ -1061,21 +1083,193 @@ fn svg_row_read_is_dropped_when_the_user_moves_on(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn closed_accepted_new_file_row_makes_no_stale_tab(cx: &mut TestAppContext) {
-    let (_dir, workbench, cx, created) = with_new_file(cx);
+/// `with_svg` with the SVG's viewer tab closed: no tab shows the file.
+fn with_svg_closed(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<Workbench>,
+    &mut VisualTestContext,
+    PathBuf,
+) {
+    let (dir, workbench, cx, svg) = with_svg(cx);
     workbench.update_in(cx, |workbench, window, cx| {
-        workbench.decide_ai_file(&created, true, window, cx);
         let pane = workbench.pane().clone();
         pane.update(cx, |pane, cx| pane.close_active(window, cx));
     });
     draw(cx);
-    let tabs = |cx: &mut VisualTestContext| {
-        workbench.read_with(cx, |workbench, cx| workbench.open_editors(cx).len())
-    };
-    let before = tabs(cx);
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    assert!(pane.read_with(cx, |pane, _| pane.position(&svg).is_none()));
+    (dir, workbench, cx, svg)
+}
+
+#[gpui::test]
+fn svg_reopen_does_not_steal_focus_after_navigation(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx, svg) = with_svg_closed(cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.open_ai_file(svg.clone(), window, cx);
+        // Before the read lands, the user shows another tab.
+        let pane = workbench.pane().clone();
+        pane.update(cx, |pane, cx| pane.activate(0, window, cx));
+    });
+    cx.run_until_parked();
+    draw(cx);
+    assert_ne!(active_path(&workbench, cx), Some(svg.clone()), "stays put");
+    assert!(!workbench.read_with(cx, |workbench, _| workbench.ai_opening_pending()));
+}
+
+#[gpui::test]
+fn failed_text_read_retires_observer(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx, svg) = with_svg_closed(cx);
+    // A directory in its place: the read fails.
+    std::fs::remove_file(&svg).unwrap();
+    std::fs::create_dir(&svg).unwrap();
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.open_ai_file(svg.clone(), window, cx);
+    });
+    assert!(workbench.read_with(cx, |workbench, _| workbench.ai_opening_pending()));
+    cx.run_until_parked();
+    draw(cx);
+    assert!(
+        !workbench.read_with(cx, |workbench, _| workbench.ai_opening_pending()),
+        "the failed read retired the observer"
+    );
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    assert!(pane.read_with(cx, |pane, _| pane.position(&svg).is_none()));
+    // Dropped for another read of the file: also retired, nothing shown.
+    std::fs::remove_dir(&svg).unwrap();
+    std::fs::write(&svg, SVG).unwrap();
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.open_ai_file(svg.clone(), window, cx);
+        let pane = workbench.pane().clone();
+        pane.update(cx, |pane, cx| pane.open_as_text(svg.clone(), window, cx));
+    });
+    cx.run_until_parked();
+    draw(cx);
+    assert!(!workbench.read_with(cx, |workbench, _| workbench.ai_opening_pending()));
+}
+
+/// Types `x` in the active editor.
+fn type_x(cx: &mut VisualTestContext) {
+    cx.simulate_input("x");
+    draw(cx);
+}
+
+/// The text of every editor of `path`, one per view.
+fn texts(
+    workbench: &Entity<Workbench>,
+    path: &std::path::Path,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    workbench.read_with(cx, |workbench, cx| {
+        (workbench.open_editors(cx).into_iter())
+            .filter(|editor| editor.read(cx).model().path() == Some(path))
+            .map(|editor| editor.read(cx).model().buffer().text().to_string())
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn preview_read_only_in_split_view(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx, created) = with_new_file(cx);
     click_new_row(&workbench, cx);
-    assert_eq!(tabs(cx), before, "no copy of the original proposal");
+    cx.simulate_keystrokes("cmd-\\");
+    draw(cx);
+    let views = texts(&workbench, &created, cx);
+    assert_eq!(views.len(), 2, "a view in each pane");
+    type_x(cx);
+    assert_eq!(texts(&workbench, &created, cx), vec!["fn made() {}\n"; 2]);
+}
+
+#[gpui::test]
+fn edited_preview_protected_on_accept_and_reject(cx: &mut TestAppContext) {
+    for accept in [true, false] {
+        let (_dir, workbench, cx, created) = with_new_file(cx);
+        click_new_row(&workbench, cx);
+        cx.simulate_keystrokes("cmd-\\");
+        draw(cx);
+        type_x(cx);
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.decide_ai_file(&created, accept, window, cx)
+        });
+        draw(cx);
+        let views = texts(&workbench, &created, cx);
+        match accept {
+            true => assert!(
+                views.iter().all(|text| text == "fn made() {}\n"),
+                "{views:?}"
+            ),
+            false => assert!(views.is_empty(), "{views:?}"),
+        }
+    }
+}
+
+#[gpui::test]
+fn accepted_new_file_row_reopens_saved_contents(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx, created) = with_new_file(cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.decide_ai_file(&created, true, window, cx);
+    });
+    draw(cx);
+    // Saved, so closing it closes the tab.
+    let tab = editor(&workbench, &created, cx);
+    let saving = tab.update_in(cx, |editor, window, cx| editor.save(window, cx));
+    saving.detach();
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| {
+        let pane = workbench.pane().clone();
+        pane.update(cx, |pane, cx| pane.close_active(window, cx));
+    });
+    draw(cx);
+    assert!(texts(&workbench, &created, cx).is_empty(), "closed");
+    // Saved with edits meanwhile.
+    std::fs::write(&created, "fn edited() {}\n").unwrap();
+    click_new_row(&workbench, cx);
+    cx.run_until_parked();
+    draw(cx);
+    assert_eq!(active_path(&workbench, cx), Some(created.clone()));
+    assert_eq!(texts(&workbench, &created, cx), vec!["fn edited() {}\n"]);
+    let rows = workbench.read_with(cx, |workbench, cx| {
+        let panel = workbench.dock().read(cx).ai_changes().cloned().unwrap();
+        panel.read(cx).shown_rows()
+    });
+    assert_eq!(rows.len(), 1, "still in the changeset");
+    // The reopened buffer is the file's: Revert Turn asks about its
+    // edits, then removes it.
+    draw(cx);
+    let bounds = cx.debug_bounds("ai-changes-revert").expect("drawn");
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    draw(cx);
+    let (question, detail) = cx.pending_prompt().expect("edited, so it asks");
+    assert_eq!(question, "Revert the turn's changes?");
+    assert!(detail.contains("new.rs"), "{detail}");
+    cx.simulate_prompt_answer("Revert");
+    draw(cx);
+    assert!(texts(&workbench, &created, cx).is_empty(), "reverted");
+}
+
+#[gpui::test]
+fn accepted_new_svg_row_reopens_as_text(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx, svg) = with_new_file_named(cx, "pic.svg", SVG);
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.decide_ai_file(&svg, true, window, cx);
+    });
+    draw(cx);
+    let tab = editor(&workbench, &svg, cx);
+    let saving = tab.update_in(cx, |editor, window, cx| editor.save(window, cx));
+    saving.detach();
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| {
+        let pane = workbench.pane().clone();
+        pane.update(cx, |pane, cx| pane.close_active(window, cx));
+    });
+    draw(cx);
+    assert!(texts(&workbench, &svg, cx).is_empty(), "closed");
+    click_row_named(&workbench, "ai-changes-row-pic.svg", cx);
+    cx.run_until_parked();
+    draw(cx);
+    assert_eq!(active_path(&workbench, cx), Some(svg.clone()));
+    assert_eq!(texts(&workbench, &svg, cx), vec![SVG.to_string()]);
 }
 
 #[gpui::test]

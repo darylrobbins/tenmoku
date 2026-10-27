@@ -874,6 +874,7 @@ impl Pane {
         }
         // The tab to replace, which the read must still find as it was.
         let origin = self.position(&path).map(|ix| self.tabs[ix].id());
+        let navigations = self.navigations;
         let read = cx.background_spawn({
             let path = path.clone();
             async move { loader::read(path) }
@@ -883,27 +884,39 @@ impl Pane {
             async move |pane, cx| {
                 let result = read.await;
                 pane.update_in(cx, |pane, window, cx| {
-                    pane.text_landed(path, origin, result, window, cx)
+                    pane.text_landed(path, origin, navigations, result, window, cx)
                 })
                 .ok();
             }
         });
         // A request already running for the file is dropped.
         self.text_reads.insert(path, task);
+        cx.notify();
+    }
+
+    /// Whether a read for [`Pane::open_as_text`] of `path` is running. Not
+    /// once it landed, failed, or was dropped for another or for
+    /// [`Pane::open_as_image`]; the pane notifies at each.
+    pub(crate) fn is_reading_text(&self, path: &Path) -> bool {
+        self.text_reads.contains_key(path)
     }
 
     /// The read for `open_as_text` landed. It does nothing if the tab it was
     /// for has gone or moved to another pane meanwhile, or if the file has
-    /// been opened as text since: the user has moved on.
+    /// been opened as text since: the user has moved on. A new tab is shown
+    /// only if the user navigated no tabs since `navigations`, else it opens
+    /// in the background. The pane notifies, whatever the outcome.
     fn text_landed(
         &mut self,
         path: PathBuf,
         origin: Option<TabId>,
+        navigations: u64,
         result: io::Result<Option<fe_buffer::Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.text_reads.remove(&path);
+        cx.notify();
         let position = self.position(&path);
         let ix = match (origin, position) {
             (Some(origin), Some(ix)) if self.tabs[ix].id() == origin => Some(ix),
@@ -945,6 +958,16 @@ impl Pane {
                 }
                 self.replace_in_place(ix, Box::new(editor), window, cx);
             }
+            None if self.navigations != navigations => {
+                // The user moved on: the file opens behind what they chose.
+                let shown = self.state.active();
+                self.add_item(Box::new(editor), cx);
+                if let Some(shown) = shown {
+                    self.state.set_active(shown);
+                    // The editor shown is the one the user chose.
+                    self.note_shown(cx);
+                }
+            }
             None => {
                 self.add_item(Box::new(editor), cx);
                 let ix = self.tabs.len() - 1;
@@ -961,7 +984,9 @@ impl Pane {
             return;
         };
         // A read for the way to the text is out of date now.
-        self.text_reads.remove(path);
+        if self.text_reads.remove(path).is_some() {
+            cx.notify();
+        }
         if self.tabs[ix].editor().is_none() {
             return;
         }

@@ -529,6 +529,24 @@ impl Workbench {
         panel
     }
 
+    /// Makes every view of a new-file preview's buffer read-only: its first
+    /// tab, a split of it and a peer in another pane alike, so no edit of
+    /// the review copy is lost to a decision or a new turn.
+    pub(crate) fn protect_ai_previews(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.ai_changes.as_ref() else {
+            return;
+        };
+        let previews: HashSet<BufferId> = state.previews.iter().map(|(_, id)| *id).collect();
+        if previews.is_empty() {
+            return;
+        }
+        for editor in self.ai_editors(cx) {
+            if previews.contains(&editor.read(cx).model().buffer().id()) {
+                editor.update(cx, |editor, cx| editor.set_read_only(true, cx));
+            }
+        }
+    }
+
     /// The open editors, one per buffer.
     fn ai_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
         self.open_editors(cx)
@@ -539,6 +557,7 @@ impl Workbench {
     /// changeset gets its proposal, and a file reopened after its tab was
     /// closed is followed to its new buffer.
     pub(crate) fn sync_ai_changes(&mut self, cx: &mut Context<Self>) {
+        self.protect_ai_previews(cx);
         let panel = self.ai_changes_panel(cx);
         let root = self.root.clone();
         let editors = self.ai_editors(cx);
@@ -580,6 +599,8 @@ impl Workbench {
             let mut conflicts = Vec::new();
             for (path, id) in shown.iter().flatten() {
                 let Some((held, _)) = state.changeset.proposal(path) else {
+                    // An accepted new file reopened after its tab closed.
+                    state.changeset.rebind_new(set, path, *id).ok();
                     continue;
                 };
                 if held != *id
@@ -928,14 +949,17 @@ impl Workbench {
             let opening = cx.observe_in(&pane, window, move |workbench, pane, window, cx| {
                 let read = pane.read(cx);
                 let current = read.open_serial() == serial && read.navigations() == navigations;
-                if current && !Self::shows_text(&pane, &watched, cx) {
+                let shown = Self::shows_text(&pane, &watched, cx);
+                // Still reading: wait. A read that failed or was dropped
+                // shows nothing, and retires the observer all the same.
+                if current && !shown && read.is_reading_text(&watched) {
                     return;
                 }
                 if let Some(state) = workbench.ai_changes.as_mut() {
                     state.opening = None;
                 }
                 // The user moved on meanwhile: show nothing.
-                if current {
+                if current && shown {
                     workbench.land_ai_file(&pane, &watched, window, cx);
                 }
             });
@@ -1006,10 +1030,25 @@ impl Workbench {
             let model = fe_editor::EditorModel::new(buffer, Some(path.clone()));
             let pane = self.pane().clone();
             pane.update(cx, |pane, cx| pane.add(model, cx));
-            let editor = pane.read(cx).active_editor().cloned();
-            if let Some(editor) = editor {
-                editor.update(cx, |editor, cx| editor.set_read_only(true, cx));
-            }
+            self.protect_ai_previews(cx);
+        }
+        let accepted = !pending
+            && self.ai_changes.as_mut().is_some_and(|state| {
+                with_editors(&editors, &mut state.made, cx, |set| {
+                    (state.changeset.files(set).into_iter())
+                        .any(|entry| entry.path == path && entry.counts.accepted > 0)
+                })
+            });
+        if accepted && tab(&panes, cx).is_none() {
+            // Accepted and its tab closed: its saved contents, through the
+            // ordinary route. The changeset keeps listing the file.
+            let pane = self.pane().clone();
+            // Text, as a new file is: an SVG opens as source, not a viewer.
+            pane.update(cx, |pane, cx| match crate::loader::is_svg(&path) {
+                true => pane.open_as_text(path, window, cx),
+                false => pane.open_at(path, None, window, cx),
+            });
+            return;
         }
         if let Some((pane, at)) = tab(&panes, cx) {
             pane.update(cx, |pane, cx| pane.activate(at, window, cx));
@@ -1098,5 +1137,13 @@ impl AiChangesPanel {
 
     pub(crate) fn test_key_context(&self) -> KeyContext {
         self.key_context()
+    }
+}
+
+#[cfg(test)]
+impl Workbench {
+    /// Whether a clicked row is still waiting on a read.
+    pub(crate) fn ai_opening_pending(&self) -> bool {
+        (self.ai_changes.as_ref()).is_some_and(|state| state.opening.is_some())
     }
 }

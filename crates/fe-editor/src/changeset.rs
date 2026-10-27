@@ -168,7 +168,13 @@ enum Kind {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NewState {
     Pending,
-    Accepted { buffer: BufferId, version: Version },
+    /// `version` is the buffer's as accepted or reopened; `None` once it
+    /// held text other than the file's proposal when it was bound, so it
+    /// counts as edited whatever its version.
+    Accepted {
+        buffer: BufferId,
+        version: Option<Version>,
+    },
     Rejected,
 }
 
@@ -414,6 +420,45 @@ impl Changeset {
                 None => self.memo.push((path, hunks)),
             }
         }
+    }
+
+    /// Follows the accepted new file `path` to `buffer`, a reopened buffer
+    /// of it whose accepted one is gone, so Revert Turn removes that buffer
+    /// and asks first if it was edited, as the accepted one was.
+    ///
+    /// # Errors
+    /// [`ChangesetError::NotPending`] if `path` is not an accepted new
+    /// file; [`ChangesetError::Conflict`] if `buffer` is missing.
+    pub fn rebind_new(
+        &mut self,
+        set: &mut impl BufferSet,
+        path: &Path,
+        buffer: BufferId,
+    ) -> Result<(), ChangesetError> {
+        let file = self.file_mut(path)?;
+        let not_pending = || ChangesetError::NotPending {
+            path: path.to_path_buf(),
+        };
+        let Kind::New { text, state } = &mut file.kind else {
+            return Err(not_pending());
+        };
+        let NewState::Accepted { buffer: held, .. } = *state else {
+            return Err(not_pending());
+        };
+        if held == buffer || set.buffer_mut(held).is_some() {
+            return Ok(());
+        }
+        let buf = set.buffer_mut(buffer).ok_or(ChangesetError::Conflict {
+            path: path.to_path_buf(),
+        })?;
+        // Text other than the proposal's was saved or typed before: it is
+        // an edit a revert asks about.
+        let untouched = buf.text().to_string() == *text;
+        *state = NewState::Accepted {
+            buffer,
+            version: untouched.then(|| buf.version()),
+        };
+        Ok(())
     }
 
     /// Follows `path` to `buffer`, a reopened buffer of the file whose
@@ -824,7 +869,7 @@ impl Changeset {
                     };
                     let edited = set
                         .buffer_mut(buffer)
-                        .is_some_and(|buf| buf.version() != version);
+                        .is_some_and(|buf| Some(buf.version()) != version);
                     if edited && !force {
                         out.push(RevertOutcome::NeedsConfirm { path });
                         continue;
@@ -911,7 +956,7 @@ impl File {
                     let buf = set.buffer_mut(id).ok_or(conflict_for(&self.path))?;
                     *state = NewState::Accepted {
                         buffer: id,
-                        version: buf.version(),
+                        version: Some(buf.version()),
                     };
                     Ok(Vec::new())
                 }

@@ -685,6 +685,7 @@ impl Workbench {
             }
         }
         self.git.update(cx, |git, cx| git.track(&editors, cx));
+        self.protect_ai_previews(cx);
         self.tint_tabs(cx);
         self.sync_problems(cx);
         self.sync_backups(cx);
