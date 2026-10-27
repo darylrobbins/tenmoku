@@ -641,3 +641,45 @@ fn a_file_landing_in_a_blurred_window_leaves_it_blurred(cx: &mut TestAppContext)
     s.draw();
     assert!(s.cx.update(|window, cx| window.focused(cx).is_none()));
 }
+
+/// Asks for the unopened first caller (`y.rs`) as Enter would and steps
+/// the executor one task at a time until the panel's own read has landed and
+/// the pane has begun its read of `y.rs` (the second stage), then runs
+/// `then` before the pane's read can land. Focus is the panel's throughout.
+fn second_stage_pending_then(s: &mut Lsp, then: impl FnOnce(&Entity<HierarchyPanel>, &mut App)) {
+    open_unopened_caller_then(s, |_, _| {});
+    let y = s.path("src/y.rs");
+    let pane = s.workbench.read_with(&s.cx, |w, _| w.pane().clone());
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !pane.read_with(&s.cx, |pane, _| pane.is_opening(&y)) {
+        assert!(std::time::Instant::now() < deadline, "no second stage");
+        s.cx.executor().tick();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let panel = panel(s);
+    s.cx.update(|_, cx| then(&panel, cx));
+}
+
+#[gpui::test]
+fn a_current_second_stage_read_gives_the_panel_focus_back(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    second_stage_pending_then(&mut s, |_, _| {});
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(panel_focused(&mut s));
+}
+
+#[gpui::test]
+fn a_superseded_second_stage_read_leaves_focus_with_its_owner(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    let workbench = s.workbench.clone();
+    // The request is superseded after the panel's read landed but before the
+    // pane's does, and the user then leaves the panel.
+    second_stage_pending_then(&mut s, |panel, cx| {
+        panel.update(cx, |p, _| p.opened += 1);
+    });
+    s.cx.update(|window, cx| window.focus(&workbench.read(cx).focus_handle(cx), cx));
+    s.until("y.rs opened", y_is_shown);
+    s.draw();
+    assert!(!panel_focused(&mut s));
+}
