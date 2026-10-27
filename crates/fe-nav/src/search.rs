@@ -419,7 +419,18 @@ impl Fallback {
             pattern: self.word.clone(),
             regex: false,
             case_sensitive: true,
-            whole_word: true,
+            // A name ending in punctuation, lib.a(a.o), has no word boundary
+            // to match; the extracted name is compared whole anyway.
+            whole_word: self
+                .word
+                .chars()
+                .next()
+                .is_some_and(fe_project::is_word_char)
+                && self
+                    .word
+                    .chars()
+                    .next_back()
+                    .is_some_and(fe_project::is_word_char),
         };
         let options = SearchOptions {
             max_matches: FALLBACK_MATCHES,
@@ -530,7 +541,22 @@ impl NavigationProvider for SearchNavigation {
         let mut found: Vec<Definition> = Vec::new();
         if let (Some(syntax), Some(source)) = (&syntax, &source) {
             let spans = syntax.highlights(word_range.clone());
-            if in_comment_or_string(&spans, &word_range) {
+            // A quoted SQL identifier, "when", is a literal node, not a
+            // string: the lexer knows it by its quotes, outside comments
+            // and strings. A comment is rejected either way.
+            let quoted_name = language.is_some_and(|l| l.name() == "sql")
+                && quoted_at(&req.text, word_range.start)
+                    == Some((word_range.start, word_range.end));
+            // Make has no strings: the arguments of $(call name,x) are
+            // highlighted as one, and a recipe's quotes are the shell's.
+            let is_make = language.is_some_and(|l| l.name() == "make");
+            let checked: Vec<_> = (spans.iter())
+                .filter(|span| {
+                    !((quoted_name || is_make) && span.highlight.name().starts_with("string"))
+                })
+                .cloned()
+                .collect();
+            if in_comment_or_string(&checked, &word_range) {
                 check()?;
                 return Ok(Definitions {
                     word: Some(word),
@@ -717,33 +743,151 @@ impl NavigationProvider for SearchNavigation {
 }
 
 /// The word at `offset` in `text`, and its bytes: the longest run of
-/// identifier chars touching it, so a caret just after a word counts.
+/// identifier chars touching it, so a caret just after a word counts. In
+/// Bash and Make a name may hold more, `my-func` or `build/main.o`; in SQL
+/// a quoted one is the text between its quotes, `audit log`, as
+/// [`symbol_name`] has it.
 pub(crate) fn word_at(
     text: &Text,
     offset: usize,
     language: Option<&str>,
 ) -> Option<(Range<usize>, String)> {
     let dollar = matches!(language, Some("javascript" | "typescript" | "tsx"));
+    // The extra chars of a name, past the search's word chars.
+    let extra: &[char] = match language {
+        Some("bash") => &['-', '.'],
+        Some("make") => &['-', '.', '/', '+'],
+        _ => &[],
+    };
     // The search's word chars, so the word is one it finds whole.
     let is_word = |ch: char| fe_project::is_word_char(ch) || (dollar && ch == '$');
+    let is_name = |ch: char| is_word(ch) || extra.contains(&ch);
     let offset = text.clip_offset(offset, Bias::Left);
     let row = text.offset_to_point(offset).row;
     let row_start = text.row_start(row);
     let line = text.row_to_string(row);
     let column = offset - row_start;
-    let start = (line[..column].char_indices().rev())
-        .take_while(|&(_, ch)| is_word(ch))
-        .last()
-        .map_or(column, |(at, _)| at);
-    let end = (line[column..].char_indices())
-        .find(|&(_, ch)| !is_word(ch))
-        .map_or(line.len(), |(at, _)| column + at);
-    (start < end).then(|| {
-        (
-            row_start + start..row_start + end,
-            line[start..end].to_owned(),
-        )
-    })
+    let found = |start: usize, end: usize| {
+        (start < end).then(|| {
+            (
+                row_start + start..row_start + end,
+                line[start..end].to_owned(),
+            )
+        })
+    };
+    if language == Some("sql")
+        && let Some((start, end)) = quoted_at(text, offset)
+    {
+        let name = text.slice_to_string(start..end);
+        return Some((start..end, name));
+    }
+    let run = |is: &dyn Fn(char) -> bool| {
+        let start = (line[..column].char_indices().rev())
+            .take_while(|&(_, ch)| is(ch))
+            .last()
+            .map_or(column, |(at, _)| at);
+        let end = (line[column..].char_indices())
+            .find(|&(_, ch)| !is(ch))
+            .map_or(line.len(), |(at, _)| column + at);
+        (start, end)
+    };
+    let (mut start, mut end) = run(&is_word);
+    if !extra.is_empty() {
+        let (long_start, long_end) = run(&is_name);
+        // A variable's expansion, $FOO-bar, is the variable.
+        let head = &line[..long_start];
+        // Make's names may hold the dash, $(BUILD-DIR), so only Bash's.
+        let expanded = language == Some("bash") && (head.ends_with('$') || head.ends_with("${"));
+        if !expanded && long_start <= start && end <= long_end && long_start < long_end {
+            (start, end) = (long_start, long_end);
+            if language == Some("make") {
+                (start, end) = make_name(&line, start, end);
+            }
+        }
+    }
+    found(start, end)
+}
+
+/// The text between the quotes, `"` or `` ` ``, of the quoted identifier
+/// in `text` that `offset` is in or at the end of, if not empty, as byte
+/// offsets. Comments and strings, `'it''s'`, are skipped whole, and an
+/// identifier may span rows.
+fn quoted_at(text: &Text, offset: usize) -> Option<(usize, usize)> {
+    let source = text.slice_to_string(0..text.len());
+    let rest = |at: usize| &source[at..];
+    let mut at = 0;
+    while at <= offset && at < source.len() {
+        let here = rest(at);
+        let ch = here.chars().next()?;
+        if here.starts_with("--") {
+            at += here.find('\n').unwrap_or(here.len());
+        } else if let Some(body) = here.strip_prefix("/*") {
+            at += body.find("*/").map_or(here.len(), |end| end + 4);
+        } else if matches!(ch, '"' | '`' | '\'') {
+            // Up to the closing quote, a doubled one inside being the quote.
+            let mut close = None;
+            let mut chars = here[1..].char_indices().peekable();
+            while let Some((i, c)) = chars.next() {
+                if c != ch {
+                    continue;
+                }
+                if chars.peek().is_some_and(|&(_, next)| next == ch) {
+                    chars.next();
+                    continue;
+                }
+                close = Some(at + 1 + i);
+                break;
+            }
+            let close = close?;
+            if ch != '\'' && at < offset && offset <= close && at + 1 < close {
+                return Some((at + 1, close));
+            }
+            at = close + 1;
+        } else {
+            at += ch.len_utf8();
+        }
+    }
+    None
+}
+
+/// The Make target `start..end` of `line` as a whole name: the archive
+/// member `lib.a(a.o)` from either of its parts, and `$(OUT)/stamp` from
+/// the part after the expansion.
+fn make_name(line: &str, mut start: usize, mut end: usize) -> (usize, usize) {
+    let name_char = |ch: char| ch.is_alphanumeric() || "_-./+".contains(ch);
+    // Inside the parentheses of lib.a(a.o).
+    let head = &line[..start];
+    if head.ends_with('(') && !head.ends_with("$(") && line[end..].starts_with(')') {
+        let archive = &head[..head.len() - 1];
+        let from = (archive.char_indices().rev())
+            .take_while(|&(_, ch)| name_char(ch))
+            .last()
+            .map(|(at, _)| at);
+        if let Some(from) = from {
+            return (from, end + 1);
+        }
+    }
+    // The member's archive, lib.a of lib.a(a.o).
+    if let Some(inner) = line[end..].strip_prefix('(')
+        && let Some(close) = inner.find(')')
+        && close > 0
+        && inner[..close].chars().all(name_char)
+    {
+        end += 1 + close + 1;
+    }
+    // An expansion, $(OUT) or ${OUT}, before the path.
+    let head = line[..start].trim_end_matches('/');
+    if (head.len() < start || line[start..].starts_with('/'))
+        && (head.ends_with(')') || head.ends_with('}'))
+    {
+        let open = if head.ends_with(')') { "$(" } else { "${" };
+        if let Some(at) = head.rfind(open)
+            && !head[at..].contains([' ', '\t'])
+        {
+            start = at;
+        }
+    }
+    (start, end)
 }
 
 /// Whether every byte of `word` is under a comment or string highlight.
@@ -754,7 +898,9 @@ pub(crate) fn in_comment_or_string(
     let mut covered: Vec<Range<usize>> = (spans.iter())
         .filter(|span| {
             let name = span.highlight.name();
-            name.starts_with("comment") || name.starts_with("string")
+            // A symbol, as Make's macro name, is a name, not text.
+            name.starts_with("comment")
+                || (name.starts_with("string") && !name.starts_with("string.special.symbol"))
         })
         .map(|span| span.range.start.max(word.start)..span.range.end.min(word.end))
         .filter(|range| !range.is_empty())

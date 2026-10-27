@@ -503,3 +503,219 @@ fn workspace_symbols_from_the_index() {
     cancel.store(true, Ordering::Relaxed);
     assert!(empty.workspace_symbols("hlp", 10, &cancel).is_err());
 }
+
+#[test]
+fn punctuated_bash_and_make_names_are_found_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let lib = "\
+my-func() { echo hi; }
+my-func
+export BUILD-DIR=out
+";
+    write(root, "lib.sh", lib);
+    let caller = "source lib.sh\nmy-func\necho $HOME-x\n";
+    write(root, "run.sh", caller);
+    let make = "\
+define compile-rule
+$(1).o: $(1).c
+endef
+build/main.o: main.c
+\tcc -c $< -o $@
+libutil.a(util.o): util.o
+$(OUT)/stamp: build/main.o
+all: build/main.o libutil.a(util.o) $(OUT)/stamp
+\t$(call compile-rule,x)
+";
+    write(root, "Makefile", make);
+    let user = "all: build/main.o libutil.a(util.o) $(OUT)/stamp\n$(eval $(call compile-rule,x))\n";
+    write(root, "other.mk", user);
+    let nav = indexed(root);
+
+    // Same file, from the middle of the name and from the use.
+    let lib = ("lib.sh", "bash", lib);
+    for (nth, delta) in [(0, 4), (1, 0), (1, 6)] {
+        let found = goto(&nav, root, lib, "my-func", nth, delta);
+        assert_eq!(
+            listed(&found),
+            ["lib.sh SameFile Function"],
+            "{nth}+{delta}"
+        );
+        assert_eq!(found.word.as_deref(), Some("my-func"));
+    }
+    // From another file, through the index.
+    let caller = ("run.sh", "bash", caller);
+    let found = goto(&nav, root, caller, "my-func", 0, 3);
+    assert_eq!(listed(&found), ["lib.sh Project Function"]);
+
+    let make_file = ("Makefile", "make", make);
+    for (at, nth, delta, word) in [
+        ("build/main.o", 0, 6, "build/main.o"),
+        ("libutil.a(util.o)", 0, 2, "libutil.a(util.o)"),
+        ("libutil.a(util.o)", 0, 12, "libutil.a(util.o)"),
+        ("$(OUT)/stamp", 0, 9, "$(OUT)/stamp"),
+        ("compile-rule", 0, 3, "compile-rule"),
+        ("compile-rule", 1, 3, "compile-rule"),
+    ] {
+        let found = goto(&nav, root, make_file, at, nth, delta);
+        assert_eq!(found.word.as_deref(), Some(word), "{at}");
+        assert_eq!(found.items.len(), 1, "{at}: {:?}", listed(&found));
+        assert_eq!(found.items[0].location.rel, Path::new("Makefile"), "{at}");
+    }
+    let other = ("other.mk", "make", user);
+    for (at, delta) in [
+        ("build/main.o", 7),
+        ("libutil.a(util.o)", 3),
+        ("$(OUT)/stamp", 8),
+        ("compile-rule", 2),
+    ] {
+        let found = goto(&nav, root, other, at, 0, delta);
+        assert_eq!(found.items.len(), 1, "{at}: {:?}", listed(&found));
+        assert_eq!(found.items[0].location.rel, Path::new("Makefile"), "{at}");
+    }
+}
+
+#[test]
+fn quoted_sql_identifiers_with_spaces_are_found_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let schema = "\
+CREATE TABLE \"audit log\" (\"when\" TIMESTAMP, who TEXT);
+SELECT \"when\" FROM \"audit log\";
+";
+    write(root, "schema.sql", schema);
+    let report = "SELECT \"when\" FROM \"audit log\" WHERE who = 'audit log';\n";
+    write(root, "report.sql", report);
+    let nav = indexed(root);
+
+    let schema = ("schema.sql", "sql", schema);
+    for (at, nth, delta, name) in [
+        ("audit log", 0, 0, "audit log"),
+        ("audit log", 0, 7, "audit log"),
+        ("audit log", 1, 2, "audit log"),
+        ("when", 0, 1, "when"),
+        ("when", 1, 3, "when"),
+    ] {
+        let found = goto(&nav, root, schema, at, nth, delta);
+        assert_eq!(found.word.as_deref(), Some(name), "{at} {nth}");
+        assert_eq!(found.items.len(), 1, "{at} {nth}: {:?}", listed(&found));
+        assert_eq!(found.items[0].name, name);
+        assert_eq!(found.items[0].location.rel, Path::new("schema.sql"));
+    }
+    // The range of the name is as written, quotes included.
+    let found = goto(&nav, root, schema, "audit log", 1, 0);
+    assert_eq!(found.items[0].location.range, 13..24);
+
+    // From another file; a string with the same text is not a name.
+    let report = ("report.sql", "sql", report);
+    for (nth, name) in [(0, "when"), (1, "audit log")] {
+        let at = if nth == 0 { "when" } else { "audit log" };
+        let found = goto(&nav, root, report, at, 0, 1);
+        assert_eq!(found.items.len(), 1, "{name}: {:?}", listed(&found));
+        assert_eq!(found.items[0].location.rel, Path::new("schema.sql"));
+    }
+    let string = goto(&nav, root, report, "audit log", 1, 1);
+    assert!(string.items.is_empty(), "{:?}", listed(&string));
+}
+
+#[test]
+fn punctuated_names_are_found_by_the_fallback_before_the_index_is_built() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "Makefile",
+        "libutil.a(util.o): util.o\n\tar cr $@ $<\n",
+    );
+    write(root, "lib.sh", "my-func() { :; }\n");
+    write(root, "schema.sql", "CREATE TABLE \"audit log\" (id INT);\n");
+    let empty = SearchNavigation::new(root, Arc::new(RwLock::new(SymbolIndex::new(root))))
+        .with_budget(Duration::from_secs(60));
+    for (file, language, text, at, expect) in [
+        (
+            "a.mk",
+            "make",
+            "all: libutil.a(util.o)\n",
+            "libutil",
+            "Makefile",
+        ),
+        ("run.sh", "bash", "my-func\n", "my-func", "lib.sh"),
+        (
+            "r.sql",
+            "sql",
+            "SELECT * FROM \"audit log\";\n",
+            "audit",
+            "schema.sql",
+        ),
+    ] {
+        let found = goto(&empty, root, (file, language, text), at, 0, 2);
+        assert_eq!(found.items.len(), 1, "{file}: {:?}", listed(&found));
+        assert_eq!(found.items[0].location.rel, Path::new(expect), "{file}");
+    }
+}
+
+#[test]
+fn review_edges_of_punctuated_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Combining marks and edge punctuation are kept whole, not split.
+    let lib = "cafe\u{301}-x() { :; }\nfinish-() { :; }\ncafe\u{301}-x\nfinish-\n";
+    write(root, "lib.sh", lib);
+    let make = "\
+BUILD-DIR = out
+build/main.o: main.c
+/tmp/main.o: main.c
+build+: build/main.o
+all: $(BUILD-DIR) ${BUILD-DIR} /tmp/main.o build+
+";
+    write(root, "Makefile", make);
+    let nav = indexed(root);
+
+    let lib = ("lib.sh", "bash", lib);
+    for (nth, at) in [(1, "cafe\u{301}-x"), (1, "finish-")] {
+        let found = goto(&nav, root, lib, at, nth, 1);
+        assert_eq!(listed(&found), ["lib.sh SameFile Function"], "{at}");
+    }
+    let make_file = ("Makefile", "make", make);
+    for (at, nth, delta) in [
+        ("BUILD-DIR", 1, 2),
+        ("BUILD-DIR", 2, 7),
+        ("/tmp/main.o", 1, 5),
+        ("build+", 1, 2),
+    ] {
+        let found = goto(&nav, root, make_file, at, nth, delta);
+        assert_eq!(found.items.len(), 1, "{at} {nth}: {:?}", listed(&found));
+        assert_eq!(found.items[0].location.rel, Path::new("Makefile"), "{at}");
+    }
+}
+
+#[test]
+fn quoted_sql_text_in_strings_and_comments_is_not_a_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let schema = "\
+CREATE TABLE \"audit log\" (\"when\" TIMESTAMP);
+/* don't */ SELECT \"when\" FROM \"audit log\";
+SELECT '\"when\"';
+-- \"audit
+-- log\" and \"when\"
+";
+    write(root, "schema.sql", schema);
+    let nav = indexed(root);
+    let schema = ("schema.sql", "sql", schema);
+    // After an apostrophe in a comment, and across rows.
+    let found = goto(&nav, root, schema, "when", 1, 1);
+    assert_eq!(found.items.len(), 1, "{:?}", listed(&found));
+    let found = goto(&nav, root, schema, "audit log\";", 0, 3);
+    assert_eq!(found.items.len(), 1, "{:?}", listed(&found));
+    // The grammar has no quoted name across rows to find, but the word is
+    // the whole of it, as written.
+    let across = ("across.sql", "sql", "SELECT \"audit\nlog\";\n");
+    let found = goto(&nav, root, across, "log", 0, 1);
+    assert_eq!(found.word.as_deref(), Some("audit\nlog"));
+    // In a string, or a comment, quoted-looking text names nothing.
+    let in_string = goto(&nav, root, schema, "when", 2, 1);
+    assert!(in_string.items.is_empty(), "{:?}", listed(&in_string));
+    let in_comment = goto(&nav, root, schema, "when", 3, 1);
+    assert!(in_comment.items.is_empty(), "{:?}", listed(&in_comment));
+}
