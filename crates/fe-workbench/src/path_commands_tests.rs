@@ -184,3 +184,33 @@ fn new_file(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     });
     draw(cx);
 }
+
+/// `secondary-k p` and `secondary-k r` through GPUI key input, with the
+/// active editor focused, reach the copy and reveal commands.
+#[gpui::test]
+fn chords_drive_copy_and_reveal(cx: &mut TestAppContext) {
+    REVEALED.lock().unwrap().clear();
+    let (dir, workbench, cx) = opened(cx, true);
+    let editor = workbench.read_with(cx, |workbench, cx| {
+        workbench.active_editor(cx).unwrap().clone()
+    });
+    cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    draw(cx);
+    // `secondary` is cmd on macOS and ctrl elsewhere.
+    let (k, source) = if cfg!(target_os = "macos") {
+        ("cmd-k", fe_keymap::DEFAULT_MACOS)
+    } else {
+        ("ctrl-k", fe_keymap::DEFAULT_LINUX)
+    };
+    let keymap = fe_keymap::load_keymap(source, None).0;
+    cx.update(|_, cx| fe_gpui::set_user_keymap(cx, keymap));
+
+    cx.simulate_keystrokes(&format!("{k} p"));
+    draw(cx);
+    let a = dir.path().join("a.txt");
+    assert_eq!(clipboard(cx), Some(a.to_string_lossy().into_owned()));
+
+    cx.simulate_keystrokes(&format!("{k} r"));
+    draw(cx);
+    assert_eq!(*REVEALED.lock().unwrap(), [a]);
+}
