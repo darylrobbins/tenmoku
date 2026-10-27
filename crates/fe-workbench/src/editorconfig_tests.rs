@@ -131,20 +131,9 @@ fn tab_sizes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<u
     })
 }
 
-#[gpui::test]
-fn split_and_moved_tabs_keep_their_tab_width(cx: &mut TestAppContext) {
-    let (_dir, workbench, _editor, cx) = opened("[*.rs]\ntab_width = 8\n", "a.rs", "a\n", cx);
-    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    run("pane.split_right", cx);
-    let sizes = tab_sizes(&workbench, cx);
-    assert!(
-        sizes.len() >= 2 && sizes.iter().all(|&size| size == 8),
-        "{sizes:?}"
-    );
-    run("pane.move_tab_left", cx);
-
+fn reload_tab_size(workbench: &Entity<Workbench>, size: usize, cx: &mut VisualTestContext) {
     let mut settings = Settings::default();
-    settings.editor.tab_size = 3;
+    settings.editor.tab_size = size;
     let event = SettingsEvent {
         settings: Arc::new(settings),
         previous: Arc::new(Settings::default()),
@@ -152,5 +141,94 @@ fn split_and_moved_tabs_keep_their_tab_width(cx: &mut TestAppContext) {
     };
     workbench.update(cx, |workbench, cx| workbench.reload_settings(&event, cx));
     cx.run_until_parked();
-    assert!(tab_sizes(&workbench, cx).iter().all(|&size| size == 8));
+}
+
+const WIDE: &str = "[*.rs]\ntab_width = 8\n";
+
+/// The ids of the editors in pane order, with their tab widths.
+fn editors(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Vec<(gpui::EntityId, usize)> {
+    workbench.read_with(cx, |workbench, cx| {
+        (workbench.pane_group(cx).panes().iter())
+            .flat_map(|pane| pane.read(cx).tabs().to_vec())
+            .map(|tab| {
+                let editor = tab.editor().unwrap();
+                (editor.entity_id(), editor.read(cx).model().tab_size())
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn both_split_editors_keep_their_tab_width(cx: &mut TestAppContext) {
+    let (_dir, workbench, _editor, cx) = opened(WIDE, "a.rs", "a\n", cx);
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    run("pane.split_right", cx);
+    let before = editors(&workbench, cx);
+    assert_eq!(before.len(), 2, "{before:?}");
+    assert_ne!(before[0].0, before[1].0);
+    assert!(before.iter().all(|&(_, size)| size == 8), "{before:?}");
+
+    reload_tab_size(&workbench, 3, cx);
+    let after = editors(&workbench, cx);
+    assert_eq!(
+        after.iter().map(|e| e.0).collect::<Vec<_>>(),
+        before.iter().map(|e| e.0).collect::<Vec<_>>()
+    );
+    assert!(after.iter().all(|&(_, size)| size == 8), "{after:?}");
+}
+
+#[gpui::test]
+fn a_moved_editor_keeps_its_identity_and_tab_width(cx: &mut TestAppContext) {
+    let (dir, workbench, _editor, cx) = opened(WIDE, "a.rs", "a\n", cx);
+    let b = dir.path().join("b.rs");
+    std::fs::write(&b, "b\n").unwrap();
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    run("pane.split_right", cx);
+    // The right pane closes its copy of a.rs and shows b.rs alone.
+    let right = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    cx.update(|window, cx| right.update(cx, |pane, cx| pane.open(b, window, cx)));
+    cx.run_until_parked();
+    let moved = right.read_with(cx, |pane, _| pane.tabs()[pane.active().unwrap()].id());
+
+    run("pane.move_tab_left", cx);
+    let target = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let ids = target.read_with(cx, |pane, _| {
+        pane.tabs().iter().map(|tab| tab.id()).collect::<Vec<_>>()
+    });
+    assert!(ids.contains(&moved), "{ids:?} lacks {moved:?}");
+    let left_first = workbench.read_with(cx, |workbench, cx| {
+        workbench.pane_group(cx).panes()[0].clone()
+    });
+    assert!(Entity::eq(&target, &left_first));
+
+    reload_tab_size(&workbench, 3, cx);
+    let sizes = tab_sizes(&workbench, cx);
+    assert!(
+        sizes.len() >= 2 && sizes.iter().all(|&size| size == 8),
+        "{sizes:?}"
+    );
+}
+
+#[gpui::test]
+fn a_reload_while_the_read_is_pending_ends_at_the_tab_width(cx: &mut TestAppContext) {
+    let (dir, workbench, _editor, cx) = opened(WIDE, "a.rs", "a\n", cx);
+    let b = dir.path().join("b.rs");
+    std::fs::write(&b, "b\n").unwrap();
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(b, window, cx)));
+    // No parking yet: b.rs is still being read.
+    reload_tab_size(&workbench, 3, cx);
+    let sizes = tab_sizes(&workbench, cx);
+    assert!(sizes.iter().all(|&size| size == 8), "{sizes:?}");
+}
+
+#[gpui::test]
+fn a_restored_setting_leaves_the_tab_width(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(WIDE, "a.rs", "a\n", cx);
+    reload_tab_size(&workbench, 3, cx);
+    reload_tab_size(&workbench, EditorSettings::default().tab_size, cx);
+    assert_eq!(editor.read_with(cx, |e, _| e.model().tab_size()), 8);
 }
