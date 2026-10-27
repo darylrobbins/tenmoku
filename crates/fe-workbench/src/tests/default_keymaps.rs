@@ -91,6 +91,7 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
     for (keys, command) in [
         ("ctrl-k p", "workbench.copy_active_file_path"),
         ("ctrl-k r", "workbench.reveal_active_file_in_os"),
+        ("ctrl-k d", "diff.compare_saved"),
     ] {
         let sequence = KeySequence::parse(keys).unwrap();
         let bound = (linux.bindings().iter())

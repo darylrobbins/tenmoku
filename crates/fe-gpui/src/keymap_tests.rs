@@ -180,6 +180,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ),
     ("cmd-k cmd-0", "editor.fold_all", Some("editor")),
     ("cmd-k cmd-j", "editor.unfold_all", Some("editor")),
+    ("cmd-k d", "diff.compare_saved", Some("editor")),
     ("cmd-k cmd-1", "editor.fold_level_1", Some("editor")),
     ("cmd-k cmd-2", "editor.fold_level_2", Some("editor")),
     ("cmd-k cmd-3", "editor.fold_level_3", Some("editor")),
@@ -252,6 +253,13 @@ fn the_default_keymap_binds_the_active_file_path_chords() {
         let context = binding.context.as_ref().map(ToString::to_string);
         assert_eq!(context.as_deref(), Some("workbench"), "{keys}");
     }
+    let sequence = KeySequence::parse("cmd-k d").unwrap();
+    let binding = (keymap.bindings().iter())
+        .find(|binding| binding.keys == sequence)
+        .expect("cmd-k d is bound");
+    assert_eq!(binding.command.as_str(), "diff.compare_saved");
+    let context = binding.context.as_ref().map(ToString::to_string);
+    assert_eq!(context.as_deref(), Some("editor"));
 }
 
 /// The default keymap with `user` as the user's layer over it.
@@ -407,6 +415,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
             || command.starts_with("peek.")
             || command == "editor.peek_definition"
             || command == "editor.peek_references"
+            || command == "diff.compare_saved"
             || command.starts_with("lsp.")
             || command.starts_with("git.")
             || command.starts_with("ai.changes_")

@@ -235,6 +235,8 @@ fn no_vim_keys() {
                 command.starts_with("git.") || command.starts_with("diff.")
             })
             .filter(|b| b.command.as_str() != "git.toggle_blame_annotations")
+            // compare_saved_key.rs's chord.
+            .filter(|b| b.command.as_str() != "diff.compare_saved")
             .map(|b| (b.keys.to_string(), b.command.as_str().to_owned()))
             .collect();
         assert_eq!(added.len(), card(os).len(), "{os:?} {added:?}");

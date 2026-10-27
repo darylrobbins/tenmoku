@@ -369,6 +369,11 @@ context = "editor"
 # VS Code's chords: fold the candidates at one nesting level, 1 the
 # outermost, or the one at the caret and everything in it.
 [[bindings]]
+keys = "secondary-k d"
+command = "diff.compare_saved"
+context = "editor"
+
+[[bindings]]
 keys = "secondary-k secondary-1"
 command = "editor.fold_level_1"
 context = "editor"

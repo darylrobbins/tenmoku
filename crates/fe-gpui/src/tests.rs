@@ -242,6 +242,8 @@ const DEDICATED: &[&str] = &[
     "cmd-alt-]",
     "alt-z",
     "cmd-k cmd-i",
+    // diff.compare_saved: fe-keymap's compare_saved_key.
+    "cmd-k d",
     "ctrl-space",
     "cmd-]",
     "cmd-[",

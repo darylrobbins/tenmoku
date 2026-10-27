@@ -31,7 +31,9 @@
 //! change inline instead.) `diff.compare_file` (`:diffsplit {file}`)
 //! compares a file the quick-open picker, titled "Compare with…", picks
 //! (or `:diffsplit` names, resolved as `:e` resolves it) on the read-only
-//! left with the active file on the right.
+//! left with the active file on the right. `diff.compare_saved` (see
+//! `compare_saved`) compares the active file with its saved text, a
+//! snapshot, `a.rs (Saved ↔ Working Tree)`, through [`Workbench::begin_saved_diff`].
 //!
 //! Each git diff's git sides are read again after a git refresh
 //! ([`Workbench::refresh_git_diffs`]), a staged diff's both. Only a view's
@@ -78,7 +80,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global, Subscription,
     WeakEntity, Window,
 };
-use kiln_shell::{ItemHandle as _, PaneView as _};
+use kiln_shell::{ItemHandle as _, PaneItem as _, PaneView as _};
 
 use super::{
     Palette, Workbench,
@@ -710,6 +712,18 @@ struct Landing {
     refreshes: u64,
     /// Whether what asked for it still stands, if that matters.
     guard: Option<Guard>,
+}
+
+/// A `diff.compare_saved` asked for: the file and where its diff lands.
+pub(crate) struct SavedAsk {
+    path: PathBuf,
+    landing: Landing,
+}
+
+impl SavedAsk {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// What a git diff's sides were read from: the git text, whether the file
@@ -1459,6 +1473,69 @@ impl Workbench {
         let diff = self.new_diff(compared, left, Err(right), cx);
         self.place_diff(&diff, &pane, cx);
         self.show_diff(&diff, window, cx);
+    }
+
+    /// Starts `diff.compare_saved` for the active editor's file: `None` if
+    /// it has none; `Some(None)` if the comparison was open, now shown;
+    /// else what to read and where the diff will land, for
+    /// [`Self::finish_saved_diff`].
+    pub(crate) fn begin_saved_diff(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Option<SavedAsk>> {
+        let editor = self.active_editor(cx).cloned();
+        let path = editor.and_then(|editor| self.op_path(&editor, cx))?;
+        if let Some(diff) = self.open_saved_diff(&path, cx) {
+            self.show_diff(&diff, window, cx);
+            return Some(None);
+        }
+        let landing = self.landing(&self.active.clone(), true, cx);
+        Some(Some(SavedAsk { path, landing }))
+    }
+
+    /// The tab open comparing `path` with its saved text.
+    fn open_saved_diff(&self, path: &Path, cx: &mut App) -> Option<Entity<DiffView>> {
+        let title = format!("{} (Saved ↔ {WORKING_TREE})", file_name(path));
+        let views: Vec<_> = (diff_views(cx).iter())
+            .filter(|compared| compared.base.is_none() && same_file(&compared.path, path))
+            .filter_map(|compared| compared.view.upgrade())
+            .collect();
+        (views.into_iter()).find(|diff| {
+            self.diff_tab(diff, cx).is_some() && diff.read(cx).tab_title(cx) == title.as_str()
+        })
+    }
+
+    /// Opens `ask`'s tab: `saved`, read-only, against the open buffer of
+    /// the file (else the file as `saved`), added to the pane it was asked
+    /// in and shown if it's still the last diff asked for. The left side is
+    /// a snapshot no refresh, edit or save changes.
+    pub(crate) fn finish_saved_diff(
+        &mut self,
+        ask: SavedAsk,
+        saved: Buffer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SavedAsk { path, landing } = ask;
+        // Another ask for the file may have landed meanwhile.
+        if let Some(diff) = self.open_saved_diff(&path, cx) {
+            if self.may_show(&landing, cx) {
+                self.show_diff(&diff, window, cx);
+            }
+            return;
+        }
+        let model = (self.file_model(&path, cx)).unwrap_or_else(|| {
+            let text = saved.text().to_string();
+            EditorModel::new(Buffer::from_file_contents(&text), Some(path.clone()))
+        });
+        let left = DiffSide::new("Saved", EditorModel::new(saved, None)).read_only();
+        let right = Ok((WORKING_TREE.into(), model));
+        let diff = self.new_diff((path, None, false), left, right, cx);
+        self.place_diff(&diff, &landing.pane, cx);
+        if self.may_show(&landing, cx) {
+            self.show_diff(&diff, window, cx);
+        }
     }
 
     /// `path` from the root, or whole if it's outside it.

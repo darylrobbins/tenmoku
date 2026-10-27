@@ -40,6 +40,13 @@ mod markdown_preview_buttons_tests;
 #[path = "close_many_tests.rs"]
 mod close_many_tests;
 
+#[path = "compare_saved.rs"]
+mod compare_saved;
+
+#[cfg(test)]
+#[path = "compare_saved_tests.rs"]
+mod compare_saved_tests;
+
 #[path = "focus_group.rs"]
 mod focus_group;
 
@@ -269,6 +276,13 @@ impl Workbench {
     #[command(id = "diff.compare_file")]
     fn diff_compare_file(&mut self, cx: &mut Cx<Self>) {
         self.run_typed_git(GitCommand::CompareFile, cx);
+    }
+
+    /// Compare Active File with Saved
+    #[command(id = "diff.compare_saved", context = "editor")]
+    fn diff_compare_saved(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.compare_saved(cx.window, cx.cx);
     }
 
     /// Go to Next Change

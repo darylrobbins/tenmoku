@@ -405,6 +405,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.cut",
     "editor.delete",
     "editor.cursor_redo",
+    "diff.compare_saved",
     "editor.cursor_undo",
     "editor.delete_duplicate_lines",
     "editor.delete_rows",

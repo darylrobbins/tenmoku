@@ -336,6 +336,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Compare Active File With…",
         "workbench",
     ),
+    (
+        "diff.compare_saved",
+        "Compare Active File with Saved",
+        "editor",
+    ),
     ("git.next_change", "Go to Next Change", "workbench"),
     ("git.previous_change", "Go to Previous Change", "workbench"),
     ("git.next_conflict", "Git: Next Conflict", "workbench"),
