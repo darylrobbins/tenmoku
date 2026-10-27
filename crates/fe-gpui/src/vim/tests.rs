@@ -660,3 +660,84 @@ fn block_cursor_before_a_soft_wrap(cx: &mut TestAppContext) {
 }
 
 mod macro_replay;
+
+/// A focused vim editor on `source`'s keymap, with every invocation seen.
+fn platform_editor<'a>(
+    cx: &'a mut TestAppContext,
+    source: &str,
+    text: &str,
+) -> (
+    Entity<EditorView>,
+    &'a mut VisualTestContext,
+    Rc<RefCell<Vec<Invocation>>>,
+) {
+    let path = std::path::Path::new(DEFAULT_KEYMAP_PATH);
+    let (layer, diagnostics) = KeymapLayer::parse(path, source, None);
+    assert_eq!(diagnostics, []);
+    let map = Keymap::from_layers([layer.unwrap()]);
+    cx.update(|cx| crate::init_with_keymap(cx, map));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        let sink = seen.clone();
+        observe_invocations(cx, move |invocation| {
+            sink.borrow_mut().push(invocation.clone())
+        });
+    });
+    let text = text.to_owned();
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        EditorView::new(
+            EditorModel::new(Buffer::new(&text), None),
+            EditorTheme::default_dark(cx),
+            cx,
+        )
+    });
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    set_vim(true, cx);
+    (view, cx, seen)
+}
+
+/// The keys vim's handler reads as tab and the arrows reach vim through the
+/// listener, not an editor command, on both platform keymaps.
+#[gpui::test]
+fn modified_keys_reach_vim_through_key_input(cx: &mut TestAppContext) {
+    for (os, source, duplicate) in [
+        ("macOS", DEFAULT_MACOS, "shift-alt-down"),
+        ("Linux", fe_keymap::DEFAULT_LINUX, "ctrl-shift-alt-down"),
+    ] {
+        let (_, cx, seen) = platform_editor(cx, source, &rows(6));
+        seen.borrow_mut().clear();
+        cx.simulate_keystrokes("shift-tab");
+        let commands: Vec<_> = seen
+            .borrow()
+            .iter()
+            .map(|invocation| invocation.command.as_str().to_owned())
+            .collect();
+        assert_eq!(commands, ["vim.jump_newer"], "{os}");
+
+        for (mode_keys, mode) in [
+            ("v", "visual"),
+            ("V", "visual_line"),
+            ("ctrl-v", "visual_block"),
+        ] {
+            let (view, cx, seen) = platform_editor(cx, source, &rows(6));
+            cx.simulate_keystrokes(mode_keys);
+            let start = caret(&view, cx);
+            for keys in ["alt-down", duplicate] {
+                seen.borrow_mut().clear();
+                cx.simulate_keystrokes(keys);
+                assert!(
+                    seen.borrow()
+                        .iter()
+                        .all(|i| i.command.as_str().starts_with("vim.")),
+                    "{os} {mode} {keys}: {:?}",
+                    seen.borrow()
+                );
+                assert!(!seen.borrow().is_empty(), "{os} {mode} {keys}");
+            }
+            let moved = caret(&view, cx);
+            assert_eq!(moved.0, start.0 + 2, "{os} {mode}");
+            cx.simulate_keystrokes("alt-up");
+            assert_eq!(caret(&view, cx).0, start.0 + 1, "{os} {mode}");
+        }
+    }
+}
