@@ -181,7 +181,7 @@ fn at_goal(text: &Text, row: u32, goal: usize, tab: usize) -> (u32, usize) {
 /// The first non-blank on `row`, as an offset.
 fn first_non_blank(text: &Text, row: u32) -> usize {
     let mut cursor = Cursor::at(text, text.row_start(row));
-    cursor.ix = cursor.line.first_non_blank();
+    cursor.go_to_first_non_blank();
     cursor.offset()
 }
 

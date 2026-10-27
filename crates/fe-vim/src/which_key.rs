@@ -142,6 +142,8 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
         keys: &[
             (ch('('), "previous unmatched ("),
             (ch('{'), "previous unmatched {"),
+            (ch('['), "previous section start"),
+            (ch(']'), "previous section end"),
             (ch('c'), "previous change"),
             (ch('p'), "put before, indented"),
             (ch('P'), "put before, indented"),
@@ -152,6 +154,8 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
         keys: &[
             (ch(')'), "next unmatched )"),
             (ch('}'), "next unmatched }"),
+            (ch(']'), "next section start"),
+            (ch('['), "next section end"),
             (ch('c'), "next change"),
             (ch('p'), "put after, indented"),
             (ch('P'), "put before, indented"),

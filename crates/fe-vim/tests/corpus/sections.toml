@@ -1,0 +1,726 @@
+# Section cases for fe-vim's oracle: `]]` `[[` `][` `[]` plain (`plain_`),
+# counted, past the last section and from a `{` row; after an operator
+# (`op_`), where `]]` also stops below a `}`, and the `.` repeat; in the
+# visual modes (`visual_`); the jump mark (`jump_`), set by a motion that
+# moves and not by one that fails (seen through `:norm!`, whose failure
+# doesn't flush the keys after it); and text with no `{` or `}` in the
+# first column (`none_`), where a count that runs out fails and stops a
+# macro. A key that fails is a case's last key: nvim flushes the keys after
+# it.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in sections.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+
+# C-style: `{` and `}` rows 3 and 5, 8 and 10; the last row is `// end`.
+[[case]]
+name = "plain_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]"
+
+[[case]]
+name = "plain_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "[["
+
+[[case]]
+name = "plain_close_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]["
+
+[[case]]
+name = "plain_close_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "[]"
+
+# Counts, and a count whose last step runs on to the text's end.
+[[case]]
+name = "plain_count"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "2]]"
+
+[[case]]
+name = "plain_count_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "2[["
+
+[[case]]
+name = "plain_count_close"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "2]["
+
+[[case]]
+name = "plain_count_close_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "2[]"
+
+[[case]]
+name = "plain_past_last"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "3]]"
+
+[[case]]
+name = "plain_past_first"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "3[["
+
+[[case]]
+name = "plain_close_past_last"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "3]["
+
+[[case]]
+name = "plain_close_past_first"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "3[]"
+
+# From a `{` or `}` row, which doesn't count.
+[[case]]
+name = "plain_from_open_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [3, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_from_open_row_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [8, 0]
+keys = "[["
+
+[[case]]
+name = "plain_from_first_open_row_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [3, 0]
+keys = "[["
+
+[[case]]
+name = "plain_from_close_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [5, 0]
+keys = "]["
+
+[[case]]
+name = "plain_from_close_row_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [10, 0]
+keys = "[]"
+
+# Already on the last row (first) it still lands there.
+[[case]]
+name = "plain_on_last_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "]]"
+
+[[case]]
+name = "plain_on_first_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 3]
+keys = "[["
+
+[[case]]
+name = "plain_on_first_column"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 0]
+keys = "[[j``"
+
+[[case]]
+name = "plain_twice_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [5, 0]
+keys = "[[[["
+
+# Run out, the caret goes to the row's first non-blank, or the last blank.
+[[case]]
+name = "plain_last_row_indented"
+buffer = "a\n{\nb\n   last"
+cursor = [0, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_last_row_blank"
+buffer = "a\n{\nb\n   "
+cursor = [2, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_first_row_indented"
+buffer = "  x y\n{\nb"
+cursor = [2, 0]
+keys = "2[["
+
+[[case]]
+name = "plain_first_row_blank"
+buffer = "   \n{\nb"
+cursor = [2, 0]
+keys = "2[["
+
+[[case]]
+name = "plain_brace_not_in_first_column"
+buffer = "a\n  {\nb\n\t}\nc"
+cursor = [0, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_close_not_in_first_column"
+buffer = "a\n  {\nb\n\t}\nc"
+cursor = [0, 0]
+keys = "]["
+
+[[case]]
+name = "plain_brace_after_multibyte"
+buffer = "é{\n{é\nb"
+cursor = [0, 0]
+keys = "]]"
+
+# A formfeed row and nroff's section macros count for all four.
+[[case]]
+name = "plain_formfeed"
+buffer = "a\n\fb\nc\n{\nd"
+cursor = [0, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_formfeed_close"
+buffer = "a\n\fb\nc\n}\nd"
+cursor = [0, 0]
+keys = "]["
+
+[[case]]
+name = "plain_formfeed_back"
+buffer = "a\n{\nc\n\fb\nd"
+cursor = [4, 0]
+keys = "[]"
+
+[[case]]
+name = "plain_macros"
+buffer = "a\n.SH x\nb\n.NH\n.H\n.H x\n.HU\n.nh\n.sh\nz"
+cursor = [0, 0]
+keys = "]]]]]]]]]]]]"
+
+[[case]]
+name = "plain_macro_close"
+buffer = "a\n.SH x\nb\n}"
+cursor = [0, 0]
+keys = "]["
+
+[[case]]
+name = "plain_not_macros"
+buffer = "a\n.PP\n.\n.Hx\n. SH\n{\nb"
+cursor = [0, 0]
+keys = "]]"
+
+[[case]]
+name = "plain_macros_back"
+buffer = "a\n.sh\nb\n.HUX\nc"
+cursor = [4, 0]
+keys = "[[[["
+
+# The goal column resets.
+[[case]]
+name = "plain_goal_reset"
+buffer = "int abc;\n{\nlong row here"
+cursor = [0, 5]
+keys = "]]j"
+
+[[case]]
+name = "plain_goal_reset_end"
+buffer = "int abc;\nlong row here\n{\nend"
+cursor = [0, 0]
+keys = "$]]kk"
+
+# Even when the motion fails (seen through `:norm!`).
+[[case]]
+name = "plain_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! 5]]<CR>j"
+
+# An empty buffer: count one lands, setting the jump mark.
+[[case]]
+name = "plain_empty_buffer"
+buffer = ""
+cursor = [0, 0]
+keys = "]]iab<Esc>``"
+
+[[case]]
+name = "plain_empty_buffer_back"
+buffer = ""
+cursor = [0, 0]
+keys = "[[iab<Esc>``"
+
+# Python, with no `{`: one step goes to the text's end.
+[[case]]
+name = "plain_python"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "]]"
+
+[[case]]
+name = "plain_python_back"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [4, 5]
+keys = "[["
+
+[[case]]
+name = "plain_python_close"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "]["
+
+[[case]]
+name = "plain_python_close_back"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [4, 5]
+keys = "[]"
+
+# After an operator: `d]]` stops below a `}` too.
+[[case]]
+name = "op_d_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "d]]"
+
+[[case]]
+name = "op_d_inside"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [4, 2]
+keys = "d]]"
+
+[[case]]
+name = "op_d_from_open_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [3, 0]
+keys = "d]]"
+
+[[case]]
+name = "op_d_to_last_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [9, 3]
+keys = "d]]"
+
+[[case]]
+name = "op_d_from_row_start_to_last_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [9, 0]
+keys = "d]]"
+
+[[case]]
+name = "op_d_count"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 0]
+keys = "d2]]"
+
+[[case]]
+name = "op_d_count_past_last"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "d5]]"
+
+[[case]]
+name = "op_d_count_with_close_stops"
+buffer = "a\n{\n}\nb"
+cursor = [0, 0]
+keys = "d3]]"
+
+[[case]]
+name = "op_d_close_on_last_row"
+buffer = "a\nb\n}"
+cursor = [0, 0]
+keys = "d]]"
+
+[[case]]
+name = "op_y_close_on_last_row"
+buffer = "a\nb\n}"
+cursor = [0, 0]
+keys = "y]]"
+
+[[case]]
+name = "op_d_open_on_last_row"
+buffer = "a b\nc\n{"
+cursor = [0, 2]
+keys = "d]]"
+
+[[case]]
+name = "op_d_to_end"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "d]]"
+
+[[case]]
+name = "op_d_all_to_end"
+buffer = "a\nb\n   last"
+cursor = [0, 0]
+keys = "d]]"
+
+[[case]]
+name = "op_d_close_to_last_row"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "d]["
+
+[[case]]
+name = "op_y_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "y]]"
+
+[[case]]
+name = "op_y_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "y[["
+
+[[case]]
+name = "op_y_to_last_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [9, 3]
+keys = "y]]"
+
+[[case]]
+name = "op_d_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "d[["
+
+[[case]]
+name = "op_d_back_on_first_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 3]
+keys = "d[["
+
+[[case]]
+name = "op_d_close_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "d[]"
+
+[[case]]
+name = "op_d_close_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "d]["
+
+[[case]]
+name = "op_c_close_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "c][X<Esc>"
+
+[[case]]
+name = "op_c_next_dot"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "c]]X<Esc>j."
+
+[[case]]
+name = "op_d_dot"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 0]
+keys = "d]]."
+
+[[case]]
+name = "op_d_dot_twice"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 0]
+keys = "d]].."
+
+[[case]]
+name = "op_d_dot_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "d[[."
+
+[[case]]
+name = "op_gu_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 0]
+keys = "gU]]"
+
+[[case]]
+name = "op_d_empty_buffer"
+buffer = ""
+cursor = [0, 0]
+keys = "d]]iab<Esc>``"
+
+[[case]]
+name = "op_y_empty_buffer"
+buffer = ""
+cursor = [0, 0]
+keys = "y]]iab<Esc>``"
+
+# A failed operator resets the goal column, as a failed motion does: the
+# `$` goal is gone when `j` moves on (seen through `:norm!`).
+[[case]]
+name = "op_d_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! d5]]<CR>j"
+
+[[case]]
+name = "op_d_close_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! d5][<CR>j"
+
+[[case]]
+name = "op_y_back_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! y5[[<CR>j"
+
+[[case]]
+name = "op_c_close_back_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! c5[]<CR>j"
+
+[[case]]
+name = "op_gU_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! gU5]]<CR>j"
+
+[[case]]
+name = "op_gq_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! gq5]]<CR>j"
+
+[[case]]
+name = "op_gu_back_fail_resets_goal"
+buffer = "abcdefghijk\nabc\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "$j:norm! gu5[[<CR>j"
+
+# Visual mode extends; `]]` there doesn't stop at a `}`.
+[[case]]
+name = "visual_next"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v]]"
+
+[[case]]
+name = "visual_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "v[["
+
+[[case]]
+name = "visual_count"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v2]]"
+
+[[case]]
+name = "visual_close"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v]["
+
+[[case]]
+name = "visual_close_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "v[]"
+
+[[case]]
+name = "visual_linewise"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "V]]"
+
+[[case]]
+name = "visual_linewise_back"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "V[["
+
+[[case]]
+name = "visual_to_last_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [9, 3]
+keys = "v]]"
+
+[[case]]
+name = "visual_inside"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [4, 2]
+keys = "v]]"
+
+[[case]]
+name = "visual_delete"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v]]d"
+
+[[case]]
+name = "visual_back_then_forward"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [8, 0]
+keys = "v[[]]]]"
+
+[[case]]
+name = "visual_count_fails"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v]]5]]"
+
+# The jump mark: set by a motion that moves, kept by one that fails.
+[[case]]
+name = "jump_back_exact"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]````"
+
+[[case]]
+name = "jump_back_row"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]''"
+
+[[case]]
+name = "jump_twice"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [5, 0]
+keys = "[[[[``"
+
+[[case]]
+name = "jump_after_close"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "][````"
+
+[[case]]
+name = "jump_after_operator"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "d]]``"
+
+[[case]]
+name = "jump_after_yank"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "y[[``"
+
+[[case]]
+name = "jump_failed_count_keeps"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]j:norm! 5]]<CR>``"
+
+[[case]]
+name = "jump_failed_count_back_keeps"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [11, 3]
+keys = "[[k:norm! 5[[<CR>``"
+
+[[case]]
+name = "jump_moved_in_normal"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]j:norm! ]]<CR>``"
+
+[[case]]
+name = "jump_failed_count_past_end"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "]]5]]"
+
+[[case]]
+name = "jump_from_visual"
+buffer = "int a;\n\nint f()\n{\n    x;\n}\n\nint g()\n{\n    y;\n}\n// end"
+cursor = [0, 2]
+keys = "v]]<Esc>``"
+
+# No `{` or `}` in the first column: a count that runs out fails, with no jump mark, and stops a macro.
+[[case]]
+name = "none_count_fails"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [4, 5]
+keys = "[[2]]"
+
+[[case]]
+name = "none_count_fails_back"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "]]2[["
+
+[[case]]
+name = "none_count_close_fails"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [4, 5]
+keys = "[]2]["
+
+[[case]]
+name = "none_count_close_back_fails"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "][2[]"
+
+[[case]]
+name = "none_indented_braces"
+buffer = "a\n  {\n  }\nb"
+cursor = [0, 0]
+keys = "]]2[["
+
+[[case]]
+name = "none_count_keeps_jump"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "]]:norm! 2[[<CR>````"
+
+[[case]]
+name = "none_operator_fails"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "]]d2[["
+
+[[case]]
+name = "none_macro_stops"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1\n]]2[[x"
+cursor = [0, 0]
+keys = "G\"ay$gg@a"
+
+[[case]]
+name = "none_macro_one_step_runs"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1\n]]x"
+cursor = [0, 0]
+keys = "G\"ay$gg@a"
+
+[[case]]
+name = "none_count_in_macro_stops"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1\n]]x2[[x"
+cursor = [0, 0]
+keys = "G\"ay$gg@a"
+
+[[case]]
+name = "none_macro_count_stops"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1\n]]2[[x"
+cursor = [0, 0]
+keys = "G\"ay$gg3@a"
+
+[[case]]
+name = "none_visual_fails"
+buffer = "def f():\n    pass\n\ndef g():\n    return 1"
+cursor = [0, 2]
+keys = "v]]2[["
+
+[[case]]
+name = "none_empty_buffer_count_fails"
+buffer = ""
+cursor = [0, 0]
+keys = "]]:norm! 2[[<CR>iab<Esc>``"

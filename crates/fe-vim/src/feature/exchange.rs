@@ -459,7 +459,7 @@ fn swap(
     let caret = match second.linewise {
         true => {
             let mut cursor = Cursor::at(after, after.row_start(after.offset_to_point(filled).row));
-            cursor.ix = cursor.line.first_non_blank();
+            cursor.go_to_first_non_blank();
             cursor.offset()
         }
         false => filled,

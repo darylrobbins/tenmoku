@@ -772,7 +772,7 @@ fn targets(target: &mut VimTarget<'_>, args: &SurroundAddArgs) -> Vec<Vec<Wrap>>
                         .saturating_add(count - 1)
                         .min(text.row_count().saturating_sub(1));
                     let mut cursor = Cursor::at(&text, text.row_start(first));
-                    cursor.ix = cursor.line.first_non_blank();
+                    cursor.go_to_first_non_blank();
                     return vec![Wrap::Chars(cursor.offset()..operator::row_end(&text, last))];
                 }
                 Target::Motion(motion) => {

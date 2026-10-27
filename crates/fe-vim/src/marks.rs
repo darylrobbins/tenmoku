@@ -35,7 +35,8 @@ use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Bias;
 
 use crate::{
-    MarkArgs, MarkMotion, Motion, VimState, VimTarget, motion, prose, unmatched, visual::Pos,
+    MarkArgs, MarkMotion, Motion, VimState, VimTarget, feature::sections, motion, prose, unmatched,
+    visual::Pos,
 };
 use fe_editor::EditorModel;
 
@@ -2227,15 +2228,35 @@ pub(crate) fn settle(target: &mut VimTarget<'_>) {
     }
 }
 
-/// The jump mark a jump by `motion` (resolved, with `count`) from the vim
-/// cursor or primary caret sets, if it is one that gets anywhere: `%`
-/// finding a bracket, a count of 100 or less, `[( [{ ]) ]}` finding their
-/// bracket, or `{ } ( )` not running out
-/// of text (a search is checked before it runs, and a mark resolved).
+/// The jump mark a jump by `motion` (resolved, with `count`) as an
+/// operator's target from the vim cursor or primary caret sets, if it is
+/// one that gets anywhere: `%` finding a bracket, a count of 100 or less,
+/// `[( [{ ]) ]}` finding their bracket, or `{ } ( ) ]] [[ ][ []` not
+/// running out of text (a search is checked before it runs, and a mark
+/// resolved). After an operator `]]` stops at a `}` too.
 pub(crate) fn jump(
     target: &mut VimTarget<'_>,
     motion: Motion,
     count: Option<u32>,
+) -> Option<Place> {
+    jump_by(target, motion, count, true)
+}
+
+/// [`jump`] for a move (in normal mode or a visual one), not an operator's
+/// target.
+pub(crate) fn move_jump(
+    target: &mut VimTarget<'_>,
+    motion: Motion,
+    count: Option<u32>,
+) -> Option<Place> {
+    jump_by(target, motion, count, false)
+}
+
+fn jump_by(
+    target: &mut VimTarget<'_>,
+    motion: Motion,
+    count: Option<u32>,
+    op: bool,
 ) -> Option<Place> {
     if !motion.is_jump() {
         return None;
@@ -2250,6 +2271,9 @@ pub(crate) fn jump(
         }
         (Motion::Unmatched { brace, forward }, count) => {
             unmatched::find(text, from, brace, forward, count.unwrap_or(1)).is_some()
+        }
+        (Motion::Section { forward, close }, count) => {
+            sections::lands(text, from, forward, close, op, count)
         }
         (
             Motion::ParagraphForward

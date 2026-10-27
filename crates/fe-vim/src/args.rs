@@ -101,7 +101,9 @@ pub enum Operator {
 /// `next_line_first_non_blank` `prev_line_first_non_blank` `column`
 /// `window_top` `window_middle` `window_bottom` `display_down` `display_up`
 /// are `ge gE + - | H M L gj gk` (`line_motions.rs`; `_` is `line`);
-/// `fold_next` and `fold_previous` are `zj` and `zk` (`folds.rs`).
+/// `fold_next` and `fold_previous` are `zj` and `zk` (`folds.rs`); `section`
+/// is `]] [[ ][ []`: `{"section": {"forward": true, "close": false}}` is
+/// `]]` (`feature/sections.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -132,6 +134,12 @@ pub enum Motion {
     Unmatched {
         brace: bool,
         forward: bool,
+    },
+    /// `]]` `[[` `][` `[]` (`feature/sections.rs`): the next (`forward`) or
+    /// previous row with a `{` in its first column, or a `}` (`close`).
+    Section {
+        forward: bool,
+        close: bool,
     },
     Line,
     Search(Search),
@@ -373,6 +381,7 @@ impl Motion {
             | Self::SearchPartialWordForward
             | Self::SearchPartialWordBackward
             | Self::Unmatched { .. }
+            | Self::Section { .. }
             | Self::FoldNext
             | Self::FoldPrevious => RangeClass::Exclusive,
             Self::WordEnd
@@ -414,7 +423,7 @@ impl Motion {
 
     /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
     /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
-    /// `[( [{ ]) ]}`, and `gs` and `gS`.
+    /// `[( [{ ]) ]}`, `]] [[ ][ []`, and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
         if self.is_prose() {
             return prose::is_jump(self);
@@ -428,6 +437,7 @@ impl Motion {
                 | Self::DocumentEnd
                 | Self::MatchPair
                 | Self::Unmatched { .. }
+                | Self::Section { .. }
                 | Self::Search(_)
                 | Self::SearchWord(_)
                 | Self::SearchNext

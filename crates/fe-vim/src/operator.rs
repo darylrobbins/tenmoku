@@ -455,7 +455,7 @@ pub(crate) fn caret(offset: usize) -> ResolvedSelection {
 fn on_row(text: &Text, row: u32, goal: Option<usize>, tab: usize, first_non_blank: bool) -> usize {
     let mut cursor = Cursor::at(text, text.row_start(row));
     match first_non_blank {
-        true => cursor.ix = cursor.line.first_non_blank(),
+        true => cursor.go_to_first_non_blank(),
         false => {
             cursor.vertical(row, goal, tab);
         }
@@ -568,7 +568,8 @@ fn move_only(
     model.set_selections(carets);
     let moved = model.selections() != before;
     // An operator over nothing still sets the goal column afresh; a failed
-    // one doesn't, except a `{` or `}` that ran out (`reset`), as nvim's does.
+    // one doesn't, except a `{` `}` or section motion that ran out
+    // (`reset`), as nvim's does.
     if reset || moved || spans.iter().any(|span| moved_to(span).is_some()) {
         state.goals = None;
         keep_goals(model, state, &landed, kept);
@@ -889,7 +890,9 @@ fn operate_unless_failing(
         .collect();
     let reset = matches!(
         measured,
-        Target::Motion(Motion::ParagraphForward | Motion::ParagraphBackward)
+        Target::Motion(
+            Motion::ParagraphForward | Motion::ParagraphBackward | Motion::Section { .. }
+        )
     ) && spans.iter().any(|span| matches!(span, Span::Failed));
     let row = |text: &Text, offset: usize| text.offset_to_point(offset).row;
     // `.` repeats an operator whose target resolved, even over nothing (`x`

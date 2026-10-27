@@ -1785,7 +1785,7 @@ fn to_row_start(target: &mut VimTarget<'_>, row: u32, settle: bool) {
 /// The first non-blank on `row` of `text`, as an offset.
 fn first_non_blank(text: &fe_text::Text, row: u32) -> usize {
     let mut cursor = Cursor::at(text, text.row_start(row));
-    cursor.ix = cursor.line.first_non_blank();
+    cursor.go_to_first_non_blank();
     cursor.offset()
 }
 
@@ -1850,7 +1850,7 @@ fn delete(
     // place, whatever another origin inserted meanwhile.
     let row = text.offset_to_point(model.primary_selection().head()).row;
     let mut cursor = Cursor::at(text, text.row_start(row));
-    cursor.ix = cursor.line.first_non_blank();
+    cursor.go_to_first_non_blank();
     let caret = cursor.offset();
     model.set_selections([operator::caret(caret)]);
     state.goals = None;

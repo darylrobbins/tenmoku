@@ -690,3 +690,55 @@ fn a_word_takes_a_long_run_of_blanks_before_it() {
         assert_eq!(register, "b", "yaw after an indent of {blank:?}s");
     }
 }
+
+/// Where a command puts the caret on a row's first non-blank, an indent of
+/// 400,000 blanks (longer than the window round the row's start) lands
+/// it as an indent of three does, past the indent or, on a row of blanks
+/// alone, on its last; and what it changes or takes is the same. (T197 F1:
+/// these looked only within the window.)
+#[test]
+fn first_non_blanks_past_a_long_indent_land_as_past_a_short_one() {
+    let cases = [
+        ("{pad}x\nb", (0, 0), "=="),
+        ("{pad}x\nb", (0, 0), "gqq"),
+        ("{pad}x\nb", (0, 0), ":s/x/y/<CR>"),
+        ("{pad}x\nb", (0, 0), ":><CR>"),
+        ("a\n{pad}x\nb", (0, 0), ":d<CR>"),
+        ("{pad}x\nb", (0, 0), "yyjVp"),
+        ("{pad}x\nb", (0, 0), "cxxjcxx"),
+        ("{pad}x\nb", (0, 0), "yss)"),
+        ("a\n{pad}x\nb", (0, 0), "j$S<Esc>u"),
+        ("a\n{pad}\nb", (0, 0), ":d<CR>"),
+        ("{pad}\nb", (0, 0), "=="),
+    ];
+    for blank in [" ", "\t"] {
+        let (short, long) = (blank.repeat(3), blank.repeat(400_000));
+        for (rows, caret, keys) in cases {
+            // These indent anew, a tab's width in spaces.
+            if blank == "\t" && ["==", "gqq", ":><CR>"].contains(&keys) {
+                continue;
+            }
+            let leave_with = |pad: &str| {
+                let (text, (row, col), register) = leave(&rows.replace("{pad}", pad), caret, keys);
+                // On the indent's last blank or past it, if the caret's row
+                // has it, from the indent's end (and told apart from a
+                // column within it).
+                let indented = text
+                    .split('\n')
+                    .nth(row as usize)
+                    .is_some_and(|line| line.starts_with(pad));
+                let col = match indented && col + 1 >= pad.len() {
+                    true => col as isize - pad.len() as isize - 1_000,
+                    false => col as isize,
+                };
+                let unpad = |text: String| text.replace(&long, &short);
+                (unpad(text), (row, col), unpad(register))
+            };
+            let why = format!("{keys:?} on {rows:?} with {blank:?}");
+            let (want, got) = (leave_with(&short), leave_with(&long));
+            assert_eq!(got.1, want.1, "cursor: {why}");
+            assert!(got.0 == want.0, "text: {why}");
+            assert!(got.2 == want.2, "register: {why}");
+        }
+    }
+}

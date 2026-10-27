@@ -1893,7 +1893,7 @@ pub(crate) fn change(
         begins.push(match span {
             Span::Lines { rows, .. } if rows.start() == rows.end() => {
                 let mut cursor = Cursor::at(&text, text.row_start(*rows.start()));
-                cursor.ix = cursor.line.first_non_blank();
+                cursor.go_to_first_non_blank();
                 history::pair(&text, cursor.offset().min(head))
             }
             Span::Lines { rows, .. } => {

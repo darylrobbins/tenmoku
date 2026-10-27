@@ -482,7 +482,7 @@ fn put_over(
     let land = match (first_non_blank, value.block_width) {
         (true, _) => {
             let mut cursor = Cursor::at(&after, start);
-            cursor.ix = cursor.line.first_non_blank();
+            cursor.go_to_first_non_blank();
             cursor.offset()
         }
         (false, Some(_)) => start,

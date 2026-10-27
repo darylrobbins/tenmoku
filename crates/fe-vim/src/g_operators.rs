@@ -260,10 +260,12 @@ pub(crate) fn operate(
         let moved = model.selections() != before;
         // A text object that isn't there sets the goal column afresh too,
         // as in nvim.
-        // So does a paragraph motion that ran out without moving.
+        // So does a paragraph or section motion that ran out without moving.
         let ran_out = matches!(
             measured,
-            Target::Motion(Motion::ParagraphForward | Motion::ParagraphBackward)
+            Target::Motion(
+                Motion::ParagraphForward | Motion::ParagraphBackward | Motion::Section { .. }
+            )
         ) && covered
             .iter()
             .any(|covered| matches!(covered.span, Span::Failed));
@@ -696,7 +698,7 @@ fn format(
                 let row = row_after(*rows.end()) + u32::from(*ended_after);
                 let row = row.min(text.row_count() - 1);
                 let mut cursor = Cursor::at(text, text.row_start(row));
-                cursor.ix = cursor.line.first_non_blank();
+                cursor.go_to_first_non_blank();
                 joined.anchor_after(cursor.offset())
             }
             (_, Rows::Over(..)) => snapshot.anchor_before(head),

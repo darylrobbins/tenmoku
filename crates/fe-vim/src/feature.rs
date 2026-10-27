@@ -42,6 +42,7 @@ pub(crate) mod exchange;
 pub(crate) mod filter;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
+pub(crate) mod sections;
 pub(crate) mod seek;
 pub(crate) mod surround;
 
@@ -190,6 +191,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &quit_keys::FEATURE,
     &changes::FEATURE,
     &unmatched::FEATURE,
+    &sections::FEATURE,
     &partial_word::FEATURE,
     &put_keys::FEATURE,
     &reindent::FEATURE,

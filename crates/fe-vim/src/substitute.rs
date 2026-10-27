@@ -587,7 +587,7 @@ fn report(matches: usize, lines: usize, count_only: bool) -> Option<String> {
 /// The first non-blank on `row`, as an offset.
 fn first_non_blank(text: &fe_text::Text, row: u32) -> usize {
     let mut cursor = Cursor::at(text, text.row_start(row));
-    cursor.ix = cursor.line.first_non_blank();
+    cursor.go_to_first_non_blank();
     cursor.offset()
 }
 

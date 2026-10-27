@@ -15,8 +15,8 @@ use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, folds, jump, line_motions, marks, prose,
-    search, state::Goals, unmatched, visual,
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, feature::sections, folds, jump,
+    line_motions, marks, prose, search, state::Goals, unmatched, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
@@ -55,7 +55,7 @@ fn move_carets(target: &mut VimTarget<'_>, args: MoveArgs) -> Dispatched<Transac
         Err(message) => return target.state.fail(message),
     }
     if !positioned
-        && let Some(from) = marks::jump(target, args.motion, args.count)
+        && let Some(from) = marks::move_jump(target, args.motion, args.count)
         && jump::lands(target, args.motion, args.count)
     {
         target.state.marks.jumped(from);
@@ -309,6 +309,9 @@ pub(crate) fn motion(
         },
         Motion::Unmatched { brace, forward } => {
             return unmatched::motion(cursor, brace, forward, count, goal);
+        }
+        Motion::Section { forward, close } => {
+            return sections::motion(cursor, forward, close, count);
         }
         Motion::LineStart => match cursor.windowed {
             true => cursor.goto(cursor.text.row_start(row)),
@@ -1043,6 +1046,24 @@ impl<'a> Cursor<'a> {
         if past && offset == self.line.start + self.line.text.len() {
             self.ix = self.line.len();
         }
+    }
+
+    /// To its row's first non-blank, or its last grapheme if all are blank,
+    /// as [`Line::first_non_blank`] finds it but reading the row past
+    /// `line`: on a huge row the window around its start can end inside
+    /// its indent.
+    pub(crate) fn go_to_first_non_blank(&mut self) {
+        let start = self.text.row_start(self.row);
+        let end = start + self.text.row_len(self.row) as usize;
+        let blanks = self
+            .text
+            .chunks_in_range(start..end)
+            .flat_map(str::bytes)
+            .take_while(|&byte| byte == b' ' || byte == b'\t')
+            .count();
+        // A non-blank byte past a blank (a combining mark) is in the
+        // blank's grapheme, which isn't blank then, as `line`'s isn't.
+        self.goto((start + blanks).min(end.saturating_sub(1)).max(start));
     }
 
     /// To the grapheme holding `offset`, clamped to its row's last.
@@ -1866,6 +1887,25 @@ mod caret_window_tests {
         };
         let _ = super::motion(&mut cursor, args, None, None, 4);
         cursor.offset()
+    }
+
+    #[test]
+    fn the_first_non_blank_is_found_past_the_window() {
+        let at = |source: &str| {
+            let text = Text::new(source);
+            let mut cursor = Cursor::at(&text, text.row_start(1));
+            cursor.go_to_first_non_blank();
+            cursor.offset() - text.row_start(1)
+        };
+        let long = " ".repeat(1_000_000);
+        assert_eq!(at(&format!("a\n{long}x\nb")), long.len());
+        // All blanks: the last.
+        assert_eq!(at(&format!("a\n{long}\nb")), long.len() - 1);
+        assert_eq!(at("a\n \t \nb"), 2);
+        assert_eq!(at("a\n\nb"), 0);
+        assert_eq!(at("a\n\t x\nb"), 2);
+        // A blank a combining mark joins isn't blank.
+        assert_eq!(at("a\n \u{301}x\nb"), 0);
     }
 
     #[test]
