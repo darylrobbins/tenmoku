@@ -102,6 +102,18 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("pane.equalize", "Equalize Panes", "workbench"),
     ("pane.focus_next", "Focus Next Pane", "workbench"),
     ("pane.focus_previous", "Focus Previous Pane", "workbench"),
+    ("pane.focus_group1", "Focus First Editor Group", "workbench"),
+    (
+        "pane.focus_group2",
+        "Focus Second Editor Group",
+        "workbench",
+    ),
+    ("pane.focus_group3", "Focus Third Editor Group", "workbench"),
+    (
+        "pane.focus_group4",
+        "Focus Fourth Editor Group",
+        "workbench",
+    ),
     ("dock.grow", "Grow Dock", "workbench"),
     ("dock.shrink", "Shrink Dock", "workbench"),
     (

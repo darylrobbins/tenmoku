@@ -1019,6 +1019,26 @@ command = "pane.focus_down"
 context = "workbench"
 
 [[bindings]]
+keys = "secondary-1"
+command = "pane.focus_group1"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-2"
+command = "pane.focus_group2"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-3"
+command = "pane.focus_group3"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-4"
+command = "pane.focus_group4"
+context = "workbench"
+
+[[bindings]]
 keys = { macos = "ctrl-cmd-left", default = "ctrl-alt-left" }
 command = "pane.move_tab_left"
 context = "workbench"

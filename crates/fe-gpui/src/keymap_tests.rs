@@ -239,6 +239,10 @@ fn the_default_keymap_binds_the_active_file_path_chords() {
         ("cmd-k r", "workbench.reveal_active_file_in_os"),
         ("cmd-alt-s", "workbench.save_all"),
         ("cmd-k s", "workbench.save_without_formatting"),
+        ("cmd-1", "pane.focus_group1"),
+        ("cmd-2", "pane.focus_group2"),
+        ("cmd-3", "pane.focus_group3"),
+        ("cmd-4", "pane.focus_group4"),
     ] {
         let sequence = KeySequence::parse(keys).unwrap();
         let binding = (keymap.bindings().iter())

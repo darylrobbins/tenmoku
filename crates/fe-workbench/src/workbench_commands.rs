@@ -40,6 +40,13 @@ mod markdown_preview_buttons_tests;
 #[path = "close_many_tests.rs"]
 mod close_many_tests;
 
+#[path = "focus_group.rs"]
+mod focus_group;
+
+#[cfg(test)]
+#[path = "focus_group_tests.rs"]
+mod focus_group_tests;
+
 #[kiln::command(context = "workbench")]
 impl Workbench {
     /// Close Tab
@@ -529,6 +536,34 @@ impl Workbench {
     fn focus_previous(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.focus_next_pane(false, cx.window, cx.cx);
+    }
+
+    /// Focus First Editor Group
+    #[command(id = "pane.focus_group1")]
+    fn focus_group1(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_group(1, cx.window, cx.cx);
+    }
+
+    /// Focus Second Editor Group
+    #[command(id = "pane.focus_group2")]
+    fn focus_group2(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_group(2, cx.window, cx.cx);
+    }
+
+    /// Focus Third Editor Group
+    #[command(id = "pane.focus_group3")]
+    fn focus_group3(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_group(3, cx.window, cx.cx);
+    }
+
+    /// Focus Fourth Editor Group
+    #[command(id = "pane.focus_group4")]
+    fn focus_group4(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.focus_group(4, cx.window, cx.cx);
     }
 
     /// Focus Left of Dock
