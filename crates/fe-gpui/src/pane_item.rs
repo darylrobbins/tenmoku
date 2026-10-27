@@ -218,6 +218,12 @@ impl fmt::Display for NotSaved {
 
 impl std::error::Error for NotSaved {}
 
+/// Whether `error` is a save the person declined, by answering Cancel to the
+/// prompt before overwriting a file that changed on disk: nothing to report.
+pub fn save_declined(error: &(dyn std::error::Error + 'static)) -> bool {
+    error.downcast_ref::<NotSaved>().is_some()
+}
+
 thread_local! {
     /// The last save asked for of each buffer being saved, which the next
     /// one waits for. GPUI runs on one thread.
@@ -460,7 +466,7 @@ impl EditorView {
     ) -> Task<gpui::Result<()>> {
         let (previous, guard) = self.queue_save();
         let edits = self.edits_allowed(reason);
-        let ask = reason == SaveReason::Explicit;
+        let ask = reason.asks();
         // With none running, the text as it is now, or as the hook leaves
         // it; typing from here on is unsaved.
         let hook = self.save_hook.clone().filter(|_| edits);
@@ -708,7 +714,7 @@ impl EditorView {
             let Err(error) = saved.await else {
                 return;
             };
-            if error.downcast_ref::<NotSaved>().is_some() {
+            if save_declined(&*error) {
                 return;
             }
             let detail = format!("{error:#}");

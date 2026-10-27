@@ -27,6 +27,9 @@ pub struct Facts {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SaveReason {
     Explicit,
+    /// Save without Formatting: an explicit save that runs no save
+    /// participants (format, trim, final newline, code actions).
+    ExplicitRaw,
     AutoDelay,
     AutoFocus,
     AutoWindow,
@@ -39,9 +42,15 @@ impl SaveReason {
     pub fn edits_allowed(self, vim_insert: bool) -> bool {
         match self {
             SaveReason::Explicit => true,
-            SaveReason::AutoDelay => false,
+            SaveReason::ExplicitRaw | SaveReason::AutoDelay => false,
             _ => !vim_insert,
         }
+    }
+
+    /// Whether a failure to save asks the person (the changed-on-disk
+    /// prompt): the saves they asked for do, the automatic ones don't.
+    pub fn asks(self) -> bool {
+        matches!(self, SaveReason::Explicit | SaveReason::ExplicitRaw)
     }
 }
 

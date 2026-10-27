@@ -237,6 +237,8 @@ fn the_default_keymap_binds_the_active_file_path_chords() {
     for (keys, command) in [
         ("cmd-k p", "workbench.copy_active_file_path"),
         ("cmd-k r", "workbench.reveal_active_file_in_os"),
+        ("cmd-alt-s", "workbench.save_all"),
+        ("cmd-k s", "workbench.save_without_formatting"),
     ] {
         let sequence = KeySequence::parse(keys).unwrap();
         let binding = (keymap.bindings().iter())

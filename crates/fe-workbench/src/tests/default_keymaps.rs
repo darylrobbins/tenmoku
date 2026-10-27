@@ -72,6 +72,9 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         "editor.column_select_right",
         "editor.column_select_up",
         "editor.column_select_down",
+        // VS Code's Linux keymap has no key for either.
+        "workbench.save_all",
+        "workbench.save_without_formatting",
     ];
     let mut expected: BTreeSet<_> = commands(&macos)
         .into_iter()

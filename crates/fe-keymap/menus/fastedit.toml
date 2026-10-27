@@ -105,6 +105,14 @@ title = "Save As…"
 command = "workbench.save_as"
 
 [[menus.items]]
+title = "Save All"
+command = "workbench.save_all"
+
+[[menus.items]]
+title = "Save without Formatting"
+command = "workbench.save_without_formatting"
+
+[[menus.items]]
 separator = true
 
 # VS Code's File > Compare Active File With… (Zed has none).

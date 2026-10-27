@@ -798,6 +798,21 @@ keys = "secondary-k r"
 command = "workbench.reveal_active_file_in_os"
 context = "workbench"
 
+# Save All and Save without Formatting, as VS Code's macOS keymap binds them.
+# Its Linux default has no key for either (ctrl-k s is not Save All's there),
+# so they are palette and menu only off macOS.
+[[bindings]]
+keys = "cmd-alt-s"
+command = "workbench.save_all"
+context = "workbench"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-k s"
+command = "workbench.save_without_formatting"
+context = "workbench"
+platform = "macos"
+
 # Zen Mode, as VS Code binds it; the same chord leaves it, and so does escape
 # escape. A lone escape still runs its own binding at once (closing Find,
 # cancelling a selection) and the chord keeps listening for a second.

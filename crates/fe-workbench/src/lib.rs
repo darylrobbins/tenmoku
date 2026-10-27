@@ -56,6 +56,7 @@ mod preserve_case;
 mod project_panel;
 mod quick_open;
 mod references_panel;
+mod save_commands;
 mod search_panel;
 mod settings_editor;
 mod shortcuts_editor;
@@ -131,6 +132,7 @@ pub fn init(cx: &mut App) {
     search_panel::init(cx);
     find_commands::init(cx);
     path_commands::init(cx);
+    save_commands::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
@@ -274,6 +276,8 @@ mod middle_click_close_tests;
 mod panel_width_tests;
 #[cfg(test)]
 mod path_commands_tests;
+#[cfg(test)]
+mod save_commands_tests;
 #[cfg(test)]
 mod settings_editor_controls_tests;
 #[cfg(test)]

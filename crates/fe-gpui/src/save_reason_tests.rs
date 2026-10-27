@@ -198,3 +198,35 @@ fn insert_entered_while_waiting(cx: &mut TestAppContext) {
     drop(saved);
     assert_eq!(fs::read_to_string(&path).unwrap(), "one  \n");
 }
+
+#[test]
+fn explicit_raw_edits_nothing_but_asks() {
+    for vim_insert in [false, true] {
+        assert!(!SaveReason::ExplicitRaw.edits_allowed(vim_insert));
+    }
+    assert!(SaveReason::ExplicitRaw.asks() && SaveReason::Explicit.asks());
+    assert!(!SaveReason::AutoDelay.asks() && !SaveReason::AutoFocus.asks());
+}
+
+#[gpui::test]
+fn explicit_raw_skips_the_hook_and_prompts(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\n").unwrap();
+    let (view, cx) = opened(cx, &path);
+    view.update(cx, |view, _| view.set_save_hook(Some(Rc::new(Edits))));
+    view.update(cx, |view, _| view.model_mut().insert("x"));
+    let saved = save_with(&view, SaveReason::ExplicitRaw, cx);
+    cx.run_until_parked();
+    drop(saved);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "xone\n");
+
+    view.update(cx, |view, _| view.model_mut().insert("mine "));
+    fs::write(&path, "theirs\n").unwrap();
+    let saved = save_with(&view, SaveReason::ExplicitRaw, cx);
+    cx.run_until_parked();
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    drop(saved);
+}

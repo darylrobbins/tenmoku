@@ -426,6 +426,12 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Reveal Active File in File Manager",
         "workbench",
     ),
+    ("workbench.save_all", "Save All", "workbench"),
+    (
+        "workbench.save_without_formatting",
+        "Save without Formatting",
+        "workbench",
+    ),
     ("editor.peek_definition", "Peek Definition", "editor"),
     ("editor.peek_references", "Peek References", "editor"),
     ("peek.close", "Close Peek", "peek || peek_shown"),
