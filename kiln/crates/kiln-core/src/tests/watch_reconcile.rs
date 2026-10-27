@@ -38,10 +38,6 @@ thread_local! {
 /// An upper bound only, for a loaded host: a re-stat is due every 3 s.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The bound for waits that only need the watcher to make progress: a
-/// re-stat is due every 3 s, but a host under load has delayed one by over 30 s.
-const LOADED: Duration = Duration::from_secs(120);
-
 /// Twice the re-stat period, and a little more.
 const QUIET: Duration = Duration::from_secs(7);
 
@@ -61,7 +57,7 @@ fn a_file_in_a_directory_made_later_is_reported() {
         tx.send(batch).ok();
     })
     .unwrap();
-    let first = batches.recv_timeout(LOADED).expect("a batch in time");
+    let first = batches.recv_timeout(TIMEOUT).expect("a batch in time");
     assert_eq!(
         first,
         std::slice::from_ref(&path),
@@ -72,7 +68,7 @@ fn a_file_in_a_directory_made_later_is_reported() {
     fs::write(&path, "editor.font_size = 18\n").unwrap();
     // A re-stat may see the directory before the file is written, and report
     // it then too.
-    let deadline = Instant::now() + LOADED;
+    let deadline = Instant::now() + TIMEOUT;
     let mut reloaded = false;
     while !reloaded {
         let remaining = deadline.saturating_duration_since(Instant::now());
