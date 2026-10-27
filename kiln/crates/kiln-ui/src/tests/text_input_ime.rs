@@ -271,3 +271,58 @@ fn one_edit_emits_one_change(cx: &mut TestAppContext) {
     });
     assert_eq!(events.borrow().len(), 1);
 }
+
+#[gpui::test]
+fn the_next_edit_replaces_a_selection(cx: &mut TestAppContext) {
+    let (input, events, cx) = input_with(cx, "foo");
+    let select = |input: &Entity<TextInput>, cx: &mut gpui::VisualTestContext| {
+        input.update(cx, |input, cx| input.select_all(cx));
+        events.borrow_mut().clear();
+    };
+
+    select(&input, cx);
+    input.update_in(cx, |input, window, cx| {
+        assert!(input.selected());
+        let selection = input.selected_text_range(false, window, cx).unwrap();
+        assert_eq!(selection.range, 0..3);
+        // Typing: the platform replaces no range.
+        input.replace_text_in_range(None, "fo", window, cx);
+        assert_eq!((input.text(), input.selected()), ("fo", false));
+    });
+    assert_eq!(*events.borrow(), [TextInputEvent::Changed]);
+
+    // The platform replacing the whole selection with less than it held.
+    input.update(cx, |input, cx| input.set_text("foo", cx));
+    select(&input, cx);
+    input.update_in(cx, |input, window, cx| {
+        input.replace_text_in_range(Some(0..3), "fo", window, cx);
+        assert_eq!(input.text(), "fo");
+    });
+
+    // A deletion, a backspace and a paste-like insert.
+    input.update(cx, |input, cx| input.set_text("foo", cx));
+    select(&input, cx);
+    input.update_in(cx, |input, window, cx| {
+        input.replace_text_in_range(Some(0..3), "", window, cx);
+        assert_eq!(input.text(), "");
+    });
+    input.update(cx, |input, cx| input.set_text("foo", cx));
+    select(&input, cx);
+    input.update(cx, |input, cx| input.backspace(cx));
+    input.update(cx, |input, _| assert_eq!(input.text(), ""));
+    input.update(cx, |input, cx| input.set_text("foo", cx));
+    select(&input, cx);
+    input.update(cx, |input, cx| input.insert("bar", cx));
+    input.update(cx, |input, _| assert_eq!(input.text(), "bar"));
+
+    // A composition replaces it; editing text elsewhere drops it.
+    input.update(cx, |input, cx| input.set_text("foo", cx));
+    select(&input, cx);
+    input.update_in(cx, |input, window, cx| {
+        input.replace_and_mark_text_in_range(None, "に", None, window, cx);
+        assert_eq!((input.text(), input.selected()), ("", false));
+    });
+    input.update(cx, |input, cx| input.set_text("", cx));
+    input.update(cx, |input, cx| input.select_all(cx));
+    input.update(cx, |input, _| assert!(!input.selected(), "empty text"));
+}

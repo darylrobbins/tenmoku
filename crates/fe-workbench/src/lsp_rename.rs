@@ -32,6 +32,8 @@ use crate::{
     workbench::Palette,
 };
 
+const STALE: &str = "The file changed since the rename began: nothing renamed";
+
 /// What the picker asks about, as it opened.
 struct Request {
     editor: WeakEntity<EditorView>,
@@ -149,9 +151,18 @@ impl Workbench {
             })?;
             caret_after(edits, &request.target, request.caret)
         });
-        let applied = answer
-            .map_err(|error| reason(&error))
-            .and_then(|files| self.apply_user_file_edits(files, cx));
+        // The server's edits were made for the version asked about: a
+        // changed or closed source buffer discards all of them.
+        let current = request
+            .editor
+            .upgrade()
+            .map(|editor| editor.read(cx).model().buffer().version());
+        let applied = answer.map_err(|error| reason(&error)).and_then(|files| {
+            if current != Some(request.version) {
+                return Err(STALE.to_owned());
+            }
+            self.apply_user_file_edits(files, cx)
+        });
         match applied {
             Ok(_) => {
                 let editor = request.editor.upgrade();
@@ -200,12 +211,8 @@ pub(crate) struct RenamePicker {
     workbench: WeakEntity<Workbench>,
     request: Request,
     placeholder: String,
-    input: Option<Entity<TextInput>>,
     /// The name as typed.
     name: String,
-    /// The input still holds the placeholder, all selected: the first edit
-    /// replaces it, as it does a selection.
-    selected: bool,
     /// Its rename, asked for and not answered, and the guard keeping
     /// others out.
     running: Option<(Task<()>, Rc<()>)>,
@@ -218,8 +225,6 @@ impl RenamePicker {
             request,
             name: String::new(),
             placeholder,
-            input: None,
-            selected: false,
             running: None,
         }
     }
@@ -227,10 +232,12 @@ impl RenamePicker {
     /// The picker has opened, on `input`: it holds the placeholder.
     fn start(&mut self, input: Entity<TextInput>, cx: &mut Context<Picker<Self>>) {
         let placeholder = self.placeholder.clone();
-        input.update(cx, |input, cx| input.set_text(placeholder.clone(), cx));
-        self.input = Some(input);
+        // Selected in the input, so its first edit replaces it.
+        input.update(cx, |input, cx| {
+            input.set_text(placeholder.clone(), cx);
+            input.select_all(cx);
+        });
         self.name = placeholder;
-        self.selected = !self.placeholder.is_empty();
         cx.notify();
     }
 
@@ -259,24 +266,7 @@ impl RenamePicker {
 
 impl PickerDelegate for RenamePicker {
     fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
-        let mut name = query;
-        if self.selected && name != self.placeholder {
-            self.selected = false;
-            // The first edit replaces what was selected.
-            let typed = match name.strip_prefix(&self.placeholder) {
-                Some(typed) => typed.to_owned(),
-                None if self.placeholder.starts_with(&name) => String::new(),
-                None => name.clone(),
-            };
-            if typed != name {
-                name = typed;
-                if let Some(input) = &self.input {
-                    let text = name.clone();
-                    input.update(cx, |input, cx| input.set_text(text, cx));
-                }
-            }
-        }
-        self.name = name;
+        self.name = query;
         cx.notify();
         let picker = cx.entity();
         // `Picker::matches_updated` borrows the picker, which is being
@@ -328,8 +318,7 @@ impl PickerDelegate for RenamePicker {
                 })
             })
         } else {
-            let message = "The file changed since the rename began: nothing renamed";
-            workbench.update(cx, |workbench, cx| workbench.say(message, window, cx));
+            workbench.update(cx, |workbench, cx| workbench.say(STALE, window, cx));
             return true;
         };
         let Some((asked, guard)) = asked else {

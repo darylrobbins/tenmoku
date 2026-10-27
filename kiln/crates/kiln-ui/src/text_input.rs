@@ -20,7 +20,10 @@ pub enum TextInputEvent {
 }
 
 /// A single-line text input. Typed text goes at the end: there's no caret
-/// movement or selection.
+/// movement. The one selection it has is all of the text
+/// ([`TextInput::select_all`]): the platform sees it as the selected range,
+/// and the next edit (typing, a paste, a platform replacement, a delete)
+/// replaces it instead of adding to the text.
 ///
 /// An IME composition sits after the text, underlined. [`TextInput::text`]
 /// leaves it out and no [`TextInputEvent::Changed`] is emitted while it's
@@ -48,6 +51,8 @@ pub struct TextInput {
     typing: bool,
     /// The composition after the text, and the selected bytes within it.
     marked: Option<(String, Range<usize>)>,
+    /// All of the (non-empty) text is selected.
+    selected: bool,
     /// The font and size it was last drawn in, which it inherits from its
     /// parents: the platform asks for bounds outside drawing.
     /// Committed text was deleted under the composition: `Changed` is owed
@@ -74,6 +79,7 @@ impl TextInput {
             bordered: false,
             typing: true,
             marked: None,
+            selected: false,
             change_owed: false,
             drawn_font: None,
         }
@@ -104,9 +110,23 @@ impl TextInput {
     /// [`TextInputEvent::Changed`].
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.marked = None;
+        self.selected = false;
         self.change_owed = false;
         self.text = text.into();
         cx.notify();
+    }
+
+    /// Selects all of the text, without emitting [`TextInputEvent::Changed`].
+    /// Nothing is selected in empty text.
+    pub fn select_all(&mut self, cx: &mut Context<Self>) {
+        self.marked = None;
+        self.selected = !self.text.is_empty();
+        cx.notify();
+    }
+
+    /// Whether all of the text is selected.
+    pub fn selected(&self) -> bool {
+        self.selected
     }
 
     /// Whether typed text goes in, as it does unless turned off here. Off,
@@ -130,16 +150,21 @@ impl TextInput {
 
     /// Adds `text` at the end, up to its first line break. This and the other
     /// editing methods cancel a composition that's open.
+    /// Replaces the text instead if it's selected.
     pub fn insert(&mut self, text: &str, cx: &mut Context<Self>) {
         self.marked = None;
         let line = text.lines().next().unwrap_or_default();
+        let replaced = self.take_selection();
         self.text.push_str(line);
-        self.finish_edit(!line.is_empty(), cx);
+        self.finish_edit(replaced || !line.is_empty(), cx);
     }
 
-    /// Deletes the last char.
+    /// Deletes the last char, or the selected text.
     pub fn backspace(&mut self, cx: &mut Context<Self>) {
         self.marked = None;
+        if self.take_selection() {
+            return self.finish_edit(true, cx);
+        }
         let edited = self.text.pop().is_some();
         self.finish_edit(edited, cx);
     }
@@ -148,6 +173,9 @@ impl TextInput {
     /// punctuation (such as a `/`) if that comes first.
     pub fn delete_word_left(&mut self, cx: &mut Context<Self>) {
         self.marked = None;
+        if self.take_selection() {
+            return self.finish_edit(true, cx);
+        }
         let word = |ch: char| ch.is_alphanumeric() || ch == '_';
         let trimmed = self.text.trim_end();
         let punctuation = trimmed.ends_with(|ch: char| !word(ch));
@@ -162,6 +190,7 @@ impl TextInput {
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.marked = None;
+        self.selected = false;
         let edited = !self.text.is_empty();
         self.text.clear();
         self.finish_edit(edited, cx);
@@ -177,6 +206,15 @@ impl TextInput {
     /// Emits [`TextInputEvent::Submitted`].
     pub fn submit(&mut self, cx: &mut Context<Self>) {
         cx.emit(TextInputEvent::Submitted);
+    }
+
+    /// Deletes the selected text, if any; whether it did.
+    fn take_selection(&mut self) -> bool {
+        let selected = std::mem::take(&mut self.selected);
+        if selected {
+            self.text.clear();
+        }
+        selected
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -269,6 +307,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<UTF16Selection> {
         let start = self.utf16_len();
         let range = match &self.marked {
+            None if self.selected => 0..start,
             Some((text, selected)) => {
                 let utf16 = |bytes: usize| text[..bytes].encode_utf16().count();
                 start + utf16(selected.start)..start + utf16(selected.end)
@@ -297,12 +336,18 @@ impl EntityInputHandler for TextInput {
         cx: &mut Context<Self>,
     ) {
         let commits = range.is_none() || range == self.marked_utf16();
+        if self.selected && (range.is_none() || range == Some(0..self.utf16_len())) {
+            // The platform replaces the selection, as typing does.
+            self.insert(text, cx);
+            return;
+        }
         if commits {
             // insert cancels the composition; an empty commit just ends it.
             self.insert(text, cx);
             return;
         }
         self.marked = None;
+        self.selected = false;
         match range.map(|range| Self::byte_range(&self.text, &range)) {
             Some(bytes) if bytes != (self.text.len()..self.text.len()) => {
                 let line = text.lines().next().unwrap_or_default();
@@ -324,11 +369,15 @@ impl EntityInputHandler for TextInput {
         let line = text.lines().next().unwrap_or_default();
         if line.is_empty() {
             // An empty mark ends the composition, whatever its range, and
-            // edits nothing.
+            // edits nothing (it replaces a selection, though).
             self.marked = None;
-            self.finish_edit(false, cx);
+            let replaced = self.take_selection();
+            self.finish_edit(replaced, cx);
             return;
         }
+        // A composition replaces the selection too.
+        let replaced = self.take_selection();
+        self.change_owed |= replaced;
         let committed = self.utf16_len();
         let (mut prefix, mut suffix) = (String::new(), String::new());
         if let Some(range) = range {
@@ -426,6 +475,8 @@ impl Render for TextInput {
         let border = self.border_color(focused, colors);
         let focus = self.focus.clone();
         let typing = self.typing;
+        let selected = self.selected;
+        let highlight = text.opacity(0.3);
         let input = cx.entity();
         div()
             .key_context(Self::KEY_CONTEXT)
@@ -443,7 +494,11 @@ impl Render for TextInput {
             .h(px(30.))
             .px_3()
             .text_color(text)
-            .child(self.text.clone())
+            .child(
+                div()
+                    .when(selected, |text| text.bg(highlight))
+                    .child(self.text.clone()),
+            )
             .when_some(self.marked.as_ref(), |row, (marked, _)| {
                 row.child(div().underline().child(marked.clone()))
             })

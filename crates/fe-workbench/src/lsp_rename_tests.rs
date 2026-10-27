@@ -1,12 +1,12 @@
 //! `lsp.rename`: the fake server's answers to `prepareRename` and
 //! `rename`, applied to an open file and a closed one.
 
-use std::fs;
+use std::{fs, ops::Range, time::Duration};
 
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_lsp::fake::{InitializeReply, Reply, Script, Scripted, initialize_result};
-use gpui::{Entity, Focusable as _, TestAppContext};
+use gpui::{Entity, EntityInputHandler as _, Focusable as _, TestAppContext};
 use lsp_types::{
     OneOf, PositionEncodingKind, RenameOptions, ServerCapabilities,
     request::{PrepareRenameRequest, Rename, Request as _},
@@ -55,7 +55,10 @@ fn foo(line: u32, column: u32) -> Value {
 /// The project with `MAIN` open, its caret in the call, and the trusted
 /// root's server renaming.
 fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
-    let mut s = Lsp::with_scripts(cx, renamer(), Script::default());
+    setup_with(Lsp::with_scripts(cx, renamer(), Script::default()))
+}
+
+fn setup_with(mut s: Lsp) -> (Lsp, Entity<EditorView>) {
     s.set_trust(true);
     fs::write(s.path("src/main.rs"), MAIN).unwrap();
     fs::write(s.path("src/other.rs"), OTHER).unwrap();
@@ -120,6 +123,12 @@ fn shown(s: &mut Lsp) -> (String, usize, String) {
     })
 }
 
+/// Whether the picker's input has its text selected.
+fn selected(s: &mut Lsp) -> bool {
+    let picker = picker(s).expect("the rename picker shows");
+    picker.read_with(&s.cx, |picker, cx| picker.input().read(cx).selected())
+}
+
 /// The message of the info prompt showing, answered.
 fn said(s: &mut Lsp) -> Option<String> {
     let message = s.cx.pending_prompt().map(|(message, _)| message);
@@ -162,6 +171,7 @@ fn renames_across_files(cx: &mut TestAppContext) {
         shown(&mut s),
         ("foo".into(), 0, "Enter to rename, Escape to cancel".into())
     );
+    assert!(selected(&mut s), "the placeholder is selected");
     s.cx.simulate_input("barista");
     s.draw();
     assert_eq!(shown(&mut s).0, "barista");
@@ -262,4 +272,75 @@ fn nothing_and_failures(cx: &mut TestAppContext) {
     assert!(focused(&mut s, &editor));
     assert_eq!(asked(&s, Rename::METHOD), 0);
     assert_eq!(said(&mut s), None);
+}
+
+#[gpui::test]
+fn a_changed_source_discards_edits_to_other_files(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup_with(Lsp::with_fake_clock(cx, renamer(), Script::default()));
+    let other = s.uri("src/other.rs");
+    s.fake.set_reply(
+        Rename::METHOD,
+        Scripted {
+            reply: Reply::Result(json!({ "changes": {
+                other.as_str(): [{ "range": foo(0, 9), "newText": "bar" }],
+            }})),
+            delay: Duration::from_secs(1),
+        },
+    );
+
+    rename(&mut s);
+    s.until("the picker", |s| picker(s).is_some());
+    s.cx.simulate_input("bar");
+    s.draw();
+    s.cx.simulate_keystrokes("enter");
+    s.until("the request", |s| asked(s, Rename::METHOD) == 1);
+    s.clock.wait_for_sleep(Duration::from_secs(1));
+    // The source changes while the server works; its edits skip it.
+    s.cx.update(|_, cx| {
+        editor.update(cx, |view, cx| {
+            view.model_mut().set_cursor(0);
+            view.model_mut().insert("// ");
+            cx.notify();
+        })
+    });
+    s.clock.advance(Duration::from_secs(1));
+    s.until("the prompt", |s| s.cx.pending_prompt().is_some());
+    assert!(said(&mut s).is_some());
+    s.until("the picker to close", |s| picker(s).is_none());
+    assert_eq!(
+        fs::read_to_string(s.path("src/other.rs")).unwrap(),
+        OTHER,
+        "nothing is applied"
+    );
+}
+
+#[gpui::test]
+fn the_selected_name_takes_platform_replacements(cx: &mut TestAppContext) {
+    let (mut s, _) = setup(cx);
+    let edit = |s: &mut Lsp, range: Option<Range<usize>>, text: &str| {
+        let input = picker(s)
+            .unwrap()
+            .read_with(&s.cx, |p, _| p.input().clone());
+        s.cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                input.replace_text_in_range(range, text, window, cx)
+            })
+        });
+        s.draw();
+    };
+
+    rename(&mut s);
+    s.until("the picker", |s| picker(s).is_some());
+    // `foo` replaced by `fo` is an edit, not a deletion.
+    edit(&mut s, Some(0..3), "fo");
+    assert_eq!((shown(&mut s).0.as_str(), shown(&mut s).1), ("fo", 1));
+    assert!(!selected(&mut s));
+
+    // Deleting the selected name leaves nothing to rename to.
+    let input = picker(&mut s)
+        .unwrap()
+        .read_with(&s.cx, |p, _| p.input().clone());
+    s.cx.update(|_, cx| input.update(cx, |input, cx| input.select_all(cx)));
+    edit(&mut s, Some(0..2), "");
+    assert_eq!((shown(&mut s).0.as_str(), shown(&mut s).1), ("", 0));
 }
