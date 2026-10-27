@@ -183,6 +183,12 @@ keys = "secondary-d"
 command = "editor.select_next_occurrence"
 context = "editor && !vim.enabled"
 
+# VS Code's chord: move the last selection to the next match, not add one.
+[[bindings]]
+keys = "secondary-k secondary-d"
+command = "editor.move_last_selection_to_next_find_match"
+context = "editor && !vim.enabled"
+
 [[bindings]]
 keys = "secondary-shift-l"
 command = "editor.select_all_occurrences"

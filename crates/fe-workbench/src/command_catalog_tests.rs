@@ -409,6 +409,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "editor.indent",
     "editor.move_document_end",
     "editor.move_document_start",
+    "editor.move_last_selection_to_next_find_match",
     "editor.move_down",
     "editor.move_left",
     "editor.move_line_end",

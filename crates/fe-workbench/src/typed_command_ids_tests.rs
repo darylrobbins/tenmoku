@@ -858,3 +858,16 @@ fn go_to_last_edit_location_has_its_id_and_title() {
         Some("Go to Last Edit Location")
     );
 }
+
+/// Move Last Selection to Next Find Match is registered with this ID and
+/// title.
+#[test]
+fn move_last_selection_to_next_find_match_has_its_id_and_title() {
+    let registry = fe_editor::commands::registry();
+    let id = "editor.move_last_selection_to_next_find_match";
+    let meta = registry.commands().find(|meta| meta.id.as_str() == id);
+    assert_eq!(
+        meta.map(|meta| meta.title.to_string()).as_deref(),
+        Some("Move Last Selection to Next Find Match")
+    );
+}
