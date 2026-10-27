@@ -1488,8 +1488,10 @@ impl Element for EditorElement {
         }
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, theme.background));
-            for &line in &frame.active_lines {
-                window.paint_quad(fill(layout.bounds(line), theme.active_line));
+            if self.view.read(cx).paints_cursor_line() {
+                for &line in &frame.active_lines {
+                    window.paint_quad(fill(layout.bounds(line), theme.active_line));
+                }
             }
             proposal::paint_bands(&layout.proposals, &layout, window);
             let text_bounds = layout.bounds(frame.text_bounds());

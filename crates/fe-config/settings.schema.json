@@ -147,6 +147,11 @@
           "description": "Draw a small square in the colour before each colour a language\nserver finds in the text (CSS, SCSS, Tailwind…).",
           "type": "boolean"
         },
+        "cursor_line": {
+          "default": true,
+          "description": "Fill the caret's row with the theme's active-line colour, as VS\nCode's `editor.renderLineHighlight` and vim's 'cursorline'. nvim's\ndefault is off and VS Code's on; fastedit keeps the editor default.\n`:set cursorline` changes one editor's.",
+          "type": "boolean"
+        },
         "cursor_surrounding_lines": {
           "default": 3,
           "description": "How many rows autoscroll keeps between the caret and the window's\nedge, as VS Code's `editor.cursorSurroundingLines` and vim's\n'scrolloff'. A value past half the window's rows centres the caret.\n`:set scrolloff` changes one editor's.",
@@ -1116,6 +1121,7 @@
         "code_actions_on_save": [],
         "code_lens": true,
         "color_decorators": true,
+        "cursor_line": true,
         "cursor_surrounding_lines": 3,
         "font_ligatures": false,
         "font_size": 13.0,

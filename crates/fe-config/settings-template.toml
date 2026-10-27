@@ -97,6 +97,10 @@
 # one editor's.
 # cursor_surrounding_lines = 3
 
+# Fill the caret's row with a band. nvim's default is off and VS Code's on;
+# fastedit keeps the editor default. :set cursorline changes one editor's.
+# cursor_line = true
+
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.
 # enabled = true

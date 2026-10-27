@@ -181,6 +181,8 @@ pub struct EditorModel {
     clock: Rc<dyn Fn() -> Instant>,
     /// Whether typing an opener closes it (see [`EditorModel::insert_typed`]).
     auto_close: bool,
+    /// vim's 'cursorline': whether the caret's row is banded.
+    cursor_line: bool,
     /// The pairs typing inserted whose closers typing may still move over,
     /// by closer (see [`EditorModel::forget_auto_closed`]).
     auto_closed: Vec<pairs::AutoClosed>,
@@ -235,6 +237,7 @@ impl EditorModel {
             typing: None,
             clock: Rc::new(Instant::now),
             auto_close: true,
+            cursor_line: true,
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
@@ -297,6 +300,7 @@ impl EditorModel {
             typing: None,
             clock: Rc::clone(&self.clock),
             auto_close: self.auto_close,
+            cursor_line: self.cursor_line,
             auto_closed: Vec::new(),
             expand_history: None,
             snippet: None,
@@ -649,6 +653,15 @@ impl EditorModel {
 
     pub fn set_scroll_off(&mut self, scroll_off: u32) {
         self.display.set_scroll_off(scroll_off);
+    }
+
+    /// vim's 'cursorline': whether the caret's row is banded. On until set.
+    pub fn cursor_line(&self) -> bool {
+        self.cursor_line
+    }
+
+    pub fn set_cursor_line(&mut self, cursor_line: bool) {
+        self.cursor_line = cursor_line;
     }
 
     /// vim's 'number': each row's number, or with 'relativenumber' the

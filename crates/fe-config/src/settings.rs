@@ -549,6 +549,11 @@ pub struct EditorSettings {
     /// `:set scrolloff` changes one editor's.
     #[schemars(range(min = 0, max = 100))]
     pub cursor_surrounding_lines: u32,
+    /// Fill the caret's row with the theme's active-line colour, as VS
+    /// Code's `editor.renderLineHighlight` and vim's 'cursorline'. nvim's
+    /// default is off and VS Code's on; fastedit keeps the editor default.
+    /// `:set cursorline` changes one editor's.
+    pub cursor_line: bool,
 }
 
 /// `editor.line_numbers`.
@@ -754,6 +759,7 @@ impl Default for EditorSettings {
             rulers: Vec::new(),
             line_numbers: LineNumbersSetting::default(),
             cursor_surrounding_lines: 3,
+            cursor_line: true,
         }
     }
 }

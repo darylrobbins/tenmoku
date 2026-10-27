@@ -286,6 +286,8 @@ fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]
+mod cursor_line_tests;
+#[cfg(test)]
 mod fold_gutter_tests;
 #[cfg(test)]
 mod font_ligatures_tests;

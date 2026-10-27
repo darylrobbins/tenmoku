@@ -1,6 +1,6 @@
 //! `:se[t] {arg} …` (`:help :set`) for the options fastedit's editor
 //! holds: `wrap` (soft wrap), `number`/`nu` and `relativenumber`/`rnu`
-//! (the gutter's numbers), `scrolloff`/`so` (rows kept around the caret),
+//! (the gutter's numbers), `cursorline`/`cul` (the caret row's band), `scrolloff`/`so` (rows kept around the caret),
 //! `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
 //! (0 meaning tabstop), `expandtab`/`et` and `clipboard`/`cb` (`unnamedplus`
 //! or empty), and the search options `ignorecase`/`ic`, `smartcase`/`scs`
@@ -45,6 +45,7 @@ enum Opt {
     Number,
     Relativenumber,
     Scrolloff,
+    Cursorline,
     Tabstop,
     Shiftwidth,
     Expandtab,
@@ -60,6 +61,7 @@ fn option(name: &str) -> Option<(Opt, &'static str)> {
         "wrap" => (Opt::Wrap, "wrap"),
         "number" | "nu" => (Opt::Number, "number"),
         "relativenumber" | "rnu" => (Opt::Relativenumber, "relativenumber"),
+        "cursorline" | "cul" => (Opt::Cursorline, "cursorline"),
         "scrolloff" | "so" => (Opt::Scrolloff, "scrolloff"),
         "tabstop" | "ts" => (Opt::Tabstop, "tabstop"),
         "shiftwidth" | "sw" => (Opt::Shiftwidth, "shiftwidth"),
@@ -176,6 +178,7 @@ fn is_bool(which: Opt) -> bool {
     matches!(
         which,
         Opt::Wrap
+            | Opt::Cursorline
             | Opt::Number
             | Opt::Relativenumber
             | Opt::Expandtab
@@ -188,6 +191,7 @@ fn is_bool(which: Opt) -> bool {
 fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
     match which {
         Opt::Wrap => target.model.soft_wrap(),
+        Opt::Cursorline => target.model.cursor_line(),
         Opt::Number => target.model.number(),
         Opt::Relativenumber => target.model.relative_number(),
         Opt::Ignorecase => target.registers.search_case().0,
@@ -201,6 +205,7 @@ fn value_of(target: &VimTarget<'_>, which: Opt) -> bool {
 fn show(target: &VimTarget<'_>, which: Opt, full: &str) -> String {
     match which {
         Opt::Wrap
+        | Opt::Cursorline
         | Opt::Number
         | Opt::Relativenumber
         | Opt::Expandtab
@@ -231,6 +236,7 @@ fn shiftwidth(target: &VimTarget<'_>) -> usize {
 fn set_bool(target: &mut VimTarget<'_>, which: Opt, on: bool) -> Result<(), ExError> {
     match which {
         Opt::Wrap => target.model.set_soft_wrap(on),
+        Opt::Cursorline => target.model.set_cursor_line(on),
         Opt::Number => target.model.set_number(on),
         Opt::Relativenumber => target.model.set_relative_number(on),
         Opt::Ignorecase => {

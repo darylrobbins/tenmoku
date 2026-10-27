@@ -1005,6 +1005,7 @@ impl PaneItem for EditorView {
                 model.set_soft_wrap(settings.soft_wrap);
                 model.set_line_numbers(crate::line_numbers(settings.line_numbers));
                 model.set_scroll_off(settings.cursor_surrounding_lines);
+                model.set_cursor_line(settings.cursor_line);
                 model.set_auto_close(settings.auto_close_pairs);
                 let view = cx.new(|cx| EditorView::new(model, theme, cx));
                 view.update(cx, |view, cx| place_caret(view, &state, cx));

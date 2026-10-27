@@ -730,6 +730,14 @@ impl EditorView {
         if settings.cursor_surrounding_lines != previous.cursor_surrounding_lines {
             self.model.set_scroll_off(settings.cursor_surrounding_lines);
         }
+        if settings.cursor_line != previous.cursor_line {
+            self.model.set_cursor_line(settings.cursor_line);
+        }
+    }
+
+    /// Whether the caret's row's band is painted: the editor's 'cursorline'.
+    pub fn paints_cursor_line(&self) -> bool {
+        self.model.cursor_line()
     }
 
     pub fn model_mut(&mut self) -> &mut EditorModel {
