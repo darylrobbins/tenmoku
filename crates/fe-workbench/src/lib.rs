@@ -47,6 +47,7 @@ mod pane;
 mod pane_drag;
 mod pane_group;
 mod pane_toolbar;
+mod path_commands;
 mod peek;
 mod persist;
 mod picker;
@@ -129,6 +130,7 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     search_panel::init(cx);
     find_commands::init(cx);
+    path_commands::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
@@ -270,6 +272,8 @@ mod lsp_consent_tests;
 mod middle_click_close_tests;
 #[cfg(test)]
 mod panel_width_tests;
+#[cfg(test)]
+mod path_commands_tests;
 #[cfg(test)]
 mod settings_editor_controls_tests;
 #[cfg(test)]

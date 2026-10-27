@@ -227,6 +227,27 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("cmd-q", "app.quit", None),
 ];
 
+/// The active file's path chords, in the workbench.
+#[test]
+fn the_default_keymap_binds_the_active_file_path_chords() {
+    let (default, diagnostics) =
+        KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_MACOS, None);
+    assert_eq!(diagnostics, []);
+    let keymap = Keymap::from_layers([default.expect("the default keymap loads")]);
+    for (keys, command) in [
+        ("cmd-k p", "workbench.copy_active_file_path"),
+        ("cmd-k r", "workbench.reveal_active_file_in_os"),
+    ] {
+        let sequence = KeySequence::parse(keys).unwrap();
+        let binding = (keymap.bindings().iter())
+            .find(|binding| binding.keys == sequence)
+            .unwrap_or_else(|| panic!("{keys} is bound"));
+        assert_eq!(binding.command.as_str(), command, "{keys}");
+        let context = binding.context.as_ref().map(ToString::to_string);
+        assert_eq!(context.as_deref(), Some("workbench"), "{keys}");
+    }
+}
+
 /// The default keymap with `user` as the user's layer over it.
 fn with_user_layer(user: &str) -> Keymap {
     let (default, _) = KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_MACOS, None);

@@ -786,6 +786,18 @@ keys = "secondary-b"
 command = "dock.toggle"
 context = "workbench"
 
+# The active file's path, as VS Code binds them: copy it, and reveal it in
+# the OS's file manager. Copying the relative path has no default key there.
+[[bindings]]
+keys = "secondary-k p"
+command = "workbench.copy_active_file_path"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k r"
+command = "workbench.reveal_active_file_in_os"
+context = "workbench"
+
 # Zen Mode, as VS Code binds it; the same chord leaves it, and so does escape
 # escape. A lone escape still runs its own binding at once (closing Find,
 # cancelling a selection) and the chord keeps listening for a second.

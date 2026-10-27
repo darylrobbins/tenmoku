@@ -411,6 +411,21 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     ("workbench.toggle_zen_mode", "Toggle Zen Mode", "workbench"),
+    (
+        "workbench.copy_active_file_path",
+        "Copy Path of Active File",
+        "workbench",
+    ),
+    (
+        "workbench.copy_active_file_relative_path",
+        "Copy Relative Path of Active File",
+        "workbench",
+    ),
+    (
+        "workbench.reveal_active_file_in_os",
+        "Reveal Active File in File Manager",
+        "workbench",
+    ),
     ("editor.peek_definition", "Peek Definition", "editor"),
     ("editor.peek_references", "Peek References", "editor"),
     ("peek.close", "Close Peek", "peek || peek_shown"),

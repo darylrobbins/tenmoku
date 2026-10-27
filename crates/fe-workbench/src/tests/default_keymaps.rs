@@ -84,6 +84,17 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         let cmd = binding.keys.keystrokes().iter().any(|k| k.modifiers.cmd);
         assert!(!cmd, "{} uses cmd", binding.command.as_str());
     }
+    // The active file's path chords, `secondary-k` being ctrl-k here.
+    for (keys, command) in [
+        ("ctrl-k p", "workbench.copy_active_file_path"),
+        ("ctrl-k r", "workbench.reveal_active_file_in_os"),
+    ] {
+        let sequence = KeySequence::parse(keys).unwrap();
+        let bound = (linux.bindings().iter())
+            .find(|binding| binding.keys == sequence)
+            .unwrap_or_else(|| panic!("{keys} is bound"));
+        assert_eq!(bound.command.as_str(), command, "{keys}");
+    }
     for (keys, command) in [
         ("ctrl-z", "editor.undo"),
         ("ctrl-y", "editor.redo"),
