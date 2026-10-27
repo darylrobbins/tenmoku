@@ -245,9 +245,13 @@ fn exhausted_retries_clear_the_swatches(cx: &mut TestAppContext) {
     type_at_end(&mut s, &editor);
     // The ask after the edit, then eight retries, each after a rest.
     for asked in 2..=10 {
-        s.cx.executor().advance_clock(Duration::from_millis(510));
-        s.draw();
+        // The rest timer is made when the previous reply lands, which on a
+        // loaded host is after any one advance: advance on every poll.
         until_ticking(&mut s, "the next ask", |s| {
+            if requests(s, COLORS).len() < asked {
+                s.cx.executor().advance_clock(Duration::from_millis(510));
+                s.draw();
+            }
             requests(s, COLORS).len() == asked
         });
         if asked < 10 {
@@ -255,7 +259,10 @@ fn exhausted_retries_clear_the_swatches(cx: &mut TestAppContext) {
             assert_eq!(shown(&s, &editor), swatches());
         }
     }
-    until_ticking(&mut s, "no swatches", |s| shown(s, &editor).is_empty());
+    until_ticking(&mut s, "no swatches", |s| {
+        s.cx.executor().advance_clock(Duration::from_millis(510));
+        shown(s, &editor).is_empty()
+    });
     // And none asked for after.
     s.cx.executor().advance_clock(Duration::from_millis(510));
     s.draw();
