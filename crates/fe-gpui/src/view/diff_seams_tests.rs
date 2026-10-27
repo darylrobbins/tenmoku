@@ -811,7 +811,7 @@ fn explicit_range_commits_keep_their_range(cx: &mut TestAppContext) {
     // Where typing wouldn't overwrite char for grapheme, the range is
     // replaced as given: over a line break, with one, a tab, or a mark that
     // joins the char before it.
-    let cases: [(&str, Range<usize>, &str, &str); 6] = [
+    let cases: [(&str, Range<usize>, &str, &str); 8] = [
         ("ab\ncd", 0..3, "XYZ", "XYZcd"),
         ("abcd", 0..2, "x\n", "x\ncd"),
         ("abcd", 1..2, "x\r\ny", "ax\nycd"),
@@ -819,6 +819,9 @@ fn explicit_range_commits_keep_their_range(cx: &mut TestAppContext) {
         ("abcd", 0..1, "e\u{301}", "e\u{301}bcd"),
         // A range in UTF-16, as the input method gives it: `ñb`.
         ("añb", 1..3, "z", "az"),
+        // A range inside a grapheme: nothing outside it is overwritten.
+        ("a\u{301}b", 0..1, "x", "x\u{301}b"),
+        ("ab\u{301}c", 0..2, "x", "x\u{301}c"),
     ];
     for (start, range, typed, after) in cases {
         let (view, cx) = editor(cx, start, 0, true);

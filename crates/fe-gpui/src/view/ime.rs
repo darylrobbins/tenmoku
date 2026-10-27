@@ -293,7 +293,10 @@ impl EditorView {
         let graphemes: Vec<&str> = taken.graphemes(true).collect();
         let chars = text.chars().count();
         let breaks = ['\n', '\r', '\t'];
-        if taken.contains(breaks) || text.contains(breaks) || text.graphemes(true).count() != chars
+        if taken.contains(breaks)
+            || text.contains(breaks)
+            || text.graphemes(true).count() != chars
+            || !on_grapheme_edges(self.model.text(), &range)
         {
             self.model.run_as(origin, |model| {
                 model.select_range(range, false);
@@ -347,6 +350,28 @@ impl EditorView {
             layout.is_some_and(|layout| layout.shows_composition(at, &composition.text))
         })
     }
+}
+
+/// Whether `range` starts and ends between graphemes of the text around
+/// it, as typing there would overwrite them.
+fn on_grapheme_edges(text: &Text, range: &Range<usize>) -> bool {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let start = text.row_start(text.offset_to_point(range.start).row);
+    // Far enough past the end for a grapheme to be whole.
+    let mut end = range.end;
+    for _ in 0..16 {
+        match text.char_at(end) {
+            Some('\n') | None => break,
+            Some(ch) => end += ch.len_utf8(),
+        }
+    }
+    let window = text.slice_to_string(start..end);
+    let edges: Vec<usize> = (window.grapheme_indices(true))
+        .map(|(at, _)| at)
+        .chain([window.len()])
+        .collect();
+    let on = |offset: usize| edges.binary_search(&(offset - start)).is_ok();
+    on(range.start) && on(range.end)
 }
 
 impl EntityInputHandler for EditorView {

@@ -80,3 +80,13 @@ fn jump_list(cx: &mut TestAppContext) {
     run(&view, cx);
     assert_eq!(*heard.borrow(), [EditorViewEvent::Jumped { from }]);
 }
+
+#[gpui::test]
+fn a_partner_inside_a_fold_is_unfolded(cx: &mut TestAppContext) {
+    let (view, cx) = rust(cx, "g(|\n    a,\n    b,\n);\n");
+    view.update(cx, |view, _| view.model.fold_rows(1..=3));
+    run(&view, cx);
+    let folds = view.update(cx, |view, _| view.model.display().folds().len());
+    assert_eq!(folds, 0);
+    assert_eq!(state(&view, cx), "g(\n    a,\n    b,\n|);\n");
+}

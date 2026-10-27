@@ -717,6 +717,12 @@ impl EditorView {
         let primary = selections.len() - 1;
         let from = heads[primary].0;
         self.record_vim_jump(cx);
+        // A destination a fold hides is opened, so no caret is invisible.
+        let text = self.model.text().clone();
+        for &(_, to) in &heads {
+            let row = text.offset_to_point(to).row;
+            self.model.unfold_rows(row..=row);
+        }
         self.model
             .set_selections(heads.iter().map(|&(_, to)| fe_buffer::ResolvedSelection {
                 range: to..to,
