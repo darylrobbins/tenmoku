@@ -69,6 +69,34 @@ fn drop_at(paths: &[PathBuf], position: Point<Pixels>, cx: &mut VisualTestContex
     draw(cx);
 }
 
+/// [`drop_at`] without letting the executor run: the drop is handled and
+/// its reads are still in flight, for the test to step.
+fn drop_unparked(
+    workbench: &Entity<Workbench>,
+    paths: &[PathBuf],
+    position: Point<Pixels>,
+    cx: &mut VisualTestContext,
+) {
+    draw(cx);
+    let paths = ExternalPaths(paths.iter().cloned().collect());
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| {
+            workbench.drop_external(&paths, position, window, cx)
+        })
+    });
+}
+
+/// Steps the executor until `ready`, without letting it run to idle.
+fn step_until(cx: &mut VisualTestContext, mut ready: impl FnMut(&mut VisualTestContext) -> bool) {
+    for _ in 0..10_000 {
+        if ready(cx) {
+            return;
+        }
+        cx.executor().tick();
+    }
+    panic!("never ready");
+}
+
 fn panes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<Entity<Pane>> {
     workbench.read_with(cx, |workbench, cx| {
         workbench
@@ -246,4 +274,72 @@ fn vim_each_dropped_file_in_normal_mode(cx: &mut TestAppContext) {
         Some("normal")
     );
     assert_eq!(tabs(&pane, cx), (names(&["a.txt", "b.txt"]), Some(1)));
+}
+
+#[gpui::test]
+fn navigating_as_a_file_lands_ends_the_batch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = write(dir.path(), &["x.txt", "a.txt", "b.txt", "c.txt"]);
+    let (workbench, mut vcx) = window(cx, dir.path());
+    let cx = &mut vcx;
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(paths[0].clone(), window, cx)));
+    draw(cx);
+    let centre = pane.read_with(cx, |pane, _| pane.bounds().center());
+    drop_unparked(&workbench, &paths[1..], centre, cx);
+    // a.txt has landed; the batch hasn't resumed.
+    step_until(cx, |cx| {
+        pane.read_with(cx, |pane, _| pane.position(&paths[1]).is_some())
+    });
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate(0, window, cx)));
+    draw(cx);
+    assert_eq!(tabs(&pane, cx), (names(&["x.txt", "a.txt"]), Some(0)));
+}
+
+#[gpui::test]
+fn overlapping_drops_sharing_a_path(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = write(dir.path(), &["a.txt", "b.txt", "c.txt"]);
+    let (workbench, mut vcx) = window(cx, dir.path());
+    let cx = &mut vcx;
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let centre = pane.read_with(cx, |pane, _| pane.bounds().center());
+    drop_unparked(&workbench, &paths[..2], centre, cx);
+    drop_unparked(&workbench, &paths[1..], centre, cx);
+    draw(cx);
+    // The later drop wins; b.txt is open once.
+    let (names, active) = tabs(&pane, cx);
+    assert_eq!(names.iter().filter(|name| *name == "b.txt").count(), 1);
+    assert_eq!(names.last().map(String::as_str), Some("c.txt"));
+    assert_eq!(active, Some(names.len() - 1));
+}
+
+#[gpui::test]
+fn a_read_landing_after_the_pane_closed_keeps_the_focus(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = write(dir.path(), &["a.txt", "b.txt"]);
+    let (workbench, mut vcx) = window(cx, dir.path());
+    let cx = &mut vcx;
+    let first = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    cx.update(|window, cx| first.update(cx, |pane, cx| pane.open(paths[0].clone(), window, cx)));
+    draw(cx);
+    cx.simulate_keystrokes("cmd-\\");
+    draw(cx);
+    let [left, right] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("two panes");
+    let on_right = right.read_with(cx, |pane, _| pane.bounds().center());
+    drop_unparked(&workbench, &paths[1..], on_right, cx);
+    // The drop made the right pane active; closing it leaves its read in
+    // flight.
+    cx.update(|window, cx| {
+        workbench.update(cx, |workbench, cx| workbench.close_active_pane(window, cx))
+    });
+    draw(cx);
+    assert_eq!(panes(&workbench, cx), std::slice::from_ref(&left));
+    let active = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    assert_eq!(active, left);
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    let editor = editor.expect("a tab is shown");
+    assert!(cx.update(|window, cx| editor.focus_handle(cx).is_focused(window)));
+    // Only the tab the split copied: b.txt never landed.
+    assert_eq!(tabs(&right, cx).0, names(&["a.txt"]));
 }

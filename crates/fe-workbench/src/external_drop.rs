@@ -5,6 +5,8 @@ use std::{fs, path::PathBuf};
 
 use gpui::{Context, ExternalPaths, Focusable as _, Pixels, Point, Window};
 
+use kiln_shell::WorkspaceEvent;
+
 use crate::Workbench;
 
 /// What a dropped path is.
@@ -80,9 +82,26 @@ impl Workbench {
             let wake = wake.clone();
             move |_, _, _| _ = wake.try_send(())
         });
-        let watch_workbench = cx.observe_self(move |_, _| _ = wake.try_send(()));
+        let watch_workbench = cx.observe_self({
+            let wake = wake.clone();
+            move |_, _| _ = wake.try_send(())
+        });
+        // A pane that leaves the workbench is kept alive by the batch, and
+        // reads still in flight would land in it and take the focus: they
+        // are dropped as it goes.
+        let watch_removal = cx.subscribe(&self.workspace, {
+            let pane = pane.clone();
+            move |_, _, event, cx| {
+                if let WorkspaceEvent::PaneRemoved(id) = event
+                    && *id == pane.entity_id()
+                {
+                    pane.update(cx, |pane, cx| pane.abandon_reads(cx));
+                    _ = wake.try_send(());
+                }
+            }
+        });
         cx.spawn_in(window, async move |workbench, cx| {
-            let _watches = (watch_pane, watch_workbench);
+            let _watches = (watch_pane, watch_workbench, watch_removal);
             let in_workbench = |cx: &mut gpui::AsyncWindowContext| {
                 workbench
                     .read_with(cx, |workbench, cx| {
@@ -95,14 +114,20 @@ impl Workbench {
                     return;
                 }
                 // Another open in the pane, from a later drop or the user,
-                // supersedes what's left of this batch.
-                let serial = pane.update_in(cx, |pane, window, cx| {
+                // or the user navigating its tabs, supersedes what's left of
+                // this batch. This open's own landing is neither.
+                let marks = pane.update_in(cx, |pane, window, cx| {
                     pane.open(path.clone(), window, cx);
-                    pane.open_serial()
+                    (pane.open_serial(), pane.navigations())
                 });
-                let Ok(serial) = serial else { return };
+                let Ok(marks) = marks else { return };
+                let superseded = |cx: &mut gpui::AsyncWindowContext| {
+                    pane.read_with(cx, |pane, _| {
+                        (pane.open_serial(), pane.navigations()) != marks
+                    })
+                };
                 loop {
-                    if pane.read_with(cx, |pane, _| pane.open_serial()) != serial {
+                    if superseded(cx) {
                         return;
                     }
                     let state = pane.read_with(cx, |pane, _| {
@@ -115,6 +140,9 @@ impl Workbench {
                     if wakes.recv().await.is_err() || !in_workbench(cx) {
                         return;
                     }
+                }
+                if superseded(cx) || !in_workbench(cx) {
+                    return;
                 }
                 if pane.read_with(cx, |pane, _| pane.position(&path).is_none()) {
                     return;

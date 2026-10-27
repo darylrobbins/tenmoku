@@ -381,6 +381,16 @@ impl Pane {
         self.opening.as_deref() == Some(path)
     }
 
+    /// Drops every read in flight, so none lands: for a pane that has left
+    /// the workbench, which a late read would otherwise activate and focus.
+    pub(crate) fn abandon_reads(&mut self, cx: &mut Context<Self>) {
+        self.reads.clear();
+        self.text_reads.clear();
+        self.opening = None;
+        self.reveal = None;
+        cx.notify();
+    }
+
     /// Every file the pane is reading to show, or waiting for the host to
     /// read: each lands in a tab, older reads too.
     pub(crate) fn reading(&self) -> impl Iterator<Item = &Path> {
