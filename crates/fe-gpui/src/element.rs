@@ -971,7 +971,7 @@ impl Element for EditorElement {
             let cache = &mut sticky_cache;
             let (height, lines) = (frame.height, line_height_f32);
             let margin = match input.autoscroll {
-                true => (lines * 3.).min(height / 3.),
+                true => fe_display::scroll_margin(view.model.scroll_off(), lines, height),
                 false => 0.,
             };
             sticky_scroll::clear_of_caret(

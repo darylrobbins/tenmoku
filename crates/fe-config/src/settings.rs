@@ -543,6 +543,12 @@ pub struct EditorSettings {
     /// (relative, the caret's row absolute, as vim's `nu rnu`). `:set nu`
     /// and `:set rnu` change one editor's.
     pub line_numbers: LineNumbersSetting,
+    /// How many rows autoscroll keeps between the caret and the window's
+    /// edge, as VS Code's `editor.cursorSurroundingLines` and vim's
+    /// 'scrolloff'. A value past half the window's rows centres the caret.
+    /// `:set scrolloff` changes one editor's.
+    #[schemars(range(min = 0, max = 100))]
+    pub cursor_surrounding_lines: u32,
 }
 
 /// `editor.line_numbers`.
@@ -747,6 +753,7 @@ impl Default for EditorSettings {
             render_whitespace: RenderWhitespace::default(),
             rulers: Vec::new(),
             line_numbers: LineNumbersSetting::default(),
+            cursor_surrounding_lines: 3,
         }
     }
 }

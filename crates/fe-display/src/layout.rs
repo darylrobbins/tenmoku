@@ -925,7 +925,7 @@ fn lay_out_frame<M: TextMeasure>(
 
     // Keep the primary cursor a few rows from the top and bottom edges.
     if autoscroll {
-        let margin = (line_height * 3.).min(height / 3.);
+        let margin = crate::scroll_margin(display.scroll_off(), line_height, height);
         let head_row = blocks.screen_row(display.row_for_offset(primary_head));
         let head_top = line_height * head_row as f32;
         if head_top < scroll.y + margin {
@@ -1865,6 +1865,9 @@ mod inlay_tests;
 mod line_number_modes_tests;
 #[cfg(test)]
 mod long_row_tests;
+#[cfg(test)]
+#[path = "layout/scroll_off_tests.rs"]
+mod scroll_off_tests;
 #[cfg(test)]
 mod slice_cap_tests;
 #[cfg(test)]

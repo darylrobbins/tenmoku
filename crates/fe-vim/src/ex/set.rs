@@ -1,6 +1,7 @@
 //! `:se[t] {arg} …` (`:help :set`) for the options fastedit's editor
 //! holds: `wrap` (soft wrap), `number`/`nu` and `relativenumber`/`rnu`
-//! (the gutter's numbers), `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
+//! (the gutter's numbers), `scrolloff`/`so` (rows kept around the caret),
+//! `tabstop`/`ts` (1 to 16), `shiftwidth`/`sw`
 //! (0 meaning tabstop), `expandtab`/`et` and `clipboard`/`cb` (`unnamedplus`
 //! or empty), and the search options `ignorecase`/`ic`, `smartcase`/`scs`
 //! and `incsearch`/`is` (bools, all held by the shared `Registers`; each
@@ -43,6 +44,7 @@ enum Opt {
     Wrap,
     Number,
     Relativenumber,
+    Scrolloff,
     Tabstop,
     Shiftwidth,
     Expandtab,
@@ -58,6 +60,7 @@ fn option(name: &str) -> Option<(Opt, &'static str)> {
         "wrap" => (Opt::Wrap, "wrap"),
         "number" | "nu" => (Opt::Number, "number"),
         "relativenumber" | "rnu" => (Opt::Relativenumber, "relativenumber"),
+        "scrolloff" | "so" => (Opt::Scrolloff, "scrolloff"),
         "tabstop" | "ts" => (Opt::Tabstop, "tabstop"),
         "shiftwidth" | "sw" => (Opt::Shiftwidth, "shiftwidth"),
         "expandtab" | "et" => (Opt::Expandtab, "expandtab"),
@@ -207,6 +210,7 @@ fn show(target: &VimTarget<'_>, which: Opt, full: &str) -> String {
             true => format!("  {full}"),
             false => format!("no{full}"),
         },
+        Opt::Scrolloff => format!("  scrolloff={}", target.model.scroll_off()),
         Opt::Tabstop => format!("  tabstop={}", target.model.tab_size()),
         Opt::Shiftwidth => format!("  shiftwidth={}", shiftwidth(target)),
         Opt::Clipboard => match target.registers.clipboard_unnamed() {
@@ -318,6 +322,12 @@ fn set_number(
     }
     let tab = target.model.tab_size();
     match which {
+        Opt::Scrolloff => {
+            // The window clamps it where it scrolls: 999 centres the caret.
+            target
+                .model
+                .set_scroll_off(u32::try_from(number).unwrap_or(u32::MAX));
+        }
         Opt::Tabstop => {
             if number == 0 {
                 return Err(ExError::Pattern(format!(

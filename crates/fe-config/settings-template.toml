@@ -92,6 +92,11 @@
 # :set number and :set relativenumber change one editor's.
 # line_numbers = "on"
 
+# How many rows autoscroll keeps between the caret and the window's edge, 0 to
+# 100; a value past half the window centres the caret. :set scrolloff changes
+# one editor's.
+# cursor_surrounding_lines = 3
+
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.
 # enabled = true

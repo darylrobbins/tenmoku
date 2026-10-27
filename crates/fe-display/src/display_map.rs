@@ -43,6 +43,22 @@ pub struct DisplayMap {
     wrap: WrapMap,
     folds: FoldMap,
     line_numbers: LineNumbers,
+    scroll_off: u32,
+}
+
+/// The rows of margin autoscroll keeps by default.
+pub const DEFAULT_SCROLL_OFF: u32 = 3;
+
+/// The distance, in pixels, autoscroll keeps the caret from a window
+/// `height` high's edges for `scroll_off` rows: the default keeps to a
+/// third of the window, any other value to as far as leaves the caret's row
+/// the middle one, so a huge value centres it.
+pub fn scroll_margin(scroll_off: u32, line_height: f32, height: f32) -> f32 {
+    let wanted = line_height * scroll_off as f32;
+    match scroll_off == DEFAULT_SCROLL_OFF {
+        true => wanted.min(height / 3.),
+        false => wanted.min(((height - line_height) / 2.).max(0.)),
+    }
 }
 
 /// Which numbers the gutter shows, as vim's 'number' and 'relativenumber'.
@@ -120,6 +136,7 @@ impl DisplayMap {
             tab_size: tab_size.max(1),
             folds: FoldMap::default(),
             line_numbers: LineNumbers::default(),
+            scroll_off: DEFAULT_SCROLL_OFF,
         };
         map.rebuild_folds();
         map
@@ -211,6 +228,16 @@ impl DisplayMap {
 
     pub fn set_line_numbers(&mut self, line_numbers: LineNumbers) {
         self.line_numbers = line_numbers;
+    }
+
+    /// How many rows autoscroll keeps between the caret and the window's
+    /// edge, vim's 'scrolloff'; [`DEFAULT_SCROLL_OFF`] until set.
+    pub fn scroll_off(&self) -> u32 {
+        self.scroll_off
+    }
+
+    pub fn set_scroll_off(&mut self, scroll_off: u32) {
+        self.scroll_off = scroll_off;
     }
 
     /// `buffer_row`'s line among those not folded away, a closed fold

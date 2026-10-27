@@ -147,6 +147,14 @@
           "description": "Draw a small square in the colour before each colour a language\nserver finds in the text (CSS, SCSS, Tailwind…).",
           "type": "boolean"
         },
+        "cursor_surrounding_lines": {
+          "default": 3,
+          "description": "How many rows autoscroll keeps between the caret and the window's\nedge, as VS Code's `editor.cursorSurroundingLines` and vim's\n'scrolloff'. A value past half the window's rows centres the caret.\n`:set scrolloff` changes one editor's.",
+          "format": "uint32",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
         "font_family": {
           "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
@@ -1108,6 +1116,7 @@
         "code_actions_on_save": [],
         "code_lens": true,
         "color_decorators": true,
+        "cursor_surrounding_lines": 3,
         "font_ligatures": false,
         "font_size": 13.0,
         "format_on_save": false,

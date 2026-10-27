@@ -727,6 +727,9 @@ impl EditorView {
             self.model
                 .set_line_numbers(line_numbers(settings.line_numbers));
         }
+        if settings.cursor_surrounding_lines != previous.cursor_surrounding_lines {
+            self.model.set_scroll_off(settings.cursor_surrounding_lines);
+        }
     }
 
     pub fn model_mut(&mut self) -> &mut EditorModel {

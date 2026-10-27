@@ -19,7 +19,9 @@ pub mod sticky;
 mod wrap_map;
 
 pub use block_map::{Block, BlockMap, ScreenRow};
-pub use display_map::{DisplayMap, DisplayRow, LineNumbers, WRAP_SLICE_BYTES};
+pub use display_map::{
+    DEFAULT_SCROLL_OFF, DisplayMap, DisplayRow, LineNumbers, WRAP_SLICE_BYTES, scroll_margin,
+};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
 pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice, SourceKey};

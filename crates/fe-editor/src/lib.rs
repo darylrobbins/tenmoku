@@ -306,6 +306,7 @@ impl EditorModel {
         };
         model.row_changes.track(&model.caught_up);
         model.display.set_line_numbers(self.line_numbers());
+        model.display.set_scroll_off(self.scroll_off());
         model.apply_wrap();
         model
     }
@@ -638,6 +639,16 @@ impl EditorModel {
 
     pub fn set_line_numbers(&mut self, line_numbers: LineNumbers) {
         self.display.set_line_numbers(line_numbers);
+    }
+
+    /// vim's 'scrolloff': the rows autoscroll keeps between the caret and
+    /// the window's edge. 3 until set.
+    pub fn scroll_off(&self) -> u32 {
+        self.display.scroll_off()
+    }
+
+    pub fn set_scroll_off(&mut self, scroll_off: u32) {
+        self.display.set_scroll_off(scroll_off);
     }
 
     /// vim's 'number': each row's number, or with 'relativenumber' the

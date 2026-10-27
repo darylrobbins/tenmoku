@@ -1731,6 +1731,7 @@ impl Pane {
             model.set_soft_wrap(self.settings.soft_wrap);
         }
         model.set_line_numbers(fe_gpui::line_numbers(self.settings.line_numbers));
+        model.set_scroll_off(self.settings.cursor_surrounding_lines);
         model.set_auto_close(self.settings.auto_close_pairs);
         let theme = self.theme.clone();
         cx.new(|cx| EditorView::new(model, theme, cx))

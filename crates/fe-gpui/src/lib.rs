@@ -298,6 +298,8 @@ mod line_numbers_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod scroll_off_tests;
+#[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
 mod tests;
