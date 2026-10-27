@@ -11,7 +11,10 @@
 //!
 //! - the proposal's dry run at start and after every buffer change, a line
 //!   per hunk (typing inside a hunk shows it going stale, cmd-z after an
-//!   accept shows the text coming back);
+//!   accept shows the text coming back). Edits batched into one view
+//!   notification print only the last one's dry run, the earlier ones a
+//!   "superseded" line: a dry run needs a snapshot, and
+//!   `BufferEvent::Edited` carries none;
 //! - each [`ProposalEvent`], with the transaction id of an accept;
 //! - each `proposal.*`, `editor.undo` and `editor.redo` invocation, so a
 //!   keyboard command and a button click are told apart (a click is an
