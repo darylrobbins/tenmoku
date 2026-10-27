@@ -508,7 +508,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
     assert_eq!(layer, expected);
 
     // No ctrl key without cmd applies in a vim editor: they're all vim's,
-    // but for the workbench's Go Back and Go Forward (ctrl-minus and
+    // but for the workbench's Open Editor at Index 1 to 9 (ctrl-1 to ctrl-9,
+    // keys vim leaves unbound), Go Back and Go Forward (ctrl-minus and
     // ctrl-shift-minus), Toggle Terminal (ctrl-`) and New Terminal
     // (ctrl-shift-`), which vim doesn't bind, and `ctrl-space`, which asks for completions only where text is
     // typed: in insert mode, and Show Changes (ctrl-shift-g), which the
@@ -542,6 +543,15 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         ctrl,
         [
             "ctrl-shift-r",
+            "ctrl-1",
+            "ctrl-2",
+            "ctrl-3",
+            "ctrl-4",
+            "ctrl-5",
+            "ctrl-6",
+            "ctrl-7",
+            "ctrl-8",
+            "ctrl-9",
             "ctrl--",
             "ctrl-shift--",
             "ctrl-`",

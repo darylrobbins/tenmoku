@@ -23,6 +23,56 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("workbench.next_tab", "Next Tab", "workbench"),
     ("workbench.previous_tab", "Previous Tab", "workbench"),
+    (
+        "workbench.open_editor_at_index1",
+        "Open Editor at Index 1",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index2",
+        "Open Editor at Index 2",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index3",
+        "Open Editor at Index 3",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index4",
+        "Open Editor at Index 4",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index5",
+        "Open Editor at Index 5",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index6",
+        "Open Editor at Index 6",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index7",
+        "Open Editor at Index 7",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index8",
+        "Open Editor at Index 8",
+        "workbench",
+    ),
+    (
+        "workbench.open_editor_at_index9",
+        "Open Editor at Index 9",
+        "workbench",
+    ),
+    (
+        "workbench.last_editor_in_group",
+        "Last Editor in Group",
+        "workbench",
+    ),
     ("pane.split_right", "Split Right", "workbench"),
     ("pane.split_down", "Split Down", "workbench"),
     ("pane.focus_left", "Focus Left Pane", "workbench"),

@@ -584,6 +584,53 @@ keys = { macos = "cmd-shift-[", default = "ctrl-pageup" }
 command = "workbench.previous_tab"
 context = "workbench"
 
+# VS Code's Open Editor at Index 1 to 9 (Last Editor in Group has no key). Not in the
+# terminal, whose shell and programs keep ctrl-digit and alt-digit.
+[[bindings]]
+keys = { macos = "ctrl-1", default = "alt-1" }
+command = "workbench.open_editor_at_index1"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-2", default = "alt-2" }
+command = "workbench.open_editor_at_index2"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-3", default = "alt-3" }
+command = "workbench.open_editor_at_index3"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-4", default = "alt-4" }
+command = "workbench.open_editor_at_index4"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-5", default = "alt-5" }
+command = "workbench.open_editor_at_index5"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-6", default = "alt-6" }
+command = "workbench.open_editor_at_index6"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-7", default = "alt-7" }
+command = "workbench.open_editor_at_index7"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-8", default = "alt-8" }
+command = "workbench.open_editor_at_index8"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = { macos = "ctrl-9", default = "alt-9" }
+command = "workbench.open_editor_at_index9"
+context = "workbench && !terminal"
+
 # `workbench.open_file` has no key yet: it's in the File menu.
 [[bindings]]
 keys = "secondary-o"

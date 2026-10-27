@@ -75,6 +75,66 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| pane.cycle(true, window, cx));
     }
 
+    /// Open Editor at Index 1
+    #[command(id = "workbench.open_editor_at_index1")]
+    fn open_editor_at_index1(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(0), cx);
+    }
+
+    /// Open Editor at Index 2
+    #[command(id = "workbench.open_editor_at_index2")]
+    fn open_editor_at_index2(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(1), cx);
+    }
+
+    /// Open Editor at Index 3
+    #[command(id = "workbench.open_editor_at_index3")]
+    fn open_editor_at_index3(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(2), cx);
+    }
+
+    /// Open Editor at Index 4
+    #[command(id = "workbench.open_editor_at_index4")]
+    fn open_editor_at_index4(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(3), cx);
+    }
+
+    /// Open Editor at Index 5
+    #[command(id = "workbench.open_editor_at_index5")]
+    fn open_editor_at_index5(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(4), cx);
+    }
+
+    /// Open Editor at Index 6
+    #[command(id = "workbench.open_editor_at_index6")]
+    fn open_editor_at_index6(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(5), cx);
+    }
+
+    /// Open Editor at Index 7
+    #[command(id = "workbench.open_editor_at_index7")]
+    fn open_editor_at_index7(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(6), cx);
+    }
+
+    /// Open Editor at Index 8
+    #[command(id = "workbench.open_editor_at_index8")]
+    fn open_editor_at_index8(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(7), cx);
+    }
+
+    /// Open Editor at Index 9
+    #[command(id = "workbench.open_editor_at_index9")]
+    fn open_editor_at_index9(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(Some(8), cx);
+    }
+
+    /// Last Editor in Group
+    #[command(id = "workbench.last_editor_in_group")]
+    fn last_editor_in_group(&mut self, cx: &mut Cx<Self>) {
+        self.open_editor_at(None, cx);
+    }
+
     /// Keep Editor
     #[command(id = "workbench.keep_editor")]
     fn keep_editor(&mut self, cx: &mut Cx<Self>) {
@@ -1196,7 +1256,7 @@ impl Workbench {
 
 impl Workbench {
     /// Runs `run` on the active pane, then redraws it.
-    fn on_active_pane(
+    pub(crate) fn on_active_pane(
         &mut self,
         cx: &mut Cx<Self>,
         run: impl FnOnce(&mut Pane, &mut Window, &mut App),

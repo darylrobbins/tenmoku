@@ -59,6 +59,7 @@ mod search_panel;
 mod settings_editor;
 mod shortcuts_editor;
 mod status_bar;
+mod tab_index_commands;
 mod terminal_panel;
 mod theme_picker;
 mod title_bar;
@@ -275,6 +276,8 @@ mod settings_editor_controls_tests;
 mod settings_editor_tests;
 #[cfg(test)]
 mod shortcuts_editor_tests;
+#[cfg(test)]
+mod tab_index_commands_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

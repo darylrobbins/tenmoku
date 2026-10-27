@@ -1393,6 +1393,14 @@ impl Pane {
         self.activate_item(ix, window, cx);
     }
 
+    /// Activates the tab at `ix`, as [`Pane::cycle`] does, so focus, preview
+    /// and nav history behave the same; nothing if there's no such tab.
+    pub fn activate_at(&mut self, ix: usize, window: &mut Window, cx: &mut App) {
+        if ix < self.tabs().len() {
+            self.activate_item(ix, window, cx);
+        }
+    }
+
     /// Pins the active tab: a preview tab is kept, as an ordinary tab that
     /// the next preview doesn't replace.
     pub fn keep_active(&mut self, cx: &mut App) {
