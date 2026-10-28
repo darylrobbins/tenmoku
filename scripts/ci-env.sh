@@ -7,7 +7,8 @@
 # default of one job per core, times up to four lanes and a gate, swamped the machine (load
 # ~70, swap full) without adding throughput.
 #
-# A snapshot is built once and thrown away, so it skips incremental data and keeps only
+# The workspace [profile.dev] builds non-incrementally everywhere (lane targets filling the disk).
+# A snapshot is built once and thrown away, so it also repeats that below and keeps only
 # line tables (panics still get file:line). It also refuses to start with less than
 # FASTEDIT_MIN_FREE_GIB (default 10) free, rather than fail halfway with ENOSPC (exit 75).
 #
@@ -28,8 +29,8 @@ fi
 case "$PWD" in
 */.worktrees/.verify/*)
 	export CARGO_TARGET_DIR="$PWD/target"
+	# Repeat the workspace [profile.dev] settings so a gate does not depend on the file.
 	export CARGO_INCREMENTAL=0
-	# Repeats the workspace [profile.dev] setting so a gate does not depend on the file.
 	export CARGO_PROFILE_DEV_DEBUG=line-tables-only
 	min=${FASTEDIT_MIN_FREE_GIB:-10}
 	df_line=$(df -Pk "$PWD" | tail -n 1)

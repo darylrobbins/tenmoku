@@ -244,6 +244,9 @@ dbg_macro = "deny"
 todo = "deny"
 
 [profile.dev]
+# No incremental data: it was a large share of a lane's target (12 GB of 50 GB), and lane
+# targets filling the disk froze main (T1195). Also lets sccache cache workspace crates.
+incremental = false
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
