@@ -34,6 +34,25 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+/// Whether the installed git reads `core.commentString`, which arrived in git
+/// 2.45. An older git ignores it and strips with `core.commentChar` alone.
+fn git_reads_comment_string() -> bool {
+    let output = Command::new("git")
+        .arg("--version")
+        .output()
+        .expect("run git");
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut parts = text
+        .split_whitespace()
+        .nth(2)
+        .unwrap_or("")
+        .split('.')
+        .map(|n| n.parse::<u32>().unwrap_or(0));
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    (major, minor) >= (2, 45)
+}
+
 /// A repository with one commit and one staged change.
 fn init() -> (tempfile::TempDir, PathBuf, Repo) {
     let dir = tempfile::tempdir().unwrap();
@@ -123,6 +142,9 @@ fn uppercase_auto_comment_char_keeps_auto_line() {
 
 #[test]
 fn comment_string_set_after_comment_char_wins() {
+    if !git_reads_comment_string() {
+        return;
+    }
     if !isolated("comment_string_set_after_comment_char_wins", "") {
         return;
     }
