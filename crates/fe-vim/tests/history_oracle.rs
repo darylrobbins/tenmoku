@@ -36,6 +36,12 @@ fn history_matches_neovim() {
         "substitute_pattern_recalled",
         "global_pattern_recalled",
         "address_pattern_recalled",
+        "global_macro_of_empty_searches_keeps_the_pattern",
+        "address_macro_of_empty_searches_keeps_the_pattern",
+        "global_macro_final_search_with_delimiter_recalled_on_slash",
+        "global_macro_final_search_with_delimiter_recalled_on_question",
+        "address_macro_final_search_with_offset_recalled_on_slash",
+        "address_macro_final_search_with_offset_recalled_on_question",
     ] {
         assert!(
             recorded.iter().any(|case| case.name == name),
@@ -232,6 +238,44 @@ fn searches_submitted_inside_an_ex_line_wait_for_it_to_end() {
         assert_eq!(
             recalls(vim.registers(), SearchBackward, ""),
             ["zip", "new", "zed"],
+            "{ex}"
+        );
+    }
+}
+
+#[test]
+fn a_macro_of_empty_searches_keeps_the_pending_pattern() {
+    for ex in [":g/foo/normal @a<CR>", ":/foo/normal @a<CR>"] {
+        let mut vim = HeadlessVim::new("zed zip\nfoo", (0, 0));
+        vim.feed("/zed<CR>qa/<CR>q").unwrap();
+        assert_eq!(history(vim.registers(), SearchForward), ["zed"], "{ex}");
+        vim.feed(ex).unwrap();
+        // The empty searches add nothing, so `foo`, the line's own pattern,
+        // is still there to be added when it ends.
+        assert_eq!(
+            history(vim.registers(), SearchForward),
+            ["zed", "foo"],
+            "{ex}"
+        );
+    }
+}
+
+#[test]
+fn a_macros_final_search_with_a_delimiter_is_recalled_from_both_directions() {
+    for ex in [":g/foo/normal @a<CR>", ":/foo/normal @a<CR>"] {
+        let mut vim = HeadlessVim::new("x a/b\nfoo", (0, 0));
+        vim.feed("qa/a\\/b/e<CR>q").unwrap();
+        vim.feed(ex).unwrap();
+        // `/` keeps the entry as typed, `?` swaps the delimiters.
+        assert_eq!(history(vim.registers(), SearchForward), [r"a\/b/e"], "{ex}");
+        assert_eq!(
+            recalls(vim.registers(), SearchForward, ""),
+            [r"a\/b/e"],
+            "{ex}"
+        );
+        assert_eq!(
+            recalls(vim.registers(), SearchBackward, ""),
+            [r"a\/b?e"],
             "{ex}"
         );
     }

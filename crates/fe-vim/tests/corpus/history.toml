@@ -474,3 +474,39 @@ name = "ctrl_c_in_a_macro_cancels_the_line"
 buffer = "x foo\nbar foo\nfoo bar\na/b?c"
 cursor = [0, 0]
 keys = "qa/bar<C-c>lq@a:<Esc>0/<Up><CR>"
+
+[[case]]
+name = "global_macro_of_empty_searches_keeps_the_pattern"
+buffer = "zed zip\nfoo\nbar"
+cursor = [0, 0]
+keys = "/zed<CR>qa/<CR>q:g/foo/normal @a<CR>0/<Up><CR>"
+
+[[case]]
+name = "address_macro_of_empty_searches_keeps_the_pattern"
+buffer = "zed zip\nfoo\nbar"
+cursor = [0, 0]
+keys = "/zed<CR>qa/<CR>q:/foo/normal @a<CR>0/<Up><CR>"
+
+[[case]]
+name = "global_macro_final_search_with_delimiter_recalled_on_slash"
+buffer = "x a/b\nfoo\nbar"
+cursor = [0, 0]
+keys = "qa/a\\/b/e<CR>q:g/foo/normal @a<CR>gg0/<Up><CR>"
+
+[[case]]
+name = "global_macro_final_search_with_delimiter_recalled_on_question"
+buffer = "x a/b\nfoo\nbar"
+cursor = [0, 0]
+keys = "qa/a\\/b/e<CR>q:g/foo/normal @a<CR>G$?<Up><CR>"
+
+[[case]]
+name = "address_macro_final_search_with_offset_recalled_on_slash"
+buffer = "x a/b\nfoo\nbar"
+cursor = [0, 0]
+keys = "qa/a\\/b/e<CR>q:/foo/normal @a<CR>gg0/<Up><CR>"
+
+[[case]]
+name = "address_macro_final_search_with_offset_recalled_on_question"
+buffer = "x a/b\nfoo\nbar"
+cursor = [0, 0]
+keys = "qa/a\\/b/e<CR>q:/foo/normal @a<CR>G$?<Up><CR>"
