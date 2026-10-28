@@ -51,19 +51,23 @@ fn setup(cx: &mut TestAppContext, provider: bool) -> Lsp {
     s
 }
 
-fn show(s: &mut Lsp, rows: usize) {
+fn show(s: &mut Lsp, rows: &[&str]) {
     s.run("nav.show_type_hierarchy");
     wait_for_rows(s, rows);
 }
 
-fn wait_for_rows(s: &mut Lsp, rows: usize) {
+fn wait_for_rows(s: &mut Lsp, rows: &[&str]) {
     s.until("the rows", |s| {
         s.cx.executor().advance_clock(Duration::from_millis(20));
         s.workbench.read_with(&s.cx, |w, cx| {
-            w.dock()
-                .read(cx)
-                .hierarchy()
-                .is_some_and(|p| p.read(cx).texts().len() >= rows)
+            w.dock().read(cx).hierarchy().is_some_and(|p| {
+                p.read(cx)
+                    .texts()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .starts_with(rows)
+            })
         })
     });
 }
@@ -87,7 +91,7 @@ fn show_type_hierarchy_lists_supertypes(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let (b, c) = (item(&s, "b", 1), item(&s, "c", 2));
     reply(&s, SUPERTYPES, json!([b, c]));
-    show(&mut s, 3);
+    show(&mut s, &["a", "  b", "  c"]);
     assert_eq!(texts(&s), ["a", "  b", "  c"]);
     assert_eq!(title(&s), "Type Hierarchy: a");
     assert_eq!(mode(&s), Mode::Supertypes);
@@ -101,7 +105,9 @@ fn show_type_hierarchy_lists_supertypes(cx: &mut TestAppContext) {
     reply(&s, SUPERTYPES, json!([]));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("no supertypes", |s| texts(s).len() == 4);
+    s.until("no supertypes", |s| {
+        texts(s) == ["a", "  b", "    No supertypes", "  c"]
+    });
     assert_eq!(texts(&s), ["a", "  b", "    No supertypes", "  c"]);
     assert_eq!(asked_about(&s, SUPERTYPES), ["a", "b"]);
 }
@@ -111,7 +117,7 @@ fn toggle_shows_subtypes_lazily(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let b = item(&s, "b", 1);
     reply(&s, SUPERTYPES, json!([b]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
 
     let c = item(&s, "c", 2);
     reply(&s, SUBTYPES, json!([c]));
@@ -123,7 +129,9 @@ fn toggle_shows_subtypes_lazily(cx: &mut TestAppContext) {
     reply(&s, SUBTYPES, json!([]));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("no subtypes", |s| texts(s).len() == 3);
+    s.until("no subtypes", |s| {
+        texts(s) == ["a", "  c", "    No subtypes"]
+    });
     assert_eq!(texts(&s), ["a", "  c", "    No subtypes"]);
     assert_eq!(asked_about(&s, SUBTYPES), ["a", "c"]);
 
@@ -161,11 +169,13 @@ fn a_cyclic_hierarchy_is_marked(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let (a, b) = (item(&s, "a", 0), item(&s, "b", 1));
     reply(&s, SUPERTYPES, json!([b]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     reply(&s, SUPERTYPES, json!([a]));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("the cycle", |s| texts(s).len() == 3);
+    s.until("the cycle", |s| {
+        texts(s) == ["a", "  b", "    a (recursive)"]
+    });
     assert_eq!(texts(&s), ["a", "  b", "    a (recursive)"]);
     // Not expandable.
     press(&mut s, "down");
@@ -181,7 +191,7 @@ fn enter_opens_the_type_at_its_selection(cx: &mut TestAppContext) {
     let mut y = with(item(&s, "Y", 0), &s, "src/y.rs");
     y["selectionRange"] = range(0, 7, 8);
     reply(&s, SUPERTYPES, json!([y]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  Y"]);
     s.cx.simulate_keystrokes("down enter");
     s.draw();
     s.until("Y selected", |s| selection(s) == (7..8));
@@ -214,7 +224,7 @@ fn calls_and_types_modes_replace_each_other_in_the_one_panel(cx: &mut TestAppCon
     let mut s = setup(cx, true);
     let b = item(&s, "b", 1);
     reply(&s, SUPERTYPES, json!([b.clone()]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     assert_eq!(title(&s), "Type Hierarchy: a");
 
     // Calls take the panel: callers first, whatever the types direction was.
@@ -261,7 +271,7 @@ fn an_unopened_utf16_or_bom_target_opens_at_its_selection(cx: &mut TestAppContex
     let mut x = with(item(&s, "X", 1), &s, "src/x.rs");
     x["selectionRange"] = range(1, 7, 8);
     reply(&s, SUPERTYPES, json!([y, x]));
-    show(&mut s, 3);
+    show(&mut s, &["a", "  Y", "  X"]);
     // "// é\n" is 6 bytes in UTF-8, and the BOM isn't text.
     s.cx.simulate_keystrokes("down enter");
     s.draw();
@@ -277,7 +287,7 @@ fn showing_again_starts_at_the_supertypes(cx: &mut TestAppContext) {
     let (b, c) = (item(&s, "b", 1), item(&s, "c", 2));
     reply(&s, SUPERTYPES, json!([b]));
     reply(&s, SUBTYPES, json!([c]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     s.run("hierarchy.toggle_direction");
     s.until("subtypes", |s| texts(s) == ["a", "  c"]);
     s.run("nav.show_type_hierarchy");

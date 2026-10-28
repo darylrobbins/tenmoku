@@ -130,16 +130,20 @@ pub(super) fn tick(s: &mut Lsp, by: Duration) {
     s.draw();
 }
 
-/// Shows the hierarchy and waits for the root's calls to land.
-fn show(s: &mut Lsp, rows: usize) {
+/// Shows the hierarchy and waits for the rows to start with `rows`, the root's calls landed (not the Loading placeholder).
+fn show(s: &mut Lsp, rows: &[&str]) {
     s.run("nav.show_call_hierarchy");
     s.until("the rows", |s| {
         s.cx.executor().advance_clock(Duration::from_millis(20));
         s.workbench.read_with(&s.cx, |w, cx| {
-            w.dock()
-                .read(cx)
-                .hierarchy()
-                .is_some_and(|p| p.read(cx).texts().len() >= rows)
+            w.dock().read(cx).hierarchy().is_some_and(|p| {
+                p.read(cx)
+                    .texts()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .starts_with(rows)
+            })
         })
     });
 }
@@ -156,7 +160,7 @@ pub(super) fn selection(s: &Lsp) -> std::ops::Range<usize> {
 fn show_call_hierarchy_lists_the_item_at_the_caret_as_root(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     reply(&s, INCOMING, json!([]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  No calls"]);
     assert_eq!(texts(&s), ["a", "  No calls"]);
     let panel = panel(&s);
     let title = panel.read_with(&s.cx, |panel, cx| panel.title(cx));
@@ -180,7 +184,7 @@ fn expanding_loads_incoming_calls_lazily(cx: &mut TestAppContext) {
         INCOMING,
         json!([call("from", b, &[range(1, 9, 10), range(1, 14, 15)])]),
     );
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b ×2"]);
     assert_eq!(texts(&s), ["a", "  b ×2"]);
     // Only the root's calls were asked for.
     assert_eq!(asked_about(&s, INCOMING), ["a"]);
@@ -189,7 +193,7 @@ fn expanding_loads_incoming_calls_lazily(cx: &mut TestAppContext) {
     reply(&s, INCOMING, json!([call("from", c, &[range(2, 9, 10)])]));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("c", |s| texts(s).len() == 3);
+    s.until("c", |s| texts(s) == ["a", "  b ×2", "    c"]);
     assert_eq!(texts(&s), ["a", "  b ×2", "    c"]);
     // Only `b`'s, none for `c`.
     assert_eq!(asked_about(&s, INCOMING), ["a", "b"]);
@@ -201,7 +205,7 @@ fn toggling_direction_asks_outgoing_calls(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let b = item(&s, "b", 1);
     reply(&s, INCOMING, json!([call("from", b, &[range(1, 9, 10)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     let panel = panel(&s);
     assert_eq!(
         panel.read_with(&s.cx, |panel, _| panel.mode()),
@@ -229,7 +233,7 @@ fn a_recursive_call_is_marked_and_not_expandable(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let a = item(&s, "a", 0);
     reply(&s, INCOMING, json!([call("from", a, &[range(0, 3, 4)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  a (recursive)"]);
     assert_eq!(texts(&s), ["a", "  a (recursive)"]);
     press(&mut s, "down");
     press(&mut s, "right");
@@ -248,7 +252,7 @@ fn enter_opens_the_callers_call_site(cx: &mut TestAppContext) {
         INCOMING,
         json!([call("from", b, &[range(1, 9, 10), range(1, 14, 15)])]),
     );
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b ×2"]);
     let line = MAIN.find("fn b").unwrap();
     // Real key events: the panel keeps focus through the opens.
     s.cx.simulate_keystrokes("down enter");
@@ -318,7 +322,9 @@ fn empty_and_error_rows(cx: &mut TestAppContext) {
     reply(&s, INCOMING, json!([]));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("no calls under b", |s| texts(s).len() == 3);
+    s.until("no calls under b", |s| {
+        texts(s) == ["a", "  b", "    No calls"]
+    });
     assert_eq!(texts(&s), ["a", "  b", "    No calls"]);
 
     // An error is shown as the row's message.
@@ -387,7 +393,7 @@ fn panel_is_on_the_rail_after_first_use(cx: &mut TestAppContext) {
     };
     assert!(!on_rail(&s));
     reply(&s, INCOMING, json!([]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  No calls"]);
     assert!(on_rail(&s));
 }
 
@@ -401,7 +407,7 @@ fn a_new_ask_drops_the_old_tree_and_its_loading_rows(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let b = item(&s, "b", 1);
     reply(&s, INCOMING, json!([call("from", b, &[range(1, 9, 10)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     // The next ask finds nothing: no stale tree, no row stuck loading.
     reply(&s, PREPARE, json!([]));
     s.run("nav.show_call_hierarchy");
@@ -475,7 +481,7 @@ fn an_unopened_target_is_positioned_in_its_decoded_text(cx: &mut TestAppContext)
     let mut y = item(&s, "y", 1);
     y["uri"] = json!(s.uri("src/y.rs").to_string());
     reply(&s, INCOMING, json!([call("from", y, &[range(1, 9, 10)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  y"]);
     s.cx.simulate_keystrokes("down enter");
     s.draw();
     s.until("y.rs shown at the call", y_is_shown);
@@ -503,11 +509,13 @@ fn right_stays_on_a_node_with_no_calls_to_enter(cx: &mut TestAppContext) {
             call("from", c, &[range(2, 9, 10)])
         ]),
     );
-    show(&mut s, 3);
+    show(&mut s, &["a", "  b", "  c"]);
     s.fake.set_reply(INCOMING, Scripted::now(Reply::Never));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("loading", |s| texts(s).len() == 4);
+    s.until("loading", |s| {
+        texts(s).contains(&"    Loading…".to_string())
+    });
     // Loading: Right doesn't jump to the sibling.
     press(&mut s, "right");
     let panel = panel(&s);
@@ -524,7 +532,7 @@ fn opening_a_caller_in_an_unopened_file_keeps_the_panel_focused(cx: &mut TestApp
     let mut y = item(&s, "y", 0);
     y["uri"] = json!(s.uri("src/y.rs").to_string());
     reply(&s, INCOMING, json!([call("from", y, &[range(0, 9, 10)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  y"]);
     s.cx.simulate_keystrokes("down enter");
     s.draw();
     s.until("y.rs shown at the call", |s| {
@@ -549,11 +557,13 @@ fn a_cancelled_expansion_can_be_retried(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let b = item(&s, "b", 1);
     reply(&s, INCOMING, json!([call("from", b, &[range(1, 9, 10)])]));
-    show(&mut s, 2);
+    show(&mut s, &["a", "  b"]);
     s.fake.set_reply(INCOMING, Scripted::now(Reply::Never));
     press(&mut s, "down");
     press(&mut s, "right");
-    s.until("loading", |s| texts(s).len() == 3);
+    s.until("loading", |s| {
+        texts(s).contains(&"    Loading…".to_string())
+    });
     // An ask with no server drops that request.
     std::fs::write(s.path("notes.txt"), "text\n").unwrap();
     s.open("notes.txt");
@@ -574,7 +584,7 @@ fn open_unopened_caller_then(s: &mut Lsp, then: impl FnOnce(&mut Window, &mut Ap
     let mut y = item(s, "y", 0);
     y["uri"] = json!(s.uri("src/y.rs").to_string());
     reply(s, INCOMING, json!([call("from", y, &[range(0, 9, 10)])]));
-    show(s, 2);
+    show(s, &["a", "  y"]);
     let panel = panel(s);
     s.cx.update(|window, cx| {
         panel.update(cx, |p, cx| p.open(vec![0], window, cx));
@@ -631,7 +641,7 @@ fn pane_loading_y_then(
     then: impl FnOnce(&Entity<HierarchyPanel>, &mut Window, &mut App),
 ) {
     std::fs::write(s.path("src/y.rs"), "fn y() { a(); }\n").unwrap();
-    show(s, 1);
+    show(s, &["a"]);
     let (panel, pane, path) = (
         panel(s),
         s.workbench.read_with(&s.cx, |w, _| w.pane().clone()),
@@ -734,8 +744,14 @@ fn a_superseded_second_stage_read_leaves_focus_with_its_owner(cx: &mut TestAppCo
     second_stage_pending_then(&mut s, |panel, cx| {
         panel.update(cx, |p, _| p.opened += 1);
     });
-    s.cx.update(|window, cx| window.focus(&workbench.read(cx).focus_handle(cx), cx));
+    let owner = s.cx.update(|window, cx| {
+        let handle = workbench.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+        handle
+    });
+    assert!(s.cx.update(|window, _| owner.is_focused(window)));
     s.until("y.rs opened", y_is_shown);
     s.draw();
     assert!(!panel_focused(&mut s));
+    assert!(s.cx.update(|window, _| owner.is_focused(window)));
 }
