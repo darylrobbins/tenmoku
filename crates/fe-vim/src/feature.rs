@@ -38,6 +38,7 @@
 pub(crate) mod argument;
 pub(crate) mod comment;
 pub(crate) mod definition;
+pub(crate) mod definition_motions;
 pub(crate) mod exchange;
 pub(crate) mod filter;
 pub(crate) mod objects;
@@ -192,6 +193,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &changes::FEATURE,
     &unmatched::FEATURE,
     &sections::FEATURE,
+    &definition_motions::FEATURE,
     &partial_word::FEATURE,
     &put_keys::FEATURE,
     &reindent::FEATURE,

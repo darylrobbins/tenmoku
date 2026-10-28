@@ -73,6 +73,12 @@ pub trait EditorHost {
     fn definition_objects(&self, _offset: usize) -> Vec<SyntaxObject> {
         Vec::new()
     }
+    /// The bytes of every function and method, by start (an outer one
+    /// before those nested in it), as `fe_syntax::function_bounds` finds
+    /// them; none (the default) if there are none or syntax isn't known.
+    fn function_bounds(&self) -> Vec<Range<usize>> {
+        Vec::new()
+    }
     /// The (opener, closer) pairs typing an opener closes in the buffer's
     /// language; none (the default) if it isn't known.
     fn auto_pairs(&self) -> &[(char, char)] {

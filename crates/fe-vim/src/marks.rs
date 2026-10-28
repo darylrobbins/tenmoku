@@ -35,7 +35,9 @@ use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Bias;
 
 use crate::{
-    MarkArgs, MarkMotion, Motion, VimState, VimTarget, feature::sections, motion, prose, unmatched,
+    MarkArgs, MarkMotion, Motion, VimState, VimTarget,
+    feature::{definition_motions, sections},
+    motion, prose, unmatched,
     visual::Pos,
 };
 use fe_editor::EditorModel;
@@ -2231,8 +2233,8 @@ pub(crate) fn settle(target: &mut VimTarget<'_>) {
 /// The jump mark a jump by `motion` (resolved, with `count`) as an
 /// operator's target from the vim cursor or primary caret sets, if it is
 /// one that gets anywhere: `%` finding a bracket, a count of 100 or less,
-/// `[( [{ ]) ]}` finding their bracket, or `{ } ( ) ]] [[ ][ []` not
-/// running out of text (a search is checked before it runs, and a mark
+/// `[( [{ ]) ]}` finding their bracket, `]m [m ]M [M` a function, or
+/// `{ } ( ) ]] [[ ][ []` not running out of text (a search is checked before it runs, and a mark
 /// resolved). After an operator `]]` stops at a `}` too.
 pub(crate) fn jump(
     target: &mut VimTarget<'_>,
@@ -2274,6 +2276,9 @@ fn jump_by(
         }
         (Motion::Section { forward, close }, count) => {
             sections::lands(text, from, forward, close, op, count)
+        }
+        (Motion::Function { forward, end }, _) => {
+            definition_motions::lands(text, from, forward, end)
         }
         (
             Motion::ParagraphForward

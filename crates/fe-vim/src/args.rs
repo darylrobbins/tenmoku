@@ -10,7 +10,7 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{line_motions, prose};
+use crate::{feature::definition_motions, line_motions, prose};
 
 /// `d y c > < =`, and over a visual selection only, `~ u U J r{char}`, and
 /// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
@@ -103,7 +103,8 @@ pub enum Operator {
 /// are `ge gE + - | H M L gj gk` (`line_motions.rs`; `_` is `line`);
 /// `fold_next` and `fold_previous` are `zj` and `zk` (`folds.rs`); `section`
 /// is `]] [[ ][ []`: `{"section": {"forward": true, "close": false}}` is
-/// `]]` (`feature/sections.rs`).
+/// `]]` (`feature/sections.rs`); `function` is `]m [m ]M [M`: `{"function":
+/// {"forward": true, "end": false}}` is `]m` (`feature/definition_motions.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -140,6 +141,13 @@ pub enum Motion {
     Section {
         forward: bool,
         close: bool,
+    },
+    /// `]m` `[m` `]M` `[M` (`feature/definition_motions.rs`): the next
+    /// (`forward`) or previous start of a function in the host's syntax, or
+    /// last char of one (`end`).
+    Function {
+        forward: bool,
+        end: bool,
     },
     Line,
     Search(Search),
@@ -384,6 +392,7 @@ impl Motion {
             | Self::Section { .. }
             | Self::FoldNext
             | Self::FoldPrevious => RangeClass::Exclusive,
+            Self::Function { end, .. } => definition_motions::class(end),
             Self::WordEnd
             | Self::BigWordEnd
             | Self::LineEnd
@@ -423,7 +432,7 @@ impl Motion {
 
     /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
     /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
-    /// `[( [{ ]) ]}`, `]] [[ ][ []`, and `gs` and `gS`.
+    /// `[( [{ ]) ]}`, `]] [[ ][ []`, `]m [m ]M [M`, and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
         if self.is_prose() {
             return prose::is_jump(self);
@@ -438,6 +447,7 @@ impl Motion {
                 | Self::MatchPair
                 | Self::Unmatched { .. }
                 | Self::Section { .. }
+                | Self::Function { .. }
                 | Self::Search(_)
                 | Self::SearchWord(_)
                 | Self::SearchNext

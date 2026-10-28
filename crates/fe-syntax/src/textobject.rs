@@ -7,13 +7,16 @@
 //! rooted at each ancestor of the offset in turn, so a call costs the
 //! offset's depth, with a cap on each ancestor, rather than the file's
 //! size.
+//!
+//! [`function_bounds`] lists every function's bytes, for Vim's `]m` `[m`
+//! `]M` `[M`, from the outline of the whole file.
 
 use std::ops::Range;
 
 use fe_buffer::Text;
 use tree_sitter::Node;
 
-use crate::{OutlineKind, Syntax, outline::items_containing};
+use crate::{OutlineKind, Syntax, outline, outline::items_containing};
 
 /// What a [`DefinitionObject`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,6 +47,22 @@ pub struct DefinitionObject {
 /// tree matching its text.
 pub fn definition_objects(syntax: &Syntax, offset: usize) -> Vec<DefinitionObject> {
     definition_objects_counted(syntax, offset).0
+}
+
+/// The bytes of every function and method's node, by start, an outer one
+/// before those nested in it, as nvim-treesitter-textobjects'
+/// `@function.outer`. They're the [`outline`](crate::outline)'s items, so
+/// a file with more than [`MAX_OUTLINE_ITEMS`](crate::MAX_OUTLINE_ITEMS)
+/// lists those of the first ones. None if the language has no outline
+/// query or `syntax` has no tree matching its text.
+pub fn function_bounds(syntax: &Syntax) -> Vec<Range<usize>> {
+    let Ok(outline) = outline(syntax) else {
+        return Vec::new();
+    };
+    (outline.items.into_iter())
+        .filter(|item| matches!(item.kind, OutlineKind::Function | OutlineKind::Method))
+        .map(|item| item.range)
+        .collect()
 }
 
 /// [`definition_objects`], with a bound on the syntax nodes it visited,

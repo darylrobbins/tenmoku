@@ -20,7 +20,8 @@
 //!   [`outline_scopes`] lists just the items enclosing some rows, for sticky
 //!   scroll.
 //!   [`definition_objects`] lists the functions and classes around an
-//!   offset, with their bodies, for text objects.
+//!   offset, with their bodies, for text objects, and [`function_bounds`]
+//!   every function's bytes, for motions between them.
 //!   [`symbols`] adds fields, enum variants and variables, for a tags index.
 //! - [`fence_language`] is the language a Markdown fence's info string names.
 //! - [`suggest_indent`] suggests a row's indentation and [`closer_outdents`]
@@ -74,6 +75,7 @@ pub use select::larger_syntax_node;
 pub use syntax::{ParseJob, Parsed, Syntax};
 pub use textobject::{
     DefinitionKind, DefinitionObject, definition_objects, definition_objects_counted,
+    function_bounds,
 };
 
 #[cfg(test)]

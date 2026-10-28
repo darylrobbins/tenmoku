@@ -148,6 +148,8 @@ struct View {
     /// caret's head and anchor (and the vim cursor's and anchor's), by
     /// offset.
     definitions: Vec<(usize, Vec<SyntaxObject>)>,
+    /// For `]m [m ]M [M`, the host's functions by start.
+    functions: Vec<Range<usize>>,
 }
 
 thread_local! {
@@ -170,7 +172,9 @@ impl Drop for Restore {
 /// `viewed` command's motion (with its count) is `gj` or `gk`, the display
 /// rows each caret goes from and to. Only those are looked up, never all
 /// the rows. If its text object is `af if ac ic`, the host's functions and
-/// classes around each caret, for [`definitions`]; for no other command.
+/// classes around each caret, for [`definitions`], and if its motion is
+/// `]m [m ]M [M`, the host's functions, for [`functions`]; for no other
+/// command.
 /// Once `f` returns, a visual motion that moved but failed fails
 /// the key.
 pub(crate) fn with_view<'a, R>(
@@ -241,6 +245,13 @@ pub(crate) fn with_view<'a, R>(
         Some(Viewed::Object(object)) if definition::is_object(object) => definitions_around(target),
         _ => Vec::new(),
     };
+    let functions = match viewed {
+        Some(Viewed::Motion {
+            motion: Motion::Function { .. },
+            ..
+        }) => target.host.function_bounds(),
+        _ => Vec::new(),
+    };
     let view = View {
         folds,
         top,
@@ -252,6 +263,7 @@ pub(crate) fn with_view<'a, R>(
         alongs: Vec::new(),
         failed: false,
         definitions,
+        functions,
     };
     let restore = Restore(VIEW.with(|cell| cell.replace(Some(view))));
     let result = f(target);
@@ -298,11 +310,16 @@ pub(crate) fn repeated(state: &mut VimState, args: CountArgs) -> Option<Viewed> 
     }
 }
 
-/// A command acting on `target` if it's a text object, for [`with_view`]:
-/// `ys{object}` and `!{object}`, which take no other part of the view.
+/// A command acting on `target` if it's a text object or `]m [m ]M [M`,
+/// for [`with_view`]: `ys{object}` and `!{object}`, which take no other
+/// part of the view.
 pub(crate) fn object(target: Target) -> Option<Viewed> {
     match target {
         Target::TextObject(object) => Some(Viewed::Object(object)),
+        Target::Motion(motion @ Motion::Function { .. }) => Some(Viewed::Motion {
+            motion,
+            count: None,
+        }),
         _ => None,
     }
 }
@@ -348,6 +365,16 @@ pub(crate) fn definitions(offset: usize) -> Vec<SyntaxObject> {
         found
             .map(|(_, objects)| objects.clone())
             .unwrap_or_default()
+    })
+}
+
+/// What `f` makes of the host's functions by start, as the [`with_view`]
+/// running looked them up; none outside one, or for a command without
+/// `]m [m ]M [M`.
+pub(crate) fn functions<R>(f: impl FnOnce(&[Range<usize>]) -> R) -> R {
+    VIEW.with(|view| {
+        let view = view.borrow();
+        f(view.as_ref().map_or(&[], |view| &view.functions))
     })
 }
 

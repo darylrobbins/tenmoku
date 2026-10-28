@@ -365,6 +365,12 @@ impl EditorHost for ViewHost<'_> {
             .collect()
     }
 
+    fn function_bounds(&self) -> Vec<Range<usize>> {
+        self.syntax
+            .map(fe_syntax::function_bounds)
+            .unwrap_or_default()
+    }
+
     fn comment_tokens(&self) -> Option<CommentTokens> {
         let tokens = fe_syntax::comment_tokens(self.language.as_ref()?.name)?;
         Some(CommentTokens {
@@ -895,6 +901,9 @@ mod auto_indent_host_tests;
 #[cfg(test)]
 #[path = "comment_host_tests.rs"]
 mod comment_host_tests;
+#[cfg(test)]
+#[path = "function_bounds_tests.rs"]
+mod function_bounds_tests;
 #[cfg(test)]
 #[path = "pairs_host_tests.rs"]
 mod pairs_host_tests;

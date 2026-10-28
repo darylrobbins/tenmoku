@@ -15,8 +15,11 @@ use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, feature::sections, folds, jump,
-    line_motions, marks, prose, search, state::Goals, unmatched, visual,
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline,
+    feature::{definition_motions, sections},
+    folds, jump, line_motions, marks, prose, search,
+    state::Goals,
+    unmatched, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
@@ -312,6 +315,9 @@ pub(crate) fn motion(
         }
         Motion::Section { forward, close } => {
             return sections::motion(cursor, forward, close, count);
+        }
+        Motion::Function { forward, end } => {
+            return definition_motions::motion(cursor, forward, end, count, goal);
         }
         Motion::LineStart => match cursor.windowed {
             true => cursor.goto(cursor.text.row_start(row)),
