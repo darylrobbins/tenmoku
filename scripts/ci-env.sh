@@ -25,6 +25,11 @@ if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
 	export RUSTC_WRAPPER
 	export SCCACHE_DIR="${SCCACHE_DIR:-$HOME/Library/Caches/fastedit-sccache}"
 	export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-8G}"
+	# The server never idles out: a client mid-build got "Connection reset by peer" (os error 104)
+	# when the server exited after its default 600 s idle timeout.
+	export SCCACHE_IDLE_TIMEOUT="${SCCACHE_IDLE_TIMEOUT:-0}"
+	# A client that still cannot talk to its server compiles locally instead of failing the build.
+	export SCCACHE_IGNORE_SERVER_IO_ERROR="${SCCACHE_IGNORE_SERVER_IO_ERROR:-1}"
 fi
 case "$PWD" in
 */.worktrees/.verify/*)
