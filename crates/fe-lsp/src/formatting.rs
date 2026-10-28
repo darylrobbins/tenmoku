@@ -5,7 +5,7 @@
 //!   had at the request's version, as byte edits of that version, sorted
 //!   by start. Edits that overlap are an error ([`LspError::RefusedEdit`]).
 //! - **No formatter.** `Ok(None)` for a server without the provider, with
-//!   nothing sent, so a host can say "no formatter". `Ok(Some(vec![]))`
+//!   nothing sent (a server still initializing is waited for first), so a host can say "no formatter". `Ok(Some(vec![]))`
 //!   is a server with nothing to change.
 //! - **Failures.** A request past 3 s is [`LspError::Timeout`], which also
 //!   cancels it, not an empty result: format on save can tell "nothing to
@@ -63,40 +63,55 @@ impl LspManager {
         range: Option<Range<usize>>,
         options: FormatOptions,
     ) -> impl Future<Output = Result<Option<Edits>, LspError>> + Send + 'static + use<> {
-        let capabilities = (self.server_of(buffer)).and_then(|server| self.capabilities(server));
-        let provided = capabilities.is_some_and(|capabilities| match range {
-            None => offers(capabilities.document_formatting_provider),
-            Some(_) => offers(capabilities.document_range_formatting_provider),
-        });
-        let reply = provided.then(|| match range {
+        // A buffer on no server has no formatter; a server still
+        // initializing (or restarting) is waited for, inside the timeout.
+        let reply = self.server_of(buffer).map(|_| match range {
             None => self
-                .document_request::<Formatting>(buffer, version, move |at| {
-                    DocumentFormattingParams {
+                .document_request_if_provided::<Formatting>(
+                    buffer,
+                    version,
+                    FEATURE,
+                    |capabilities| offers(capabilities.document_formatting_provider.clone()),
+                    move |at| DocumentFormattingParams {
                         text_document: document(at),
                         options: options.lsp(),
                         work_done_progress_params: Default::default(),
-                    }
-                })
+                    },
+                )
                 .boxed(),
             Some(range) => self
-                .document_request::<RangeFormatting>(buffer, version, move |at| {
-                    let text = &at.document.sent.text;
-                    let position =
-                        |offset| to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding);
-                    DocumentRangeFormattingParams {
-                        text_document: document(at),
-                        range: lsp_types::Range::new(position(range.start), position(range.end)),
-                        options: options.lsp(),
-                        work_done_progress_params: Default::default(),
-                    }
-                })
+                .document_request_if_provided::<RangeFormatting>(
+                    buffer,
+                    version,
+                    FEATURE,
+                    |capabilities| offers(capabilities.document_range_formatting_provider.clone()),
+                    move |at| {
+                        let text = &at.document.sent.text;
+                        let position = |offset| {
+                            to_lsp(text, text.clip_offset(offset, Bias::Left), at.encoding)
+                        };
+                        DocumentRangeFormattingParams {
+                            text_document: document(at),
+                            range: lsp_types::Range::new(
+                                position(range.start),
+                                position(range.end),
+                            ),
+                            options: options.lsp(),
+                            work_done_progress_params: Default::default(),
+                        }
+                    },
+                )
                 .boxed(),
         });
         async move {
             let Some(reply) = reply else {
                 return Ok(None);
             };
-            let (reply, admitted) = reply.await?;
+            let (reply, admitted) = match reply.await {
+                Ok(answered) => answered,
+                Err(LspError::Unavailable(why)) if why == FEATURE => return Ok(None),
+                Err(err) => return Err(err),
+            };
             let edits = reply.result.unwrap_or_default();
             let text = &admitted.document.sent.text;
             decode_closed(text, &edits, admitted.encoding)
@@ -105,6 +120,9 @@ impl LspManager {
         }
     }
 }
+
+/// The `Unavailable` reason for a server without the provider.
+const FEATURE: &str = "formatting";
 
 /// Whether a server's provider capability is on.
 fn offers<T>(provider: Option<OneOf<bool, T>>) -> bool {

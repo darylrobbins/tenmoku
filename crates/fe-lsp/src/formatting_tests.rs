@@ -56,6 +56,7 @@ struct Started {
     fake: FakeServer,
     manager: LspManager,
     clock: Arc<ManualClock>,
+    fake_clock: Arc<ManualClock>,
     buffer: Buffer,
     uri: Url,
 }
@@ -63,26 +64,37 @@ struct Started {
 /// A server on the fake in UTF-16, with the given formatting providers,
 /// with a buffer of `text` open and synced.
 fn started(formatting: bool, range: bool, text: &str) -> Started {
+    started_after(formatting, range, text, Duration::ZERO)
+}
+
+/// As `started`, but `initialize` is answered `delay` after the fake's
+/// clock starts, and nothing waits for that: the buffer is opened before
+/// the server is ready.
+fn started_after(formatting: bool, range: bool, text: &str, delay: Duration) -> Started {
     let mut init = initialize_result(Some(PositionEncodingKind::UTF16));
     init.capabilities = ServerCapabilities {
         document_formatting_provider: formatting.then_some(OneOf::Left(true)),
         document_range_formatting_provider: range.then_some(OneOf::Left(true)),
         ..init.capabilities
     };
+    let fake_clock = Arc::new(ManualClock::new());
     let fake = FakeServer::with_clock(
         Script {
             initialize: InitializeReply::Result(Box::new(init)),
             replies: HashMap::new(),
+            initialize_delay: delay,
             ..Script::default()
         },
-        Arc::new(ManualClock::new()),
+        fake_clock.clone(),
     );
     let clock = Arc::new(ManualClock::new());
     let mut manager = LspManager::with_clock(fake.launcher(), clock.clone(), |_| {});
     let server = manager
         .start(ServerSpec::new("fake", "fake-server"), Path::new(ROOT))
         .unwrap();
-    fake.wait_initialized();
+    if delay.is_zero() {
+        fake.wait_initialized();
+    }
     let mut buffer = Buffer::new(text);
     let path = PathBuf::from(ROOT).join("a.rs");
     let subscription = buffer.subscribe();
@@ -98,11 +110,14 @@ fn started(formatting: bool, range: bool, text: &str) -> Started {
         )
         .unwrap();
     let uri = Url::from_file_path(&path).unwrap();
-    fake.wait_for_document(&uri, "didOpen", |r| r.is_some_and(|r| r.open));
+    if delay.is_zero() {
+        fake.wait_for_document(&uri, "didOpen", |r| r.is_some_and(|r| r.open));
+    }
     Started {
         fake,
         manager,
         clock,
+        fake_clock,
         buffer,
         uri,
     }
@@ -254,4 +269,52 @@ fn missing_and_slow() {
     assert!(slow.as_mut().now_or_never().is_none());
     s.clock.advance(Duration::from_millis(1));
     assert_eq!(answer(slow), Err(LspError::Timeout));
+}
+
+#[test]
+fn asked_before_the_server_is_ready() {
+    // A save before `initialize` is answered waits for the capabilities:
+    // a server with the provider is asked, one without is not.
+    for (provided, method_range) in [(true, false), (true, true), (false, false), (false, true)] {
+        let s = started_after(provided, provided, "let a = 1;\n", Duration::from_secs(1));
+        let (id, version) = (s.buffer.id(), s.buffer.version());
+        let method = if method_range { RANGE } else { FORMATTING };
+        s.fake.set_reply(
+            method,
+            Scripted::now(Reply::Result(json!([edit((0, 7), (0, 8), "2")]))),
+        );
+        let range = method_range.then_some(0..3);
+        let asked = s.manager.format(id, version, range, OPTIONS);
+        let waiting = std::thread::spawn(move || answer(asked));
+        s.clock.wait_for_sleep(Duration::from_millis(20));
+        assert!(requests(&s.fake, method).is_empty());
+        s.fake_clock.wait_for_sleep(Duration::from_secs(1));
+        s.fake_clock.advance(Duration::from_secs(1));
+        s.fake.wait_initialized();
+        s.clock.advance(Duration::from_millis(20));
+        let expected = provided.then(|| vec![(7..8, "2".to_owned())]);
+        assert_eq!(waiting.join().unwrap(), Ok(expected));
+        assert_eq!(requests(&s.fake, method).len(), usize::from(provided));
+    }
+}
+
+#[test]
+fn asked_while_the_server_restarts() {
+    // Between sessions the answer is an error the host can retry, not
+    // "no formatter".
+    for range in [None, Some(0..3)] {
+        let s = started(true, true, "let a = 1;\n");
+        let (id, version) = (s.buffer.id(), s.buffer.version());
+        s.fake.crash();
+        s.clock.wait_for_sleep(Duration::from_secs(1));
+        let asked = s.manager.format(id, version, range, OPTIONS);
+        let waiting = std::thread::spawn(move || answer(asked));
+        std::thread::sleep(Duration::from_millis(50));
+        s.clock.advance(Duration::from_secs(3));
+        let outcome = waiting.join().unwrap();
+        assert!(
+            matches!(outcome, Err(LspError::Timeout | LspError::ServerDown)),
+            "{outcome:?}"
+        );
+    }
 }
