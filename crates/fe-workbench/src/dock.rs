@@ -151,17 +151,22 @@ const _: () = {
         );
         ix += 1;
     }
-    // History ([`Dock::set_history`]) and then AI Changes
-    // ([`Dock::set_ai_changes`]), the panels registered after the dock is
+    // History ([`Dock::set_history`]), then AI Changes
+    // ([`Dock::set_ai_changes`]) and Call Hierarchy
+    // ([`Dock::set_hierarchy`]), the panels registered after the dock is
     // made, are added at the rail's end, in that order: their places.
     assert!(
-        PANELS[PANELS.len() - 2].order
+        PANELS[PANELS.len() - 3].order
             == crate::workbench::git_commands::git_history::SIDEBAR.order,
-        "History, registered last but one, is last but one on the rail"
+        "History, registered third from last, is third from last on the rail"
     );
     assert!(
-        PANELS[PANELS.len() - 1].order == crate::ai_changes_panel::SIDEBAR.order,
-        "AI Changes, registered last, is last on the rail"
+        PANELS[PANELS.len() - 2].order == crate::ai_changes_panel::SIDEBAR.order,
+        "AI Changes, registered last but one, is last but one on the rail"
+    );
+    assert!(
+        PANELS[PANELS.len() - 1].order == crate::hierarchy_panel::SIDEBAR.order,
+        "Call Hierarchy, registered last, is last on the rail"
     );
 };
 

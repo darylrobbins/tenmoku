@@ -237,10 +237,12 @@ pub(crate) fn with_view<'a, R>(
     });
     let hops: Vec<Hop> = hops.collect();
     let folds = match viewed {
-        Some(Viewed {
+        Some(Viewed::Motion {
             motion: Motion::LastNonBlank,
             count: Some(2..),
         }) => crate::folds::fold_rows(target.model),
+        _ => Vec::new(),
+    };
     let definitions = match viewed {
         Some(Viewed::Object(object)) if definition::is_object(object) => definitions_around(target),
         _ => Vec::new(),

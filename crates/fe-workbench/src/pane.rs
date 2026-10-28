@@ -1138,22 +1138,6 @@ impl Pane {
         }
     }
 
-    /// [`Pane::open_at`] for a panel that keeps focus: a file still to be
-    /// read doesn't take it once it lands, unless the user has navigated.
-    pub(crate) fn open_at_keeping_focus(
-        &mut self,
-        path: PathBuf,
-        reveal: Option<Reveal>,
-        focus: FocusHandle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_tab(path.clone(), reveal, false, window, cx);
-        if self.opening.as_ref() == Some(&path) {
-            self.keep_focus = Some(focus);
-        }
-    }
-
     fn open_tab(
         &mut self,
         path: PathBuf,

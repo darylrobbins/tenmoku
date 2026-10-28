@@ -154,6 +154,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "cmd-u",
         "editor.cursor_undo",
         Some("editor && !vim.enabled"),
+    ),
     (
         "shift-alt-a",
         "editor.toggle_block_comment",

@@ -451,6 +451,8 @@ command = "nav.goto_implementation"
 [[menus.items]]
 title = "Peek References"
 command = "editor.peek_references"
+
+[[menus.items]]
 title = "Show Call Hierarchy"
 command = "nav.show_call_hierarchy"
 
