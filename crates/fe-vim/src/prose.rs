@@ -370,10 +370,13 @@ fn visual_sentences(
     let items = items(count, around);
     match cursor.cmp(&anchor) {
         Ordering::Equal => {
-            // Both at a row's end after a sentence's last mark: the anchor
+            // Both at the text's end after a sentence's last mark: the anchor
             // stays and the cursor takes that mark.
             let at = Walk::visual(text, cursor);
-            if at.past_end && at.ch_before().is_some_and(ends_sentence) {
+            if at.past_end
+                && at.row + 1 == text.row_count()
+                && at.ch_before().is_some_and(ends_sentence)
+            {
                 let mut mark = at.copy();
                 mark.past_end = false;
                 return (cursor, mark.offset());

@@ -475,3 +475,35 @@ fn a_paragraph_motion_that_runs_out_resets_the_goal_column() {
     vim.feed("jgu3}k").unwrap();
     assert_eq!(vim.cursor(), (0, 1));
 }
+
+/// `'[` and `']` after a visual case operator span the selection's rows or
+/// ends, whether or not the text changed (nvim 0.12.4's `getpos`).
+#[test]
+fn visual_case_marks_follow_the_selection() {
+    let marks = |text: &str, keys: &str| {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.feed(keys).unwrap();
+        (vim.mark('['), vim.mark(']'))
+    };
+    // A linewise selection ending on an empty row marks that row.
+    for keys in ["VjU", "Vju"] {
+        assert_eq!(
+            marks("abc\n\nxyz", keys),
+            (Some((0, 0)), Some((1, 0))),
+            "{keys}"
+        );
+    }
+    assert_eq!(
+        marks("abc\n\n", "VjjU"),
+        (Some((0, 0)), Some((2, 0))),
+        "final empty row"
+    );
+    // A charwise selection starting on a line break marks the row's end.
+    for keys in ["v$ojU", "v$oju"] {
+        assert_eq!(
+            marks("abc\nDEF", keys),
+            (Some((0, 2)), Some((1, 0))),
+            "{keys}"
+        );
+    }
+}

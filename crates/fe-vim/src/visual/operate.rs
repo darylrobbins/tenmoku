@@ -421,7 +421,14 @@ fn operate_as_wide(
                 Operator::Replace(_) => range.start,
                 _ => start,
             };
-            recase(target, actor, args.operator, range, land, lines)
+            recase(
+                target,
+                actor,
+                args.operator,
+                range,
+                land,
+                lines.then_some((first, last)),
+            )
         }
     };
     move_marks(target.state, moved);
@@ -541,7 +548,7 @@ fn recase(
     operator: Operator,
     range: Range<usize>,
     land: usize,
-    lines: bool,
+    lines: Option<(u32, u32)>,
 ) -> Dispatched<TransactionId> {
     use unicode_segmentation::UnicodeSegmentation;
     let VimTarget { model, state, .. } = target;
@@ -573,11 +580,11 @@ fn recase(
                 history::pair(&text, last),
             );
             let (start, end) = match lines {
-                true => {
-                    let len = text.row_len(last.0) as usize;
-                    ((first.0, 0), (last.0, len.saturating_sub(1)))
+                Some((top, bottom)) => {
+                    let len = text.row_len(bottom) as usize;
+                    ((top, 0), (bottom, len.saturating_sub(1)))
                 }
-                false => {
+                None => {
                     let clamp = |(row, column): (u32, usize)| {
                         (
                             row,

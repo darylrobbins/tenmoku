@@ -821,3 +821,22 @@ fn display_rows_from_a_wider_tab() {
         (format!("a {}HI", "b".repeat(13)), (0, 15))
     );
 }
+
+/// A counted `g_` counts a closed fold as one row (nvim 0.12.4: `2g_` from
+/// the fold at rows 0-2 reaches (3, 8), and `d2g_` takes all four rows).
+#[test]
+fn counted_g_underscore_counts_a_closed_fold_as_a_row() {
+    const FOLDED: &str = "abc\n  defghijkl\n  mnopq\nrstuvwxyz";
+    let folded = |keys: &str| {
+        let mut vim = HeadlessVim::new(FOLDED, (0, 0));
+        vim.feed("zc").unwrap();
+        vim.feed(keys).unwrap();
+        (vim.text(), vim.cursor(), vim.state().failed())
+    };
+    assert_eq!(folded("2g_").1, (3, 8));
+    assert_eq!(folded("v2g_").1, (3, 8));
+    assert_eq!(folded("d2g_").0, "");
+    // From the last visible row it fails; open, it steps through the rows.
+    assert!(folded("G2g_").2);
+    assert_eq!(after(FOLDED, (0, 0), "2g_"), ((1, 10), false));
+}

@@ -128,6 +128,8 @@ struct View {
     /// The vim cursor's offset, if it stands past the last character of a
     /// row that has one (after `$`): the motions see it clamped onto it.
     past_end: Option<usize>,
+    /// For a counted `g_`, the closed folds as `(header, last)` rows.
+    folds: Vec<(u32, u32)>,
     /// The display columns of an unwrapped row the view shows.
     columns: Range<u32>,
     /// For `gj gk g$ gm`, each caret's display row and the one they go
@@ -223,7 +225,15 @@ pub(crate) fn with_view<'a, R>(
         Hop { along, ..hop }
     });
     let hops: Vec<Hop> = hops.collect();
+    let folds = match viewed {
+        Some(Viewed {
+            motion: Motion::LastNonBlank,
+            count: Some(2..),
+        }) => crate::folds::fold_rows(target.model),
+        _ => Vec::new(),
+    };
     let view = View {
+        folds,
         top,
         rows,
         visual,
@@ -292,6 +302,43 @@ fn report_failed() {
             view.failed = true;
         }
     });
+}
+
+/// The last row of the closed fold holding `row`, or `row`.
+fn closed_end(row: u32) -> u32 {
+    VIEW.with(|view| {
+        let view = view.borrow();
+        let folds = view.as_ref().map_or(&[][..], |view| &view.folds[..]);
+        folds
+            .iter()
+            .filter(|&&(start, end)| start <= row && row <= end)
+            .map(|&(_, end)| end)
+            .max()
+            .unwrap_or(row)
+    })
+}
+
+/// The row `steps` visible rows below `row`, a closed fold counting as one,
+/// at most `last_row`; a fold landed in is at its header.
+fn down_visible(row: u32, steps: u32, last_row: u32) -> u32 {
+    let mut row = row;
+    for _ in 0..steps {
+        let next = closed_end(row).saturating_add(1);
+        if next > last_row {
+            break;
+        }
+        row = next;
+    }
+    VIEW.with(|view| {
+        let view = view.borrow();
+        let folds = view.as_ref().map_or(&[][..], |view| &view.folds[..]);
+        folds
+            .iter()
+            .filter(|&&(start, end)| start <= row && row <= end)
+            .map(|&(start, _)| start)
+            .min()
+            .unwrap_or(row)
+    })
 }
 
 /// A caret's step by display rows: from the one holding `offset`, `rows`
@@ -499,9 +546,9 @@ pub(crate) fn motion(
             Ok(goal)
         }
         // Like `+`, `g_` fails only where it can't move at all.
-        Motion::LastNonBlank if count > 1 && row == last_row => Err(goal),
+        Motion::LastNonBlank if count > 1 && closed_end(row) >= last_row => Err(goal),
         Motion::LastNonBlank => {
-            cursor.enter(row.saturating_add(count - 1).min(last_row));
+            cursor.enter(down_visible(row, count - 1, last_row));
             let blank = |ix: usize| matches!(cursor.line.grapheme(ix), " " | "\t");
             cursor.ix = (0..cursor.line.len())
                 .rev()

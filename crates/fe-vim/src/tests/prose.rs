@@ -561,3 +561,18 @@ fn visual_sentences_of_punctuation_runs_and_row_ends() {
         ("visual", Some((0, 3)), (0, 2))
     );
 }
+
+/// `is` and `as` from a selection at a non-final row's end go by the
+/// ordinary rules (nvim 0.12.4), unlike at the text's end.
+#[test]
+fn visual_sentences_at_a_row_end() {
+    let text = "Ab.\nCd. Ef.";
+    assert_eq!(
+        feed(text, (0, 0), "v$o$isd"),
+        ("\nCd. Ef.".to_string(), (0, 0))
+    );
+    assert_eq!(feed(text, (0, 0), "v$o$2isd").0, "\nCd. Ef.");
+    assert_eq!(feed(text, (0, 0), "v$o$asd").0, "\nCd. Ef.");
+    // At the text's end it takes the last mark.
+    assert_eq!(feed(text, (1, 4), "v$o$isd").0, "Ab.\nCd. Ef");
+}

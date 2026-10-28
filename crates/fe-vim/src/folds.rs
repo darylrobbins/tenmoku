@@ -179,7 +179,7 @@ fn fold(target: &mut VimTarget<'_>, args: FoldArgs) -> bool {
     before != (fold_rows(model), model.selections())
 }
 
-fn fold_rows(model: &EditorModel) -> Vec<(u32, u32)> {
+pub(crate) fn fold_rows(model: &EditorModel) -> Vec<(u32, u32)> {
     let mut folds: Vec<_> = model
         .display()
         .folds()
