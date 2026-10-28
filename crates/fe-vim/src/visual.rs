@@ -138,6 +138,59 @@ impl LastVisual {
     }
 }
 
+/// Before rows go in below `row`, at its end: `'<` and `'>` on it stay
+/// there even if it's empty (where a row's start is its end), as nvim's do.
+/// [`reanchored`] sets them as any others once the rows are in.
+pub(crate) fn opening_below(state: &mut VimState, snapshot: &BufferSnapshot, row: u32) {
+    let Some(last) = state.last_visual.as_mut() else {
+        return;
+    };
+    let text = snapshot.text();
+    if text.row_len(row) > 0 {
+        return;
+    }
+    for pos in [&mut last.start, &mut last.end] {
+        if !pos.past_end && pos.position(snapshot).0 == row {
+            pos.row = snapshot.anchor_before(text.row_start(row));
+        }
+    }
+}
+
+/// `'<` and `'>` anchored afresh at their rows' starts in `snapshot`, as
+/// [`Pos::at`] anchors them, after [`opening_below`].
+pub(crate) fn reanchored(state: &mut VimState, snapshot: &BufferSnapshot) {
+    let Some(last) = state.last_visual.as_mut() else {
+        return;
+    };
+    let text = snapshot.text();
+    for pos in [&mut last.start, &mut last.end] {
+        if !pos.past_end {
+            let row = pos.position(snapshot).0;
+            pos.row = snapshot.anchor_after(text.row_start(row));
+        }
+    }
+}
+
+/// Before rows are rewritten in place, each row `moved` maps to another
+/// taking its text (`]e`, `[e`): `'<` and `'>` on them go with their text,
+/// as nvim's `:move` moves them.
+pub(crate) fn moving_rows(
+    state: &mut VimState,
+    snapshot: &BufferSnapshot,
+    moved: &dyn Fn(u32) -> Option<u32>,
+) {
+    let Some(last) = state.last_visual.as_mut() else {
+        return;
+    };
+    let text = snapshot.text();
+    for pos in [&mut last.start, &mut last.end] {
+        let (row, _) = pos.position(snapshot);
+        if let Some(to) = moved(row).filter(|_| !pos.past_end) {
+            pos.row = snapshot.anchor_after(text.row_start(to));
+        }
+    }
+}
+
 /// Before a change joins the rows from `first` (past the first row) to the
 /// end of the text onto the row before them, deleting them (`:s` over
 /// rows): `'<` and `'>` on them go past the last row of the text the change
@@ -407,6 +460,23 @@ fn leave(model: &EditorModel, state: &mut VimState, ends: Ends) {
     }
     state.mode = Mode::Normal;
     state.visual = None;
+}
+
+/// The extent leaving the visual mode now would make the last, `'<` and
+/// `'>`; outside a visual mode, the last one.
+pub(crate) fn extent_now(model: &EditorModel, state: &VimState) -> Option<LastVisual> {
+    let Some(ends) = ends(model, state) else {
+        return state.last_visual.clone();
+    };
+    let snapshot = model.snapshot();
+    Some(LastVisual {
+        kind: ends.kind,
+        start: Pos::at(snapshot, ends.lo()),
+        end: Pos::at(snapshot, ends.hi()),
+        cursor_first: ends.cursor < ends.anchor,
+        goal: ends.goal,
+        deleted: [false; 2],
+    })
 }
 
 /// A normal-mode caret at the vim cursor, keeping its goal column.

@@ -41,6 +41,7 @@ pub(crate) mod definition;
 pub(crate) mod definition_motions;
 pub(crate) mod exchange;
 pub(crate) mod filter;
+pub(crate) mod line_edits;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
 pub(crate) mod sections;
@@ -196,6 +197,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &definition_motions::FEATURE,
     &partial_word::FEATURE,
     &put_keys::FEATURE,
+    &line_edits::FEATURE,
     &reindent::FEATURE,
     &line_undo::FEATURE,
     &changelist::FEATURE,

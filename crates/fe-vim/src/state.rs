@@ -201,6 +201,8 @@ pub struct VimState {
     pub(crate) normal_suspended: Option<crate::ex::normal::Suspended>,
     /// The row `U` undoes the latest changes on.
     pub(crate) line_undo: crate::feature::line_undo::LineUndo,
+    /// The rows `]e` and `[e` moved, for `u` and `<C-r>` to move marks back.
+    pub(crate) moves: crate::feature::line_edits::Moves,
     /// 'incsearch' is off ([`VimState::set_incsearch`]): on by default, as
     /// in nvim.
     pub(crate) incsearch_off: bool,

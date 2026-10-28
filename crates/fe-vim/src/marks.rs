@@ -1788,6 +1788,35 @@ impl Marks {
         });
     }
 
+    /// Before rows are rewritten in place, each row `moved` maps to another
+    /// taking its text (`]e`, `[e`): as nvim's `:move` does, the rows'
+    /// marks, jumplist and changelist entries go with their text.
+    pub(crate) fn moving(&mut self, snapshot: &BufferSnapshot, moved: &dyn Fn(u32) -> Option<u32>) {
+        self.update(|place| {
+            let (row, column) = place.position(snapshot)?;
+            Some(match moved(row) {
+                Some(to) => Place::on(snapshot, to, column),
+                None => place.clone(),
+            })
+        });
+    }
+
+    /// `a` to `z` as they are, caught up: what nvim's undo header saves.
+    pub(crate) fn lowercase(&mut self) -> BTreeMap<char, Place> {
+        self.advance();
+        (self.named.iter())
+            .filter(|(name, _)| name.is_ascii_lowercase())
+            .map(|(&name, place)| (name, place.clone()))
+            .collect()
+    }
+
+    /// Puts back the marks [`Marks::lowercase`] saved, as nvim's undo does;
+    /// one it didn't save stays as it is.
+    pub(crate) fn restore_lowercase(&mut self, saved: BTreeMap<char, Place>) {
+        self.advance();
+        self.named.extend(saved);
+    }
+
     /// Before a linewise delete of the rows from `first` through `last`:
     /// their marks go, as nvim's do.
     pub(crate) fn deleting(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
@@ -2478,6 +2507,62 @@ pub(crate) fn filtered(
         .is_some_and(|(last, _)| Some(last) == transaction);
     changes.fresh |= !read;
     changes.record_at(snapshot, start(first));
+}
+
+/// `]<Space>` or `[<Space>` just put empty rows in `model`'s text as
+/// `transaction`, the first on row `first`: `'[` and `']` at `at`, where the
+/// caret was (the `g@l` nvim's default runs sets them there, and the rows
+/// put in don't move them), and `'.` and the changelist's entry at the
+/// start of `first`, in place of those its batch made, as nvim's.
+pub(crate) fn opened_blank(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    transaction: Option<TransactionId>,
+    at: (u32, usize),
+    first: u32,
+) {
+    noted_rows(state, model, transaction, (at, at), first);
+}
+
+/// `]e` or `[e` just moved rows of `model`'s text to `first` through
+/// `last` as `transaction`, changing rows from `top`: `'[` and `']` at the
+/// starts of `first` and `last`, and `'.` and the changelist's entry at the
+/// start of `top`, in place of those its batch made (rows whose text didn't
+/// change made none), as nvim's `:move` sets them.
+pub(crate) fn moved(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    transaction: Option<TransactionId>,
+    (first, last): (u32, u32),
+    top: u32,
+) {
+    noted_rows(state, model, transaction, ((first, 0), (last, 0)), top);
+}
+
+/// `transaction` just changed `model`'s text: `'[` and `']` at `ends`, and
+/// `'.` and the changelist's entry at the start of row `change`, in place
+/// of those its batches made.
+fn noted_rows(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    transaction: Option<TransactionId>,
+    (start, end): ((u32, usize), (u32, usize)),
+    change: u32,
+) {
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let place = |(row, column)| Spot::placed(Place::on(snapshot, row, column));
+    let changes = &mut state.marks.changes;
+    changes.newer(Newer::CHANGE);
+    changes.start = Some(place(start));
+    changes.end = Some(place(end));
+    changes.change = Some(place((change, 0)));
+    let read = changes
+        .last
+        .is_some_and(|(last, _)| Some(last) == transaction);
+    changes.fresh |= !read;
+    changes.record_at(snapshot, place((change, 0)));
 }
 
 /// A case operator covered `start` to `end` (row and byte column) of

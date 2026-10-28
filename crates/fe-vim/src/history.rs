@@ -180,12 +180,16 @@ pub(crate) fn undo(
     crate::insert::adopt_closing(state);
     let mut reverted = Vec::new();
     for _ in 0..args.count.unwrap_or(1).max(1) {
+        let outgoing = crate::feature::line_edits::outgoing(state, model);
         let (step, _) = model.run_as(origin(actor), |model| match redo {
             true => model.redo(),
             false => model.undo(),
         });
         match step {
-            Ok(Some(id)) => reverted.push(id),
+            Ok(Some(id)) => {
+                crate::feature::line_edits::reverted(state, id, outgoing);
+                reverted.push(id);
+            }
             Ok(None) => break,
             // A conflict after some steps stops there, as running out does.
             Err(_) if !reverted.is_empty() => break,

@@ -1,0 +1,843 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "space_below",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "[<Space>",
+      "expect": {
+        "buffer": "one\n\ntwo\nthree",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_count",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "3]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n\n\n\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_count",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2[<Space>",
+      "expect": {
+        "buffer": "one\n\n\ntwo\nthree",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_first_row",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "[<Space>",
+      "expect": {
+        "buffer": "\none\ntwo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_first_row",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2]<Space>",
+      "expect": {
+        "buffer": "one\n\n\ntwo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_last_row",
+      "buffer": "one\ntwo",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_last_row",
+      "buffer": "one\ntwo",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "2[<Space>",
+      "expect": {
+        "buffer": "one\n\n\ntwo",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_only_row",
+      "buffer": "only",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "]<Space>",
+      "expect": {
+        "buffer": "only\n",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_only_row",
+      "buffer": "only",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "3[<Space>",
+      "expect": {
+        "buffer": "\n\n\nonly",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_empty_buffer",
+      "buffer": "",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "]<Space>",
+      "expect": {
+        "buffer": "\n",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_empty_buffer",
+      "buffer": "",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2[<Space>",
+      "expect": {
+        "buffer": "\n\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_moves_marks",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "majmbjmcjmdk[<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n\nthree\nfour",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            1
+          ],
+          "b": [
+            1,
+            1
+          ],
+          "c": [
+            3,
+            1
+          ],
+          "d": [
+            4,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_moves_marks",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "majlmbjmcjmdkk2]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n\n\nthree\nfour",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            1
+          ],
+          "b": [
+            1,
+            2
+          ],
+          "c": [
+            4,
+            2
+          ],
+          "d": [
+            5,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_above_mark_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma[<Space>",
+      "expect": {
+        "buffer": "one\n\n\nthree",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_mark_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma]<Space>",
+      "expect": {
+        "buffer": "one\n\n\nthree",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_dot",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2]<Space>G.",
+      "expect": {
+        "buffer": "one\n\n\ntwo\nthree\n\n",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_dot_new_count",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "[<Space>gg3.",
+      "expect": {
+        "buffer": "\n\n\none\ntwo\n\nthree",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_undo",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "3]<Space>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_undo_redo",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2[<Space>u<C-r>",
+      "expect": {
+        "buffer": "one\n\n\ntwo\nthree",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_undo",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2[<Space>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_undo_redo",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "3]<Space>u<C-r>",
+      "expect": {
+        "buffer": "one\ntwo\n\n\n\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_undo_elsewhere",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "]<Space>Gu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_undo_elsewhere",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "[<Space>Gu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_above_redo_elsewhere",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "[<Space>uG<C-r>",
+      "expect": {
+        "buffer": "one\n\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_redo_elsewhere",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "]<Space>uG<C-r>",
+      "expect": {
+        "buffer": "one\ntwo\n\nthree\nfour",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_multi_count_last_row_undo",
+      "buffer": "one\ntwo",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2]<Space>u",
+      "expect": {
+        "buffer": "one\ntwo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_then_visual_marks",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>gg]<Space>",
+      "expect": {
+        "buffer": "one\n\ntwo\nthree",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_visual_marks_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V<Esc>]<Space>",
+      "expect": {
+        "buffer": "one\n\n\nthree",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_count_visual_marks_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V<Esc>3]<Space>",
+      "expect": {
+        "buffer": "one\n\n\n\n\nthree",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_above_visual_marks_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V<Esc>2[<Space>",
+      "expect": {
+        "buffer": "one\n\n\n\nthree",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            3,
+            0
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_visual_marks_on_last_empty_row",
+      "buffer": "one\ntwo",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "o<Esc>v<Esc>]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\n\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_then_above_visual_marks_on_empty_row",
+      "buffer": "one\n\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V<Esc>]<Space>[<Space>",
+      "expect": {
+        "buffer": "one\n\n\n\nthree",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_then_above_visual_marks",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V<Esc>]<Space>[<Space>",
+      "expect": {
+        "buffer": "one\n\ntwo\n\nthree",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_below_then_above_counted_visual_marks",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vl<Esc>2]<Space>3[<Space>",
+      "expect": {
+        "buffer": "one\n\n\n\ntwo\n\n\nthree",
+        "cursor": [
+          4,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            4,
+            1
+          ],
+          ">": [
+            4,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "space_after_operator_cancels",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "d[<Space>",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_after_operator_cancels",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "y]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "space_below_in_visual",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vj]<Space>",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "space_above_in_visual_line",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vk[<Space>",
+      "expect": {
+        "buffer": "one\ntwo\nthree",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          1,
+          1
+        ]
+      }
+    }
+  ]
+}

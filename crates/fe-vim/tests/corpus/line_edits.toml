@@ -1,0 +1,245 @@
+# Blank-line cases for fe-vim's oracle: nvim's default `[<Space>` and
+# `]<Space>` (`:help [<Space>`), which put [count] empty lines above or below
+# the cursor's row: plain and counted, at the first, last and only row and in
+# an empty buffer, the cursor's column kept, marks above, on and below the
+# row, `.` with and without a new count, `u` and `<C-r>`; the keys in a visual
+# mode (nvim maps them in normal mode only: `[` then `<Space>` beeps, so they
+# end the case) and after an operator (cancelled).
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in line_edits.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "space_below"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "]<Space>"
+
+[[case]]
+name = "space_above"
+buffer = "one\ntwo\nthree"
+cursor = [1, 2]
+keys = "[<Space>"
+
+[[case]]
+name = "space_below_count"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "3]<Space>"
+
+[[case]]
+name = "space_above_count"
+buffer = "one\ntwo\nthree"
+cursor = [1, 2]
+keys = "2[<Space>"
+
+[[case]]
+name = "space_above_first_row"
+buffer = "one\ntwo"
+cursor = [0, 2]
+keys = "[<Space>"
+
+[[case]]
+name = "space_below_first_row"
+buffer = "one\ntwo"
+cursor = [0, 0]
+keys = "2]<Space>"
+
+[[case]]
+name = "space_below_last_row"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "]<Space>"
+
+[[case]]
+name = "space_above_last_row"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "2[<Space>"
+
+[[case]]
+name = "space_below_only_row"
+buffer = "only"
+cursor = [0, 3]
+keys = "]<Space>"
+
+[[case]]
+name = "space_above_only_row"
+buffer = "only"
+cursor = [0, 3]
+keys = "3[<Space>"
+
+[[case]]
+name = "space_below_empty_buffer"
+buffer = ""
+cursor = [0, 0]
+keys = "]<Space>"
+
+[[case]]
+name = "space_above_empty_buffer"
+buffer = ""
+cursor = [0, 0]
+keys = "2[<Space>"
+
+[[case]]
+name = "space_above_moves_marks"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 1]
+keys = "majmbjmcjmdk[<Space>"
+
+[[case]]
+name = "space_below_moves_marks"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 1]
+keys = "majlmbjmcjmdkk2]<Space>"
+
+[[case]]
+name = "space_above_mark_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "ma[<Space>"
+
+[[case]]
+name = "space_below_mark_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "ma]<Space>"
+
+[[case]]
+name = "space_below_dot"
+buffer = "one\ntwo\nthree"
+cursor = [0, 0]
+keys = "2]<Space>G."
+
+[[case]]
+name = "space_above_dot_new_count"
+buffer = "one\ntwo\nthree"
+cursor = [2, 1]
+keys = "[<Space>gg3."
+
+[[case]]
+name = "space_below_undo"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "3]<Space>u"
+
+[[case]]
+name = "space_above_undo_redo"
+buffer = "one\ntwo\nthree"
+cursor = [1, 2]
+keys = "2[<Space>u<C-r>"
+
+[[case]]
+name = "space_above_undo"
+buffer = "one\ntwo\nthree"
+cursor = [1, 2]
+keys = "2[<Space>u"
+
+[[case]]
+name = "space_below_undo_redo"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "3]<Space>u<C-r>"
+
+[[case]]
+name = "space_below_undo_elsewhere"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "]<Space>Gu"
+
+[[case]]
+name = "space_above_undo_elsewhere"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "[<Space>Gu"
+
+[[case]]
+name = "space_above_redo_elsewhere"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "[<Space>uG<C-r>"
+
+[[case]]
+name = "space_below_redo_elsewhere"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "]<Space>uG<C-r>"
+
+[[case]]
+name = "space_below_multi_count_last_row_undo"
+buffer = "one\ntwo"
+cursor = [1, 2]
+keys = "2]<Space>u"
+
+[[case]]
+name = "space_then_visual_marks"
+buffer = "one\ntwo\nthree"
+cursor = [1, 0]
+keys = "Vj<Esc>gg]<Space>"
+
+[[case]]
+name = "space_below_visual_marks_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "V<Esc>]<Space>"
+
+[[case]]
+name = "space_below_count_visual_marks_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "V<Esc>3]<Space>"
+
+[[case]]
+name = "space_above_visual_marks_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "V<Esc>2[<Space>"
+
+[[case]]
+name = "space_below_visual_marks_on_last_empty_row"
+buffer = "one\ntwo"
+cursor = [1, 0]
+keys = "o<Esc>v<Esc>]<Space>"
+
+[[case]]
+name = "space_below_then_above_visual_marks_on_empty_row"
+buffer = "one\n\nthree"
+cursor = [1, 0]
+keys = "V<Esc>]<Space>[<Space>"
+
+[[case]]
+name = "space_below_then_above_visual_marks"
+buffer = "one\ntwo\nthree"
+cursor = [1, 0]
+keys = "V<Esc>]<Space>[<Space>"
+
+[[case]]
+name = "space_below_then_above_counted_visual_marks"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "vl<Esc>2]<Space>3[<Space>"
+
+[[case]]
+name = "space_after_operator_cancels"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "d[<Space>"
+
+[[case]]
+name = "space_below_after_operator_cancels"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "y]<Space>"
+
+[[case]]
+name = "space_below_in_visual"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "vj]<Space>"
+
+[[case]]
+name = "space_above_in_visual_line"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "Vk[<Space>"

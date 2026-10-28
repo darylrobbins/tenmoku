@@ -149,6 +149,8 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
             (ch('c'), "previous change"),
             (ch('p'), "put before, indented"),
             (ch('P'), "put before, indented"),
+            (ch(' '), "blank line above"),
+            (ch('e'), "move line up"),
         ],
     },
     BuiltinKeys {
@@ -163,6 +165,8 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
             (ch('c'), "next change"),
             (ch('p'), "put after, indented"),
             (ch('P'), "put before, indented"),
+            (ch(' '), "blank line below"),
+            (ch('e'), "move line down"),
         ],
     },
 ];
