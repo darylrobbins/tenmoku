@@ -436,6 +436,62 @@ fn an_ask_without_a_server_cancels_a_delayed_prepare(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn toggling_while_the_prepare_is_pending_keeps_it_in_the_new_direction(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    let x = item(&s, "x", 2);
+    reply(&s, OUTGOING, json!([call("to", x, &[range(0, 3, 4)])]));
+    let a = item(&s, "a", 0);
+    s.fake.set_reply(
+        PREPARE,
+        Scripted {
+            reply: Reply::Result(json!([a])),
+            delay: Duration::from_millis(500),
+        },
+    );
+    s.run("nav.show_call_hierarchy");
+    s.run("hierarchy.toggle_direction");
+    let panel = panel(&s);
+    assert_eq!(
+        panel.read_with(&s.cx, |panel, _| panel.mode()),
+        Mode::Outgoing
+    );
+    // The prepare is asked again, and lands once, in the new direction.
+    s.until("outgoing rows", |s| {
+        tick(s, Duration::from_millis(250));
+        texts(s) == ["a", "  x"]
+    });
+    assert_eq!(requests(&s, PREPARE).len(), 2);
+    assert_eq!(asked_about(&s, OUTGOING), ["a"]);
+    assert!(requests(&s, INCOMING).is_empty());
+    assert!(toasts(&s).is_empty());
+}
+
+#[gpui::test]
+fn an_unopened_target_is_positioned_in_its_decoded_text(cx: &mut TestAppContext) {
+    let mut s = setup(cx, true);
+    // Latin-1: not valid UTF-8, and its first line's `\xe9` is two bytes once
+    // decoded, so the call site's offset differs from the file's.
+    std::fs::write(s.path("src/y.rs"), b"// \xe9\nfn y() { a(); }\n").unwrap();
+    let mut y = item(&s, "y", 1);
+    y["uri"] = json!(s.uri("src/y.rs").to_string());
+    reply(&s, INCOMING, json!([call("from", y, &[range(1, 9, 10)])]));
+    show(&mut s, 2);
+    s.cx.simulate_keystrokes("down enter");
+    s.draw();
+    s.until("y.rs shown at the call", y_is_shown);
+    let editor = (s.workbench).read_with(&s.cx, |w, cx| w.active_editor(cx).cloned());
+    let text = editor.unwrap().read_with(&s.cx, |view, _| {
+        let model = view.model();
+        let at = model.primary_selection().range;
+        (model.text().to_string(), at)
+    });
+    let start = text.0.find("fn y").unwrap() + 9;
+    assert_eq!(text.1, start..start + 1);
+    assert_eq!(&text.0[text.1], "a");
+    assert!(toasts(&s).is_empty());
+}
+
+#[gpui::test]
 fn right_stays_on_a_node_with_no_calls_to_enter(cx: &mut TestAppContext) {
     let mut s = setup(cx, true);
     let (b, c) = (item(&s, "b", 1), item(&s, "c", 2));
