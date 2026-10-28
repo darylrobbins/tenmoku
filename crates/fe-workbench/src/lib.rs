@@ -31,6 +31,7 @@ mod find_commands;
 mod git;
 mod git_panel;
 mod go_to_line;
+mod inline_edit;
 mod language_picker;
 pub mod loader;
 mod lsp;

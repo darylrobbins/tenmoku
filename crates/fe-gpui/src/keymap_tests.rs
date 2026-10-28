@@ -383,6 +383,8 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "editor || find_bar"
                         | "vim_line"
                         | "vim_line && text_input"
+                        | "inline_edit"
+                        | "inline_edit && text_input"
                         | "project_panel"
                         | "ReferencesPanel"
                         | "ReferencesPanel && vim"
@@ -419,6 +421,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
             || command.starts_with("lsp.")
             || command.starts_with("git.")
             || command.starts_with("ai.changes_")
+            || command == "ai.inline_edit"
             || command.starts_with("markdown.")
     };
     for binding in bindings

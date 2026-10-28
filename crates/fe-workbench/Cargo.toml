@@ -54,9 +54,10 @@ serde.workspace = true
 # The hash of a script an extension's language server runs.
 sha2 = "0.10"
 toml.workspace = true
+# Reads inline edit's stream of updates.
+futures.workspace = true
 
 [dev-dependencies]
-futures.workspace = true
 # Card 1's fake server and its launcher, and the LSP types it speaks.
 fe-lsp = { workspace = true, features = ["test-support"] }
 lsp-types.workspace = true

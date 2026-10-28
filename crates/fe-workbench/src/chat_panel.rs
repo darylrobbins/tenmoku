@@ -366,6 +366,8 @@ pub(crate) struct ChatPanel {
     grants: Grants,
     /// The key in use and where it came from.
     key: Option<(KeyOrigin, ApiKey)>,
+    /// The provider the key makes, which the view and inline edits use.
+    current: Option<Arc<dyn ChatProvider>>,
     /// The keychain read under way: dropping it drops its answer.
     reading: Option<Task<()>>,
     /// Whether the first-run notice shows, in a chat started now.
@@ -523,6 +525,7 @@ impl ChatPanel {
             options,
             grants: chat_grants(),
             key: None,
+            current: None,
             reading: None,
             notice,
             watched: None,
@@ -1586,6 +1589,7 @@ impl ChatPanel {
     /// Gives the view the key's provider, or none.
     fn apply_key(&mut self, cx: &mut Context<Self>) {
         let provider = (self.key.as_ref()).map(|(_, key)| self.provider(key, cx));
+        self.current = provider.clone();
         self.view
             .update(cx, |view, cx| view.set_provider(provider, cx));
     }
@@ -1968,6 +1972,24 @@ fn track_workbench(workbench: &Workbench, cx: &mut App) {
         root,
     };
     Worker::of(cx).track(&target, trusted);
+}
+
+/// The chat's provider and settings for the window's `workbench`, the same
+/// Claude client and key the chat uses; `None` without a key. The key is
+/// read first if the chat never drew, which an environment key answers at
+/// once and the keychain's does a moment later.
+pub(crate) fn provider(
+    workbench: &Workbench,
+    cx: &mut App,
+) -> Option<(Arc<dyn ChatProvider>, ChatSettings)> {
+    let panel = workbench.dock().read(cx).chat().cloned()?;
+    panel.update(cx, |panel, cx| {
+        if !panel.key_read {
+            panel.reload_key(cx);
+        }
+    });
+    let provider = panel.read(cx).current.clone()?;
+    Some((provider, new_chat_settings(cx).0))
 }
 
 /// Runs `chat.open`, `chat.set_api_key` and `chat.clear_api_key` in the

@@ -493,6 +493,7 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "find.next",
     "find.previous",
     "find.show",
+    "ai.inline_edit",
     "lsp.code_actions",
     "lsp.format_document",
     "lsp.format_selection",

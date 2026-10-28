@@ -1072,6 +1072,28 @@ impl Workbench {
         self.in_editor(cx, |this, window, cx| this.rename_symbol(window, cx));
     }
 
+    /// Inline Edit with AI
+    #[command(id = "ai.inline_edit", context = "editor")]
+    fn inline_edit_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_editor(cx, |this, window, cx| this.inline_edit(window, cx));
+    }
+
+    /// Send Inline Edit
+    #[command(id = "inline_edit.submit", context = "inline_edit", palette = false)]
+    fn inline_edit_submit_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::inline_edit::KEY_CONTEXT, cx, |this, window, cx| {
+            this.inline_edit_submit(window, cx)
+        });
+    }
+
+    /// Cancel Inline Edit
+    #[command(id = "inline_edit.cancel", context = "inline_edit", palette = false)]
+    fn inline_edit_cancel_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(crate::inline_edit::KEY_CONTEXT, cx, |this, window, cx| {
+            this.inline_edit_cancel(window, cx)
+        });
+    }
+
     /// Code Actions…
     #[command(id = "lsp.code_actions", context = "editor")]
     fn code_actions(&mut self, cx: &mut Cx<Self>) {

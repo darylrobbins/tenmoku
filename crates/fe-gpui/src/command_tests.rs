@@ -77,6 +77,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                         | "editor || find_bar"
                         | "vim_line"
                         | "vim_line && text_input"
+                        | "inline_edit"
+                        | "inline_edit && text_input"
                         | "project_panel"
                         | "ReferencesPanel"
                         | "ReferencesPanel && vim"

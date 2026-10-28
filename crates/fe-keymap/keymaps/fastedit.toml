@@ -2540,3 +2540,22 @@ context = "ImageViewer"
 keys = "secondary-1"
 command = "image.zoom_actual"
 context = "ImageViewer"
+
+# Inline Edit with AI: an input under the selection. Off macOS ctrl-i is
+# vim's <C-i> (jump forward) in its other modes, so it's bound as the other
+# editing keys are, in insert and replace mode.
+[[bindings]]
+keys = "secondary-i"
+command = "ai.inline_edit"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+# The input's own keys, deeper than the editor's.
+[[bindings]]
+keys = "enter"
+command = "inline_edit.submit"
+context = "inline_edit && text_input"
+
+[[bindings]]
+keys = "escape"
+command = "inline_edit.cancel"
+context = "inline_edit"
