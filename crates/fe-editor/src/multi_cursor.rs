@@ -131,8 +131,9 @@ impl EditorModel {
 
     /// With a caret, selects the word around each caret (one on whitespace
     /// stays a caret). Otherwise adds the next match of the primary
-    /// selection's text after the bottommost selection, wrapping once, that
-    /// overlaps no selection; whole words only if the primary is a word.
+    /// selection's text after it, wrapping once, that overlaps no
+    /// selection, and makes the match the primary selection; whole words
+    /// only if the primary is a word.
     pub fn select_next_occurrence(&mut self) {
         self.sync_display();
         if self.seed_carets() {
@@ -144,7 +145,7 @@ impl EditorModel {
         let selections = self.selections();
         let text = self.text();
         let n = needle.len();
-        let from = selections.last().expect("one selection").range.end;
+        let from = self.primary_selection().range.end;
         let first_in = |range: Range<usize>| {
             let mut found = None;
             each_match(text, needle.as_bytes(), range, |offset| {
@@ -171,7 +172,7 @@ impl EditorModel {
             range: offset..offset + n,
             reversed: false,
         });
-        self.set_selections(added);
+        self.set_selections_with_primary(added, offset..offset + n);
     }
 
     /// Seeds carets as [`EditorModel::select_next_occurrence`] does, then
@@ -206,7 +207,8 @@ impl EditorModel {
     }
 
     /// Turns each caret into a selection of the word around it, unless it's
-    /// on whitespace. Returns whether there was a caret.
+    /// on whitespace, keeping the primary selection's place. Returns whether
+    /// there was a caret.
     pub(crate) fn seed_carets(&mut self) -> bool {
         let selections = self.selections();
         if !selections
@@ -238,7 +240,13 @@ impl EditorModel {
                 }
             })
             .collect();
-        self.set_selections(seeded);
+        match self.selections.primary_index_in(&self.snapshot) {
+            Some(ix) => {
+                let primary = seeded[ix].range.clone();
+                self.set_selections_with_primary(seeded, primary);
+            }
+            None => self.set_selections(seeded),
+        }
         true
     }
 

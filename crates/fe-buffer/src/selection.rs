@@ -38,10 +38,14 @@ impl ResolvedSelection {
     }
 }
 
-/// One or more selections, kept sorted and non-overlapping.
+/// One or more selections, kept sorted and non-overlapping, with the
+/// primary one: a tracked one, or the last.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionSet {
     selections: Vec<Selection>,
+    /// The tracked primary's index in `selections`; `None` makes the last
+    /// one primary.
+    primary: Option<usize>,
 }
 
 impl SelectionSet {
@@ -63,6 +67,24 @@ impl SelectionSet {
         snapshot: &BufferSnapshot,
         selections: impl IntoIterator<Item = ResolvedSelection>,
     ) -> Self {
+        Self::build(snapshot, selections, None)
+    }
+
+    /// [`SelectionSet::from_resolved`], tracking the `primary`th of
+    /// `selections` as the primary one, or the one it merges into.
+    pub fn from_resolved_with_primary(
+        snapshot: &BufferSnapshot,
+        selections: impl IntoIterator<Item = ResolvedSelection>,
+        primary: usize,
+    ) -> Self {
+        Self::build(snapshot, selections, Some(primary))
+    }
+
+    fn build(
+        snapshot: &BufferSnapshot,
+        selections: impl IntoIterator<Item = ResolvedSelection>,
+        primary: Option<usize>,
+    ) -> Self {
         let text = snapshot.text();
         let clipped = selections
             .into_iter()
@@ -79,7 +101,8 @@ impl SelectionSet {
                 ResolvedSelection { range, ..selection }
             })
             .collect();
-        let selections = merge(clipped)
+        let (merged, primary) = merge_tracking(clipped, primary);
+        let selections = merged
             .into_iter()
             .map(|selection| {
                 let range = selection.range;
@@ -99,7 +122,10 @@ impl SelectionSet {
                 }
             })
             .collect();
-        Self { selections }
+        Self {
+            selections,
+            primary,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -116,7 +142,31 @@ impl SelectionSet {
 
     /// The selections in `snapshot`, sorted, with any that edits made overlap merged.
     pub fn resolve(&self, snapshot: &BufferSnapshot) -> Vec<ResolvedSelection> {
-        merge(
+        self.resolve_tracking(snapshot).0
+    }
+
+    /// The primary selection in `snapshot`: the tracked one (or the one it
+    /// merged into), else the last. `None` with no selections.
+    pub fn primary_in(&self, snapshot: &BufferSnapshot) -> Option<ResolvedSelection> {
+        let (mut selections, primary) = self.resolve_tracking(snapshot);
+        match primary {
+            Some(ix) => Some(selections.swap_remove(ix)),
+            None => selections.pop(),
+        }
+    }
+
+    /// The tracked primary's index in [`SelectionSet::resolve`]'s
+    /// selections; `None` if the last is primary for want of one.
+    pub fn primary_index_in(&self, snapshot: &BufferSnapshot) -> Option<usize> {
+        self.primary?;
+        self.resolve_tracking(snapshot).1
+    }
+
+    fn resolve_tracking(
+        &self,
+        snapshot: &BufferSnapshot,
+    ) -> (Vec<ResolvedSelection>, Option<usize>) {
+        merge_tracking(
             self.selections
                 .iter()
                 .map(|selection| ResolvedSelection {
@@ -124,28 +174,44 @@ impl SelectionSet {
                     reversed: selection.reversed,
                 })
                 .collect(),
+            self.primary,
         )
     }
 
     /// Rebases the anchors onto `snapshot` so later resolves are cheap.
     pub fn refresh(&mut self, snapshot: &BufferSnapshot) {
-        *self = Self::from_resolved(snapshot, self.resolve(snapshot));
+        let (selections, primary) = self.resolve_tracking(snapshot);
+        *self = Self::build(snapshot, selections, primary);
     }
 }
 
-fn merge(mut selections: Vec<ResolvedSelection>) -> Vec<ResolvedSelection> {
-    selections.sort_by_key(|selection| (selection.range.start, selection.range.end));
-    let mut merged: Vec<ResolvedSelection> = Vec::with_capacity(selections.len());
-    for selection in selections {
+/// Sorts `selections` and merges overlapping ones, with where the
+/// `primary`th of them ends up.
+fn merge_tracking(
+    selections: Vec<ResolvedSelection>,
+    primary: Option<usize>,
+) -> (Vec<ResolvedSelection>, Option<usize>) {
+    let mut indexed: Vec<_> = selections.into_iter().enumerate().collect();
+    indexed.sort_by_key(|(_, selection)| (selection.range.start, selection.range.end));
+    let mut merged: Vec<ResolvedSelection> = Vec::with_capacity(indexed.len());
+    let mut merged_primary = None;
+    for (ix, selection) in indexed {
+        let is_primary = primary == Some(ix);
         if let Some(last) = merged.last_mut() {
             let overlaps = selection.range.start < last.range.end;
             let same_caret = selection.range == last.range;
             if overlaps || same_caret {
                 last.range.end = last.range.end.max(selection.range.end);
+                if is_primary {
+                    merged_primary = Some(merged.len() - 1);
+                }
                 continue;
             }
         }
         merged.push(selection);
+        if is_primary {
+            merged_primary = Some(merged.len() - 1);
+        }
     }
-    merged
+    (merged, merged_primary)
 }

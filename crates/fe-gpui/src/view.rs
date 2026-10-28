@@ -1964,6 +1964,9 @@ mod completion_tests;
 mod multi_cursor_tests;
 
 #[cfg(test)]
+mod primary_reveal_tests;
+
+#[cfg(test)]
 mod diff_seams_tests;
 
 #[cfg(test)]

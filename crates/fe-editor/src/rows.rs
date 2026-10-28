@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::{Bias, ResolvedSelection, SelectionSet, Text};
+use fe_buffer::{Bias, ResolvedSelection, Text};
 use fe_command::{Effect, Registry};
 
 use crate::{
@@ -379,7 +379,7 @@ impl EditorModel {
                 transactions.push(id);
             }
             let snapshot = buffer.snapshot();
-            let selections = SelectionSet::from_resolved(&snapshot, selections);
+            let selections = self.carry_primary(&snapshot, selections);
             // Before catching up, which may make a newer edit elsewhere.
             self.note_edit(&selections);
             self.sync_snippet_mirrors(&mut buffer, Some(id));

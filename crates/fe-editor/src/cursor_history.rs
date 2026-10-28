@@ -69,7 +69,10 @@ impl EditorModel {
         }
         let old = self.selections();
         let new_resolved = new.resolve(&self.snapshot);
-        if old == new_resolved {
+        // The same selections with another primary are a change.
+        if old == new_resolved
+            && self.selections.primary_in(&self.snapshot) == new.primary_in(&self.snapshot)
+        {
             self.cursor_history.coalesce = false;
             return;
         }
@@ -126,7 +129,16 @@ impl EditorModel {
                     reversed: selection.reversed,
                 })
                 .collect();
-            if target == current {
+            // `target` is `set` resolved, so the primary's index holds.
+            let next = match set.primary_index_in(&self.snapshot) {
+                Some(ix) => {
+                    SelectionSet::from_resolved_with_primary(&self.snapshot, target.clone(), ix)
+                }
+                None => SelectionSet::from_resolved(&self.snapshot, target.clone()),
+            };
+            if target == current
+                && next.primary_in(&self.snapshot) == self.selections.primary_in(&self.snapshot)
+            {
                 continue;
             }
             let from = self.selections.clone();
@@ -140,7 +152,7 @@ impl EditorModel {
             self.end_typing();
             self.goals.clear();
             self.column_box = None;
-            self.selections = SelectionSet::from_resolved(&self.snapshot, target);
+            self.selections = next;
             self.forget_auto_closed();
             self.follow_snippet();
             return;

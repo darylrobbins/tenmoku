@@ -816,12 +816,16 @@ impl EditorModel {
         self.selections.resolve(&self.snapshot)
     }
 
-    /// The selection that scrolling follows: the last one.
+    /// The selection that scrolling follows: the one Select Next Occurrence
+    /// or Move Last Selection to Next Find Match last added or moved, while
+    /// no other change replaces the selections; otherwise the last one.
     pub fn primary_selection(&self) -> ResolvedSelection {
-        self.selections().pop().unwrap_or(ResolvedSelection {
-            range: 0..0,
-            reversed: false,
-        })
+        self.selections
+            .primary_in(&self.snapshot)
+            .unwrap_or(ResolvedSelection {
+                range: 0..0,
+                reversed: false,
+            })
     }
 
     pub fn expanded_row(&self, row: u32) -> ExpandedRow {
@@ -832,10 +836,32 @@ impl EditorModel {
     /// They're sorted and overlapping ones merged.
     /// Ends any run of typing, even if they're where they were.
     pub fn set_selections(&mut self, selections: impl IntoIterator<Item = ResolvedSelection>) {
+        let selections = SelectionSet::from_resolved(&self.snapshot, selections);
+        self.replace_selections(selections);
+    }
+
+    /// [`EditorModel::set_selections`], making the one at `primary` (or
+    /// the one it merges into) the primary selection.
+    pub(crate) fn set_selections_with_primary(
+        &mut self,
+        selections: impl IntoIterator<Item = ResolvedSelection>,
+        primary: Range<usize>,
+    ) {
+        let selections: Vec<_> = selections.into_iter().collect();
+        let set = match selections
+            .iter()
+            .position(|selection| selection.range == primary)
+        {
+            Some(ix) => SelectionSet::from_resolved_with_primary(&self.snapshot, selections, ix),
+            None => SelectionSet::from_resolved(&self.snapshot, selections),
+        };
+        self.replace_selections(set);
+    }
+
+    fn replace_selections(&mut self, selections: SelectionSet) {
         self.end_typing();
         self.goals.clear();
         self.column_box = None;
-        let selections = SelectionSet::from_resolved(&self.snapshot, selections);
         self.record_cursor_history(&selections);
         self.selections = selections;
         self.forget_auto_closed();
@@ -1516,7 +1542,7 @@ impl EditorModel {
                 transactions.push(id);
             }
             let snapshot = buffer.snapshot();
-            let selections = SelectionSet::from_resolved(&snapshot, selections);
+            let selections = self.carry_primary(&snapshot, selections);
             // Before catching up, which may make a newer edit elsewhere.
             if id.is_some() {
                 self.note_edit(&selections);
@@ -1532,6 +1558,40 @@ impl EditorModel {
         self.forget_auto_closed();
         self.follow_snippet();
         (snapshot, id)
+    }
+}
+
+impl EditorModel {
+    /// Anchors `selections`, the ones an edit leaves, in `snapshot`. A
+    /// tracked primary selection stays primary: by its place if there is one
+    /// of them per selection, in order, as there is for typing; otherwise
+    /// (edits merged) the first of them touching where its anchors went.
+    pub(crate) fn carry_primary(
+        &self,
+        snapshot: &BufferSnapshot,
+        selections: Vec<ResolvedSelection>,
+    ) -> SelectionSet {
+        let primary = self
+            .selections
+            .primary_index_in(&self.snapshot)
+            .and_then(|ix| {
+                if self.selections().len() == selections.len() {
+                    return Some(ix);
+                }
+                let moved = self.selections.primary_in(snapshot)?.range;
+                selections
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, selection)| {
+                        selection.range.start <= moved.end && moved.start <= selection.range.end
+                    })
+                    .min_by_key(|(_, selection)| selection.range.start)
+                    .map(|(ix, _)| ix)
+            });
+        match primary {
+            Some(ix) => SelectionSet::from_resolved_with_primary(snapshot, selections, ix),
+            None => SelectionSet::from_resolved(snapshot, selections),
+        }
     }
 }
 
@@ -2158,3 +2218,7 @@ impl CharClass {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "primary_identity_tests.rs"]
+mod primary_identity_tests;

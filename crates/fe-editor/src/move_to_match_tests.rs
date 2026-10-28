@@ -50,11 +50,11 @@ fn empty_selection_uses_the_word() {
 fn wraps_and_skips() {
     let model = dispatch("foo bar [foo]");
     assert_eq!(render(&model), "[foo] bar foo");
-    // Landing above a retained selection, it is not the primary (the
-    // bottommost, which the view follows): the documented limit.
+    // Landing above a retained selection, it is still the primary, which
+    // the view follows.
     let model = dispatch("foo [bar] [foo]");
     assert_eq!(render(&model), "[foo] [bar] foo");
-    assert_eq!(model.primary_selection().range, 4..7);
+    assert_eq!(model.primary_selection().range, 0..3);
     // A match another caret holds is skipped.
     let model = dispatch("[foo] foo [foo] foo");
     assert_eq!(render(&model), "[foo] foo foo [foo]");

@@ -34,10 +34,10 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 
 impl EditorModel {
     /// With a caret as the primary selection, selects the word around each
-    /// caret. Otherwise replaces the primary selection with the next match of its text after it,
-    /// wrapping once, that overlaps no selection; whole words only if it is
-    /// one. Nothing if there is no such match, or the text is over
-    /// [`MAX_WORD_BYTES`].
+    /// caret. Otherwise replaces the primary selection with the next match
+    /// of its text after it, wrapping once, that overlaps no selection, and
+    /// makes the match primary; whole words only if it is one. Nothing if
+    /// there is no such match, or the text is over [`MAX_WORD_BYTES`].
     pub fn move_last_selection_to_next_find_match(&mut self) {
         self.sync_display();
         let primary = self.primary_selection();
@@ -58,7 +58,7 @@ impl EditorModel {
         let n = needle.len();
         let selections = self.selections();
         let text = self.text();
-        let from = selections.last().expect("one selection").range.end;
+        let from = primary.range.end;
         let first_in = |range: Range<usize>| {
             let mut found = None;
             each_match(text, needle.as_bytes(), range, |offset| {
@@ -79,12 +79,12 @@ impl EditorModel {
             return;
         };
         let mut moved = selections;
-        moved.pop();
+        moved.retain(|selection| selection.range != primary.range);
         moved.push(ResolvedSelection {
             range: offset..offset + n,
             reversed: false,
         });
-        self.set_selections(moved);
+        self.set_selections_with_primary(moved, offset..offset + n);
     }
 }
 
