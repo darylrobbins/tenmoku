@@ -114,8 +114,9 @@ pub struct Registers {
     search_history: VecDeque<(String, char)>,
     /// The ex lines submitted, oldest first, each with `:`.
     ex_history: VecDeque<(String, char)>,
-    /// The last pattern a running ex line set, for the search history.
-    pending_pattern: Option<String>,
+    /// The last search entry (text and delimiter) a running ex line set or
+    /// submitted, for the search history.
+    pending_pattern: Option<(String, char)>,
     /// How many ex lines are running (`:normal` nests them).
     ex_depth: u32,
 }
@@ -401,16 +402,22 @@ impl Registers {
         if pattern.is_empty() {
             return;
         }
-        self.pending_pattern = Some(pattern.to_owned());
+        self.pending_pattern = Some((pattern.to_owned(), NO_DELIMITER));
         if self.ex_depth == 0 {
             self.flush_pattern();
         }
     }
 
-    /// A search line submitted inside an ex line (`:normal`): the pattern it
-    /// sets replaces any the line set before.
-    pub(crate) fn drop_pending_pattern(&mut self) {
-        self.pending_pattern = None;
+    /// Adds a search line submitted on a command line of `kind`
+    /// ([`Registers::add_history`]); inside an ex line (`:normal`) it waits
+    /// for the line to end, replacing any entry the line set before, and an
+    /// empty one leaves that entry be.
+    pub(crate) fn submit_search(&mut self, kind: CommandLineKind, text: &str) {
+        if self.ex_depth == 0 {
+            self.add_history(kind, text);
+        } else if !text.is_empty() {
+            self.pending_pattern = Some((text.to_owned(), delimiter(kind)));
+        }
     }
 
     /// An ex line starts running: patterns it sets are noted until it ends.
@@ -428,8 +435,8 @@ impl Registers {
     }
 
     fn flush_pattern(&mut self) {
-        if let Some(pattern) = self.pending_pattern.take() {
-            self.add_entry(CommandLineKind::SearchForward, &pattern, NO_DELIMITER);
+        if let Some((pattern, typed)) = self.pending_pattern.take() {
+            self.add_entry(CommandLineKind::SearchForward, &pattern, typed);
         }
     }
 

@@ -213,3 +213,26 @@ fn star_global_and_address_patterns_go_into_the_search_history() {
     );
     assert_eq!(history(vim.registers(), Ex), ["g/bar/s/o/0/", "/zzz/d"]);
 }
+
+#[test]
+fn searches_submitted_inside_an_ex_line_wait_for_it_to_end() {
+    for ex in [":g/foo/normal @a<CR>", ":/foo/normal @a<CR>"] {
+        // Register `a` holds two searches (the second typed on `?`), then an
+        // empty one, which adds nothing and doesn't clear the second.
+        let mut vim = HeadlessVim::new("zed zip\nfoo", (0, 0));
+        vim.feed("qa/zed<CR>?zip<CR>/<CR>q/new<CR>j0").unwrap();
+        assert_eq!(
+            history(vim.registers(), SearchForward),
+            ["zed", "zip", "new"]
+        );
+        vim.feed(ex).unwrap();
+        // Only the second is added again, the newest.
+        let searches = history(vim.registers(), SearchForward);
+        assert_eq!(searches, ["zed", "new", "zip"], "{ex}");
+        assert_eq!(
+            recalls(vim.registers(), SearchBackward, ""),
+            ["zip", "new", "zed"],
+            "{ex}"
+        );
+    }
+}

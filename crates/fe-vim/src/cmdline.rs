@@ -249,13 +249,13 @@ pub(crate) fn submit(
     args: SubmitArgs,
 ) -> Handled {
     let line = close(target.state)?;
-    target.registers.add_history(line.args.kind, &args.text);
     match line.args.kind {
         CommandLineKind::SearchForward | CommandLineKind::SearchBackward => {
-            target.registers.drop_pending_pattern();
+            target.registers.submit_search(line.args.kind, &args.text);
             search(target, actor, line.args, &args.text)
         }
         CommandLineKind::Ex => {
+            target.registers.add_history(line.args.kind, &args.text);
             target.state.macros.command_line(&args.text);
             target.registers.enter_ex();
             let handled = ex::run(target, actor, &args.text);
