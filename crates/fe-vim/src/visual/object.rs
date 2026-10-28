@@ -309,7 +309,13 @@ pub(crate) fn select_object(
         cursor,
         goal: None,
     };
+    let single = selected.anchor == selected.cursor;
     select(model, state, selected);
+    // A one-char object is a selection that took no more than a cursor does:
+    // the next seek object must still know an object made it.
+    if single {
+        state.set_visual_by_object();
+    }
     state.failed |= ran_out;
     effect(true)
 }
@@ -332,7 +338,13 @@ fn select_seek(
                 text_object: plain,
                 count: Some(count),
             };
-            return select_object(target, args);
+            let selected = select_object(target, args);
+            // The plain object clears the marker; a seek object's selection
+            // is one an object made, whichever way it was reached.
+            if selected.is_ok() && !target.state.failed {
+                target.state.set_visual_by_object();
+            }
+            return selected;
         }
     };
     let VimTarget { model, state, .. } = target;

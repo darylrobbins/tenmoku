@@ -251,7 +251,34 @@ fn seek_repeat_and_visual() {
     );
     assert_eq!(selected(ones, (0, 10), "vil(il("), "b");
     assert_eq!(selected(ones, (0, 0), "vin(an("), "(a)");
+    // A third, and mixed with plain objects, grow as the plain one does.
+    for keys in ["vin(in(in(", "vin(i(in(", "vin(in(i(", "vin(i(i("] {
+        assert_eq!(
+            selected(ones, (0, 0), keys),
+            selected(ones, (0, 0), "vin(i(i("),
+            "{keys}"
+        );
+    }
+    for keys in ["vil(il(il(", "vil(i(il(", "vil(il(i("] {
+        assert_eq!(
+            selected(ones, (0, 10), keys),
+            selected(ones, (0, 10), "vil(i(i("),
+            "{keys}"
+        );
+    }
     let quoted = r#"x "a" "b" y"#;
+    for keys in ["vin\"in\"in\"", "vin\"i\"in\"", "vin\"in\"i\""] {
+        assert_eq!(
+            selected(quoted, (0, 0), keys),
+            selected(quoted, (0, 0), "vin\"i\"i\""),
+            "{keys}"
+        );
+    }
+    let wide = "x (é) (b) y";
+    assert_eq!(
+        selected(wide, (0, 0), "vin(in(in("),
+        selected(wide, (0, 0), "vin(i(i(")
+    );
     assert_eq!(selected(quoted, (0, 0), "vin\"in\""), "a");
     assert_eq!(selected(quoted, (0, 10), "vil\"il\""), "b");
     assert_eq!(selected("x (é) (b) y", (0, 0), "vin(in("), "é");
