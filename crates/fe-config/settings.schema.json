@@ -226,9 +226,9 @@
         },
         "links": {
           "default": true,
+          "description": "Underline language servers' links (URLs and file paths) under the\npointer while cmd (ctrl off macOS) is held, and open them on\ncmd-click.",
           "type": "boolean"
         },
-          "description": "Underline language servers' links (URLs and file paths) under the\npointer while cmd (ctrl off macOS) is held, and open them on\ncmd-click.",
         "minimap": {
           "$ref": "#/$defs/MinimapSettings",
           "default": {

@@ -62,9 +62,14 @@ fn the_go_menu_names_it_after_go_to_implementations() {
     let ids: Vec<_> = (bar.menu("Go").unwrap().items.iter())
         .map(|item| item.id().unwrap_or("-").to_owned())
         .collect();
-    let at = ids.iter().position(|id| id == "nav.goto_implementation");
-    assert_eq!(
-        at.map(|at| ids[at + 1].as_str()),
-        Some("nav.show_call_hierarchy")
+    let at = |command: &str| ids.iter().position(|id| id == command);
+    // Peek References sits between them on the Mac (T1150).
+    let implementation = at("nav.goto_implementation").expect("Go to Implementations");
+    let call_hierarchy = at("nav.show_call_hierarchy").expect("Show Call Hierarchy");
+    assert!(
+        ids[implementation + 1..call_hierarchy]
+            .iter()
+            .all(|id| id == "editor.peek_references"),
+        "{ids:?}"
     );
 }
