@@ -381,7 +381,7 @@ fn opened_saved_closed_are_never_merged_and_stay_ordered() {
 
 #[test]
 fn a_full_queue_drops_the_oldest_and_reports_lagged() {
-    let limits = Limits::default();
+    let limits = limits();
     assert_eq!(limits.event_queue, 256);
 
     // The first to go is the oldest that coalescing could have absorbed: the change, not the
