@@ -374,6 +374,18 @@ struct Vim {
     register_blur: Option<gpui::Subscription>,
 }
 
+/// What the `c` maps make of keys typed on the command line
+/// ([`EditorView::remap_line_key`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LineKeys {
+    /// The keys to type now, in order, each with whether a map's right
+    /// side made it.
+    pub typed: Vec<(VimKey, bool)>,
+    /// The keys after one that ends the line, or a `<Cmd>`: the editor's to
+    /// feed ([`EditorView::replay_line_rest`]) once the line is over.
+    pub rest: Vec<VimKey>,
+}
+
 /// A map's replay, suspended while the host runs the file or window command
 /// the map left: the keys after it, and what the loop held.
 struct HostWait {
@@ -1678,11 +1690,36 @@ impl EditorView {
     /// or `<BS>` on an empty line). Typed after the line's prefill, which a
     /// replay starts it with too: any of that taken out as `<BS>`s first.
     /// The host's line calls it just before it submits or cancels.
+    ///
+    /// A line that took keys through the `c` maps ([`EditorView::remap_line_key`])
+    /// has recorded them as typed, not as they expanded. What they typed
+    /// there is the line a replay builds too, so only the difference to
+    /// `text` is recorded (edits the maps never saw, a `<BS>`, a paste),
+    /// then `end`, but for one a map's right side typed.
     pub fn record_command_line(&mut self, text: &str, end: VimKey) {
+        let echo = self.vim_line_echo.take();
+        let expanded = std::mem::take(&mut self.vim_line_end_expanded);
         let Some(state) = &self.vim else {
             return;
         };
         if !matches!(state.mode(), fe_vim::Mode::CmdLine(_)) {
+            return;
+        }
+        if let Some(echo) = echo {
+            let kept = echo
+                .chars()
+                .zip(text.chars())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let taken = echo.chars().count() - kept;
+            let typed: Vec<VimKey> = (0..taken)
+                .map(|_| VimKey::Backspace)
+                .chain(text.chars().skip(kept).map(VimKey::Char))
+                .chain((!expanded).then_some(end))
+                .collect();
+            for key in typed {
+                self.record_vim_key(key);
+            }
             return;
         }
         let prefill = state.command_line_prefill();
@@ -1700,6 +1737,144 @@ impl EditorView {
         for key in typed {
             self.record_vim_key(key);
         }
+    }
+
+    /// The line's text changed to `text` by an edit the `c` maps never saw
+    /// (a `<BS>`, a paste): recorded now, as typed, so it comes before the
+    /// keys the maps see next. Only once a line goes through the maps; until
+    /// then [`EditorView::record_command_line`] records the line whole.
+    pub fn sync_line_text(&mut self, text: &str) {
+        let Some(state) = &self.vim else {
+            return;
+        };
+        if !matches!(state.mode(), fe_vim::Mode::CmdLine(_))
+            || !(self.vim_line_echo.is_some()
+                || state.remap_waiting()
+                || !state.remaps().is_empty())
+        {
+            return;
+        }
+        let echo = self
+            .vim_line_echo
+            .get_or_insert_with(|| state.command_line_prefill().to_owned());
+        let kept = echo
+            .chars()
+            .zip(text.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let taken = echo.chars().count() - kept;
+        let typed: Vec<VimKey> = (0..taken)
+            .map(|_| VimKey::Backspace)
+            .chain(text.chars().skip(kept).map(VimKey::Char))
+            .collect();
+        *echo = text.to_owned();
+        for key in typed {
+            self.record_vim_key(key);
+        }
+    }
+
+    /// A new command line opens: what the last one took through the `c`
+    /// maps is forgotten.
+    pub fn begin_command_line(&mut self) {
+        self.vim_line_echo = None;
+        self.vim_line_end_expanded = false;
+    }
+
+    /// A character typed on the command line, asked of the `c` maps
+    /// ([`VimState::remap_insert`]). `None`: no map is in play, and it
+    /// types as it came. Otherwise what the maps give ([`LineKeys`]): no
+    /// keys while the character starts or runs a map, or is held for a
+    /// longer one ([`EditorView::remap_line_waiting`]). A map's right side
+    /// is matched again, so a recursive map expands. Each key is recorded
+    /// as the Insert path records it, so a recording has what was typed.
+    pub fn remap_line_key(&mut self, ch: char) -> Option<LineKeys> {
+        let state = self.vim.as_ref()?;
+        if !matches!(state.mode(), fe_vim::Mode::CmdLine(_))
+            || !(state.remap_waiting() || !state.remaps().is_empty())
+        {
+            return None;
+        }
+        Some(self.remapped_line_keys(VecDeque::from([VimKey::Char(ch)])))
+    }
+
+    /// Whether keys typed on the command line are held for a longer map.
+    pub fn remap_line_waiting(&self) -> bool {
+        self.vim.as_ref().is_some_and(VimState::remap_waiting)
+    }
+
+    /// Ends the wait for the rest of a map on the command line, as
+    /// [`CHORD_TIMEOUT`] does ([`VimState::remap_timeout`]): what the held
+    /// keys come to, as [`EditorView::remap_line_key`] gives it.
+    pub fn remap_line_timeout(&mut self) -> LineKeys {
+        let Some(state) = self.vim.as_mut().filter(|state| state.remap_waiting()) else {
+            return LineKeys::default();
+        };
+        state.remap_timeout();
+        let rest = state.take_replay();
+        self.remapped_line_keys(rest.into())
+    }
+
+    /// Feeds the keys a line that ended left over to the editor, as the mode
+    /// it left takes them: after a map's `<CR>` or `<Esc>`, or a `<Cmd>`.
+    pub fn replay_line_rest(&mut self, rest: Vec<VimKey>, cx: &mut Context<Self>) {
+        if !rest.is_empty() {
+            self.replay_from(rest.into(), None, None, cx);
+        }
+    }
+
+    /// Feeds `queue` through the `c` maps, and what a map or a held prefix
+    /// leaves after it, until nothing is left to match or a key ends the
+    /// line: the keys after it, and a `<Cmd>`, are the line's `rest`.
+    fn remapped_line_keys(&mut self, mut queue: VecDeque<VimKey>) -> LineKeys {
+        let mut line = LineKeys::default();
+        let Some(state) = &mut self.vim else {
+            return line;
+        };
+        let echo = self
+            .vim_line_echo
+            .get_or_insert_with(|| state.command_line_prefill().to_owned());
+        'keys: while let Some(key) = queue.pop_front() {
+            if state.remap_command_next() {
+                queue.push_front(key);
+                break;
+            }
+            let keys = match state.remap_insert(key) {
+                RemapInsert::Wait => Vec::new(),
+                RemapInsert::Keys(keys) => keys,
+            };
+            let mut keys = VecDeque::from(keys);
+            while let Some(key) = keys.pop_front() {
+                state.record_key(key);
+                let expanded = state.expanding();
+                line.typed.push((key, expanded));
+                match key {
+                    VimKey::Char(ch) => echo.push(ch),
+                    VimKey::Backspace => {
+                        echo.pop();
+                    }
+                    VimKey::Enter | VimKey::Ctrl('j' | 'c') | VimKey::Esc => {
+                        self.vim_line_end_expanded |= expanded;
+                        // The rest is the editor's, in the mode this leaves.
+                        keys.extend(state.take_replay());
+                        keys.extend(queue.drain(..));
+                        line.rest = keys.into();
+                        break 'keys;
+                    }
+                    _ => {}
+                }
+            }
+            // After the keys that came out, as the Insert path feeds them.
+            let mut rest: VecDeque<VimKey> = state.take_replay().into();
+            rest.extend(queue.drain(..));
+            queue = rest;
+            if state.failed() {
+                state.stop_replay();
+                queue.clear();
+                break;
+            }
+        }
+        line.rest.extend(queue);
+        line
     }
 
     /// A keystroke the keymap left for the editor, in normal,
@@ -2715,49 +2890,77 @@ impl EditorView {
                 }
             }
             fe_vim::Mode::CmdLine(_) => {
-                state.record_key(key);
-                // Read before the line runs, which may read keys of its own.
-                let mapped = state.expanding();
-                let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
-                let invocation = match key {
-                    VimKey::Char(ch) => {
-                        text.push(ch);
-                        return true;
-                    }
-                    VimKey::Backspace if text.pop().is_some() => return true,
-                    // `<BS>` on an empty line, and `<C-c>`, cancel it. A
-                    // replay's `<Esc>` runs it, as in nvim (`:help c_<Esc>`).
-                    VimKey::Backspace | VimKey::Ctrl('c') => {
-                        Invocation::of("vim.command_line_cancel").expect("a valid command ID")
-                    }
-                    VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
-                        Invocation::of("vim.command_line_submit")
-                            .expect("a valid command ID")
-                            .args(fe_command::Value::from_iter([("text", text.as_str())]))
-                    }
-                    _ => return false,
-                };
-                *line = None;
-                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
-                let invocation = invocation.source(Source::Keyboard).context(context);
-                let ok = self.run_vim_once(&invocation, cx);
-                // A file or window command (`:w`) is the host's line's to
-                // run, not a macro replay's; but a map's is left for the
-                // host, which takes it from the editor, and ends the map.
-                if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
-                    *handed = Some(HANDED_HOST_COMMAND);
-                    return false;
+                // A character, or any key while keys are held, goes through
+                // the `c` maps; the line's other keys are its own.
+                if matches!(key, VimKey::Char(_)) || state.remap_waiting() {
+                    return match state.remap_insert(key) {
+                        RemapInsert::Wait => !state.failed(),
+                        RemapInsert::Keys(keys) => keys
+                            .into_iter()
+                            .all(|key| self.replay_line_key(key, line, handed, cx)),
+                    };
                 }
-                if let Some(command) = self.take_vim_host_command() {
-                    log::warn!("a macro replay doesn't run {command:?}");
-                }
-                ok && self.vim.as_ref().is_some_and(|s| !s.failed())
+                self.replay_line_key(key, line, handed, cx)
             }
             // The arrows too, so a map's are matched against the maps: with
             // nothing pending the reducer reads them as the keymap's
             // `vim.move`s do.
             _ => self.replay_fed(key, handed, cx),
         }
+    }
+
+    /// One `key` of a replay or of a map's keys, typed on the command line.
+    fn replay_line_key(
+        &mut self,
+        key: VimKey,
+        line: &mut Option<String>,
+        handed: &mut Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        state.record_key(key);
+        // Read before the line runs, which may read keys of its own.
+        let mapped = state.expanding();
+        let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
+        let invocation = match key {
+            VimKey::Char(ch) => {
+                text.push(ch);
+                return true;
+            }
+            VimKey::Backspace if text.pop().is_some() => return true,
+            // `<BS>` on an empty line, and `<C-c>`, cancel it. A
+            // replay's `<Esc>` runs it, as in nvim (`:help c_<Esc>`).
+            VimKey::Backspace | VimKey::Ctrl('c') => {
+                Invocation::of("vim.command_line_cancel").expect("a valid command ID")
+            }
+            // A map's `<Esc>` cancels, as on the live line.
+            VimKey::Esc if mapped => {
+                Invocation::of("vim.command_line_cancel").expect("a valid command ID")
+            }
+            VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
+                Invocation::of("vim.command_line_submit")
+                    .expect("a valid command ID")
+                    .args(fe_command::Value::from_iter([("text", text.as_str())]))
+            }
+            _ => return false,
+        };
+        *line = None;
+        let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+        let invocation = invocation.source(Source::Keyboard).context(context);
+        let ok = self.run_vim_once(&invocation, cx);
+        // A file or window command (`:w`) is the host's line's to
+        // run, not a macro replay's; but a map's is left for the
+        // host, which takes it from the editor, and ends the map.
+        if mapped && self.vim.as_ref().is_some_and(VimState::has_host_command) {
+            *handed = Some(HANDED_HOST_COMMAND);
+            return false;
+        }
+        if let Some(command) = self.take_vim_host_command() {
+            log::warn!("a macro replay doesn't run {command:?}");
+        }
+        ok && self.vim.as_ref().is_some_and(|s| !s.failed())
     }
 
     /// One `key` of a replay, or of a live key a map resolved, typed in
@@ -3005,6 +3208,9 @@ mod macro_tests;
 
 #[cfg(test)]
 mod remap_insert_tests;
+
+#[cfg(test)]
+mod remap_line_tests;
 #[cfg(test)]
 mod remap_tests;
 

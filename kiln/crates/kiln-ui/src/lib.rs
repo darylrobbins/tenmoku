@@ -59,7 +59,7 @@ pub use status_bar::{
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use tabs::{Tabs, TabsEvent};
 pub use text_field::{TextField, TextFieldEvent};
-pub use text_input::{TextInput, TextInputEvent};
+pub use text_input::{TextInput, TextInputEvent, Typed};
 pub use theme::{
     ActiveTheme, ActiveUiTheme, Appearance, Color, GlobalTheme, ROW_HEIGHT, Theme, ThemeData,
     ThemeMode, Tokens, UiTheme, follow_system_appearance, hsla, observe_system_appearance,

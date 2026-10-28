@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-use std::ops::Range;
+use std::{ops::Range, rc::Rc};
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
@@ -18,6 +18,23 @@ pub enum TextInputEvent {
     /// [`TextInput::submit`] was called.
     Submitted,
 }
+
+/// What a [`TextInput::set_typing_filter`] filter makes of a typed character.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Typed {
+    /// It types as it came.
+    Pass,
+    /// It types nothing.
+    Swallow,
+    /// It types this text, in its place.
+    Insert(String),
+}
+
+/// Asked of each character typed on its own, before it goes in: see
+/// [`TextInput::set_typing_filter`]. It runs while the input is being
+/// updated, so it can't read or edit the input: it answers with a
+/// [`Typed`], and defers anything else.
+type TypingFilter = Rc<dyn Fn(&str, &mut Window, &mut App) -> Typed>;
 
 /// A single-line text input. Typed text goes at the end: there's no caret
 /// movement. The one selection it has is all of the text
@@ -59,6 +76,8 @@ pub struct TextInput {
     /// when it ends.
     change_owed: bool,
     drawn_font: Option<(gpui::Font, Pixels)>,
+    /// See [`TextInput::set_typing_filter`].
+    typing_filter: Option<TypingFilter>,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -82,7 +101,19 @@ impl TextInput {
             selected: false,
             change_owed: false,
             drawn_font: None,
+            typing_filter: None,
         }
+    }
+
+    /// Asks `filter` about each character typed on its own, before it goes
+    /// in. Not a paste or [`TextInput::insert`], nor text an IME composes
+    /// or commits, and not while a composition is open. `None`, the
+    /// default, types them all as they come.
+    pub fn set_typing_filter(
+        &mut self,
+        filter: Option<impl Fn(&str, &mut Window, &mut App) -> Typed + 'static>,
+    ) {
+        self.typing_filter = filter.map(|filter| Rc::new(filter) as TypingFilter);
     }
 
     /// Draws it as a field on its own: on the panel colour, in a rounded
@@ -332,10 +363,21 @@ impl EntityInputHandler for TextInput {
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let commits = range.is_none() || range == self.marked_utf16();
+        if commits
+            && self.marked.is_none()
+            && text.chars().count() == 1
+            && let Some(filter) = self.typing_filter.clone()
+        {
+            match filter(text, window, cx) {
+                Typed::Pass => {}
+                Typed::Swallow => return,
+                Typed::Insert(text) => return self.insert(&text, cx),
+            }
+        }
         if self.selected && (range.is_none() || range == Some(0..self.utf16_len())) {
             // The platform replaces the selection, as typing does.
             self.insert(text, cx);

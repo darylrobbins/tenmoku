@@ -159,6 +159,13 @@ pub struct EditorView {
     /// An editor command a recording can't hold was logged since the
     /// recording began ([`EditorView::record_typing`]).
     pub(crate) vim_unrecorded_logged: bool,
+    /// The command line took keys through the `c` maps
+    /// ([`EditorView::remap_line_key`]), which a recording took as typed:
+    /// the line they build, so only the rest of its text is recorded.
+    pub(crate) vim_line_echo: Option<String>,
+    /// The key that ended the line came from a map's right side, so a
+    /// recording has it in the map's keys already.
+    pub(crate) vim_line_end_expanded: bool,
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
@@ -415,6 +422,8 @@ impl EditorView {
             command_failed: false,
             press_settled: false,
             vim_unrecorded_logged: false,
+            vim_line_echo: None,
+            vim_line_end_expanded: false,
             fold_column_hovered: false,
             gutter_glyph: None,
             overlay: None,
