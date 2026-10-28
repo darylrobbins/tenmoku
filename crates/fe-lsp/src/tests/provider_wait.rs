@@ -261,3 +261,32 @@ fn a_stop_while_waiting_answers_server_down() {
         .collect();
     assert_eq!(answers, vec![Err(LspError::ServerDown); 2]);
 }
+
+#[test]
+fn a_queued_prepare_rename_times_out_while_the_server_initializes() {
+    // The local fallback (no `prepareProvider`) is covered by the deadline
+    // too, though it sends nothing: the wait for initialization is what's
+    // timed.
+    let s = Starting::new(ServerCapabilities {
+        rename_provider: Some(OneOf::Left(true)),
+        ..ServerCapabilities::default()
+    });
+    let (id, version) = (s.buffer.id(), s.buffer.version());
+    let prepare = s.manager.prepare_rename(id, version, 4);
+    let rename = s.manager.rename(id, version, 4, "other".into());
+    let calls = vec![
+        thread::spawn(move || async_io::block_on(prepare).map(|_| ())),
+        thread::spawn(move || async_io::block_on(rename).map(|_| ())),
+    ];
+    // `initialize` is never answered; only the manager's clock moves.
+    let deadline = Instant::now() + WAIT;
+    while !calls.iter().all(JoinHandle::is_finished) && Instant::now() < deadline {
+        s.clock.advance(crate::rename::RENAME_TIMEOUT);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let answers: Vec<_> = (calls.into_iter())
+        .map(|call| call.join().unwrap_or_else(|_| unreachable!()))
+        .collect();
+    assert_eq!(answers, vec![Err(LspError::Timeout); 2]);
+    assert_eq!(s.sent("textDocument/rename"), 0);
+}
