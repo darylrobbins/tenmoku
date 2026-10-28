@@ -1432,13 +1432,27 @@ impl Pane {
     /// it, unless `force` or another tab, in this pane or another, shows
     /// its buffer still open. Returns how many it kept.
     pub fn close_others(&mut self, force: bool, window: &mut Window, cx: &mut App) -> usize {
-        let state = self.pane();
-        let Some(active) = state.active_item().map(|item| item.id()) else {
+        let Some(active) = self.pane().active_item().map(|item| item.id()) else {
             return 0;
         };
-        let closing: Vec<_> = (state.items().iter())
+        self.close_matching(force, |item, _| item.id() != active, window, cx)
+    }
+
+    /// Closes the tabs `pick` chooses, as [`Pane::close_others`] does: a tab
+    /// with unsaved changes stays open, unless `force` or another tab shows
+    /// its buffer still open. Returns how many chosen tabs it kept.
+    pub(crate) fn close_matching(
+        &mut self,
+        force: bool,
+        pick: impl Fn(&dyn ItemHandle, &App) -> bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> usize {
+        let order: Vec<ItemId> = self.pane().items().iter().map(|item| item.id()).collect();
+        let active = self.pane().active_item().map(|item| item.id());
+        let closing: Vec<_> = (self.pane().items().iter())
+            .filter(|item| pick(&***item, cx))
             .map(|item| item.id())
-            .filter(|id| *id != active)
             .collect();
         let mut kept = 0;
         for id in closing {
@@ -1455,7 +1469,33 @@ impl Pane {
                 self.take_item(ix, window, cx);
             }
         }
+        // Each close moved the active tab right; a lone survivor's
+        // nearest neighbour is the one to show (the right one on a tie).
+        if let Some(active) = active.filter(|id| self.pane().position(*id).is_none()) {
+            let at = order.iter().position(|id| *id == active).unwrap_or(0);
+            let nearest = (1..order.len()).find_map(|d| {
+                [at + d, at.wrapping_sub(d)]
+                    .into_iter()
+                    .filter_map(|ix| order.get(ix))
+                    .find_map(|id| self.pane().position(*id))
+            });
+            if let Some(ix) = nearest {
+                self.activate_item(ix, window, cx);
+            }
+        }
         kept
+    }
+
+    /// Closes the tabs with `ids` without asking: the close of a request
+    /// whose items agreed. The pane stays though it's left empty.
+    pub(crate) fn take_ids(&mut self, ids: &[ItemId], window: &mut Window, cx: &mut App) {
+        for id in ids {
+            if let Some(ix) = self.pane().position(*id) {
+                self.take_item(ix, window, cx);
+            }
+        }
+        // Else the workspace closes a pane its last tab left.
+        self.pane_mut().take_emptied();
     }
 
     /// Closes the tabs of the editors on `buffers`, whose buffers the host

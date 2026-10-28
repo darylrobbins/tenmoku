@@ -21,6 +21,17 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Close Other Tabs",
         "workbench",
     ),
+    ("workbench.close_saved", "Close Saved Editors", "workbench"),
+    (
+        "workbench.close_group_editors",
+        "Close Editors in Group",
+        "workbench",
+    ),
+    (
+        "workbench.close_all_editors",
+        "Close All Editors",
+        "workbench",
+    ),
     ("workbench.next_tab", "Next Tab", "workbench"),
     ("workbench.previous_tab", "Previous Tab", "workbench"),
     (

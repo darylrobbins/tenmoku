@@ -5,7 +5,8 @@ use std::{collections::BTreeSet, path::Path};
 
 use fe_command::{ContextFrame, ContextStack};
 use fe_keymap::{
-    DEFAULT_KEYMAP_PATH, DEFAULT_LINUX, DEFAULT_MACOS, Keymap, KeymapLayer, KeymapStore, Keystroke,
+    DEFAULT_KEYMAP_PATH, DEFAULT_LINUX, DEFAULT_MACOS, KeySequence, Keymap, KeymapLayer,
+    KeymapStore, Keystroke,
 };
 
 use crate::command_catalog;
@@ -144,4 +145,29 @@ fn the_linux_menus_name_known_commands() {
     let (bar, diagnostics) = fe_keymap::default_menus_linux(Some(&*command_catalog()));
     assert_eq!(diagnostics, []);
     assert!(bar.is_some());
+}
+
+#[test]
+fn close_saved_and_group_editors_have_their_chords() {
+    for (source, chord, close) in [
+        (DEFAULT_MACOS, "cmd-k", "cmd-k cmd-w"),
+        (DEFAULT_LINUX, "ctrl-k", "ctrl-k ctrl-w"),
+    ] {
+        let keymap = keymap(source);
+        let bound = |keys: &str| {
+            let keys: KeySequence = keys.parse().unwrap();
+            let found = keymap.bindings().iter().rev().find(|b| b.keys == keys);
+            found.map(|binding| binding.command.as_str().to_owned())
+        };
+        assert_eq!(
+            bound(&format!("{chord} u")).as_deref(),
+            Some("workbench.close_saved")
+        );
+        assert_eq!(
+            bound(&format!("{chord} w")).as_deref(),
+            Some("workbench.close_group_editors")
+        );
+        assert_eq!(bound(close).as_deref(), Some("pane.close"));
+        assert!(!commands(&keymap).contains("workbench.close_all_editors"));
+    }
 }

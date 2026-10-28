@@ -1004,6 +1004,16 @@ keys = "secondary-k secondary-w"
 command = "pane.close"
 context = "workbench"
 
+[[bindings]]
+keys = "secondary-k u"
+command = "workbench.close_saved"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k w"
+command = "workbench.close_group_editors"
+context = "workbench"
+
 # The project tree, when it has focus. `project_panel.reveal_active` has no
 # key yet: it's for the command palette.
 [[bindings]]

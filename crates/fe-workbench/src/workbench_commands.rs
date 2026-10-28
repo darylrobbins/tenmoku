@@ -26,12 +26,19 @@ use crate::{
     workbench::recent_picker::RecentOp,
 };
 
+#[path = "close_many.rs"]
+mod close_many;
+
 #[path = "markdown_preview.rs"]
 pub(crate) mod markdown_preview;
 
 #[cfg(test)]
 #[path = "markdown_preview_buttons_tests.rs"]
 mod markdown_preview_buttons_tests;
+
+#[cfg(test)]
+#[path = "close_many_tests.rs"]
+mod close_many_tests;
 
 #[kiln::command(context = "workbench")]
 impl Workbench {
@@ -47,6 +54,27 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| {
             pane.close_others(false, window, cx);
         });
+    }
+
+    /// Close Saved Editors
+    #[command(id = "workbench.close_saved")]
+    fn close_saved_editors(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.close_saved(cx.window, cx.cx);
+    }
+
+    /// Close Editors in Group
+    #[command(id = "workbench.close_group_editors")]
+    fn close_group_editors(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.close_editors(false, cx.window, cx.cx);
+    }
+
+    /// Close All Editors
+    #[command(id = "workbench.close_all_editors")]
+    fn close_all_editors(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.close_editors(true, cx.window, cx.cx);
     }
 
     /// Reopen Closed Editor

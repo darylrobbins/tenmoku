@@ -741,3 +741,21 @@ fn unsupported_keys_fail_a_chord(cx: &mut TestAppContext) {
     assert_eq!(commands(&seen), ["editor.fold_all"]);
     assert_eq!(folds(&view, cx), [(0, 1)]);
 }
+
+#[test]
+fn close_saved_and_group_editors_are_chords_in_the_workbench() {
+    let store = KeymapStore::load(DEFAULT_MACOS, None, None);
+    let bindings = store.keymap().bindings();
+    for (keys, command) in [
+        ("cmd-k u", "workbench.close_saved"),
+        ("cmd-k w", "workbench.close_group_editors"),
+        ("cmd-k cmd-w", "pane.close"),
+    ] {
+        let keys = KeySequence::parse(keys).unwrap();
+        let binding = bindings.iter().find(|binding| binding.keys == keys);
+        let binding = binding.expect("bound");
+        assert_eq!(binding.command.as_str(), command);
+        let context = binding.context.as_ref().map(ToString::to_string);
+        assert_eq!(context.as_deref(), Some("workbench"));
+    }
+}
