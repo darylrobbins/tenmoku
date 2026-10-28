@@ -197,13 +197,24 @@ fn an_infinite_loop_is_interrupted() {
 fn a_call_that_returns_past_its_deadline_times_out() {
     // grow_memory's `run-command` ends in a `log`, which this sink holds past the deadline:
     // no epoch check runs after it, so only the time it returned at shows the overrun.
-    let (plugin, logged) = try_load(
-        "grow_memory",
-        &fixture("grow_memory"),
-        limits(),
-        Duration::from_millis(400),
-    );
-    let mut plugin = plugin.unwrap();
+    // Loading meets the 250 ms deadline on an idle machine; a loaded gate may overrun it before
+    // the call under test, so the load alone gets a few tries.
+    let text = fixture("grow_memory");
+    let (mut plugin, logged) = (0..5)
+        .find_map(
+            |_| match try_load("grow_memory", &text, limits(), Duration::from_millis(400)) {
+                (Ok(plugin), logged) => Some((plugin, logged)),
+                (
+                    Err(LoadError::Unloaded(Diagnostic {
+                        reason: Reason::Timeout,
+                        ..
+                    })),
+                    _,
+                ) => None,
+                (Err(error), _) => panic!("{error:?}"),
+            },
+        )
+        .expect("grow_memory loads within 250 ms in five tries");
     let (plugin, error) = bounded(move || {
         let error = run_command(&mut plugin).unwrap_err();
         (plugin, error)
