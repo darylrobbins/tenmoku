@@ -11,8 +11,11 @@
 //! The keys are the commands of [`registry`], which [`crate::register`]
 //! installs: the picker's (`picker.select_prev`, `picker.select_next`,
 //! `picker.confirm`, `picker.dismiss`) in the [`KEY_CONTEXT`] context, and
-//! its input's (`text_input.backspace`, `text_input.delete_word_left`,
-//! `text_input.clear`, `text_input.paste`) in [`TextInput::KEY_CONTEXT`].
+//! its input's (`text_input.backspace`, `text_input.delete_forward`,
+//! `text_input.delete_word_left`, `text_input.clear`, `text_input.paste`
+//! and the caret's `text_input.move_left`, `move_right`, `move_word_left`,
+//! `move_word_right`, `move_home` and `move_end`) in
+//! [`TextInput::KEY_CONTEXT`].
 //! Other views with a [`TextInput`] can run the latter through [`op`] and
 //! [`PickerOp::edit`]. A key reaches them as a [`RunCommand`]; a command
 //! the picker doesn't know goes on to its host. Opening a palette is the
@@ -28,7 +31,7 @@
 //! input): `j` and `k` move the selection, `g g` selects the first match and
 //! `G` the last (a `g` then anything else is dropped), `picker.confirm`
 //! (enter) accepts, `picker.dismiss`, `ctrl-[` and `q` dismiss, and `i`,
-//! `a`, `I` and `A` go back to insert mode, typing appending to the query.
+//! `a`, `I` and `A` go back to insert mode, typing at the query's caret.
 //! The other picker commands work as in insert mode; the input's do
 //! nothing. The letters reach the picker's key listener only when no
 //! binding matched them. The switch is read live: once it's off, the next
@@ -416,9 +419,16 @@ pub enum PickerOp {
     Confirm,
     Dismiss,
     Backspace,
+    DeleteForward,
     DeleteWordLeft,
     Clear,
     Paste,
+    MoveLeft,
+    MoveRight,
+    MoveWordLeft,
+    MoveWordRight,
+    MoveHome,
+    MoveEnd,
 }
 
 impl PickerOp {
@@ -426,9 +436,16 @@ impl PickerOp {
     pub fn edit(self) -> Option<fn(&mut TextInput, &mut Context<TextInput>)> {
         match self {
             Self::Backspace => Some(TextInput::backspace),
+            Self::DeleteForward => Some(TextInput::delete_forward),
             Self::DeleteWordLeft => Some(TextInput::delete_word_left),
             Self::Clear => Some(TextInput::clear),
             Self::Paste => Some(TextInput::paste),
+            Self::MoveLeft => Some(TextInput::move_left),
+            Self::MoveRight => Some(TextInput::move_right),
+            Self::MoveWordLeft => Some(TextInput::move_word_left),
+            Self::MoveWordRight => Some(TextInput::move_word_right),
+            Self::MoveHome => Some(TextInput::move_home),
+            Self::MoveEnd => Some(TextInput::move_end),
             Self::SelectPrev | Self::SelectNext | Self::Confirm | Self::Dismiss => None,
         }
     }
@@ -467,6 +484,12 @@ pub fn registry() -> Registry<PickerCommands> {
         ("picker.dismiss", "Dismiss", KEY_CONTEXT, Dismiss),
         ("text_input.backspace", "Delete Backward", input, Backspace),
         (
+            "text_input.delete_forward",
+            "Delete Forward",
+            input,
+            DeleteForward,
+        ),
+        (
             "text_input.delete_word_left",
             "Delete Word Backward",
             input,
@@ -474,6 +497,22 @@ pub fn registry() -> Registry<PickerCommands> {
         ),
         ("text_input.clear", "Clear", input, Clear),
         ("text_input.paste", "Paste", input, Paste),
+        ("text_input.move_left", "Move Left", input, MoveLeft),
+        ("text_input.move_right", "Move Right", input, MoveRight),
+        (
+            "text_input.move_word_left",
+            "Move Word Left",
+            input,
+            MoveWordLeft,
+        ),
+        (
+            "text_input.move_word_right",
+            "Move Word Right",
+            input,
+            MoveWordRight,
+        ),
+        ("text_input.move_home", "Move to Start", input, MoveHome),
+        ("text_input.move_end", "Move to End", input, MoveEnd),
     ];
     let mut registry = Registry::new();
     for (id, title, context, op) in commands {

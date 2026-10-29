@@ -34,8 +34,8 @@
 //! - Up and Down move the selected row, scrolling it into view; Down in
 //!   the search field moves into the list. `/` or secondary-f goes back to
 //!   the search, and Escape clears it. The search and the rows' inputs
-//!   take the text inputs' editing keys (`text_input.backspace` and the
-//!   like). On the selected row, Space toggles a switch and Enter works
+//!   take the text inputs' editing and caret keys (`text_input.backspace`,
+//!   `text_input.move_left` and the like). On the selected row, Space toggles a switch and Enter works
 //!   its control: it opens a dropdown, goes into an input, or opens
 //!   `settings.toml`.
 //! - Only the rows in view are built: the list is a `uniform_list`.
@@ -79,6 +79,10 @@ mod controls;
 #[cfg(test)]
 #[path = "settings_editor_open_file_tests.rs"]
 mod open_file_tests;
+
+#[cfg(test)]
+#[path = "settings_editor_caret_tests.rs"]
+mod caret_tests;
 
 use controls::{Change, Field, ListField};
 
@@ -643,16 +647,13 @@ impl SettingsEditor {
         cx.notify();
     }
 
-    /// The text inputs' editing commands (`text_input.backspace` and the
-    /// like, which an input leaves to its host), for the search or the
+    /// The text inputs' editing and caret commands (`text_input.backspace`,
+    /// `text_input.move_left` and the like, which an input leaves to its
+    /// host), for the search or the
     /// row's input that has focus, unless that's off; others go on.
     fn on_input_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
-        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-            Some(PaletteOp::Backspace) => TextInput::backspace,
-            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-            Some(PaletteOp::Clear) => TextInput::clear,
-            Some(PaletteOp::Paste) => TextInput::paste,
-            _ => return cx.propagate(),
+        let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+            return cx.propagate();
         };
         let input = match self.editing(window, cx) {
             Some(editing) => self.input_of(&editing),

@@ -46,6 +46,7 @@ mod references_panel;
 mod search_panel;
 mod search_panel_cancel;
 mod search_panel_followups;
+mod settings_caret;
 mod splits;
 mod splits_followups;
 mod status_bar;

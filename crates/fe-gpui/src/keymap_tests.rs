@@ -396,6 +396,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                         | "terminal"
                         | "picker"
                         | "text_input"
+                        | "settings_editor && text_input"
                         | "search_panel"
                         | "search_panel && text_input"
                         | "find_bar"
