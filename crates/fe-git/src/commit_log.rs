@@ -277,7 +277,7 @@ impl Repo {
     }
 }
 
-fn path_of(bytes: &[u8]) -> PathBuf {
+pub(crate) fn path_of(bytes: &[u8]) -> PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
