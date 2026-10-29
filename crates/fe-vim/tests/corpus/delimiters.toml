@@ -1283,3 +1283,231 @@ name = "yit_count_2_over_pattern_names"
 buffer = "<b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb></b>"
 cursor = [0, 153]
 keys = "2yit"
+
+[[case]]
+name = "dit_pattern_name_distinct_clusters_keep_their_own_requirements"
+buffer = "<a‍a‍́.>x</a‍a‍x>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_dot_before_a_zwj_is_not_a_literal"
+buffer = "<a.‍>x</a.‍>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_star_before_a_zwj_is_not_a_literal"
+buffer = "<a*‍>x</aaa‍>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_cluster_never_meets_a_private_use_char_of_the_text"
+buffer = "<a‍.>x</\U000f0000x>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_past_a_bare_lt_before_an_empty_closing_tag"
+buffer = "<ab c><</>x</ab>"
+cursor = [0, 10]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_starting_with_a_keyword_atom"
+buffer = "<\\ka>x</ba>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_starting_with_a_keyword_atom_no_match"
+buffer = "<\\ka>x</b-a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_star"
+buffer = "<\\k*>x</abc>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_nested"
+buffer = "<\\kb>x<ab>y</ab>z</cb>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_from_a_bare_lt_before_an_empty_closing_tag_keeps_the_boundary"
+buffer = "<ab c><</>x</ab>"
+cursor = [0, 6]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_nomagic"
+buffer = "<\\M\\ka\\*>x</aaa>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_not_digit"
+buffer = "<\\K\\+>x</a1>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_non_ascii"
+buffer = "<\\k.>x</éé>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_very_magic"
+buffer = "<\\v\\k+>x</abc>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_not_punctuation"
+buffer = "<\\ka>x</-a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_eleven_distinct_joined_clusters"
+buffer = "<a\u200db\u200dc\u200dd\u200de\u200df\u200dg\u200dh\u200di\u200dj\u200dk\u200d.>x</a\u200db\u200dc\u200dd\u200de\u200df\u200dg\u200dh\u200di\u200dj\u200dk\u200dz>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom"
+buffer = "<\\ia>x</ba>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_not_dash"
+buffer = "<\\ia>x</-a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_not_digit_capital"
+buffer = "<\\Ia>x</1a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_capital"
+buffer = "<\\Ia>x</ba>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_latin_one"
+buffer = "<\\i>x</\u00d7>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom"
+buffer = "<\\fa>x</.a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_not_space"
+buffer = "<\\fa>x</ a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_wide"
+buffer = "<\\f>x</\u4e2d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_capital_not_digit"
+buffer = "<\\Fa>x</1a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_atom"
+buffer = "<\\pa>x</ba>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_atom_wide"
+buffer = "<\\p>x</\u4e2d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_atom_capital_not_digit"
+buffer = "<\\Pa>x</9a>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_nine_joined_clusters_of_one_base"
+buffer = "<a\u200da\u200d\u0301a\u200d\u0302a\u200d\u0303a\u200d\u0304a\u200d\u0305a\u200d\u0306a\u200d\u0307a\u200d\u0308.>x</a\u200da\u200d\u0301a\u200d\u0302a\u200d\u0303a\u200d\u0304a\u200d\u0305a\u200d\u0306a\u200d\u0307a\u200d\u0308z>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_nine_joined_clusters_of_one_base_one_missing"
+buffer = "<a\u200da\u200d\u0301a\u200d\u0302a\u200d\u0303a\u200d\u0304a\u200d\u0305a\u200d\u0306a\u200d\u0307a\u200d\u0308.>x</a\u200da\u200d\u0301a\u200d\u0302a\u200d\u0303a\u200d\u0304a\u200d\u0305a\u200d\u0306a\u200d\u0307a\u200d\u0309z>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_collection_member_of_a_joined_base"
+buffer = "<a\u200d[a]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_collection_of_a_joined_base"
+buffer = "<a\u200d[^a]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_collection_escape_of_a_joined_base"
+buffer = "<a\u200d[\\x61]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_collection_naming_a_private_use_char"
+buffer = "<a\u200d[\\U000f0000]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_with_a_joined_cluster"
+buffer = "<a\u200d.\\ia>x</a\u200dba\u200da>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_capital_with_a_joined_cluster"
+buffer = "<a\u200d\\Ia>x</a\u200da\u200d1>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atoms_with_a_joined_cluster"
+buffer = "<a\u200d\\k\\k>x</a\u200da\u200da>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_with_a_joined_cluster"
+buffer = "<a\u200d\\f>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"

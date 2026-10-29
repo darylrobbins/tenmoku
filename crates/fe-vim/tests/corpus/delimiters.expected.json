@@ -5286,6 +5286,879 @@
           }
         }
       }
+    },
+    {
+      "name": "dit_pattern_name_distinct_clusters_keep_their_own_requirements",
+      "buffer": "<a‍a‍́.>x</a‍a‍x>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍a‍́.>x</a‍a‍x>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_dot_before_a_zwj_is_not_a_literal",
+      "buffer": "<a.‍>x</a.‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.‍>x</a.‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_star_before_a_zwj_is_not_a_literal",
+      "buffer": "<a*‍>x</aaa‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a*‍></aaa‍>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_cluster_never_meets_a_private_use_char_of_the_text",
+      "buffer": "<a‍.>x</󰀀x>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍.>x</󰀀x>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_past_a_bare_lt_before_an_empty_closing_tag",
+      "buffer": "<ab c><</>x</ab>",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ab c><</>x</ab>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_starting_with_a_keyword_atom",
+      "buffer": "<\\ka>x</ba>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\ka></ba>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_starting_with_a_keyword_atom_no_match",
+      "buffer": "<\\ka>x</b-a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\ka>x</b-a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_star",
+      "buffer": "<\\k*>x</abc>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\k*></abc>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_nested",
+      "buffer": "<\\kb>x<ab>y</ab>z</cb>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\kb></cb>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<ab>y</ab>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<ab>y</ab>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_from_a_bare_lt_before_an_empty_closing_tag_keeps_the_boundary",
+      "buffer": "<ab c><</>x</ab>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ab c></ab>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<</>x",
+            "linewise": false
+          },
+          "-": {
+            "text": "<</>x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_nomagic",
+      "buffer": "<\\M\\ka\\*>x</aaa>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\M\\ka\\*></aaa>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_not_digit",
+      "buffer": "<\\K\\+>x</a1>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\K\\+>x</a1>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_non_ascii",
+      "buffer": "<\\k.>x</éé>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\k.></éé>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_very_magic",
+      "buffer": "<\\v\\k+>x</abc>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\v\\k+>x</abc>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_not_punctuation",
+      "buffer": "<\\ka>x</-a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\ka>x</-a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_eleven_distinct_joined_clusters",
+      "buffer": "<a‍b‍c‍d‍e‍f‍g‍h‍i‍j‍k‍.>x</a‍b‍c‍d‍e‍f‍g‍h‍i‍j‍k‍z>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍b‍c‍d‍e‍f‍g‍h‍i‍j‍k‍.></a‍b‍c‍d‍e‍f‍g‍h‍i‍j‍k‍z>",
+        "cursor": [
+          0,
+          47
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom",
+      "buffer": "<\\ia>x</ba>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\ia></ba>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_not_dash",
+      "buffer": "<\\ia>x</-a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\ia>x</-a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_not_digit_capital",
+      "buffer": "<\\Ia>x</1a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\Ia>x</1a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_capital",
+      "buffer": "<\\Ia>x</ba>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\Ia></ba>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_latin_one",
+      "buffer": "<\\i>x</×>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\i></×>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom",
+      "buffer": "<\\fa>x</.a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\fa></.a>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_not_space",
+      "buffer": "<\\fa>x</ a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\fa>x</ a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_wide",
+      "buffer": "<\\f>x</中>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\f></中>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_capital_not_digit",
+      "buffer": "<\\Fa>x</1a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\Fa>x</1a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_atom",
+      "buffer": "<\\pa>x</ba>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\pa></ba>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_atom_wide",
+      "buffer": "<\\p>x</中>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\p></中>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_atom_capital_not_digit",
+      "buffer": "<\\Pa>x</9a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<\\Pa>x</9a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_nine_joined_clusters_of_one_base",
+      "buffer": "<a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈.>x</a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈z>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈.></a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈z>",
+        "cursor": [
+          0,
+          55
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_nine_joined_clusters_of_one_base_one_missing",
+      "buffer": "<a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈.>x</a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̉z>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̈.>x</a‍a‍́a‍̂a‍̃a‍̄a‍̅a‍̆a‍̇a‍̉z>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_collection_member_of_a_joined_base",
+      "buffer": "<a‍[a]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[a]></a‍a‍>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_collection_of_a_joined_base",
+      "buffer": "<a‍[^a]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^a]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_collection_escape_of_a_joined_base",
+      "buffer": "<a‍[\\x61]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[\\x61]></a‍a‍>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_collection_naming_a_private_use_char",
+      "buffer": "<a‍[\\U000f0000]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[\\U000f0000]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_with_a_joined_cluster",
+      "buffer": "<a‍.\\ia>x</a‍ba‍a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍.\\ia></a‍ba‍a>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_capital_with_a_joined_cluster",
+      "buffer": "<a‍\\Ia>x</a‍a‍1>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍\\Ia>x</a‍a‍1>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atoms_with_a_joined_cluster",
+      "buffer": "<a‍\\k\\k>x</a‍a‍a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍\\k\\k></a‍a‍a>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_with_a_joined_cluster",
+      "buffer": "<a‍\\f>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍\\f></a‍a‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }
