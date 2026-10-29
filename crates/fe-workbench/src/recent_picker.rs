@@ -26,11 +26,13 @@ use std::path::{Path, PathBuf};
 
 use fe_config::recent::{self, Entry, RecentList};
 use fe_gpui::EditorView;
-use fe_ui::{HighlightedLabel, Icon, IconButton, Tooltip, char_ranges, file_icon, folder_icon};
+use fe_ui::{
+    HighlightedLabel, Icon, IconButton, Tooltip, char_ranges, file_icon_path, folder_icon_path,
+};
 use gpui::{
     AnyElement, App, AppContext as _, Context, DismissEvent, Entity, FocusHandle, Focusable as _,
-    IntoElement as _, Keystroke, ParentElement as _, SharedString, Styled as _, Task, WeakEntity,
-    Window, div, px, svg,
+    InteractiveElement as _, IntoElement as _, Keystroke, ParentElement as _, SharedString,
+    Styled as _, Task, WeakEntity, Window, div, px, svg,
 };
 
 use crate::{
@@ -349,12 +351,14 @@ impl PickerDelegate for RecentPicker {
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let ui = fe_ui::ui_theme(cx);
         let row = self.row(ix);
-        let icon = match row.folder {
-            true => folder_icon(false),
-            false => file_icon(&row.path.file_name().unwrap_or_default().to_string_lossy()),
+        let name = row.path.file_name().unwrap_or_default().to_string_lossy();
+        let path = match row.folder {
+            true => folder_icon_path(false),
+            false => file_icon_path(&name),
         };
         let icon = svg()
-            .path(icon.path())
+            .debug_selector(|| format!("recent-icon:{name}:{path}"))
+            .path(path.clone())
             .size(px(14.))
             .flex_none()
             .text_color(ui.icon);

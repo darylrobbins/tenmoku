@@ -7,7 +7,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
 
@@ -100,7 +100,7 @@ impl RenderOnce for TabBar {
 #[derive(IntoElement)]
 pub struct Tab {
     id: ElementId,
-    icon: Option<Icon>,
+    icon: Option<IconRef>,
     label: SharedString,
     description: Option<SharedString>,
     label_color: Option<Hsla>,
@@ -134,15 +134,21 @@ impl Tab {
     }
 
     /// Drawn before the label, in the theme's file icon colour: a file
-    /// tab's file-type icon, say.
-    pub fn icon(mut self, icon: Option<Icon>) -> Self {
-        self.icon = icon;
+    /// tab's file-type icon, say: a bundled [`Icon`] or an icon set's
+    /// answer.
+    pub fn icon(mut self, icon: Option<impl Into<IconRef>>) -> Self {
+        self.icon = icon.map(Into::into);
         self
     }
 
-    /// The icon drawn before the label, if any.
+    /// The bundled icon drawn before the label, if it is one.
     pub fn icon_kind(&self) -> Option<Icon> {
-        self.icon
+        self.icon.as_ref().and_then(IconRef::bundled)
+    }
+
+    /// The icon drawn before the label, if any.
+    pub fn icon_ref(&self) -> Option<&IconRef> {
+        self.icon.as_ref()
     }
 
     /// Drawn after the label, at its size in the theme's muted text colour:
@@ -335,7 +341,7 @@ impl RenderOnce for Tab {
                     tab.bg(colors.tab.inactive)
                 }
             })
-            .when_some(self.icon, |tab, icon| {
+            .when_some(self.icon.clone(), |tab, icon| {
                 tab.child(
                     svg()
                         .path(icon.path())

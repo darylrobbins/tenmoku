@@ -573,7 +573,7 @@ impl<V: PaneView> PaneState<V> {
             .map(|(ix, ((item, title), description))| {
                 kiln_ui::Tab::new(("tab", ix), title, &ui)
                     .preview(Some(ix) == preview)
-                    .icon(item.tab_icon(cx))
+                    .icon(item.tab_icon_ref(cx))
                     .description(description)
                     .label_color(item.tab_title_color(cx))
                     .dirty(item.is_dirty(cx))

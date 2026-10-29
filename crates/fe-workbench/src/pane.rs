@@ -27,7 +27,7 @@ use fe_gpui::{
 use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
-    UiTheme, file_icon,
+    UiTheme, file_icon_ref,
 };
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
@@ -2409,9 +2409,14 @@ impl Pane {
         let crumbs = self.crumbs(cx);
         #[cfg(test)]
         {
+            // A bundled icon; what's drawn, an asset too, is named by the
+            // crumb's `crumb-icon:` selector.
             self.drawn_crumbs = crumbs
                 .iter()
-                .map(|crumb| (crumb.label.to_string(), crumb.kind, crumb.icon))
+                .map(|crumb| {
+                    let icon = crumb.icon.as_ref().and_then(fe_ui::IconRef::bundled);
+                    (crumb.label.to_string(), crumb.kind, icon)
+                })
                 .collect();
         }
         let toolbar = div()
@@ -2506,7 +2511,7 @@ impl Pane {
                     };
                     let mut element = Crumb::new(crumb.label.clone(), kind);
                     if crumb.file {
-                        element = element.icon(file_icon(&crumb.label));
+                        element = element.icon(file_icon_ref(&crumb.label));
                     }
                     let Some(dir) = crumb.dir else {
                         return element;

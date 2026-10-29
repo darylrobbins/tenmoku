@@ -6,7 +6,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, UiTheme};
 
 /// The height of a pane's toolbar, which holds the breadcrumbs.
 pub const TOOLBAR_HEIGHT: Pixels = px(24.);
@@ -23,7 +23,7 @@ pub enum CrumbKind {
 /// One segment of [`Breadcrumbs`].
 pub struct Crumb {
     pub label: SharedString,
-    pub icon: Option<Icon>,
+    pub icon: Option<IconRef>,
     pub kind: CrumbKind,
     on_click: Option<ClickHandler>,
 }
@@ -38,8 +38,9 @@ impl Crumb {
         }
     }
 
-    pub fn icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+    /// A bundled [`Icon`] or an icon set's answer.
+    pub fn icon(mut self, icon: impl Into<IconRef>) -> Self {
+        self.icon = Some(icon.into());
         self
     }
 
@@ -112,12 +113,14 @@ impl RenderOnce for Breadcrumbs {
                     }
                 })
                 .when_some(crumb.icon, |element, icon| {
+                    let selector = format!("crumb-icon:{}:{}", crumb.label, icon.name());
                     element.child(
                         svg()
                             .path(icon.path())
                             .size(px(14.))
                             .flex_none()
-                            .text_color(icon_color),
+                            .text_color(icon_color)
+                            .debug_selector(|| selector),
                     )
                 })
                 .child(

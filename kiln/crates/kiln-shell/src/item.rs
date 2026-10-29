@@ -37,7 +37,7 @@ use gpui::{
     Subscription, Task, Window,
 };
 use kiln_command::Value;
-use kiln_ui::{CrumbKind, Icon};
+use kiln_ui::{CrumbKind, Icon, IconRef};
 
 use crate::StatusItem;
 
@@ -69,6 +69,12 @@ pub trait PaneItem: Render + Focusable + Sized + 'static {
     /// The tab's icon, if any.
     fn tab_icon(&self, _cx: &App) -> Option<Icon> {
         None
+    }
+
+    /// The icon the tab draws: [`Self::tab_icon`] unless the item answers
+    /// from an icon set, which may give an asset path.
+    fn tab_icon_ref(&self, cx: &App) -> Option<IconRef> {
+        self.tab_icon(cx).map(IconRef::from)
     }
 
     /// The window's title while this is the active pane's active item.
@@ -255,6 +261,7 @@ pub trait ItemHandle: 'static {
 
     fn tab_title(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, cx: &App) -> Option<Icon>;
+    fn tab_icon_ref(&self, cx: &App) -> Option<IconRef>;
     fn window_title(&self, cx: &App) -> SharedString;
     fn tab_title_color(&self, cx: &App) -> Option<Hsla>;
     fn is_dirty(&self, cx: &App) -> bool;
@@ -321,6 +328,10 @@ impl<T: PaneItem> ItemHandle for Entity<T> {
 
     fn tab_icon(&self, cx: &App) -> Option<Icon> {
         self.read(cx).tab_icon(cx)
+    }
+
+    fn tab_icon_ref(&self, cx: &App) -> Option<IconRef> {
+        self.read(cx).tab_icon_ref(cx)
     }
 
     fn window_title(&self, cx: &App) -> SharedString {

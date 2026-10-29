@@ -8,7 +8,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, Icon, ROW_HEIGHT, Tokens, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, ROW_HEIGHT, Tokens, UiTheme};
 
 /// How far each level of the tree is indented.
 pub const TREE_INDENT: Pixels = px(14.);
@@ -40,7 +40,7 @@ pub struct TreeRow {
     depth: usize,
     /// `Some(expanded)` for a directory.
     expanded: Option<bool>,
-    icon: Option<Icon>,
+    icon: Option<IconRef>,
     ignored: bool,
     error: bool,
     label_color: Option<Hsla>,
@@ -97,9 +97,10 @@ impl TreeRow {
         self
     }
 
-    /// The icon before the label.
-    pub fn icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+    /// The icon before the label: a bundled [`Icon`] or an icon set's
+    /// answer.
+    pub fn icon(mut self, icon: impl Into<IconRef>) -> Self {
+        self.icon = Some(icon.into());
         self
     }
 

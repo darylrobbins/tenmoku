@@ -51,7 +51,9 @@ use std::{
 use fe_gpui::commands::RunCommand;
 use fe_lsp::FileEdits;
 use fe_project::{FsChange, NameError, NodeId, fs_ops};
-use fe_ui::{CHEVRON_WIDTH, ICON_SIZE, Icon, TREE_INDENT, TextField, TextFieldEvent, text_field};
+use fe_ui::{
+    CHEVRON_WIDTH, ICON_SIZE, IconRef, TREE_INDENT, TextField, TextFieldEvent, text_field,
+};
 use gpui::{
     AnyElement, AppContext as _, ClipboardItem, Context, Entity, Focusable as _,
     InteractiveElement as _, IntoElement as _, KeyDownEvent, ParentElement as _, PromptButton,
@@ -812,7 +814,7 @@ impl ProjectPanel {
     pub(super) fn render_field(
         &self,
         depth: usize,
-        icon: Icon,
+        icon: IconRef,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(edit) = &self.edit else {

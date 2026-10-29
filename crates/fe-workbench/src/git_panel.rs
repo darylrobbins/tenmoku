@@ -81,14 +81,16 @@ use fe_editor::decorations::{Decoration, DecorationKind, DecorationProvider, Tin
 use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo, SplitStatus};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_text::Text;
-use fe_ui::{Button, Checkbox, Icon, IconButton, ROW_HEIGHT, TextInput, Tooltip, UiTheme};
+use fe_ui::{
+    Button, Checkbox, Icon, IconButton, ROW_HEIGHT, TextInput, Tooltip, UiTheme, file_icon_path,
+};
 use fe_vim::{CommandLineKind, Mode};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, Modifiers,
     ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    prelude::FluentBuilder as _, px, svg, uniform_list,
 };
 
 use crate::{
@@ -1144,6 +1146,13 @@ impl GitPanel {
                         let selected = self.selected == Some(ix);
                         let (kind, group) = (entry.kind, entry.group);
                         let buttons = self.buttons(at, row, row_actions(group, deleted), cx);
+                        let path = file_icon_path(&name_text);
+                        let icon = svg()
+                            .debug_selector(|| format!("change-icon:{name_text}:{path}"))
+                            .path(path.clone())
+                            .size(px(14.))
+                            .flex_none()
+                            .text_color(ui.icon);
                         base.when(deleted, |row| row.opacity(0.5))
                             .when(selected, |row| row.bg(selected_bg))
                             .hover(move |row| row.bg(ui.row_hover))
@@ -1157,6 +1166,7 @@ impl GitPanel {
                                     .text_color(letter_color(kind, &ui))
                                     .child(letter(kind)),
                             )
+                            .child(icon)
                             .child(div().flex_none().child(name_text))
                             .child(
                                 div()

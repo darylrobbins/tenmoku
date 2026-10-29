@@ -4,6 +4,7 @@ mod active_theme;
 mod assets;
 mod button_command;
 mod controls;
+mod file_icon_set;
 mod file_icons;
 mod layout;
 mod list;

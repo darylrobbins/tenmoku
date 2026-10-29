@@ -7,6 +7,7 @@ mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;
 mod caret_keys_lines;
 mod default_keymaps;
+mod file_icon_set_surfaces;
 pub(crate) mod find_bar;
 mod find_keys;
 mod launch;

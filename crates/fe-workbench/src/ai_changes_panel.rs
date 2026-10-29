@@ -36,7 +36,7 @@ use fe_buffer::{BufferId, HunkId, HunkStatus, ProposedChange, TransactionId, Ver
 use fe_command::Source;
 use fe_editor::{ChangesetError, Counts, FileEntry, RevertOutcome, Summary};
 use fe_gpui::{EditorView, ProposalEvent};
-use fe_ui::{Button, Icon, ROW_HEIGHT, file_icon};
+use fe_ui::{Button, Icon, ROW_HEIGHT, file_icon_path};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EntityId, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptButton,
@@ -322,8 +322,10 @@ impl AiChangesPanel {
                 let file = self.listing.files.get(ix)?;
                 let shown = self.display_path(&file.path);
                 let name = file.path.file_name().unwrap_or_default().to_string_lossy();
+                let path = file_icon_path(&name);
                 let icon = svg()
-                    .path(file_icon(&name).path())
+                    .debug_selector(|| format!("ai-changes-icon:{name}:{path}"))
+                    .path(path.clone())
                     .size(px(14.))
                     .flex_none()
                     .text_color(ui.icon);

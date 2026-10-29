@@ -7,9 +7,16 @@
 //! an alpha mask tinted with the element's text colour.
 //!
 //! The mapping is data: [`FILE_NAMES`] and [`EXTENSIONS`], built once into hash
-//! maps. A themeable mapping would load over these defaults.
+//! maps.
+//!
+//! Every surface that shows a file or folder icon asks the installed
+//! [`IconSet`] through [`file_icon_ref`], [`folder_icon_ref`] or their `_path`
+//! forms, so installing another set with [`set_icon_set`] changes them all
+//! together. With none installed the set is [`LucideIcons`], the mapping here.
 
-use std::{collections::HashMap, sync::LazyLock};
+use std::{cell::RefCell, collections::HashMap, sync::Arc, sync::LazyLock};
+
+use gpui::{App, SharedString};
 
 macro_rules! icons {
     ($($variant:ident => $name:literal,)*) => {
@@ -284,14 +291,154 @@ static NAME_MAP: LazyLock<HashMap<&'static str, Icon>> =
 static EXTENSION_MAP: LazyLock<HashMap<&'static str, Icon>> =
     LazyLock::new(|| EXTENSIONS.iter().copied().collect());
 
-/// The icon for a file called `name` (a file name, not a path).
+/// A file or folder icon as an icon set answers it: one bundled with kiln-ui,
+/// or an SVG served by the app's asset source. Tree rows, crumbs and tabs
+/// take either.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum IconRef {
+    Bundled(Icon),
+    /// An asset path, e.g. `"my-icons/rust.svg"`; drawn as a bundled icon is,
+    /// as an alpha mask tinted with the text colour.
+    Asset(SharedString),
+}
+
+impl IconRef {
+    /// The asset path to draw with `svg().path(..)`.
+    pub fn path(&self) -> SharedString {
+        match self {
+            IconRef::Bundled(icon) => icon.path().into(),
+            IconRef::Asset(path) => path.clone(),
+        }
+    }
+
+    /// The bundled icon, if it is one.
+    pub fn bundled(&self) -> Option<Icon> {
+        match self {
+            IconRef::Bundled(icon) => Some(*icon),
+            IconRef::Asset(_) => None,
+        }
+    }
+
+    /// What debug selectors name it by: a bundled icon's name
+    /// (`"file-code"`), else its asset path.
+    pub fn name(&self) -> SharedString {
+        match self {
+            IconRef::Bundled(icon) => icon.name().into(),
+            IconRef::Asset(path) => path.clone(),
+        }
+    }
+}
+
+impl From<Icon> for IconRef {
+    fn from(icon: Icon) -> Self {
+        IconRef::Bundled(icon)
+    }
+}
+
+impl PartialEq<Icon> for IconRef {
+    fn eq(&self, icon: &Icon) -> bool {
+        self.bundled() == Some(*icon)
+    }
+}
+
+/// Which icon each file and folder gets.
+pub trait IconSet: 'static {
+    /// The icon for a file called `name` (a file name, not a path).
+    fn file(&self, name: &str) -> IconRef;
+
+    /// The icon for a folder row, open or closed.
+    fn folder(&self, expanded: bool) -> IconRef;
+}
+
+/// The default set: Lucide's icons through [`FILE_NAMES`] and [`EXTENSIONS`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LucideIcons;
+
+impl IconSet for LucideIcons {
+    fn file(&self, name: &str) -> IconRef {
+        lucide_file(name).into()
+    }
+
+    fn folder(&self, expanded: bool) -> IconRef {
+        lucide_folder(expanded).into()
+    }
+}
+
+thread_local! {
+    /// The installed set. Per thread, as an app's globals are per app: an
+    /// app and every window it draws live on its UI thread, and each test's
+    /// app on its own. Free functions read it so callers without an `App`
+    /// (a `PaneItem::tab_icon`, the gallery) can too.
+    static ICON_SET: RefCell<Option<Arc<dyn IconSet>>> = const { RefCell::new(None) };
+}
+
+/// Installs `set` for every file and folder icon, and redraws every window
+/// so what's on screen changes with it.
+pub fn set_icon_set(set: Arc<dyn IconSet>, cx: &mut App) {
+    ICON_SET.with(|installed| *installed.borrow_mut() = Some(set));
+    cx.refresh_windows();
+}
+
+/// Puts [`LucideIcons`] back, redrawing every window.
+pub fn reset_icon_set(cx: &mut App) {
+    ICON_SET.with(|installed| *installed.borrow_mut() = None);
+    cx.refresh_windows();
+}
+
+/// The installed set, or [`LucideIcons`] when none is.
+pub fn icon_set() -> Arc<dyn IconSet> {
+    // Cloned out, so a set may itself ask the free functions.
+    ICON_SET
+        .with(|installed| installed.borrow().clone())
+        .unwrap_or_else(|| Arc::new(LucideIcons))
+}
+
+/// The installed set's icon for a file called `name`.
+pub fn file_icon_ref(name: &str) -> IconRef {
+    icon_set().file(name)
+}
+
+/// The installed set's icon for a folder row.
+pub fn folder_icon_ref(expanded: bool) -> IconRef {
+    icon_set().folder(expanded)
+}
+
+/// The asset path of the installed set's icon for a file called `name`, for a
+/// surface that draws `svg().path(..)` itself.
+pub fn file_icon_path(name: &str) -> SharedString {
+    file_icon_ref(name).path()
+}
+
+/// The asset path of the installed set's icon for a folder row.
+pub fn folder_icon_path(expanded: bool) -> SharedString {
+    folder_icon_ref(expanded).path()
+}
+
+/// The installed set's icon for a file called `name`, where only a bundled
+/// [`Icon`] will do, as in the gallery. A set that answers with an asset path
+/// gets [`LucideIcons`]' icon here; app surfaces use [`file_icon_ref`].
+pub fn file_icon(name: &str) -> Icon {
+    file_icon_ref(name)
+        .bundled()
+        .unwrap_or_else(|| lucide_file(name))
+}
+
+/// The installed set's folder icon where only a bundled [`Icon`] will do;
+/// see [`file_icon`].
+pub fn folder_icon(expanded: bool) -> Icon {
+    folder_icon_ref(expanded)
+        .bundled()
+        .unwrap_or_else(|| lucide_folder(expanded))
+}
+
+/// Lucide's icon for a file called `name` (a file name, not a path).
 ///
 /// In order: the exact name, ASCII case-insensitively; a name starting with
 /// `.env`; the last two extensions (`tar.gz`); the last extension; else
 /// [`Icon::File`]. A leading dot doesn't start an extension, so `.gitignore`
 /// is a name. At most three hash probes, and no allocation: names and
 /// extensions longer than 64 bytes skip their lookup.
-pub fn file_icon(name: &str) -> Icon {
+fn lucide_file(name: &str) -> Icon {
     let mut buf = [0u8; MAX_KEY];
     if let Some(icon) = lookup(&NAME_MAP, name, &mut buf) {
         return icon;
@@ -318,8 +465,8 @@ pub fn file_icon(name: &str) -> Icon {
     lookup(&EXTENSION_MAP, &name[last_dot + 1..], &mut buf).unwrap_or(Icon::File)
 }
 
-/// The icon for a folder row.
-pub fn folder_icon(expanded: bool) -> Icon {
+/// Lucide's icon for a folder row.
+fn lucide_folder(expanded: bool) -> Icon {
     if expanded {
         Icon::FolderOpen
     } else {

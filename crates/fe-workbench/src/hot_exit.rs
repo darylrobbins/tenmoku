@@ -62,7 +62,8 @@ use gpui::{
     SharedString, Subscription, Task, Window, WindowId,
 };
 use kiln_shell::{
-    CloseAnswer, CloseKind, CloseRequest, Closing, Icon, ItemCrumb, ItemHandle, ItemId, StatusItem,
+    CloseAnswer, CloseKind, CloseRequest, Closing, Icon, IconRef, ItemCrumb, ItemHandle, ItemId,
+    StatusItem,
     close::{self, Items, LiveItems},
     layout::LayoutStore,
 };
@@ -544,6 +545,10 @@ impl ItemHandle for BackedUp {
 
     fn tab_icon(&self, cx: &App) -> Option<Icon> {
         self.0.tab_icon(cx)
+    }
+
+    fn tab_icon_ref(&self, cx: &App) -> Option<IconRef> {
+        self.0.tab_icon_ref(cx)
     }
 
     fn window_title(&self, cx: &App) -> SharedString {

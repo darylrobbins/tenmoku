@@ -43,7 +43,10 @@ pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
 pub use breadcrumbs::{Breadcrumbs, Crumb, CrumbKind, TOOLBAR_HEIGHT};
 pub use controls::{Button, ButtonSize, ButtonVariant, Checkbox, Switch};
-pub use file_icons::{Icon, file_icon, folder_icon};
+pub use file_icons::{
+    Icon, IconRef, IconSet, LucideIcons, file_icon, file_icon_path, file_icon_ref, folder_icon,
+    folder_icon_path, folder_icon_ref, icon_set, reset_icon_set, set_icon_set,
+};
 pub use highlighted_label::{HighlightedLabel, char_ranges};
 pub use icon_button::IconButton;
 pub use layout::{h_flex, v_flex};
