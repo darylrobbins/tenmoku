@@ -600,6 +600,9 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
 }
 
 #[cfg(test)]
+#[path = "vim_lazyvim_preset_tests.rs"]
+mod vim_lazyvim_preset_tests;
+#[cfg(test)]
 #[path = "vim_preset_tests.rs"]
 mod vim_preset_tests;
 

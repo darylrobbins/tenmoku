@@ -2,4 +2,85 @@
 " vim.preset = "lazyvim", with <Space> as <leader> unless vim.leader is set.
 " The vimrc subset fastedit reads; each <Cmd>fe:…<CR> names a fastedit
 " command.
-nnoremap <leader>w <Cmd>fe:editor.save<CR>
+
+" find
+nnoremap <leader>ff <Cmd>fe:quick_open.toggle<CR>
+nnoremap <leader><space> <Cmd>fe:quick_open.toggle<CR>
+nnoremap <leader>fr <Cmd>fe:workbench.open_recent<CR>
+nnoremap <leader>fn <Cmd>fe:workbench.new_file<CR>
+nnoremap <leader>fp <Cmd>fe:workbench.open_folder<CR>
+nnoremap <leader>ft <Cmd>fe:terminal.toggle<CR>
+nnoremap <leader>fT <Cmd>fe:terminal.toggle<CR>
+
+" search
+nnoremap <leader>/ <Cmd>fe:search.show<CR>
+nnoremap <leader>sg <Cmd>fe:search.show<CR>
+nnoremap <leader>sr <Cmd>fe:search.show_replace<CR>
+nnoremap <leader>ss <Cmd>fe:outline.show<CR>
+nnoremap <leader>sS <Cmd>fe:nav.workspace_symbols<CR>
+nnoremap <leader>: <Cmd>fe:command_palette.toggle<CR>
+nnoremap <leader>sc <Cmd>fe:command_palette.toggle<CR>
+
+" explorer, buffers
+nnoremap <leader>e <Cmd>fe:dock.show_project<CR>
+nnoremap <leader>E <Cmd>fe:dock.show_project<CR>
+nnoremap <leader>bd <Cmd>fe:workbench.close_tab<CR>
+nnoremap <leader>bb <Cmd>fe:workbench.next_tab<CR>
+nnoremap <leader>, <Cmd>fe:workbench.next_tab<CR>
+
+" code
+nnoremap <leader>cr <Cmd>fe:lsp.rename<CR>
+nnoremap <leader>ca <Cmd>fe:lsp.code_actions<CR>
+nnoremap <leader>cf <Cmd>fe:lsp.format_document<CR>
+xnoremap <leader>cf <Cmd>fe:lsp.format_selection<CR>
+nnoremap <leader>cs <Cmd>fe:outline.show<CR>
+nnoremap <leader>co <Cmd>fe:lsp.organize_imports<CR>
+nnoremap <leader>cd <Cmd>fe:diagnostics.next<CR>
+
+" git
+nnoremap <leader>gg <Cmd>fe:git.show_changes<CR>
+nnoremap <leader>gs <Cmd>fe:git.show_changes<CR>
+nnoremap <leader>gb <Cmd>fe:git.toggle_blame_annotations<CR>
+nnoremap <leader>ghs <Cmd>fe:git.stage_hunk<CR>
+nnoremap <leader>ghr <Cmd>fe:git.revert_hunk<CR>
+
+" diagnostics
+nnoremap <leader>xx <Cmd>fe:problems.show<CR>
+
+" windows
+nnoremap <leader>- <Cmd>fe:pane.split_down<CR>
+nnoremap <leader><Bar> <Cmd>fe:pane.split_right<CR>
+nnoremap <leader>wd <Cmd>fe:pane.close<CR>
+nnoremap <leader>ww <Cmd>fe:pane.focus_next<CR>
+nnoremap <leader>w= <Cmd>fe:pane.equalize<CR>
+nnoremap <C-h> <Cmd>fe:pane.focus_left<CR>
+nnoremap <C-j> <Cmd>fe:pane.focus_down<CR>
+nnoremap <C-k> <Cmd>fe:pane.focus_up<CR>
+nnoremap <C-l> <Cmd>fe:pane.focus_right<CR>
+
+" quit, ui
+nnoremap <leader>qq <Cmd>fe:app.quit<CR>
+nnoremap <leader>uw <Cmd>fe:editor.toggle_soft_wrap<CR>
+
+" Unmapped LazyVim keys: fastedit has no command for them.
+"   <leader>sk  keymaps picker
+"   <leader>sh  help picker
+"   <leader>sd  diagnostics picker
+"   <leader>sb  buffer grep
+"   <leader>fb  buffer list
+"   <leader>fg  git files
+"   <leader>fc  config files
+"   <leader>l   lazy
+"   <leader>L   changelog
+"   <leader>K   keywordprg
+"   <leader>cm  mason
+"   <leader>xl  location list
+"   <leader>xq  quickfix list
+"   <leader>xt  todo list
+"   <leader>ur  redraw
+"   <leader>ud  toggle diagnostics
+"   <leader>un  dismiss notifications
+"   <leader>wm  zoom
+"   <leader>bo  delete other buffers
+"   <leader><tab>  tab pages
+"   <leader>qs  sessions

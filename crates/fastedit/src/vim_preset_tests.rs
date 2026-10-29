@@ -16,6 +16,7 @@ use super::tests::{Files, edit, insert_layer, keys, normal, problems, warnings};
 use super::*;
 
 const SAVE: &str = "<Cmd>fe:editor.save<CR>";
+const QUIT: &str = "<Cmd>fe:app.quit<CR>";
 
 /// `kiln::init` with the settings and vimrc of `files`, and a
 /// [`VimRemaps`] source whose presets are `presets`.
@@ -45,6 +46,11 @@ fn in_use(cx: &mut TestAppContext) -> RemapsInUse {
 /// Whether `from` runs `fe:editor.save` in normal mode: the record that
 /// wins for its keys is the preset's.
 fn saves(from: &str, cx: &mut TestAppContext) -> bool {
+    runs(from, SAVE, cx)
+}
+
+/// Whether `from` runs `to` in normal mode, as [`saves`].
+fn runs(from: &str, to: &str, cx: &mut TestAppContext) -> bool {
     let in_use = in_use(cx);
     let (set, _) = RemapSet::new(&in_use.remaps, &in_use.leader);
     let from = parse_keys(from).unwrap();
@@ -55,7 +61,7 @@ fn saves(from: &str, cx: &mut TestAppContext) -> bool {
     let last = (in_use.remaps.iter()).rfind(|remap| {
         parse_keys(&remap.from.replace("<leader>", &in_use.leader)).as_deref() == Ok(&from[..])
     });
-    mapped && last.is_some_and(|remap| remap.to == SAVE)
+    mapped && last.is_some_and(|remap| remap.to == to)
 }
 
 /// The `fe:` command ids the `<Cmd>…<CR>`s of `text`'s maps name.
@@ -77,7 +83,7 @@ fn fe_commands(text: &str) -> Vec<String> {
 }
 
 /// The `fe:` command ids of `text` that fastedit's catalog doesn't know.
-fn unknown_commands(text: &str) -> Vec<String> {
+pub(super) fn unknown_commands(text: &str) -> Vec<String> {
     let catalog = fe_workbench::command_catalog();
     (fe_commands(text).into_iter())
         .filter(|id| {
@@ -118,21 +124,21 @@ fn preset_sits_under_the_users_maps_and_sets_its_leader(cx: &mut TestAppContext)
         set.remaps,
         parse_with_leader(lazyvim.text, "<Space>").remaps
     );
-    assert!(saves(" w", cx), "the preset's <leader>w");
-    assert!(!saves("\\w", cx));
+    assert!(runs(" qq", QUIT, cx), "the preset's <leader>qq");
+    assert!(!runs("\\qq", QUIT, cx));
     assert_eq!(problems(Path::new(lazyvim.name), cx), []);
 
     // The vimrc's `<leader>` starts as the preset's, and its map wins.
-    let vimrc = "nnoremap <leader>w :w<CR>\n";
+    let vimrc = "nnoremap <leader>qq :w<CR>\n";
     edit(&files.vimrc(), vimrc, &[files.vimrc()], &sender, cx);
-    assert_eq!(normal(" w", cx), keys(":w<CR>"));
+    assert_eq!(normal(" qq", cx), keys(":w<CR>"));
     assert_eq!(problems(&files.vimrc(), cx), []);
 
     // So does a `[[vim.remap]]` entry's, over both.
     let table =
-        format!("{preset}\n[[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>w\"\nto = \"x\"\n");
+        format!("{preset}\n[[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>qq\"\nto = \"x\"\n");
     edit(&files.settings(), &table, &[files.settings()], &sender, cx);
-    assert_eq!(normal(" w", cx), keys("x"));
+    assert_eq!(normal(" qq", cx), keys("x"));
 
     // An explicit `vim.leader` beats the preset's, for its maps too.
     std::fs::remove_file(files.vimrc()).unwrap();
@@ -140,15 +146,15 @@ fn preset_sits_under_the_users_maps_and_sets_its_leader(cx: &mut TestAppContext)
     let batch = [files.vimrc(), files.settings()];
     edit(&files.settings(), comma, &batch, &sender, cx);
     assert_eq!(in_use(cx).leader, ",");
-    assert!(saves(",w", cx));
-    assert!(!saves(" w", cx));
+    assert!(runs(",qq", QUIT, cx));
+    assert!(!runs(" qq", QUIT, cx));
 
     // A vimrc's own `let mapleader` still sets its leader from there.
     let vimrc = "nnoremap <leader>q :q<CR>\nlet mapleader = \"-\"\nnnoremap <leader>q ZZ\n";
     edit(&files.vimrc(), vimrc, &[files.vimrc()], &sender, cx);
     assert_eq!(normal(",q", cx), keys(":q<CR>"));
     assert_eq!(normal("-q", cx), keys("ZZ"));
-    assert!(saves(",w", cx));
+    assert!(runs(",qq", QUIT, cx));
 }
 
 #[gpui::test]
@@ -165,15 +171,15 @@ fn any_leader_keeps_the_users_maps_over_the_presets(cx: &mut TestAppContext) {
         let files = Files::new(&preset, None);
         let sender = start(&files, bundled, cx);
         assert_eq!(in_use(cx).leader, leader);
-        let w = format!("{leader}w");
-        assert!(saves(&w, cx), "{leader:?}: the preset's");
+        let w = format!("{leader}qq");
+        assert!(runs(&w, QUIT, cx), "{leader:?}: the preset's");
 
-        let vimrc = "nnoremap <leader>w :w<CR>\n";
+        let vimrc = "nnoremap <leader>qq :w<CR>\n";
         edit(&files.vimrc(), vimrc, &[files.vimrc()], &sender, cx);
         assert_eq!(problems(&files.vimrc(), cx), [], "{leader:?}");
         assert_eq!(normal(&w, cx), keys(":w<CR>"), "{leader:?}: the vimrc's");
 
-        let entry = "[[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>w\"\nto = \"x\"\n";
+        let entry = "[[vim.remap]]\nmode = \"n\"\nfrom = \"<leader>qq\"\nto = \"x\"\n";
         let table = format!("{preset}\n{entry}");
         edit(&files.settings(), &table, &[files.settings()], &sender, cx);
         assert_eq!(problems(&files.settings(), cx), [], "{leader:?}");
@@ -247,10 +253,6 @@ fn bundled_presets_name_real_commands(cx: &mut TestAppContext) {
             "{preset:?}"
         );
     }
-    assert_eq!(
-        fe_commands(bundled(VimPreset::Lazyvim).unwrap().text),
-        ["editor.save"]
-    );
 
     // A renamed command is caught.
     let renamed = "nnoremap <leader>w <Cmd>fe:editor.save<CR>\n\
