@@ -584,6 +584,7 @@ fn a_cut_checks_again_once_servers_answer(cx: &mut TestAppContext) {
         (records.iter()).any(|record| record.method() == "workspace/willRenameFiles")
     });
     fs::write(s.path("src/sub/util.rs"), "theirs").unwrap();
+    s.clock.wait_for_sleep(Duration::from_secs(5));
     s.clock.advance(Duration::from_secs(5));
     s.draw();
     s.until("the toast", |s| !lsp_toasts(s).is_empty());
@@ -624,6 +625,7 @@ fn a_cut_checks_again_once_servers_answer(cx: &mut TestAppContext) {
         })
     });
     s.draw();
+    s.clock.wait_for_sleep(Duration::from_secs(5));
     s.clock.advance(Duration::from_secs(5));
     s.draw();
     s.until("the toast", |s| !lsp_toasts(s).is_empty());
@@ -949,6 +951,7 @@ fn a_cut_checks_its_folder_again_once_servers_answer(cx: &mut TestAppContext) {
     // Work starts in `src/sub` while the servers are asked.
     let sub = fs::canonicalize(s.path("src/sub")).unwrap();
     let running = super::ops::Running::start(sub);
+    s.clock.wait_for_sleep(Duration::from_secs(5));
     s.clock.advance(Duration::from_secs(5));
     s.draw();
     s.until("the toast", |s| !lsp_toasts(s).is_empty());
