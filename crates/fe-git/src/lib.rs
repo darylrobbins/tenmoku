@@ -27,6 +27,7 @@ mod index;
 mod log;
 mod refs;
 mod remote;
+pub mod remote_link;
 mod stage;
 mod stash;
 
