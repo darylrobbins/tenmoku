@@ -300,6 +300,9 @@ pub(super) fn problem(entry: &SettingEntry, value: &Value) -> Option<String> {
 /// `lsp.servers`), or where it's set. `None` if the file doesn't parse or
 /// hasn't it.
 pub(super) fn table_row(text: &str, key: &[String]) -> Option<u32> {
+    if key.is_empty() {
+        return None;
+    }
     let layer = parse_layer(Path::new(""), text.to_owned());
     let offset = layer.key_offset(key)?;
     let row = text.get(..offset)?.matches('\n').count();
@@ -1061,7 +1064,7 @@ impl SettingsEditor {
     }
 
     /// Opens the selected scope's settings file in the active pane, as
-    /// `workbench.open_settings` does the user's, creating the user's from
+    /// `workbench.open_settings` does the user's, creating it from
     /// the template if it's missing, with the caret on `key`'s table if
     /// the file has it.
     pub(super) fn edit_in_file(
@@ -1071,9 +1074,9 @@ impl SettingsEditor {
         cx: &mut Context<Self>,
     ) {
         let (user, project) = self.files(cx);
-        let (path, create) = match self.scope() {
-            Scope::User => (user, true),
-            Scope::Workspace => (project, false),
+        let path = match self.scope() {
+            Scope::User => user,
+            Scope::Workspace => project,
         };
         let Some(path) = path else {
             toast::show(
@@ -1097,9 +1100,7 @@ impl SettingsEditor {
         let read = cx.background_spawn({
             let path = path.clone();
             async move {
-                if create {
-                    open::create_settings(&path)?;
-                }
+                open::create_settings(&path)?;
                 let text = match open_text {
                     Some(text) => text,
                     None => read_settings(&path).unwrap_or_default(),

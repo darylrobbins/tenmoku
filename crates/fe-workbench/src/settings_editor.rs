@@ -76,6 +76,10 @@ use crate::{
 #[path = "settings_editor_controls.rs"]
 mod controls;
 
+#[cfg(test)]
+#[path = "settings_editor_open_file_tests.rs"]
+mod open_file_tests;
+
 use controls::{Change, Field, ListField};
 
 /// The key context the editor's element sets.
@@ -938,17 +942,28 @@ impl SettingsEditor {
             .on_click(cx.listener(move |this, _, window, cx| this.reset(&key, window, cx)))
     }
 
+    /// The selected scope's name and settings file, as the Open button
+    /// labels and shows them.
+    fn open_file_target(&self, cx: &App) -> (&'static str, Option<PathBuf>) {
+        let (user, project) = self.files(cx);
+        match self.scope() {
+            Scope::User => ("User", user),
+            Scope::Workspace => ("Workspace", project),
+        }
+    }
+
     /// The User and Workspace tabs.
     fn scope_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = ui_theme(cx);
         let shown = self.scope();
-        div()
-            .flex_none()
+        let (name, file) = self.open_file_target(cx);
+        let tip = file.map_or_else(
+            || "There's no config directory".to_owned(),
+            |path| path.display().to_string(),
+        );
+        let tabs = div()
             .flex()
             .gap_4()
-            .px_6()
-            .border_b_1()
-            .border_color(ui.border)
             .children(self.scopes().iter().map(|&scope| {
                 let (label, selector) = match scope {
                     Scope::User => ("User", "settings-scope-user"),
@@ -969,7 +984,29 @@ impl SettingsEditor {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.set_scope(scope, cx)))
                     .child(label)
-            }))
+            }));
+        let open = div()
+            .id("setting-open-file")
+            .debug_selector(|| "setting-open-file".into())
+            .py_1p5()
+            .text_color(ui.accent)
+            .cursor_pointer()
+            .hover(|style| style.underline())
+            .child(format!("Open {name} settings.toml"))
+            .tooltip(move |_, cx| {
+                cx.new(|_| Tooltip::new(tip.clone(), None::<&str>, &ui))
+                    .into()
+            })
+            .on_click(cx.listener(|this, _, window, cx| this.edit_in_file(&[], window, cx)));
+        div()
+            .flex_none()
+            .flex()
+            .justify_between()
+            .px_6()
+            .border_b_1()
+            .border_color(ui.border)
+            .child(tabs)
+            .child(open)
     }
 }
 
