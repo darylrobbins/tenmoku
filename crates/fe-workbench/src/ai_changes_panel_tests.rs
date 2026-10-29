@@ -9,6 +9,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_editor::{Changeset, Counts};
 use fe_gpui::{EditorView, commands::RunCommand};
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
+use kiln_shell::DockView as _;
 
 use crate::ai_changes_panel::AiChangesPanel;
 use crate::{DockPanel, Launch, Workbench, tests::open};
@@ -1296,4 +1297,57 @@ fn replacing_the_turn_closes_its_new_file_previews(cx: &mut TestAppContext) {
     let tabs = workbench.read_with(cx, |workbench, cx| workbench.open_editors(cx).len());
     assert_eq!(tabs, 2);
     assert_eq!(text(cx), "fn other() {}\n");
+}
+
+/// Whether the right dock's rail has a button for AI Changes.
+fn on_rail(s: &mut Setup<'_>) -> bool {
+    s.workbench.read_with(s.cx, |workbench, cx| {
+        let state = workbench.dock().read(cx).state();
+        state.on_rail(DockPanel::AiChanges.id(), cx)
+            || state.joined().contains(&DockPanel::AiChanges.id())
+    })
+}
+
+#[gpui::test]
+fn ai_changes_shows_in_the_right_sidebar_on_changeset(cx: &mut TestAppContext) {
+    let mut s = setup(cx);
+    let panel = s.panel();
+    let (visible, active, position, has_problems) = s.workbench.read_with(s.cx, |wb, cx| {
+        let dock = wb.dock().read(cx);
+        (
+            dock.is_visible(),
+            dock.active(),
+            dock.state().position(),
+            dock.state().panel_ids().contains(&DockPanel::Problems.id()),
+        )
+    });
+    assert_eq!(
+        (visible, active, position, has_problems),
+        (
+            true,
+            DockPanel::AiChanges,
+            kiln_shell::DockPosition::Right,
+            true
+        )
+    );
+    let focused =
+        s.cx.update(|window, cx| panel.focus_handle(cx).contains_focused(window, cx));
+    assert!(focused);
+}
+
+#[gpui::test]
+fn ai_changes_has_no_rail_entry(cx: &mut TestAppContext) {
+    let mut s = setup(cx);
+    assert!(!on_rail(&mut s), "shown");
+    s.workbench.update_in(s.cx, |wb, _, cx| {
+        wb.dock().update(cx, |dock, cx| {
+            dock.dock_mut().set_visible(false);
+            cx.notify();
+        })
+    });
+    draw(s.cx);
+    assert!(!on_rail(&mut s), "hidden");
+    s.run("ai.show_changes", &["workbench"]);
+    s.run("ai.show_changes", &["workbench"]);
+    assert!(!on_rail(&mut s), "shown again");
 }

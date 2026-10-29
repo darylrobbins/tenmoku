@@ -147,6 +147,13 @@ pub trait DockItem: Render + Focusable + 'static {
         true
     }
 
+    /// Whether a panel that isn't [`DockItem::always_on_rail`] joins the
+    /// rail once shown. `false` keeps it off the rail, shown by its
+    /// command alone.
+    fn joins_rail_on_show(&self) -> bool {
+        true
+    }
+
     /// Focused when shown, as a search panel focuses its input.
     fn focus_on_show(&self) -> bool {
         false
@@ -173,6 +180,7 @@ trait PanelHandle {
     fn icon(&self, cx: &App) -> Icon;
     fn show_command(&self, cx: &App) -> Option<&'static str>;
     fn always_on_rail(&self, cx: &App) -> bool;
+    fn joins_rail_on_show(&self, cx: &App) -> bool;
     fn focus_on_show(&self, cx: &App) -> bool;
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn save_state(&self, cx: &App) -> Option<Value>;
@@ -209,6 +217,10 @@ impl<P: DockItem> PanelHandle for Panel<P> {
 
     fn always_on_rail(&self, cx: &App) -> bool {
         self.entity.read(cx).always_on_rail()
+    }
+
+    fn joins_rail_on_show(&self, cx: &App) -> bool {
+        self.entity.read(cx).joins_rail_on_show()
     }
 
     fn focus_on_show(&self, cx: &App) -> bool {
@@ -648,9 +660,12 @@ impl DockState {
             return false;
         };
         let focus = handle.focus_on_show(cx).then(|| handle.focus_handle(cx));
+        let joins = handle.joins_rail_on_show(cx);
         self.active = Some(panel);
         self.visible = true;
-        self.joined.insert(panel);
+        if joins {
+            self.joined.insert(panel);
+        }
         if let Some(focus) = focus {
             window.focus(&focus, cx);
         }
@@ -766,8 +781,12 @@ impl DockState {
             .flatten()
             .filter_map(|id| registered(id.as_str()?))
             .collect();
+        let joins =
+            |id: PanelId| (self.handle(id)).is_none_or(|handle| handle.joins_rail_on_show(cx));
+        let joined: Vec<PanelId> = joined.into_iter().filter(|&id| joins(id)).collect();
+        let active = self.active.filter(|&id| joins(id));
         self.joined.extend(joined);
-        if let Some(active) = self.active {
+        if let Some(active) = active {
             self.joined.insert(active);
         }
         let panels = saved.get("panels").and_then(Value::as_object);

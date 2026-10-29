@@ -199,7 +199,19 @@ macro_rules! dock_item {
             $sidebar.name.into()
         });
     };
+    // Shown by its command alone: never on the rail.
+    ($panel:ty, $sidebar:expr, off_rail) => {
+        dock_item!(
+            $panel,
+            $sidebar,
+            |_: &$panel, _: &App| $sidebar.name.into(),
+            false
+        );
+    };
     ($panel:ty, $sidebar:expr, $title:expr) => {
+        dock_item!($panel, $sidebar, $title, true);
+    };
+    ($panel:ty, $sidebar:expr, $title:expr, $joins_rail:expr) => {
         impl DockItem for $panel {
             fn id(&self) -> PanelId {
                 $sidebar.panel.id()
@@ -221,6 +233,10 @@ macro_rules! dock_item {
                 $sidebar.always_on_rail
             }
 
+            fn joins_rail_on_show(&self) -> bool {
+                $joins_rail
+            }
+
             fn focus_on_show(&self) -> bool {
                 $sidebar.focus_on_show
             }
@@ -231,7 +247,7 @@ macro_rules! dock_item {
 dock_item!(SearchPanel, search_panel::SIDEBAR);
 dock_item!(ReferencesPanel, crate::references_panel::SIDEBAR);
 dock_item!(ProblemsPanel, problems_panel::SIDEBAR);
-dock_item!(AiChangesPanel, crate::ai_changes_panel::SIDEBAR);
+dock_item!(AiChangesPanel, crate::ai_changes_panel::SIDEBAR, off_rail);
 // Titled with the file it lists.
 dock_item!(
     HistoryPanel,

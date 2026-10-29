@@ -22,9 +22,8 @@
 //! turn can still be reverted. Reverting a file edited since asks first,
 //! naming the files, and only then overwrites them.
 //!
-//! The panel is in the sidebar beside Problems, joining the rail once it
-//! has shown, as Problems does: the only bottom dock is the terminal's,
-//! which draws no other panel.
+//! The panel is in the right sidebar beside Problems, opened by a
+//! changeset, but never on the activity rail, shown or not.
 
 use std::{
     cell::RefCell,
@@ -62,8 +61,8 @@ pub(crate) const SHOW: &str = "ai.show_changes";
 /// What the panel shows when nothing is pending.
 const NO_CHANGES: &str = "No pending changes";
 
-/// The AI changes in the sidebar: on the rail once it has shown; focused
-/// when shown, for its keys.
+/// The AI changes in the sidebar: never on the rail (see `dock_item!`);
+/// focused when shown, for its keys.
 pub(crate) const SIDEBAR: crate::dock::SidebarPanel = crate::dock::SidebarPanel {
     panel: crate::DockPanel::new("ai_changes"),
     name: "AI Changes",
