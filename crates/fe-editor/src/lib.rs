@@ -39,6 +39,7 @@ pub mod ghost_text;
 mod indent_convert;
 pub mod indent_guides;
 mod indent_style;
+pub mod inline_diff;
 mod join_lines;
 mod last_edit;
 mod line_sort;
@@ -68,6 +69,7 @@ pub use changeset::{
 pub use comment::CommentTokens;
 pub use disk::{SaveError, SaveJob, Saved, save_target};
 pub use indent_style::{IndentStyle, detect_indent_style};
+pub use inline_diff::InlineDiff;
 pub use multi_cursor::MAX_OCCURRENCES;
 pub use text_diff::{Hunk, HunkKind, Side, TextDiff};
 pub use trim_whitespace::trailing_whitespace;
