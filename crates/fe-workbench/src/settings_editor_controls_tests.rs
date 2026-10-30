@@ -389,33 +389,27 @@ fn number_out_of_range_shows_message_and_does_not_write(cx: &mut TestAppContext)
 fn text_commit(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
     let (workbench, cx) = workbench(cx, &dirs);
-    let key = "editor.font_family";
+    let key = "vim.leader";
     let editor = open_settings(&workbench, Scope::Workspace, key, cx);
     let input = format!("setting-input-{key}");
-    assert_eq!(field(&editor, key, cx), (String::new(), None), "unset");
+    assert_eq!(field(&editor, key, cx), ("\\".to_owned(), None), "default");
 
-    type_into(&input, "Iosevka Term", cx);
+    type_into(&input, "<Space>", cx);
     press("enter", cx);
-    assert_eq!(
-        read(&dirs.workspace()),
-        "[editor]\nfont_family = \"Iosevka Term\"\n"
-    );
-    assert_eq!(shown(&editor, key, cx), ("Iosevka Term".to_owned(), true));
+    assert_eq!(read(&dirs.workspace()), "[vim]\nleader = \"<Space>\"\n");
+    assert_eq!(shown(&editor, key, cx), ("<Space>".to_owned(), true));
 
     // Leaving it commits; a quote is escaped.
-    type_into(&input, "Fira \"Code\"", cx);
+    type_into(&input, ",\"", cx);
     click(&format!("settings-description-{key}"), cx);
-    assert_eq!(
-        read(&dirs.workspace()),
-        "[editor]\nfont_family = \"Fira \\\"Code\\\"\"\n"
-    );
-    assert_eq!(shown(&editor, key, cx), ("Fira \"Code\"".to_owned(), true));
+    assert_eq!(read(&dirs.workspace()), "[vim]\nleader = \",\\\"\"\n");
+    assert_eq!(shown(&editor, key, cx), (",\"".to_owned(), true));
 
-    // Emptied, a setting unset by default is unset again.
+    // Emptied, a setting with a default is set to nothing.
     type_into(&input, "", cx);
     press("enter", cx);
-    assert_eq!(read(&dirs.workspace()), "");
-    assert_eq!(shown(&editor, key, cx), ("Not set".to_owned(), false));
+    assert_eq!(read(&dirs.workspace()), "[vim]\nleader = \"\"\n");
+    assert_eq!(shown(&editor, key, cx), (String::new(), true));
 }
 
 #[gpui::test]

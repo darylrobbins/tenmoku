@@ -44,7 +44,7 @@
 //! layouts, and closes as any tab does.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
     sync::{
@@ -82,6 +82,10 @@ mod choices;
 #[cfg(test)]
 #[path = "settings_editor_choices_tests.rs"]
 mod choices_tests;
+
+#[cfg(test)]
+#[path = "settings_editor_choices_font_tests.rs"]
+mod choices_font_tests;
 
 #[cfg(test)]
 #[path = "settings_editor_open_file_tests.rs"]
@@ -216,6 +220,9 @@ pub(crate) struct SettingsEditor {
     lists: HashMap<String, ListField>,
     /// The open dropdown.
     select: Option<Select>,
+    /// The dropdowns whose rows show an input instead, after Other…, by
+    /// dotted key.
+    typing: HashSet<String>,
     /// The changes written or waiting to be, not read back yet, by dotted
     /// key, scope and the file they're to: what their rows show meanwhile.
     pending: HashMap<PendingKey, Pending>,
@@ -275,6 +282,7 @@ impl SettingsEditor {
                 // file: drop them, and their blur subscriptions, so a late
                 // blur writes nothing to the new root.
                 this.select = None;
+                this.typing.clear();
                 this.fields.clear();
                 this.lists.clear();
                 this.reload(cx);
@@ -296,6 +304,7 @@ impl SettingsEditor {
             fields: HashMap::new(),
             lists: HashMap::new(),
             select: None,
+            typing: HashSet::new(),
             pending: HashMap::new(),
             next_generation: 0,
             reads: Arc::new(AtomicU64::new(1)),
@@ -555,6 +564,7 @@ impl SettingsEditor {
         self.select = None;
         // The inputs are made again with the new scope's values, dropping
         // any message, and a late blur of the old ones commits nothing.
+        self.typing.clear();
         self.fields.clear();
         self.lists.clear();
         self.reload(cx);

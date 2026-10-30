@@ -1,12 +1,17 @@
 //! The lists a [`SettingKind::Choice`](fe_config::SettingKind::Choice)
 //! setting is one of, which only the app knows: the themes, as Change
-//! Color Theme lists them ([`theme_picker::rows`]).
+//! Color Theme lists them ([`theme_picker::rows`]), the Claude models it
+//! knows ([`chat_models::KNOWN`]) and the fonts the text system has.
 //!
 //! A slot, `theme.dark` or `theme.light`, takes a theme of its appearance
 //! by the ID kiln selects it by, as the picker writes an installed one;
 //! `theme.name` takes a bundled one by title, as the picker writes it.
+//!
+//! A model or font not listed is still one the setting takes: a model
+//! newer than the app, or a font the text system finds by another name.
+//! It shows with no hint, so a closed dropdown of fonts never lists them.
 
-use fe_config::{ChoiceSource, EnumVariant, themes};
+use fe_config::{ChoiceSource, EnumVariant, chat_models, themes};
 use gpui::App;
 use kiln::core::theme::Appearance;
 
@@ -17,12 +22,42 @@ use crate::theme_picker::{self, Source};
 pub(super) fn variants(source: ChoiceSource, cx: &App) -> Vec<EnumVariant> {
     match source {
         ChoiceSource::Themes { appearance } => themes(appearance, cx),
+        ChoiceSource::ChatModels => (chat_models::KNOWN.iter())
+            .map(|model| variant(model))
+            .collect(),
+        // Sorted and deduplicated by the text system.
+        ChoiceSource::Fonts => (cx.text_system().all_font_names().iter())
+            .map(|font| variant(font))
+            .collect(),
+    }
+}
+
+/// Whether a value `source` doesn't list is one the setting takes all the
+/// same, shown with no hint.
+pub(super) fn takes_any(source: ChoiceSource) -> bool {
+    match source {
+        ChoiceSource::Themes { .. } => false,
+        ChoiceSource::ChatModels | ChoiceSource::Fonts => true,
+    }
+}
+
+/// Whether `source`'s dropdown ends in Other…, which has the row take a
+/// value typed in: a model id newer than the app.
+pub(super) fn other(source: ChoiceSource) -> bool {
+    source == ChoiceSource::ChatModels
+}
+
+fn variant(value: &str) -> EnumVariant {
+    EnumVariant {
+        value: value.to_owned(),
+        description: String::new(),
     }
 }
 
 /// The value `source` lists `value` as: a bundled theme's title for the
 /// ID, short title or title in another case `theme.name` also takes it by
-/// ([`themes::find`]); else `value`, as a slot takes only an ID.
+/// ([`themes::find`]); else `value`, as a slot takes only an ID, and a
+/// model or font only as listed.
 pub(super) fn listed_as(source: ChoiceSource, value: &str) -> String {
     match source {
         ChoiceSource::Themes { appearance: None } => themes::find(value)
@@ -30,7 +65,9 @@ pub(super) fn listed_as(source: ChoiceSource, value: &str) -> String {
             .to_owned(),
         ChoiceSource::Themes {
             appearance: Some(_),
-        } => value.to_owned(),
+        }
+        | ChoiceSource::ChatModels
+        | ChoiceSource::Fonts => value.to_owned(),
     }
 }
 

@@ -64,15 +64,15 @@ fn extension(base: &Path, id: &str, themes: &[(&str, &str, &str)]) {
 
 /// A project folder, a config directory and the Acme extension under one
 /// temporary base.
-struct Dirs {
+pub(super) struct Dirs {
     _temp: Option<tempfile::TempDir>,
-    base: PathBuf,
+    pub(super) base: PathBuf,
     root: PathBuf,
     config: PathBuf,
 }
 
 impl Dirs {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let base = fs::canonicalize(temp.path()).unwrap();
         Self {
@@ -95,7 +95,7 @@ impl Dirs {
         }
     }
 
-    fn user(&self) -> PathBuf {
+    pub(super) fn user(&self) -> PathBuf {
         self.config.join("settings.toml")
     }
 
@@ -109,11 +109,16 @@ impl Dirs {
 /// that it passed: `None` here, once it has. There, it's `Some` with the
 /// directories it runs in.
 fn in_own_process(name: &str) -> Option<Dirs> {
+    in_own_process_of(module_path!(), name)
+}
+
+/// [`in_own_process`] for the test `name` of `module`, a `module_path!()`.
+pub(super) fn in_own_process_of(module: &str, name: &str) -> Option<Dirs> {
     if let Some(base) = std::env::var_os(OWN_PROCESS_DIRS) {
         return Some(Dirs::at(Path::new(&base)));
     }
     let dirs = Dirs::new();
-    let module = module_path!().split_once("::").unwrap().1;
+    let module = module.split_once("::").unwrap().1;
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([&format!("{module}::{name}"), "--exact", "--test-threads=1"])
         .env("FASTEDIT_CONFIG_DIR", &dirs.config)
@@ -132,7 +137,7 @@ fn in_own_process(name: &str) -> Option<Dirs> {
 /// A workbench on `dirs`' root, with the Acme extension installed and the
 /// user's settings `dirs`' config directory's, focused; and the sender
 /// standing in for the config watcher.
-fn workbench<'a>(
+pub(super) fn workbench<'a>(
     cx: &'a mut TestAppContext,
     dirs: &Dirs,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext, BatchSender) {
@@ -158,7 +163,7 @@ fn workbench<'a>(
 
 /// Draws, delivers the next frame's callbacks, as the platform would, and
 /// draws what they changed.
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     for _ in 0..2 {
         cx.run_until_parked();
         cx.update(|window, cx| {
@@ -171,7 +176,7 @@ fn draw(cx: &mut VisualTestContext) {
 
 /// Opens the Settings tab on `scope` and searches for `key`, so its row
 /// shows at the top.
-fn open_settings(
+pub(super) fn open_settings(
     workbench: &Entity<Workbench>,
     scope: Scope,
     key: &str,
@@ -193,7 +198,7 @@ fn open_settings(
 }
 
 /// Searches for `key` instead, from the search field.
-fn search_for(editor: &Entity<SettingsEditor>, key: &str, cx: &mut VisualTestContext) {
+pub(super) fn search_for(editor: &Entity<SettingsEditor>, key: &str, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let search = editor.read(cx).search_input().focus_handle(cx);
         window.focus(&search, cx);
@@ -204,36 +209,36 @@ fn search_for(editor: &Entity<SettingsEditor>, key: &str, cx: &mut VisualTestCon
     assert!(drawn(&format!("settings-row-{key}"), cx), "{key} shows");
 }
 
-fn bounds(selector: &str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixels> {
+pub(super) fn bounds(selector: &str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixels> {
     let found = cx.debug_bounds(selector.to_owned().leak());
     found.unwrap_or_else(|| panic!("{selector} is drawn"))
 }
 
-fn drawn(selector: &str, cx: &mut VisualTestContext) -> bool {
+pub(super) fn drawn(selector: &str, cx: &mut VisualTestContext) -> bool {
     cx.debug_bounds(selector.to_owned().leak()).is_some()
 }
 
-fn click(selector: &str, cx: &mut VisualTestContext) {
+pub(super) fn click(selector: &str, cx: &mut VisualTestContext) {
     let at = bounds(selector, cx).center();
     cx.simulate_click(at, Modifiers::none());
     draw(cx);
 }
 
-fn press(keys: &str, cx: &mut VisualTestContext) {
+pub(super) fn press(keys: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(keys);
     draw(cx);
 }
 
-fn read(path: &Path) -> String {
+pub(super) fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
 }
 
-fn option(key: &str, value: &str) -> String {
+pub(super) fn option(key: &str, value: &str) -> String {
     format!("setting-option-{key}-{value}")
 }
 
 /// What `key`'s dropdown lists now, `None` for Default (built-in).
-fn listed(
+pub(super) fn listed(
     editor: &Entity<SettingsEditor>,
     key: &str,
     cx: &mut VisualTestContext,
@@ -249,7 +254,7 @@ fn listed(
 
 /// The open dropdown's setting, the options it shows, `None` for Default
 /// (built-in), and the one highlighted.
-fn open_list(
+pub(super) fn open_list(
     editor: &Entity<SettingsEditor>,
     cx: &mut VisualTestContext,
 ) -> Option<(String, Vec<Option<String>>, usize)> {
@@ -271,7 +276,7 @@ fn in_view(key: &str, selector: &str, cx: &mut VisualTestContext) -> bool {
 }
 
 /// What `key`'s dropdown shows, and its hint.
-fn label(
+pub(super) fn label(
     editor: &Entity<SettingsEditor>,
     key: &str,
     cx: &mut VisualTestContext,

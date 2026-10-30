@@ -118,12 +118,10 @@ fn kinds_follow_the_schema() {
         kind("editor.font_size"),
         SettingKind::Float { .. }
     ));
-    // Optional: a string or nothing.
+    // Optional: one of the fonts installed, or nothing.
     assert_eq!(
         kind("editor.font_family"),
-        SettingKind::Text {
-            min_length: Some(1)
-        }
+        SettingKind::Choice(ChoiceSource::Fonts)
     );
     assert!(matches!(
         kind("terminal.font_size"),
@@ -203,12 +201,10 @@ fn ranges_come_from_schemars_attributes() {
             max: Some(128_000)
         }
     );
-    // #[schemars(length(min = 1))]
+    // A string, #[schemars(length(min = 1))], listed as the models known.
     assert_eq!(
         kind("chat.model"),
-        SettingKind::Text {
-            min_length: Some(1)
-        }
+        SettingKind::Choice(ChoiceSource::ChatModels)
     );
     assert_eq!(
         kind("theme.name"),

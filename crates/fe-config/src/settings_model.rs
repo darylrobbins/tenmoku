@@ -8,8 +8,9 @@
 //! arrays of tables the editor can't edit in place (`lsp.servers`,
 //! `vim.remap`) are one [`SettingKind::Other`] row each, edited in
 //! `settings.toml`. Strings whose values only the host knows, the themes
-//! installed, are [`SettingKind::Choice`], by key ([`choice_source`]), so
-//! the schema stays a string's. Nothing here writes a file.
+//! and fonts installed, or that a list picks from, the Claude models, are
+//! [`SettingKind::Choice`], by key ([`choice_source`]), so the schema stays
+//! a string's. Nothing here writes a file.
 
 use kiln_core::theme::Appearance;
 use serde_json::{Map, Value};
@@ -75,6 +76,13 @@ pub enum ChoiceSource {
     /// The bundled and installed themes of `appearance`, by ID; or with
     /// none, the bundled ones, by title.
     Themes { appearance: Option<Appearance> },
+    /// The Claude models the app knows ([`chat_models::KNOWN`]), though
+    /// the setting takes any id.
+    ///
+    /// [`chat_models::KNOWN`]: crate::chat_models::KNOWN
+    ChatModels,
+    /// The font families installed.
+    Fonts,
 }
 
 /// One of an [`SettingKind::Enum`]'s values.
@@ -568,6 +576,8 @@ fn choice_source(key: &[String]) -> Option<ChoiceSource> {
         ["theme", "dark"] => Some(Appearance::Dark),
         ["theme", "light"] => Some(Appearance::Light),
         ["theme", "name"] => None,
+        ["chat", "model"] => return Some(ChoiceSource::ChatModels),
+        [.., "font_family"] => return Some(ChoiceSource::Fonts),
         _ => return None,
     };
     Some(ChoiceSource::Themes { appearance })

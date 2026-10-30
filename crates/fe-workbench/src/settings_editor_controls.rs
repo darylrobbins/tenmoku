@@ -18,6 +18,12 @@
 //!   (`setting-hint-<key>`), and stays until another is picked; one the
 //!   list has by another name (`theme.name`'s bundled theme by ID) shows
 //!   as the file has it. An open list keeps the options it opened with.
+//!   A model or font not listed shows with no hint, and the fonts are
+//!   only listed when the dropdown opens. The model's list ends in Other…
+//!   (`setting-option-other-<key>`), which swaps the row to an input
+//!   (`setting-input-<key>`), focused, for an id the list hasn't; leaving
+//!   it commits it and brings the dropdown back, unless it isn't a value
+//!   the setting takes.
 //! - [`SettingKind::Int`], [`SettingKind::Float`] and [`SettingKind::Text`]:
 //!   an input (`setting-input-<key>`), committed on Enter or when it loses
 //!   focus. Text that isn't a number, or is out of the schema's bounds,
@@ -74,6 +80,9 @@ pub(super) const DEFAULT_CHOICE: &str = "Default (built-in)";
 /// What a choice whose value isn't in its list says beside it.
 pub(super) const NOT_INSTALLED: &str = "not installed";
 
+/// What the option that swaps a dropdown for an input says.
+pub(super) const OTHER_CHOICE: &str = "Other…";
+
 /// A dropdown's options for `entry`, `None` if it has none: an enum's
 /// variants, or the list a choice is one of now, after Default (built-in),
 /// a `None` option, if it's unset by default.
@@ -117,6 +126,8 @@ pub(super) struct Select {
     /// The setting's dotted key.
     key: String,
     options: Vec<Option<EnumVariant>>,
+    /// Whether Other… follows the options, highlighted at their length.
+    other: bool,
     highlighted: usize,
     /// The menu's scroll, which keeps the highlighted option in view.
     scroll: ScrollHandle,
@@ -134,7 +145,11 @@ pub(super) fn select_label(
         return (DEFAULT_CHOICE.to_owned(), None);
     }
     let text = value.as_str().unwrap_or_default().to_owned();
-    let missing = choice && option_of(entry, options, value).is_none();
+    let flags = match entry.kind {
+        SettingKind::Choice(source) => !choices::takes_any(source),
+        _ => false,
+    };
+    let missing = flags && option_of(entry, options, value).is_none();
     (text, missing.then_some(NOT_INSTALLED))
 }
 
@@ -406,8 +421,17 @@ impl SettingsEditor {
     ) -> AnyElement {
         let (control, height) = match &entry.kind {
             SettingKind::Bool => (self.switch(entry, value, disabled, cx), LINE_HEIGHT),
+            SettingKind::Choice(_) if self.typing.contains(&entry.key_path()) => (
+                self.input(ix, entry, value, disabled, window, cx),
+                CONTROL_HEIGHT,
+            ),
             SettingKind::Enum(_) | SettingKind::Choice(_) => {
-                let options = options(entry, cx).unwrap_or_default();
+                // A list that flags no value isn't needed to draw the
+                // button: the fonts aren't listed at every render.
+                let options = match entry.kind {
+                    SettingKind::Choice(source) if choices::takes_any(source) => Vec::new(),
+                    _ => options(entry, cx).unwrap_or_default(),
+                };
                 (
                     self.dropdown(ix, entry, &options, value, disabled, window, cx),
                     SELECT_HEIGHT,
@@ -639,6 +663,31 @@ impl SettingsEditor {
                         cx.stop_propagation();
                     }))
             });
+            let other = select.other.then(|| {
+                let option = select.options.len();
+                let path = path.clone();
+                div()
+                    .id(("setting-option", option))
+                    .debug_selector({
+                        let path = path.clone();
+                        move || format!("setting-option-other-{path}")
+                    })
+                    .min_h(SELECT_HEIGHT)
+                    .px_2()
+                    .py_1()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .when(option == highlighted, |row| row.bg(ui.row_selected))
+                    .hover(move |style| style.bg(ui.row_hover))
+                    .text_color(ui.text)
+                    .child(OTHER_CHOICE)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select = None;
+                        this.type_other(&path, window, cx);
+                        cx.stop_propagation();
+                    }))
+            });
             div()
                 .id(("setting-menu", ix))
                 .debug_selector({
@@ -658,6 +707,7 @@ impl SettingsEditor {
                 .shadow_md()
                 .text_size(px(12.))
                 .children(options)
+                .children(other)
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.select = None;
                     cx.notify();
@@ -678,11 +728,29 @@ impl SettingsEditor {
     }
 
     /// The open dropdown's setting, the options it shows and the one
-    /// highlighted.
+    /// highlighted: Other…, if it has it, at their length.
     #[cfg(test)]
     pub(super) fn open_select(&self) -> Option<(&str, &[Option<EnumVariant>], usize)> {
         let select = self.select.as_ref()?;
         Some((&select.key, &select.options, select.highlighted))
+    }
+
+    /// Swaps the dropdown of the setting at dotted `path` for an input,
+    /// showing its value, focused: Other….
+    fn type_other(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.entry(path).cloned() else {
+            return;
+        };
+        let Some((value, _)) = self.value(&entry, cx) else {
+            return;
+        };
+        self.typing.insert(path.to_owned());
+        let field = self.field_of(&entry, &input_text(&value), window, cx);
+        field.forget_shown();
+        Self::sync_field(field, &input_text(&value), cx);
+        let focus = field.input.focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
     /// Opens the dropdown of the setting at dotted `path`, its value
@@ -698,13 +766,23 @@ impl SettingsEditor {
             let Some(options) = options(&entry, cx) else {
                 return;
             };
+            let other = match entry.kind {
+                SettingKind::Choice(source) => choices::other(source),
+                _ => false,
+            };
             let value = self.value(&entry, cx).map(|(value, _)| value);
-            let highlighted = (value.as_ref())
-                .and_then(|value| option_of(&entry, &options, value))
-                .unwrap_or(0);
+            let listed = (value.as_ref()).and_then(|value| option_of(&entry, &options, value));
+            // A value the list hasn't was typed in: Other….
+            let typed = other && value.as_ref().is_some_and(Json::is_string);
+            let highlighted = match listed {
+                Some(listed) => listed,
+                None if typed => options.len(),
+                None => 0,
+            };
             self.select = Some(Select {
                 key: path.to_owned(),
                 options,
+                other,
                 highlighted,
                 scroll: ScrollHandle::new(),
             });
@@ -725,8 +803,9 @@ impl SettingsEditor {
         let Some(select) = self.select.as_mut() else {
             return;
         };
+        let count = select.options.len() + usize::from(select.other);
         select.highlighted = match down {
-            true => (select.highlighted + 1).min(select.options.len().saturating_sub(1)),
+            true => (select.highlighted + 1).min(count.saturating_sub(1)),
             false => select.highlighted.saturating_sub(1),
         };
         select.scroll.scroll_to_item(select.highlighted);
@@ -735,8 +814,8 @@ impl SettingsEditor {
 
     /// Enter on the selected row: picks the open dropdown's highlighted
     /// variant, opens a closed one, goes into an input (a list's first
-    /// item, or a new one), opens `settings.toml` for a table, or toggles
-    /// a switch.
+    /// item, a new one, or a dropdown's after Other…), opens
+    /// `settings.toml` for a table, or toggles a switch.
     pub(super) fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.selected_entry().cloned() else {
             return;
@@ -749,10 +828,17 @@ impl SettingsEditor {
             SettingKind::Bool => {
                 self.toggle_selected(cx);
             }
+            SettingKind::Choice(_) if self.typing.contains(&path) => {
+                if let Some(field) = self.fields.get(&path) {
+                    window.focus(&field.input.focus_handle(cx), cx);
+                }
+            }
             SettingKind::Enum(_) | SettingKind::Choice(_) => match self.select.take() {
                 Some(select) if select.key == path => {
-                    if let Some(option) = select.options.get(select.highlighted) {
-                        self.write(&entry.key, pick(option), cx);
+                    match select.options.get(select.highlighted) {
+                        Some(option) => self.write(&entry.key, pick(option), cx),
+                        None if select.other => self.type_other(&path, window, cx),
+                        None => {}
                     }
                     cx.notify();
                 }
@@ -829,8 +915,43 @@ impl SettingsEditor {
         field.edited.set(false);
     }
 
-    /// The input of a number or text setting: its typed text, else its
-    /// value.
+    /// The input of `entry`, made showing `text` if it isn't yet. Leaving
+    /// it commits it, and has a dropdown's row after Other… show the
+    /// dropdown again, unless what it holds isn't a value the setting
+    /// takes.
+    fn field_of(
+        &mut self,
+        entry: &SettingEntry,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> &mut Field {
+        let path = entry.key_path();
+        if !self.fields.contains_key(&path) {
+            let placeholder = if entry.default.is_null() {
+                "Not set"
+            } else {
+                ""
+            };
+            let commit = {
+                let path = path.clone();
+                move |this: &mut Self, cx: &mut Context<Self>| {
+                    this.commit(&Editing::Field(path.clone()), false, cx);
+                    let refused =
+                        (this.fields.get(&path)).is_some_and(|field| field.message.is_some());
+                    if !refused && this.typing.remove(&path) {
+                        cx.notify();
+                    }
+                }
+            };
+            let field = self.new_field(text.to_owned(), placeholder, commit, window, cx);
+            self.fields.insert(path.clone(), field);
+        }
+        self.fields.get_mut(&path).expect("the field was just made")
+    }
+
+    /// The input of a number or text setting, or of a dropdown's after
+    /// Other…: its typed text, else its value.
     fn input(
         &mut self,
         ix: usize,
@@ -842,27 +963,12 @@ impl SettingsEditor {
     ) -> AnyElement {
         let path = entry.key_path();
         let text = input_text(value);
-        if !self.fields.contains_key(&path) {
-            let placeholder = if entry.default.is_null() {
-                "Not set"
-            } else {
-                ""
-            };
-            let commit = {
-                let path = path.clone();
-                move |this: &mut Self, cx: &mut Context<Self>| {
-                    this.commit(&Editing::Field(path.clone()), false, cx)
-                }
-            };
-            let field = self.new_field(text.clone(), placeholder, commit, window, cx);
-            self.fields.insert(path.clone(), field);
-        }
-        let field = self.fields.get_mut(&path).expect("the field was just made");
+        let field = self.field_of(entry, &text, window, cx);
         Self::sync_field(field, &text, cx);
         let input = field.input.clone();
         input.update(cx, |input, cx| input.set_typing(!disabled, cx));
         let width = match entry.kind {
-            SettingKind::Text { .. } => px(320.),
+            SettingKind::Text { .. } | SettingKind::Choice(_) => px(320.),
             _ => px(120.),
         };
         div()
