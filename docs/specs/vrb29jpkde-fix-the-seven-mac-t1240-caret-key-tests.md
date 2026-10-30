@@ -21,3 +21,7 @@ Mac main da40996c (merged into helium as the sync commit 0d26579...) fails seven
 Typical failures: caret_keys_hosts.rs:54 "the input has focus" (search panel), :73 and :120 `pane.find_bar().unwrap()` is None after `press("secondary-f")`. Mac main itself fails the same gate on helium's Linux.
 
 Find why on Linux (a key that is bound differently there, such as secondary-f / secondary-shift-f, a vim or terminal context, or a platform-specific modifier in `press`) and fix the TEST helpers or setup so the tests pass on both platforms and still test the same behaviour. Do not weaken the assertions. Do not change the shipping keymap unless the Linux bug is real in the app; if it is, fix it and say so in the evidence. Keep macOS behaviour unchanged.
+
+## Implementation notes
+
+Cause: `fe_gpui::init` installs `DEFAULT_MACOS` on every platform, so the test windows match the macOS keymap, but the tests pressed `secondary-*` and `ctrl-left` on Linux, which that keymap does not bind. The shipping keymap is fine (Linux uses `DEFAULT_LINUX`). The tests now press the macOS keymap's keys (`cmd-f`, `cmd-shift-f`, `cmd-shift-j`, `alt-left`) on both platforms; the assertions are unchanged.

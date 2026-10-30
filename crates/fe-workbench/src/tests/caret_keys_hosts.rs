@@ -16,12 +16,12 @@ use crate::{
     Launch, Workbench, inline_edit, open::ConfigDirOverride, shortcuts_editor::ShortcutsEditor,
 };
 
-/// The word-left key: alt on macOS, ctrl elsewhere.
-const WORD_LEFT: &str = if cfg!(target_os = "macos") {
-    "alt-left"
-} else {
-    "ctrl-left"
-};
+/// The keys are the macOS keymap's: `fe_gpui::init` installs
+/// `DEFAULT_MACOS` on every platform, and the tests press its keys.
+const WORD_LEFT: &str = "alt-left";
+const FIND: &str = "cmd-f";
+const SEARCH: &str = "cmd-shift-f";
+const SEARCH_DETAILS: &str = "cmd-shift-j";
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
@@ -115,7 +115,7 @@ fn run(id: &str, contexts: &[&str], cx: &mut VisualTestContext) {
 #[gpui::test]
 fn find_bar_takes_caret_keys(cx: &mut TestAppContext) {
     let (_dir, workbench, cx) = editing(cx);
-    press("secondary-f", cx);
+    press(FIND, cx);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     let input = pane.read_with(cx, |pane, _| pane.find_bar().unwrap().input().clone());
     caret_keys(&input, cx);
@@ -142,7 +142,7 @@ fn terminal_find_takes_caret_keys(cx: &mut TestAppContext) {
     let view = panel.read_with(cx, |panel, _| panel.view().unwrap().clone());
     cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
     draw(cx);
-    press("secondary-f", cx);
+    press(FIND, cx);
     let input = panel.read_with(cx, |panel, _| panel.find().unwrap().input().clone());
     caret_keys(&input, cx);
 }
@@ -156,7 +156,7 @@ fn search_panel_takes_caret_keys(cx: &mut TestAppContext) {
         window.activate_window();
         window.focus(&workbench.focus_handle(cx), cx);
     });
-    press("secondary-shift-f", cx);
+    press(SEARCH, cx);
     let search = workbench.read_with(cx, |workbench, cx| {
         workbench.dock().read(cx).search().clone()
     });
@@ -173,7 +173,7 @@ fn search_panel_takes_caret_keys(cx: &mut TestAppContext) {
         )
     });
     if !search.read_with(cx, |search, _| search.details_shown()) {
-        press("secondary-shift-j", cx);
+        press(SEARCH_DETAILS, cx);
     }
     assert!(search.read_with(cx, |search, _| search.details_shown()));
     for filter in [include, exclude] {

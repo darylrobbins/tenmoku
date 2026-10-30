@@ -15,12 +15,9 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{GitPanel, Launch, Workbench};
 
-/// The word-left key: alt on macOS, ctrl elsewhere.
-const WORD_LEFT: &str = if cfg!(target_os = "macos") {
-    "alt-left"
-} else {
-    "ctrl-left"
-};
+/// The macOS keymap's word-left key: `fe_gpui::init` installs
+/// `DEFAULT_MACOS` on every platform.
+const WORD_LEFT: &str = "alt-left";
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
