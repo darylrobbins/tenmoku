@@ -223,3 +223,6 @@ mod underline_colour;
 
 #[path = "lsp_semantic_format_specifier.rs"]
 mod format_specifier;
+
+#[path = "lsp_semantic_mutable_underline.rs"]
+mod mutable_underline;

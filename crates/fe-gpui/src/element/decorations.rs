@@ -8,7 +8,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Range};
 
 use fe_display::{
     CharWidth as _,
-    layout::{Rect, RowLayout},
+    layout::{MeasuredLine as _, Rect, RowLayout},
 };
 use fe_editor::decorations::{Decoration, DecorationKind, GutterMark, Tint};
 use gpui::{
@@ -247,34 +247,96 @@ impl Decorations {
                         if !on_row {
                             continue;
                         }
-                        let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
-                        let width = match range.is_empty() {
-                            true => space,
-                            false => {
-                                frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)) - left
+                        // A syntax underline without a colour of its own
+                        // takes the colour of the text under it, run by run.
+                        let own = match &decoration.kind {
+                            DecorationKind::SyntaxUnderline(name) => name_color(theme, name),
+                            _ => Some(tint),
+                        };
+                        // Each piece: its bytes, its colour, and whether its
+                        // left edge is where its first character starts, past
+                        // any hint or inlay inserted before it.
+                        let mut pieces = vec![(start, end, tint, false)];
+                        let shown = row.shown();
+                        // Where the character at `offset` starts.
+                        let display = |offset: usize| {
+                            let col = offset - shown.start;
+                            let column = row.expanded.to_display_after_hints(col);
+                            match row.expanded.inlay_range() {
+                                Some(inlay) if inlay.start == column => inlay.end,
+                                _ => column,
                             }
                         };
-                        if decoration.kind == DecorationKind::Highlight {
-                            place(
-                                whole_row(row.row, left, width),
-                                tint.opacity(HIGHLIGHT_ALPHA),
-                                None,
-                            );
-                            continue;
+                        if own.is_none() && !range.is_empty() {
+                            pieces.clear();
+                            let color_at = |offset: usize| {
+                                (shown.start..shown.end)
+                                    .contains(&offset)
+                                    .then(|| row.line.color_at(display(offset)))
+                                    .flatten()
+                                    .unwrap_or(tint)
+                            };
+                            // Inserted text sits before the character at
+                            // `offset`: the underline stops short of it.
+                            let inserted = |offset: usize| {
+                                (shown.start..shown.end).contains(&offset)
+                                    && display(offset)
+                                        != row.expanded.to_display(offset - shown.start)
+                            };
+                            let mut at = start;
+                            while at < end {
+                                let color = color_at(at);
+                                let mut next = at + 1;
+                                while next < end
+                                    && (!text.is_char_boundary(next)
+                                        || (!inserted(next) && color_at(next) == color))
+                                {
+                                    next += 1;
+                                }
+                                pieces.push((at, next, color, true));
+                                at = next;
+                            }
                         }
-                        // Just below the baseline, as diagnostics' squiggles.
-                        let line = &row.line.layout;
-                        let (ascent, descent): (f32, f32) =
-                            (line.ascent.into(), line.descent.into());
-                        let baseline =
-                            frame.row_top(row.row) + (line_height - ascent - descent) / 2. + ascent;
-                        let rect = Rect {
-                            x: left,
-                            y: baseline.round() + 1.,
-                            width,
-                            height: UNDERLINE,
-                        };
-                        place(rect, tint, None);
+                        for (start, end, tint, past_inserted) in pieces {
+                            let left = match past_inserted
+                                && (shown.start..shown.end).contains(&start)
+                            {
+                                true => {
+                                    row.start_x() + f64::from(row.line.x_for_index(display(start)))
+                                }
+                                false => row.x_for_offset(start, long_rows, glyph_widths),
+                            };
+                            let left = frame.view_x(left);
+                            let width = match range.is_empty() {
+                                true => space,
+                                false => {
+                                    frame.view_x(row.x_for_offset(end, long_rows, glyph_widths))
+                                        - left
+                                }
+                            };
+                            if decoration.kind == DecorationKind::Highlight {
+                                place(
+                                    whole_row(row.row, left, width),
+                                    tint.opacity(HIGHLIGHT_ALPHA),
+                                    None,
+                                );
+                                continue;
+                            }
+                            // Just below the baseline, as diagnostics' squiggles.
+                            let line = &row.line.layout;
+                            let (ascent, descent): (f32, f32) =
+                                (line.ascent.into(), line.descent.into());
+                            let baseline = frame.row_top(row.row)
+                                + (line_height - ascent - descent) / 2.
+                                + ascent;
+                            let rect = Rect {
+                                x: left,
+                                y: baseline.round() + 1.,
+                                width,
+                                height: UNDERLINE,
+                            };
+                            place(rect, tint, None);
+                        }
                     }
                 }
                 DecorationKind::AfterLine(label) => {
@@ -447,6 +509,10 @@ mod tests;
 #[cfg(test)]
 #[path = "syntax_underline_tests.rs"]
 mod syntax_underline_tests;
+
+#[cfg(test)]
+#[path = "syntax_underline_color_tests.rs"]
+mod syntax_underline_color_tests;
 
 #[cfg(test)]
 #[path = "change_bar_tests.rs"]

@@ -45,6 +45,8 @@ image.workspace = true
 kiln-platform = { workspace = true, features = ["test-support"] }
 # Invocations recorded in tests go through JSON, as a macro or log would.
 serde_json.workspace = true
+# The render tests build palettes from the bundled themes.
+kiln-core.workspace = true
 # The save tests read a file as the workbench's loader does. Only fe-buffer
 # types cross between it and this crate.
 fe-workbench.workspace = true
