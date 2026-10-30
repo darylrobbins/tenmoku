@@ -6159,6 +6159,699 @@
           }
         }
       }
+    },
+    {
+      "name": "dit_pattern_name_keyword_capital_not_a_joined_digit",
+      "buffer": "<1‍\\K>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\K>x</1‍1‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_a_joined_digit",
+      "buffer": "<1‍\\k>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\k></1‍1‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_capital_not_a_joined_digit",
+      "buffer": "<1‍\\I>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\I>x</1‍1‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_capital_not_a_joined_digit",
+      "buffer": "<1‍\\F>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\F>x</1‍1‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_a_joined_digit",
+      "buffer": "<1‍\\f>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\f></1‍1‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_capital_not_a_joined_digit",
+      "buffer": "<1‍\\P>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\P>x</1‍1‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_atom_a_joined_digit",
+      "buffer": "<1‍\\p>x</1‍1‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<1‍\\p></1‍1‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_capital_not_digit",
+      "buffer": "<a\\K>x</a1>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\K>x</a1>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_capital_letter",
+      "buffer": "<a\\K>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\K></ab>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_keyword_atom_not_a_joined_dash",
+      "buffer": "<-‍\\k>x</-‍-‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<-‍\\k>x</-‍-‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_identifier_atom_not_a_joined_dash",
+      "buffer": "<-‍\\i>x</-‍-‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<-‍\\i>x</-‍-‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_filename_atom_a_joined_dash",
+      "buffer": "<-‍\\f>x</-‍-‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<-‍\\f></-‍-‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_printable_atom_a_joined_dash",
+      "buffer": "<-‍\\p>x</-‍-‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<-‍\\p></-‍-‍>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_private_use_range_not_a_joined_base",
+      "buffer": "<a‍[\\U000f0000-\\U0010fffd]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[\\U000f0000-\\U0010fffd]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_private_use_range_a_joined_base",
+      "buffer": "<a‍[^\\U000f0000-\\U0010fffd]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^\\U000f0000-\\U0010fffd]></a‍a‍>",
+        "cursor": [
+          0,
+          30
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_wide_range_a_joined_base",
+      "buffer": "<a‍[\\x61-\\U0010fffd]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[\\x61-\\U0010fffd]></a‍a‍>",
+        "cursor": [
+          0,
+          23
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_wide_range_not_a_joined_base",
+      "buffer": "<a‍[^\\x61-\\U0010fffd]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^\\x61-\\U0010fffd]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_range_a_joined_base",
+      "buffer": "<a‍[a-z]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[a-z]></a‍a‍>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_range_not_a_joined_base",
+      "buffer": "<a‍[^a-z]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^a-z]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_range_not_a_joined_base",
+      "buffer": "<a‍[b-z]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[b-z]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_range_a_joined_base",
+      "buffer": "<a‍[^b-z]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^b-z]></a‍a‍>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_trailing_dash_not_a_range",
+      "buffer": "<a‍[a-]>x</a‍b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[a-]>x</a‍b>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_trailing_dash_itself",
+      "buffer": "<a‍[a-]>x</a‍->",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[a-]></a‍->",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_trailing_dash_a_joined_base",
+      "buffer": "<a‍[a-]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[a-]></a‍a‍>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_trailing_dash_not_a_range",
+      "buffer": "<a‍[^a-]>x</a‍b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^a-]></a‍b>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_trailing_dash_not_a_joined_base",
+      "buffer": "<a‍[^a-]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^a-]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_trailing_dash_not_itself",
+      "buffer": "<a‍[^a-]>x</a‍->",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^a-]>x</a‍->",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_caret_member_a_joined_base",
+      "buffer": "<a‍[^^b]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^^b]></a‍a‍>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_caret_member_not_a_caret",
+      "buffer": "<a‍[^^b]>x</a‍^>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^^b]>x</a‍^>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_caret_member_not_its_own_base",
+      "buffer": "<a‍[^^a]>x</a‍a‍>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^^a]>x</a‍a‍>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_pattern_name_negated_caret_member_another_char",
+      "buffer": "<a‍[^^a]>x</a‍b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍[^^a]></a‍b>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

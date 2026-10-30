@@ -41,7 +41,14 @@
 //! selection's end; an `it` that would select the selection again takes the
 //! tags too.
 
-use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::OnceLock};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ops::Range,
+    panic::Location,
+    rc::Rc,
+    sync::OnceLock,
+};
 
 use fe_text::Text;
 use regex::Regex;
@@ -289,8 +296,13 @@ fn around_selection(text: &Text, lo: usize, hi: usize, count: u32) -> Option<(Bl
 /// What one selection command may do: [`crate::search::time_limit`] from
 /// before it reads the text, looked at every [`WORK`] steps of gathering,
 /// searching and reading names, and before each pass that isn't one of those
-/// (so no pass runs on past it). Past it, the object fails.
-struct Clock(Deadline);
+/// (so no pass runs on past it). Past it, the object fails. It counts the
+/// steps passes have taken since it was last looked at, one count for all
+/// of them ([`Clock::ahead`]).
+struct Clock {
+    deadline: Deadline,
+    since: Cell<usize>,
+}
 
 /// Steps (bytes, graphemes or tags) between looks at a [`Clock`].
 pub(crate) const WORK: usize = 1 << 12;
@@ -307,10 +319,15 @@ thread_local! {
     pub(crate) static LOOKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static EXPIRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The phase of the command last named ([`Clock::phase`]), and the
-    /// phase of each look taken (when [`RECORD`] is set).
+    /// phase and the line of `delimiters.rs` of each look taken (when
+    /// [`RECORD`] is set).
     pub(crate) static PHASE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     pub(crate) static RECORD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    pub(crate) static LOG: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static LOG: RefCell<Vec<(&'static str, u32)>> = const { RefCell::new(Vec::new()) };
+    /// How many patterns [`compile`] has compiled on this thread, and how
+    /// many of those it began with a clock already run out.
+    pub(crate) static PARSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static LATE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The steps passes have taken since the last look ([`Clock::did`]),
     /// and the most between any two.
     pub(crate) static SINCE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -334,12 +351,19 @@ impl Clock {
         // object would run out of its 2 s and fail. [`STOPPED`] still
         // stops one.
         #[cfg(test)]
-        return Self(Deadline::never());
+        let deadline = Deadline::never();
         #[cfg(not(test))]
-        Self(Deadline::new())
+        let deadline = Deadline::new();
+        Self {
+            deadline,
+            since: Cell::new(0),
+        }
     }
 
-    fn expired(&self) -> bool {
+    /// Whether it's out of time, looked at from `site` (which a test reads).
+    fn expired(&self, site: &'static Location<'static>) -> bool {
+        let _ = site;
+        self.since.set(0);
         #[cfg(test)]
         {
             SINCE.with(|since| {
@@ -347,7 +371,7 @@ impl Clock {
                 since.set(0);
             });
             if RECORD.get() {
-                LOG.with_borrow_mut(|log| log.push(PHASE.get()));
+                LOG.with_borrow_mut(|log| log.push((PHASE.get(), site.line())));
             }
             LOOKED.set(LOOKED.get() + 1);
             let at = LOOKS.get();
@@ -361,29 +385,55 @@ impl Clock {
                 return false;
             }
         }
-        self.0.expired()
+        self.deadline.expired()
     }
 
+    #[track_caller]
     fn check(&self) -> Result<(), Interrupted> {
-        match self.expired() {
+        self.check_at(Location::caller())
+    }
+
+    fn check_at(&self, site: &'static Location<'static>) -> Result<(), Interrupted> {
+        match self.expired(site) {
             true => Err(Interrupted),
             false => Ok(()),
         }
     }
 
     /// Looks at the clock before a pass takes more steps, which are never
-    /// many more than [`WORK`] before the next look: `Err` if it's out of
-    /// time, and then the pass doesn't start.
+    /// more than [`WORK`] before the next look: `Err` if it's out of time,
+    /// and then the pass doesn't start.
+    #[track_caller]
     fn spend(&self, steps: usize) -> Result<(), Interrupted> {
         let _ = steps;
-        self.check()
+        self.check_at(Location::caller())
     }
 
-    /// Notes (for a test) that a pass has taken `steps` more steps.
+    /// Looks at the clock, from where it's called, on a pass's `first` step
+    /// or if `most` more steps could take it past [`WORK`] since it was
+    /// last looked at: `Err` if it's out of time.
+    #[track_caller]
+    fn ahead(&self, first: bool, most: usize) -> Result<(), Interrupted> {
+        self.ahead_at(first, most, Location::caller())
+    }
+
+    fn ahead_at(
+        &self,
+        first: bool,
+        most: usize,
+        site: &'static Location<'static>,
+    ) -> Result<(), Interrupted> {
+        if first || self.since.get() + most > WORK {
+            self.check_at(site)?;
+        }
+        Ok(())
+    }
+
+    /// Notes that a pass has taken `steps` more steps.
     fn did(&self, steps: usize) {
         #[cfg(test)]
         SINCE.set(SINCE.get() + steps);
-        let _ = steps;
+        self.since.set(self.since.get() + steps);
     }
 
     /// Notes (for a test) that a new phase of the command starts.
@@ -464,14 +514,64 @@ fn find(
 /// The most bytes a grapheme may take to be read in a bounded step:
 /// segmenting is done a grapheme at a time, and one longer than this (a base
 /// with that many marks) can't be told in one, so the object fails
-/// ([`Interrupted`]) rather than run on past the clock.
-const SEGMENT: usize = 2 * WORK;
+/// ([`Interrupted`]) rather than run on past the clock. Half of [`WORK`],
+/// so a pass looking before each grapheme that could take its clock past
+/// `WORK` steps ([`Clock::ahead`]) reads at least that many between.
+const SEGMENT: usize = WORK / 2;
+
+/// The graphemes `graphemes` gives (where each starts, and it), of a text
+/// [`bounded`] has read, none longer than `most` bytes, looking at the
+/// clock before the first and as they're read ([`Clock::ahead`]), from
+/// where this is called. Past the clock
+/// it gives one `Err`, then nothing.
+struct Metered<'c, I> {
+    graphemes: I,
+    most: usize,
+    clock: &'c Clock,
+    first: bool,
+    site: &'static Location<'static>,
+    out: bool,
+}
+
+#[track_caller]
+fn metered<'a, I: Iterator<Item = (usize, &'a str)>>(
+    graphemes: I,
+    most: usize,
+    clock: &Clock,
+) -> Metered<'_, I> {
+    Metered {
+        graphemes,
+        most,
+        clock,
+        first: true,
+        site: Location::caller(),
+        out: false,
+    }
+}
+
+impl<'a, I: Iterator<Item = (usize, &'a str)>> Iterator for Metered<'_, I> {
+    type Item = Result<(usize, &'a str), Interrupted>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.out {
+            return None;
+        }
+        if let Err(out) = self.clock.ahead_at(self.first, self.most, self.site) {
+            self.out = true;
+            return Some(Err(out));
+        }
+        self.first = false;
+        let (at, grapheme) = self.graphemes.next()?;
+        self.clock.did(grapheme.len());
+        Some(Ok((at, grapheme)))
+    }
+}
 
 /// Whether `text` is all ASCII, looking at the clock a [`WORK`] bytes at a
 /// time; `Err` if a grapheme of it is longer than [`SEGMENT`]. A grapheme
 /// goes on into no ASCII char but a base, so only runs of more than that
 /// many bytes without one are segmented here, each grapheme read from a
-/// window of two segments (never past the end of its run).
+/// window a char longer than a segment (never past the end of its run).
 fn bounded(text: &str, clock: &Clock) -> Result<bool, Interrupted> {
     let bytes = text.as_bytes();
     let (mut ascii, mut run_from) = (true, None::<usize>);
@@ -503,22 +603,19 @@ fn segmentable(run: &str, clock: &Clock) -> Result<(), Interrupted> {
         return Ok(());
     }
     let mut at = 0;
-    let mut step = 0usize;
     while at < run.len() {
-        let mut end = (at + 2 * SEGMENT).min(run.len());
+        // Telling a grapheme reads at most a char past it.
+        clock.ahead(at == 0, SEGMENT + 4)?;
+        let mut end = (at + SEGMENT + 4).min(run.len());
         while !run.is_char_boundary(end) {
             end -= 1;
         }
         let window = &run[at..end];
         let len = window.graphemes(true).next().map_or(window.len(), str::len);
+        clock.did(len);
         if len > SEGMENT || (len == window.len() && end < run.len()) {
             return Err(Interrupted);
         }
-        if step.is_multiple_of(WORK) {
-            clock.spend(WORK)?;
-        }
-        step += 1;
-        clock.did(1);
         at += len;
     }
     Ok(())
@@ -607,12 +704,11 @@ impl Tag {
         if same {
             return Ok(true);
         }
-        for (at, (unit, other)) in self.units(source).zip(other.units(source)).enumerate() {
-            if at % WORK == 0 {
-                clock.spend(WORK)?;
-            }
-            clock.did(1);
-            if unit != other {
+        let (one, two) = (self.name(source), other.name(source));
+        let ones = metered(one.grapheme_indices(true), SEGMENT, clock);
+        let twos = metered(two.grapheme_indices(true), SEGMENT, clock);
+        for (unit, other) in ones.zip(twos) {
+            if Unit::new(unit?.1) != Unit::new(other?.1) {
                 return Ok(false);
             }
         }
@@ -621,14 +717,12 @@ impl Tag {
 
     /// Its name's bytes.
     fn written<'b>(&self, source: &'b str) -> &'b [u8] {
-        slice(source, self.name_start..self.name_end).as_bytes()
+        self.name(source).as_bytes()
     }
 
-    /// Its name's units, read from `source`.
-    fn units<'b>(&self, source: &'b str) -> impl Iterator<Item = Unit> + 'b {
+    /// Its name, read from `source`.
+    fn name<'b>(&self, source: &'b str) -> &'b str {
         slice(source, self.name_start..self.name_end)
-            .graphemes(true)
-            .map(Unit::new)
     }
 }
 
@@ -715,9 +809,7 @@ impl<'a> Tags<'a> {
         clock.phase("pair");
         clock.spend(1)?;
         for ix in (0..tags.len()).rev() {
-            if ix % WORK == 0 {
-                clock.spend(WORK)?;
-            }
+            clock.ahead(ix + 1 == tags.len(), 1)?;
             clock.did(1);
             let tag = &tags[ix];
             if tag.closing {
@@ -778,7 +870,7 @@ impl<'a> Tags<'a> {
         };
         #[cfg(test)]
         COMPILED.set(COMPILED.get() + 1);
-        let found = Compiled::new(name, &private, &self.clock)?.map(Rc::new);
+        let found = Compiled::new(name, &self.source, &private, &self.clock)?.map(Rc::new);
         self.clock.allocated(name.len());
         self.compiled
             .borrow_mut()
@@ -794,9 +886,7 @@ impl<'a> Tags<'a> {
         let mut quote = None;
         let skipped = self.source.as_bytes().iter().enumerate().skip(tag.name_end);
         for (step, (at, &byte)) in skipped.enumerate() {
-            if step % WORK == 0 {
-                self.clock.spend(WORK)?;
-            }
+            self.clock.ahead(step == 0, 1)?;
             self.clock.did(1);
             match (quote, byte) {
                 (Some(open), _) if byte == open => quote = None,
@@ -825,9 +915,7 @@ impl<'a> Tags<'a> {
         self.clock.phase("count");
         self.clock.spend(1).ok()?;
         for (step, ix) in (0..before).rev().enumerate() {
-            if step % WORK == 0 {
-                self.clock.spend(WORK).ok()?;
-            }
+            self.clock.ahead(step == 0, 1).ok()?;
             self.clock.did(1);
             let tag = &self.tags[ix];
             match (tag.closing, depth) {
@@ -881,15 +969,13 @@ fn partner(
     let mut depth = 0usize;
     clock.phase("partner");
     clock.spend(1)?;
-    for (at, tag) in tags.iter().enumerate().skip(ix + 1) {
-        if at % WORK == 0 {
-            clock.spend(WORK)?;
-        }
+    for (step, (at, tag)) in tags.iter().enumerate().skip(ix + 1).enumerate() {
+        clock.ahead(step == 0, 1)?;
         clock.did(1);
         let opening_nests = !tag.closing && (tag.marked || !nests);
         if opening_nests
             || tag.units != seeker.units
-            || !matches(seeker.units(source), tag.units(source), clock)?
+            || !matches(seeker.name(source), tag.name(source), clock)?
         {
             continue;
         }
@@ -916,7 +1002,7 @@ fn pattern_partner(
     compiled: &Compiled,
     clock: &Clock,
 ) -> Result<Option<(usize, usize)>, Interrupted> {
-    let deadline = &clock.0;
+    let deadline = &clock.deadline;
     clock.phase("pairing");
     let whole = |pattern: &Pattern, span: &str| -> Result<bool, Interrupted> {
         #[cfg(test)]
@@ -945,22 +1031,25 @@ fn pattern_partner(
                 ranges.get(ix).is_some_and(|range| range.start <= column)
             })
         };
-        for (column, _) in hay.match_indices('<') {
+        // Each `<` (and `>`, blank or grapheme past it) is found a stretch
+        // at a time, looking at the clock.
+        let mut from = 0;
+        while let Some(column) = find(hay.as_bytes(), from, clock, |byte| byte == b'<')? {
+            from = column + 1;
             if row_start + column <= start {
                 continue;
             }
-            clock.check()?;
-            clock.did(1);
             let rest = &hay[column..];
             let mut closes = false;
             let mut first = 0;
             if rest.starts_with("</") && hit(heads.map(|heads| &heads.1), column) {
-                let gts = rest.match_indices('>').map(|(at, _)| at + 1);
-                for (step, gt) in gts.enumerate() {
-                    if step == 0 {
-                        first = gt;
+                let mut at = 0;
+                while let Some(gt) = find(rest.as_bytes(), at, clock, |byte| byte == b'>')? {
+                    at = gt + 1;
+                    if first == 0 {
+                        first = gt + 1;
                     }
-                    if whole(&compiled.close, &rest[..gt])? {
+                    if whole(&compiled.close, &rest[..gt + 1])? {
                         closes = true;
                         break;
                     }
@@ -976,18 +1065,28 @@ fn pattern_partner(
             if !hit(heads.map(|heads| &heads.0), column) {
                 continue;
             }
-            let ends = rest
-                .match_indices([' ', '\t', '>'])
-                .map(|(at, _)| at)
-                .chain([rest.len()]);
-            for end in ends {
-                let word = rest[..end]
-                    .graphemes(true)
-                    .next_back()
-                    .is_some_and(|last| end > 1 && matches!(class(last, false), Class::Of(2..)));
+            // Each place a `<name` can end: a blank, a `>`, or the row's end,
+            // after a word char.
+            let mut graphemes = metered(rest.grapheme_indices(true), SEGMENT, clock);
+            let mut last = "";
+            loop {
+                let next = graphemes.next().transpose()?;
+                let end = match next {
+                    Some((at, grapheme)) if grapheme.starts_with([' ', '\t', '>']) => at,
+                    Some((_, grapheme)) => {
+                        last = grapheme;
+                        continue;
+                    }
+                    None => rest.len(),
+                };
+                let word = end > 1 && matches!(class(last, false), Class::Of(2..));
                 if word && whole(&compiled.open, &rest[..end])? {
                     depth += 1;
                     break;
+                }
+                match next {
+                    Some((_, grapheme)) => last = grapheme,
+                    None => break,
                 }
             }
         }
@@ -996,49 +1095,79 @@ fn pattern_partner(
 }
 
 /// Most distinct joined graphemes of one base char a pattern name may hold
-/// (each takes a stand-in for every combination of them a text grapheme
-/// could satisfy).
+/// (each combination of them a grapheme of the text satisfies takes a
+/// stand-in, [`occurring`]).
 const CLUSTERS: usize = 16;
 
 /// The most a pattern name may spell out to, once its joined graphemes and
-/// character-class atoms are put as collections.
-const SPELLED: usize = 1 << 16;
+/// character-class atoms are put as collections: with what's put around it,
+/// a pattern [`compile`]d from it is at most [`WORK`] bytes.
+const SPELLED: usize = WORK - 16;
 
-/// Where the private-use chars [`Compiled`] stands in with start, and how
-/// many there are (planes 15 and 16).
-const PRIVATE_START: u32 = 0xf_0000;
-const PRIVATE_CHARS: usize = 0x2_0000;
+/// The private-use chars [`Compiled`] stands in with: planes 15 and 16, then
+/// the BMP's private-use area, by index ([`pooled`]).
+const PLANES_START: u32 = 0xf_0000;
+const PLANES: usize = 0x2_0000;
+const AREA_START: u32 = 0xe000;
+const AREA: usize = 0x1900;
+const POOL: usize = PLANES + AREA;
 
-/// The private-use chars (planes 15 and 16) of `source`, a bit each.
+/// The char at index `ix` of the pool, or `None` for a noncharacter.
+fn pooled(ix: usize) -> Option<char> {
+    let cp = match ix < PLANES {
+        true => PLANES_START + ix as u32,
+        false => AREA_START + (ix - PLANES) as u32,
+    };
+    char::from_u32(cp).filter(|_| cp & 0xfffe != 0xfffe)
+}
+
+/// The index in the pool of the code point `cp`, if it's there.
+fn pool_index(cp: u32) -> Option<usize> {
+    match cp {
+        _ if (PLANES_START..PLANES_START + PLANES as u32).contains(&cp) => {
+            Some((cp - PLANES_START) as usize)
+        }
+        _ if (AREA_START..AREA_START + AREA as u32).contains(&cp) => {
+            Some(PLANES + (cp - AREA_START) as usize)
+        }
+        _ => None,
+    }
+}
+
+/// Marks the pool's char `cp`, if it's one, in `used`.
+fn mark_used(used: &mut [u64], cp: u32) {
+    if let Some(bit) = pool_index(cp) {
+        used[bit / 64] |= 1 << (bit % 64);
+    }
+}
+
+/// The pool's chars that are in `source`, a bit each.
 fn private_use(source: &str, clock: &Clock) -> Result<Vec<u64>, Interrupted> {
-    let mut used = vec![0u64; PRIVATE_CHARS / 64];
+    let mut used = vec![0u64; POOL.div_ceil(64)];
     clock.allocated(used.capacity());
     let mut at = 0;
-    // Their UTF-8 starts with 0xf3 or 0xf4, which no other byte does.
+    // Their UTF-8 starts with 0xee, 0xef, 0xf3 or 0xf4, which no other byte
+    // of theirs does.
     while let Some(found) = find(source.as_bytes(), at, clock, |byte| {
-        matches!(byte, 0xf3 | 0xf4)
+        matches!(byte, 0xee | 0xef | 0xf3 | 0xf4)
     })? {
         clock.did(1);
         at = found + 1;
         let ch = source.get(found..).and_then(|rest| rest.chars().next());
-        if let Some(bit) = ch.and_then(|ch| (ch as u32).checked_sub(PRIVATE_START))
-            && (bit as usize) < PRIVATE_CHARS
-        {
-            used[bit as usize / 64] |= 1 << (bit % 64);
+        if let Some(ch) = ch {
+            mark_used(&mut used, ch as u32);
         }
     }
     Ok(used)
 }
 
-/// Marks in `used` the private-use chars `name` names by an escape
+/// Marks in `used` the pool's chars `name` names by an escape
 /// (`\U000f0000`, `\%u..`, `\x..`, `\d..`, `\o..`).
 fn named_private_use(name: &str, used: &mut [u64], clock: &Clock) -> Result<(), Interrupted> {
     let bytes = name.as_bytes();
     let mut ix = 0;
     while ix < bytes.len() {
-        if ix % WORK == 0 {
-            clock.spend(WORK)?;
-        }
+        clock.ahead(ix == 0, 1)?;
         clock.did(1);
         ix += 1;
         if bytes[ix - 1] != b'\\' {
@@ -1062,13 +1191,32 @@ fn named_private_use(name: &str, used: &mut [u64], clock: &Clock) -> Result<(), 
             .take_while(|&&byte| char::from(byte).is_digit(radix))
             .count();
         let value = u32::from_str_radix(&name[at + 1..at + 1 + digits], radix).unwrap_or(0);
-        if let Some(bit) = value.checked_sub(PRIVATE_START)
-            && (bit as usize) < PRIVATE_CHARS
-        {
-            used[bit as usize / 64] |= 1 << (bit % 64);
-        }
+        mark_used(used, value);
     }
     Ok(())
+}
+
+/// `source` compiled as a pattern, after a look at the clock from where
+/// this is called; `None` if fe-vim can't read it. It's never more than
+/// [`WORK`] bytes ([`SPELLED`]): compiling it is one step, which can't be
+/// interrupted and so never starts past the clock.
+#[track_caller]
+fn compile(source: &str, clock: &Clock) -> Result<Option<Pattern>, Interrupted> {
+    clock.spend(source.len())?;
+    #[cfg(test)]
+    {
+        PARSED.set(PARSED.get() + 1);
+        LATE.set(LATE.get() + usize::from(EXPIRED.get()));
+    }
+    clock.did(source.len());
+    Ok(Pattern::parse(source).ok())
+}
+
+/// Whether the one char `ch` is one `pattern` (of one char) matches.
+fn holds(pattern: &Pattern, ch: char, clock: &Clock) -> Result<bool, Interrupted> {
+    let mut buf = [0; 4];
+    let one = Text::new(ch.encode_utf8(&mut buf));
+    Ok(first_in_row(&one, 0, pattern, &clock.deadline)?.is_some())
 }
 
 /// A pattern name read as a pattern, to pair its tags ([`pattern_partner`]):
@@ -1089,8 +1237,10 @@ struct Compiled {
     groups: HashMap<char, Vec<usize>>,
     /// What stands in, in the name and the text, for a grapheme of a base
     /// by which of that base's clusters it satisfies (a bit each, in the
-    /// order of its group): a grapheme satisfying none stands for itself.
-    stand_ins: HashMap<(char, usize), char>,
+    /// order of its group, [`satisfied`]): a grapheme satisfying none stands
+    /// for itself. A stand-in is a member of a collection or class atom of
+    /// the name just when its base is ([`choose`], [`class_spelled`]).
+    stand_ins: StandIns,
 }
 
 /// The text with its joined graphemes put as [`Compiled`]'s stand-ins, and
@@ -1118,86 +1268,105 @@ impl Compiled {
     /// see [`literals`]), if a char magic in a pattern is joined to others
     /// (`.` takes its whole grapheme, so nothing is left for them), or if
     /// there are too many joined graphemes of one base or too few
-    /// private-use chars left to stand for them. `Err` if that ran out of
-    /// time, or the name spells out to more than [`SPELLED`].
-    fn new(name: &str, private: &[u64], clock: &Clock) -> Result<Option<Self>, Interrupted> {
+    /// private-use chars left to stand for them ([`choose`]). `Err` if that
+    /// ran out of time, or the name is or spells out to more than
+    /// [`SPELLED`].
+    fn new(
+        name: &str,
+        source: &str,
+        private: &[u64],
+        clock: &Clock,
+    ) -> Result<Option<Self>, Interrupted> {
         clock.phase("prepare");
+        if name.len() > SPELLED {
+            return Err(Interrupted);
+        }
         bounded(name, clock)?;
         let Some(scan) = literals(name, clock)? else {
             return Ok(None);
         };
-        for (step, &dot) in scan.dots.iter().enumerate() {
-            if step % WORK == 0 {
-                clock.spend(WORK)?;
-            }
-            clock.did(1);
+        for (ix, &dot) in scan.dots.iter().enumerate() {
+            clock.ahead(ix == 0, SEGMENT + 4)?;
             let dot = name[dot..].graphemes(true).next().map_or(0, str::len);
+            clock.did(dot);
             if dot > 1 {
                 return Ok(None);
             }
         }
         // The joined graphemes written literally, each once, by base.
         let mut written: Vec<(usize, usize, usize)> = Vec::new();
-        let mut found: Vec<&str> = Vec::new();
+        let mut found: HashMap<&str, usize> = HashMap::new();
         let mut clusters: Vec<(char, Vec<char>)> = Vec::new();
         let mut groups: HashMap<char, Vec<usize>> = HashMap::new();
-        for (step, (at, grapheme)) in name.grapheme_indices(true).enumerate() {
-            if step % WORK == 0 {
-                clock.spend(WORK)?;
-            }
-            clock.did(grapheme.len().div_ceil(4));
+        for read in metered(name.grapheme_indices(true), SEGMENT, clock) {
+            let (at, grapheme) = read?;
             if !(scan.literal[at] && joined(grapheme)) {
                 continue;
             }
-            let ix = match found.iter().position(|&seen| seen == grapheme) {
-                Some(ix) => ix,
+            let ix = match found.get(grapheme) {
+                Some(&ix) => ix,
                 None => {
                     let (base, rest) = units(grapheme);
                     let group = groups.entry(base).or_default();
                     if group.len() == CLUSTERS {
                         return Ok(None);
                     }
-                    group.push(found.len());
-                    found.push(grapheme);
+                    group.push(clusters.len());
+                    found.insert(grapheme, clusters.len());
                     clusters.push((base, rest));
-                    found.len() - 1
+                    clusters.len() - 1
                 }
             };
             written.push((at, grapheme.len(), ix));
+        }
+        // The bases in order, so stand-ins are chosen alike each time.
+        let mut bases: Vec<char> = groups.keys().copied().collect();
+        bases.sort_unstable();
+        // Each collection's members, as a pattern of one char of them (its
+        // `^` left out) and one of a char of the rest, and which bases are
+        // members: a base's stand-ins are put among the members of each
+        // collection it's one of.
+        let mut sets: Vec<Set> = Vec::new();
+        if !bases.is_empty() {
+            for &(open, length, end) in &scan.collections {
+                let negated = name[open + length..end].starts_with('^');
+                let body = &name[open + length + usize::from(negated)..end];
+                // A `^` after the negating one is a member: escaped, so it
+                // stays one with the negating `^` left out.
+                let spelled = |not: &str| {
+                    let escape = if not.is_empty() && body.starts_with('^') {
+                        "\\"
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "\\c\\{}{}{not}{escape}{body}\\m",
+                        scan.mode[open] as char,
+                        &name[open..open + length],
+                    )
+                };
+                let members = compile(&spelled(""), clock)?;
+                let rest = compile(&spelled("^"), clock)?;
+                let mut has = Vec::with_capacity(bases.len());
+                for (ix, &base) in bases.iter().enumerate() {
+                    clock.ahead(ix == 0, 1)?;
+                    clock.did(1);
+                    has.push(match &members {
+                        Some(members) => holds(members, base, clock)?,
+                        None => false,
+                    });
+                }
+                sets.push(Set { members, rest, has });
+            }
         }
         // The private-use chars the name itself names by an escape are taken
         // too, or a collection naming one would match its stand-in.
         let mut private = private.to_vec();
         named_private_use(name, &mut private, clock)?;
-        let mut next_bit = 0usize;
-        let mut stand_ins = HashMap::new();
-        for (&base, group) in &groups {
-            for mask in 1..1usize << group.len() {
-                let free = loop {
-                    if next_bit.is_multiple_of(WORK) {
-                        clock.spend(WORK)?;
-                    }
-                    clock.did(1);
-                    let bit = next_bit;
-                    next_bit += 1;
-                    if bit >= PRIVATE_CHARS {
-                        return Ok(None);
-                    }
-                    let ch = char::from_u32(PRIVATE_START + bit as u32);
-                    match ch {
-                        Some(ch)
-                            if private[bit / 64] >> (bit % 64) & 1 == 0
-                                && ch as u32 & 0xfffe != 0xfffe =>
-                        {
-                            break ch;
-                        }
-                        _ => {}
-                    }
-                };
-                stand_ins.insert((base, mask), free);
-            }
-        }
-        clock.allocated(stand_ins.len());
+        let wanted = occurring(source, &bases, &groups, &clusters, clock)?;
+        let Some(stand_ins) = choose(&bases, &wanted, &sets, &private, clock)? else {
+            return Ok(None);
+        };
         // The members of the collection of what satisfies each cluster.
         let mut members: Vec<String> = Vec::with_capacity(clusters.len());
         for (ix, (base, _)) in clusters.iter().enumerate() {
@@ -1214,6 +1383,18 @@ impl Compiled {
             chars.sort_unstable();
             members.push(chars.into_iter().collect());
         }
+        // The stand-ins of each base (for the collections it's in), and all
+        // of them by code point, with their bases (for the class atoms).
+        let mut of_base: Vec<String> = vec![String::new(); bases.len()];
+        let mut standing: Vec<(u32, char)> = Vec::with_capacity(stand_ins.len());
+        for (&(base, _), &ch) in &stand_ins {
+            if let Ok(ix) = bases.binary_search(&base) {
+                of_base[ix].push(ch);
+            }
+            standing.push((ch as u32, base));
+        }
+        standing.sort_unstable();
+        clock.allocated(standing.capacity());
         // What each atom of the name that needs a collection of its own
         // is spelled as: a joined grapheme, as what satisfies it, and an
         // atom `\k`, `\i`, `\f`, `\p` or its capital, as its members.
@@ -1221,44 +1402,38 @@ impl Compiled {
         let mut spelled = String::with_capacity(name.len());
         let mut done = 0;
         let (mut cluster, mut atom, mut collection) = (0, 0, 0);
-        // The stand-ins of each base char (for what's in a collection).
-        let mut of_base: HashMap<char, String> = HashMap::new();
-        for (&(base, _), &ch) in &stand_ins {
-            of_base.entry(base).or_default().push(ch);
-        }
         loop {
             clock.spend(1)?;
             clock.did(1);
-            // A collection with a base char of a joined grapheme in its
-            // set takes that grapheme's stand-ins in.
+            // A collection with a base char of a joined grapheme among its
+            // members takes that grapheme's stand-ins in too (its `^` then
+            // leaves them out).
             if let Some(&(open, length, end)) = scan.collections.get(collection)
                 && scan.atoms.get(atom).is_none_or(|&(at, _)| open < at)
                 && written.get(cluster).is_none_or(|&(at, ..)| open < at)
             {
+                let has = sets.get(collection).map(|set| &set.has);
                 collection += 1;
-                let set = &name[open..end];
-                let negated = set[length..].starts_with('^');
                 let mut extra = String::new();
-                for (&base, group) in &of_base {
-                    clock.spend(1)?;
-                    let Ok(pattern) =
-                        Pattern::parse(&format!("\\c^\\{}{set}\\m$", scan.mode[open] as char))
-                    else {
-                        break;
-                    };
-                    let mut buf = [0; 4];
-                    let one = Text::new(base.encode_utf8(&mut buf));
-                    let found = first_in_row(&one, 0, &pattern, &clock.0)?.is_some();
-                    if found != negated {
-                        extra.push_str(group);
+                for (ix, stand_ins) in of_base.iter().enumerate() {
+                    if has.is_some_and(|has| has[ix]) {
+                        extra.push_str(stand_ins);
                     }
                 }
                 if !extra.is_empty() {
-                    if spelled.len() + extra.len() + open - done > SPELLED {
+                    if spelled.len() + extra.len() + end + 1 - done > SPELLED {
                         clock.allocated(spelled.capacity());
                         return Err(Interrupted);
                     }
-                    spelled.push_str(&name[done..end - 1]);
+                    clock.spend(extra.len())?;
+                    clock.did(extra.len());
+                    // A `-` last is itself: it's escaped, to stay so before
+                    // the stand-ins put after it.
+                    let before = &name[done..end - 1];
+                    match last_hyphen(&name[open + length..end - 1]) {
+                        true => spelled.extend([&before[..before.len() - 1], "\\-"]),
+                        false => spelled.push_str(before),
+                    }
                     spelled.push_str(&extra);
                     done = end - 1;
                 }
@@ -1278,17 +1453,12 @@ impl Compiled {
                 (_, Some(_)) => {
                     let (at, kind) = scan.atoms[atom];
                     atom += 1;
-                    // The stand-ins of the graphemes whose base is in the
-                    // class are in it too.
-                    let with = atom_members.entry(kind).or_insert_with(|| {
-                        let mut members = class_members(kind).to_string();
-                        for (&(base, _), &ch) in &stand_ins {
-                            if class_has(kind, u32::from(base)) {
-                                members.push(ch);
-                            }
+                    let with = match atom_members.entry(kind) {
+                        std::collections::hash_map::Entry::Occupied(known) => known.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(class_spelled(kind, &standing, clock)?)
                         }
-                        members
-                    });
+                    };
                     (at, 2, with.as_str())
                 }
                 (None, None) => break,
@@ -1300,7 +1470,8 @@ impl Compiled {
                 clock.allocated(spelled.capacity());
                 return Err(Interrupted);
             }
-            clock.spend(members.len().min(WORK))?;
+            clock.spend(members.len())?;
+            clock.did(members.len());
             spelled.push_str(&name[done..at]);
             // In the nomagic modes, a collection is `\[`.
             match scan.mode[at] {
@@ -1315,31 +1486,20 @@ impl Compiled {
         }
         spelled.push_str(&name[done..]);
         clock.allocated(spelled.capacity());
-        // Compiling can't be interrupted: it is the work of what's compiled,
-        // looked at before it starts.
-        for _ in 0..4 * spelled.len().div_ceil(WORK) {
-            clock.spend(WORK)?;
-            clock.did(WORK);
-        }
         // `\c` wins over a `\C` in the name, and `\m` undoes its `\v` or `\V`.
-        clock.spend(1)?;
-        let Ok(open) = Pattern::parse(&format!("\\c^<{spelled}\\m$")) else {
+        let Some(open) = compile(&format!("\\c^<{spelled}\\m$"), clock)? else {
             return Ok(None);
         };
-        clock.spend(1)?;
-        let Ok(close) = Pattern::parse(&format!("\\c^</{spelled}\\m>$")) else {
+        let Some(close) = compile(&format!("\\c^</{spelled}\\m>$"), clock)? else {
             return Ok(None);
         };
         // A `$` in the name could end the span, not the text, and a `\z`
         // (`\zs`, `\ze`) moves where a match starts or ends from its `<`.
         let mut heads = None;
         if !name.contains('$') && !name.contains("\\z") {
-            clock.spend(1)?;
-            let found = Pattern::parse(&format!("\\c<{spelled}"));
-            clock.spend(1)?;
-            if let (Ok(found_open), Ok(found_close)) =
-                (found, Pattern::parse(&format!("\\c</{spelled}")))
-            {
+            let found_open = compile(&format!("\\c<{spelled}"), clock)?;
+            let found_close = compile(&format!("\\c</{spelled}"), clock)?;
+            if let (Some(found_open), Some(found_close)) = (found_open, found_close) {
                 heads = Some((found_open, found_close));
             }
         }
@@ -1366,22 +1526,19 @@ impl Compiled {
         bounded(text, clock)?;
         let mut put = String::with_capacity(text.len());
         let mut shifts = Vec::new();
-        for (step, (at, grapheme)) in text.grapheme_indices(true).enumerate() {
-            if step % WORK == 0 {
-                clock.spend(WORK)?;
-            }
-            clock.did(grapheme.len().div_ceil(4));
+        let mut first = true;
+        for read in metered(text.grapheme_indices(true), SEGMENT, clock) {
+            let (at, grapheme) = read?;
             let stand_in = match Unit::new(grapheme) {
                 Unit::Char(_) => None,
-                Unit::Composed(base, rest) => self.groups.get(&base).and_then(|group| {
-                    let mut mask = 0;
-                    for (bit, &ix) in group.iter().enumerate() {
-                        if self.clusters[ix].1.iter().all(|ch| rest.contains(ch)) {
-                            mask |= 1 << bit;
-                        }
+                Unit::Composed(base, rest) => match self.groups.get(&base) {
+                    Some(group) => {
+                        let mask = satisfied(&self.clusters, group, &rest, first, clock)?;
+                        first = false;
+                        self.stand_ins.get(&(base, mask))
                     }
-                    self.stand_ins.get(&(base, mask))
-                }),
+                    None => None,
+                },
             };
             match stand_in {
                 None => put.push_str(grapheme),
@@ -1424,12 +1581,10 @@ impl Compiled {
         let list = |pattern: &Pattern| -> Result<Vec<Range<usize>>, Interrupted> {
             clock.spend(1)?;
             let mut list = RowList::new(searched, at);
-            let found = list.list_until(pattern, &clock.0, |_, _| false)?;
+            let found = list.list_until(pattern, &clock.deadline, |_, _| false)?;
             let mut ranges = Vec::with_capacity(found.len());
             for (step, found) in found.iter().enumerate() {
-                if step % WORK == 0 {
-                    clock.spend(WORK)?;
-                }
+                clock.ahead(step == 0, 1)?;
                 clock.did(1);
                 ranges
                     .push(standin.original(found.start - base)..standin.original(found.end - base));
@@ -1492,11 +1647,9 @@ fn literals(name: &str, clock: &Clock) -> Result<Option<Scan>, Interrupted> {
     let mut depth = 0usize;
     let mut chars = name.char_indices().peekable();
     let mut step = 0usize;
-    // One more char read: looks at the clock every [`WORK`].
+    // One more char read: looks at the clock every [`WORK`] steps.
     let mut read = |clock: &Clock| -> Result<(), Interrupted> {
-        if step.is_multiple_of(WORK) {
-            clock.spend(WORK)?;
-        }
+        clock.ahead(step == 0, 1)?;
         step += 1;
         clock.did(1);
         Ok(())
@@ -1600,33 +1753,307 @@ const FILENAME: &str = "23-25,2b-39,3d-3d,41-5a,5f-5f,61-7a,7e-7e,a0-d7ff,e000-1
 const PRINTABLE: &str = "20-7e,a0-70e,710-180a,180f-200a,2010-2029,202f-205f,2070-d7ff,e000-fefe,ff00-fff8,fffc-fffd,10000-10ffff";
 
 /// The members of a collection for the character-class atom `\k`, `\i`,
-/// `\f` or `\p` (or the capital, without the digits), as `\u` escapes in
-/// ranges: `\k` is the chars nvim's 'iskeyword' counts as word chars
-/// (class 2 or more).
-fn class_members(atom: char) -> &'static str {
-    &class_of(atom).0
+/// `\f` or `\p` (or the capital, without the digits) in a name whose
+/// stand-ins are `standing` (by code point, with their bases): the class's
+/// chars but the stand-ins, and the stand-ins whose base it takes, spelled
+/// as ranges ([`spell`]). `\k` is the chars nvim's 'iskeyword' counts as
+/// word chars (class 2 or more).
+fn class_spelled(
+    atom: char,
+    standing: &[(u32, char)],
+    clock: &Clock,
+) -> Result<String, Interrupted> {
+    let class = class_of(atom);
+    let has = |cp: u32| {
+        let ix = class.partition_point(|&(_, last)| last < cp);
+        class.get(ix).is_some_and(|&(first, _)| first <= cp)
+    };
+    let mut step = 0usize;
+    let mut tick = |clock: &Clock| -> Result<(), Interrupted> {
+        clock.ahead(step == 0, 1)?;
+        step += 1;
+        clock.did(1);
+        Ok(())
+    };
+    let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(class.len() + standing.len());
+    let mut cuts = standing.iter().map(|&(cp, _)| cp).peekable();
+    for &(first, last) in class {
+        tick(clock)?;
+        let mut from = first;
+        while let Some(cut) = cuts.next_if(|&cut| cut <= last) {
+            tick(clock)?;
+            if cut < from {
+                continue;
+            }
+            if cut > from {
+                ranges.push((from, cut - 1));
+            }
+            from = cut + 1;
+        }
+        if from <= last {
+            ranges.push((from, last));
+        }
+    }
+    for &(cp, base) in standing {
+        tick(clock)?;
+        if has(u32::from(base)) {
+            ranges.push((cp, cp));
+        }
+    }
+    ranges.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+    for (first, last) in ranges {
+        tick(clock)?;
+        match merged.last_mut() {
+            Some((_, end)) if *end + 1 >= first => *end = (*end).max(last),
+            _ => merged.push((first, last)),
+        }
+    }
+    clock.allocated(merged.capacity());
+    Ok(spell(&merged))
 }
 
-/// Whether the char `cp` is one `atom` takes.
-fn class_has(atom: char, cp: u32) -> bool {
-    let ranges = &class_of(atom).1;
-    let ix = ranges.partition_point(|&(_, last)| last < cp);
-    ranges.get(ix).is_some_and(|&(first, _)| first <= cp)
+/// `ranges` as the members of a collection: a char beyond ASCII as itself
+/// (none is special in one), any other as a `\u` escape.
+fn spell(ranges: &[(u32, u32)]) -> String {
+    let put = |spelled: &mut String, cp: u32| match char::from_u32(cp) {
+        Some(ch) if !ch.is_ascii() => spelled.push(ch),
+        _ if cp <= 0xffff => spelled.push_str(&format!("\\u{cp:04x}")),
+        _ => spelled.push_str(&format!("\\U{cp:08x}")),
+    };
+    let mut spelled = String::new();
+    for &(first, last) in ranges {
+        put(&mut spelled, first);
+        if last > first {
+            spelled.push('-');
+            put(&mut spelled, last);
+        }
+    }
+    spelled
 }
 
-/// One class atom's members spelled, and as ranges.
-type ClassSet = (String, Vec<(u32, u32)>);
+/// Whether the members of a collection, as written between its opening and
+/// its `]` (with any `^`), end in a `-` that is itself: one no odd run of
+/// backslashes escapes.
+fn last_hyphen(written: &str) -> bool {
+    let Some(before) = written.strip_suffix('-') else {
+        return false;
+    };
+    let slashes = before.len() - before.trim_end_matches('\\').len();
+    slashes % 2 == 0
+}
 
-/// What `atom` (`k i f p`, or a capital) takes, worked out the first time
-/// it's asked for.
-fn class_of(atom: char) -> &'static ClassSet {
-    static CLASSES: [OnceLock<ClassSet>; 8] = [const { OnceLock::new() }; 8];
+/// A collection of a pattern name with joined graphemes: patterns of a char
+/// among its members (without its `^`) and of one not, if fe-vim reads
+/// them, and whether each base (in order) is a member.
+struct Set {
+    members: Option<Pattern>,
+    rest: Option<Pattern>,
+    has: Vec<bool>,
+}
+
+/// What stands in for a grapheme of a base by which of its clusters it
+/// satisfies ([`Compiled::stand_ins`]).
+type StandIns = HashMap<(char, usize), char>;
+
+/// Which of a base's `group` of `clusters` a grapheme of it with the other
+/// chars `rest` satisfies (has all their other chars): a bit each. Each
+/// cluster is compared in a step a char of the two, looking at the clock
+/// first if it's the `first` grapheme of a pass ([`Clock::ahead`]).
+fn satisfied(
+    clusters: &[(char, Vec<char>)],
+    group: &[usize],
+    rest: &[char],
+    first: bool,
+    clock: &Clock,
+) -> Result<usize, Interrupted> {
+    let mut mask = 0;
+    for (bit, &ix) in group.iter().enumerate() {
+        let steps = clusters[ix].1.len() + rest.len();
+        clock.ahead(first && bit == 0, steps)?;
+        clock.did(steps);
+        if subset(&clusters[ix].1, rest) {
+            mask |= 1 << bit;
+        }
+    }
+    Ok(mask)
+}
+
+/// Whether the ascending chars `some` are all among the ascending chars
+/// `all`: one pass through the two.
+fn subset(some: &[char], all: &[char]) -> bool {
+    let mut all = all.iter();
+    some.iter().all(|ch| all.any(|other| other == ch))
+}
+
+/// For each of `bases`, the combinations of its clusters (masks, see
+/// [`satisfied`]) graphemes of `source` satisfy, ascending: only those take
+/// a stand-in. Each place a base char is, but before an ASCII char, is read
+/// as a grapheme of at most a segment (a row with a longer one isn't paired
+/// with: [`bounded`]).
+fn occurring(
+    source: &str,
+    bases: &[char],
+    groups: &HashMap<char, Vec<usize>>,
+    clusters: &[(char, Vec<char>)],
+    clock: &Clock,
+) -> Result<Vec<Vec<usize>>, Interrupted> {
+    let bytes = source.as_bytes();
+    let mut wanted = Vec::with_capacity(bases.len());
+    for &base in bases {
+        let mut buf = [0; 4];
+        let lead = base.encode_utf8(&mut buf).as_bytes()[0];
+        let mut masks = std::collections::BTreeSet::new();
+        let mut at = 0;
+        let mut first = true;
+        while let Some(found) = find(bytes, at, clock, |byte| byte == lead)? {
+            at = found + 1;
+            let after = found + base.len_utf8();
+            if !source[found..].starts_with(base)
+                || bytes.get(after).is_none_or(|&byte| byte < 0x80)
+            {
+                continue;
+            }
+            clock.spend(SEGMENT + 4)?;
+            let mut end = (found + SEGMENT + 4).min(source.len());
+            while !source.is_char_boundary(end) {
+                end -= 1;
+            }
+            let grapheme = source[found..end]
+                .graphemes(true)
+                .next()
+                .unwrap_or_default();
+            clock.did(grapheme.len());
+            if let Unit::Composed(_, rest) = Unit::new(grapheme) {
+                let mask = satisfied(clusters, &groups[&base], &rest, first, clock)?;
+                first = false;
+                if mask != 0 {
+                    masks.insert(mask);
+                }
+            }
+        }
+        clock.allocated(masks.len());
+        wanted.push(masks.into_iter().collect());
+    }
+    Ok(wanted)
+}
+
+/// The stand-ins of `bases`, one for each combination of a base's clusters
+/// (a mask, a bit each) it's `wanted` for: chars of the pool not `used`, looked through a window at a time, each
+/// a member of one of the collections `sets` only if its base is too (as
+/// a stand-in in a collection stands for its base, it can only be put
+/// among the members, or by a `^` among what's left out). `None` if the
+/// pool runs out first.
+fn choose(
+    bases: &[char],
+    wanted: &[Vec<usize>],
+    sets: &[Set],
+    used: &[u64],
+    clock: &Clock,
+) -> Result<Option<StandIns>, Interrupted> {
+    // How many of its masks each base has a stand-in for.
+    let mut next: Vec<usize> = vec![0; bases.len()];
+    let needs = |next: &[usize], base: usize| next[base] < wanted[base].len();
+    let mut stand_ins = HashMap::new();
+    // The first base that needs more, and the next char of the pool.
+    let (mut first, mut ix) = (0, 0);
+    let mut step = 0usize;
+    while first < bases.len() && !needs(&next, first) {
+        first += 1;
+    }
+    while first < bases.len() {
+        let mut window = String::new();
+        let mut starts = Vec::new();
+        while starts.len() < WORK / 4 && ix < POOL {
+            clock.ahead(ix == 0, 1)?;
+            clock.did(1);
+            ix += 1;
+            if used[(ix - 1) / 64] >> ((ix - 1) % 64) & 1 == 1 {
+                continue;
+            }
+            if let Some(ch) = pooled(ix - 1) {
+                starts.push(window.len());
+                window.push(ch);
+            }
+        }
+        if starts.is_empty() {
+            return Ok(None);
+        }
+        // Which collections each char of the window is a member of.
+        let mut holders: Vec<Vec<usize>> = vec![Vec::new(); starts.len()];
+        let text = Text::new(&window);
+        for (ix, set) in sets.iter().enumerate() {
+            let (Some(members), Some(rest)) = (&set.members, &set.rest) else {
+                continue;
+            };
+            if !set.has.contains(&false) {
+                continue;
+            }
+            // Mostly a window holds none of the members, or only members.
+            clock.spend(window.len())?;
+            clock.did(window.len());
+            if first_in_row(&text, 0, members, &clock.deadline)?.is_none() {
+                continue;
+            }
+            clock.spend(window.len())?;
+            clock.did(window.len());
+            if first_in_row(&text, 0, rest, &clock.deadline)?.is_none() {
+                for (step, holder) in holders.iter_mut().enumerate() {
+                    clock.ahead(step == 0, 1)?;
+                    clock.did(1);
+                    holder.push(ix);
+                }
+                continue;
+            }
+            clock.spend(window.len())?;
+            clock.did(window.len());
+            let mut list = RowList::new(&text, 0);
+            let found = list.list_until(members, &clock.deadline, |_, _| false)?;
+            for (step, found) in found.iter().enumerate() {
+                clock.ahead(step == 0, 1)?;
+                clock.did(1);
+                if let Ok(at) = starts.binary_search(&found.start) {
+                    holders[at].push(ix);
+                }
+            }
+        }
+        let chars = starts.iter().map(|&start| window[start..].chars().next());
+        for (at, ch) in chars.enumerate() {
+            let Some(ch) = ch else { continue };
+            // The first base that needs more and that `ch` can stand for.
+            let mut base = first;
+            while base < bases.len() {
+                clock.ahead(step == 0, 1 + holders[at].len())?;
+                step += 1;
+                clock.did(1 + holders[at].len());
+                if needs(&next, base) && holders[at].iter().all(|&set| sets[set].has[base]) {
+                    break;
+                }
+                base += 1;
+            }
+            if base == bases.len() {
+                continue;
+            }
+            stand_ins.insert((bases[base], wanted[base][next[base]]), ch);
+            next[base] += 1;
+            while first < bases.len() && !needs(&next, first) {
+                first += 1;
+            }
+            if first == bases.len() {
+                break;
+            }
+        }
+    }
+    clock.allocated(stand_ins.len());
+    Ok(Some(stand_ins))
+}
+
+/// What `atom` (`k i f p`, or a capital) takes, as ranges of code points,
+/// worked out the first time it's asked for.
+fn class_of(atom: char) -> &'static [(u32, u32)] {
+    static CLASSES: [OnceLock<Vec<(u32, u32)>>; 8] = [const { OnceLock::new() }; 8];
     let slot = "kifpKIFP".find(atom).unwrap_or(0);
     CLASSES[slot].get_or_init(|| {
-        let escape = |cp: u32| match cp {
-            0..=0xffff => format!("\\u{cp:04x}"),
-            _ => format!("\\U{cp:08x}"),
-        };
         let parse = |ranges: &str| -> Vec<(u32, u32)> {
             ranges
                 .split(',')
@@ -1678,26 +2105,21 @@ fn class_of(atom: char) -> &'static ClassSet {
             }
             ranges = without;
         }
-        let spelled = ranges
-            .iter()
-            .map(|&(first, last)| match first == last {
-                true => escape(first),
-                false => format!("{}-{}", escape(first), escape(last)),
-            })
-            .collect();
-        (spelled, ranges)
+        ranges
     })
 }
 
 /// The graphemes of `name` written literally that join chars other than
 /// composing ones (a ZWJ, an emoji modifier): see [`Compiled::clusters`].
 fn joined(grapheme: &str) -> bool {
+    grapheme.chars().skip(1).any(|ch| !mark(ch))
+}
+
+/// Whether `ch` is a composing char (a mark).
+fn mark(ch: char) -> bool {
     static MARK: OnceLock<Regex> = OnceLock::new();
     let mark = MARK.get_or_init(|| Regex::new(r"^\p{M}$").expect("a valid regex"));
-    grapheme
-        .chars()
-        .skip(1)
-        .any(|ch| !mark.is_match(ch.encode_utf8(&mut [0; 4])))
+    mark.is_match(ch.encode_utf8(&mut [0; 4]))
 }
 
 /// A grapheme of a tag name: one char, case folded, or a char with
@@ -1745,19 +2167,21 @@ impl Unit {
 /// Whether the opening tag name `name` matches `other`'s, as long:
 /// grapheme by grapheme, a char matches the same char case-blind, and a
 /// composed one the same char with at least its composing chars.
-fn matches(
-    name: impl Iterator<Item = Unit>,
-    other: impl Iterator<Item = Unit>,
-    clock: &Clock,
-) -> Result<bool, Interrupted> {
-    for (at, pair) in name.zip(other).enumerate() {
-        if at % WORK == 0 {
-            clock.spend(WORK)?;
-        }
-        clock.did(1);
-        let same = match &pair {
-            (Unit::Composed(base, composing), Unit::Composed(other_base, other_composing)) => {
-                base == other_base && composing.iter().all(|ch| other_composing.contains(ch))
+fn matches(name: &str, other: &str, clock: &Clock) -> Result<bool, Interrupted> {
+    let names = metered(name.grapheme_indices(true), SEGMENT, clock);
+    let others = metered(other.grapheme_indices(true), SEGMENT, clock);
+    let mut first = true;
+    for (unit, other) in names.zip(others) {
+        let same = match &(Unit::new(unit?.1), Unit::new(other?.1)) {
+            (Unit::Composed(base, composing), Unit::Composed(other_base, other))
+                if base == other_base =>
+            {
+                // A step a composing char of the two.
+                let steps = composing.len() + other.len();
+                clock.ahead(first, steps)?;
+                first = false;
+                clock.did(steps);
+                subset(composing, other)
             }
             (unit, other) => unit == other,
         };
@@ -1821,9 +2245,12 @@ impl Run {
         let mut word = None;
         // ASCII graphemes are its bytes (a name holds no line break).
         let ascii = bounded(text, clock)?;
-        let graphemes: Box<dyn Iterator<Item = (usize, &str)>> = match ascii {
-            true => Box::new((0..text.len()).rev().map(|ix| (ix, &text[ix..ix + 1]))),
-            false => Box::new(text.grapheme_indices(true).rev()),
+        let (graphemes, most): (Box<dyn Iterator<Item = (usize, &str)>>, _) = match ascii {
+            true => (
+                Box::new((0..text.len()).rev().map(|ix| (ix, &text[ix..ix + 1]))),
+                1,
+            ),
+            false => (Box::new(text.grapheme_indices(true).rev()), SEGMENT),
         };
         // The one and two graphemes to the right of the one being read:
         // where they start, the name from there, and whether the first is a
@@ -1831,11 +2258,8 @@ impl Run {
         let mut right: Option<(usize, (u64, usize, bool, bool))> = None;
         let mut right2 = None;
         let mut slash = false;
-        for (step, (ix, grapheme)) in graphemes.enumerate() {
-            if step % WORK == 0 {
-                clock.spend(WORK)?;
-            }
-            clock.did(grapheme.len().div_ceil(4));
+        for read in metered(graphemes, most, clock) {
+            let (ix, grapheme) = read?;
             // A tag at this grapheme's `<` names what's to its right: past
             // the `<` and its composing chars, or past `</`.
             let named = match closing {
@@ -1866,9 +2290,7 @@ impl Run {
         clock.spend(1)?;
         let (mut low, mut high) = (0, from.len());
         while low + 1 < high {
-            if low % WORK == 0 {
-                clock.spend(WORK)?;
-            }
+            clock.ahead(low == 0, 1)?;
             clock.did(1);
             high -= 1;
             from.swap(low, high);
@@ -1876,9 +2298,7 @@ impl Run {
         }
         let mut kept = 0;
         for ix in 0..from.len() {
-            if ix % WORK == 0 {
-                clock.spend(WORK)?;
-            }
+            clock.ahead(ix == 0, 1)?;
             clock.did(1);
             if kept == 0 || from[kept - 1].0 != from[ix].0 {
                 from[kept] = from[ix];
@@ -1951,7 +2371,20 @@ fn tag(
         }
         _ => return Ok(None),
     };
-    let name_start = match (closing, lt_len(slice(source, at..name_end))) {
+    // A `<` before an ASCII char is a grapheme of its own; one before a
+    // composing char is as long as the composing chars (no more than a
+    // segment, as its run is `bounded`), read in a step of its own.
+    let lt = match bytes.get(at + 1) {
+        _ if closing => None,
+        Some(&byte) if byte < 0x80 => Some(1),
+        _ => {
+            clock.spend(1 + SEGMENT + 4)?;
+            let lt = lt_len(slice(source, at..name_end));
+            clock.did(lt.unwrap_or(0));
+            lt
+        }
+    };
+    let name_start = match (closing, lt) {
         (true, _) => name_start,
         (false, Some(lt)) => at + lt,
         (false, None) => return Ok(None),
@@ -1981,22 +2414,15 @@ fn tag(
 }
 
 /// The length of the grapheme a tag's `<` starts in `written` (the tag
-/// from its `<` through its name): the `<` and any composing chars after it.
-/// A window of it is read, not all of it, unless the grapheme fills that.
+/// from its `<` through its name): the `<` and any composing chars after it,
+/// which its name's run being [`bounded`] holds to a segment. A window a
+/// char longer than that is read, not all of it.
 fn lt_len(written: &str) -> Option<usize> {
-    let mut window = 64;
-    loop {
-        let mut end = window.min(written.len());
-        while !written.is_char_boundary(end) {
-            end -= 1;
-        }
-        let text = &written[..end];
-        let lt = text.graphemes(true).next()?.len();
-        if lt < text.len() || end == written.len() {
-            return Some(lt);
-        }
-        window *= 4;
+    let mut end = written.len().min(1 + SEGMENT + 4);
+    while !written.is_char_boundary(end) {
+        end -= 1;
     }
+    written[..end].graphemes(true).next().map(str::len)
 }
 
 /// The char `ch` matches case-blind, as nvim's `\c` folds case: its
@@ -2016,5 +2442,5 @@ fn fold(ch: char) -> char {
 }
 
 #[cfg(test)]
-#[path = "tests/delimiters_work.rs"]
-mod work_tests;
+#[path = "tests/delimiters_clock.rs"]
+mod clock_tests;

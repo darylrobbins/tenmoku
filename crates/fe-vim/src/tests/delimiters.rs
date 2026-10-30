@@ -315,6 +315,38 @@ fn pattern_names_keep_joined_chars_whole() {
 }
 
 #[test]
+fn joined_chars_are_in_a_collection_or_class_just_as_their_base_is() {
+    // Uppercase class atoms leave out digits, joined ones too; a class or a
+    // range of private-use chars takes a joined char only if it takes its
+    // base (a `^` the other way); a `-` last in a collection is itself.
+    let cases = [
+        ("<1\u{200d}\\K>x</1\u{200d}1\u{200d}>", ""),
+        ("<1\u{200d}\\I>x</1\u{200d}1\u{200d}>", ""),
+        ("<1\u{200d}\\k>x</1\u{200d}1\u{200d}>", "x"),
+        ("<-\u{200d}\\k>x</-\u{200d}-\u{200d}>", ""),
+        (
+            "<a\u{200d}[\\U000f0000-\\U0010fffd]>x</a\u{200d}a\u{200d}>",
+            "",
+        ),
+        (
+            "<a\u{200d}[^\\U000f0000-\\U0010fffd]>x</a\u{200d}a\u{200d}>",
+            "x",
+        ),
+        ("<a\u{200d}[a-]>x</a\u{200d}b>", ""),
+        ("<a\u{200d}[^a-]>x</a\u{200d}b>", "x"),
+    ];
+    let got: Vec<(&str, String)> = cases
+        .iter()
+        .map(|&(text, _)| (text, after(text, (0, 0), "yit").3))
+        .collect();
+    let want: Vec<(&str, String)> = cases
+        .iter()
+        .map(|&(text, taken)| (text, taken.to_string()))
+        .collect();
+    assert_eq!(got, want);
+}
+
+#[test]
 fn many_unnested_tags_pair_in_one_pass() {
     // 30,000 `<a->` (which nest nothing) before the caret: each finds its
     // partner from one pass back, not a search of its own.

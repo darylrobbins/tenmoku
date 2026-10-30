@@ -1511,3 +1511,189 @@ name = "dit_pattern_name_filename_atom_with_a_joined_cluster"
 buffer = "<a\u200d\\f>x</a\u200da\u200d>"
 cursor = [0, 0]
 keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_capital_not_a_joined_digit"
+buffer = "<1\u200d\\K>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_a_joined_digit"
+buffer = "<1\u200d\\k>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_capital_not_a_joined_digit"
+buffer = "<1\u200d\\I>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_capital_not_a_joined_digit"
+buffer = "<1\u200d\\F>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_a_joined_digit"
+buffer = "<1\u200d\\f>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_capital_not_a_joined_digit"
+buffer = "<1\u200d\\P>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_atom_a_joined_digit"
+buffer = "<1\u200d\\p>x</1\u200d1\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_capital_not_digit"
+buffer = "<a\\K>x</a1>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_capital_letter"
+buffer = "<a\\K>x</ab>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_keyword_atom_not_a_joined_dash"
+buffer = "<-\u200d\\k>x</-\u200d-\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_identifier_atom_not_a_joined_dash"
+buffer = "<-\u200d\\i>x</-\u200d-\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_filename_atom_a_joined_dash"
+buffer = "<-\u200d\\f>x</-\u200d-\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_printable_atom_a_joined_dash"
+buffer = "<-\u200d\\p>x</-\u200d-\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_private_use_range_not_a_joined_base"
+buffer = "<a\u200d[\\U000f0000-\\U0010fffd]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_private_use_range_a_joined_base"
+buffer = "<a\u200d[^\\U000f0000-\\U0010fffd]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_wide_range_a_joined_base"
+buffer = "<a\u200d[\\x61-\\U0010fffd]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_wide_range_not_a_joined_base"
+buffer = "<a\u200d[^\\x61-\\U0010fffd]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_range_a_joined_base"
+buffer = "<a\u200d[a-z]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_range_not_a_joined_base"
+buffer = "<a\u200d[^a-z]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_range_not_a_joined_base"
+buffer = "<a\u200d[b-z]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_range_a_joined_base"
+buffer = "<a\u200d[^b-z]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_trailing_dash_not_a_range"
+buffer = "<a\u200d[a-]>x</a\u200db>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_trailing_dash_itself"
+buffer = "<a\u200d[a-]>x</a\u200d->"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_trailing_dash_a_joined_base"
+buffer = "<a\u200d[a-]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_trailing_dash_not_a_range"
+buffer = "<a\u200d[^a-]>x</a\u200db>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_trailing_dash_not_a_joined_base"
+buffer = "<a\u200d[^a-]>x</a\u200da\u200d>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_trailing_dash_not_itself"
+buffer = "<a\u200d[^a-]>x</a\u200d->"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_caret_member_a_joined_base"
+buffer = "<a‍[^^b]>x</a‍a‍>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_caret_member_not_a_caret"
+buffer = "<a‍[^^b]>x</a‍^>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_caret_member_not_its_own_base"
+buffer = "<a‍[^^a]>x</a‍a‍>"
+cursor = [0, 0]
+keys = "dit"
+
+[[case]]
+name = "dit_pattern_name_negated_caret_member_another_char"
+buffer = "<a‍[^^a]>x</a‍b>"
+cursor = [0, 0]
+keys = "dit"
