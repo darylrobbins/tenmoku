@@ -822,55 +822,57 @@ keys = "secondary-v"
 command = "text_input.paste"
 context = "text_input"
 
-# The caret's keys, in the Settings tab's inputs. Not every `text_input`'s:
-# the project panel's TextFields move their caret with their own
-# `text_field` keys, which these would shadow, and the other inputs' hosts
-# don't take these commands yet.
+# The caret's keys, in the inputs whose hosts take them: the Settings tab's,
+# the find bar's (the terminal's find too), the search panel's, the Keyboard
+# Shortcuts filter and inline edit's. Not every `text_input`'s: the project
+# panel's TextFields move their caret with their own `text_field` keys, which
+# these would shadow, and the other inputs' hosts don't take these commands
+# yet.
 [[bindings]]
 keys = "delete"
 command = "text_input.delete_forward"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = "left"
 command = "text_input.move_left"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = "right"
 command = "text_input.move_right"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = { macos = "alt-left", default = "ctrl-left" }
 command = "text_input.move_word_left"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = { macos = "alt-right", default = "ctrl-right" }
 command = "text_input.move_word_right"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = "home"
 command = "text_input.move_home"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = "cmd-left"
 command = "text_input.move_home"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 platform = "macos"
 
 [[bindings]]
 keys = "end"
 command = "text_input.move_end"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 
 [[bindings]]
 keys = "cmd-right"
 command = "text_input.move_end"
-context = "settings_editor && text_input"
+context = "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
 platform = "macos"
 
 [[bindings]]

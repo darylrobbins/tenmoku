@@ -870,12 +870,8 @@ impl SearchPanel {
         if let Some(option) = option {
             return self.toggle(option, cx);
         }
-        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-            Some(PaletteOp::Backspace) => TextInput::backspace,
-            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-            Some(PaletteOp::Clear) => TextInput::clear,
-            Some(PaletteOp::Paste) => TextInput::paste,
-            _ => return cx.propagate(),
+        let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+            return cx.propagate();
         };
         self.focused_input(window, cx).update(cx, edit);
     }

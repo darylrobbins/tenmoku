@@ -1003,12 +1003,8 @@ impl ShortcutsEditor {
 /// (`text_input.backspace` and the like, which the input leaves to its
 /// host), returning whether it was.
 fn input_command(input: &Entity<TextInput>, run: &RunCommand, cx: &mut App) -> bool {
-    let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-        Some(PaletteOp::Backspace) => TextInput::backspace,
-        Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-        Some(PaletteOp::Clear) => TextInput::clear,
-        Some(PaletteOp::Paste) => TextInput::paste,
-        _ => return false,
+    let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+        return false;
     };
     input.update(cx, edit);
     true

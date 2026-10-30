@@ -65,6 +65,13 @@ fn edits(cx: &mut gpui::App) -> &mut HashMap<EntityId, Entity<InlineEdit>> {
     &mut cx.default_global::<InlineEdits>().0
 }
 
+/// The input open over the editor `editor`, if one is.
+#[cfg(test)]
+pub(crate) fn open_for(editor: EntityId, cx: &gpui::App) -> Option<Entity<InlineEdit>> {
+    let edits = cx.try_global::<InlineEdits>()?;
+    edits.0.get(&editor).cloned()
+}
+
 /// What the input is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -438,18 +445,12 @@ impl InlineEdit {
 
     /// The input's editing keys.
     fn on_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
-        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-            Some(PaletteOp::Backspace) => TextInput::backspace,
-            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-            Some(PaletteOp::Clear) => TextInput::clear,
-            Some(PaletteOp::Paste) => TextInput::paste,
-            _ => {
-                // The editor's own keys, which the input sits in, aren't its.
-                if passes(run, cx) {
-                    cx.propagate();
-                }
-                return;
+        let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+            // The editor's own keys, which the input sits in, aren't its.
+            if passes(run, cx) {
+                cx.propagate();
             }
+            return;
         };
         self.message = None;
         self.input.update(cx, edit);

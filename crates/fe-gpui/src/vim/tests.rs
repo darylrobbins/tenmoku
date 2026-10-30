@@ -437,7 +437,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                             | "terminal"
                             | "picker"
                             | "text_input"
-                            | "settings_editor && text_input"
+                            | "(settings_editor || find_bar || search_panel || shortcuts_editor || inline_edit) && text_input"
                             | "search_panel"
                             | "search_panel && text_input"
                             | "find_bar"

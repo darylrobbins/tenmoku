@@ -319,12 +319,8 @@ fn on_run_command(
     if kiln::commands::dispatch_typed(run, window, cx) {
         return;
     }
-    let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-        Some(PaletteOp::Backspace) => TextInput::backspace,
-        Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-        Some(PaletteOp::Clear) => TextInput::clear,
-        Some(PaletteOp::Paste) => TextInput::paste,
-        _ => return cx.propagate(),
+    let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+        return cx.propagate();
     };
     panel.update_find(|find, _, cx| find.input.update(cx, edit), cx);
 }
