@@ -500,6 +500,28 @@ fn a_missing_pair_fails_with_nothing_changed() {
 }
 
 #[test]
+fn a_name_char_with_more_than_six_composing_chars_pairs_no_tag() {
+    // Counted once alike are dropped; only the opening tag's name matters.
+    let marks = |n: u32| {
+        (0..n)
+            .filter_map(|i| char::from_u32(0x300 + i))
+            .collect::<String>()
+    };
+    let (six, seven) = (marks(6), marks(7));
+    let block = |open: &str, close: &str, keys: &str| {
+        let text = format!("<a{open}>x</a{close}>");
+        after(&text, (0, 3 + open.len()), keys).3
+    };
+    assert_eq!(block(&six, &six, "yit"), "x");
+    assert_eq!(block(&seven, &seven, "yit"), "");
+    assert_eq!(block(&seven, &seven, "yat"), "");
+    assert_eq!(block(&seven, &six, "yit"), "");
+    assert_eq!(block(&six, &seven, "yit"), "x");
+    let alike = "\u{301}".repeat(7);
+    assert_eq!(block(&alike, &alike, "yit"), "x");
+}
+
+#[test]
 fn visual_objects_grow() {
     let html = "<a><b>ab</b></a>";
     assert_eq!(selected(html, (0, 6), "vit"), "ab");

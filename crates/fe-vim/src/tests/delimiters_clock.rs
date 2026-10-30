@@ -135,19 +135,17 @@ fn commands() -> Vec<Command> {
     // but for case (long ones too, read side by side), a grapheme of many
     // marks matched by the same marks in another order, and the table of
     // places a name can start (looking at every 256 tags too). (nvim pairs
-    // no name with a char of more than 6 composing chars, which fe-vim
-    // doesn't follow yet: the graphemes of many marks here are for what
-    // comparing them takes.)
+    // no name with a char of more than 6 composing chars, so the
+    // graphemes here hold 5 (a ZWJ is one more), and a name has many of them.)
     let long = "b".repeat(5_000);
     let wide = "é".repeat(3_000);
     let composed = "e\u{301}".repeat(2_000);
-    // 600 marks, 1,800 bytes: comparing two takes about what reading them
-    // does.
+    // 5 marks, 15 bytes: comparing two takes about what reading them does.
     let nonspacing = Regex::new(r"^\p{Mn}$").unwrap();
     let marks: String = (0x800..0x1_0000)
         .filter_map(char::from_u32)
         .filter(|ch| nonspacing.is_match(ch.encode_utf8(&mut [0; 4])))
-        .take(600)
+        .take(5)
         .collect();
     assert_eq!(format!("e{marks}").graphemes(true).count(), 1);
     let backwards: String = marks.chars().rev().collect();
@@ -164,8 +162,8 @@ fn commands() -> Vec<Command> {
         dit(format!("<{}>x</{}>", "A".repeat(5_000), "a".repeat(5_000))),
         dit(format!(
             "<{}>x</{}>",
-            format!("e{marks}").repeat(4),
-            format!("e{backwards}").repeat(4),
+            format!("e{marks}").repeat(300),
+            format!("e{backwards}").repeat(300),
         )),
         (format!("<a>x{run}></a>"), 3, "dit", format!("x{run}>"), ""),
         (format!("{many}x</a->"), many.len(), "yit", "x".into(), ""),

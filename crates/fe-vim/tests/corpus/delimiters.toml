@@ -1697,3 +1697,63 @@ name = "dit_pattern_name_negated_caret_member_another_char"
 buffer = "<a‍[^^a]>x</a‍b>"
 cursor = [0, 0]
 keys = "dit"
+
+[[case]]
+name = "dit_name_char_with_six_composing_chars_pairs"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305>x</a\u0300\u0301\u0302\u0303\u0304\u0305>"
+cursor = [0, 16]
+keys = "dit"
+
+[[case]]
+name = "dit_name_char_with_seven_composing_chars_pairs_nothing"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>x</a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>"
+cursor = [0, 18]
+keys = "dit"
+
+[[case]]
+name = "dat_name_char_with_six_composing_chars_pairs"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305>x</a\u0300\u0301\u0302\u0303\u0304\u0305>"
+cursor = [0, 16]
+keys = "dat"
+
+[[case]]
+name = "dat_name_char_with_seven_composing_chars_pairs_nothing"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>x</a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>"
+cursor = [0, 18]
+keys = "dat"
+
+[[case]]
+name = "dit_seven_composing_chars_written_alike_dedup_pair"
+buffer = "<a\u0301\u0301\u0301\u0301\u0301\u0301\u0301>x</a\u0301\u0301\u0301\u0301\u0301\u0301\u0301>"
+cursor = [0, 6]
+keys = "dit"
+
+[[case]]
+name = "dit_seven_composing_chars_opening_six_closing_pairs_nothing"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>x</a\u0300\u0301\u0302\u0303\u0304\u0305>"
+cursor = [0, 18]
+keys = "dit"
+
+[[case]]
+name = "dit_six_composing_chars_opening_seven_closing_pairs"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305>x</a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>"
+cursor = [0, 16]
+keys = "dit"
+
+[[case]]
+name = "dit_seven_composing_chars_mismatching_closing_name"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305\u0306>x</b\u0300\u0301\u0302\u0303\u0304\u0305\u0306>"
+cursor = [0, 18]
+keys = "dit"
+
+[[case]]
+name = "dat_six_composing_chars_mismatching_closing_name"
+buffer = "<a\u0300\u0301\u0302\u0303\u0304\u0305>x</b\u0300\u0301\u0302\u0303\u0304\u0305>"
+cursor = [0, 16]
+keys = "dat"
+
+[[case]]
+name = "dit_seven_composing_chars_on_a_later_name_char"
+buffer = "<ab\u0300\u0301\u0302\u0303\u0304\u0305\u0306>x</ab\u0300\u0301\u0302\u0303\u0304\u0305\u0306>"
+cursor = [0, 19]
+keys = "dit"

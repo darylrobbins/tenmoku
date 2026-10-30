@@ -6852,6 +6852,222 @@
           }
         }
       }
+    },
+    {
+      "name": "dit_name_char_with_six_composing_chars_pairs",
+      "buffer": "<à́̂̃̄̅>x</à́̂̃̄̅>",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<à́̂̃̄̅></à́̂̃̄̅>",
+        "cursor": [
+          0,
+          15
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_char_with_seven_composing_chars_pairs_nothing",
+      "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅̆>",
+      "cursor": [
+        0,
+        18
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅̆>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dat_name_char_with_six_composing_chars_pairs",
+      "buffer": "<à́̂̃̄̅>x</à́̂̃̄̅>",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<à́̂̃̄̅>x</à́̂̃̄̅>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<à́̂̃̄̅>x</à́̂̃̄̅>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_name_char_with_seven_composing_chars_pairs_nothing",
+      "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅̆>",
+      "cursor": [
+        0,
+        18
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅̆>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_seven_composing_chars_written_alike_dedup_pair",
+      "buffer": "<á́́́́́́>x</á́́́́́́>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<á́́́́́́></á́́́́́́>",
+        "cursor": [
+          0,
+          17
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_seven_composing_chars_opening_six_closing_pairs_nothing",
+      "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅>",
+      "cursor": [
+        0,
+        18
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<à́̂̃̄̅̆>x</à́̂̃̄̅>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_six_composing_chars_opening_seven_closing_pairs",
+      "buffer": "<à́̂̃̄̅>x</à́̂̃̄̅̆>",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<à́̂̃̄̅></à́̂̃̄̅̆>",
+        "cursor": [
+          0,
+          15
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_seven_composing_chars_mismatching_closing_name",
+      "buffer": "<à́̂̃̄̅̆>x</b̀́̂̃̄̅̆>",
+      "cursor": [
+        0,
+        18
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<à́̂̃̄̅̆>x</b̀́̂̃̄̅̆>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dat_six_composing_chars_mismatching_closing_name",
+      "buffer": "<à́̂̃̄̅>x</b̀́̂̃̄̅>",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<à́̂̃̄̅>x</b̀́̂̃̄̅>",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_seven_composing_chars_on_a_later_name_char",
+      "buffer": "<ab̀́̂̃̄̅̆>x</ab̀́̂̃̄̅̆>",
+      "cursor": [
+        0,
+        19
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ab̀́̂̃̄̅̆>x</ab̀́̂̃̄̅̆>",
+        "cursor": [
+          0,
+          19
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

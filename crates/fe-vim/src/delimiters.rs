@@ -13,7 +13,8 @@
 //!   the row. Names match case-blind (as `\c` folds them); one name's pairs
 //!   nest if it ends in a word char, another's are left alone. A name char
 //!   with composing chars after it (a grapheme of several) matches only the
-//!   same char with those composing chars and maybe more, in any order.
+//!   same char with those composing chars and maybe more, in any order; an
+//!   opening tag's name with a char of more than 6 distinct ones pairs no tag.
 //!   Composing chars after an opening tag's `<` are the `<`'s: the name is
 //!   what follows, and the tag nests in no other; with nothing after
 //!   (`<ͅ>`), taking the tag fails the object. A name holding `\ . * [ ~`
@@ -646,6 +647,9 @@ struct Tag {
     /// An opening tag whose name holds a char magic in a pattern (`\ . *
     /// [ ~`): it pairs as a pattern ([`pattern_partner`]).
     pattern: bool,
+    /// An opening tag whose name holds a char with more composing chars
+    /// than nvim's patterns take ([`MOST_COMPOSING`]): it pairs with no tag.
+    over: bool,
     /// Its name's units hashed ([`Unit::key`]): equal names hash alike.
     key: u64,
     /// Its name's graphemes.
@@ -777,6 +781,13 @@ impl<'a> Tags<'a> {
             let Some(tag) = tag(&source, found, &mut names, &clock)? else {
                 continue;
             };
+            if tag.over {
+                tags.push(Tag {
+                    paired: true,
+                    ..tag
+                });
+                continue;
+            }
             if tag.nameless() || tag.lone() || tag.pattern {
                 lone |= tag.lone() && found <= offset;
                 tags.push(tag);
@@ -2122,6 +2133,15 @@ fn mark(ch: char) -> bool {
     mark.is_match(ch.encode_utf8(&mut [0; 4]))
 }
 
+/// The most distinct composing chars on one char of an opening tag's name
+/// that nvim's pattern still matches (more pairs with no tag).
+const MOST_COMPOSING: usize = 6;
+
+/// A tag name from some place on, as [`Run::from`] gives it: its key, unit
+/// count, whether a char has composing chars, whether it holds a magic
+/// char, and whether a char has more than [`MOST_COMPOSING`] of them.
+type Name = (u64, usize, bool, bool, bool);
+
 /// A grapheme of a tag name: one char, case folded, or a char with
 /// composing chars after it, as written, with the set of those.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2215,7 +2235,7 @@ struct Run {
     end: usize,
     word: bool,
     /// By place, ascending.
-    from: Vec<(usize, (u64, usize, bool, bool))>,
+    from: Vec<(usize, Name)>,
     /// Where in `from` the last lookup ended: tags ask in ascending order.
     next: usize,
 }
@@ -2240,7 +2260,7 @@ impl Run {
         let text = slice(source, at..end);
         let mut from = std::mem::take(&mut self.from);
         from.clear();
-        let mut state = (0u64, 0usize, false, false);
+        let mut state: Name = (0u64, 0usize, false, false, false);
         from.push((end, state));
         let mut word = None;
         // ASCII graphemes are its bytes (a name holds no line break).
@@ -2255,7 +2275,7 @@ impl Run {
         // The one and two graphemes to the right of the one being read:
         // where they start, the name from there, and whether the first is a
         // lone `/`.
-        let mut right: Option<(usize, (u64, usize, bool, bool))> = None;
+        let mut right: Option<(usize, Name)> = None;
         let mut right2 = None;
         let mut slash = false;
         for read in metered(graphemes, most, clock) {
@@ -2269,12 +2289,13 @@ impl Run {
             from.extend(named);
             let unit = Unit::new(grapheme);
             word.get_or_insert_with(|| unit.word());
-            let (key, units, composed, magic) = state;
+            let (key, units, composed, magic, over) = state;
             state = (
                 unit.key(key),
                 units + 1,
                 composed || matches!(unit, Unit::Composed(..)),
                 magic || grapheme.contains(['\\', '.', '*', '[', '~']),
+                over || matches!(&unit, Unit::Composed(_, set) if set.len() > MOST_COMPOSING),
             );
             right2 = right;
             right = Some((at + ix, state));
@@ -2320,7 +2341,7 @@ impl Run {
 
     /// The name from `at` on, if a tag's name can start there; `at` never
     /// goes back within a run, so the lookups step through it once.
-    fn from(&mut self, at: usize) -> Option<(u64, usize, bool, bool)> {
+    fn from(&mut self, at: usize) -> Option<Name> {
         while self
             .from
             .get(self.next)
@@ -2393,7 +2414,7 @@ fn tag(
         true => &mut names.closing,
         false => &mut names.opening,
     };
-    let Some((key, units, composed, magic)) = run.from(name_start) else {
+    let Some((key, units, composed, magic, over)) = run.from(name_start) else {
         return Ok(None);
     };
     Ok(Some(Tag {
@@ -2404,6 +2425,7 @@ fn tag(
         closing,
         marked: !closing && name_start > at + 1,
         pattern: !closing && magic,
+        over: !closing && over,
         key,
         units,
         composed,
