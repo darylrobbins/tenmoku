@@ -455,6 +455,11 @@ fn toggling_while_the_prepare_is_pending_keeps_it_in_the_new_direction(cx: &mut 
         },
     );
     s.run("nav.show_call_hierarchy");
+    // The first prepare is really pending (reached the server) before the toggle starts it over.
+    s.until("the first prepare", |s| {
+        tick(s, Duration::from_millis(1));
+        requests(s, PREPARE).len() == 1
+    });
     s.run("hierarchy.toggle_direction");
     let panel = panel(&s);
     assert_eq!(
