@@ -37,29 +37,28 @@ use crate::{
 /// them to it too.
 pub const SEARCH_PREVIEW_LIMIT: Duration = Duration::from_millis(100);
 
-/// [`SEARCH_PREVIEW_LIMIT`] in nanoseconds, or `u64::MAX` for the default.
-static PREVIEW_LIMIT_OVERRIDE: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(u64::MAX);
+thread_local! {
+    /// What [`set_search_preview_limit`] set on this thread, or `None` for
+    /// [`SEARCH_PREVIEW_LIMIT`].
+    static PREVIEW_LIMIT_OVERRIDE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
 
-/// Replaces [`SEARCH_PREVIEW_LIMIT`] for [`VimState::search_preview`],
-/// process-wide, or restores it with `None`. For tests whose preview must not
-/// give up on a loaded machine; nothing else sets it.
+/// Replaces [`SEARCH_PREVIEW_LIMIT`] for [`VimState::search_preview`] on this
+/// thread, or restores it with `None`. For tests whose preview must not give
+/// up on a loaded machine; nothing else sets it.
 #[doc(hidden)]
 pub fn set_search_preview_limit(limit: Option<Duration>) {
-    let nanos = limit.map_or(u64::MAX, |l| {
-        u64::try_from(l.as_nanos()).unwrap_or(u64::MAX - 1)
-    });
-    PREVIEW_LIMIT_OVERRIDE.store(nanos, std::sync::atomic::Ordering::Relaxed);
+    PREVIEW_LIMIT_OVERRIDE.with(|o| o.set(limit));
 }
 
 /// The time a preview search gets: [`SEARCH_PREVIEW_LIMIT`], or what
-/// [`set_search_preview_limit`] set.
+/// [`set_search_preview_limit`] set on this thread.
 #[doc(hidden)]
 pub fn search_preview_limit() -> Duration {
-    match PREVIEW_LIMIT_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        u64::MAX => SEARCH_PREVIEW_LIMIT,
-        nanos => Duration::from_nanos(nanos),
-    }
+    PREVIEW_LIMIT_OVERRIDE
+        .with(|o| o.get())
+        .unwrap_or(SEARCH_PREVIEW_LIMIT)
 }
 
 /// An open command line: what it's for and carries, the mode it came from,
