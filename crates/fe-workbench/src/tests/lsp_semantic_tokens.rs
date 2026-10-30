@@ -22,6 +22,7 @@ use crate::tests::lsp::Lsp;
 const FULL: &str = "textDocument/semanticTokens/full";
 const DELTA: &str = "textDocument/semanticTokens/full/delta";
 const REST: Duration = Duration::from_millis(250);
+const POLL: Duration = Duration::from_millis(20);
 
 fn script() -> Script {
     let mut init = initialize_result(Some(PositionEncodingKind::UTF8));
@@ -70,8 +71,14 @@ fn setup(cx: &mut TestAppContext) -> (Lsp, Entity<EditorView>) {
     // The first ask can find the server's capabilities not yet known: it
     // polls for them every 20 ms of the manager's (manual) clock, answers
     // `Retry`, and asks again after REST on the executor's (fake) clock.
+    // The manager's clock moves only to wake a poll that is waiting: its
+    // 3 s ask timeout is armed with the ask, and advancing 20 ms a pass
+    // while a loaded actor is slow to send would run it out, and so ask
+    // twice.
     s.until("the first ask", |s| {
-        s.clock.advance(Duration::from_millis(20));
+        if s.clock.sleeping().iter().any(|left| *left <= POLL) {
+            s.clock.advance(POLL);
+        }
         s.cx.executor().advance_clock(REST);
         !asked(s).is_empty()
     });
@@ -133,7 +140,8 @@ fn server_tokens_recolour_and_follow_edits(cx: &mut TestAppContext) {
         ]
     );
     let sent = asked(&s);
-    assert_eq!(sent.len(), 1);
+    // A second ask names itself here: its method, and the params it carries.
+    assert_eq!(sent.len(), 1, "asks sent: {sent:?}");
     assert_eq!(sent[0].0, FULL);
 
     // An edit, then the wait: a delta from the first result.
