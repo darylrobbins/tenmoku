@@ -413,10 +413,12 @@ fn a_retry_asks_again(cx: &mut TestAppContext) {
     let answer = links(&s, true);
     s.fake
         .set_reply(LINKS, Scripted::now(Reply::Result(answer)));
-    // Asked again after a rest, with no edit.
-    s.cx.executor().advance_clock(Duration::from_millis(510));
-    s.draw();
+    // Asked again after a rest, with no edit. The rest's timer is armed
+    // only once the error reply has been handled, which on a loaded machine
+    // can be after the first request is recorded, so the executor's clock
+    // is advanced on every poll rather than once, up front.
     until_ticking(&mut s, "the links", |s| {
+        s.cx.executor().advance_clock(Duration::from_millis(510));
         editor.read_with(&s.cx, |view, _| view.link_ranges().len() == 3)
     });
     assert_eq!(requests(&s, LINKS).len(), 2);
