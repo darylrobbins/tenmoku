@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use fe_config::{
-    EnumVariant, SettingEntry, SettingKind, Settings, SettingsModel, SettingsStore, ValueSource,
-    settings_schema,
+    ChoiceSource, EnumVariant, SettingEntry, SettingKind, Settings, SettingsModel, SettingsStore,
+    ValueSource, settings_schema,
 };
 use serde_json::{Value, json};
 
@@ -212,9 +212,7 @@ fn ranges_come_from_schemars_attributes() {
     );
     assert_eq!(
         kind("theme.name"),
-        SettingKind::Text {
-            min_length: Some(1)
-        }
+        SettingKind::Choice(ChoiceSource::Themes { appearance: None })
     );
 }
 

@@ -34,22 +34,22 @@ use crate::{
 
 /// Where a row's theme comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Source {
+pub(crate) enum Source {
     Bundled(&'static BundledTheme),
     /// An extension's, by ID.
     Installed(String),
 }
 
 #[derive(Clone, Debug)]
-struct Row {
-    title: SharedString,
-    appearance: Appearance,
-    source: Source,
+pub(crate) struct Row {
+    pub(crate) title: SharedString,
+    pub(crate) appearance: Appearance,
+    pub(crate) source: Source,
 }
 
 impl Row {
     /// The ID kiln selects the row's theme by.
-    fn id(&self) -> String {
+    pub(crate) fn id(&self) -> String {
         match &self.source {
             Source::Bundled(theme) => kiln::extensions::builtin_theme_id(theme.id),
             Source::Installed(id) => id.clone(),
@@ -94,22 +94,8 @@ impl ThemePicker {
     ) {
         self.previous_focus = previous_focus.or(self.previous_focus.take());
         self.settings_path = settings_path;
-        let bundled = (themes::bundled_themes().iter()).map(|theme| Row {
-            title: theme.title.into(),
-            appearance: theme.appearance,
-            source: Source::Bundled(theme),
-        });
         let listed = kiln::extensions::themes(cx);
-        let mut installed: Vec<Row> = (listed.iter())
-            .filter(|theme| !is_builtin(&theme.id))
-            .map(|theme| Row {
-                title: theme.title.clone().into(),
-                appearance: theme.appearance,
-                source: Source::Installed(theme.id.clone()),
-            })
-            .collect();
-        installed.sort_by_key(|row| row.title.to_lowercase());
-        self.rows = bundled.chain(installed).collect();
+        self.rows = rows(&listed);
         self.matches = (0..self.rows.len()).collect();
         let settings = theme_settings(cx);
         let showing = showing(&settings, cx.theme().appearance, &listed);
@@ -144,6 +130,27 @@ impl ThemePicker {
             })
             .collect()
     }
+}
+
+/// The bundled themes, then the `installed` ones, which
+/// [`kiln::extensions::themes`] lists, by title, A–Z: what the picker
+/// lists, as the Settings tab's theme dropdowns do.
+pub(crate) fn rows(installed: &[ThemeInfo]) -> Vec<Row> {
+    let bundled = (themes::bundled_themes().iter()).map(|theme| Row {
+        title: theme.title.into(),
+        appearance: theme.appearance,
+        source: Source::Bundled(theme),
+    });
+    let mut installed: Vec<Row> = (installed.iter())
+        .filter(|theme| !is_builtin(&theme.id))
+        .map(|theme| Row {
+            title: theme.title.clone().into(),
+            appearance: theme.appearance,
+            source: Source::Installed(theme.id.clone()),
+        })
+        .collect();
+    installed.sort_by_key(|row| row.title.to_lowercase());
+    bundled.chain(installed).collect()
 }
 
 /// Whether `id` is one of the app's own themes, listed as bundled.

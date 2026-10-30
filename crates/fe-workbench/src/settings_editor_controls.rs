@@ -6,9 +6,18 @@
 //!   click, or Space on its selected row.
 //! - [`SettingKind::Enum`]: a dropdown (`setting-select-<key>`) of the
 //!   schema's variants, anchored under its button, which a click or Enter
-//!   on the selected row opens. Up and Down move through it, Enter or a
-//!   click picks (`setting-option-<key>-<variant>`), and Escape or a click
-//!   elsewhere closes it.
+//!   on the selected row opens. Up and Down move through it, scrolling the
+//!   highlighted variant into view of a list taller than the window
+//!   allows, Enter or a click picks (`setting-option-<key>-<variant>`),
+//!   and Escape or a click elsewhere closes it.
+//! - [`SettingKind::Choice`]: the same dropdown, of the list the app gives
+//!   now ([`choices`](super::choices)): the themes installed, say. One
+//!   unset by default lists Default (built-in) first
+//!   (`setting-option-default-<key>`), which resets it. A value not in the
+//!   list, a theme since removed, shows with a "not installed" hint
+//!   (`setting-hint-<key>`), and stays until another is picked; one the
+//!   list has by another name (`theme.name`'s bundled theme by ID) shows
+//!   as the file has it. An open list keeps the options it opened with.
 //! - [`SettingKind::Int`], [`SettingKind::Float`] and [`SettingKind::Text`]:
 //!   an input (`setting-input-<key>`), committed on Enter or when it loses
 //!   focus. Text that isn't a number, or is out of the schema's bounds,
@@ -41,11 +50,12 @@ use fe_config::{
 use fe_ui::{Button, Icon, Switch, TextInput, TextInputEvent, ui_theme};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, anchored, deferred, div, prelude::FluentBuilder as _, px, svg,
+    IntoElement, MouseButton, ParentElement as _, ScrollHandle, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, anchored, deferred, div, prelude::FluentBuilder as _, px,
+    svg,
 };
 
-use super::{CONTROL_HEIGHT, LINE_HEIGHT, Scope, SettingsEditor, read_settings};
+use super::{CONTROL_HEIGHT, LINE_HEIGHT, Scope, SettingsEditor, choices, read_settings};
 use crate::{
     open,
     pane::Reveal,
@@ -54,6 +64,79 @@ use crate::{
 
 /// The height of a dropdown's button, and of each of its variants.
 const SELECT_HEIGHT: gpui::Pixels = px(24.);
+
+/// The tallest a dropdown's list gets, the window allowing.
+const MENU_HEIGHT: gpui::Pixels = px(400.);
+
+/// What the Default (built-in) option of a choice unset by default says.
+pub(super) const DEFAULT_CHOICE: &str = "Default (built-in)";
+
+/// What a choice whose value isn't in its list says beside it.
+pub(super) const NOT_INSTALLED: &str = "not installed";
+
+/// A dropdown's options for `entry`, `None` if it has none: an enum's
+/// variants, or the list a choice is one of now, after Default (built-in),
+/// a `None` option, if it's unset by default.
+pub(super) fn options(entry: &SettingEntry, cx: &App) -> Option<Vec<Option<EnumVariant>>> {
+    match &entry.kind {
+        SettingKind::Enum(variants) => Some(variants.iter().cloned().map(Some).collect()),
+        SettingKind::Choice(source) => {
+            let default = entry.default.is_null().then_some(None);
+            let listed = choices::variants(*source, cx).into_iter().map(Some);
+            Some(default.into_iter().chain(listed).collect())
+        }
+        _ => None,
+    }
+}
+
+/// What picking `option` writes.
+fn pick(option: &Option<EnumVariant>) -> Change {
+    match option {
+        Some(variant) => Change::Set(Value::Str(variant.value.clone())),
+        None => Change::Reset,
+    }
+}
+
+/// The index in `options`, `entry`'s, of the one `value` is: for a
+/// choice, the one it means, as a bundled theme's ID means its title.
+fn option_of(entry: &SettingEntry, options: &[Option<EnumVariant>], value: &Json) -> Option<usize> {
+    let listed = match (&entry.kind, value.as_str()) {
+        (SettingKind::Choice(source), Some(text)) => Some(choices::listed_as(*source, text)),
+        (_, text) => text.map(str::to_owned),
+    };
+    options.iter().position(|option| match option {
+        Some(variant) => listed.as_deref() == Some(variant.value.as_str()),
+        None => value.is_null(),
+    })
+}
+
+/// An open dropdown: the options it opened with, which it keeps while
+/// open, so that a list changing meanwhile (an extension's themes
+/// reloading) changes neither what it shows nor what a pick writes.
+pub(super) struct Select {
+    /// The setting's dotted key.
+    key: String,
+    options: Vec<Option<EnumVariant>>,
+    highlighted: usize,
+    /// The menu's scroll, which keeps the highlighted option in view.
+    scroll: ScrollHandle,
+}
+
+/// What a dropdown of `options` showing `value` says, and its hint if it's
+/// a choice whose value isn't one of them.
+pub(super) fn select_label(
+    entry: &SettingEntry,
+    options: &[Option<EnumVariant>],
+    value: &Json,
+) -> (String, Option<&'static str>) {
+    let choice = matches!(entry.kind, SettingKind::Choice(_));
+    if choice && value.is_null() {
+        return (DEFAULT_CHOICE.to_owned(), None);
+    }
+    let text = value.as_str().unwrap_or_default().to_owned();
+    let missing = choice && option_of(entry, options, value).is_none();
+    (text, missing.then_some(NOT_INSTALLED))
+}
 
 /// A value a control writes.
 #[derive(Clone, Debug, PartialEq)]
@@ -323,10 +406,13 @@ impl SettingsEditor {
     ) -> AnyElement {
         let (control, height) = match &entry.kind {
             SettingKind::Bool => (self.switch(entry, value, disabled, cx), LINE_HEIGHT),
-            SettingKind::Enum(variants) => (
-                self.dropdown(ix, entry, variants, value, disabled, cx),
-                SELECT_HEIGHT,
-            ),
+            SettingKind::Enum(_) | SettingKind::Choice(_) => {
+                let options = options(entry, cx).unwrap_or_default();
+                (
+                    self.dropdown(ix, entry, &options, value, disabled, window, cx),
+                    SELECT_HEIGHT,
+                )
+            }
             SettingKind::Int { .. } | SettingKind::Float { .. } | SettingKind::Text { .. } => (
                 self.input(ix, entry, value, disabled, window, cx),
                 CONTROL_HEIGHT,
@@ -447,23 +533,36 @@ impl SettingsEditor {
         }
     }
 
-    /// A dropdown of `variants`, showing `value`, with its list open under
-    /// it while it's [`SettingsEditor::select`].
+    /// A dropdown of `options`, showing `value`, with its list open under
+    /// it while it's [`SettingsEditor::select`], of the options it opened
+    /// with. A `None` option is Default (built-in). The list is no taller
+    /// than the window, and scrolls.
+    #[allow(clippy::too_many_arguments)]
     fn dropdown(
         &self,
         ix: usize,
         entry: &SettingEntry,
-        variants: &[EnumVariant],
+        options: &[Option<EnumVariant>],
         value: &Json,
         disabled: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = ui_theme(cx);
         let path = entry.key_path();
-        let current = value.as_str().unwrap_or_default().to_owned();
-        let open = (self.select.as_ref())
-            .filter(|(key, _)| *key == path)
-            .map(|(_, highlighted)| *highlighted);
+        let (current, hint) = select_label(entry, options, value);
+        let hint = hint.map(|hint| {
+            let path = path.clone();
+            div()
+                .debug_selector(move || format!("setting-hint-{path}"))
+                .text_color(ui.muted_text)
+                .child(hint)
+        });
+        let open = self.select.as_ref().filter(|select| select.key == path);
+        let margin = px(8.);
+        let max_height = (window.viewport_size().height - margin * 2.)
+            .min(MENU_HEIGHT)
+            .max(SELECT_HEIGHT);
         let button = div()
             .id(("setting-select", ix))
             .debug_selector({
@@ -482,7 +581,7 @@ impl SettingsEditor {
             .border_color(ui.border)
             .bg(ui.panel_background)
             .text_color(ui.text)
-            .child(current)
+            .child(div().flex().gap_2().child(current).children(hint))
             .child(
                 svg()
                     .path(Icon::ChevronDown.path())
@@ -491,15 +590,23 @@ impl SettingsEditor {
             )
             .when(!disabled, |button| {
                 let path = path.clone();
-                button
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_dropdown(&path, cx)))
+                button.cursor_pointer().on_click(
+                    cx.listener(move |this, _, window, cx| this.toggle_dropdown(&path, window, cx)),
+                )
             });
-        let menu = open.map(|highlighted| {
-            let options = variants.iter().enumerate().map(|(option, variant)| {
-                let selector = format!("setting-option-{path}-{}", variant.value);
+        let menu = open.map(|select| {
+            let highlighted = select.highlighted;
+            let options = select.options.iter().enumerate().map(|(option, variant)| {
+                let selector = match variant {
+                    Some(variant) => format!("setting-option-{path}-{}", variant.value),
+                    None => format!("setting-option-default-{path}"),
+                };
                 let key = entry.key.clone();
-                let picked = Value::Str(variant.value.clone());
+                let picked = pick(variant);
+                let (value, description) = match variant {
+                    Some(variant) => (variant.value.clone(), variant.description.clone()),
+                    None => (DEFAULT_CHOICE.to_owned(), String::new()),
+                };
                 div()
                     .id(("setting-option", option))
                     .debug_selector(move || selector)
@@ -511,10 +618,10 @@ impl SettingsEditor {
                     .cursor_pointer()
                     .when(option == highlighted, |row| row.bg(ui.row_selected))
                     .hover(move |style| style.bg(ui.row_hover))
-                    .child(div().text_color(ui.text).child(variant.value.clone()))
+                    .child(div().text_color(ui.text).child(value))
                     // Under it, on one line: one that's too long ends in
                     // an ellipsis.
-                    .when(!variant.description.is_empty(), |row| {
+                    .when(!description.is_empty(), |row| {
                         row.child(
                             div()
                                 .w_full()
@@ -523,18 +630,26 @@ impl SettingsEditor {
                                 .text_ellipsis()
                                 .text_size(px(11.))
                                 .text_color(ui.muted_text)
-                                .child(variant.description.clone()),
+                                .child(description),
                         )
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select = None;
-                        this.write(&key, Change::Set(picked.clone()), cx);
+                        this.write(&key, picked.clone(), cx);
                         cx.stop_propagation();
                     }))
             });
             div()
+                .id(("setting-menu", ix))
+                .debug_selector({
+                    let path = path.clone();
+                    move || format!("setting-menu-{path}")
+                })
                 .occlude()
                 .w(px(360.))
+                .max_h(max_height)
+                .overflow_y_scroll()
+                .track_scroll(&select.scroll)
                 .py_1()
                 .rounded_md()
                 .border_1()
@@ -554,7 +669,7 @@ impl SettingsEditor {
             .when_some(menu, |dropdown, menu| {
                 dropdown.child(
                     div().absolute().top(SELECT_HEIGHT + px(2.)).left_0().child(
-                        deferred(anchored().snap_to_window_with_margin(px(8.)).child(menu))
+                        deferred(anchored().snap_to_window_with_margin(margin).child(menu))
                             .with_priority(1),
                     ),
                 )
@@ -562,21 +677,44 @@ impl SettingsEditor {
             .into_any_element()
     }
 
+    /// The open dropdown's setting, the options it shows and the one
+    /// highlighted.
+    #[cfg(test)]
+    pub(super) fn open_select(&self) -> Option<(&str, &[Option<EnumVariant>], usize)> {
+        let select = self.select.as_ref()?;
+        Some((&select.key, &select.options, select.highlighted))
+    }
+
     /// Opens the dropdown of the setting at dotted `path`, its value
     /// highlighted, or closes it if it's open.
-    fn toggle_dropdown(&mut self, path: &str, cx: &mut Context<Self>) {
-        if self.select.as_ref().is_some_and(|(key, _)| key == path) {
+    fn toggle_dropdown(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .select
+            .as_ref()
+            .is_some_and(|select| select.key == path)
+        {
             self.select = None;
         } else if let Some(entry) = self.entry(path).cloned() {
-            let SettingKind::Enum(variants) = &entry.kind else {
+            let Some(options) = options(&entry, cx) else {
                 return;
             };
             let value = self.value(&entry, cx).map(|(value, _)| value);
-            let current = value.as_ref().and_then(Json::as_str);
-            let highlighted = (variants.iter())
-                .position(|variant| Some(variant.value.as_str()) == current)
+            let highlighted = (value.as_ref())
+                .and_then(|value| option_of(&entry, &options, value))
                 .unwrap_or(0);
-            self.select = Some((path.to_owned(), highlighted));
+            self.select = Some(Select {
+                key: path.to_owned(),
+                options,
+                highlighted,
+                scroll: ScrollHandle::new(),
+            });
+            // The list has nothing to scroll in until it's drawn once.
+            cx.on_next_frame(window, |this, _, cx| {
+                if let Some(select) = &this.select {
+                    select.scroll.scroll_to_item(select.highlighted);
+                    cx.notify();
+                }
+            });
         }
         cx.notify();
     }
@@ -584,18 +722,14 @@ impl SettingsEditor {
     /// Moves the open dropdown's highlight down, or with `down` false up,
     /// stopping at its ends.
     pub(super) fn move_highlight(&mut self, down: bool, cx: &mut Context<Self>) {
-        let Some((key, highlighted)) = self.select.clone() else {
+        let Some(select) = self.select.as_mut() else {
             return;
         };
-        let count = match self.entry(&key).map(|entry| &entry.kind) {
-            Some(SettingKind::Enum(variants)) => variants.len(),
-            _ => return,
+        select.highlighted = match down {
+            true => (select.highlighted + 1).min(select.options.len().saturating_sub(1)),
+            false => select.highlighted.saturating_sub(1),
         };
-        let next = match down {
-            true => (highlighted + 1).min(count.saturating_sub(1)),
-            false => highlighted.saturating_sub(1),
-        };
-        self.select = Some((key, next));
+        select.scroll.scroll_to_item(select.highlighted);
         cx.notify();
     }
 
@@ -615,15 +749,14 @@ impl SettingsEditor {
             SettingKind::Bool => {
                 self.toggle_selected(cx);
             }
-            SettingKind::Enum(variants) => match self.select.take() {
-                Some((key, highlighted)) if key == path => {
-                    if let Some(variant) = variants.get(highlighted) {
-                        let picked = Value::Str(variant.value.clone());
-                        self.write(&entry.key, Change::Set(picked), cx);
+            SettingKind::Enum(_) | SettingKind::Choice(_) => match self.select.take() {
+                Some(select) if select.key == path => {
+                    if let Some(option) = select.options.get(select.highlighted) {
+                        self.write(&entry.key, pick(option), cx);
                     }
                     cx.notify();
                 }
-                _ => self.toggle_dropdown(&path, cx),
+                _ => self.toggle_dropdown(&path, window, cx),
             },
             SettingKind::Int { .. } | SettingKind::Float { .. } | SettingKind::Text { .. } => {
                 if let Some(field) = self.fields.get(&path) {

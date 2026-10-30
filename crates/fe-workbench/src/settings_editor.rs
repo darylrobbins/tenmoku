@@ -76,6 +76,13 @@ use crate::{
 #[path = "settings_editor_controls.rs"]
 mod controls;
 
+#[path = "settings_editor_choices.rs"]
+mod choices;
+
+#[cfg(test)]
+#[path = "settings_editor_choices_tests.rs"]
+mod choices_tests;
+
 #[cfg(test)]
 #[path = "settings_editor_open_file_tests.rs"]
 mod open_file_tests;
@@ -84,7 +91,7 @@ mod open_file_tests;
 #[path = "settings_editor_caret_tests.rs"]
 mod caret_tests;
 
-use controls::{Change, Field, ListField};
+use controls::{Change, Field, ListField, Select};
 
 /// The key context the editor's element sets.
 pub(crate) const KEY_CONTEXT: &str = "settings_editor";
@@ -207,9 +214,8 @@ pub(crate) struct SettingsEditor {
     fields: HashMap<String, Field>,
     /// The list editors, by dotted key.
     lists: HashMap<String, ListField>,
-    /// The open dropdown: its setting's dotted key, and the variant
-    /// highlighted.
-    select: Option<(String, usize)>,
+    /// The open dropdown.
+    select: Option<Select>,
     /// The changes written or waiting to be, not read back yet, by dotted
     /// key, scope and the file they're to: what their rows show meanwhile.
     pending: HashMap<PendingKey, Pending>,

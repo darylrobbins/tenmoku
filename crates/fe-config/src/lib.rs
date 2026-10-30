@@ -44,8 +44,8 @@ pub use settings::{
 };
 pub use settings_edit::{SettingEditError, SettingScope, reset_setting, set_setting};
 pub use settings_model::{
-    EffectiveValue, EnumVariant, SettingEntry, SettingGroup, SettingKind, SettingsModel,
-    ValueSource,
+    ChoiceSource, EffectiveValue, EnumVariant, SettingEntry, SettingGroup, SettingKind,
+    SettingsModel, ValueSource,
 };
 pub use theme::{Color, EditorColors, EditorPalette};
 pub use watch::ConfigWatcher;

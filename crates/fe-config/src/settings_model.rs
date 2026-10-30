@@ -7,8 +7,11 @@
 //! [`Settings`](crate::Settings) appears here with no change. Tables and
 //! arrays of tables the editor can't edit in place (`lsp.servers`,
 //! `vim.remap`) are one [`SettingKind::Other`] row each, edited in
-//! `settings.toml`. Nothing here writes a file.
+//! `settings.toml`. Strings whose values only the host knows, the themes
+//! installed, are [`SettingKind::Choice`], by key ([`choice_source`]), so
+//! the schema stays a string's. Nothing here writes a file.
 
+use kiln_core::theme::Appearance;
 use serde_json::{Map, Value};
 use toml::Table;
 
@@ -58,9 +61,20 @@ pub enum SettingKind {
     },
     /// A list of strings.
     TextList,
+    /// A string, one of a list the host gives at runtime.
+    Choice(ChoiceSource),
     /// A table, an array of tables or anything else the editor can't edit:
     /// it links to `settings.toml`.
     Other,
+}
+
+/// The list a [`SettingKind::Choice`]'s value is one of, which the host
+/// resolves: the themes installed now, say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChoiceSource {
+    /// The bundled and installed themes of `appearance`, by ID; or with
+    /// none, the bundled ones, by title.
+    Themes { appearance: Option<Appearance> },
 }
 
 /// One of an [`SettingKind::Enum`]'s values.
@@ -465,10 +479,14 @@ impl Walk {
                 });
                 self.table(&resolved, &key, &default);
             } else {
+                let kind = match choice_source(&key) {
+                    Some(source) => SettingKind::Choice(source),
+                    None => self.kind(&resolved),
+                };
                 self.entries.push(SettingEntry {
                     key,
                     group: group.clone(),
-                    kind: self.kind(&resolved),
+                    kind,
                     default,
                     description,
                 });
@@ -539,6 +557,20 @@ impl Walk {
         }
         (!variants.is_empty()).then_some(variants)
     }
+}
+
+/// The list the setting at `key` is one of, if only the host knows it: a
+/// table here, not a schema keyword, so `settings.schema.json` stays as it
+/// is.
+fn choice_source(key: &[String]) -> Option<ChoiceSource> {
+    let key: Vec<&str> = key.iter().map(String::as_str).collect();
+    let appearance = match key.as_slice() {
+        ["theme", "dark"] => Some(Appearance::Dark),
+        ["theme", "light"] => Some(Appearance::Light),
+        ["theme", "name"] => None,
+        _ => return None,
+    };
+    Some(ChoiceSource::Themes { appearance })
 }
 
 /// `schema`'s `type`s other than null.
