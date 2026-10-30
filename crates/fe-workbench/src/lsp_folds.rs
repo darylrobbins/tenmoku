@@ -3,7 +3,7 @@
 //! on its server and 400 ms after its text last changed. A non-empty answer
 //! is the buffer's editors' fold model ([`EditorView::set_fold_ranges`]);
 //! `None` (no `foldingRangeProvider`), an empty answer or an error puts the
-//! tree back. An answer is shown only if it is for the buffer's current
+//! tree back. Nothing is asked until the server has the document open. An answer is shown only if it is for the buffer's current
 //! version, from the opening the server still has; until one lands the old
 //! ranges stay, their rows following the edits.
 
@@ -124,7 +124,10 @@ impl Workbench {
                     slot.key = None;
                 }
             }
-            if slot.no_provider || slot.key == Some(version) {
+            // Until the server has the document open there's no opening to
+            // ask of: a request sent now would be retired, yet still go out,
+            // once the opening appears.
+            if slot.no_provider || slot.key == Some(version) || identity.is_none() {
                 continue;
             }
             // The first ask goes at once; later ones wait for the text to
