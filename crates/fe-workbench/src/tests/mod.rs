@@ -5,6 +5,7 @@
 mod activity_rail;
 mod breadcrumb_symbol_icons;
 mod caret_keys_hosts;
+mod caret_keys_lines;
 mod default_keymaps;
 pub(crate) mod find_bar;
 mod find_keys;

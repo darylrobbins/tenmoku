@@ -1698,15 +1698,12 @@ impl GitPanel {
             LINE_CANCEL => return self.end_line(None, true, window, cx),
             _ => {}
         }
-        let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
-            Some(PaletteOp::Backspace) if input.read(cx).text().is_empty() => {
-                return self.end_line(None, true, window, cx);
-            }
-            Some(PaletteOp::Backspace) => TextInput::backspace,
-            Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,
-            Some(PaletteOp::Clear) => TextInput::clear,
-            Some(PaletteOp::Paste) => TextInput::paste,
-            _ => return cx.propagate(),
+        let op = picker::op(run, cx);
+        if op == Some(PaletteOp::Backspace) && input.read(cx).text().is_empty() {
+            return self.end_line(None, true, window, cx);
+        }
+        let Some(edit) = op.and_then(PaletteOp::edit) else {
+            return cx.propagate();
         };
         input.update(cx, edit);
     }
@@ -2199,6 +2196,12 @@ impl GitPanel {
     /// Whether the box's command line is open.
     pub(crate) fn commit_line_open(&self) -> bool {
         (self.commit.as_ref()).is_some_and(|commit| commit.line_open.is_some())
+    }
+
+    /// The input of the box's open command line.
+    pub(crate) fn commit_line_input(&self) -> Option<Entity<TextInput>> {
+        let commit = self.commit.as_ref()?;
+        commit.line_open.and(commit.line.clone())
     }
 
     /// What shows in place of the rows, if anything.
