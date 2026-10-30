@@ -598,8 +598,9 @@ fn list_builds_only_the_rows_in_view(cx: &mut TestAppContext) {
     let built = editor.update(cx, |editor, _| editor.take_built());
     let most = built.iter().map(|range| range.len()).max().unwrap_or(0);
     let window = cx.update(|window, _| window.viewport_size());
-    // A row is 84px: what fits in the window, and one more either side.
-    let fits = (f32::from(window.height) / 84.).ceil() as usize + 2;
+    // Rows are as tall as they draw, the shortest a heading with no
+    // description, 30px: what fits in the window, and one more either side.
+    let fits = (f32::from(window.height) / 30.).ceil() as usize + 2;
     assert!(most > 1, "the list drew rows: {built:?}");
     assert!(most <= fits, "{most} rows built of {rows}; {fits} fit");
     assert!(rows > fits, "the schema's rows are more than fit: {rows}");
@@ -643,8 +644,9 @@ fn bounds(selector: &str, cx: &mut VisualTestContext) -> gpui::Bounds<gpui::Pixe
     found.unwrap_or_else(|| panic!("{selector} is drawn"))
 }
 
-/// A setting whose description wraps to two lines keeps its title, both
-/// lines and its value inside its row, each at its full height.
+/// A setting whose description wraps to three lines and more keeps its
+/// title, three lines and its value inside its row, each at its full
+/// height.
 #[gpui::test]
 fn rows_fit_a_wrapped_description_and_the_value(cx: &mut TestAppContext) {
     let dirs = Dirs::new();
@@ -665,7 +667,7 @@ fn rows_fit_a_wrapped_description_and_the_value(cx: &mut TestAppContext) {
     let value = bounds(&format!("settings-value-{key}"), cx);
     assert!(within(text, row), "{text:?} in {row:?}");
     assert!(within(value, row), "{value:?} in {row:?}");
-    assert_eq!(text.size.height, gpui::px(32.), "two lines");
+    assert_eq!(text.size.height, gpui::px(48.), "three lines");
     assert_eq!(value.size.height, gpui::px(18.));
     assert!(value.top() >= text.bottom());
 }

@@ -453,7 +453,7 @@ impl SettingsEditor {
             .debug_selector(move || format!("settings-value-{key}"))
             // A list takes the line's width, scrolling its items in it.
             .when(fills, |line| line.flex_1().min_w_0())
-            .when(!fills, |line| line.flex_none())
+            .when(!fills, |line| line.flex_none().max_w_full())
             .h(height)
             .flex()
             .items_center()
@@ -579,6 +579,8 @@ impl SettingsEditor {
             let path = path.clone();
             div()
                 .debug_selector(move || format!("setting-hint-{path}"))
+                .min_w_0()
+                .truncate()
                 .text_color(ui.muted_text)
                 .child(hint)
         });
@@ -594,7 +596,10 @@ impl SettingsEditor {
                 move || format!("setting-select-{path}")
             })
             .h(SELECT_HEIGHT)
-            .min_w(px(140.))
+            .min_w(px(120.))
+            // In a narrow column, it's as wide as the column, its label cut
+            // short.
+            .max_w_full()
             .px_2()
             .flex()
             .items_center()
@@ -605,9 +610,17 @@ impl SettingsEditor {
             .border_color(ui.border)
             .bg(ui.panel_background)
             .text_color(ui.text)
-            .child(div().flex().gap_2().child(current).children(hint))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex()
+                    .gap_2()
+                    .child(div().min_w_0().truncate().child(current))
+                    .children(hint),
+            )
             .child(
                 svg()
+                    .flex_none()
                     .path(Icon::ChevronDown.path())
                     .size(px(12.))
                     .text_color(ui.muted_text),
@@ -715,6 +728,7 @@ impl SettingsEditor {
         });
         div()
             .relative()
+            .max_w_full()
             .child(button)
             .when_some(menu, |dropdown, menu| {
                 dropdown.child(
@@ -968,13 +982,15 @@ impl SettingsEditor {
         let input = field.input.clone();
         input.update(cx, |input, cx| input.set_typing(!disabled, cx));
         let width = match entry.kind {
-            SettingKind::Text { .. } | SettingKind::Choice(_) => px(320.),
-            _ => px(120.),
+            SettingKind::Text { .. } | SettingKind::Choice(_) => px(260.),
+            _ => px(96.),
         };
         div()
             .debug_selector(move || format!("setting-input-{path}"))
             .flex_none()
             .w(width)
+            // In a narrow column, as wide as the column.
+            .max_w_full()
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {

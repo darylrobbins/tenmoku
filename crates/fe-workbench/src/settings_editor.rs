@@ -8,7 +8,7 @@
 //! - A search field on top, focused when the tab opens, filters the list
 //!   as it's typed ([`SettingsModel::search`]); a group with nothing found
 //!   loses its heading, and nothing found at all says so.
-//! - Under it, the User and Workspace scopes, as VS Code's tabs: a row
+//! - Beside it, the User and Workspace scopes, as VS Code's tabs: a row
 //!   shows the selected scope's file's value, else what it inherits, and
 //!   a 2px accent bar at its left edge if that file sets it. Workspace
 //!   shows only with a folder open, and dims the rows a project's file
@@ -38,14 +38,14 @@
 //!   `text_input.move_left` and the like). On the selected row, Space toggles a switch and Enter works
 //!   its control: it opens a dropdown, goes into an input, or opens
 //!   `settings.toml`.
-//! - Only the rows in view are built: the list is a `uniform_list`.
+//! - Only the rows in view are built: the list is a gpui `list`, its rows
+//!   as tall as they draw ([`layout`] has how they're laid out).
 //!
 //! It has no path and serializes to nothing, so it isn't kept in saved
 //! layouts, and closes as any tab does.
 
 use std::{
     collections::{HashMap, HashSet},
-    ops::Range,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -58,11 +58,10 @@ use fe_config::{SettingEditError, SettingEntry, SettingsModel};
 use fe_gpui::commands::RunCommand;
 use fe_ui::{Icon, TextInput, TextInputEvent, Tooltip, ui_theme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
-    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px, svg, uniform_list,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Global, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, MouseButton,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Task, WeakEntity, Window, div, list, px, svg,
 };
 use kiln::platform::config::{self, ChangedFiles};
 use kiln_shell::{PaneItem, PaneView as _};
@@ -78,6 +77,13 @@ mod controls;
 
 #[path = "settings_editor_choices.rs"]
 mod choices;
+
+#[path = "settings_editor_layout.rs"]
+mod layout;
+
+#[cfg(test)]
+#[path = "settings_editor_layout_tests.rs"]
+mod layout_tests;
 
 #[cfg(test)]
 #[path = "settings_editor_choices_tests.rs"]
@@ -96,32 +102,21 @@ mod open_file_tests;
 mod caret_tests;
 
 use controls::{Change, Field, ListField, Select};
+use layout::Section;
 
 /// The key context the editor's element sets.
 pub(crate) const KEY_CONTEXT: &str = "settings_editor";
-
-/// Every row's height, a group heading's as a setting's: the list is a
-/// `uniform_list`. A setting's holds its title line, two lines of
-/// description, its control's line and a line for why a typed value wasn't
-/// written, with [`ROW_PADDING`] above and below and [`ROW_GAP`] between.
-const ROW_HEIGHT: Pixels = px(126.);
 
 /// The height of a setting's title line, and of a switch's or a link's
 /// line.
 const LINE_HEIGHT: Pixels = px(18.);
 
-/// The height of a line of a setting's description, which shows up to two.
-const DESCRIPTION_LINE_HEIGHT: Pixels = px(16.);
-
 /// The height of the control's line: a text input's.
 const CONTROL_HEIGHT: Pixels = px(30.);
 
-/// The height of the line under the control.
-const MESSAGE_HEIGHT: Pixels = px(14.);
-
-const ROW_PADDING: Pixels = px(10.);
-
-const ROW_GAP: Pixels = px(4.);
+/// How far past the list's ends it lays rows out, so the rows next to the
+/// view are measured before Up or Down reaches them.
+const OVERDRAW: Pixels = px(240.);
 
 /// What a workspace-restricted row says under the Workspace scope, as VS
 /// Code's.
@@ -208,9 +203,27 @@ pub(crate) struct SettingsEditor {
     model: Option<SettingsModel>,
     /// What the search finds, with its groups' headings.
     rows: Vec<Row>,
+    /// The top-level groups the rows show settings of, as the category
+    /// navigation lists them.
+    sections: Vec<Section>,
+    /// The heading row of the section last clicked in the navigation,
+    /// until the rows change.
+    anchor: Option<usize>,
+    /// Whether the list keeps the anchor's heading at the top: from the
+    /// click until the wheel or the keys scroll it.
+    pinned: bool,
+    /// How many times in a row the list has scrolled back to the anchor's
+    /// heading for the same spacer: it gives up after a few.
+    repins: u8,
+    /// The height of the blank row after the last, so that a short last
+    /// section's heading can come to the top: what the rows from the
+    /// anchor's heading on lack of the view's height, as last laid out.
+    spacer: Pixels,
     /// The selected row, a setting's.
     selected: Option<usize>,
-    scroll: UniformListScrollHandle,
+    /// The row under the mouse, a setting's.
+    hovered: Option<usize>,
+    list: ListState,
     /// The read of the files under way, dropped for a newer one.
     load: Task<()>,
     /// The number and text inputs, by dotted key, kept across renders so
@@ -239,7 +252,7 @@ pub(crate) struct SettingsEditor {
     gate: Option<async_channel::Receiver<()>>,
     /// Each range of rows the list built, for the tests.
     #[cfg(test)]
-    built: Vec<Range<usize>>,
+    built: Vec<std::ops::Range<usize>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -298,8 +311,14 @@ impl SettingsEditor {
             root,
             model: None,
             rows: Vec::new(),
+            sections: Vec::new(),
+            anchor: None,
+            pinned: false,
+            repins: 0,
+            spacer: Pixels::ZERO,
             selected: None,
-            scroll: UniformListScrollHandle::new(),
+            hovered: None,
+            list: ListState::new(0, ListAlignment::Top, OVERDRAW),
             load: Task::ready(()),
             fields: HashMap::new(),
             lists: HashMap::new(),
@@ -316,6 +335,13 @@ impl SettingsEditor {
             _subscriptions: subscriptions,
         };
         let tab = cx.weak_entity();
+        // The wheel takes over from a section clicked.
+        this.list.set_scroll_handler({
+            let tab = tab.clone();
+            move |_, _, cx| {
+                tab.update(cx, |this, _| this.pinned = false).ok();
+            }
+        });
         let tabs = &mut cx.default_global::<SettingsWrites>().tabs;
         tabs.retain(|tab| tab.upgrade().is_some());
         tabs.push(tab);
@@ -482,11 +508,27 @@ impl SettingsEditor {
     }
 
     /// The rows for the search as it is now, keeping the selected setting
-    /// selected if it's still found.
+    /// selected if it's still found. New rows start at the top; the same
+    /// rows, read again, are measured again where they are.
     fn refilter(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_setting();
-        self.rows = match &self.model {
+        let rows = match &self.model {
             Some(model) => rows(model, self.search.read(cx).text()),
+            None => Vec::new(),
+        };
+        if rows == self.rows {
+            self.list.remeasure();
+        } else {
+            // And the spacer after them.
+            self.list.reset(rows.len() + 1);
+            self.anchor = None;
+            self.pinned = false;
+            self.spacer = Pixels::ZERO;
+            self.hovered = None;
+        }
+        self.rows = rows;
+        self.sections = match &self.model {
+            Some(model) => layout::sections(model, &self.rows),
             None => Vec::new(),
         };
         self.selected = selected
@@ -599,7 +641,7 @@ impl SettingsEditor {
 
     /// Each range of rows the list built, dropping them.
     #[cfg(test)]
-    pub(crate) fn take_built(&mut self) -> Vec<Range<usize>> {
+    pub(crate) fn take_built(&mut self) -> Vec<std::ops::Range<usize>> {
         std::mem::take(&mut self.built)
     }
 
@@ -640,27 +682,45 @@ impl SettingsEditor {
         };
         self.selected = Some(next);
         self.select = None;
-        // Going up to a group's first setting, its heading comes into view
-        // with it, the heading at the top, if both fit and either is out
-        // of view; else the setting alone comes into view.
-        let (height, scrolled) = {
-            let handle = &self.scroll.0.borrow().base_handle;
-            (handle.bounds().size.height, -handle.offset().y)
-        };
-        let in_view = |ix: usize| {
-            let top = ROW_HEIGHT * ix as f32 - scrolled;
-            top >= Pixels::ZERO && top + ROW_HEIGHT <= height
-        };
-        let heading = (next.checked_sub(1)).filter(|ix| {
-            !down && height >= ROW_HEIGHT * 2. && matches!(self.rows[*ix], Row::Group(_))
-        });
-        match heading {
-            Some(heading) if !(in_view(heading) && in_view(next)) => {
-                (self.scroll).scroll_to_item_strict(heading, ScrollStrategy::Top)
-            }
-            _ => (self.scroll).scroll_to_item(next, ScrollStrategy::Nearest),
-        }
+        self.pinned = false;
+        self.reveal(next, down);
         cx.notify();
+    }
+
+    /// Scrolls row `ix`, just selected going `down` or up, into view, as
+    /// little as it takes. Going up to a group's first setting, its heading
+    /// comes into view with it, the heading at the top, if both fit and
+    /// either is out of view. A row below the view that the list hasn't
+    /// measured yet (keys pressed faster than it draws) comes to the top.
+    fn reveal(&self, ix: usize, down: bool) {
+        let list = &self.list;
+        let view = list.viewport_bounds();
+        let in_view = |ix: usize| {
+            (list.bounds_for_item(ix))
+                .is_some_and(|row| row.top() >= view.top() && row.bottom() <= view.bottom())
+        };
+        // Unmeasured, a setting is taken to be a tall one's height.
+        let height = (list.bounds_for_item(ix)).map_or(px(120.), |row| row.size.height);
+        let heading = (ix.checked_sub(1)).filter(|heading| {
+            !down
+                && view.size.height >= layout::HEADING_HEIGHT + height
+                && matches!(self.rows[*heading], Row::Group(_))
+        });
+        let top = |item_ix| ListOffset {
+            item_ix,
+            offset_in_item: Pixels::ZERO,
+        };
+        match heading {
+            Some(heading) if !(in_view(heading) && in_view(ix)) => list.scroll_to(top(heading)),
+            Some(_) => {}
+            None if in_view(ix) => {}
+            None if ix <= list.logical_scroll_top().item_ix
+                || list.bounds_for_item(ix).is_some() =>
+            {
+                list.scroll_to_reveal_item(ix)
+            }
+            None => list.scroll_to(top(ix)),
+        }
     }
 
     /// The text inputs' editing and caret commands (`text_input.backspace`,
@@ -738,192 +798,6 @@ impl SettingsEditor {
         cx.stop_propagation();
     }
 
-    fn render_rows(
-        &mut self,
-        range: Range<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        #[cfg(test)]
-        self.built.push(range.clone());
-        let ui = ui_theme(cx);
-        let Some(model) = &self.model else {
-            return Vec::new();
-        };
-        let selected_bg = if self.focus.is_focused(window) {
-            ui.row_selected
-        } else {
-            ui.row_selected_inactive
-        };
-        let rows: Vec<(usize, Result<SettingEntry, String>)> = (range.clone())
-            .filter_map(|ix| {
-                let row = match self.rows.get(ix)? {
-                    Row::Group(title) => Err(title.clone()),
-                    Row::Setting(entry) => Ok(model.entries()[*entry].clone()),
-                };
-                Some((ix, row))
-            })
-            .collect();
-        rows.into_iter()
-            .map(|(ix, row)| match row {
-                Err(title) => div()
-                    .debug_selector({
-                        let title = title.clone();
-                        move || format!("settings-group-{title}")
-                    })
-                    .h(ROW_HEIGHT)
-                    .px_6()
-                    .pb_2()
-                    .flex()
-                    .flex_col()
-                    .justify_end()
-                    .text_size(px(16.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child(title)
-                    .into_any_element(),
-                Ok(entry) => self
-                    .setting_row(ix, &entry, window, cx)
-                    .when(self.selected == Some(ix), |row| row.bg(selected_bg))
-                    .into_any_element(),
-            })
-            .collect()
-    }
-
-    /// Row `ix`, `entry`'s: its title and key path, with Reset to Default
-    /// if the selected scope's file sets it, its description, its control,
-    /// and under that why a typed value wasn't written, if it wasn't. It's
-    /// dimmed with a note, its control off, if the selected scope's file
-    /// can't set it.
-    fn setting_row(
-        &mut self,
-        ix: usize,
-        entry: &SettingEntry,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let ui = ui_theme(cx);
-        let key = entry.key_path();
-        let restricted = self.restricted(entry);
-        let (value, modified) = self.value(entry, cx).unwrap_or((Json::Null, false));
-        let control = self.control(ix, entry, &value, restricted, window, cx);
-        let message = self.message(&key);
-        let name = entry
-            .key
-            .last()
-            .map_or_else(String::new, |name| title(name));
-        div()
-            .id(("settings-row", ix))
-            .debug_selector({
-                let key = key.clone();
-                move || format!("settings-row-{key}")
-            })
-            .relative()
-            .w_full()
-            .h(ROW_HEIGHT)
-            .px_6()
-            .py(ROW_PADDING)
-            .flex()
-            .flex_col()
-            .gap(ROW_GAP)
-            .overflow_hidden()
-            .when(restricted, |row| row.opacity(0.5))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.selected = Some(ix);
-                window.focus(&this.focus, cx);
-                cx.notify();
-            }))
-            .when(modified, |row| {
-                row.child(
-                    div()
-                        .debug_selector({
-                            let key = key.clone();
-                            move || format!("settings-modified-{key}")
-                        })
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(2.))
-                        .bg(ui.accent),
-                )
-            })
-            .child(
-                div()
-                    .flex_none()
-                    .h(LINE_HEIGHT)
-                    .line_height(LINE_HEIGHT)
-                    .flex()
-                    .items_baseline()
-                    .gap_2()
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ui.text)
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .text_color(ui.muted_text)
-                            .text_size(px(12.))
-                            .child(key.clone()),
-                    )
-                    .when(modified && !restricted, |line| {
-                        line.child(self.reset_button(ix, entry, cx))
-                    }),
-            )
-            .child(
-                div()
-                    .debug_selector({
-                        let key = key.clone();
-                        move || format!("settings-description-{key}")
-                    })
-                    .flex_none()
-                    .h(DESCRIPTION_LINE_HEIGHT * 2.)
-                    .line_height(DESCRIPTION_LINE_HEIGHT)
-                    .text_size(px(12.))
-                    .text_color(ui.muted_text)
-                    .line_clamp(2)
-                    .child(entry.description.clone()),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .h(CONTROL_HEIGHT)
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .whitespace_nowrap()
-                    .text_size(px(12.))
-                    .child(control)
-                    .when(restricted, |line| {
-                        let key = key.clone();
-                        line.child(
-                            div()
-                                .debug_selector(move || format!("settings-restricted-{key}"))
-                                .text_color(ui.muted_text)
-                                .child(WORKSPACE_RESTRICTED),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .h(MESSAGE_HEIGHT)
-                    .line_height(MESSAGE_HEIGHT)
-                    .text_size(px(11.))
-                    .text_color(ui.error_text)
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .when_some(message, |line, message| {
-                        line.debug_selector(move || format!("setting-message-{key}"))
-                            .child(message)
-                    }),
-            )
-    }
-
     /// The Reset to Default button of row `ix`, `entry`'s.
     fn reset_button(
         &self,
@@ -969,8 +843,9 @@ impl SettingsEditor {
         }
     }
 
-    /// The User and Workspace tabs.
-    fn scope_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The search, the User and Workspace tabs and the Open button, on one
+    /// line where they fit.
+    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let ui = ui_theme(cx);
         let shown = self.scope();
         let (name, file) = self.open_file_target(cx);
@@ -1018,10 +893,22 @@ impl SettingsEditor {
         div()
             .flex_none()
             .flex()
-            .justify_between()
+            .flex_wrap()
+            .items_end()
+            .gap_x_6()
             .px_6()
+            .pt_3()
             .border_b_1()
             .border_color(ui.border)
+            .child(
+                div()
+                    .debug_selector(|| "settings-search".into())
+                    .flex_grow(1.)
+                    .flex_basis(px(240.))
+                    .min_w_0()
+                    .pb_2()
+                    .child(self.search.clone()),
+            )
             .child(tabs)
             .child(open)
     }
@@ -1179,17 +1066,26 @@ impl Render for SettingsEditor {
                 .child(NOTHING_FOUND)
                 .into_any_element()
         } else {
-            uniform_list(
-                "settings-rows",
-                self.rows.len(),
-                cx.processor(|this, range, window, cx| this.render_rows(range, window, cx)),
+            list(
+                self.list.clone(),
+                cx.processor(|this, ix, window, cx| this.render_row(ix, window, cx)),
             )
-            .track_scroll(&self.scroll)
-            .flex_1()
-            // Its width is the tab's, not its widest row's (a long list's).
-            .w_full()
+            .size_full()
             .into_any_element()
         };
+        // Once the list is laid out: the spacer and the anchor's heading.
+        let settle = gpui::canvas(
+            {
+                let tab = cx.weak_entity();
+                move |_, window, cx| {
+                    tab.update(cx, |this, cx| this.settle_anchor(window, cx))
+                        .ok();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0();
         // Under an open dropdown, a click anywhere else in the tab closes
         // it, its button's too, and does nothing else.
         let backdrop = self.select.is_some().then(|| {
@@ -1203,6 +1099,7 @@ impl Render for SettingsEditor {
         });
         div()
             .track_focus(&self.root_focus)
+            .debug_selector(|| "settings-editor".into())
             .key_context(KEY_CONTEXT)
             .relative()
             .on_key_down(cx.listener(Self::on_key_down))
@@ -1213,26 +1110,34 @@ impl Render for SettingsEditor {
             .bg(ui.background)
             .text_color(ui.text)
             .text_size(px(13.))
-            .child(
-                div()
-                    .debug_selector(|| "settings-search".into())
-                    .flex_none()
-                    .px_6()
-                    .pt_3()
-                    .pb_2()
-                    .child(self.search.clone()),
-            )
-            .child(self.scope_bar(cx))
+            .child(self.header(cx))
             .children(errors)
+            // The list, and the navigation on its left; in a tab too narrow
+            // for both, the list wraps to the first line, alone, and the
+            // navigation to the second, out of view.
             .child(
                 div()
-                    .track_focus(&self.focus)
-                    .debug_selector(|| "settings-list".into())
                     .flex_1()
                     .min_h_0()
+                    .overflow_hidden()
                     .flex()
-                    .flex_col()
-                    .child(body),
+                    .flex_row_reverse()
+                    .flex_wrap()
+                    .child(
+                        div()
+                            .track_focus(&self.focus)
+                            .debug_selector(|| "settings-list".into())
+                            .h_full()
+                            .flex_grow(1.)
+                            .flex_basis(layout::NAV_MIN_TAB_WIDTH - layout::NAV_WIDTH)
+                            .min_w_0()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .child(body)
+                            .child(settle),
+                    )
+                    .child(self.nav(cx)),
             )
             .children(backdrop)
     }
