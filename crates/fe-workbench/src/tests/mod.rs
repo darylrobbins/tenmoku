@@ -42,6 +42,7 @@ mod palette_recent;
 mod pane_cycle;
 mod pane_drag;
 mod pane_toolbar;
+mod pane_toolbar_no_path_item;
 mod project_panel;
 pub(crate) mod quick_open;
 mod quick_open_races;

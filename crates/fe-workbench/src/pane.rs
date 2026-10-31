@@ -2485,18 +2485,25 @@ impl Pane {
             return Vec::new();
         };
         let path = path.as_deref();
-        // A diff view with no working file on its right (HEAD against the
-        // index, a commit's change) is named by its tab's title.
-        let diff_title = (path.is_none() && self.opening.is_none() && self.error.is_none())
+        // Only an editor buffer with no file is "untitled". A diff view with
+        // no working file on its right (HEAD against the index, a commit's
+        // change) is named by its tab's title, as is any other item with no
+        // file (Settings, Keyboard Shortcuts).
+        let titled = (path.is_none() && self.opening.is_none() && self.error.is_none())
             .then(|| self.state.active_item())
             .flatten()
-            .filter(|item| item.downcast_ref::<DiffView>().is_some())
-            .map(|item| item.tab_title(cx));
-        let path_crumbs = match diff_title {
-            Some(title) => vec![kiln_shell::crumbs::PathCrumb {
+            .filter(|item| item.downcast_ref::<EditorView>().is_none())
+            .map(|item| {
+                (
+                    item.tab_title(cx),
+                    item.downcast_ref::<DiffView>().is_some(),
+                )
+            });
+        let path_crumbs = match titled {
+            Some((title, file)) => vec![kiln_shell::crumbs::PathCrumb {
                 label: title,
                 dir: None,
-                file: true,
+                file,
             }],
             None => pane_toolbar::path_crumbs(path, self.toolbar.root.as_deref()),
         };
