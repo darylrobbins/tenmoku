@@ -32,7 +32,10 @@ use std::{
 };
 
 use fe_buffer::{Bias, BufferSnapshot, Text, Version};
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
+use fe_command::{
+    Actor, CommandId, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
+    Effect, Registry, Value,
+};
 use fe_editor::{
     EditorModel,
     decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps},
@@ -41,6 +44,7 @@ use fe_editor::{
     text_diff::{HunkKind, Side, TextDiff},
 };
 
+use fe_ui::{Icon, IconButton, Tooltip};
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptLevel, Render,
@@ -71,6 +75,12 @@ pub const TOGGLE_INLINE: &str = "diff.toggle_inline";
 
 /// A side over this many bytes is diffed off the main thread.
 pub const ASYNC_BYTES: usize = 1024 * 1024;
+
+/// A side over this many bytes also has its changed words found off the
+/// main thread: they're found for every paired row, offscreen ones
+/// included, after every edit, and noisy text of this size costs tens of
+/// milliseconds there.
+const WORDS_ASYNC_BYTES: usize = 64 * 1024;
 
 /// What navigation says when it wraps past the last hunk.
 pub const WRAPPED_TO_FIRST: &str = "Wrapped to first change";
@@ -534,6 +544,74 @@ impl DiffView {
         }
     }
 
+    /// The hunk the focused side's caret is at, as the one last moved to
+    /// or else the last starting at or above its row, and the number of
+    /// hunks. `None` before the first hunk, or with no hunks.
+    fn current_change(&self, window: &Window, cx: &App) -> (Option<usize>, usize) {
+        let count = self.diff.hunks().len();
+        let focused = match !self.inline && self.views[0].focus_handle(cx).is_focused(window) {
+            true => 0,
+            false => 1,
+        };
+        let model = self.views[focused].read(cx).model();
+        let head = model.primary_selection().head();
+        if let Some((index, carets)) = self.visited
+            && carets[focused] == Some(head)
+        {
+            return (Some(index), count);
+        }
+        let side = [Side::Left, Side::Right][focused];
+        let row = caret_row(model);
+        let at = self
+            .diff
+            .hunks()
+            .partition_point(|hunk| hunk.range(side).start <= row);
+        (at.checked_sub(1), count)
+    }
+
+    /// The previous and next change buttons, and a `Change 2 of 5` count.
+    fn change_buttons(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let ui = fe_ui::ui_theme(cx);
+        let (current, count) = self.current_change(window, cx);
+        let label = (count > 0).then(|| match current {
+            Some(index) => format!("Change {} of {count}", index + 1),
+            None => format!("{count} changes"),
+        });
+        let button = |id: &'static str, icon, title: &'static str, command: &'static str| {
+            IconButton::new(id, icon, &ui)
+                .disabled(count == 0)
+                .tooltip(move |_, cx| {
+                    let shortcut = key_label(command, cx);
+                    let tooltip = Tooltip::new(title, shortcut, &fe_ui::ui_theme(cx));
+                    cx.new(|_| tooltip).into()
+                })
+        };
+        let previous = button(
+            "previous-change",
+            Icon::ArrowLeft,
+            "Previous Change",
+            PREVIOUS_CHANGE,
+        )
+        .on_click(cx.listener(|this, _, window, cx| this.previous_change(window, cx)));
+        let next = button("next-change", Icon::ArrowRight, "Next Change", NEXT_CHANGE)
+            .on_click(cx.listener(|this, _, window, cx| this.next_change(window, cx)));
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.))
+            .px(px(4.))
+            .children(label.map(|label| {
+                div()
+                    .px(px(4.))
+                    .debug_selector(|| "change-count".into())
+                    .child(label)
+            }))
+            .child(previous)
+            .child(next)
+    }
+
     /// [`NEXT_CHANGE`]: the focused side's caret to the next hunk's start,
     /// wrapping to the first.
     pub fn next_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -557,6 +635,18 @@ impl DiffView {
     }
 }
 
+/// The single-key shortcut that runs `command` in a diff view, as the
+/// keymap has it now.
+fn key_label(command: &str, cx: &App) -> Option<String> {
+    let command = CommandId::parse(command).ok()?;
+    let stack: ContextStack = [KEY_CONTEXT].into_iter().map(ContextFrame::new).collect();
+    let keymap = crate::current_keymap(cx);
+    fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack)
+        .iter()
+        .find(|keys| keys.keystrokes().len() == 1)
+        .map(fe_keymap::shortcut_label)
+}
+
 /// A diff and the texts it was made from, as diff bases, each side's
 /// changed words, and the buffer versions they were read at.
 struct Diffed {
@@ -567,9 +657,10 @@ struct Diffed {
 }
 
 impl Diffed {
-    /// Whether either side is over [`ASYNC_BYTES`].
+    /// Whether either side is over [`WORDS_ASYNC_BYTES`], the size from
+    /// which the diff, with its words, is too costly for the main thread.
     fn is_large(left: &Text, right: &Text) -> bool {
-        left.len().max(right.len()) > ASYNC_BYTES
+        left.len().max(right.len()) > WORDS_ASYNC_BYTES
     }
 
     fn new(left: &Text, right: &Text, versions: [Version; 2]) -> Self {
@@ -801,6 +892,7 @@ impl Render for DiffView {
                 .child(div().flex_1().min_w_0().child(title.clone()))
                 .children(message.map(|message| div().flex_none().child(message)))
         };
+        let buttons = self.change_buttons(window, cx);
         let side =
             |view: &Entity<EditorView>| div().flex_1().min_w_0().h_full().child(view.clone());
         div()
@@ -822,7 +914,8 @@ impl Render for DiffView {
                     .text_size(theme.font_size)
                     .font_family(theme.font_family.clone())
                     .children((!self.inline).then(|| header(&self.titles[0], None)))
-                    .child(header(&self.titles[1], self.status())),
+                    .child(header(&self.titles[1], self.status()))
+                    .child(buttons),
             )
             .child(
                 div()
@@ -942,3 +1035,7 @@ mod diff_view_compare_tests;
 #[cfg(test)]
 #[path = "diff_view_words_tests.rs"]
 mod diff_view_words_tests;
+
+#[cfg(test)]
+#[path = "diff_view_change_buttons_tests.rs"]
+mod diff_view_change_buttons_tests;

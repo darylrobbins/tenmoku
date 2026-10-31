@@ -17,6 +17,8 @@ fe-fileview.workspace = true
 fe-keymap.workspace = true
 fe-syntax.workspace = true
 fe-text.workspace = true
+# The diff view's change buttons (diff_view.rs).
+fe-ui.workspace = true
 fe-vim.workspace = true
 kiln-platform.workspace = true
 # EditorView is a pane item (pane_item.rs).

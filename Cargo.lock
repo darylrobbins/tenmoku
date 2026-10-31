@@ -2264,6 +2264,7 @@ dependencies = [
  "kiln-core",
  "kiln-platform",
  "kiln-shell",
+ "kiln-ui",
  "log",
  "serde_json",
  "tempfile",
