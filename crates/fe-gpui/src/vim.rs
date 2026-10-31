@@ -3180,7 +3180,7 @@ mod visual_tests;
 mod search_tests;
 
 #[cfg(test)]
-mod incsearch_tests;
+pub(crate) mod incsearch_tests;
 
 #[cfg(test)]
 mod incsearch_fold_tests;

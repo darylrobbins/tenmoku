@@ -98,17 +98,40 @@ fn caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> usize {
     view.read_with(cx, |view, _| view.model().primary_selection().head())
 }
 
-/// Keeps the previews from giving up on a loaded machine's clock for its
-/// scope; the tests of the deadline itself don't take it.
-fn unhurried() -> impl Drop {
-    struct Unhurried;
-    impl Drop for Unhurried {
-        fn drop(&mut self) {
-            fe_vim::set_search_preview_limit(None);
-        }
+/// Serialises the tests that set or depend on the process-wide search limits
+/// (the call budget and the wall-clock limit are atomics shared by every test
+/// thread; the preview limit is per thread).
+static LIMITS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Holds [`LIMITS`] and puts every limit back when it drops, panic or not.
+pub(crate) struct Limits(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl Limits {
+    fn hold() -> Self {
+        Self(
+            LIMITS
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
     }
+}
+
+impl Drop for Limits {
+    fn drop(&mut self) {
+        fe_vim::set_search_preview_limit(None);
+        fe_vim::search::set_time_limit(fe_vim::search::DEFAULT_TIME_LIMIT);
+        set_call_limit(None);
+    }
+}
+
+/// Keeps the previews from giving up on a loaded machine's clock, and from
+/// being cut by another test's call budget, for its scope; the tests of the
+/// deadline itself don't take it.
+pub(crate) fn unhurried() -> Limits {
+    let limits = Limits::hold();
     fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(60)));
-    Unhurried
+    fe_vim::search::set_time_limit(std::time::Duration::from_secs(600));
+    limits
 }
 
 #[gpui::test]
@@ -307,19 +330,12 @@ fn a_previews_matches_paint_within_its_time_limit(cx: &mut TestAppContext) {
     // call each. The deadlines run out after a counted number of calls, not
     // a measured time, so the test doesn't depend on the machine's speed.
     let text: String = (0..40).map(|_| "a".repeat(5_000) + "\n").collect();
+    let _limits = Limits::hold();
     let (view, cx) = editor_with(cx, text);
     cx.simulate_keystrokes("/");
     draw(cx);
     // The wall-time limits (the preview's and the command's) are out of play:
     // the call budget does the cutting.
-    struct Unclocked;
-    impl Drop for Unclocked {
-        fn drop(&mut self) {
-            fe_vim::set_search_preview_limit(None);
-            fe_vim::search::set_time_limit(fe_vim::search::DEFAULT_TIME_LIMIT);
-        }
-    }
-    let _unclocked = Unclocked;
     fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(3600)));
     fe_vim::search::set_time_limit(std::time::Duration::from_secs(3600));
     let limit = CallLimited::of(500);

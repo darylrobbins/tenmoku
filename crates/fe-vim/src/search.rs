@@ -34,28 +34,32 @@ pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
 /// The limit, in nanoseconds, for [`set_time_limit`] and [`time_limit`].
 static TIME_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_TIME_LIMIT.as_nanos() as u64);
 
-/// How many regex calls [`RowMatches`] has made, process-wide.
-static REGEX_CALLS: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    /// How many regex calls [`RowMatches`] has made on this thread.
+    static REGEX_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 
-/// How many regex calls searches have made so far in this process, each
-/// finding one match or finding none more on a row. For tests to count the
-/// work a search does instead of timing it: they take it before and after.
-#[doc(hidden)]
-pub fn regex_calls() -> u64 {
-    REGEX_CALLS.load(Ordering::Relaxed)
+    /// The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
+    static CALL_LIMIT: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
 }
 
-/// The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
-static CALL_LIMIT: AtomicU64 = AtomicU64::new(u64::MAX);
+/// How many regex calls searches have made so far on this thread, each
+/// finding one match or finding none more on a row. For tests to count the
+/// work a search does instead of timing it: they take it before and after.
+/// Per thread, so another test's searches don't add to it.
+#[doc(hidden)]
+pub fn regex_calls() -> u64 {
+    REGEX_CALLS.with(|calls| calls.get())
+}
 
-/// Gives each [`Deadline`] made from now on a budget of `limit` regex calls,
-/// process-wide, or none with `None` (the default): it passes once that many
-/// calls have been made since it started, as if its time had run out. For
+/// Gives each [`Deadline`] made from now on, on this thread, a budget of
+/// `limit` regex calls, or none with `None` (the default): it passes once that
+/// many calls have been made since it started, as if its time had run out. For
 /// tests that need an interruption at a counted point of the work instead of
-/// a measured time; nothing else sets it.
+/// a measured time; nothing else sets it. Per thread, so it doesn't cut the
+/// searches of tests running alongside.
 #[doc(hidden)]
 pub fn set_call_limit(limit: Option<u64>) {
-    CALL_LIMIT.store(limit.unwrap_or(u64::MAX), Ordering::Relaxed);
+    CALL_LIMIT.with(|cell| cell.set(limit.unwrap_or(u64::MAX)));
 }
 
 /// Sets how long a `:s` or a search may spend matching before it stops with
@@ -134,7 +138,7 @@ impl Deadline {
     /// A deadline `limit` from now: one that's past [`Instant`]'s range
     /// (`Duration::MAX`) never passes.
     pub(crate) fn within(limit: Duration) -> Self {
-        let calls_end = match CALL_LIMIT.load(Ordering::Relaxed) {
+        let calls_end = match CALL_LIMIT.with(|cell| cell.get()) {
             u64::MAX => None,
             calls => regex_calls().checked_add(calls),
         };
@@ -2014,7 +2018,7 @@ impl Iterator for RowMatches<'_> {
             if self.deadline.passed() {
                 return None;
             }
-            REGEX_CALLS.fetch_add(1, Ordering::Relaxed);
+            REGEX_CALLS.with(|calls| calls.set(calls.get() + 1));
             let found = match (self.engine, &mut self.found) {
                 (Engine::Regex { regex, slots, .. }, Found::Regex(locs)) => {
                     regex.captures_read_at(locs, self.hay, at)?;

@@ -5,7 +5,7 @@ use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
-use super::*;
+use super::{incsearch_tests::unhurried, *};
 use crate::{EditorTheme, EditorView, init};
 
 /// `r0` to `r499`, one a row, `far` on row 400.
@@ -16,10 +16,6 @@ fn editor(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContex
             row => format!("r{row}\n"),
         })
         .collect();
-    // The previews below must find `far` however loaded the machine is, so
-    // neither wall-clock limit on matching may cut them off.
-    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(600)));
-    fe_vim::search::set_time_limit(std::time::Duration::from_secs(600));
     cx.update(init);
     let (view, cx) = cx.add_window_view(move |_, cx| {
         EditorView::new(
@@ -62,6 +58,7 @@ fn preview_then(
 /// back, instead of folding the rows that took its place.
 #[gpui::test]
 fn a_cancel_folds_where_the_edits_left_the_fold(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     preview_then(
         &view,
@@ -78,6 +75,7 @@ fn a_cancel_folds_where_the_edits_left_the_fold(cx: &mut TestAppContext) {
 /// A replacing preview does the same.
 #[gpui::test]
 fn a_new_preview_folds_where_the_edits_left_the_fold(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     preview_then(
         &view,
@@ -95,6 +93,7 @@ fn a_new_preview_folds_where_the_edits_left_the_fold(cx: &mut TestAppContext) {
 /// were it still folded.
 #[gpui::test]
 fn an_edit_inside_the_fold_drops_it(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     preview_then(
         &view,
@@ -114,6 +113,7 @@ fn an_edit_inside_the_fold_drops_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn edits_on_both_sides_keep_the_fold(cx: &mut TestAppContext) {
     for replace in [false, true] {
+        let _unhurried = unhurried();
         let (view, cx) = editor(cx);
         preview_then(
             &view,
@@ -142,6 +142,7 @@ fn edits_on_both_sides_keep_the_fold(cx: &mut TestAppContext) {
 /// below, keeps the fold where it was.
 #[gpui::test]
 fn a_header_edit_and_a_later_edit_keep_the_fold(cx: &mut TestAppContext) {
+    let _unhurried = unhurried();
     let (view, cx) = editor(cx);
     preview_then(
         &view,

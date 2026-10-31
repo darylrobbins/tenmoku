@@ -354,14 +354,7 @@ fn row_top(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) -> O
 #[gpui::test]
 fn a_search_preview_while_parsing_clears_the_band_off_its_match(cx: &mut TestAppContext) {
     // A loaded machine's clock must not cut the preview search short.
-    struct Unhurried;
-    impl Drop for Unhurried {
-        fn drop(&mut self) {
-            fe_vim::set_search_preview_limit(None);
-        }
-    }
-    fe_vim::set_search_preview_limit(Some(std::time::Duration::from_secs(60)));
-    let _unhurried = Unhurried;
+    let _unhurried = crate::vim::incsearch_tests::unhurried();
     let (view, cx) = editor(true, cx);
     let line_height = px(line_height(&view, cx));
     // Searching back from the nested function's end to `w_5`, five rows
