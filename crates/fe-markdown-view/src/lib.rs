@@ -24,7 +24,8 @@
 //! document's `n`th image, with `md-image-<n>-loading` and
 //! `md-image-<n>-failed` for the alt text shown in its place, and
 //! `md-image-alt-<n>` for [`Images::AltText`]'s; `md-task-<n>` for the
-//! `n`th task checkbox; and `md-code-<n>` for the `n`th code block.
+//! `n`th task checkbox; and `md-code-<n>` for the `n`th code block, with
+//! `md-code-<n>-text` for its text, as wide as its longest line.
 
 mod blocks;
 mod compact;

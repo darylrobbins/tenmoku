@@ -322,6 +322,11 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .id(("md-code", id))
                 .debug_selector(|| format!("md-code-{id}"))
                 .w_full()
+                // A flex row, so the text below keeps its own width, as
+                // wide as its longest line: a block child would be
+                // stretched to this box's width and leave no range.
+                .flex()
+                .flex_row()
                 .overflow_x_scroll()
                 // In a host's scrolling view, a vertical wheel scrolls
                 // the view, not the code sideways.
@@ -334,7 +339,12 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .text_size(style.code_font_size)
                 .line_height(relative(style.code_line_height))
                 .whitespace_nowrap()
-                .child(StyledText::new(code.to_owned()).with_runs(runs));
+                .child(
+                    div()
+                        .debug_selector(|| format!("md-code-{id}-text"))
+                        .flex_none()
+                        .child(StyledText::new(code.to_owned()).with_runs(runs)),
+                );
             match header {
                 None => block.into_any_element(),
                 Some(header) => div()
