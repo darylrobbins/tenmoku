@@ -686,7 +686,7 @@ impl Pane {
 
     /// [`PaneView::add_preview`], whose preview tab it replaces isn't
     /// closed for [`Pane::closed_editors`].
-    fn replace_preview(&mut self, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
+    pub(crate) fn replace_preview(&mut self, item: Box<dyn ItemHandle>, cx: &mut App) -> usize {
         self.replacing = true;
         let ix = self.add_preview(item, cx);
         self.replacing = false;

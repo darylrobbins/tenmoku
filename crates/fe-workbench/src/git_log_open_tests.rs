@@ -56,7 +56,7 @@ fn write(root: &Path, file: &str, text: &str) {
 /// `init` (a.rs, d.rs), `edit` (a.rs edited, n.rs added, d.rs deleted),
 /// `rename` (a.rs to b.rs), then `topic work` (t.rs) merged with
 /// `main work` (m.rs) by `merge`. Each commit's id, by summary.
-fn fixture() -> (tempfile::TempDir, Vec<(&'static str, String)>) {
+pub(super) fn fixture() -> (tempfile::TempDir, Vec<(&'static str, String)>) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     git(root, &["init", "-q"]);
@@ -98,20 +98,23 @@ fn send(id: &str, cx: &mut VisualTestContext) {
 }
 
 /// Lets background work land, then draws a frame.
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
 }
 
-fn press(keys: &str, cx: &mut VisualTestContext) {
+pub(super) fn press(keys: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(keys);
     draw(cx);
 }
 
 /// A window of a workbench rooted at `root`, focused, with vim on, and the
 /// Git Log panel shown.
-fn window(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, VisualTestContext) {
+pub(super) fn window(
+    cx: &mut TestAppContext,
+    root: &Path,
+) -> (Entity<Workbench>, VisualTestContext) {
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -136,22 +139,25 @@ fn window(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, VisualTes
     (workbench, vcx)
 }
 
-fn panel(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<GitLogPanel> {
+pub(super) fn panel(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<GitLogPanel> {
     workbench.read_with(cx, |workbench, cx| {
         (workbench.dock().read(cx).git_log().cloned()).expect("the Git Log panel was made")
     })
 }
 
-fn lines(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+pub(super) fn lines(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
     panel(workbench, cx).read_with(cx, |panel, _| panel.lines())
 }
 
-fn selected(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<usize> {
+pub(super) fn selected(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<usize> {
     panel(workbench, cx).read_with(cx, |panel, _| panel.selected())
 }
 
 /// The row of the commit `summary` in `lines`.
-fn row_of(lines: &[String], summary: &str) -> usize {
+pub(super) fn row_of(lines: &[String], summary: &str) -> usize {
     let tail = format!("  {summary}");
     (lines.iter())
         .position(|line| line.ends_with(&tail))
@@ -170,14 +176,14 @@ fn short(id: &str) -> &str {
 }
 
 /// The active tab's title.
-fn title(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
+pub(super) fn title(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
     workbench.read_with(cx, |workbench, cx| {
         let pane = workbench.pane().read(cx);
         pane.active_item().expect("a tab").tab_title(cx).to_string()
     })
 }
 
-fn tab_count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+pub(super) fn tab_count(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
     workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tabs().len())
 }
 
@@ -211,7 +217,7 @@ fn diff_focused(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| left.contains_focused(window, cx) || right.contains_focused(window, cx))
 }
 
-fn focus_panel(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+pub(super) fn focus_panel(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     let panel = panel(workbench, cx);
     let focus = panel.read_with(cx, |panel, cx| panel.focus_handle(cx));
     cx.update(|window, cx| window.focus(&focus, cx));
@@ -223,6 +229,11 @@ fn under(lines: &[String], ix: usize) -> Vec<String> {
     let is_file =
         |line: &String| line.len() > 2 && line.as_bytes()[1] == b' ' && !line.contains("  ");
     let rest = &lines[ix + 1..];
+    // The commit's totals sit above its files.
+    let rest = match rest.first() {
+        Some(first) if first.contains(" changed") => &rest[1..],
+        _ => rest,
+    };
     let count = rest
         .iter()
         .take_while(|line| is_file(line) || *line == "Loading…")
@@ -248,7 +259,7 @@ fn expands(cx: &mut TestAppContext) {
     draw(cx);
     let listed = lines(&workbench, cx);
     assert_eq!(under(&listed, edit), ["M a.rs", "D d.rs", "A n.rs"]);
-    assert_eq!(listed.len(), 9);
+    assert_eq!(listed.len(), 10);
     assert_eq!(selected(&workbench, cx), Some(edit));
 
     // Enter again hides them.
@@ -294,7 +305,7 @@ fn opens(cx: &mut TestAppContext) {
     let edit = row_of(&all, "edit");
     select_row(&workbench, edit, cx);
     press("enter", cx);
-    press("j enter", cx);
+    press("j j enter", cx);
     let s = short(&id("edit")).to_owned();
     assert_eq!(title(&workbench, cx), format!("a.rs ({s}^ ↔ {s})"));
     let first = diff(&workbench, cx);
@@ -330,8 +341,8 @@ fn opens(cx: &mut TestAppContext) {
     let panel_entity = panel(&workbench, cx);
     cx.update(|window, cx| {
         panel_entity.update(cx, |panel, cx| {
-            panel.select(rename + 1, cx);
-            panel.open_row(rename + 1, window, cx)
+            panel.select(rename + 2, cx);
+            panel.open_row(rename + 2, window, cx)
         })
     });
     draw(cx);
@@ -348,7 +359,7 @@ fn opens(cx: &mut TestAppContext) {
     // Again: the same tab, focused.
     focus_panel(&workbench, cx);
     let edit = row_of(&lines(&workbench, cx), "edit");
-    select_row(&workbench, edit + 1, cx);
+    select_row(&workbench, edit + 2, cx);
     press("enter", cx);
     assert_eq!(diff(&workbench, cx), first);
     assert!(diff_focused(&first, cx));
@@ -406,7 +417,7 @@ fn clicks_by_row(cx: &mut TestAppContext) {
     assert_eq!(unique.len(), ids.len());
 
     // A click on a row that has since moved down acts on it.
-    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.click(edit_line, true, window, cx)));
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.click(edit_line, 1, window, cx)));
     draw(cx);
     let listed = lines(&workbench, cx);
     let (edit, rename) = (row_of(&listed, "edit"), row_of(&listed, "rename"));
@@ -417,7 +428,11 @@ fn clicks_by_row(cx: &mut TestAppContext) {
 
 /// The middle of row `ix` of the panel's list, as last drawn, scrolled to
 /// the top.
-fn row_center(panel: &Entity<GitLogPanel>, ix: usize, cx: &mut VisualTestContext) -> Point<Pixels> {
+pub(super) fn row_center(
+    panel: &Entity<GitLogPanel>,
+    ix: usize,
+    cx: &mut VisualTestContext,
+) -> Point<Pixels> {
     let list = panel.read_with(cx, |panel, _| panel.scroll.0.borrow().base_handle.bounds());
     point(
         list.left() + px(40.),
@@ -458,25 +473,25 @@ fn a_release_over_a_row_that_replaced_the_pressed_one_clicks_nothing(cx: &mut Te
     let pressed = edit + 2;
     assert!(loading[pressed].ends_with("  init"), "{loading:?}");
 
-    // Pressed on `init`; the files land and are drawn, `d.rs`'s row where
+    // Pressed on `init`; the files land and are drawn, `a.rs`'s row where
     // `init`'s was; released there.
     let at = row_center(&panel, pressed, cx);
     cx.simulate_mouse_down(at, MouseButton::Left, none);
     draw(cx);
     let listed = lines(&workbench, cx);
-    assert_eq!(listed[pressed], "D d.rs");
+    assert_eq!(listed[pressed], "M a.rs");
     cx.simulate_mouse_up(at, MouseButton::Left, none);
     draw(cx);
     assert_eq!(lines(&workbench, cx), listed, "init isn't expanded");
     assert_eq!(selected(&workbench, cx), Some(edit), "nor selected");
-    assert_eq!(tab_count(&workbench, cx), 0, "nor d.rs opened");
+    assert_eq!(tab_count(&workbench, cx), 0, "nor a.rs opened");
 
     // An ordinary click on that file row opens it.
     cx.simulate_click(at, none);
     draw(cx);
     assert_eq!(selected(&workbench, cx), Some(pressed));
     assert_eq!(tab_count(&workbench, cx), 1);
-    assert!(title(&workbench, cx).starts_with("d.rs ("));
+    assert!(title(&workbench, cx).starts_with("a.rs ("));
 }
 
 #[path = "git_log_tab_names_tests.rs"]

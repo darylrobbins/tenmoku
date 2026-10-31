@@ -88,17 +88,18 @@ fn rail_is_unbroken_through_a_commits_expanded_rows(cx: &mut TestAppContext) {
     let dir = fixture("t.rs");
     let (panel, cx) = expanded(cx, &dir);
     let (lines, seen) = panel.read_with(&cx, |panel, _| (panel.lines(), panel.rows_seen()));
-    // The commit, its body line, its file, then the next commit.
+    // The commit, its body line, its totals, its file, then the next commit.
     assert_eq!(lines[1], "body line");
-    assert_eq!(lines[2], "A src/deep/t.rs");
+    assert_eq!(lines[2], "1 file changed, +1 -0");
+    assert_eq!(lines[3], "A src/deep/t.rs");
     let seen = seen.borrow();
-    for ix in 0..3 {
+    for ix in 0..4 {
         let (leaving, entering) = (ends(&seen, ix, true), ends(&seen, ix + 1, false));
         assert_eq!(leaving.len(), 2, "row {ix} carries both lanes: {leaving:?}");
         assert_eq!(leaving, entering, "rows {ix} and {} meet", ix + 1);
     }
     // The rows between draw a stroke the row's whole height.
-    for ix in 1..3 {
+    for ix in 1..4 {
         for (from, to, _) in &seen.segments[&ix] {
             assert_eq!(from.x, to.x);
             assert_eq!(to.y - from.y, fe_ui::ROW_HEIGHT);
@@ -112,7 +113,7 @@ fn files_show_their_name_then_their_dimmed_directory(cx: &mut TestAppContext) {
     let (panel, cx) = expanded(cx, &dir);
     let (muted, seen) = panel.read_with(&cx, |panel, _| (panel.muted_text(), panel.rows_seen()));
     let seen = seen.borrow();
-    let cells = &seen.cells[&2];
+    let cells = &seen.cells[&3];
     let texts: Vec<_> = cells.iter().map(|cell| cell.text.as_str()).collect();
     // The file's icon, then its name and directory; its counts and letter
     // at the right edge.
@@ -130,7 +131,7 @@ fn a_long_file_name_ellipsizes_before_its_directory_goes(cx: &mut TestAppContext
     let (panel, cx) = expanded(cx, &dir);
     let seen = panel.read_with(&cx, |panel, _| panel.rows_seen());
     let seen = seen.borrow();
-    let name = seen.cells[&2][1].bounds.unwrap();
+    let name = seen.cells[&3][1].bounds.unwrap();
     let list = panel.read_with(&cx, |panel, _| panel.scroll.0.borrow().base_handle.bounds());
     assert!(name.right() <= list.right(), "the name is cut to the row");
     assert!(name.size.width > gpui::px(40.), "the name keeps room");

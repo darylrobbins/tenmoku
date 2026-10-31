@@ -514,7 +514,7 @@ fn narrow(cx: &mut TestAppContext) {
             .map(|(ix, _)| *ix)
             .unwrap();
         assert!(
-            ix > at && ix <= at + 3,
+            ix > at + 1 && ix <= at + 4,
             "{name} is under the commit, at {ix}"
         );
         let cells = row(&all_lanes, name);

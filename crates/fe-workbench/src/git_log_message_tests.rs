@@ -90,7 +90,11 @@ fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
     assert_eq!(loading[..5], expected[..]);
     assert_eq!(loading[5..], ["Loading…".to_owned(), commits[1].clone()]);
     draw(cx);
-    expected.extend(["M a.rs".to_owned(), commits[1].clone()]);
+    expected.extend([
+        "1 file changed, +1 -1".to_owned(),
+        "M a.rs".to_owned(),
+        commits[1].clone(),
+    ]);
     assert_eq!(lines(&workbench, cx), expected);
 
     // The selection moves over the body rows; Enter or `o` on one does
@@ -111,10 +115,10 @@ fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
 
     // A one-line message lists only its files.
     press("G", cx);
-    assert_eq!(selected(&workbench, cx), Some(6));
+    assert_eq!(selected(&workbench, cx), Some(7));
     press("enter", cx);
     let mut both = expected.clone();
-    both.push("A a.rs".to_owned());
+    both.extend(["1 file changed, +1 -0".to_owned(), "A a.rs".to_owned()]);
     assert_eq!(lines(&workbench, cx), both);
 
     // Enter again hides both the body and the files.
@@ -122,7 +126,12 @@ fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
     press("enter", cx);
     assert_eq!(
         lines(&workbench, cx),
-        [commits[0].clone(), commits[1].clone(), "A a.rs".to_owned()]
+        [
+            commits[0].clone(),
+            commits[1].clone(),
+            "1 file changed, +1 -0".to_owned(),
+            "A a.rs".to_owned()
+        ]
     );
 }
 

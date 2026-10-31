@@ -29,6 +29,7 @@
 //! last row, `o` opens and `q` hides the dock, focusing the active editor.
 
 use std::{
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -40,10 +41,11 @@ use fe_git::{FileCommit, Repo};
 use fe_gpui::{DiffSide, DiffView};
 use fe_ui::ROW_HEIGHT;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable, Global,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EntityId, FocusHandle, Focusable,
+    Global, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
+    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
 use kiln_shell::PaneView as _;
 
@@ -190,13 +192,45 @@ fn clicked() -> GitOp {
     }
 }
 
-/// The commits' diff views opened, in any window, and the opens asked for.
+/// The commits' diff views opened, in any window, and each workbench's
+/// opens asked for.
 #[derive(Default)]
 struct Opened {
     /// Each one's commit id, file and view.
     views: Vec<(String, PathBuf, WeakEntity<DiffView>)>,
+    /// The opens asked for, by workbench: one window's don't cancel
+    /// another's.
+    asks: HashMap<EntityId, Asks>,
+}
+
+/// A workbench's opens asked for.
+#[derive(Default)]
+struct Asks {
     /// Bumped by each open asked for: only the last is shown as it lands.
     asked: u64,
+    /// Numbers the reads started.
+    requests: u64,
+    /// The reads under way.
+    reads: Vec<Read>,
+}
+
+/// A diff being read for one or more opens of it asked for in a pane in
+/// one state: they share the read, and what the last asked for.
+struct Read {
+    request: u64,
+    commit: String,
+    path: PathBuf,
+    pane: WeakEntity<Pane>,
+    /// The pane's navigations and file opens when asked.
+    navigations: u64,
+    opens: u64,
+    /// The last open of it asked for.
+    asked: u64,
+    /// Whether one of the opens was for the preview tab, whose place it
+    /// takes.
+    replace: bool,
+    /// Whether one of the opens was to stay.
+    keep: bool,
 }
 
 impl Global for Opened {}
@@ -261,51 +295,77 @@ impl Workbench {
         &mut self,
         repo: Arc<Repo>,
         commit: FileCommit,
+        preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let me = cx.entity_id();
         // Asked for, even if it's open: an open still being read is no
         // longer the last.
-        let landing = self.commit_landing(cx);
+        let asks = (cx.default_global::<Opened>().asks).entry(me).or_default();
+        asks.asked += 1;
+        let asked = asks.asked;
         if let Some((pane, ix)) = self.commit_diff(&commit, cx) {
+            if !preview {
+                pane.update(cx, |pane, cx| pane.pin_item(ix, cx));
+            }
             return self.show_tab(pane, ix, window, cx);
         }
+        let pane = self.active.clone();
+        let (navigations, opens) = {
+            let state = pane.read(cx);
+            (state.navigations(), state.open_serial())
+        };
+        let asks = (cx.default_global::<Opened>().asks).entry(me).or_default();
+        // The same diff already being read for this pane as it is now: the
+        // read is shared, and takes this open's place as the last.
+        let shared = asks.reads.iter_mut().find(|read| {
+            (read.commit == commit.commit.id && read.path == commit.path)
+                && read.pane.upgrade().is_some_and(|other| other == pane)
+                && (read.navigations, read.opens) == (navigations, opens)
+        });
+        if let Some(read) = shared {
+            read.asked = asked;
+            read.replace |= preview;
+            read.keep |= !preview;
+            return;
+        }
+        asks.requests += 1;
+        let request = asks.requests;
+        asks.reads.push(Read {
+            request,
+            commit: commit.commit.id.clone(),
+            path: commit.path.clone(),
+            pane: pane.downgrade(),
+            navigations,
+            opens,
+            asked,
+            replace: preview,
+            keep: !preview,
+        });
         let at = commit.clone();
         let read = cx.background_spawn(async move { read_change(&repo, &at) });
         cx.spawn_in(window, async move |workbench, cx| {
             let read = read.await;
             (workbench.update_in(cx, |workbench, window, cx| {
-                workbench.land_commit(commit, read, landing, window, cx)
+                workbench.land_commit(commit, read, request, window, cx)
             }))
             .ok();
         })
         .detach();
     }
 
-    /// An open asked for now, in the active pane: see [`Landing`].
-    fn commit_landing(&self, cx: &mut App) -> Landing {
-        let opened = cx.default_global::<Opened>();
-        opened.asked += 1;
-        let asked = opened.asked;
-        let pane = self.active.read(cx);
-        Landing {
-            asked,
-            pane: self.active.downgrade(),
-            navigations: pane.navigations(),
-            opens: pane.open_serial(),
-        }
-    }
-
-    /// Whether an open landing as `landing` says is to be shown: it's the
-    /// last asked for, its pane is still the active one, and nothing was
-    /// navigated to or opened there meanwhile.
-    fn may_show_commit(&self, landing: &Landing, cx: &mut App) -> bool {
-        let last = cx.default_global::<Opened>().asked == landing.asked;
-        last && (landing.pane.upgrade()).is_some_and(|pane| {
+    /// Whether the open `read` is of is to be shown as it lands: it's the
+    /// last asked for in this workbench, its pane is still the active one,
+    /// and nothing was navigated to or opened there meanwhile.
+    fn may_show_commit(&self, read: &Read, cx: &mut App, me: EntityId) -> bool {
+        let last = (cx.default_global::<Opened>().asks.get(&me))
+            .is_some_and(|asks| asks.asked == read.asked);
+        last && (read.pane.upgrade()).is_some_and(|pane| {
             let state = pane.read(cx);
             pane == self.active
-                && state.navigations() == landing.navigations
-                && state.open_serial() == landing.opens
+                && state.navigations() == read.navigations
+                && state.open_serial() == read.opens
         })
     }
 
@@ -316,21 +376,35 @@ impl Workbench {
         &mut self,
         commit: FileCommit,
         read: Result<(String, String), String>,
-        landing: Landing,
+        request: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let me = cx.entity_id();
+        let asks = (cx.default_global::<Opened>().asks).entry(me).or_default();
+        let Some(at) = asks.reads.iter().position(|read| read.request == request) else {
+            return;
+        };
+        let state = asks.reads.remove(at);
         let (left, right) = match read {
             Ok(texts) => texts,
             Err(answer) => return self.answer_git_op(&clicked(), answer, cx),
         };
         // Before its tab's added, which may count as a navigation.
-        let show = self.may_show_commit(&landing, cx);
+        let show = self.may_show_commit(&state, cx, me);
         // Opened meanwhile.
         if let Some((pane, ix)) = self.commit_diff(&commit, cx) {
+            if state.keep {
+                pane.update(cx, |pane, cx| pane.pin_item(ix, cx));
+            }
             if show {
                 self.show_tab(pane, ix, window, cx);
             }
+            return;
+        }
+        // A preview that's no longer the latest open is dropped: the one
+        // that replaced it is the preview.
+        if !state.keep && !show {
             return;
         }
         let short = &commit.commit.short;
@@ -348,11 +422,18 @@ impl Workbench {
         }
         let opened = &mut cx.default_global::<Opened>().views;
         opened.push((commit.commit.id.clone(), commit.path, diff.downgrade()));
-        let pane = (landing.pane.upgrade())
+        let pane = (state.pane.upgrade())
             .filter(|pane| self.panes(cx).contains(pane))
             .unwrap_or_else(|| self.active.clone());
         let ix = pane.update(cx, |pane, cx| {
-            let ix = pane.pane_mut().push(Box::new(diff.clone()), cx);
+            let ix = if show && state.replace {
+                pane.replace_preview(Box::new(diff.clone()), cx)
+            } else {
+                pane.pane_mut().push(Box::new(diff.clone()), cx)
+            };
+            if show && state.replace && state.keep {
+                pane.pin_item(ix, cx);
+            }
             pane.items_changed(cx);
             cx.notify();
             ix
@@ -361,18 +442,6 @@ impl Workbench {
             self.show_tab(pane, ix, window, cx);
         }
     }
-}
-
-/// Where a commit's open was asked for, and what decides whether it's shown
-/// as it lands, as `git_diff`'s diffs are.
-struct Landing {
-    /// The open's number.
-    asked: u64,
-    pane: WeakEntity<Pane>,
-    /// The pane's navigations when asked.
-    navigations: u64,
-    /// The pane's file opens when asked.
-    opens: u64,
 }
 
 /// What the panel shows in place of the list, or the list.
@@ -541,7 +610,7 @@ impl HistoryPanel {
         self.select(ix, cx);
         if let Some(workbench) = self.workbench.upgrade() {
             workbench.update(cx, |workbench, cx| {
-                workbench.open_commit(repo, commit, window, cx)
+                workbench.open_commit(repo, commit, false, window, cx)
             });
         }
     }

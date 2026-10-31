@@ -73,12 +73,13 @@ use fe_git::{
 };
 use fe_ui::{Icon, IconButton, ROW_HEIGHT, UiTheme, file_icon_path};
 use gpui::{
-    AnyElement, App, AppContext as _, BorderStyle, Bounds, ClipboardItem, Context, Div, ElementId,
-    Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle,
-    ScrollStrategy, ScrollWheelEvent, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, UniformListScrollHandle, WeakEntity, Window, canvas, div, point,
-    prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
+    AnyElement, App, AppContext as _, BorderStyle, Bounds, ClickEvent, ClipboardItem, Context, Div,
+    ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render,
+    ScrollHandle, ScrollStrategy, ScrollWheelEvent, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle, WeakEntity, Window,
+    canvas, div, point, prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black,
+    uniform_list,
 };
 
 use super::{
@@ -178,6 +179,8 @@ enum Line {
     Body(usize, usize),
     File(usize, usize),
     Note(usize),
+    /// The totals of an expanded commit's files, above them.
+    Summary(usize),
 }
 
 impl Line {
@@ -192,13 +195,18 @@ impl Line {
             Line::Body(ix, row) => BODY | (ix as u64 * ROW + row as u64),
             Line::File(ix, file) => ix as u64 * ROW + file as u64 + 1,
             Line::Note(ix) => ix as u64 * ROW + ROW - 1,
+            Line::Summary(ix) => ix as u64 * ROW + ROW - 2,
         }
     }
 
     /// The index of the commit the row is or is under.
     fn commit(self) -> usize {
         match self {
-            Line::Commit(ix) | Line::Body(ix, _) | Line::File(ix, _) | Line::Note(ix) => ix,
+            Line::Commit(ix)
+            | Line::Body(ix, _)
+            | Line::File(ix, _)
+            | Line::Note(ix)
+            | Line::Summary(ix) => ix,
         }
     }
 }
@@ -1008,6 +1016,7 @@ impl GitLogPanel {
             (self.lines).extend((0..body).map(|row| Line::Body(ix, row)));
             match listing {
                 Listing::Files(files) => {
+                    self.lines.push(Line::Summary(ix));
                     (self.lines).extend((0..files.len()).map(|file| Line::File(ix, file)));
                 }
                 _ => self.lines.push(Line::Note(ix)),
@@ -1086,6 +1095,21 @@ impl GitLogPanel {
             dir,
             counts,
         })
+    }
+
+    /// Commit `commit`'s totals as its summary row says them: `N files
+    /// changed, +X -Y`, the line counts once they're read.
+    fn summary_text(&self, commit: usize) -> String {
+        let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
+            return String::new();
+        };
+        let [changed, ..] = totals_text(files.len(), 0, 0);
+        let Some(Counts::Read(counts)) = self.counts.get(&commit) else {
+            return changed;
+        };
+        let (added, removed) =
+            (counts.values()).fold((0, 0), |(a, r), (add, del)| (a + add, r + del));
+        format!("{changed}, +{added} -{removed}")
     }
 
     /// The lanes' columns and colours running through the rows under
@@ -1184,8 +1208,16 @@ impl GitLogPanel {
         cx.notify();
     }
 
-    /// Opens file `file` of commit `commit`'s change.
-    fn open_file(&mut self, commit: usize, file: usize, window: &mut Window, cx: &mut App) {
+    /// Opens file `file` of commit `commit`'s change: in the pane's preview
+    /// tab if `preview`, else to stay.
+    fn open_file(
+        &mut self,
+        commit: usize,
+        file: usize,
+        preview: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let (Some(repo), Some(entry)) = (self.repo.clone(), self.commits.get(commit)) else {
             return;
         };
@@ -1204,21 +1236,24 @@ impl GitLogPanel {
         // Once this update is over: the workbench moves focus.
         window.defer(cx, move |window, cx| {
             let open = |workbench: &mut Workbench, cx: &mut Context<Workbench>| {
-                workbench.open_commit(repo, commit, window, cx)
+                workbench.open_commit(repo, commit, preview, window, cx)
             };
             workbench.update(cx, open).ok();
         });
     }
 
-    /// A click on `line`, wherever its row is by now: selects it and, if
-    /// `open`, opens it.
-    fn click(&mut self, line: Line, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// The `clicks`th click of a run on `line`, wherever its row is by now:
+    /// selects it. A first click expands or collapses a commit and opens a
+    /// file in the preview tab; a second keeps that tab.
+    fn click(&mut self, line: Line, clicks: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.lines.iter().position(|other| *other == line) else {
             return;
         };
         self.select(ix, cx);
-        if open {
-            self.open(ix, window, cx);
+        match line {
+            Line::Commit(commit) if clicks == 1 => self.toggle(commit, cx),
+            Line::File(commit, file) => self.open_file(commit, file, clicks == 1, window, cx),
+            _ => {}
         }
     }
 
@@ -1227,8 +1262,8 @@ impl GitLogPanel {
     fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.lines.get(ix).copied() {
             Some(Line::Commit(commit)) => self.toggle(commit, cx),
-            Some(Line::File(commit, file)) => self.open_file(commit, file, window, cx),
-            Some(Line::Body(..) | Line::Note(_)) | None => {}
+            Some(Line::File(commit, file)) => self.open_file(commit, file, false, window, cx),
+            Some(Line::Body(..) | Line::Note(_) | Line::Summary(_)) | None => {}
         }
     }
 
@@ -1457,7 +1492,7 @@ impl GitLogPanel {
                                 row.when(selected, |row| row.bg(selected_bg))
                                     .text_color(ui.muted_text)
                                     .on_click(cx.listener(move |panel, _, window, cx| {
-                                        panel.click(line, false, window, cx)
+                                        panel.click(line, 1, window, cx)
                                     })),
                                 lead().child(rail(commit)).child(ellipsized(text)),
                                 ix,
@@ -1471,11 +1506,29 @@ impl GitLogPanel {
                         return Some(
                             row.when(selected, |row| row.bg(selected_bg))
                                 .hover(move |row| row.bg(ui.row_hover))
-                                .on_click(cx.listener(move |panel, _, window, cx| {
-                                    panel.click(line, true, window, cx)
-                                }))
+                                .on_click(cx.listener(
+                                    move |panel, event: &ClickEvent, window, cx| {
+                                        panel.click(line, event.click_count(), window, cx)
+                                    },
+                                ))
                                 .child(file_cell(rail(commit), parts, &colors, ix, seen.clone()))
                                 .into_any_element(),
+                        );
+                    }
+                    Line::Summary(commit) => {
+                        let text = self.summary_text(commit);
+                        return Some(
+                            lettered(
+                                row.when(selected, |row| row.bg(selected_bg))
+                                    .text_color(ui.muted_text)
+                                    .on_click(cx.listener(move |panel, _, window, cx| {
+                                        panel.click(line, 1, window, cx)
+                                    })),
+                                lead().child(rail(commit)).child(ellipsized(text)),
+                                ix,
+                                seen.clone(),
+                            )
+                            .into_any_element(),
                         );
                     }
                     Line::Note(commit) => {
@@ -1488,7 +1541,7 @@ impl GitLogPanel {
                                 row.when(selected, |row| row.bg(selected_bg))
                                     .text_color(color)
                                     .on_click(cx.listener(move |panel, _, window, cx| {
-                                        panel.click(line, false, window, cx)
+                                        panel.click(line, 1, window, cx)
                                     })),
                                 lead().child(rail(commit)).child(ellipsized(text)),
                                 ix,
@@ -1519,22 +1572,22 @@ impl GitLogPanel {
                 let (hovered, now, repo) = (entry.clone(), self.now, self.repo.clone());
                 #[cfg(test)]
                 let probe = self.card.clone();
-                let row =
-                    row.when(selected, |row| row.bg(selected_bg))
-                        .hover(move |row| row.bg(ui.row_hover))
-                        .on_click(cx.listener(move |panel, _, window, cx| {
-                            panel.click(line, true, window, cx)
-                        }))
-                        .hoverable_tooltip(move |_, cx| {
-                            let repo = repo.clone();
-                            let card = cx.new(|cx| {
-                                let card = CommitCard::new(&hovered, lane, now, repo, cx);
-                                #[cfg(test)]
-                                let card = card.probed(&probe);
-                                card
-                            });
-                            card.into()
+                let row = row
+                    .when(selected, |row| row.bg(selected_bg))
+                    .hover(move |row| row.bg(ui.row_hover))
+                    .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                        panel.click(line, event.click_count(), window, cx)
+                    }))
+                    .hoverable_tooltip(move |_, cx| {
+                        let repo = repo.clone();
+                        let card = cx.new(|cx| {
+                            let card = CommitCard::new(&hovered, lane, now, repo, cx);
+                            #[cfg(test)]
+                            let card = card.probed(&probe);
+                            card
                         });
+                        card.into()
+                    });
                 Some(lettered(row, lead, ix, seen).into_any_element())
             })
             .collect()
@@ -2124,6 +2177,7 @@ impl GitLogPanel {
                 }
                 Line::Body(ix, row) => self.body_text(ix, row).unwrap_or_default(),
                 Line::File(ix, file) => self.file_text(ix, file).unwrap_or_default(),
+                Line::Summary(ix) => self.summary_text(ix),
                 Line::Note(ix) => match self.expanded.get(&ix) {
                     Some(Listing::Failed(error)) => error.clone(),
                     _ => LOADING.to_owned(),
@@ -2175,6 +2229,10 @@ mod git_log_tests;
 #[cfg(test)]
 #[path = "git_log_open_tests.rs"]
 mod git_log_open_tests;
+
+#[cfg(test)]
+#[path = "git_log_select_tests.rs"]
+mod git_log_select_tests;
 
 #[cfg(test)]
 #[path = "git_log_file_rows_tests.rs"]
