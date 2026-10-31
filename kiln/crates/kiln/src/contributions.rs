@@ -941,19 +941,21 @@ impl Contributions {
         // registered now, and `init` doesn't register them again.
         let register_now = started || kiln_platform::commands::initialized(cx);
         for spec in specs {
-            if register_now {
-                (spec.register)(cx, spec.info());
-            }
+            // Stored before its registrar runs: a callback that contributes
+            // a replacement for the same ID then lands after this spec, and
+            // isn't discarded when this call returns.
+            let (register, info) = (spec.register, spec.info());
             let this = cx.default_global::<Self>();
             this.commands.retain(|added| added.id != spec.id);
-            if register_now {
-                this.unregistered.retain(|added| added.id != spec.id);
-            } else {
-                this.unregistered.retain(|added| added.id != spec.id);
+            this.unregistered.retain(|added| added.id != spec.id);
+            if !register_now {
                 this.unregistered.push(spec.clone());
             }
             this.commands.push(spec);
             this.added += 1;
+            if register_now {
+                register(cx, info);
+            }
         }
         if started {
             schedule(cx);

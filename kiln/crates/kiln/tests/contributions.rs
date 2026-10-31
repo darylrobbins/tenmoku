@@ -561,6 +561,30 @@ fn a_command_contributed_while_registering_another_is_registered(cx: &mut TestAp
     });
 }
 
+/// Registers `extra.archive`, contributing a replacement of itself bound
+/// to `secondary-q` as it does.
+fn register_archive_and_replace_itself(cx: &mut App, info: kiln::CommandInfo) {
+    kiln::register_command::<extra::Archive>(cx, info);
+    Contributions::add_command(
+        cx,
+        CommandSpec::new::<extra::Archive>("Archive").keys("secondary-q"),
+    );
+}
+
+#[gpui::test]
+fn a_replacement_contributed_while_registering_after_init_is_kept(cx: &mut TestAppContext) {
+    let (config, _sender) = config(KEYMAP, MENUS);
+    cx.update(|cx| kiln::init(cx, config));
+    cx.update(|cx| {
+        let mut archive = CommandSpec::new::<extra::Archive>("Archive").keys("secondary-w");
+        archive.register = register_archive_and_replace_itself;
+        Contributions::add_command(cx, archive);
+    });
+    cx.run_until_parked();
+    assert_eq!(bound("secondary-q", cx).as_deref(), Some("extra.archive"));
+    assert_eq!(bound("secondary-w", cx), None, "the outer spec is replaced");
+}
+
 #[gpui::test]
 fn diagnostics_follow_contributions_once_nothing_is_watched(cx: &mut TestAppContext) {
     let keymap =
