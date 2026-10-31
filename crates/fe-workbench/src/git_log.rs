@@ -55,11 +55,25 @@
 //! The selection moves over commit, body and file rows alike; Enter, `o`
 //! and a click on a body row do nothing. Rows too long for the panel end in
 //! an ellipsis.
+//!
+//! A box at the top of the panel filters the list, as GitLens's Commit
+//! Graph search does: [`FILTER_DELAY`] after the typing stops, the list is
+//! read again from the same commits, listing only those [`LogFilter`]
+//! matches by message, author or id prefix ([`Repo::log_from_matching`]),
+//! paged as the whole list is; `No commits match` shows if none does. Their
+//! graph is laid out over the rows listed: a commit's lane runs on to each
+//! parent listed, and ends at its dot where none is. Enter in the box reads
+//! at once and gives the keys back to the list; Escape, or the box's clear
+//! button, empties the box and lists every commit again. With vim on, `/`
+//! in the list focuses the box, its text selected. The box is a
+//! [`TextInput`] in the `text_input` key context, and the panel drops its
+//! `vim` flag while the box has focus, so the list's keys don't take what's
+//! typed. Running `git.log` again keeps the filter.
 
 #[cfg(test)]
 use std::{cell::RefCell, rc::Rc};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -67,19 +81,20 @@ use std::{
 };
 
 use fe_git::{
-    ChangeKind, CommitFile, CommitInfo, CommitStats, FileCommit, Head, LogCommit, LogScope,
-    RefKind, RefLabel, Repo,
+    ChangeKind, CommitFile, CommitInfo, CommitStats, FileCommit, Head, LogCommit, LogFilter,
+    LogScope, RefKind, RefLabel, Repo,
     graph::{GraphLayout, GraphRow},
 };
-use fe_ui::{Icon, IconButton, ROW_HEIGHT, UiTheme, file_icon_path};
+use fe_gpui::commands::RunCommand;
+use fe_ui::{Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, file_icon_path};
 use gpui::{
     AnyElement, App, AppContext as _, BorderStyle, Bounds, ClickEvent, ClipboardItem, Context, Div,
     ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render,
+    IntoElement, KeyContext, KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render,
     ScrollHandle, ScrollStrategy, ScrollWheelEvent, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle, WeakEntity, Window,
-    canvas, div, point, prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black,
-    uniform_list,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle,
+    WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _, px, quad, rgba, size, svg,
+    transparent_black, uniform_list,
 };
 
 use super::{
@@ -87,7 +102,12 @@ use super::{
     GitCommand, GitOp,
     commit_rows::{self, Key, ListKeys},
 };
-use crate::{Workbench, dock::DockOp, git};
+use crate::{
+    Workbench,
+    dock::DockOp,
+    git,
+    picker::{self, PaletteOp},
+};
 
 /// The id the Git Log panel had on the sidebar, before it was Source
 /// Control's Graph view, which layouts saved then name.
@@ -108,6 +128,18 @@ const NO_REPO: &str = "Not in a git repository";
 
 /// What the panel shows for an unborn HEAD.
 const NO_COMMITS: &str = "No commits yet";
+
+/// What the panel shows when the filter matches no commit.
+const NO_MATCHES: &str = "No commits match";
+
+/// What the filter box shows while it's empty.
+const FILTER_PLACEHOLDER: &str = "Filter by message, author or SHA";
+
+/// How long after the last edit of the filter box the list is read again.
+pub(crate) const FILTER_DELAY: Duration = Duration::from_millis(250);
+
+/// The filter box's clear button's id.
+const FILTER_CLEAR: &str = "git-log-filter-clear";
 
 /// What the last row says while a page is read.
 const LOADING: &str = "Loading…";
@@ -735,9 +767,10 @@ enum Counts {
 type Found = Result<Option<(Arc<Repo>, Head, Arc<[String]>, Vec<LogCommit>)>, String>;
 
 /// The repository of `at`, a file or folder, where its HEAD is, the
-/// commits its `scope` log starts from now and the log's first page, or
-/// none outside a repository. Runs on the background executor.
-fn read_first(at: &Path, scope: LogScope) -> Found {
+/// commits its `scope` log starts from now and the first page of the log's
+/// commits `filter` matches, or none outside a repository. Runs on the
+/// background executor.
+fn read_first(at: &Path, scope: LogScope, filter: &LogFilter) -> Found {
     let real = git::resolve(at);
     let Some(folder) = real.ancestors().find(|folder| folder.is_dir()) else {
         return Ok(None);
@@ -747,7 +780,8 @@ fn read_first(at: &Path, scope: LogScope) -> Found {
     };
     let head = repo.current_branch().map_err(|error| error.to_string())?;
     let tips = repo.log_tips(scope).map_err(|error| error.to_string())?;
-    let commits = (repo.log_from(&tips, 0, PAGE)).map_err(|error| error.to_string())?;
+    let commits =
+        (repo.log_from_matching(&tips, filter, 0, PAGE)).map_err(|error| error.to_string())?;
     Ok(Some((Arc::new(repo), head, tips.into(), commits)))
 }
 
@@ -865,6 +899,17 @@ pub(crate) struct GitLogPanel {
     keys: ListKeys,
     /// The last list started's number: only its pages land.
     read: u64,
+    /// What the list was last asked for, a file or folder in its
+    /// repository, once it has been.
+    at: Option<PathBuf>,
+    /// The filter the list is read with.
+    filter: LogFilter,
+    /// The filter box.
+    filter_input: Entity<TextInput>,
+    /// Moves on with each edit of the filter box: only the last edit's
+    /// delayed read happens.
+    filter_edits: u64,
+    _filter_input: Subscription,
     /// Whether the workbench was asked to list the panel the first time it
     /// was drawn.
     first_asked: bool,
@@ -879,6 +924,13 @@ pub(crate) struct GitLogPanel {
 
 impl GitLogPanel {
     pub(crate) fn new(workbench: WeakEntity<Workbench>, cx: &mut Context<Self>) -> Self {
+        let ui = fe_ui::ui_theme(cx);
+        let filter_input = cx.new(|cx| TextInput::new(FILTER_PLACEHOLDER, &ui, cx).bordered());
+        let filter_subscription = cx.subscribe(&filter_input, |panel, _, event, cx| {
+            if *event == TextInputEvent::Changed {
+                panel.filter_edited(cx);
+            }
+        });
         Self {
             workbench,
             scope: LogScope::Head,
@@ -902,6 +954,11 @@ impl GitLogPanel {
             hold: Hold::None,
             keys: ListKeys::default(),
             read: 0,
+            at: None,
+            filter: LogFilter::default(),
+            filter_input,
+            filter_edits: 0,
+            _filter_input: filter_subscription,
             first_asked: false,
             scroll: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -940,25 +997,135 @@ impl GitLogPanel {
         self.not_repository = false;
         self.repo = None;
         self.tips = Arc::from([]);
-        self.commits.clear();
-        self.rows.clear();
-        self.expanded.clear();
-        self.counts.clear();
-        self.lines.clear();
         self.root = root;
-        self.layout = GraphLayout::new();
-        self.lanes = 0;
-        self.tail = Tail::Loading;
-        self.more = false;
-        self.selected = None;
-        self.hold = Hold::None;
-        let found = cx.background_spawn(async move { read_first(&at, scope) });
+        self.at = Some(at.clone());
+        self.clear_rows();
+        let filter = self.filter.clone();
+        let found = cx.background_spawn(async move { read_first(&at, scope, &filter) });
         cx.spawn(async move |panel, cx| {
             let found = found.await;
             (panel.update(cx, |panel, cx| panel.land(read, found, op, cx))).ok();
         })
         .detach();
         cx.notify();
+    }
+
+    /// Forgets the commits listed, their rows and the selection, showing
+    /// the list loading.
+    fn clear_rows(&mut self) {
+        self.commits.clear();
+        self.rows.clear();
+        self.expanded.clear();
+        self.counts.clear();
+        self.lines.clear();
+        self.layout = GraphLayout::new();
+        self.lanes = 0;
+        self.tail = Tail::Loading;
+        self.more = false;
+        self.selected = None;
+        self.hold = Hold::None;
+    }
+
+    /// An edit of the filter box: the list is read again [`FILTER_DELAY`]
+    /// after the last.
+    fn filter_edited(&mut self, cx: &mut Context<Self>) {
+        self.filter_edits += 1;
+        let edits = self.filter_edits;
+        cx.spawn(async move |panel, cx| {
+            cx.background_executor().timer(FILTER_DELAY).await;
+            panel.update(cx, |panel, cx| {
+                if panel.filter_edits == edits {
+                    panel.apply_filter(cx);
+                }
+            })
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Reads the list again with the filter box's text as its filter, now,
+    /// if that's not the filter it was read with. A delayed read waiting
+    /// for the box is dropped.
+    fn apply_filter(&mut self, cx: &mut Context<Self>) {
+        self.filter_edits += 1;
+        let filter = LogFilter::new(self.filter_input.read(cx).text().trim());
+        if filter == self.filter {
+            return;
+        }
+        self.filter = filter;
+        self.refilter(cx);
+    }
+
+    /// Reads the first page of the list again with its filter, from the
+    /// commits it was read from, or, if it wasn't read, from what it was
+    /// asked for.
+    fn refilter(&mut self, cx: &mut Context<Self>) {
+        let (Some(repo), Some(head)) = (self.repo.clone(), self.head.clone()) else {
+            if let Some(at) = self.at.clone() {
+                self.list(at, self.root.clone(), self.scope, None, cx);
+            }
+            return;
+        };
+        self.read += 1;
+        let read = self.read;
+        self.clear_rows();
+        let (tips, filter) = (self.tips.clone(), self.filter.clone());
+        let found = cx.background_spawn(async move {
+            let commits = (repo.log_from_matching(&tips, &filter, 0, PAGE))
+                .map_err(|error| error.to_string())?;
+            Ok(Some((repo, head, tips, commits)))
+        });
+        cx.spawn(async move |panel, cx| {
+            let found = found.await;
+            (panel.update(cx, |panel, cx| panel.land(read, found, None, cx))).ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Empties the filter box and lists every commit again, at once.
+    fn clear_filter(&mut self, cx: &mut Context<Self>) {
+        self.filter_input.update(cx, |input, cx| input.clear(cx));
+        self.apply_filter(cx);
+        cx.notify();
+    }
+
+    /// `/`: focuses the filter box, its text selected.
+    fn focus_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_input
+            .update(cx, |input, cx| input.select_all(cx));
+        window.focus(&self.filter_input.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Whether the filter box has focus.
+    fn filter_focused(&self, window: &Window, cx: &App) -> bool {
+        self.filter_input.focus_handle(cx).is_focused(window)
+    }
+
+    /// Enter in the filter box reads the list at once and focuses it;
+    /// Escape empties the box, lists every commit and focuses the list.
+    fn on_filter_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.modifiers.modified() {
+            return;
+        }
+        match keystroke.key.as_str() {
+            "enter" => self.apply_filter(cx),
+            "escape" => self.clear_filter(cx),
+            _ => return,
+        }
+        cx.stop_propagation();
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// The filter box's editing commands; others go on.
+    fn on_filter_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(edit) = picker::op(run, cx).and_then(PaletteOp::edit) else {
+            return cx.propagate();
+        };
+        self.filter_input.update(cx, edit);
     }
 
     /// Shows the first page read `read` found, unless a later read started.
@@ -991,14 +1158,39 @@ impl GitLogPanel {
     }
 
     /// Adds `page` to the list, its graph going on from the rows before.
+    /// Filtered, the whole graph is laid out again over the rows listed, a
+    /// commit's lanes running to its parents listed alone: one in a later
+    /// page joins up once it's read.
     fn append(&mut self, page: Vec<LogCommit>) {
         self.more = page.len() >= PAGE;
-        for entry in &page {
-            let row = self.layout.push(&entry.commit.id, &entry.parents);
+        let from = if self.filter.is_empty() {
+            self.commits.len()
+        } else {
+            self.rows.clear();
+            self.layout = GraphLayout::new();
+            self.lanes = 0;
+            0
+        };
+        self.commits.extend(page);
+        let listed: Option<HashSet<&str>> = (!self.filter.is_empty()).then(|| {
+            (self.commits.iter())
+                .map(|entry| entry.commit.id.as_str())
+                .collect()
+        });
+        for entry in &self.commits[from..] {
+            let row = match &listed {
+                Some(listed) => {
+                    let parents: Vec<String> = (entry.parents.iter())
+                        .filter(|parent| listed.contains(parent.as_str()))
+                        .cloned()
+                        .collect();
+                    self.layout.push(&entry.commit.id, &parents)
+                }
+                None => self.layout.push(&entry.commit.id, &entry.parents),
+            };
             self.lanes = self.lanes.max(lanes(&row));
             self.rows.push(row);
         }
-        self.commits.extend(page);
         self.relayout();
     }
 
@@ -1283,8 +1475,9 @@ impl GitLogPanel {
         }
         self.tail = Tail::Loading;
         let (read, tips, skip) = (self.read, self.tips.clone(), self.commits.len());
+        let filter = self.filter.clone();
         let page = cx.background_spawn(async move {
-            (repo.log_from(&tips, skip, PAGE)).map_err(|error| error.to_string())
+            (repo.log_from_matching(&tips, &filter, skip, PAGE)).map_err(|error| error.to_string())
         });
         cx.spawn(async move |panel, cx| {
             let page = page.await;
@@ -1344,6 +1537,8 @@ impl GitLogPanel {
     fn message(&self) -> Option<&'static str> {
         if self.not_repository {
             Some(NO_REPO)
+        } else if self.commits.is_empty() && self.tail == Tail::None && !self.filter.is_empty() {
+            Some(NO_MATCHES)
         } else if self.commits.is_empty() && self.tail == Tail::None {
             Some(NO_COMMITS)
         } else {
@@ -1402,6 +1597,14 @@ impl GitLogPanel {
 
     /// Its keys: see the module docs.
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_focused(window, cx) {
+            return;
+        }
+        let keystroke = &event.keystroke;
+        if keystroke.key == "/" && !keystroke.modifiers.modified() && fe_gpui::vim_enabled(cx) {
+            cx.stop_propagation();
+            return self.focus_filter(window, cx);
+        }
         let Some(key) = self.keys.key(event, cx) else {
             return;
         };
@@ -2122,9 +2325,35 @@ impl Render for GitLogPanel {
         )
         .track_scroll(&self.scroll)
         .flex_1();
+        // While the box has focus, without the `vim` flag, so no vim key
+        // of the list's takes what's typed.
+        let key_context = if self.filter_focused(window, cx) {
+            let mut key_context = KeyContext::default();
+            key_context.add(KEY_CONTEXT);
+            key_context
+        } else {
+            commit_rows::key_context(KEY_CONTEXT, cx)
+        };
+        let filtering = !self.filter_input.read(cx).text().is_empty();
+        let filter_row = (div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1())
+        .on_key_down(cx.listener(Self::on_filter_key))
+        .on_action(cx.listener(Self::on_filter_command))
+        .child(div().flex_1().min_w_0().child(self.filter_input.clone()))
+        .when(filtering, |row| {
+            row.child(
+                IconButton::new(FILTER_CLEAR, Icon::X, &ui)
+                    .on_click(cx.listener(|panel, _, _, cx| panel.clear_filter(cx))),
+            )
+        });
         div()
             .track_focus(&self.focus)
-            .key_context(commit_rows::key_context(KEY_CONTEXT, cx))
+            .key_context(key_context)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .debug_selector(|| "sidebar-panel".into())
@@ -2138,6 +2367,7 @@ impl Render for GitLogPanel {
             .bg(ui.panel_background)
             .text_color(ui.text)
             .text_size(px(12.))
+            .child(filter_row)
             .when_some(self.message(), |panel, message| {
                 panel.child(
                     div()
@@ -2241,3 +2471,7 @@ mod git_log_file_rows_tests;
 #[cfg(test)]
 #[path = "git_log_ref_pills_tests.rs"]
 mod git_log_ref_pills_tests;
+
+#[cfg(test)]
+#[path = "git_log_filter_tests.rs"]
+mod git_log_filter_tests;

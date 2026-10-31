@@ -34,7 +34,7 @@ mod stash;
 pub use blame::{BlameRun, CommitInfo};
 pub use branch::{BranchRef, SwitchError};
 pub use commit::CommitError;
-pub use commit_log::{CommitFile, LogCommit, LogScope, RefKind, RefLabel};
+pub use commit_log::{CommitFile, LogCommit, LogFilter, LogScope, RefKind, RefLabel};
 pub use commit_stats::{CommitStats, FileStat};
 pub use index::SplitStatus;
 pub use log::FileCommit;

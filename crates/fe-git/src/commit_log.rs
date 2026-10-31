@@ -1,5 +1,6 @@
 //! A branch's or every branch's commits with their parents and ref names, and
-//! the files a commit changed, for the repository log.
+//! the files a commit changed, for the repository log. A log can be narrowed
+//! to the commits a [`LogFilter`] matches.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -19,6 +20,75 @@ pub enum LogScope {
     Head,
     /// Every local branch, remote-tracking branch and tag, and HEAD.
     All,
+}
+
+/// What narrows a log to the commits it matches: see [`LogFilter::matches`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogFilter {
+    /// What's typed. Matched trimmed; empty, or only whitespace, matches
+    /// every commit.
+    pub text: String,
+}
+
+impl LogFilter {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+
+    /// Whether it matches every commit: its text is empty but for
+    /// whitespace.
+    pub fn is_empty(&self) -> bool {
+        self.text.trim().is_empty()
+    }
+
+    /// Whether `commit` is one it keeps, ignoring case: each of its text's
+    /// whitespace-separated words is in the commit's message, subject or
+    /// body (as `git log -i --fixed-strings --all-match` with a `--grep`
+    /// per word keeps them); or its whole text is in the author's name or
+    /// email; or its text, of 4 or more hex digits, begins the commit's id.
+    /// An empty filter keeps every commit.
+    pub fn matches(&self, commit: &CommitInfo) -> bool {
+        Matcher::new(self).is_none_or(|matcher| matcher.matches(commit))
+    }
+}
+
+/// A non-empty [`LogFilter`], lower-cased once for the commits it's tried on.
+struct Matcher {
+    words: Vec<String>,
+    text: String,
+    /// The text, if it's a hex id prefix of 4 or more digits.
+    id_prefix: Option<String>,
+}
+
+impl Matcher {
+    /// None for an empty filter.
+    fn new(filter: &LogFilter) -> Option<Self> {
+        let text = filter.text.trim().to_lowercase();
+        if text.is_empty() {
+            return None;
+        }
+        let id_prefix = (text.len() >= 4 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| text.clone());
+        Some(Self {
+            words: text.split_whitespace().map(str::to_owned).collect(),
+            text,
+            id_prefix,
+        })
+    }
+
+    fn matches(&self, commit: &CommitInfo) -> bool {
+        if (self.id_prefix.as_ref()).is_some_and(|prefix| commit.id.starts_with(prefix.as_str())) {
+            return true;
+        }
+        let contains = |field: &str| field.to_lowercase().contains(&self.text);
+        if contains(&commit.author) || contains(&commit.email) {
+            return true;
+        }
+        let message = commit.message.to_lowercase();
+        self.words
+            .iter()
+            .all(|word| message.contains(word.as_str()))
+    }
 }
 
 /// One commit of a log, as `git log --topo-order` lists it.
@@ -83,7 +153,30 @@ impl Repo {
             LogScope::Head => &["HEAD"],
             LogScope::All => &["--branches", "--remotes", "--tags", "HEAD"],
         };
-        self.log_of(revisions, skip, limit)
+        self.log_of(revisions, None, skip, limit)
+    }
+
+    /// As [`Repo::log`], of the commits `filter` matches alone: `limit` of
+    /// them after the first `skip` that match, in the same order. An empty
+    /// filter lists what [`Repo::log`] does. Runs one `git log`, listing
+    /// the whole history for a non-empty filter, and reads each commit
+    /// until `skip + limit` have matched; blocks until it's done.
+    pub fn log_matching(
+        &self,
+        scope: LogScope,
+        filter: &LogFilter,
+        skip: usize,
+        limit: usize,
+    ) -> Result<Vec<LogCommit>, GitError> {
+        let repo = self.repo.to_thread_local();
+        if repo.head().map_err(GitError::from_gix)?.is_unborn() {
+            return Ok(Vec::new());
+        }
+        let revisions: &[&str] = match scope {
+            LogScope::Head => &["HEAD"],
+            LogScope::All => &["--branches", "--remotes", "--tags", "HEAD"],
+        };
+        self.log_of(revisions, Matcher::new(filter).as_ref(), skip, limit)
     }
 
     /// The ids `scope`'s log starts from, as they are now: HEAD's commit
@@ -126,14 +219,32 @@ impl Repo {
             return Ok(Vec::new());
         }
         let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
-        self.log_of(&tips, skip, limit)
+        self.log_of(&tips, None, skip, limit)
+    }
+
+    /// As [`Repo::log_from`], of the commits `filter` matches alone, as
+    /// [`Repo::log_matching`] pages them.
+    pub fn log_from_matching(
+        &self,
+        tips: &[String],
+        filter: &LogFilter,
+        skip: usize,
+        limit: usize,
+    ) -> Result<Vec<LogCommit>, GitError> {
+        if tips.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+        self.log_of(&tips, Matcher::new(filter).as_ref(), skip, limit)
     }
 
     /// `git log --topo-order` of `revisions`, as [`Repo::log`] reads it,
-    /// whatever HEAD is.
+    /// whatever HEAD is; with a `matcher`, of the commits it matches alone,
+    /// `skip` and `limit` counting those.
     fn log_of(
         &self,
         revisions: &[&str],
+        matcher: Option<&Matcher>,
         skip: usize,
         limit: usize,
     ) -> Result<Vec<LogCommit>, GitError> {
@@ -163,8 +274,11 @@ impl Repo {
         ]
         .map(OsString::from)
         .into();
-        args.push(format!("--skip={skip}").into());
-        args.push(format!("--max-count={limit}").into());
+        // A filter is matched here, so git lists the whole history.
+        if matcher.is_none() {
+            args.push(format!("--skip={skip}").into());
+            args.push(format!("--max-count={limit}").into());
+        }
         // Revisions go on stdin, past the argument-list limit; pseudo-options
         // (`--branches`, ...) stay on the command line, which `--stdin` takes
         // only from git 2.42.
@@ -189,7 +303,11 @@ impl Repo {
         };
 
         let mut commits = Vec::new();
+        let mut matched = 0;
         for record in stdout.split(|&byte| byte == 0) {
+            if commits.len() == limit {
+                break;
+            }
             let record = String::from_utf8_lossy(record);
             // Records after the first start with the line break ending the one before.
             let record = record.trim_start_matches('\n');
@@ -203,8 +321,18 @@ impl Repo {
                 continue;
             };
             let object_id = ObjectId::from_hex(id.as_bytes()).map_err(GitError::from_gix)?;
+            let commit = commit_info(&repo, object_id)?;
+            if let Some(matcher) = matcher {
+                if !matcher.matches(&commit) {
+                    continue;
+                }
+                matched += 1;
+                if matched <= skip {
+                    continue;
+                }
+            }
             commits.push(LogCommit {
-                commit: Arc::new(commit_info(&repo, object_id)?),
+                commit: Arc::new(commit),
                 parents: parents.split_whitespace().map(str::to_owned).collect(),
                 refs: ref_labels(refs.trim_end()),
             });
