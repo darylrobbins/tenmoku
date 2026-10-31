@@ -2,11 +2,12 @@
 //! dispatched to the focused element as a key would, with the setup of
 //! [`crate::tests::find_bar`].
 
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use fe_buffer::Origin;
 use fe_command::{CommandId, Value};
-use fe_gpui::{EditorView, set_vim_enabled};
+use fe_gpui::{EditorView, set_vim_enabled, set_vim_time_limit};
+use fe_vim::search::DEFAULT_TIME_LIMIT;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{
@@ -754,6 +755,16 @@ fn vim_a_replace_that_finds_nothing_leaves_visual_mode(cx: &mut TestAppContext) 
 
 #[gpui::test]
 fn replace_all_over_many_empty_matches(cx: &mut TestAppContext) {
+    // This checks the count and the text, not the search budget: under a
+    // loaded parallel suite 100k rows can pass the default limit.
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_vim_time_limit(DEFAULT_TIME_LIMIT);
+        }
+    }
+    let _restore = Restore;
+    set_vim_time_limit(Duration::from_secs(600));
     let rows = 100_000;
     let (_dir, workbench, cx) = opened(cx, &[("a.txt", &"a\n".repeat(rows))]);
     let pane = pane(&workbench, cx);
