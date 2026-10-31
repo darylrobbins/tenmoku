@@ -448,6 +448,7 @@ fn host_blocks(cx: &mut TestAppContext) {
     let lines = HostBlockKind::Lines {
         lines: vec![SharedString::from("\tadded"), SharedString::from("two")],
         tint: Tint::Added,
+        words: Vec::new(),
     };
     let blocks = vec![
         filler(3, 2, 7),
@@ -693,6 +694,7 @@ fn wide_host_lines_scroll(cx: &mut TestAppContext) {
     let lines = HostBlockKind::Lines {
         lines: vec![wide.clone().into(), long.clone().into()],
         tint: Tint::Modified,
+        words: Vec::new(),
     };
     let block = HostBlock {
         above: 1,
@@ -1028,6 +1030,7 @@ fn host_lines_scroll_by_cluster_and_under_soft_wrap(cx: &mut TestAppContext) {
     let lines = HostBlockKind::Lines {
         lines: vec![clustered.clone().into(), wide.into()],
         tint: Tint::Added,
+        words: Vec::new(),
     };
     let block = HostBlock {
         above: 2,

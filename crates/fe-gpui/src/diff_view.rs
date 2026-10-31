@@ -3,8 +3,11 @@
 //! (the new: usually the file's live buffer). Each side is an
 //! [`EditorView`] with a header naming it. Rows line up across the two,
 //! the shorter side of each hunk padded with filler blocks
-//! ([`TextDiff::fillers`]); removed rows on the left and added rows on the
-//! right are tinted, modified rows on both ([`DiffTints`]). Scrolling either
+//! ([`TextDiff::fillers`]), hatched; the left side's removed and modified
+//! rows are tinted removed, the right side's added and modified rows added,
+//! and their changed words more strongly ([`DiffTints`]): within a modified
+//! row pair the words [`InlineDiff::changed_spans`] finds, and the whole
+//! text of a row with no partner. Scrolling either
 //! side scrolls the other to the same screen row, and `diff.next_change` /
 //! `diff.previous_change` move between hunks, wrapping at the ends.
 //! `diff.toggle_inline` shows the right side alone instead, the removed
@@ -28,11 +31,12 @@ use std::{
     sync::Arc,
 };
 
-use fe_buffer::{BufferSnapshot, Text, Version};
+use fe_buffer::{Bias, BufferSnapshot, Text, Version};
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
 use fe_editor::{
     EditorModel,
     decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps},
+    inline_diff::InlineDiff,
     row_changes::{RowChange, RowChangeKind},
     text_diff::{HunkKind, Side, TextDiff},
 };
@@ -183,6 +187,8 @@ pub struct DiffView {
     sized: bool,
     /// The texts last diffed.
     texts: [Arc<str>; 2],
+    /// Each side's changed words in the diff shown.
+    words: [Arc<Words>; 2],
     _subscriptions: Vec<Subscription>,
     /// Looks for edits from elsewhere every [`POLL`].
     _poll: Task<()>,
@@ -204,10 +210,8 @@ impl DiffView {
         cx: &mut Context<Self>,
     ) -> Self {
         let (theme, settings) = restore_style(cx);
-        let tints = [
-            Rc::new(RefCell::new(DiffTints::default())),
-            Rc::new(RefCell::new(DiffTints::default())),
-        ];
+        let tints = [Tint::DiffRemoved, Tint::DiffAdded]
+            .map(|tint| Rc::new(RefCell::new(DiffTints::new(tint))));
         let titles = [left.title, right.title];
         let mut view = |mut model: EditorModel, read_only: bool, tints: &Rc<RefCell<DiffTints>>| {
             model.own_row_changes();
@@ -288,6 +292,7 @@ impl DiffView {
             chosen: false,
             sized: false,
             texts: [Arc::from(""), Arc::from("")],
+            words: Default::default(),
             _subscriptions: subscriptions,
             _poll: poll,
             #[cfg(test)]
@@ -390,12 +395,17 @@ impl DiffView {
         let Diffed {
             diff,
             texts,
+            words,
             versions,
         } = diffed;
         self.diff = diff;
         self.texts = texts;
+        self.words = words.map(Arc::new);
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
-            self.tints[ix].borrow_mut().rows = tinted_rows(&self.diff, side);
+            let mut tints = self.tints[ix].borrow_mut();
+            tints.rows = tinted_rows(&self.diff, side);
+            tints.words = self.words[ix].clone();
+            drop(tints);
             let base = self.texts[1 - ix].clone();
             let changes = row_changes(&self.diff, side);
             self.views[ix].update(cx, |view, cx| {
@@ -418,7 +428,7 @@ impl DiffView {
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
             let blocks = match (self.inline, ix) {
                 (true, 0) => Vec::new(),
-                (true, _) => inline::removed_blocks(&self.diff, &self.texts[0]),
+                (true, _) => inline::removed_blocks(&self.diff, &self.texts[0], &self.words[0]),
                 (false, _) => (self.diff.fillers(side).into_iter().enumerate())
                     .map(|(id, (above, rows))| HostBlock {
                         above,
@@ -547,11 +557,12 @@ impl DiffView {
     }
 }
 
-/// A diff and the texts it was made from, as diff bases, with the buffer
-/// versions they were read at.
+/// A diff and the texts it was made from, as diff bases, each side's
+/// changed words, and the buffer versions they were read at.
 struct Diffed {
     diff: TextDiff,
     texts: [Arc<str>; 2],
+    words: [Words; 2],
     versions: [Version; 2],
 }
 
@@ -563,11 +574,67 @@ impl Diffed {
 
     fn new(left: &Text, right: &Text, versions: [Version; 2]) -> Self {
         let texts: [Arc<str>; 2] = [left.to_string().into(), right.to_string().into()];
+        let diff = TextDiff::new(&texts[0], &texts[1]);
         Self {
-            diff: TextDiff::new(&texts[0], &texts[1]),
+            words: Words::of(&diff, &diff.inline(&texts[0], &texts[1])),
+            diff,
             texts,
             versions,
         }
+    }
+}
+
+/// A side's changed words: its rows to tint whole, and its spans within
+/// rows. Rows of the text diffed, which may have moved on.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Words {
+    /// The rows with no partner on the other side, sorted: an added or
+    /// removed hunk's, and a modified hunk's past the other side's last.
+    pub(crate) whole: Vec<Range<u32>>,
+    /// The changed bytes within each paired row of a modified hunk, as
+    /// `(row, bytes of the row)`, sorted. A pair too long to diff word by
+    /// word has none: its rows keep their row tint alone.
+    pub(crate) spans: Vec<(u32, Range<usize>)>,
+}
+
+impl Words {
+    /// Both sides' changed words in `diff`, whose `inline` diff that is.
+    fn of(diff: &TextDiff, inline: &InlineDiff) -> [Self; 2] {
+        let mut words: [Self; 2] = Default::default();
+        for hunk in diff.hunks() {
+            let paired = match hunk.kind() {
+                HunkKind::Modified => hunk.left.len().min(hunk.right.len()) as u32,
+                HunkKind::Added | HunkKind::Removed => 0,
+            };
+            for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
+                let rows = hunk.range(side);
+                let pairs_end = rows.start + paired;
+                for row in rows.start..pairs_end {
+                    let spans = inline.changed_spans(side, row).iter();
+                    words[ix]
+                        .spans
+                        .extend(spans.map(|span| (row, span.clone())));
+                }
+                if pairs_end < rows.end {
+                    words[ix].whole.push(pairs_end..rows.end);
+                }
+            }
+        }
+        words
+    }
+
+    /// The changed bytes of `row`, in the row: all of its `len` bytes for
+    /// a row tinted whole.
+    pub(crate) fn of_row(&self, row: u32, len: usize) -> Vec<Range<usize>> {
+        let at = self.whole.partition_point(|rows| rows.end <= row);
+        if self.whole.get(at).is_some_and(|rows| rows.contains(&row)) {
+            return std::iter::once(0..len).collect();
+        }
+        let from = self.spans.partition_point(|(at, _)| *at < row);
+        (self.spans[from..].iter())
+            .take_while(|(at, _)| *at == row)
+            .map(|(_, span)| span.clone())
+            .collect()
     }
 }
 
@@ -606,25 +673,62 @@ fn row_offset(text: &Text, row: u32) -> usize {
 
 /// `side`'s rows to tint: removed rows on the left, added rows on the
 /// right, modified rows on both.
-fn tinted_rows(diff: &TextDiff, side: Side) -> Vec<(Range<u32>, Tint)> {
+fn tinted_rows(diff: &TextDiff, side: Side) -> Vec<Range<u32>> {
     (diff.hunks().iter())
-        .filter(|hunk| !hunk.range(side).is_empty())
-        .map(|hunk| {
-            let tint = match hunk.kind() {
-                HunkKind::Added => Tint::Added,
-                HunkKind::Removed => Tint::Removed,
-                HunkKind::Modified => Tint::Modified,
-            };
-            (hunk.range(side).clone(), tint)
-        })
+        .map(|hunk| hunk.range(side).clone())
+        .filter(|rows| !rows.is_empty())
         .collect()
 }
 
-/// A side's changed rows as row backgrounds, in the tint of their change.
-#[derive(Default)]
+/// A side's changed rows as row backgrounds and their changed words as
+/// highlights, in the side's tint: [`Tint::DiffRemoved`] on the left,
+/// [`Tint::DiffAdded`] on the right, which the theme gives a colour for
+/// each.
 pub(crate) struct DiffTints {
+    tint: Tint,
     /// Rows of the text last diffed, sorted.
-    rows: Vec<(Range<u32>, Tint)>,
+    rows: Vec<Range<u32>>,
+    words: Arc<Words>,
+}
+
+impl DiffTints {
+    fn new(tint: Tint) -> Self {
+        Self {
+            tint,
+            rows: Vec::new(),
+            words: Default::default(),
+        }
+    }
+
+    /// The changed words of the rows `range` touches, as highlights: each
+    /// cut to its row's text and onto char boundaries, since the text may
+    /// have moved on from the one diffed, and none empty.
+    fn words(&self, text: &Text, range: &Range<usize>, out: &mut Vec<Decoration>) {
+        let count = text.row_count();
+        let first = text.offset_to_point(range.start).row;
+        let last = text.offset_to_point(range.end).row;
+        let mut word = |row: u32, span: Range<usize>| {
+            let (start, len) = (text.row_start(row), text.row_len(row) as usize);
+            let at = |offset: usize, bias| text.clip_offset(start + offset.min(len), bias);
+            let item = at(span.start, Bias::Left)..at(span.end, Bias::Right);
+            if !item.is_empty() && overlaps(&item, range) {
+                out.push(Decoration::new(item, DecorationKind::Highlight, self.tint));
+            }
+        };
+        let Words { whole, spans } = &*self.words;
+        let from = whole.partition_point(|rows| rows.end <= first);
+        for rows in whole[from..].iter().take_while(|rows| rows.start <= last) {
+            for row in rows.start.max(first)..rows.end.min(last + 1).min(count) {
+                word(row, 0..usize::MAX);
+            }
+        }
+        let from = spans.partition_point(|(row, _)| *row < first);
+        for (row, span) in spans[from..].iter().take_while(|(row, _)| *row <= last) {
+            if *row < count {
+                word(*row, span.clone());
+            }
+        }
+    }
 }
 
 impl DecorationProvider for DiffTints {
@@ -641,10 +745,11 @@ impl DecorationProvider for DiffTints {
             true => text.row_start(row),
             false => text.len(),
         };
+        let tint = &self.tint;
         let first = self
             .rows
-            .partition_point(|(rows, _)| start_of(rows.end) < range.start);
-        for (rows, tint) in &self.rows[first..] {
+            .partition_point(|rows| start_of(rows.end) < range.start);
+        for rows in &self.rows[first..] {
             let start = start_of(rows.start);
             if start > range.end {
                 break;
@@ -669,6 +774,7 @@ impl DecorationProvider for DiffTints {
                 ));
             }
         }
+        self.words(text, &range, out);
     }
 }
 
@@ -832,3 +938,7 @@ mod diff_view_inline_tests;
 #[cfg(test)]
 #[path = "diff_view_compare_tests.rs"]
 mod diff_view_compare_tests;
+
+#[cfg(test)]
+#[path = "diff_view_words_tests.rs"]
+mod diff_view_words_tests;

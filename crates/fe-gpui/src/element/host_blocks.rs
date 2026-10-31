@@ -1,7 +1,7 @@
 //! The host's blocks ([`crate::view::HostBlock`]) in a frame: placed by
 //! fe-display's block layer between the display rows, as screen rows
 //! ([`block_map`]), then painted across the text area: a filler's faint
-//! diagonal hatch, or a band of text on its tint. Positions down the frame
+//! diagonal hatch, or a band of text on its tint, its words highlighted. Positions down the frame
 //! go by screen row, so a block's rows push the text's down ([`row_at`]).
 //!
 //! A reserve block paints nothing: where it's laid out is published for
@@ -20,13 +20,16 @@ use fe_display::{
         Vec2,
     },
 };
-use fe_editor::decorations::Tint;
+use fe_editor::decorations::DecorationKind;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, Hsla,
     MouseExitEvent, MouseMoveEvent, PathBuilder, Pixels, Window, fill, point, px, size,
 };
 
-use super::{FrameLayout, Line, PointerOutside, Shaper};
+use super::{
+    FrameLayout, Line, PointerOutside, Shaper,
+    decorations::{diff_color, tint_color},
+};
 use crate::{
     EditorTheme, EditorView,
     lens::{self, Lens, LensItem, PaintedRow},
@@ -41,10 +44,10 @@ pub(super) const LENS_SCALE: f32 = 0.9;
 /// Between a lens row's items.
 const LENS_SEPARATOR: &str = " | ";
 
-/// How opaque a text block's band is over its tint.
+/// How opaque a text block's band is over its tint, and its highlighted
+/// words, but for a diff tint's ([`diff_color`]).
 const BAND_ALPHA: f32 = 0.15;
-/// How opaque a filler's hatch is over the text colour.
-const HATCH_ALPHA: f32 = 0.12;
+const WORD_ALPHA: f32 = 0.3;
 /// How far apart a filler's hatch lines are, across, in line heights.
 const HATCH_SPACING: f32 = 0.5;
 
@@ -419,9 +422,10 @@ pub(super) struct Placed {
 
 enum PlacedKind {
     Filler,
-    /// The band's colour, and each line shown.
+    /// The band's colour, its words', and each line shown.
     Lines {
         band: Hsla,
+        word: Hsla,
         lines: Vec<Shown>,
     },
 }
@@ -430,6 +434,8 @@ enum PlacedKind {
 struct Shown {
     at: Vec2,
     line: Line,
+    /// The x each highlighted word starts and ends at, from `at`.
+    words: Vec<Range<f32>>,
     /// As shaped, which tests see.
     #[cfg(test)]
     text: String,
@@ -444,20 +450,31 @@ pub(crate) struct PaintedBlock {
     pub(crate) bounds: Bounds<Pixels>,
     /// A text block's band colour; `None` for a filler.
     pub(crate) band: Option<Hsla>,
-    /// A filler's hatch lines.
+    /// A text block's highlighted words, in their colour.
+    pub(crate) words: Vec<(Bounds<Pixels>, Hsla)>,
+    /// A filler's hatch lines, and their colour.
     pub(crate) hatch: usize,
+    pub(crate) hatch_color: Option<Hsla>,
     /// A text block's lines shown, and the window position each starts at.
     pub(crate) lines: Vec<(String, gpui::Point<Pixels>)>,
 }
 
-/// The lines of the text blocks `frame` shows that are in view, each with
-/// its block's index in `frame.blocks`, its y and its text, tabs expanded.
-fn shown_lines(frame: &Frame<Line>, view: &EditorView) -> Vec<(usize, f32, String)> {
+/// A text block's line in view: its block's index in `frame.blocks`, its
+/// y, its text with tabs expanded, and its highlighted words in that text.
+struct InView {
+    ix: usize,
+    y: f32,
+    text: String,
+    words: Vec<Range<usize>>,
+}
+
+/// The lines of the text blocks `frame` shows that are in view.
+fn shown_lines(frame: &Frame<Line>, view: &EditorView) -> Vec<InView> {
     let tab_size = view.model.tab_size();
     let line_height = frame.line_height;
     let mut out = Vec::new();
     for (ix, laid) in frame.blocks.iter().enumerate() {
-        let Some(HostBlockKind::Lines { lines, .. }) =
+        let Some(HostBlockKind::Lines { lines, words, .. }) =
             host_block(view, laid.id).map(|block| &block.kind)
         else {
             continue;
@@ -466,7 +483,16 @@ fn shown_lines(frame: &Frame<Line>, view: &EditorView) -> Vec<(usize, f32, Strin
         for (row, line) in shown {
             let y = laid.rect.y + line_height * row as f32;
             if y + line_height > 0. && y < frame.height {
-                out.push((ix, y, ExpandedRow::new(line, tab_size).text().to_string()));
+                let expanded = ExpandedRow::new(line, tab_size);
+                let words = (words.get(row).into_iter().flatten())
+                    .map(|word| {
+                        let (start, end) = (word.start.min(word.end), word.end.min(line.len()));
+                        expanded.to_display(start.min(end))..expanded.to_display(end)
+                    })
+                    .filter(|word| !word.is_empty())
+                    .collect();
+                let text = expanded.text().to_string();
+                out.push(InView { ix, y, text, words });
             }
         }
     }
@@ -484,10 +510,12 @@ pub(super) fn widest(
     widths: &mut dyn CharWidth,
 ) -> f64 {
     (shown_lines(frame, view).iter())
-        .map(|(_, _, text)| match text.len() > MAX_SHAPED_ROW_BYTES {
-            true => clusters(text, widths).last().map_or(0., |(_, _, end)| end),
-            false => f64::from(shaper.shape(text, &runs(text, view)).width()),
-        })
+        .map(
+            |InView { text, .. }| match text.len() > MAX_SHAPED_ROW_BYTES {
+                true => clusters(text, widths).last().map_or(0., |(_, _, end)| end),
+                false => f64::from(shaper.shape(text, &runs(text, view)).width()),
+            },
+        )
         .fold(0., f64::max)
 }
 
@@ -582,10 +610,16 @@ pub(super) fn layout(
         .map(|laid| {
             let block = host_block(view, laid.id)?;
             let kind = match &block.kind {
-                HostBlockKind::Lines { tint, .. } => PlacedKind::Lines {
-                    band: tint_color(&view.theme, *tint).opacity(BAND_ALPHA),
-                    lines: Vec::new(),
-                },
+                HostBlockKind::Lines { tint, .. } => {
+                    let (theme, color) = (&view.theme, tint_color(&view.theme, *tint));
+                    let own = |kind| diff_color(theme, *tint, &kind);
+                    PlacedKind::Lines {
+                        band: own(DecorationKind::RowBackground)
+                            .unwrap_or(color.opacity(BAND_ALPHA)),
+                        word: own(DecorationKind::Highlight).unwrap_or(color.opacity(WORD_ALPHA)),
+                        lines: Vec::new(),
+                    }
+                }
                 HostBlockKind::Filler => PlacedKind::Filler,
                 // The host draws over it.
                 HostBlockKind::Reserve => return None,
@@ -598,20 +632,29 @@ pub(super) fn layout(
             })
         })
         .collect();
-    for (ix, y, text) in shown_lines(frame, view) {
+    for InView { ix, y, text, words } in shown_lines(frame, view) {
         let (range, x) = match text.len() > MAX_SHAPED_ROW_BYTES {
             true => slice(&text, frame, scroll_x, widths),
             false => (0..text.len(), 0.),
         };
-        let text = &text[range];
+        let line = shaper.shape(&text[range.clone()], &runs(&text[range.clone()], view));
+        // Each word's part in the slice shaped.
+        let words = (words.into_iter())
+            .map(|word| word.start.max(range.start)..word.end.min(range.end))
+            .filter(|word| !word.is_empty())
+            .map(|word| {
+                line.x_for_index(word.start - range.start)..line.x_for_index(word.end - range.start)
+            })
+            .collect();
         let shown = Shown {
             at: Vec2 {
                 x: frame.text_left + (x - f64::from(scroll_x)) as f32,
                 y,
             },
-            line: shaper.shape(text, &runs(text, view)),
+            line,
+            words,
             #[cfg(test)]
-            text: text.to_string(),
+            text: text[range].to_string(),
         };
         if let Some(PlacedKind::Lines { lines, .. }) =
             placed[ix].as_mut().map(|placed| &mut placed.kind)
@@ -620,21 +663,6 @@ pub(super) fn layout(
         }
     }
     placed.into_iter().flatten().collect()
-}
-
-/// A tint's colour, as the decorations resolve it.
-fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
-    match tint {
-        Tint::Error => theme.error,
-        Tint::Warning => theme.warning,
-        Tint::Information => theme.information,
-        Tint::Added => theme.change_added,
-        Tint::Modified => theme.change_modified,
-        Tint::Removed => theme.change_deleted,
-        Tint::Hint => theme.hint,
-        Tint::Accent => theme.cursor,
-        Tint::Muted => theme.foreground,
-    }
 }
 
 /// Paints `placed`, each clipped to its rect inside the text area, noting
@@ -659,13 +687,30 @@ pub(super) fn paint(
                     id: block.id,
                     bounds,
                     band: None,
+                    words: Vec::new(),
                     hatch: _hatch,
+                    hatch_color: Some(theme.diff_filler),
                     lines: Vec::new(),
                 });
             }
-            PlacedKind::Lines { band, lines } => {
+            PlacedKind::Lines { band, word, lines } => {
                 window.paint_quad(fill(bounds, *band));
+                let word_bounds = |shown: &Shown| -> Vec<Bounds<Pixels>> {
+                    (shown.words.iter())
+                        .map(|x| {
+                            let at = Vec2 {
+                                x: shown.at.x + x.start,
+                                y: shown.at.y,
+                            };
+                            let width = px(x.end - x.start);
+                            Bounds::new(layout.to_window(at), size(width, line_height))
+                        })
+                        .collect()
+                };
                 for shown in lines {
+                    for bounds in word_bounds(shown) {
+                        window.paint_quad(fill(bounds, *word));
+                    }
                     let origin = layout.to_window(shown.at);
                     shown.line.paint(origin, line_height, window, cx);
                 }
@@ -674,7 +719,11 @@ pub(super) fn paint(
                     id: block.id,
                     bounds,
                     band: Some(*band),
+                    words: (lines.iter().flat_map(word_bounds))
+                        .map(|bounds| (bounds, *word))
+                        .collect(),
                     hatch: 0,
+                    hatch_color: None,
                     lines: (lines.iter())
                         .map(|shown| (shown.text.clone(), layout.to_window(shown.at)))
                         .collect(),
@@ -699,7 +748,7 @@ fn paint_hatch(
         return 0;
     }
     let spacing = f32::from((line_height * HATCH_SPACING).max(px(4.)));
-    let color = theme.foreground.opacity(HATCH_ALPHA);
+    let color = theme.diff_filler;
     // Each line is where x + y is the block's corner's plus a whole number
     // of spacings; those crossing what's shown.
     let corner = f32::from(bounds.left() + bounds.bottom());

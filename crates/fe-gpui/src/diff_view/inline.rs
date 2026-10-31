@@ -1,6 +1,6 @@
 //! [`DiffView`]'s inline mode (VS Code's inline diff editor): only the
 //! right side shows, each hunk's removed left rows a tinted block above the
-//! right row that takes their place. Switching modes keeps the right side's
+//! right row that takes their place, their changed words highlighted. Switching modes keeps the right side's
 //! caret, selection and top row.
 
 use fe_editor::{
@@ -9,7 +9,7 @@ use fe_editor::{
 };
 use gpui::{Context, Focusable as _, SharedString, Window, px};
 
-use super::{DiffView, caret_row, row_offset};
+use super::{DiffView, Words, caret_row, row_offset};
 use crate::commands::{HostBlock, HostBlockKind};
 
 /// Below this window width a newly opened [`DiffView`] starts inline.
@@ -59,21 +59,27 @@ pub(super) fn paired_right_row(diff: &TextDiff, row: u32) -> u32 {
     (i64::from(row) + shift).max(0) as u32
 }
 
-/// The blocks of removed rows above the right side, from the left text.
-pub(super) fn removed_blocks(diff: &TextDiff, left: &str) -> Vec<HostBlock> {
+/// The blocks of removed rows above the right side, from the left text,
+/// their changed words (`words`, the left side's) highlighted.
+pub(super) fn removed_blocks(diff: &TextDiff, left: &str, words: &Words) -> Vec<HostBlock> {
     let rows = split_rows(left);
     (diff.removed_above().into_iter().enumerate())
         .map(|(id, (above, removed))| {
-            let lines = (removed.clone())
+            let lines: Vec<_> = (removed.clone())
                 .map(|row| rows.get(row as usize).copied().unwrap_or(""))
-                .map(|line| SharedString::from(line.to_owned()))
+                .collect();
+            let words = (removed.clone().zip(&lines))
+                .map(|(row, line)| words.of_row(row, line.len()))
                 .collect();
             HostBlock {
                 above,
                 rows: removed.len() as u32,
                 kind: HostBlockKind::Lines {
-                    lines,
-                    tint: Tint::Removed,
+                    lines: (lines.into_iter())
+                        .map(|line| SharedString::from(line.to_owned()))
+                        .collect(),
+                    tint: Tint::DiffRemoved,
+                    words,
                 },
                 id: id as u64,
             }

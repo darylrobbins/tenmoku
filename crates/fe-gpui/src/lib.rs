@@ -149,6 +149,15 @@ pub struct EditorTheme {
     pub change_modified: Hsla,
     /// The git change mark where rows were deleted.
     pub change_deleted: Hsla,
+    /// A diff view's added and removed rows: the right and left side of a
+    /// modified pair too.
+    pub diff_added_row: Hsla,
+    pub diff_removed_row: Hsla,
+    /// A diff view's changed words, over their row's colour.
+    pub diff_added_word: Hsla,
+    pub diff_removed_word: Hsla,
+    /// The hatch on a diff view's filler rows.
+    pub diff_filler: Hsla,
     /// A vertical line at an indent level.
     pub indent_guide: Hsla,
     /// The indent guide of the block the caret is in.

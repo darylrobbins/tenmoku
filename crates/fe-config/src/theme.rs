@@ -99,6 +99,22 @@ colors! {
         change_modified,
         /// The mark where rows were deleted since the git base.
         change_deleted,
+        /// Behind a diff view's added rows, and the right side's rows of a
+        /// modified pair, VS Code's diffEditor.insertedLineBackground.
+        diff_added_row,
+        /// Behind a diff view's removed rows, and the left side's rows of a
+        /// modified pair, VS Code's diffEditor.removedLineBackground.
+        diff_removed_row,
+        /// Behind the changed words of a diff view's added rows, over
+        /// `diff_added_row`, VS Code's diffEditor.insertedTextBackground.
+        diff_added_word,
+        /// Behind the changed words of a diff view's removed rows, over
+        /// `diff_removed_row`, VS Code's diffEditor.removedTextBackground.
+        diff_removed_word,
+        /// The diagonal hatch on a diff view's filler rows, across from the
+        /// other side's added or removed rows, VS Code's
+        /// diffEditor.diagonalFill.
+        diff_filler,
         /// A vertical line at an indent level.
         indent_guide,
         /// The indent guide of the block the caret is in.

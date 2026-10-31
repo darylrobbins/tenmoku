@@ -110,7 +110,9 @@ fn removed_rows_above(app: &mut TestAppContext) {
             rows: 2,
             kind: HostBlockKind::Lines {
                 lines: vec!["b".into(), "c".into()],
-                tint: Tint::Removed,
+                tint: Tint::DiffRemoved,
+                // b's pair is X; c has none.
+                words: vec![vec![0..1], vec![0..1]],
             },
             id: 0,
         }]
@@ -212,7 +214,7 @@ fn narrow_start(app: &mut TestAppContext) {
 fn removed_rows_split_on_any_ending() {
     let (left, right) = ("a\rb\r\nc\nd", "a\rX\nd");
     let diff = TextDiff::new(left, right);
-    let blocks = inline::removed_blocks(&diff, left);
+    let blocks = inline::removed_blocks(&diff, left, &Words::default());
     let HostBlockKind::Lines { lines, .. } = &blocks[0].kind else {
         panic!("{:?}", blocks[0].kind)
     };

@@ -1,5 +1,6 @@
 //! A [`DiffView`] in a headless window: rows lined up with fillers and
-//! tinted by change, the left side read-only; an edit to the right side's
+//! tinted by side, removed on the left and added on the right, the left
+//! side read-only; an edit to the right side's
 //! live buffer re-diffed within a frame; scrolling followed across the
 //! sides without echo; and moving between hunks, wrapping at the ends.
 
@@ -126,8 +127,8 @@ fn aligned(app: &mut TestAppContext) {
     assert_eq!(blocks(&left, cx), [filler(3, 1, 0)]);
     assert_eq!(blocks(&right, cx), []);
     assert_eq!(row_y(&left, 3, cx), row_y(&right, 4, cx));
-    assert_eq!(tints(&left, cx), [(1..3, Tint::Modified)]);
-    assert_eq!(tints(&right, cx), [(1..4, Tint::Modified)]);
+    assert_eq!(tints(&left, cx), [(1..3, Tint::DiffRemoved)]);
+    assert_eq!(tints(&right, cx), [(1..4, Tint::DiffAdded)]);
     assert_eq!(painted_tints(&left, cx), 2);
     assert_eq!(painted_tints(&right, cx), 3);
 
@@ -140,8 +141,8 @@ fn aligned(app: &mut TestAppContext) {
     let (left, right) = (side(&diff, 0, cx), side(&diff, 1, cx));
     assert_eq!(blocks(&left, cx), [filler(2, 2, 0)]);
     assert_eq!(row_y(&left, 2, cx), row_y(&right, 4, cx));
-    assert_eq!(tints(&left, cx), [(1..2, Tint::Modified)]);
-    assert_eq!(tints(&right, cx), [(1..4, Tint::Modified)]);
+    assert_eq!(tints(&left, cx), [(1..2, Tint::DiffRemoved)]);
+    assert_eq!(tints(&right, cx), [(1..4, Tint::DiffAdded)]);
 
     // Rows only one side has: removed on the left, added on the right,
     // each across from a filler.
@@ -153,8 +154,8 @@ fn aligned(app: &mut TestAppContext) {
     let (left, right) = (side(&diff, 0, cx), side(&diff, 1, cx));
     assert_eq!(blocks(&left, cx), [filler(4, 1, 0)]);
     assert_eq!(blocks(&right, cx), [filler(1, 1, 0)]);
-    assert_eq!(tints(&left, cx), [(1..2, Tint::Removed)]);
-    assert_eq!(tints(&right, cx), [(3..4, Tint::Added)]);
+    assert_eq!(tints(&left, cx), [(1..2, Tint::DiffRemoved)]);
+    assert_eq!(tints(&right, cx), [(3..4, Tint::DiffAdded)]);
     for (left_row, right_row) in [(0, 0), (2, 1), (3, 2), (4, 4)] {
         assert_eq!(row_y(&left, left_row, cx), row_y(&right, right_row, cx));
     }
@@ -183,7 +184,7 @@ fn live_right_side(cx: &mut TestAppContext) {
     // One frame later, b and c are across from N, X, Y and Z.
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(blocks(&left, cx), [filler(3, 2, 0)]);
-    assert_eq!(tints(&right, cx), [(1..5, Tint::Modified)]);
+    assert_eq!(tints(&right, cx), [(1..5, Tint::DiffAdded)]);
     assert_eq!(painted_tints(&right, cx), 4);
     assert_eq!(row_y(&left, 3, cx), row_y(&right, 5, cx));
 
@@ -513,14 +514,14 @@ fn trailing_empty_row_tinted(app: &mut TestAppContext) {
     let right = side(&diff, 1, cx);
     assert_eq!(
         tints(&right, cx),
-        [(1..2, Tint::Added), (2..3, Tint::Added)]
+        [(1..2, Tint::DiffAdded), (2..3, Tint::DiffAdded)]
     );
     assert_eq!(painted_tints(&right, cx), 2);
     let (diff, cx) = diff_view("a\nb\n", "a", app);
     let left = side(&diff, 0, cx);
     assert_eq!(
         tints(&left, cx),
-        [(1..2, Tint::Removed), (2..3, Tint::Removed)]
+        [(1..2, Tint::DiffRemoved), (2..3, Tint::DiffRemoved)]
     );
     assert_eq!(painted_tints(&left, cx), 2);
 }

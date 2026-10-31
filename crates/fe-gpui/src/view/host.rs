@@ -25,6 +25,8 @@
 //! scroll position counts. A reserve block paints nothing: the host draws
 //! over it, where [`EditorView::reserved_blocks`] says each frame put it.
 
+use std::ops::Range;
+
 use fe_command::{Invocation, Value};
 use fe_editor::decorations::Tint;
 use fe_vim::{CommandLineKind, Ex, ExCommand, Mode, Step, VimKey, VimState};
@@ -57,10 +59,13 @@ pub enum HostBlockKind {
     /// Blank rows with a faint diagonal hatch, as a diff's filler.
     Filler,
     /// Text rows on a band tinted `tint`, one line a row, tabs expanded and
-    /// in the text colour: lines past `rows` aren't shown.
+    /// in the text colour: lines past `rows` aren't shown. `words` has, by
+    /// line, byte ranges of it highlighted in `tint` over the band, as a
+    /// diff's changed words; a line past its end has none.
     Lines {
         lines: Vec<SharedString>,
         tint: Tint,
+        words: Vec<Vec<Range<usize>>>,
     },
     /// Blank rows the view paints nothing on, for the host to draw an
     /// element over: see [`EditorView::reserved_blocks`].

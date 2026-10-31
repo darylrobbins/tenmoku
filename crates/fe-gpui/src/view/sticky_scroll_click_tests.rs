@@ -651,6 +651,7 @@ fn a_click_on_a_wide_header_scrolled_across_shows_the_caret(cx: &mut TestAppCont
             let lines = HostBlockKind::Lines {
                 lines: vec![SharedString::from("x".repeat(400))],
                 tint: Tint::Added,
+                words: Vec::new(),
             };
             let block = HostBlock {
                 above: FN + 2,

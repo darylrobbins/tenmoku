@@ -28,6 +28,15 @@ jump_label_foreground = "#ffffff"
 change_added = "#8cc79a"
 change_modified = "#9db6d6"
 change_deleted = "#d6a2a7"
+# A diff view's rows: added and removed rows faint, their changed words
+# stronger over them, and the hatch on the filler rows across from them. Green
+# and red only, never the blue of change_modified: a modified pair is removed on
+# the left and added on the right.
+diff_added_row = "#4fb16a26"
+diff_removed_row = "#d6505e1f"
+diff_added_word = "#3c9a5547"
+diff_removed_word = "#d6505e40"
+diff_filler = "#2222221f"
 # A thin line at each indent level, and the one of the caret's block.
 indent_guide = "#0000001a"
 indent_guide_active = "#00000040"

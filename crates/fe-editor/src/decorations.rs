@@ -36,6 +36,12 @@ pub enum Tint {
     Added,
     Modified,
     Removed,
+    /// A diff view's added text: its rows' band, or, as a highlight, its
+    /// changed words, each in a colour of its own rather than a fade of
+    /// one.
+    DiffAdded,
+    /// A diff view's removed text, as [`Tint::DiffAdded`].
+    DiffRemoved,
 }
 
 /// A mark in the gutter.

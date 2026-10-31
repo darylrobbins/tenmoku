@@ -58,18 +58,33 @@ impl Queried {
     }
 }
 
-/// What each [`DecorationKind`] resolves its tint to.
-fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
+/// What each [`DecorationKind`] resolves its tint to, before its kind's
+/// fade; a diff tint's band and highlight have colours of their own
+/// ([`diff_color`]).
+pub(super) fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
     match tint {
         Tint::Error => theme.error,
         Tint::Warning => theme.warning,
         Tint::Information => theme.information,
-        Tint::Added => theme.change_added,
+        Tint::Added | Tint::DiffAdded => theme.change_added,
         Tint::Modified => theme.change_modified,
-        Tint::Removed => theme.change_deleted,
+        Tint::Removed | Tint::DiffRemoved => theme.change_deleted,
         Tint::Hint => theme.hint,
         Tint::Accent => theme.cursor,
         Tint::Muted => theme.foreground,
+    }
+}
+
+/// A diff tint's own colour as a row's band or a word's highlight, painted
+/// as the theme has it, unfaded: the words' over their row's are what set
+/// them apart. `None` for any other tint or kind.
+pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind) -> Option<Hsla> {
+    match (tint, kind) {
+        (Tint::DiffAdded, DecorationKind::RowBackground) => Some(theme.diff_added_row),
+        (Tint::DiffRemoved, DecorationKind::RowBackground) => Some(theme.diff_removed_row),
+        (Tint::DiffAdded, DecorationKind::Highlight) => Some(theme.diff_added_word),
+        (Tint::DiffRemoved, DecorationKind::Highlight) => Some(theme.diff_removed_word),
+        _ => None,
     }
 }
 
@@ -182,7 +197,9 @@ impl Decorations {
                 DecorationKind::RowBackground => {
                     for row in rows {
                         let rect = whole_row(row.row, text_bounds.x, text_bounds.width);
-                        place(rect, tint.opacity(ROW_BACKGROUND_ALPHA), None);
+                        let color = diff_color(theme, decoration.tint, &decoration.kind)
+                            .unwrap_or(tint.opacity(ROW_BACKGROUND_ALPHA));
+                        place(rect, color, None);
                     }
                 }
                 DecorationKind::Gutter(GutterMark::Bar) => {
@@ -315,11 +332,9 @@ impl Decorations {
                                 }
                             };
                             if decoration.kind == DecorationKind::Highlight {
-                                place(
-                                    whole_row(row.row, left, width),
-                                    tint.opacity(HIGHLIGHT_ALPHA),
-                                    None,
-                                );
+                                let color = diff_color(theme, decoration.tint, &decoration.kind)
+                                    .unwrap_or(tint.opacity(HIGHLIGHT_ALPHA));
+                                place(whole_row(row.row, left, width), color, None);
                                 continue;
                             }
                             // Just below the baseline, as diagnostics' squiggles.
