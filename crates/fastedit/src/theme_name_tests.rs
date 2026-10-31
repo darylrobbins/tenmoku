@@ -73,8 +73,8 @@ fn name_selects_a_bundled_theme_live(cx: &mut TestAppContext) {
     cx.update(|cx| assert_eq!(kiln::platform::config::diagnostics(cx), []));
 
     // A reload re-selects, with no restart.
-    write(&user, &sender, "[theme]\nname = \"Fastedit Ember\"\n", cx);
-    let ember = palette_of("Fastedit Ember");
+    write(&user, &sender, "[theme]\nname = \"Tenmoku Ember\"\n", cx);
+    let ember = palette_of("Tenmoku Ember");
     assert_ne!(ember, dark_modern);
     assert_eq!(editor_palette(cx), ember);
 
@@ -99,7 +99,7 @@ fn name_selects_a_bundled_theme_live(cx: &mut TestAppContext) {
     assert_eq!(name_warnings(cx), warnings);
 
     // theme.dark, set too, wins the dark slot, with a warning on the name.
-    let text = "[theme]\ndark = \"builtin/fastedit-ember\"\nname = \"Dark Modern\"\n";
+    let text = "[theme]\ndark = \"builtin/tenmoku-ember\"\nname = \"Dark Modern\"\n";
     write(&user, &sender, text, cx);
     assert_eq!(editor_palette(cx), ember);
     let warnings = name_warnings(cx);
@@ -113,12 +113,12 @@ fn name_selects_a_bundled_theme_live(cx: &mut TestAppContext) {
     );
 
     // A light theme's name leaves the dark slot to theme.dark.
-    let text = "[theme]\ndark = \"builtin/fastedit-ember\"\nname = \"light\"\n";
+    let text = "[theme]\ndark = \"builtin/tenmoku-ember\"\nname = \"light\"\n";
     write(&user, &sender, text, cx);
     assert_eq!(editor_palette(cx), ember);
     assert_eq!(name_warnings(cx), []);
     cx.update(|cx| cx.set_theme_mode(ThemeMode::Light));
-    assert_eq!(editor_palette(cx), palette_of("Fastedit Light"));
+    assert_eq!(editor_palette(cx), palette_of("Tenmoku Light"));
     cx.update(|cx| cx.set_theme_mode(ThemeMode::Dark));
 
     // No name, no choice: the built-in again.

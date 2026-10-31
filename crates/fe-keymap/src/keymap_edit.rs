@@ -30,13 +30,12 @@ use crate::{
 
 /// The top of a keymap file [`write_keymap`] creates.
 pub const KEYMAP_HEADER: &str = "\
-# fastedit keymap.
+# Tenmoku keymap.
 #
 # This file reloads when you save it. Its bindings are read after the
-# built-in ones (fe-keymap's keymaps/fastedit.toml): an entry with the same
-# keys and context as a built-in binding replaces it, and one with
-# `command = \"\"` removes it. The format is described in kiln-core's
-# `keymap` module docs.
+# built-in ones: an entry with the same keys and context as a built-in
+# binding replaces it, and one with `command = \"\"` removes it. The
+# format is described in kiln-core's `keymap` module docs.
 ";
 
 /// A change to the user's keymap. Keys, contexts and commands are as

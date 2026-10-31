@@ -398,7 +398,7 @@ const PATH_FILE_VAR: &str = "FASTEDIT_LOGIN_PATH_FILE";
 /// time its `PATH` is needed, as `<shell> -l -c 'printf "%s\n" "$PATH" >>
 /// "$FASTEDIT_LOGIN_PATH_FILE"'`, and what it wrote is kept.
 ///
-/// The `PATH` goes to a file of fastedit's, not the shell's output, where
+/// The `PATH` goes to a file of Tenmoku's, not the shell's output, where
 /// a profile's or logout script's chatter could pass for it. Only that
 /// command writes there, and its final line break shows it wrote the
 /// whole `PATH`, so any `PATH` is kept as it was written: relative
@@ -455,7 +455,7 @@ impl LoginPath {
                 Ok(path) => Some(path),
                 Err(why) => {
                     log::warn!(
-                        "bare language server commands are looked up on fastedit's own PATH: \
+                        "bare language server commands are looked up on Tenmoku's own PATH: \
                          the login shell {} {why}",
                         self.shell.display()
                     );

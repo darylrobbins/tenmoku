@@ -31,9 +31,9 @@ impl PaneItem for ImageViewer {
         file_name(Some(self.path())).into()
     }
 
-    /// `logo.png — fastedit`.
+    /// `logo.png — Tenmoku`.
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — fastedit", self.tab_title(cx)).into()
+        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
     }
 
     // Never dirty, so `is_dirty`, `may_close`, `close_revision` and `save`

@@ -226,13 +226,13 @@ pub struct EditorTheme {
 }
 
 impl EditorTheme {
-    /// fastedit Dark with the default settings: the first installed font
+    /// Tenmoku Dark with the default settings: the first installed font
     /// of a preferred list.
     pub fn default_dark(cx: &App) -> Self {
         Self::from_settings(&EditorSettings::default(), cx)
     }
 
-    /// fastedit Dark with the font and metrics of `settings`.
+    /// Tenmoku Dark with the font and metrics of `settings`.
     pub fn from_settings(settings: &EditorSettings, cx: &App) -> Self {
         Self::from_palette(EditorPalette::fastedit_dark(), settings, cx)
     }

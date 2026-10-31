@@ -53,9 +53,9 @@ fn bundled_palettes() {
     );
 
     let sources = [
-        include_str!("../themes/fastedit-dark.toml"),
-        include_str!("../themes/fastedit-light.toml"),
-        include_str!("../themes/fastedit-ember.toml"),
+        include_str!("../themes/tenmoku-dark.toml"),
+        include_str!("../themes/tenmoku-light.toml"),
+        include_str!("../themes/tenmoku-ember.toml"),
     ];
     let mut captures = Vec::new();
     for source in sources {

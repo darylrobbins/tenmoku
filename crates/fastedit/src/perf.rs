@@ -1,4 +1,4 @@
-//! `fastedit --perf <file>`: measures the M2 large-file targets in a real
+//! `tenmoku --perf <file>`: measures the M2 large-file targets in a real
 //! window, prints them and quits. See PERF.md for how to read the output.
 //!
 //! 1. Open: startup phases from process start (see [`Startup`]) to the
@@ -43,7 +43,7 @@ const STALL: Duration = Duration::from_millis(50);
 /// Frames to wait for a resize to reach the editor.
 const RESIZE_FRAMES: u32 = 120;
 
-/// `println!` that ignores a closed stdout (`fastedit --perf | head`): a
+/// `println!` that ignores a closed stdout (`tenmoku --perf | head`): a
 /// panic inside a platform callback aborts the app.
 macro_rules! say {
     ($($arg:tt)*) => {{

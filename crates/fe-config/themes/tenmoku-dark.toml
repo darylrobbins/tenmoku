@@ -1,9 +1,9 @@
-# fastedit Dark: the editor's colours in the bundled dark theme, and
+# Tenmoku Dark: the editor's colours in the bundled dark theme, and
 # where any editor or syntax colour a dark theme leaves out comes from. The
 # rest of the window's colours are Kiln Dark's. Colours are "#rgb",
 # "#rrggbb" or "#rrggbbaa".
 
-name = "fastedit Dark"
+name = "Tenmoku Dark"
 appearance = "dark"
 
 [editor]

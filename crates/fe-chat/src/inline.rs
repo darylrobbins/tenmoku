@@ -44,7 +44,7 @@ pub struct InlineEditInput {
 }
 
 const SYSTEM: &str = "\
-You are the inline editor in fastedit, a code editor. The user selects code \
+You are the inline editor in Tenmoku, a code editor. The user selects code \
 in a file and gives an instruction; you answer with the code that replaces \
 the selection.
 

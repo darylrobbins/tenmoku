@@ -184,7 +184,7 @@ fn save_as_moves_the_tab(cx: &mut TestAppContext) {
             .map(|pane| pane.read(cx).title(cx))
             .collect()
     });
-    assert_eq!(titles, ["b.py — fastedit", "b.py — fastedit"]);
+    assert_eq!(titles, ["b.py — Tenmoku", "b.py — Tenmoku"]);
     // Saved there from now on.
     cx.simulate_input("y");
     cx.simulate_keystrokes("cmd-s");

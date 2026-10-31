@@ -1487,7 +1487,7 @@ fn bare_commands_use_the_login_shell_path() {
         assert!(
             logs.last().is_some_and(|log| log.contains(why)
                 && log.contains(shell.to_str().unwrap())
-                && log.contains("fastedit's own PATH")),
+                && log.contains("Tenmoku's own PATH")),
             "{logs:#?}"
         );
         // `cat` is found on this process's PATH, which servers get.

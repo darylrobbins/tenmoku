@@ -506,7 +506,7 @@ fn drags_and_keys_share_move_tab(cx: &mut TestAppContext) {
     let dirty =
         |cx: &mut VisualTestContext| editor.read_with(cx, |view, _| view.model().is_dirty());
     assert!(dirty(cx));
-    assert_eq!(cx.window_title().as_deref(), Some("a.txt ● — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("a.txt ● — Tenmoku"));
 
     cx.simulate_keystrokes("cmd-z");
     draw(cx);

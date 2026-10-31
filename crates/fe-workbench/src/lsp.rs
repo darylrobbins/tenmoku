@@ -105,7 +105,7 @@
 //!   a server still awaiting its `initialize` reply, and waits a little
 //!   longer for that. A host's launcher must honour the cancel or bound
 //!   its own launch time ([`set_server_launcher`]); one that does neither
-//!   can't be preempted, and its server may outlive fastedit.
+//!   can't be preempted, and its server may outlive Tenmoku.
 
 use std::{
     borrow::Cow,
@@ -259,7 +259,7 @@ impl Layers {
 /// progress, and the launch should then return promptly; quitting also
 /// force-stops servers that outlast [`SHUT_DOWN_WITHIN`]. A launcher that
 /// does neither can't be preempted: quitting gives up on it after
-/// [`KILL_WITHIN`] more, and its server may outlive fastedit.
+/// [`KILL_WITHIN`] more, and its server may outlive Tenmoku.
 pub fn set_server_launcher(cx: &mut App, launcher: Arc<dyn ServerLauncher>) {
     cx.set_global(Launcher(launcher));
 }
@@ -418,7 +418,7 @@ pub(crate) fn shut_down_all(cx: &mut App) {
     if quit.left > 0 {
         log::warn!(
             "quitting with {} language server(s) still running: a launcher \
-             ignored its cancel, and its server may outlive fastedit",
+             ignored its cancel, and its server may outlive Tenmoku",
             quit.left
         );
     }

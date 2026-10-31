@@ -1,4 +1,4 @@
-//! The themes fastedit bundles, which `[theme] name` selects by title or
+//! The themes Tenmoku bundles, which `[theme] name` selects by title or
 //! ID: "Dark Modern" or "Ember", say, with no theme file to copy. The
 //! titles are this table's, whatever each file's own `name` says.
 
@@ -8,7 +8,7 @@ use kiln_core::theme::{Appearance, ThemeFile};
 
 use crate::theme::EXTENSIONS;
 
-/// A theme in fastedit's binary: [`bundled_themes`].
+/// A theme in Tenmoku's binary: [`bundled_themes`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BundledTheme {
     /// What `[theme] name` calls it: "Dark Modern".
@@ -17,12 +17,12 @@ pub struct BundledTheme {
     /// "vscode-dark-modern".
     pub id: &'static str,
     pub appearance: Appearance,
-    /// The theme file, with fastedit's tables ([`EXTENSIONS`]).
+    /// The theme file, with Tenmoku's tables ([`EXTENSIONS`]).
     pub source: &'static str,
 }
 
 impl BundledTheme {
-    /// The theme file, parsed with fastedit's tables.
+    /// The theme file, parsed with Tenmoku's tables.
     pub fn file(&self) -> ThemeFile {
         let path = format!("{}.toml", self.id);
         let (file, diagnostics) = ThemeFile::parse(Path::new(&path), self.source, EXTENSIONS);
@@ -55,9 +55,9 @@ const BUNDLED: &[BundledTheme] = &[
     bundled!("Catppuccin Frappe", "catppuccin-frappe", Dark),
     bundled!("Catppuccin Macchiato", "catppuccin-macchiato", Dark),
     bundled!("Catppuccin Mocha", "catppuccin-mocha", Dark),
-    bundled!("Fastedit Dark", "fastedit-dark", Dark),
-    bundled!("Fastedit Light", "fastedit-light", Light),
-    bundled!("Fastedit Ember", "fastedit-ember", Dark),
+    bundled!("Tenmoku Dark", "tenmoku-dark", Dark),
+    bundled!("Tenmoku Light", "tenmoku-light", Light),
+    bundled!("Tenmoku Ember", "tenmoku-ember", Dark),
 ];
 
 /// Every bundled theme, in the order a list of them shows.
@@ -66,11 +66,11 @@ pub fn bundled_themes() -> &'static [BundledTheme] {
 }
 
 /// The bundled theme `name` is the title or ID of, ignoring case and the
-/// space around it. A title's "Fastedit " may be left out: "Ember".
+/// space around it. A title's "Tenmoku " may be left out: "Ember".
 pub fn find(name: &str) -> Option<&'static BundledTheme> {
     let name = name.trim();
     BUNDLED.iter().find(|theme| {
-        let short = theme.title.strip_prefix("Fastedit ");
+        let short = theme.title.strip_prefix("Tenmoku ");
         [Some(theme.title), short, Some(theme.id)]
             .into_iter()
             .flatten()

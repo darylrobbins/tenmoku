@@ -99,7 +99,7 @@ nnoremap<silent> v w
     assert_eq!(lines(&vimrc), vec![1, 2, 3, 4]);
     assert_eq!(
         vimrc.issues[0].message,
-        "vmap applies to Visual mode only: Select mode isn't in fastedit"
+        "vmap applies to Visual mode only: Select mode isn't in Tenmoku"
     );
 
     // Windows line endings, and a key-notation map.
@@ -465,7 +465,7 @@ let mapleader = \"\\<M-a>\"
 let mapleader = \"\\<C-@>\"
 ";
     let vimrc = parse_vimrc(text);
-    let select = "Select mode isn't in fastedit";
+    let select = "Select mode isn't in Tenmoku";
     assert_eq!(
         vimrc.issues,
         vec![

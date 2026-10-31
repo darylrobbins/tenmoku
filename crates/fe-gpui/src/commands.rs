@@ -32,7 +32,7 @@ use crate::{
 };
 
 // The app's command plumbing is kiln's (docs/decisions/app-framework.md);
-// fastedit keeps its paths to it.
+// Tenmoku keeps its paths to it.
 pub(crate) use kiln_platform::commands::notify_observers;
 pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
 
@@ -41,8 +41,8 @@ pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
 /// types are reachable here, as the crate root doesn't re-export them.
 pub use crate::view::{EditorViewEvent, HostBlock, HostBlockKind};
 
-/// The name app commands are titled with (`Hide fastedit`).
-const APP_NAME: &str = "fastedit";
+/// The name app commands are titled with (`Hide Tenmoku`).
+const APP_NAME: &str = fe_config::APP_NAME;
 
 thread_local! {
     /// Built once: GPUI runs on one thread, and handlers aren't `Sync`.

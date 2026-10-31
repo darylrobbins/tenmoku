@@ -171,7 +171,7 @@ fn stash_and_switch_then_pop() {
     let messages: Vec<String> = (repo.stash_list().unwrap().into_iter())
         .map(|entry| entry.message)
         .collect();
-    assert_eq!(messages, ["fastedit: before switching to feat"]);
+    assert_eq!(messages, ["tenmoku: before switching to feat"]);
 
     repo.stash_pop(0).unwrap();
     assert_eq!(read(&root, "a.txt"), "two\n");

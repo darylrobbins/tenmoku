@@ -71,7 +71,7 @@ tab_size = 8
 
 [theme]
 # The one I like.
-name = \"Fastedit Ember\"
+name = \"Tenmoku Ember\"
 ";
 
 /// The app, its settings file and the sender that reloads it.
@@ -247,7 +247,7 @@ fn theme_settings(host: &Host) -> ThemeSettings {
 fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
     let host = host(USER, cx);
     let (workbench, cx) = workbench(&host, cx);
-    let ember = palette_of("Fastedit Ember");
+    let ember = palette_of("Tenmoku Ember");
     assert_eq!(active_palette(cx), ember);
     let picker = picker(&workbench, cx);
 
@@ -265,9 +265,9 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
             row("Catppuccin Frappe", Appearance::Dark, false),
             row("Catppuccin Macchiato", Appearance::Dark, false),
             row("Catppuccin Mocha", Appearance::Dark, false),
-            row("Fastedit Dark", Appearance::Dark, false),
-            row("Fastedit Light", Appearance::Light, false),
-            row("Fastedit Ember", Appearance::Dark, true),
+            row("Tenmoku Dark", Appearance::Dark, false),
+            row("Tenmoku Light", Appearance::Light, false),
+            row("Tenmoku Ember", Appearance::Dark, true),
             row("Acme Midnight", Appearance::Dark, false),
             row("Acme Noon", Appearance::Light, false),
         ]
@@ -278,7 +278,7 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
     assert!(cx.update(|window, cx| workbench.focus_handle(cx).is_focused(window)));
     assert_eq!(
         read(&host),
-        USER.replace("\"Fastedit Ember\"", "\"Dark Modern\"")
+        USER.replace("\"Tenmoku Ember\"", "\"Dark Modern\"")
     );
     reload(&host, cx);
     let dark_modern = palette_of("Dark Modern");
@@ -302,15 +302,15 @@ fn choosing_a_bundled_theme_applies_and_keeps_it(cx: &mut TestAppContext) {
     // A light one turns the mode light too, and the dark slot keeps Dark
     // Modern.
     dispatch("theme.select", cx);
-    pick("Fastedit Light", cx);
+    pick("Tenmoku Light", cx);
     let theme = theme_settings(&host);
-    assert_eq!(theme.name.as_deref(), Some("Fastedit Light"));
+    assert_eq!(theme.name.as_deref(), Some("Tenmoku Light"));
     assert_eq!(theme.mode, ThemeModeSetting::Light);
     assert_eq!(theme.dark.as_deref(), Some("builtin/vscode-dark-modern"));
     let text = read(&host);
     assert!(text.starts_with("# My settings.\n[editor]\n# Wider.\ntab_size = 8\n"));
     reload(&host, cx);
-    assert_eq!(active_palette(cx), palette_of("Fastedit Light"));
+    assert_eq!(active_palette(cx), palette_of("Tenmoku Light"));
     cx.update(|_, cx| cx.set_theme_mode(ThemeMode::Dark));
     assert_eq!(active_palette(cx), dark_modern);
 }
@@ -343,7 +343,7 @@ fn choosing_an_installed_theme_sets_its_slot(cx: &mut TestAppContext) {
     assert!(cx.update(|window, cx| workbench.focus_handle(cx).is_focused(window)));
     assert_eq!(read(&host), USER);
     reload(&host, cx);
-    assert_eq!(active_palette(cx), palette_of("Fastedit Ember"));
+    assert_eq!(active_palette(cx), palette_of("Tenmoku Ember"));
 
     // An installed dark theme is theme.dark, by ID; the dark name that
     // would lose to it goes.
@@ -393,16 +393,16 @@ fn system_mode_turns_to_show_the_pick(cx: &mut TestAppContext) {
     // The test platform's appearance is light.
     assert_eq!(cx.update(|_, cx| cx.theme().appearance), Appearance::Light);
     dispatch("theme.select", cx);
-    assert_eq!(current(&picker, cx), ["Fastedit Light"]);
+    assert_eq!(current(&picker, cx), ["Tenmoku Light"]);
     cx.simulate_keystrokes("escape");
     draw(cx);
 
     // A bundled theme of the appearance showing leaves the mode the
     // system's.
     dispatch("theme.select", cx);
-    pick("Fastedit Light", cx);
+    pick("Tenmoku Light", cx);
     let theme = theme_settings(&host);
-    assert_eq!(theme.name.as_deref(), Some("Fastedit Light"));
+    assert_eq!(theme.name.as_deref(), Some("Tenmoku Light"));
     assert_eq!(theme.mode, ThemeModeSetting::System);
 
     // One of the other turns the mode to it, the light slot kept.
@@ -412,7 +412,7 @@ fn system_mode_turns_to_show_the_pick(cx: &mut TestAppContext) {
     let theme = theme_settings(&host);
     assert_eq!(theme.name.as_deref(), Some("Dark Modern"));
     assert_eq!(theme.mode, ThemeModeSetting::Dark);
-    assert_eq!(theme.light.as_deref(), Some("builtin/fastedit-light"));
+    assert_eq!(theme.light.as_deref(), Some("builtin/tenmoku-light"));
     reload(&host, cx);
     assert_eq!(active_palette(cx), palette_of("Dark Modern"));
 
@@ -421,7 +421,7 @@ fn system_mode_turns_to_show_the_pick(cx: &mut TestAppContext) {
     cx.update(|_, cx| kiln::ui::system_appearance_changed(cx, WindowAppearance::Dark));
     assert_eq!(cx.update(|_, cx| cx.theme().appearance), Appearance::Dark);
     dispatch("theme.select", cx);
-    assert_eq!(current(&picker, cx), ["Fastedit Dark"]);
+    assert_eq!(current(&picker, cx), ["Tenmoku Dark"]);
     pick("Acme Midnight", cx);
     let theme = theme_settings(&host);
     assert_eq!(theme.dark.as_deref(), Some("acme.night/midnight"));
@@ -454,28 +454,25 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
     };
 
     // Nothing chosen: fastedit's own.
-    assert_eq!(marked("", cx), ["Fastedit Dark"]);
+    assert_eq!(marked("", cx), ["Tenmoku Dark"]);
     // A light theme in the dark slot, which kiln refuses for it.
     assert_eq!(
         marked("[theme]\ndark = \"acme.night/noon\"\n", cx),
-        ["Fastedit Dark"]
+        ["Tenmoku Dark"]
     );
     assert_eq!(active_palette(cx), *EditorPalette::fastedit_dark());
     // A theme not installed.
     assert_eq!(
         marked("[theme]\ndark = \"acme.gone/midnight\"\n", cx),
-        ["Fastedit Dark"]
+        ["Tenmoku Dark"]
     );
     // A name nothing bundled has, then one by its short name.
-    assert_eq!(marked("[theme]\nname = \"Nope\"\n", cx), ["Fastedit Dark"]);
-    assert_eq!(
-        marked("[theme]\nname = \"ember\"\n", cx),
-        ["Fastedit Ember"]
-    );
+    assert_eq!(marked("[theme]\nname = \"Nope\"\n", cx), ["Tenmoku Dark"]);
+    assert_eq!(marked("[theme]\nname = \"ember\"\n", cx), ["Tenmoku Ember"]);
     // A light name leaves the dark slot fastedit's own.
     assert_eq!(
-        marked("[theme]\nname = \"Fastedit Light\"\n", cx),
-        ["Fastedit Dark"]
+        marked("[theme]\nname = \"Tenmoku Light\"\n", cx),
+        ["Tenmoku Dark"]
     );
     // A slot's own setting wins over the name.
     assert_eq!(

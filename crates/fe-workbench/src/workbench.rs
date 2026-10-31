@@ -59,11 +59,11 @@ use kiln_shell::{
     Workspace, layout::LayoutStore,
 };
 
-/// Shown in a tab when fastedit starts with nothing to open.
+/// Shown in a tab when Tenmoku starts with nothing to open.
 pub const WELCOME: &str = "\
-fastedit
+Tenmoku
 
-Open a folder or a file with:  cargo run -p fastedit -- path
+Open a folder or a file with:  tenmoku <path>
 
 Keys: arrows, alt-arrows (words), cmd-arrows (line/document),
 shift to select, double/triple-click, cmd-c/x/v, cmd-z/shift-cmd-z, cmd-s.
@@ -483,7 +483,8 @@ impl Workbench {
                 let template = (template.borrow().upgrade()).expect("a pane to restore beside");
                 template.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)))
             };
-            Workspace::new(KEY_CONTEXT, pane.clone(), new_pane, window, cx).title("fastedit")
+            Workspace::new(KEY_CONTEXT, pane.clone(), new_pane, window, cx)
+                .title(fe_config::APP_NAME)
         });
         let shell = workspace.read(cx).shell().clone();
         shell.update(cx, |shell, cx| {

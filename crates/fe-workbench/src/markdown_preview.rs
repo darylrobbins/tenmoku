@@ -391,7 +391,7 @@ impl PaneItem for MarkdownPreview {
     }
 
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — fastedit", self.tab_title(cx)).into()
+        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
     }
 
     /// The source's file, to tell previews with the same title apart. The

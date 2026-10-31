@@ -66,7 +66,7 @@ cargo llvm-cov -p fe-buffer --summary-only
 
 Fuzzing is separate and also by hand; see [Fuzzing](#fuzzing).
 
-Benchmarks and the `fastedit --perf` frame-timing run are described in
+Benchmarks and the `tenmoku --perf` frame-timing run are described in
 [PERF.md](PERF.md), with the latest numbers. Release binaries carry no symbols
 (`strip = "symbols"`); to profile, use the bench profile (`cargo bench`), which keeps them.
 
@@ -92,7 +92,7 @@ The script does three things:
 
 1. It installs Node from `tools/lsp/mise.toml` (`mise install`) and the npm
    servers from `tools/lsp/package-lock.json` (`npm ci --prefix tools/lsp`).
-   They are pinned there for these tests only. fastedit never installs
+   They are pinned there for these tests only. Tenmoku never installs
    servers for users.
 2. It adds the pinned toolchain's rust-analyzer (`rustup component add
    rust-analyzer`). The component isn't listed in `rust-toolchain.toml`, so
@@ -378,7 +378,7 @@ What differs from macOS:
   Linux. F10 opens it. See `docs/decisions/linux-menu-bar.md`.
 - **Screenshots** render with Metal, so their examples only run on macOS;
   `cargo test` still runs their comparison's unit tests.
-- **`fastedit --perf`** times launch from the kernel's process start to
+- **`tenmoku --perf`** times launch from the kernel's process start to
   the nearest clock tick (10 ms), and reports memory as the resident set
   and its peak: Linux has no physical footprint as macOS counts it.
 

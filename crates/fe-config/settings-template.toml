@@ -1,4 +1,4 @@
-# fastedit settings.
+# Tenmoku settings.
 #
 # This file reloads when you save it. A project's `.fastedit/settings.toml`
 # overrides it, key by key. Uncomment a line to change that setting.
@@ -98,7 +98,7 @@
 # cursor_surrounding_lines = 3
 
 # Fill the caret's row with a band. nvim's default is off and VS Code's on;
-# fastedit keeps the editor default. :set cursorline changes one editor's.
+# Tenmoku keeps the editor default. :set cursorline changes one editor's.
 # cursor_line = true
 
 [editor.minimap]
@@ -220,7 +220,7 @@
 # light = "acme.solarized/solarized-light"
 # A bundled theme by name: Dark Modern, Dark 2026, Light 2026,
 # Catppuccin Latte, Catppuccin Frappe, Catppuccin Macchiato, Catppuccin Mocha,
-# Fastedit Dark, Fastedit Light or Fastedit Ember. It's the dark or the light
+# Tenmoku Dark, Tenmoku Light or Tenmoku Ember. It's the dark or the light
 # theme, as its appearance is; dark or light, if set, wins for that one.
 # name = "Dark Modern"
 

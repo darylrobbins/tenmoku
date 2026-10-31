@@ -12,7 +12,7 @@ pub use kiln_platform::window_options::{
 };
 
 /// What the bar reads with no root folder.
-const NO_ROOT: &str = "fastedit";
+const NO_ROOT: &str = fe_config::APP_NAME;
 
 /// What a mouse down on the bar asked the window to do, under test, where
 /// the platform's window move is unimplemented.
@@ -42,7 +42,7 @@ pub(crate) fn record_requests(cx: &mut gpui::App) {
     });
 }
 
-/// The root folder's name, or `fastedit` with no root.
+/// The root folder's name, or Tenmoku with no root.
 pub(crate) fn name(root: Option<&Path>) -> SharedString {
     root.and_then(Path::file_name).map_or_else(
         || SharedString::from(NO_ROOT),

@@ -20,10 +20,10 @@ fn finds_by_title_or_id() {
         assert_eq!(found.id, "vscode-dark-modern", "{name:?}");
     }
     let ember = find("Ember").unwrap();
-    assert_eq!(ember.id, "fastedit-ember");
-    assert_eq!(find("Fastedit Ember"), Some(ember));
-    assert_eq!(find("FASTEDIT-EMBER"), Some(ember));
-    assert_eq!(find("dark").map(|theme| theme.id), Some("fastedit-dark"));
+    assert_eq!(ember.id, "tenmoku-ember");
+    assert_eq!(find("Tenmoku Ember"), Some(ember));
+    assert_eq!(find("TENMOKU-EMBER"), Some(ember));
+    assert_eq!(find("dark").map(|theme| theme.id), Some("tenmoku-dark"));
     assert_eq!(find("nope"), None);
     assert_eq!(find(""), None);
 }
@@ -56,10 +56,7 @@ fn every_entry_parses() {
         );
         assert_eq!(theme.file(), file, "{}", theme.id);
     }
-    assert_eq!(
-        find("Fastedit Light").unwrap().appearance,
-        Appearance::Light
-    );
+    assert_eq!(find("Tenmoku Light").unwrap().appearance, Appearance::Light);
 }
 
 #[test]
@@ -73,7 +70,7 @@ fn name_is_the_user_files_alone() {
     assert_eq!(store.settings().theme.name.as_deref(), Some("Dark Modern"));
 
     let project = dir.path().join("project.toml");
-    fs::write(&project, "[theme]\nname = \"Fastedit Ember\"\n").unwrap();
+    fs::write(&project, "[theme]\nname = \"Tenmoku Ember\"\n").unwrap();
     let store = SettingsStore::load(Some(user), Some(project));
     assert_eq!(store.settings().theme.name.as_deref(), Some("Dark Modern"));
     let found: Vec<_> = store

@@ -82,7 +82,7 @@ fn install_sets_menus_and_display_bindings(cx: &mut TestAppContext, bare: &mut T
     install(cx);
     let menus = cx.update(|cx| cx.get_menus()).unwrap();
     let names: Vec<_> = menus.iter().map(|menu| menu.name.to_string()).collect();
-    assert_eq!(names, ["fastedit", "File", "Edit", "View", "Go", "Window"]);
+    assert_eq!(names, ["Tenmoku", "File", "Edit", "View", "Go", "Window"]);
     let view = &menus[3];
     let search = view.items.iter().find_map(|item| match item {
         OwnedMenuItem::Action { name, action, .. } if name == "Search" => {

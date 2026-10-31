@@ -291,7 +291,7 @@ impl Terminal {
         let env = HashMap::from([
             ("TERM".to_owned(), "xterm-256color".to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
-            ("TERM_PROGRAM".to_owned(), "fastedit".to_owned()),
+            ("TERM_PROGRAM".to_owned(), "tenmoku".to_owned()),
         ]);
         let tty_options = tty::Options {
             shell: options

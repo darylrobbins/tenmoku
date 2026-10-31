@@ -155,7 +155,7 @@ fn scrolled_into_a_method_its_impl_and_its_header_are_pinned(cx: &mut TestAppCon
     // The impl's row is numbered 5 and the function's 6: one digit each.
     let numbers = band.rows.iter().map(|row| row.number.unwrap().0.size.width);
     assert!(numbers.into_iter().all(|width| width > px(0.)));
-    // No border in fastedit Dark, and its shadow under the band.
+    // No border in Tenmoku Dark, and its shadow under the band.
     assert_eq!(band.border, None);
     let shadow = band.shadow.expect("a shadow");
     assert_eq!(shadow.origin.y, band.bounds.bottom());

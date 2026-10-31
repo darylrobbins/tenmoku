@@ -1,4 +1,4 @@
-//! Standalone fastedit host: `fastedit [--perf] [folder or file]`, a
+//! Tenmoku, the standalone host: `tenmoku [--perf] [folder or file]`, a
 //! [`Workbench`] in a window.
 
 mod app_icon;
@@ -251,7 +251,7 @@ fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
         },
         None => (None, None),
     };
-    let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+    let mut options = window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
     // The active window, or the last opened where the platform has none
     // (an X server without a window manager).
     let from = cx.active_window().or_else(|| cx.windows().last().copied());
@@ -306,7 +306,7 @@ fn saved_bounds(entry: &Value) -> Option<WindowBounds> {
     kiln::shell::layout::restore_bounds(entry.get("bounds")?)
 }
 
-/// A workbench for `launch`, in fastedit's chrome for this platform, with
+/// A workbench for `launch`, in Tenmoku's chrome for this platform, with
 /// `settings`, saving its layout in `layout` and restoring `entry`.
 fn new_workbench(
     launch: Launch,
@@ -317,7 +317,7 @@ fn new_workbench(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Workbench> {
-    // fastedit's windows aren't kiln `Root`s, which do this themselves.
+    // Tenmoku's windows aren't kiln `Root`s, which do this themselves.
     window.follow_system_appearance(cx);
     let capabilities = Capabilities::current();
     let editor_settings = settings.editor.clone();
@@ -461,7 +461,7 @@ fn main() {
         let mut failed = None;
         // The launch file's read hadn't finished as the window opened.
         let mut loading = false;
-        let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+        let mut options = window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
         if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
             options.window_bounds = Some(bounds);
         }
@@ -520,7 +520,8 @@ fn main() {
                 file: None,
             };
             let theme = theme.clone();
-            let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+            let mut options =
+                window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
             if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
                 options.window_bounds = Some(bounds);
             }

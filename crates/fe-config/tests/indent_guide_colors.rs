@@ -22,9 +22,9 @@ fn bundled_themes_set_faint_guides() {
         assert!(EditorColors::KEYS.contains(&key), "{key} is a colour key");
     }
     for (name, source) in [
-        ("dark", include_str!("../themes/fastedit-dark.toml")),
-        ("light", include_str!("../themes/fastedit-light.toml")),
-        ("ember", include_str!("../themes/fastedit-ember.toml")),
+        ("dark", include_str!("../themes/tenmoku-dark.toml")),
+        ("light", include_str!("../themes/tenmoku-light.toml")),
+        ("ember", include_str!("../themes/tenmoku-ember.toml")),
     ] {
         let editor = &parse(source).extensions["editor"];
         for key in ["indent_guide", "indent_guide_active"] {

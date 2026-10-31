@@ -1663,7 +1663,7 @@ impl PaneItem for ShortcutsEditor {
     }
 
     fn window_title(&self, cx: &App) -> SharedString {
-        format!("{} — fastedit", self.tab_title(cx)).into()
+        format!("{} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
     }
 }
 

@@ -36,7 +36,7 @@
 //! row and the rows up to that one. With an operator pending, `z` takes
 //! only `j` and `k`.
 //!
-//! **Divergence from nvim.** Folds are fastedit's own, not nvim's
+//! **Divergence from nvim.** Folds are Tenmoku's own, not nvim's
 //! `foldmethod=indent`: a fold starts at the header row, the one that opens
 //! the block, where nvim's starts on the first indented row. Candidates come
 //! from `EditorHost::fold_ranges` (syntax), or with none, from the buffer's
@@ -47,7 +47,7 @@
 //! closes its fold too). `zj` and `zk` go to any candidate's first or last
 //! row, nested or not, where nvim's step through the levels at the cursor.
 //! nvim's `dzj` takes the class of the motion typed before it (its operator
-//! state isn't reset: after `j`, `dzj` is linewise); fastedit's is always
+//! state isn't reset: after `j`, `dzj` is linewise); Tenmoku's is always
 //! exclusive, as nvim's is fresh.
 
 use std::{cell::RefCell, ops::RangeInclusive};
@@ -164,7 +164,7 @@ fn register(registry: &mut Registry<VimCommands>) {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Opens or closes the editor's folds at the primary caret's row (`zo zc za zO zC zA`), every fold (`zR zM`) or those hiding the caret (`zv`), or deletes the fold at the caret (`zd`), every fold nested there (`zD`) or every fold (`zE`), which in fastedit opens them; `count` is the levels `zo`, `zc` and `za` act on. Candidates are the host's fold ranges, or indented blocks. Changes no text.",
+            "Opens or closes the editor's folds at the primary caret's row (`zo zc za zO zC zA`), every fold (`zR zM`) or those hiding the caret (`zv`), or deletes the fold at the caret (`zd`), every fold nested there (`zD`) or every fold (`zE`), which in Tenmoku opens them; `count` is the levels `zo`, `zc` and `za` act on. Candidates are the host's fold ranges, or indented blocks. Changes no text.",
         )
         .context(normal)
         .mutates_buffer(false);

@@ -536,7 +536,7 @@ impl Pane {
         }
         match self.state.active_item() {
             Some(item) => item.window_title(cx).into(),
-            None => "fastedit".into(),
+            None => fe_config::APP_NAME.into(),
         }
     }
 

@@ -2257,7 +2257,7 @@ pub(crate) fn initialize_params(spec: &ServerSpec, folder: &WorkspaceFolder) -> 
         root_uri: Some(folder.uri.clone()),
         workspace_folders: Some(vec![folder.clone()]),
         client_info: Some(ClientInfo {
-            name: "fastedit".into(),
+            name: "Tenmoku".into(),
             version: Some(env!("CARGO_PKG_VERSION").into()),
         }),
         initialization_options: spec.initialization_options.clone(),
@@ -2301,7 +2301,7 @@ fn client_capabilities() -> ClientCapabilities {
             workspace_folders: Some(true),
             configuration: Some(true),
             // No willCreate or willDelete: their edits would need the same
-            // flow for operations fastedit can't hold.
+            // flow for operations Tenmoku can't hold.
             file_operations: Some(WorkspaceFileOperationsClientCapabilities {
                 dynamic_registration: dynamic,
                 did_create: Some(true),

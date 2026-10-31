@@ -1,5 +1,5 @@
 # VS Code Light 2026: the colours of VS Code's Light 2026 theme, VS Code
-# 1.142's light counterpart to Dark 2026, on fastedit's one-colour-per-highlight-name
+# 1.142's light counterpart to Dark 2026, on Tenmoku's one-colour-per-highlight-name
 # model. The window's chrome is set through kiln's semantic token groups, not
 # per component.
 #
@@ -24,9 +24,9 @@
 # the CSS-only and language-specific scope variants. A highlight name that
 # several scopes colour differently takes the general scope's colour.
 # `keyword.control` (if, match, for, return, await) stays #AF00DB in VS Code,
-# as 2026-light.json does not override that more specific Light+ rule; fastedit
+# as 2026-light.json does not override that more specific Light+ rule; Tenmoku
 # has one `keyword` name, so control flow shows #CF222E here. Names 2026-light.json
-# and its includes do not colour (punctuation) take fastedit Light's.
+# and its includes do not colour (punctuation) take Tenmoku Light's.
 #
 # To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "light"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
@@ -146,7 +146,7 @@ minimap_gutter_added = "#587C0C"
 minimap_gutter_modified = "#005FB8"
 minimap_gutter_deleted = "#AD0707"
 
-# Every name fastedit Light colours is listed, since a theme's table is laid
+# Every name Tenmoku Light colours is listed, since a theme's table is laid
 # over Light's.
 [syntax]
 "attribute" = "#001080"

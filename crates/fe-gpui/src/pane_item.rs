@@ -842,10 +842,10 @@ impl PaneItem for EditorView {
         self.tab_tint
     }
 
-    /// `main.rs — fastedit`, `main.rs ● — fastedit` with unsaved changes.
+    /// `main.rs — Tenmoku`, `main.rs ● — Tenmoku` with unsaved changes.
     fn window_title(&self, cx: &App) -> SharedString {
         let dirty = if self.is_dirty(cx) { " ●" } else { "" };
-        format!("{}{dirty} — fastedit", self.tab_title(cx)).into()
+        format!("{}{dirty} — {}", self.tab_title(cx), fe_config::APP_NAME).into()
     }
 
     fn is_dirty(&self, _: &App) -> bool {

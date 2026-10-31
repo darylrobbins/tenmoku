@@ -139,7 +139,7 @@ fn shows_the_root_name(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn no_root_reads_fastedit(cx: &mut TestAppContext) {
+fn no_root_reads_tenmoku(cx: &mut TestAppContext) {
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -159,7 +159,7 @@ fn no_root_reads_fastedit(cx: &mut TestAppContext) {
     });
     workbench.update(cx, |workbench, cx| workbench.set_title_bar(true, cx));
     draw(cx);
-    assert_eq!(name(&workbench, cx), "fastedit");
+    assert_eq!(name(&workbench, cx), "Tenmoku");
 }
 
 #[gpui::test]

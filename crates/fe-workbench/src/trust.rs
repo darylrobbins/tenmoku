@@ -6,7 +6,7 @@
 //! ([`kiln_shell::trust`]): each window's [`Workbench`] holds a
 //! [`RootTrust`] for its root and emits [`TrustChanged`] when its trust
 //! changes. The first time a folder is opened as one (a folder launch, or
-//! Open Folder…), the workbench asks whether to trust it, in fastedit's
+//! Open Folder…), the workbench asks whether to trust it, in Tenmoku's
 //! words ([`prompt`]). `workbench.trust_folder` and
 //! `workbench.untrust_folder` change the root's decision: they're typed,
 //! `#[kiln::command]` methods of the workbench (`workbench_commands.rs`)
@@ -27,7 +27,7 @@ const QUESTION: &str = "Do you trust the authors of the files in this folder?";
 pub(crate) fn prompt() -> TrustPrompt {
     TrustPrompt::new(QUESTION, |folder| {
         format!(
-            "{}\n\nTrusting this folder lets fastedit start language servers in it, which \
+            "{}\n\nTrusting this folder lets Tenmoku start language servers in it, which \
              can run the project's code: rust-analyzer runs build scripts and proc macros. \
              Its subfolders are trusted too. Change this later with File > Trust This \
              Folder or Untrust This Folder.",

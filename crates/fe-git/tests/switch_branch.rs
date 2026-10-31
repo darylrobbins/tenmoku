@@ -132,7 +132,7 @@ fn would_overwrite() {
     let stashes = git(&root, &["stash", "list"]);
     assert_eq!(stashes.lines().count(), 1);
     assert!(
-        stashes.contains("fastedit: before switching to other"),
+        stashes.contains("tenmoku: before switching to other"),
         "{stashes}"
     );
 

@@ -506,7 +506,7 @@ const META_VERSION: u64 = 1;
 
 fn encode_meta(meta: &BackupMeta, text_hash: u64) -> io::Result<String> {
     use fmt::Write as _;
-    let mut out = String::from("# A fastedit backup of an unsaved buffer.\n");
+    let mut out = String::from("# A Tenmoku backup of an unsaved buffer.\n");
     let mut line = |key: &str, value: String| {
         let _ = writeln!(out, "{key} = {value}");
     };

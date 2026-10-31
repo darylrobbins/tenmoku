@@ -32,7 +32,7 @@ const C: RemapMode = RemapMode::CmdLine;
 const NXO: &[RemapMode] = &[N, X, O];
 const IC: &[RemapMode] = &[I, C];
 
-const SELECT: &str = "Select mode isn't in fastedit";
+const SELECT: &str = "Select mode isn't in Tenmoku";
 const LANGUAGE: &str = "language remaps aren't supported";
 const TERMINAL: &str = "terminal remaps aren't supported";
 
@@ -43,7 +43,7 @@ enum Command {
     Mapclear(&'static [RemapMode]),
     /// `vmap` and `vnoremap`: Visual only, with a note.
     VisualSelect(bool),
-    /// A mode fastedit has no remaps for, with why.
+    /// A mode Tenmoku has no remaps for, with why.
     Unsupported(&'static str),
 }
 

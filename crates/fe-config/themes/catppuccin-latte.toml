@@ -1,5 +1,5 @@
 # Catppuccin Latte: Catppuccin for VS Code's Latte flavour (light), on
-# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# Tenmoku's one-colour-per-highlight-name model. The window's chrome is set
 # through kiln's semantic token groups, not per component.
 #
 # Adapted from catppuccin/vscode's
@@ -159,7 +159,7 @@ minimap_gutter_added = "#40A02B"
 minimap_gutter_modified = "#DF8E1D"
 minimap_gutter_deleted = "#D20F39"
 
-# Every name fastedit Light colours is listed, since a theme's table is laid
+# Every name Tenmoku Light colours is listed, since a theme's table is laid
 # over Light's.
 [syntax]
 "attribute" = "#DF8E1D"

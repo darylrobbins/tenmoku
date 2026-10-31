@@ -1,9 +1,9 @@
 ---
 name: run-fastedit-linux
-description: Linux only - build, run, and drive the fastedit editor app headless under Xvfb with xdotool. Use on Linux when asked to run or start fastedit, launch the app, take a screenshot of its UI, check a change works in the real window, click or type into the editor, or run its tests. Not for macOS, where the app runs on Metal and AppKit: there, use `cargo run` and the screenshot examples in TESTING.md instead.
+description: Linux only - build, run, and drive the Tenmoku editor app (this repo, fastedit) headless under Xvfb with xdotool. Use on Linux when asked to run or start Tenmoku or fastedit, launch the app, take a screenshot of its UI, check a change works in the real window, click or type into the editor, or run its tests. Not for macOS, where the app runs on Metal and AppKit: there, use `cargo run` and the screenshot examples in TESTING.md instead.
 ---
 
-**Linux only.** fastedit is a GPUI desktop editor (`crates/fastedit`). On
+**Linux only.** Tenmoku is a GPUI desktop editor (`crates/fastedit`, binary `tenmoku`). On
 Linux, agents drive it headless with
 `.claude/skills/run-fastedit-linux/driver.sh`: Xvfb renders it
 through Mesa's software Vulkan, tmux holds the process, xdotool sends

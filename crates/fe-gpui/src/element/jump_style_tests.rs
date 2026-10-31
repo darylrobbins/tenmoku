@@ -154,18 +154,18 @@ fn editor_color(source: &str, key: &str) -> Color {
 
 #[gpui::test]
 fn backdrop_keeps_text_readable(cx: &mut TestAppContext) {
-    let source = include_str!("../../../fe-config/themes/fastedit-ember.toml");
+    let source = include_str!("../../../fe-config/themes/tenmoku-ember.toml");
     let mut ember = EditorPalette::fastedit_dark().clone();
     ember.editor.background = editor_color(source, "background");
     ember.editor.foreground = editor_color(source, "foreground");
     let palettes = [
-        ("fastedit Dark", EditorPalette::fastedit_dark().clone(), 6.0),
+        ("Tenmoku Dark", EditorPalette::fastedit_dark().clone(), 6.0),
         (
-            "fastedit Light",
+            "Tenmoku Light",
             EditorPalette::fastedit_light().clone(),
             4.59,
         ),
-        ("fastedit Ember", ember, 6.6),
+        ("Tenmoku Ember", ember, 6.6),
     ];
     for (name, palette, expected) in palettes {
         let theme =

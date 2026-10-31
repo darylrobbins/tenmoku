@@ -53,7 +53,7 @@ fn underline(range: Range<usize>, name: &str) -> Decoration {
 fn check(name: &str, cx: &mut TestAppContext) {
     cx.update(init);
     let palette = match name {
-        "fastedit-dark" => EditorPalette::fastedit_dark().clone(),
+        "tenmoku-dark" => EditorPalette::fastedit_dark().clone(),
         other => {
             let data = ThemeData::from_file(&find(other).expect("bundled").file());
             EditorPalette::for_theme(&data).0
@@ -96,7 +96,7 @@ fn painted(view: &Entity<EditorView>, offset: usize, cx: &mut VisualTestContext)
 
 #[gpui::test]
 fn a_mutable_self_underlines_in_the_colour_of_self_in_fastedit_dark(cx: &mut TestAppContext) {
-    check("fastedit-dark", cx);
+    check("tenmoku-dark", cx);
 }
 
 #[gpui::test]

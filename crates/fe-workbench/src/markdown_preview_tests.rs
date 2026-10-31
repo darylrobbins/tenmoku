@@ -152,7 +152,7 @@ fn open_preview_opens_a_read_only_preview_tab(cx: &mut TestAppContext) {
     assert_eq!(headings(&preview, cx), ["readme"]);
     assert_eq!(
         cx.window_title().as_deref(),
-        Some("Preview README.md — fastedit")
+        Some("Preview README.md — Tenmoku")
     );
 
     // The palette lists both, from the source.

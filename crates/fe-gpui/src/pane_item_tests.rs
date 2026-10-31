@@ -36,7 +36,7 @@ fn titles_and_dirty_state(cx: &mut TestAppContext) {
     assert_eq!(item.kind(), "fastedit.editor");
     cx.update(|_, cx| {
         assert_eq!(item.tab_title(cx), "main.rs");
-        assert_eq!(item.window_title(cx), "main.rs — fastedit");
+        assert_eq!(item.window_title(cx), "main.rs — Tenmoku");
         assert!(!item.is_dirty(cx));
         assert_eq!(item.path(cx), Some(path.clone()));
         assert_eq!(item.tab_icon(cx), Some(kiln_shell::Icon::FileCode));
@@ -48,7 +48,7 @@ fn titles_and_dirty_state(cx: &mut TestAppContext) {
     });
     cx.update(|_, cx| {
         assert!(item.is_dirty(cx));
-        assert_eq!(item.window_title(cx), "main.rs ● — fastedit");
+        assert_eq!(item.window_title(cx), "main.rs ● — Tenmoku");
     });
 
     // Saving writes the file and clears the dot.

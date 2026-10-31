@@ -1,6 +1,6 @@
 # Performance
 
-How fastedit is measured, and the latest numbers against the plan's targets.
+How Tenmoku is measured, and the latest numbers against the plan's targets.
 Release builds on an M3 Max MacBook Pro (120 Hz built-in display), measured
 2026-10-02 at `m2-bench`.
 
@@ -18,7 +18,7 @@ cargo bench -p fe-project --bench search          # project search over 10k file
 cargo bench -p fe-gpui --bench keystroke          # keystroke to presented frame, by stage (~20 s)
 cargo bench -p fe-gpui --bench minimap            # scroll and typing frames, minimap off and on (~5 min)
 cargo build --release -p fastedit
-target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
+target/release/tenmoku --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
 
 Close CPU-heavy jobs first (soak runs, builds): with the machine loaded,
@@ -94,7 +94,7 @@ limit, 3.5 to 10 MiB (see [tree memory](#tree-memory)), so files like the
 
 ### Background loading
 
-`fastedit <file>` opens the window at once and reads the file on a
+`tenmoku <file>` opens the window at once and reads the file on a
 background thread (`crates/fastedit/src/loader.rs`); the first frame shows
 "Loading <file>…" and the editor replaces it when the read finishes.
 Measured 2026-10-03 on the same machine, release build, three repeat runs

@@ -259,8 +259,8 @@ fn label_picked_while_labels_wait(cx: &mut TestAppContext) {
 /// The default dark and light palettes.
 fn palettes() -> [(&'static str, EditorPalette); 2] {
     [
-        ("fastedit Dark", EditorPalette::fastedit_dark().clone()),
-        ("fastedit Light", EditorPalette::fastedit_light().clone()),
+        ("Tenmoku Dark", EditorPalette::fastedit_dark().clone()),
+        ("Tenmoku Light", EditorPalette::fastedit_light().clone()),
     ]
 }
 

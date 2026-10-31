@@ -345,7 +345,7 @@ fn the_request_matches_the_record() {
             Some("server-side-fallback-2026-07-01")
         );
         let agent = sent.header("user-agent").unwrap();
-        assert_eq!(agent, format!("fastedit/{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(agent, format!("tenmoku/{}", env!("CARGO_PKG_VERSION")));
     }
     drop(sent);
 

@@ -1,5 +1,5 @@
 # Catppuccin Mocha: Catppuccin for VS Code's Mocha flavour (dark), on
-# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# Tenmoku's one-colour-per-highlight-name model. The window's chrome is set
 # through kiln's semantic token groups, not per component.
 #
 # Adapted from catppuccin/vscode's
@@ -157,7 +157,7 @@ minimap_gutter_added = "#A6E3A1"
 minimap_gutter_modified = "#F9E2AF"
 minimap_gutter_deleted = "#F38BA8"
 
-# Every name fastedit Dark colours is listed, since a theme's table is laid
+# Every name Tenmoku Dark colours is listed, since a theme's table is laid
 # over Dark's.
 [syntax]
 "attribute" = "#F9E2AF"

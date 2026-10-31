@@ -149,7 +149,7 @@
         },
         "cursor_line": {
           "default": true,
-          "description": "Fill the caret's row with the theme's active-line colour, as VS\nCode's `editor.renderLineHighlight` and vim's 'cursorline'. nvim's\ndefault is off and VS Code's on; fastedit keeps the editor default.\n`:set cursorline` changes one editor's.",
+          "description": "Fill the caret's row with the theme's active-line colour, as VS\nCode's `editor.renderLineHighlight` and vim's 'cursorline'. nvim's\ndefault is off and VS Code's on; Tenmoku keeps the editor default.\n`:set cursorline` changes one editor's.",
           "type": "boolean"
         },
         "cursor_surrounding_lines": {
@@ -370,7 +370,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Set on top of fastedit's environment.",
+          "description": "Set on top of Tenmoku's environment.",
           "type": [
             "object",
             "null"
@@ -380,7 +380,7 @@
           "description": "Sent with `initialize`."
         },
         "languages": {
-          "description": "The languages it serves, by fastedit's names: rust, python,\njavascript, typescript, tsx and so on. A file gets the first enabled\nserver listing its language.",
+          "description": "The languages it serves, by Tenmoku's names: rust, python,\njavascript, typescript, tsx and so on. A file gets the first enabled\nserver listing its language.",
           "items": {
             "type": "string"
           },
@@ -398,7 +398,7 @@
               "type": "null"
             }
           ],
-          "description": "How fastedit tells the server is ready."
+          "description": "How Tenmoku tells the server is ready."
         },
         "ready_ignores_progress": {
           "description": "Work-done progress token prefixes that don't hold back readiness.",
@@ -820,7 +820,7 @@
           "description": "dark, light, or system to follow the system's appearance. Your own\ncolours go in theme.toml beside this file; its appearance says whether\nit replaces the dark or the light theme."
         },
         "name": {
-          "description": "A bundled theme by its title or ID, as in \"Dark Modern\" or \"Fastedit\nEmber\": the dark or the light theme, as its appearance is. theme.dark\nor theme.light, if set, wins for that one.",
+          "description": "A bundled theme by its title or ID, as in \"Dark Modern\" or \"Tenmoku\nEmber\": the dark or the light theme, as its appearance is. theme.dark\nor theme.light, if set, wins for that one.",
           "minLength": 1,
           "type": [
             "string",
@@ -1097,7 +1097,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "fastedit's settings, as written in `settings.toml`.",
+  "description": "Tenmoku's settings, as written in `settings.toml`.",
   "properties": {
     "chat": {
       "$ref": "#/$defs/ChatSettings",

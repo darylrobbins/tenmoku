@@ -374,7 +374,7 @@ impl Workbench {
                     .then(|| target.file_name()?.to_str())
                     .flatten()
                     .ok_or_else(|| {
-                        format!("fastedit can't move {display} to another folder ({to_display})")
+                        format!("Tenmoku can't move {display} to another folder ({to_display})")
                     })?;
                 let existing = match fs::symlink_metadata(&target) {
                     Ok(meta) => Some(meta),
@@ -437,7 +437,7 @@ impl Workbench {
                     .map_err(|error| format!("can't move {display} to the Trash: {error}"))?;
                 self.lsp_files_deleted(&[(file.path.clone(), folder)]);
             }
-            _ => return Err(format!("{display}: an edit fastedit doesn't know")),
+            _ => return Err(format!("{display}: an edit Tenmoku doesn't know")),
         }
         Ok(Made::Done)
     }
@@ -552,7 +552,7 @@ impl Workbench {
                 })
             }
             // Operations are made by `apply_operation`.
-            _ => Err(format!("{display}: an edit fastedit doesn't know")),
+            _ => Err(format!("{display}: an edit Tenmoku doesn't know")),
         }
     }
 

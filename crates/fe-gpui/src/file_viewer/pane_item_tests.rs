@@ -183,7 +183,7 @@ fn is_a_read_only_pane_item(cx: &mut TestAppContext) {
     assert_eq!(item.kind(), "fastedit.file_viewer");
     cx.update(|window, cx| {
         assert_eq!(item.tab_title(cx), "big.log");
-        assert_eq!(item.window_title(cx), "big.log — fastedit");
+        assert_eq!(item.window_title(cx), "big.log — Tenmoku");
         assert_eq!(item.path(cx), Some(path.clone()));
         assert!(!item.is_dirty(cx));
         assert!(item.save(window, cx).is_none(), "nothing to save");

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drives the fastedit app headless on Linux: Xvfb renders it (Mesa's
+# Drives the Tenmoku app headless on Linux: Xvfb renders it (Mesa's
 # software Vulkan), tmux holds it, xdotool types and clicks, and the
 # framebuffer becomes a PNG. Run from the repo root. See SKILL.md.
 #
@@ -23,7 +23,7 @@ RUN_DIR="${FE_RUN_DIR:-/tmp/fastedit-run}"
 SESSION="${FE_SESSION:-fastedit}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-BIN="${FE_BIN:-$REPO/target/debug/fastedit}"
+BIN="${FE_BIN:-$REPO/target/debug/tenmoku}"
 FB="$RUN_DIR/fb/Xvfb_screen0"
 LOG="$RUN_DIR/app.log"
 export PATH="$HOME/.cargo/bin:$PATH"

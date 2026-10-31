@@ -1,5 +1,5 @@
 # Catppuccin Frappe: Catppuccin for VS Code's Frappé flavour (dark), on
-# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# Tenmoku's one-colour-per-highlight-name model. The window's chrome is set
 # through kiln's semantic token groups, not per component.
 # Upstream spells the flavour Frappé; the title here is plain ASCII.
 #
@@ -158,7 +158,7 @@ minimap_gutter_added = "#A6D189"
 minimap_gutter_modified = "#E5C890"
 minimap_gutter_deleted = "#E78284"
 
-# Every name fastedit Dark colours is listed, since a theme's table is laid
+# Every name Tenmoku Dark colours is listed, since a theme's table is laid
 # over Dark's.
 [syntax]
 "attribute" = "#E5C890"

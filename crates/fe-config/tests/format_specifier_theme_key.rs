@@ -6,9 +6,9 @@ use fe_config::theme::EXTENSIONS;
 use kiln_core::theme::ThemeFile;
 
 const THEMES: [(&str, &str); 6] = [
-    ("dark", include_str!("../themes/fastedit-dark.toml")),
-    ("light", include_str!("../themes/fastedit-light.toml")),
-    ("ember", include_str!("../themes/fastedit-ember.toml")),
+    ("dark", include_str!("../themes/tenmoku-dark.toml")),
+    ("light", include_str!("../themes/tenmoku-light.toml")),
+    ("ember", include_str!("../themes/tenmoku-ember.toml")),
     (
         "vscode-dark-modern",
         include_str!("../themes/vscode-dark-modern.toml"),

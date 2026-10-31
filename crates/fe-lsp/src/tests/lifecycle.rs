@@ -92,7 +92,7 @@ fn initialize_advertises_m4_capabilities() {
         params["workspaceFolders"],
         json!([{ "uri": uri, "name": "project" }])
     );
-    assert_eq!(params["clientInfo"]["name"], "fastedit");
+    assert_eq!(params["clientInfo"]["name"], "Tenmoku");
     assert_eq!(
         params["initializationOptions"],
         json!({ "cargo": { "features": "all" } })

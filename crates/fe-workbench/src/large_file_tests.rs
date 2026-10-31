@@ -258,7 +258,7 @@ fn viewer_and_editor_tabs_together(cx: &mut TestAppContext) {
     assert!(cx.update(|window, cx| viewer.focus_handle(cx).is_focused(window)));
     assert_eq!(
         pane.read_with(cx, |pane, cx| pane.title(cx)),
-        "big.log — fastedit"
+        "big.log — Tenmoku"
     );
     run("workbench.previous_tab", cx);
     assert_eq!(active(cx), Some(0));

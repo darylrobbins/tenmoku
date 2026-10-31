@@ -1,11 +1,11 @@
 # Shell integration in the terminal
 
 Shells can tell the terminal two things with standard escape sequences:
-where they are, and where each prompt starts. fastedit's terminal uses both
-once your shell sends them. fastedit doesn't inject anything into your shell:
+where they are, and where each prompt starts. Tenmoku's terminal uses both
+once your shell sends them. Tenmoku doesn't inject anything into your shell:
 add the snippet for your shell below to its startup file.
 
-## What fastedit does with them
+## What Tenmoku does with them
 
 - **OSC 7, the working directory** (`ESC ] 7 ; file://<host>/<path> BEL`,
   the path percent-encoded). `terminal.new` starts the new terminal in the
@@ -30,7 +30,7 @@ add the snippet for your shell below to its startup file.
 (command end) are read but not used yet. The snippets send them anyway so
 later features work without changing your setup.
 
-Each snippet checks `TERM_PROGRAM`, which fastedit sets to `fastedit` in its
+Each snippet checks `TERM_PROGRAM`, which Tenmoku sets to `tenmoku` in its
 terminals, so other terminals don't get these sequences.
 
 ## zsh
@@ -39,9 +39,9 @@ Add at the end of `~/.zshrc`, after anything that sets your prompt or adds
 prompt hooks:
 
 ```zsh
-if [[ $TERM_PROGRAM == fastedit ]]; then
+if [[ $TERM_PROGRAM == tenmoku ]]; then
   # The working directory, percent-encoded, as OSC 7.
-  __fastedit_osc7() {
+  __tenmoku_osc7() {
     local LC_ALL=C url= ch i
     for (( i = 1; i <= ${#PWD}; i++ )); do
       ch=${PWD[i]}
@@ -55,30 +55,30 @@ if [[ $TERM_PROGRAM == fastedit ]]; then
   }
   # The end of the last command. It goes first among the precmd hooks, to
   # see the command's exit status, and passes the status on.
-  __fastedit_command_end() {
+  __tenmoku_command_end() {
     local code=$?
-    if [[ -n $__fastedit_ran ]]; then
+    if [[ -n $__tenmoku_ran ]]; then
       printf '\e]133;D;%s\a' "$code"
-      __fastedit_ran=
+      __tenmoku_ran=
     fi
     return $code
   }
   # The start of the prompt. It goes last, after any other hook's output.
-  __fastedit_prompt_start() {
+  __tenmoku_prompt_start() {
     local code=$?
     printf '\e]133;A\a'
     return $code
   }
   # The start of the command's output.
-  __fastedit_preexec() {
-    __fastedit_ran=1
+  __tenmoku_preexec() {
+    __tenmoku_ran=1
     printf '\e]133;C\a'
   }
   autoload -Uz add-zsh-hook
-  precmd_functions=(__fastedit_command_end $precmd_functions __fastedit_prompt_start)
-  add-zsh-hook preexec __fastedit_preexec
-  add-zsh-hook chpwd __fastedit_osc7
-  __fastedit_osc7
+  precmd_functions=(__tenmoku_command_end $precmd_functions __tenmoku_prompt_start)
+  add-zsh-hook preexec __tenmoku_preexec
+  add-zsh-hook chpwd __tenmoku_osc7
+  __tenmoku_osc7
   # The end of the prompt, where the command line starts.
   PS1+='%{'$'\e]133;B\a''%}'
 fi
@@ -93,9 +93,9 @@ Add at the end of `~/.bashrc`, after anything that sets `PS1` or `PROMPT_COMMAND
 (`PS0` needs bash 4.4 or later):
 
 ```bash
-if [ "$TERM_PROGRAM" = fastedit ]; then
+if [ "$TERM_PROGRAM" = tenmoku ]; then
   # The working directory, percent-encoded, as OSC 7.
-  __fastedit_osc7() {
+  __tenmoku_osc7() {
     local LC_ALL=C url= ch i
     for (( i = 0; i < ${#PWD}; i++ )); do
       ch=${PWD:i:1}
@@ -109,17 +109,17 @@ if [ "$TERM_PROGRAM" = fastedit ]; then
   # The end of the last command, and the directory. It runs first in
   # PROMPT_COMMAND, to see the command's exit status, and passes the
   # status on to the rest.
-  __fastedit_command_end() {
+  __tenmoku_command_end() {
     local code=$?
-    if [ -n "$__fastedit_started" ]; then
+    if [ -n "$__tenmoku_started" ]; then
       printf '\e]133;D;%s\a' "$code"
     fi
-    __fastedit_started=1
-    __fastedit_osc7
+    __tenmoku_started=1
+    __tenmoku_osc7
     return "$code"
   }
   # The start of the prompt. It runs last, after any other output.
-  __fastedit_prompt_start() {
+  __tenmoku_prompt_start() {
     local code=$?
     printf '\e]133;A\a'
     return "$code"
@@ -127,9 +127,9 @@ if [ "$TERM_PROGRAM" = fastedit ]; then
   # Around whatever runs there already: an array (bash 5.1 and later) or a
   # string.
   if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
-    PROMPT_COMMAND=(__fastedit_command_end "${PROMPT_COMMAND[@]}" __fastedit_prompt_start)
+    PROMPT_COMMAND=(__tenmoku_command_end "${PROMPT_COMMAND[@]}" __tenmoku_prompt_start)
   else
-    PROMPT_COMMAND="__fastedit_command_end"$'\n'"$PROMPT_COMMAND"$'\n'"__fastedit_prompt_start"
+    PROMPT_COMMAND="__tenmoku_command_end"$'\n'"$PROMPT_COMMAND"$'\n'"__tenmoku_prompt_start"
   fi
   # The end of the prompt, where the command line starts.
   PS1+='\[\e]133;B\a\]'
@@ -144,18 +144,18 @@ fish 4.0 and later send OSC 133 themselves. Add OSC 7 in
 `~/.config/fish/config.fish`:
 
 ```fish
-if test "$TERM_PROGRAM" = fastedit
-    function __fastedit_osc7 --on-variable PWD
+if test "$TERM_PROGRAM" = tenmoku
+    function __tenmoku_osc7 --on-variable PWD
         printf '\e]7;file://%s%s\a' $hostname (string escape --style=url -- $PWD)
     end
-    __fastedit_osc7
+    __tenmoku_osc7
 end
 ```
 
 ## Remote shells
 
 A shell on another machine over ssh reports its own path, with that machine's
-name as the host. fastedit doesn't check the host. It uses the path only when
+name as the host. Tenmoku doesn't check the host. It uses the path only when
 it is a directory on this machine, so `terminal.new` from an ssh session
 usually starts in the project root. If the remote shell has the snippet,
 prompt marks work there as they do locally. The remote side needs

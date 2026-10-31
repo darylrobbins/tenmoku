@@ -1,4 +1,4 @@
-# fastedit's built-in menu bar, for every platform: native on macOS, drawn in
+# Tenmoku's built-in menu bar, for every platform: native on macOS, drawn in
 # the window elsewhere. A host replaces it with a table of its own, or
 # extends it with a layer: see kiln-core's `menu` module for the format.
 # Each item's shortcut is whatever the active keymap runs it with.
@@ -9,11 +9,11 @@
 # (`DEFAULT_MACOS_MENUS`, `DEFAULT_LINUX_MENUS`).
 
 [[menus]]
-name = "fastedit"
+name = "Tenmoku"
 platform = "macos"
 
 [[menus.items]]
-title = "Hide fastedit"
+title = "Hide Tenmoku"
 command = "app.hide"
 
 [[menus.items]]
@@ -50,7 +50,7 @@ system = "services"
 separator = true
 
 [[menus.items]]
-title = "Quit fastedit"
+title = "Quit Tenmoku"
 command = "app.quit"
 
 [[menus]]

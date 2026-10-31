@@ -6,7 +6,7 @@ use std::path::Path;
 use fe_config::{Color, EditorPalette, theme::EXTENSIONS};
 use kiln_core::theme::{ThemeData, ThemeFile};
 
-const EMBER: &str = include_str!("../themes/fastedit-ember.toml");
+const EMBER: &str = include_str!("../themes/tenmoku-ember.toml");
 const DARK_2026: &str = include_str!("../themes/vscode-2026-dark.toml");
 const LIGHT_2026: &str = include_str!("../themes/vscode-2026-light.toml");
 
@@ -66,9 +66,9 @@ fn hue(color: Color) -> f64 {
 #[test]
 fn labels_readable_in_bundled_themes() {
     let palettes = [
-        ("fastedit Dark", EditorPalette::fastedit_dark().clone()),
-        ("fastedit Light", EditorPalette::fastedit_light().clone()),
-        ("fastedit Ember", ember()),
+        ("Tenmoku Dark", EditorPalette::fastedit_dark().clone()),
+        ("Tenmoku Light", EditorPalette::fastedit_light().clone()),
+        ("Tenmoku Ember", ember()),
         ("VS Code Dark 2026", palette(DARK_2026)),
         ("VS Code Light 2026", palette(LIGHT_2026)),
     ];

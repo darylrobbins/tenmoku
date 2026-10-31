@@ -51,9 +51,9 @@ fn every_bundled_theme_sets_vscode_s_sticky_scroll_colours() {
             [0x24273AFF, 0, 0x181926FF, 0x363A4FFF],
         ),
         ("catppuccin-mocha", [0x1E1E2EFF, 0, 0x11111BFF, 0x313244FF]),
-        ("fastedit-dark", [0x16181DFF, 0, 0x000000FF, 0x2A2D2EFF]),
-        ("fastedit-ember", [0x1C1814FF, 0, 0x000000FF, 0x2A2D2EFF]),
-        ("fastedit-light", [0xFFFFFFFF, 0, 0xDDDDDDFF, 0xF0F0F0FF]),
+        ("tenmoku-dark", [0x16181DFF, 0, 0x000000FF, 0x2A2D2EFF]),
+        ("tenmoku-ember", [0x1C1814FF, 0, 0x000000FF, 0x2A2D2EFF]),
+        ("tenmoku-light", [0xFFFFFFFF, 0, 0xDDDDDDFF, 0xF0F0F0FF]),
     ];
     assert_eq!(bundled_themes().len(), want.len());
     for (id, want) in want {

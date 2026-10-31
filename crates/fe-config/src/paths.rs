@@ -17,17 +17,21 @@ pub const THEME_FILE: &str = "theme.toml";
 /// The user's vimrc's name, beside [`SETTINGS_FILE`].
 pub const VIMRC_FILE: &str = "vimrc";
 
-/// fastedit, as kiln knows it.
+/// The name people see: the app menu, window titles and prompts.
+pub const APP_NAME: &str = "Tenmoku";
+
+/// Tenmoku, as kiln knows it. Its reverse DNS and short name still key the
+/// config and state directories as `fastedit`.
 pub fn app_id() -> AppId {
-    AppId::new("dev.fastedit.fastedit", "fastedit", "fastedit")
+    AppId::new("dev.fastedit.fastedit", "fastedit", APP_NAME)
 }
 
-/// fastedit's directories, reading variables through `env`.
+/// Tenmoku's directories, reading variables through `env`.
 pub fn app_paths_from(env: impl Fn(&str) -> Option<OsString>) -> AppPaths {
     AppPaths::resolve(&app_id(), PathStyle::Xdg, Os::current(), env)
 }
 
-/// fastedit's directories, from the process environment.
+/// Tenmoku's directories, from the process environment.
 pub fn app_paths() -> AppPaths {
     app_paths_from(|name| std::env::var_os(name))
 }

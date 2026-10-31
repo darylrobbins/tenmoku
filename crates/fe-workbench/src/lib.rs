@@ -196,7 +196,7 @@ fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
 /// The commands the palette doesn't get from the typed ones: the
 /// workbench's registries' and the editor's. It lists each where its
 /// context holds.
-fn command_list() -> Vec<CommandMeta> {
+pub fn command_list() -> Vec<CommandMeta> {
     let typed = kiln::recorded_catalog("fe_workbench");
     let mut list: Vec<CommandMeta> = (search_panel::registry().commands())
         .chain(commit_box_registry().commands())

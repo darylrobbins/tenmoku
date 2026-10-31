@@ -187,7 +187,7 @@ fn after_delay_saves(cx: &mut TestAppContext) {
     wait(1, cx);
     assert_eq!(on_disk(&a), "xone\n");
     assert!(!dirty(&editor, cx));
-    assert_eq!(cx.window_title().as_deref(), Some("a.txt — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("a.txt — Tenmoku"));
     assert_eq!(saves(&workbench, cx), 1);
 
     // Each edit puts the save off again.

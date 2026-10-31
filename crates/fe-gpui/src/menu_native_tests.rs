@@ -164,7 +164,7 @@ fn a_window_item_is_dropped_once_its_window_closes(cx: &mut TestAppContext) {
 
     // An app item still runs, windowless.
     let a = open(cx);
-    choose_as_a_closes(cx, &command("fastedit", "app.quit"), a, b);
+    choose_as_a_closes(cx, &command("Tenmoku", "app.quit"), a, b);
     let quit = Invocation::of("app.quit").unwrap().source(Source::Menu);
     assert_eq!(*seen.borrow(), [quit]);
 }

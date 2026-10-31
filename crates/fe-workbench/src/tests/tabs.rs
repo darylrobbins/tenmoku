@@ -73,7 +73,7 @@ fn clicking_a_file_opens_a_focused_tab(cx: &mut TestAppContext) {
     });
     let focused = cx.update(|window, cx| editor.focus_handle(cx).is_focused(window));
     assert!(focused);
-    assert_eq!(cx.window_title().as_deref(), Some("b.rs — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("b.rs — Tenmoku"));
 }
 
 #[gpui::test]
@@ -123,12 +123,12 @@ fn switching_and_closing_tabs(cx: &mut TestAppContext) {
     workbench.read_with(cx, |workbench, cx| {
         assert!(workbench.active_editor(cx).is_none(), "the empty pane");
     });
-    assert_eq!(cx.window_title().as_deref(), Some("fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("Tenmoku"));
 
     // A dirty tab stays open.
     click_row(&panel, "c.md", cx);
     cx.simulate_input("x");
-    assert_eq!(cx.window_title().as_deref(), Some("c.md ● — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("c.md ● — Tenmoku"));
     cx.simulate_keystrokes("cmd-w");
     assert_eq!(tabs(&workbench, cx), (vec![paths[2].clone()], Some(0)));
 }

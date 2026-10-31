@@ -197,8 +197,8 @@ fn showing(settings: &ThemeSettings, appearance: Appearance, installed: &[ThemeI
     };
     chosen.filter(taken).unwrap_or_else(|| {
         let own = match appearance {
-            Appearance::Dark => "fastedit-dark",
-            Appearance::Light => "fastedit-light",
+            Appearance::Dark => "tenmoku-dark",
+            Appearance::Light => "tenmoku-light",
         };
         kiln::extensions::builtin_theme_id(own)
     })

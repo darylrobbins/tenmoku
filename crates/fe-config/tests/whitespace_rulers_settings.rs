@@ -59,9 +59,9 @@ fn every_bundled_theme_sets_the_whitespace_and_ruler_colours() {
         assert!(EditorColors::KEYS.contains(&key), "{key} is a colour key");
     }
     for (name, source) in [
-        ("dark", include_str!("../themes/fastedit-dark.toml")),
-        ("light", include_str!("../themes/fastedit-light.toml")),
-        ("ember", include_str!("../themes/fastedit-ember.toml")),
+        ("dark", include_str!("../themes/tenmoku-dark.toml")),
+        ("light", include_str!("../themes/tenmoku-light.toml")),
+        ("ember", include_str!("../themes/tenmoku-ember.toml")),
         ("2026 dark", include_str!("../themes/vscode-2026-dark.toml")),
         (
             "2026 light",

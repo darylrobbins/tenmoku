@@ -18,7 +18,7 @@ use crate::provider::{ApiMessage, CacheControl, ChatRequest, Effort, Role, Syste
 /// The chat's instructions. Versioned in code and never built at runtime:
 /// changing it empties every chat's cache.
 pub const SYSTEM_PROMPT: &str = "\
-You are the AI assistant in fastedit, a code editor. You help the user \
+You are the AI assistant in Tenmoku, a code editor. You help the user \
 understand, write, review and change the code in the project they have open.
 
 Each user message may begin with context the editor attached, before the \

@@ -1,12 +1,12 @@
-//! fastedit Ember, the warm dark theme file a user can copy to `theme.toml`.
+//! Tenmoku Ember, the warm dark theme file a user can copy to `theme.toml`.
 
 use std::path::Path;
 
 use fe_config::{EditorColors, EditorPalette, theme::EXTENSIONS};
 use kiln_core::theme::{Appearance, DARK_SOURCE, ThemeData, ThemeFile};
 
-const EMBER: &str = include_str!("../themes/fastedit-ember.toml");
-const DARK: &str = include_str!("../themes/fastedit-dark.toml");
+const EMBER: &str = include_str!("../themes/tenmoku-ember.toml");
+const DARK: &str = include_str!("../themes/tenmoku-dark.toml");
 
 fn parse(source: &str) -> ThemeFile {
     let (file, diagnostics) = ThemeFile::parse(Path::new("theme.toml"), source, EXTENSIONS);
@@ -17,7 +17,7 @@ fn parse(source: &str) -> ThemeFile {
 #[test]
 fn parses_cleanly() {
     let ember = parse(EMBER);
-    assert_eq!(ember.name.as_deref(), Some("fastedit Ember"));
+    assert_eq!(ember.name.as_deref(), Some("Tenmoku Ember"));
     assert_eq!(ember.appearance, Some(Appearance::Dark));
 
     let kiln_dark = parse(DARK_SOURCE);

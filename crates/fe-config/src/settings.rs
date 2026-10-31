@@ -23,7 +23,7 @@ use crate::{
     layers::Layer,
 };
 
-/// fastedit's settings, as written in `settings.toml`.
+/// Tenmoku's settings, as written in `settings.toml`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Settings {
@@ -202,7 +202,7 @@ pub struct ThemeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub light: Option<String>,
-    /// A bundled theme by its title or ID, as in "Dark Modern" or "Fastedit
+    /// A bundled theme by its title or ID, as in "Dark Modern" or "Tenmoku
     /// Ember": the dark or the light theme, as its appearance is. theme.dark
     /// or theme.light, if set, wins for that one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -551,7 +551,7 @@ pub struct EditorSettings {
     pub cursor_surrounding_lines: u32,
     /// Fill the caret's row with the theme's active-line colour, as VS
     /// Code's `editor.renderLineHighlight` and vim's 'cursorline'. nvim's
-    /// default is off and VS Code's on; fastedit keeps the editor default.
+    /// default is off and VS Code's on; Tenmoku keeps the editor default.
     /// `:set cursorline` changes one editor's.
     pub cursor_line: bool,
 }
@@ -869,15 +869,15 @@ pub struct LspServerSettings {
     pub command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
-    /// Set on top of fastedit's environment.
+    /// Set on top of Tenmoku's environment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<BTreeMap<String, String>>,
-    /// The languages it serves, by fastedit's names: rust, python,
+    /// The languages it serves, by Tenmoku's names: rust, python,
     /// javascript, typescript, tsx and so on. A file gets the first enabled
     /// server listing its language.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub languages: Option<Vec<String>>,
-    /// How fastedit tells the server is ready.
+    /// How Tenmoku tells the server is ready.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readiness: Option<LspReadiness>,
     /// Work-done progress token prefixes that don't hold back readiness.
@@ -950,7 +950,7 @@ fn sorted(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-/// What a reload changed: kiln's, for fastedit's [`Settings`].
+/// What a reload changed: kiln's, for Tenmoku's [`Settings`].
 pub type SettingsEvent = kiln_core::SettingsEvent<Settings>;
 
 /// The effective settings: built-in defaults, then the user file, then the
@@ -963,7 +963,7 @@ pub type SettingsEvent = kiln_core::SettingsEvent<Settings>;
 /// off ([`LspSettings`]); [`trusted_lsp`] applies them all, for a trusted
 /// root.
 ///
-/// kiln-core's typed store for [`Settings`], with fastedit's checks:
+/// kiln-core's typed store for [`Settings`], with Tenmoku's checks:
 /// [`SettingsStore::into_inner`] gives it to kiln's config service.
 pub struct SettingsStore(kiln_core::SettingsStore<Settings>);
 
@@ -1011,7 +1011,7 @@ impl SettingsStore {
     }
 }
 
-/// How fastedit's settings files are checked: against [`SCHEMA`] with each
+/// How Tenmoku's settings files are checked: against [`SCHEMA`] with each
 /// server listed ([`schema_for`]), a project's `lsp` keys narrowed
 /// ([`narrow_lsp`]) and its `theme` and `extensions` dropped
 /// ([`drop_theme`], [`drop_extensions`]).

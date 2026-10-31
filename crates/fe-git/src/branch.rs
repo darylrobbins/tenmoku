@@ -148,7 +148,7 @@ impl Repo {
     /// Stashes local changes, untracked files included, before switching
     /// to `name`.
     fn stash(&self, name: &str) -> Result<(), SwitchError> {
-        let message = format!("fastedit: before switching to {name}");
+        let message = format!("tenmoku: before switching to {name}");
         let args: Vec<OsString> = ["stash", "push", "--include-untracked", "-m"]
             .map(OsString::from)
             .into_iter()

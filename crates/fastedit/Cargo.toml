@@ -1,11 +1,16 @@
 [package]
 name = "fastedit"
-description = "Standalone fastedit host."
+description = "Tenmoku, the standalone editor."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+# The package keeps its name; the binary it builds and installs is tenmoku.
+[[bin]]
+name = "tenmoku"
+path = "src/main.rs"
 
 [dependencies]
 fe-buffer.workspace = true

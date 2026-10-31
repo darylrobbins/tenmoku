@@ -161,7 +161,7 @@ fn split_right_shares_the_buffer(cx: &mut TestAppContext) {
     assert_eq!(text(&right, 0, cx), "xalpha\n");
     assert_eq!(text(&left, 0, cx), "xalpha\n");
     assert!(dirty(&left, 0, cx) && dirty(&right, 0, cx));
-    assert_eq!(cx.window_title().as_deref(), Some("a.txt ● — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("a.txt ● — Tenmoku"));
 
     // And the other way, each view keeping its own caret.
     click_pane(&left, cx);
@@ -413,12 +413,12 @@ fn the_window_title_follows_the_active_pane(cx: &mut TestAppContext) {
     click_row(&panel, "a.txt", cx);
     cx.simulate_keystrokes("cmd-\\");
     click_row(&panel, "b.rs", cx);
-    assert_eq!(cx.window_title().as_deref(), Some("b.rs — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("b.rs — Tenmoku"));
     let [left, _] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("two panes");
 
     click_pane(&left, cx);
     assert_eq!(active(&workbench, cx), left);
-    assert_eq!(cx.window_title().as_deref(), Some("a.txt — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("a.txt — Tenmoku"));
 }
 
 #[gpui::test]
@@ -465,7 +465,7 @@ fn reads_land_in_the_pane_that_asked(cx: &mut TestAppContext) {
     });
     assert_eq!(active(&workbench, cx), left);
     assert!(editor_focused(&left, cx));
-    assert_eq!(cx.window_title().as_deref(), Some("c.md — fastedit"));
+    assert_eq!(cx.window_title().as_deref(), Some("c.md — Tenmoku"));
     cx.simulate_keystrokes("cmd-w");
     assert_eq!(tabs(&left, cx).0, ["a.txt"]);
 }

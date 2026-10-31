@@ -57,7 +57,7 @@ fn ids(bar: &MenuBar, menu: &str) -> Vec<String> {
 fn default_menus_parse() {
     let bar = default_bar();
     let names: Vec<_> = bar.menus.iter().map(|menu| menu.name.as_str()).collect();
-    assert_eq!(names, ["fastedit", "File", "Edit", "View", "Go", "Window"]);
+    assert_eq!(names, ["Tenmoku", "File", "Edit", "View", "Go", "Window"]);
 
     let edit = bar.menu("Edit").unwrap();
     let os_actions: Vec<_> = edit
@@ -78,7 +78,7 @@ fn default_menus_parse() {
         ]
     );
 
-    let app = bar.menu("fastedit").unwrap();
+    let app = bar.menu("Tenmoku").unwrap();
     let services = app.items.iter().find_map(|item| match &item.kind {
         ItemKind::System(system) => Some(system),
         _ => None,
@@ -117,7 +117,7 @@ fn shortcuts_follow_the_keymap() {
         Some(keys("cmd-shift-]"))
     );
     assert_eq!(
-        shortcut("fastedit", "app.hide", &keymap),
+        shortcut("Tenmoku", "app.hide", &keymap),
         Some(keys("cmd-h"))
     );
 
@@ -306,7 +306,7 @@ fn hosts_extend_and_replace() {
     let names: Vec<_> = bar.menus.iter().map(|menu| menu.name.as_str()).collect();
     assert_eq!(
         names,
-        ["fastedit", "File", "Edit", "View", "Go", "Tools", "Window"]
+        ["Tenmoku", "File", "Edit", "View", "Go", "Tools", "Window"]
     );
     assert_eq!(ids(&bar, "Tools"), ["tools.run_tests"]);
     assert_eq!(

@@ -1,5 +1,5 @@
 # VS Code Dark Modern: the editor and token colours of VS Code's Dark Modern
-# theme, on fastedit's one-colour-per-highlight-name model. The window's
+# theme, on Tenmoku's one-colour-per-highlight-name model. The window's
 # chrome is set through kiln's semantic token groups, not per component.
 #
 # Adapted from microsoft/vscode `extensions/theme-defaults/themes/dark_modern.json`,
@@ -155,7 +155,7 @@ minimap_gutter_added = "#2EA043"
 minimap_gutter_modified = "#0078D4"
 minimap_gutter_deleted = "#F85149"
 
-# Every name fastedit Dark colours is listed, since a theme's table is laid
+# Every name Tenmoku Dark colours is listed, since a theme's table is laid
 # over Dark's.
 [syntax]
 "attribute" = "#9CDCFE"

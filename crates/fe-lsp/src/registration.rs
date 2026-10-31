@@ -65,7 +65,7 @@ impl Registrations {
         if !refused.is_empty() {
             return Err(ResponseError::new(
                 ErrorCode::REQUEST_FAILED,
-                format!("fastedit can't register {}", refused.join(", ")),
+                format!("Tenmoku can't register {}", refused.join(", ")),
             ));
         }
         self.0.extend(accepted);

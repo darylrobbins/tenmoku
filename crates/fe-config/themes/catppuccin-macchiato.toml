@@ -1,5 +1,5 @@
 # Catppuccin Macchiato: Catppuccin for VS Code's Macchiato flavour (dark), on
-# fastedit's one-colour-per-highlight-name model. The window's chrome is set
+# Tenmoku's one-colour-per-highlight-name model. The window's chrome is set
 # through kiln's semantic token groups, not per component.
 #
 # Adapted from catppuccin/vscode's
@@ -157,7 +157,7 @@ minimap_gutter_added = "#A6DA95"
 minimap_gutter_modified = "#EED49F"
 minimap_gutter_deleted = "#ED8796"
 
-# Every name fastedit Dark colours is listed, since a theme's table is laid
+# Every name Tenmoku Dark colours is listed, since a theme's table is laid
 # over Dark's.
 [syntax]
 "attribute" = "#EED49F"

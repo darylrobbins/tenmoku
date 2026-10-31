@@ -1,6 +1,6 @@
 //! The editor's colours in a theme. kiln owns theme files, the dark and
 //! light pair, the mode and the user's theme file
-//! (docs/decisions/app-framework.md §8); a fastedit theme file adds two app
+//! (docs/decisions/app-framework.md §8); a Tenmoku theme file adds two app
 //! tables to kiln's format ([`EXTENSIONS`]), which kiln keeps as
 //! [`ThemeData::extensions`] for this module to read:
 //!
@@ -27,7 +27,7 @@ use toml::{Table, Value};
 
 pub use kiln_core::theme::Color;
 
-/// The app tables a fastedit theme file has, beside kiln's own keys: for
+/// The app tables a Tenmoku theme file has, beside kiln's own keys: for
 /// [`ThemeFile::load`] and [`ThemeFile::parse`], and kiln's user theme.
 pub const EXTENSIONS: &[&str] = &["editor", "syntax"];
 
@@ -192,15 +192,15 @@ pub struct EditorPalette {
 
 static FASTEDIT_DARK: LazyLock<EditorPalette> = LazyLock::new(|| {
     bundled(
-        "fastedit-dark.toml",
-        include_str!("../themes/fastedit-dark.toml"),
+        "tenmoku-dark.toml",
+        include_str!("../themes/tenmoku-dark.toml"),
     )
 });
 
 static FASTEDIT_LIGHT: LazyLock<EditorPalette> = LazyLock::new(|| {
     bundled(
-        "fastedit-light.toml",
-        include_str!("../themes/fastedit-light.toml"),
+        "tenmoku-light.toml",
+        include_str!("../themes/tenmoku-light.toml"),
     )
 });
 
@@ -220,7 +220,7 @@ fn bundled(file_name: &str, source: &str) -> EditorPalette {
 }
 
 impl EditorPalette {
-    /// The bundled dark palette, fastedit's colours since before themes.
+    /// The bundled dark palette, Tenmoku's colours since before themes.
     pub fn fastedit_dark() -> &'static EditorPalette {
         &FASTEDIT_DARK
     }

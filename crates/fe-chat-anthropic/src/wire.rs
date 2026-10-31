@@ -88,7 +88,7 @@ pub fn request_headers(api_key: &str, fallbacks: bool) -> Vec<(String, String)> 
         ("content-type".to_owned(), "application/json".to_owned()),
         (
             "user-agent".to_owned(),
-            format!("fastedit/{}", env!("CARGO_PKG_VERSION")),
+            format!("tenmoku/{}", env!("CARGO_PKG_VERSION")),
         ),
     ];
     if fallbacks {
