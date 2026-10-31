@@ -114,7 +114,9 @@ fn files_show_their_name_then_their_dimmed_directory(cx: &mut TestAppContext) {
     let seen = seen.borrow();
     let cells = &seen.cells[&2];
     let texts: Vec<_> = cells.iter().map(|cell| cell.text.as_str()).collect();
-    assert_eq!(texts, ["A", "t.rs", "src/deep"]);
+    // The file's icon, then its name and directory; its counts and letter
+    // at the right edge.
+    assert_eq!(texts[1..], ["t.rs", "src/deep", "+1", "A"]);
     assert_eq!(cells[1].color, None, "the name keeps the row's colour");
     assert_eq!(cells[2].color, Some(muted), "the directory is dimmed");
     let (name, dir) = (cells[1].bounds.unwrap(), cells[2].bounds.unwrap());

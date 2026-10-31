@@ -39,10 +39,15 @@
 //! muted row a line (its blank lines kept), then its files
 //! ([`Repo::commit_files`], against its first parent, read on the background
 //! executor, a `Loading…` row under it until they arrive and a muted row for
-//! an error) are listed under it, indented, as `A`, `M` or `D` and the path
-//! from the root, or `R old → new`; doing it again collapses it. Enter, `o`
-//! or a click on a file opens its change at that commit as the History panel
-//! opens one ([`Workbench::open_commit`]), so the same one is the same tab.
+//! an error) are listed under it, indented: each its file-type icon from the
+//! installed icon set, its name and, dimmed, its directory from the root (a
+//! rename's old path after it), then at the right edge its lines added and
+//! removed, muted green and red, once they're read beside the files
+//! ([`Repo::commit_stats`]; none for a binary file), and its change's letter,
+//! `M` amber, `A` green, `D` red, `R` blue; doing it again collapses it.
+//! Enter, `o` or a click on a file opens its change at that commit as the
+//! History panel opens one ([`Workbench::open_commit`]), so the same one is
+//! the same tab.
 //! The selection moves over commit, body and file rows alike; Enter, `o`
 //! and a click on a body row do nothing. Rows too long for the panel end in
 //! an ellipsis.
@@ -50,25 +55,25 @@
 #[cfg(test)]
 use std::{cell::RefCell, rc::Rc};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use fe_git::{
-    ChangeKind, CommitFile, CommitInfo, FileCommit, Head, LogCommit, LogScope, RefKind, RefLabel,
-    Repo,
+    ChangeKind, CommitFile, CommitInfo, CommitStats, FileCommit, Head, LogCommit, LogScope,
+    RefKind, RefLabel, Repo,
     graph::{GraphLayout, GraphRow},
 };
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::{ROW_HEIGHT, UiTheme, file_icon_path};
 use gpui::{
     AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, Div, ElementId, Entity,
     FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
     ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
     UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
-    px, quad, size, transparent_black, uniform_list,
+    px, quad, rgba, size, svg, transparent_black, uniform_list,
 };
 
 use super::{
@@ -351,6 +356,16 @@ enum Listing {
     Failed(String),
 }
 
+/// An expanded commit's files' line counts, read beside its files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Counts {
+    /// Being read by the expansion request with this number.
+    Loading(u64),
+    /// Lines added and removed by path; a binary file has none, nor does
+    /// any file if they couldn't be read.
+    Read(HashMap<PathBuf, (u32, u32)>),
+}
+
 /// What reading a log's first page found: its repository, where HEAD is,
 /// the commits the log starts from and the first page; none outside a
 /// repository; or the error's message.
@@ -470,6 +485,8 @@ pub(crate) struct GitLogPanel {
     now: i64,
     /// The expanded commits' files, by commit index.
     expanded: BTreeMap<usize, Listing>,
+    /// The expanded commits' files' line counts, by commit index.
+    counts: BTreeMap<usize, Counts>,
     /// The last expansion request's number: only the one a commit's
     /// `Loading` names lands.
     requests: u64,
@@ -514,6 +531,7 @@ impl GitLogPanel {
             more: false,
             now: 0,
             expanded: BTreeMap::new(),
+            counts: BTreeMap::new(),
             requests: 0,
             lines: Vec::new(),
             root: None,
@@ -562,6 +580,7 @@ impl GitLogPanel {
         self.commits.clear();
         self.rows.clear();
         self.expanded.clear();
+        self.counts.clear();
         self.lines.clear();
         self.root = root;
         self.layout = GraphLayout::new();
@@ -678,9 +697,9 @@ impl GitLogPanel {
         })
     }
 
-    /// File `file` of commit `commit` as its row shows it: the change's
-    /// letter, the file's name, then its directory (a rename's old path
-    /// after it) dimmed.
+    /// File `file` of commit `commit` as its row shows it: the file's name,
+    /// its directory (a rename's old path after it), its line counts once
+    /// they're read and the change's letter.
     fn file_parts(&self, commit: usize, file: usize) -> Option<FileParts> {
         let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
             return None;
@@ -702,7 +721,16 @@ impl GitLogPanel {
             Some(from) => format!("{dir} ← {}", self.display_path(from)),
             None => dir,
         };
-        Some(FileParts { kind, name, dir })
+        let counts = match self.counts.get(&commit) {
+            Some(Counts::Read(counts)) => counts.get(&file.path).copied(),
+            _ => None,
+        };
+        Some(FileParts {
+            kind,
+            name,
+            dir,
+            counts,
+        })
     }
 
     /// The lanes' columns and colours running through the rows under
@@ -718,10 +746,11 @@ impl GitLogPanel {
             .collect()
     }
 
-    /// Expands commit `ix`, reading its files on the background executor, or
-    /// collapses it.
+    /// Expands commit `ix`, reading its files and their line counts on the
+    /// background executor, or collapses it.
     fn toggle(&mut self, ix: usize, cx: &mut Context<Self>) {
         if self.expanded.remove(&ix).is_some() {
+            self.counts.remove(&ix);
             self.relayout();
             return cx.notify();
         }
@@ -732,7 +761,20 @@ impl GitLogPanel {
         self.requests += 1;
         let request = self.requests;
         self.expanded.insert(ix, Listing::Loading(request));
+        self.counts.insert(ix, Counts::Loading(request));
         self.relayout();
+        let stats = cx.background_spawn({
+            let (repo, id) = (repo.clone(), id.clone());
+            async move { repo.commit_stats(&id).ok() }
+        });
+        cx.spawn(async move |panel, cx| {
+            let stats = stats.await;
+            (panel.update(cx, |panel, cx| {
+                panel.land_counts(read, (ix, request), stats, cx)
+            }))
+            .ok();
+        })
+        .detach();
         let files = cx.background_spawn(async move {
             (repo.commit_files(&id)).map_err(|error| error.to_string())
         });
@@ -765,6 +807,25 @@ impl GitLogPanel {
         };
         self.expanded.insert(ix, listing);
         self.relayout();
+        cx.notify();
+    }
+
+    /// Notes the line counts read for commit `ix`, if it's still expanded by
+    /// the request they were read for in the list they were read for.
+    fn land_counts(
+        &mut self,
+        read: u64,
+        (ix, request): (usize, u64),
+        stats: Option<CommitStats>,
+        cx: &mut Context<Self>,
+    ) {
+        if read != self.read || self.counts.get(&ix) != Some(&Counts::Loading(request)) {
+            return;
+        }
+        let counts = (stats.into_iter().flat_map(|stats| stats.files))
+            .filter_map(|file| Some((file.path, (file.added?, file.removed?))))
+            .collect();
+        self.counts.insert(ix, Counts::Read(counts));
         cx.notify();
     }
 
@@ -992,6 +1053,7 @@ impl GitLogPanel {
                 .detach();
         }
         let ui = fe_ui::ui_theme(cx);
+        let colors = FileColors::new(&ui, cx);
         #[cfg(test)]
         {
             self.rows_seen.0.borrow_mut().muted = ui.muted_text;
@@ -1054,8 +1116,7 @@ impl GitLogPanel {
                                 .on_click(cx.listener(move |panel, _, window, cx| {
                                     panel.click(line, true, window, cx)
                                 }))
-                                .child(rail(commit))
-                                .child(file_cell(parts, &ui, ix, seen.clone()))
+                                .child(file_cell(rail(commit), parts, &colors, ix, seen.clone()))
                                 .into_any_element(),
                         );
                     }
@@ -1151,28 +1212,145 @@ fn ref_label(label: &RefLabel, ui: &UiTheme) -> impl IntoElement {
         .child(label_text(label))
 }
 
-/// A file row's text: the change's letter, the file's name, then its
-/// directory dimmed, the name shrinking only after the directory has.
-fn file_cell(parts: FileParts, ui: &UiTheme, ix: usize, probe: RowsProbe) -> impl IntoElement {
-    let kind = div().flex_none();
-    let name = div().min_w_0().overflow_hidden().text_ellipsis();
-    let dir = (div().flex_shrink(100.).min_w_0().overflow_hidden())
-        .text_ellipsis()
-        .text_color(ui.muted_text);
-    let mut cells = [
-        (parts.kind.to_string(), kind),
+/// A file row after its commit's `rail`: the file's icon from the installed
+/// icon set, its name, then its directory dimmed; at the right edge its line
+/// counts, muted, and the change's letter. The directory shrinks first, then
+/// the name, then the icon and the counts, by their weights; the letter
+/// never does.
+fn file_cell(
+    rail: impl IntoElement,
+    parts: FileParts,
+    colors: &FileColors,
+    ix: usize,
+    probe: RowsProbe,
+) -> impl IntoElement {
+    let icon = file_icon_path(&parts.name);
+    let icon_cell = (div().flex_shrink(LAST).min_w_0().overflow_hidden())
+        .flex()
+        .items_center()
+        .child(
+            svg()
+                .path(icon.clone())
+                .size(px(14.))
+                .text_color(colors.icon),
+        );
+    let name = (div().flex_shrink(LAST * 100.).min_w_0().overflow_hidden()).text_ellipsis();
+    let dir = (div()
+        .flex_1()
+        .flex_shrink(LAST * 10_000.)
+        .min_w_0()
+        .overflow_hidden())
+    .text_ellipsis()
+    .text_color(colors.muted);
+    let count = |color: Hsla| {
+        (div().flex_shrink(LAST).min_w_0().overflow_hidden())
+            .text_ellipsis()
+            .text_color(muted(color))
+    };
+    let (added, removed) = parts.counts.unwrap_or_default();
+    let counts = [
+        (added > 0).then(|| (format!("+{added}"), count(colors.added))),
+        (removed > 0).then(|| (format!("-{removed}"), count(colors.deleted))),
+    ];
+    let mut letter =
+        (div().flex_none().min_w(px(12.)).text_right()).text_color(colors.letter(parts.kind));
+    // The icon's cell is noted by its icon's path, and shows no text.
+    let mut cells: Vec<_> = [
+        (icon.to_string(), icon_cell),
         (parts.name, name),
         (parts.dir, dir),
-    ];
+    ]
+    .into_iter()
+    .chain(counts.into_iter().flatten())
+    .collect();
+    let kind = parts.kind.to_string();
     probe.cells(
         ix,
-        cells.iter_mut().map(|(text, cell)| (text.clone(), cell)),
+        (cells.iter_mut().map(|(text, cell)| (text.clone(), cell)))
+            .chain([(kind.clone(), &mut letter)]),
     );
-    let cell = (div().flex_1().min_w_0().flex().gap_2().overflow_hidden())
-        .children(cells.into_iter().map(|(text, cell)| cell.child(text)));
     #[cfg(test)]
-    let cell = cell.on_children_prepainted(move |drawn, _, _| probe.bounds(ix, &drawn));
+    let at_letter = cells.len();
+    let cells = (cells.into_iter().enumerate())
+        .map(|(at, (text, cell))| if at == 0 { cell } else { cell.child(text) });
+    // The rail and everything before the letter shrink and clip together,
+    // however many lanes the rail has, so the letter beside them keeps its
+    // room.
+    let before = (div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .overflow_hidden())
+    .child(rail)
+    .children(cells);
+    #[cfg(test)]
+    let before = before.on_children_prepainted({
+        let probe = probe.clone();
+        move |drawn, _, _| probe.bounds(ix, 0, &drawn[1..])
+    });
+    let cell = (div().flex_1().min_w_0().flex().items_center().gap_2())
+        .child(before)
+        .child(letter.child(kind));
+    #[cfg(test)]
+    let cell = cell.on_children_prepainted(move |drawn, _, _| {
+        probe.bounds(ix, at_letter, &drawn[1..]);
+        probe.0.borrow_mut().before.insert(ix, drawn[0]);
+    });
     cell
+}
+
+/// The flex shrink weight of what in a file row shrinks last: its icon and
+/// its counts, once its name and directory have gone. At least 1, so it
+/// takes the whole of what's left to shrink.
+const LAST: f32 = 1.;
+
+/// `color` muted, for a file's line counts.
+fn muted(color: Hsla) -> Hsla {
+    Hsla {
+        a: color.a * 0.75,
+        ..color
+    }
+}
+
+/// A file row's colours, from the theme: its directory's and icon's from
+/// the chrome's, its letter's and counts' from the editor's palette, a
+/// modification amber (a warning's), an addition green (an added row's),
+/// a deletion red (an error's) and a rename blue (information's).
+struct FileColors {
+    muted: Hsla,
+    icon: Hsla,
+    modified: Hsla,
+    added: Hsla,
+    deleted: Hsla,
+    renamed: Hsla,
+}
+
+impl FileColors {
+    fn new(ui: &UiTheme, cx: &App) -> Self {
+        let palette = fe_gpui::editor_palette(cx);
+        let editor = &palette.editor;
+        let hsla = |color: fe_config::theme::Color| rgba(color.to_rgba_u32()).into();
+        Self {
+            muted: ui.muted_text,
+            icon: ui.icon,
+            modified: hsla(editor.warning),
+            added: hsla(editor.change_added),
+            deleted: hsla(editor.error),
+            renamed: hsla(editor.information),
+        }
+    }
+
+    /// The colour of a change's letter.
+    fn letter(&self, kind: char) -> Hsla {
+        match kind {
+            'A' => self.added,
+            'D' => self.deleted,
+            'R' => self.renamed,
+            _ => self.modified,
+        }
+    }
 }
 
 /// What the rail tests hand the painter, defined in
@@ -1205,6 +1383,8 @@ pub(crate) struct RowsSeen {
     pub(crate) segments: BTreeMap<usize, Vec<Segment>>,
     /// A file row's cells in order: text, text colour set on it and bounds.
     pub(crate) cells: BTreeMap<usize, Vec<CellSeen>>,
+    /// The bounds a file row's rail and cells before its letter clip to.
+    pub(crate) before: BTreeMap<usize, Bounds<Pixels>>,
     /// The muted text colour the rows were drawn with.
     pub(crate) muted: Hsla,
 }
@@ -1217,6 +1397,10 @@ pub(crate) type Segment = (Point<Pixels>, Point<Pixels>, Hsla);
 pub(crate) struct CellSeen {
     pub(crate) text: String,
     pub(crate) color: Option<Hsla>,
+    /// Whether it neither grows nor shrinks.
+    pub(crate) flex_none: bool,
+    /// Whether its text is aligned right.
+    pub(crate) right: bool,
     pub(crate) bounds: Option<Bounds<Pixels>>,
 }
 
@@ -1268,17 +1452,20 @@ impl RowsProbe {
             let cells = _cells.map(|(text, cell)| CellSeen {
                 text,
                 color: cell.style().text.color,
+                flex_none: cell.style().flex_grow == Some(0.)
+                    && cell.style().flex_shrink == Some(0.),
+                right: cell.style().text.text_align == Some(gpui::TextAlign::Right),
                 bounds: None,
             });
             self.0.borrow_mut().cells.insert(_ix, cells.collect());
         }
     }
 
-    /// Notes row `ix`'s cells' bounds.
+    /// Notes row `ix`'s cells' bounds, from its cell `from` on.
     #[cfg(test)]
-    fn bounds(&self, ix: usize, drawn: &[Bounds<Pixels>]) {
+    fn bounds(&self, ix: usize, from: usize, drawn: &[Bounds<Pixels>]) {
         if let Some(cells) = self.0.borrow_mut().cells.get_mut(&ix) {
-            for (cell, bounds) in cells.iter_mut().zip(drawn) {
+            for (cell, bounds) in cells.iter_mut().skip(from).zip(drawn) {
                 cell.bounds = Some(*bounds);
             }
         }
@@ -1290,6 +1477,8 @@ struct FileParts {
     kind: char,
     name: String,
     dir: String,
+    /// Lines added and removed, once read; none for a binary file.
+    counts: Option<(u32, u32)>,
 }
 
 /// The lanes `rail` runs through a row under a commit, [`LANE_WIDTH`] per
@@ -1518,3 +1707,7 @@ mod git_log_tests;
 #[cfg(test)]
 #[path = "git_log_open_tests.rs"]
 mod git_log_open_tests;
+
+#[cfg(test)]
+#[path = "git_log_file_rows_tests.rs"]
+mod git_log_file_rows_tests;
