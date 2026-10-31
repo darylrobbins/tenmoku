@@ -83,9 +83,9 @@ fn header(cx: &mut TestAppContext) {
     let edit = row_of(&lines(&workbench, cx), "edit");
     click(&workbench, edit, 1, cx);
     let listed = lines(&workbench, cx);
-    // a.rs +1 -1, n.rs +1, d.rs -1.
-    assert_eq!(listed[edit + 1], "3 files changed, +2 -2");
-    assert_eq!(listed[edit + 2], "M a.rs");
+    // The files are listed directly under the commit, no totals row.
+    assert_eq!(listed[edit + 1], "M a.rs");
+    assert!(listed.iter().all(|line| !line.contains("files changed")));
 }
 
 #[gpui::test]
@@ -97,12 +97,12 @@ fn file_focus(cx: &mut TestAppContext) {
     click(&workbench, edit, 1, cx);
     let before = tab_count(&workbench, cx);
 
-    // File rows follow the header: a.rs, d.rs, n.rs.
-    click(&workbench, edit + 2, 1, cx);
+    // File rows follow the commit: a.rs, d.rs, n.rs.
+    click(&workbench, edit + 1, 1, cx);
     assert_eq!(tab_count(&workbench, cx), before + 1);
     let first = title(&workbench, cx);
 
-    click(&workbench, edit + 3, 1, cx);
+    click(&workbench, edit + 2, 1, cx);
     assert_eq!(
         tab_count(&workbench, cx),
         before + 1,
@@ -112,17 +112,17 @@ fn file_focus(cx: &mut TestAppContext) {
     assert_ne!(title(&workbench, cx), first);
 
     // A double click keeps the tab: the next click adds another.
-    click(&workbench, edit + 4, 2, cx);
+    click(&workbench, edit + 3, 2, cx);
     assert_eq!(tab_count(&workbench, cx), before + 1);
-    click(&workbench, edit + 2, 1, cx);
+    click(&workbench, edit + 1, 1, cx);
     assert_eq!(tab_count(&workbench, cx), before + 2);
 
     // Enter keeps it too.
-    click(&workbench, edit + 3, 1, cx);
+    click(&workbench, edit + 2, 1, cx);
     assert_eq!(tab_count(&workbench, cx), before + 2);
     super::git_log_open_tests::focus_panel(&workbench, cx);
     press("enter", cx);
-    click(&workbench, edit + 2, 1, cx);
+    click(&workbench, edit + 1, 1, cx);
     assert_eq!(tab_count(&workbench, cx), before + 3);
 }
 
@@ -134,9 +134,9 @@ fn double_click_takes_the_previews_place(cx: &mut TestAppContext) {
     let edit = row_of(&lines(&workbench, cx), "edit");
     click(&workbench, edit, 1, cx);
     let before = tab_count(&workbench, cx);
-    click(&workbench, edit + 2, 1, cx);
+    click(&workbench, edit + 1, 1, cx);
     // Double clicking another file replaces the preview and stays.
-    click(&workbench, edit + 3, 2, cx);
+    click(&workbench, edit + 2, 2, cx);
     assert_eq!(
         tab_count(&workbench, cx),
         before + 1,
@@ -144,7 +144,7 @@ fn double_click_takes_the_previews_place(cx: &mut TestAppContext) {
         tabs(&workbench, cx)
     );
     assert!(title(&workbench, cx).starts_with("d.rs"));
-    click(&workbench, edit + 4, 1, cx);
+    click(&workbench, edit + 3, 1, cx);
     assert_eq!(tab_count(&workbench, cx), before + 2);
 }
 
@@ -158,7 +158,7 @@ fn rapid_clicks_leave_one_preview(cx: &mut TestAppContext) {
     let before = tab_count(&workbench, cx);
     // Two files clicked before either read lands: only the last opens.
     let panel = panel(&workbench, cx);
-    for file in [edit + 2, edit + 3] {
+    for file in [edit + 1, edit + 2] {
         let line = panel.read_with(cx, |panel, _| panel.lines[file]);
         cx.update(|window, cx| panel.update(cx, |panel, cx| panel.click(line, 1, window, cx)));
     }
@@ -214,19 +214,19 @@ fn repeated_keeps_share_one_read_and_the_previews_place(cx: &mut TestAppContext)
     let cx = &mut cx;
     let edit = row_of(&lines(&workbench, cx), "edit");
     click(&workbench, edit, 1, cx);
-    click(&workbench, edit + 2, 1, cx);
+    click(&workbench, edit + 1, 1, cx);
     assert_eq!(pane_tabs(&workbench, cx)[0].len(), 1);
     // A triple click and an Enter on an unread file, none of the reads
     // landed yet.
     for clicks in [Some(1), Some(2), Some(3), None] {
-        ask(&workbench, edit + 3, clicks, cx);
+        ask(&workbench, edit + 2, clicks, cx);
     }
     draw(cx);
     let tabs = pane_tabs(&workbench, cx);
     assert_eq!(tabs[0].len(), 1, "{tabs:?}");
     assert!(tabs[0][0].starts_with("d.rs"));
     // Kept: the next preview opens beside it.
-    click(&workbench, edit + 4, 1, cx);
+    click(&workbench, edit + 3, 1, cx);
     assert_eq!(pane_tabs(&workbench, cx)[0].len(), 2);
 }
 
@@ -242,17 +242,17 @@ fn a_keep_after_changing_pane_leaves_that_panes_preview(cx: &mut TestAppContext)
         workbench.split(crate::pane_group::Direction::Right, window, cx)
     });
     draw(cx);
-    click(&workbench, edit + 2, 1, cx);
+    click(&workbench, edit + 1, 1, cx);
     let panes = workbench.read_with(cx, |workbench, cx| workbench.panes(cx));
     // Preview d.rs in the first pane, then keep it from the second.
     workbench.update_in(cx, |workbench, window, cx| {
         workbench.activate(panes[0].clone(), window, cx)
     });
-    ask(&workbench, edit + 3, Some(1), cx);
+    ask(&workbench, edit + 2, Some(1), cx);
     workbench.update_in(cx, |workbench, window, cx| {
         workbench.activate(panes[1].clone(), window, cx)
     });
-    ask(&workbench, edit + 3, None, cx);
+    ask(&workbench, edit + 2, None, cx);
     draw(cx);
     let tabs = pane_tabs(&workbench, cx);
     let in_second = &tabs[1];
@@ -274,8 +274,8 @@ fn a_request_in_another_window_leaves_this_previews_alone(cx: &mut TestAppContex
     // Both commits expanded before either diff is asked for.
     click(&workbench, edit, 1, first);
     click(&other, other_edit, 1, second);
-    ask(&workbench, edit + 2, Some(1), first);
-    ask(&other, other_edit + 2, Some(1), second);
+    ask(&workbench, edit + 1, Some(1), first);
+    ask(&other, other_edit + 1, Some(1), second);
     // Neither read has landed when the second window asked.
     assert!(pane_tabs(&workbench, first)[0].is_empty());
     assert!(pane_tabs(&other, second)[0].is_empty());

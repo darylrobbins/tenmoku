@@ -1,5 +1,4 @@
-//! A Git Log commit's whole message: its body listed above its files when
-//! it's expanded, and its card scrolling a message taller than the window,
+//! A Git Log commit's whole message: its card scrolling a message taller than the window,
 //! on repositories built with the `git` CLI in temporary directories. The
 //! card's contents are `git_log_card_tests.rs`'s.
 
@@ -68,7 +67,7 @@ fn cli_date(root: &Path, id: &str) -> String {
 }
 
 #[gpui::test]
-fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
+fn expanding_a_commit_lists_only_its_files(cx: &mut TestAppContext) {
     let (dir, [second, first]) = fixture();
     let (workbench, mut cx) = log_window(cx, dir.path());
     let cx = &mut cx;
@@ -78,60 +77,37 @@ fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
         format!("{}  one line", &first[..7]),
     ];
     assert_eq!(all, commits);
-    let body = ["line one", "line two", "", "para"].map(str::to_owned);
 
-    // The body is there as soon as the commit expands, its files loading
-    // under it; then its files.
+    // Its files loading under it, then its files: no body, no totals.
     let panel = panel(&workbench, cx);
     cx.update(|window, cx| panel.update(cx, |panel, cx| panel.open_row(0, window, cx)));
-    let loading = lines(&workbench, cx);
-    let mut expected = vec![commits[0].clone()];
-    expected.extend(body.iter().cloned());
-    assert_eq!(loading[..5], expected[..]);
-    assert_eq!(loading[5..], ["Loading…".to_owned(), commits[1].clone()]);
+    assert_eq!(
+        lines(&workbench, cx),
+        [&commits[0], "Loading…", &commits[1]]
+    );
     draw(cx);
-    expected.extend([
-        "1 file changed, +1 -1".to_owned(),
-        "M a.rs".to_owned(),
-        commits[1].clone(),
-    ]);
-    assert_eq!(lines(&workbench, cx), expected);
+    let expanded = [&commits[0], "M a.rs", &commits[1]].map(str::to_owned);
+    assert_eq!(lines(&workbench, cx), expanded);
 
-    // The selection moves over the body rows; Enter or `o` on one does
-    // nothing.
+    // Enter on the file opens it; the selection moves over every row.
     assert_eq!(selected(&workbench, cx), Some(0));
     press("j", cx);
     assert_eq!(selected(&workbench, cx), Some(1));
-    press("enter", cx);
     press("j", cx);
-    press("j", cx);
-    assert_eq!(selected(&workbench, cx), Some(3), "on the blank line");
-    press("o", cx);
-    press("enter", cx);
-    assert_eq!(lines(&workbench, cx), expected);
-    assert_eq!(selected(&workbench, cx), Some(3));
-    let tabs = workbench.read_with(cx, |workbench, cx| workbench.pane().read(cx).tabs().len());
-    assert_eq!(tabs, 1, "only a.rs is open");
+    assert_eq!(selected(&workbench, cx), Some(2));
 
-    // A one-line message lists only its files.
-    press("G", cx);
-    assert_eq!(selected(&workbench, cx), Some(7));
+    // A one-line message lists only its files too.
     press("enter", cx);
-    let mut both = expected.clone();
-    both.extend(["1 file changed, +1 -0".to_owned(), "A a.rs".to_owned()]);
+    let mut both = expanded.to_vec();
+    both.push("A a.rs".to_owned());
     assert_eq!(lines(&workbench, cx), both);
 
-    // Enter again hides both the body and the files.
+    // Enter again hides the files.
     press("g g", cx);
     press("enter", cx);
     assert_eq!(
         lines(&workbench, cx),
-        [
-            commits[0].clone(),
-            commits[1].clone(),
-            "1 file changed, +1 -0".to_owned(),
-            "A a.rs".to_owned()
-        ]
+        [&commits[0], &commits[1], "A a.rs"].map(str::to_owned)
     );
 }
 

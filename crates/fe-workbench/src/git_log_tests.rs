@@ -717,15 +717,14 @@ fn rails_clip_alike_when_narrow(cx: &mut TestAppContext) {
     let rail = panel.read_with(cx, |panel, _| panel.rail(commit).len());
     assert_eq!(rail, 11, "every lane runs through the commit's rows");
     let lines = panel.read_with(cx, |panel, _| panel.lines());
-    assert_eq!(lines[at + 1], "1 file changed, +1 -0");
-    assert_eq!(lines[at + 2], "A b.rs");
+    assert_eq!(lines[at + 1], "A b.rs");
 
     // Every row drawn, commit and file rows alike, clips its lanes at the
     // same edge: the lanes past it are cut from all of them, none from
     // only some.
     let seen = seen.borrow();
     let drawn: Vec<usize> = seen.segments.keys().copied().collect();
-    assert!(drawn.len() > at + 2, "{drawn:?}");
+    assert!(drawn.len() > at + 1, "{drawn:?}");
     let clip = seen.before[&at].right();
     for ix in &drawn {
         let before = seen.before.get(ix).unwrap_or_else(|| panic!("row {ix}"));

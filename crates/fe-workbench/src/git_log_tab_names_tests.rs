@@ -52,9 +52,9 @@ fn two_commit_diffs_of_same_named_files_show_their_folders(cx: &mut TestAppConte
     focus_panel(&workbench, cx);
     press("enter", cx);
     let lines = panel.read_with(cx, |panel, _| panel.lines());
-    assert_eq!(lines[2..4], ["M src/ex.rs", "M src/tests/ex.rs"]);
+    assert_eq!(lines[1..3], ["M src/ex.rs", "M src/tests/ex.rs"]);
 
-    press("j j enter", cx);
+    press("j enter", cx);
     focus_panel(&workbench, cx);
     press("j enter", cx);
     let s = &edit[..7];

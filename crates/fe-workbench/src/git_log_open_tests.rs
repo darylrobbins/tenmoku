@@ -259,7 +259,7 @@ fn expands(cx: &mut TestAppContext) {
     draw(cx);
     let listed = lines(&workbench, cx);
     assert_eq!(under(&listed, edit), ["M a.rs", "D d.rs", "A n.rs"]);
-    assert_eq!(listed.len(), 10);
+    assert_eq!(listed.len(), 9);
     assert_eq!(selected(&workbench, cx), Some(edit));
 
     // Enter again hides them.
@@ -305,7 +305,7 @@ fn opens(cx: &mut TestAppContext) {
     let edit = row_of(&all, "edit");
     select_row(&workbench, edit, cx);
     press("enter", cx);
-    press("j j enter", cx);
+    press("j enter", cx);
     let s = short(&id("edit")).to_owned();
     assert_eq!(title(&workbench, cx), format!("a.rs ({s}^ ↔ {s})"));
     let first = diff(&workbench, cx);
@@ -341,8 +341,8 @@ fn opens(cx: &mut TestAppContext) {
     let panel_entity = panel(&workbench, cx);
     cx.update(|window, cx| {
         panel_entity.update(cx, |panel, cx| {
-            panel.select(rename + 2, cx);
-            panel.open_row(rename + 2, window, cx)
+            panel.select(rename + 1, cx);
+            panel.open_row(rename + 1, window, cx)
         })
     });
     draw(cx);
@@ -359,7 +359,7 @@ fn opens(cx: &mut TestAppContext) {
     // Again: the same tab, focused.
     focus_panel(&workbench, cx);
     let edit = row_of(&lines(&workbench, cx), "edit");
-    select_row(&workbench, edit + 2, cx);
+    select_row(&workbench, edit + 1, cx);
     press("enter", cx);
     assert_eq!(diff(&workbench, cx), first);
     assert!(diff_focused(&first, cx));
@@ -479,7 +479,7 @@ fn a_release_over_a_row_that_replaced_the_pressed_one_clicks_nothing(cx: &mut Te
     cx.simulate_mouse_down(at, MouseButton::Left, none);
     draw(cx);
     let listed = lines(&workbench, cx);
-    assert_eq!(listed[pressed], "M a.rs");
+    assert_eq!(listed[pressed], "D d.rs");
     cx.simulate_mouse_up(at, MouseButton::Left, none);
     draw(cx);
     assert_eq!(lines(&workbench, cx), listed, "init isn't expanded");
@@ -491,7 +491,7 @@ fn a_release_over_a_row_that_replaced_the_pressed_one_clicks_nothing(cx: &mut Te
     draw(cx);
     assert_eq!(selected(&workbench, cx), Some(pressed));
     assert_eq!(tab_count(&workbench, cx), 1);
-    assert!(title(&workbench, cx).starts_with("a.rs ("));
+    assert!(title(&workbench, cx).starts_with("d.rs ("));
 }
 
 #[path = "git_log_tab_names_tests.rs"]

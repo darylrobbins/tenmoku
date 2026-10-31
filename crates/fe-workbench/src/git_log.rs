@@ -39,8 +39,7 @@
 //! `G` reads no further page: none is read until the selection moves or the
 //! list is scrolled (by the wheel, even at its end, or to other rows).
 //!
-//! Enter, `o` and a click on a commit expand it: its message's body, one
-//! muted row a line (its blank lines kept), then its files
+//! Enter, `o` and a click on a commit expand it: its files
 //! ([`Repo::commit_files`], against its first parent, read on the background
 //! executor, a `Loading…` row under it until they arrive and a muted row for
 //! an error) are listed under it, indented: each its file-type icon from the
@@ -52,8 +51,8 @@
 //! Enter, `o` or a click on a file opens its change at that commit as the
 //! History panel opens one ([`Workbench::open_commit`]), so the same one is
 //! the same tab.
-//! The selection moves over commit, body and file rows alike; Enter, `o`
-//! and a click on a body row do nothing. Rows too long for the panel end in
+//! Only its file rows are listed: its message, trailers and totals are left
+//! to its card. The selection moves over commit and file rows alike. Rows too long for the panel end in
 //! an ellipsis. A right click on a commit or file row selects it and opens
 //! its menu, whose items are the panel's commands too ([`git_log_menu`]).
 //!
@@ -202,44 +201,32 @@ fn lanes(row: &GraphRow) -> usize {
     widest.unwrap_or(0).max(row.column) + 1
 }
 
-/// What a row of the list is: a commit (by its index), a line of its
-/// message's body or one of its files (the commit's, then the line's or the
-/// file's index), or the row under a commit saying its files are loading or
-/// couldn't be read.
+/// What a row of the list is: a commit (by its index), one of its files
+/// (the commit's, then the file's index), or the row under a commit saying
+/// its files are loading or couldn't be read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Line {
     Commit(usize),
-    Body(usize, usize),
     File(usize, usize),
     Note(usize),
-    /// The totals of an expanded commit's files, above them.
-    Summary(usize),
 }
 
 impl Line {
     /// An identity for the row's element that holds whatever rows are
-    /// listed before it. Body rows' have the top bit set, so they're none
-    /// of a commit's, a file's or a note's.
+    /// listed before it.
     fn id(self) -> u64 {
         const ROW: u64 = 1 << 24;
-        const BODY: u64 = 1 << 63;
         match self {
             Line::Commit(ix) => ix as u64 * ROW,
-            Line::Body(ix, row) => BODY | (ix as u64 * ROW + row as u64),
             Line::File(ix, file) => ix as u64 * ROW + file as u64 + 1,
             Line::Note(ix) => ix as u64 * ROW + ROW - 1,
-            Line::Summary(ix) => ix as u64 * ROW + ROW - 2,
         }
     }
 
     /// The index of the commit the row is or is under.
     fn commit(self) -> usize {
         match self {
-            Line::Commit(ix)
-            | Line::Body(ix, _)
-            | Line::File(ix, _)
-            | Line::Note(ix)
-            | Line::Summary(ix) => ix,
+            Line::Commit(ix) | Line::File(ix, _) | Line::Note(ix) => ix,
         }
     }
 }
@@ -1209,11 +1196,8 @@ impl GitLogPanel {
             let Some(listing) = self.expanded.get(&ix) else {
                 continue;
             };
-            let body = body_lines(&self.commits[ix].commit.message).len();
-            (self.lines).extend((0..body).map(|row| Line::Body(ix, row)));
             match listing {
                 Listing::Files(files) => {
-                    self.lines.push(Line::Summary(ix));
                     (self.lines).extend((0..files.len()).map(|file| Line::File(ix, file)));
                 }
                 _ => self.lines.push(Line::Note(ix)),
@@ -1234,12 +1218,6 @@ impl GitLogPanel {
         let relative = (bases.into_iter().chain([workdir]).flatten())
             .find_map(|base| Some(path.strip_prefix(base).ok()?.to_owned()));
         relative.as_deref().unwrap_or(path).display().to_string()
-    }
-
-    /// Line `row` of commit `commit`'s message's body.
-    fn body_text(&self, commit: usize, row: usize) -> Option<String> {
-        let entry = self.commits.get(commit)?;
-        Some(body_lines(&entry.commit.message).get(row)?.to_string())
     }
 
     /// The text of file `file` of commit `commit`: `M path`, `R old → new`.
@@ -1292,21 +1270,6 @@ impl GitLogPanel {
             dir,
             counts,
         })
-    }
-
-    /// Commit `commit`'s totals as its summary row says them: `N files
-    /// changed, +X -Y`, the line counts once they're read.
-    fn summary_text(&self, commit: usize) -> String {
-        let Some(Listing::Files(files)) = self.expanded.get(&commit) else {
-            return String::new();
-        };
-        let [changed, ..] = totals_text(files.len(), 0, 0);
-        let Some(Counts::Read(counts)) = self.counts.get(&commit) else {
-            return changed;
-        };
-        let (added, removed) =
-            (counts.values()).fold((0, 0), |(a, r), (add, del)| (a + add, r + del));
-        format!("{changed}, +{added} -{removed}")
     }
 
     /// The lanes' columns and colours running through the rows under
@@ -1468,12 +1431,12 @@ impl GitLogPanel {
     }
 
     /// Enter, `o` or a click on row `ix`: expands or collapses a commit,
-    /// opens a file; nothing on a body or note row.
+    /// opens a file; nothing on a note row.
     fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.lines.get(ix).copied() {
             Some(Line::Commit(commit)) => self.toggle(commit, cx),
             Some(Line::File(commit, file)) => self.open_file(commit, file, false, window, cx),
-            Some(Line::Body(..) | Line::Note(_) | Line::Summary(_)) | None => {}
+            Some(Line::Note(_)) | None => {}
         }
     }
 
@@ -1710,22 +1673,6 @@ impl GitLogPanel {
                     |commit: usize| rail_cell(self.rail(commit), self.lanes, ix, seen.clone());
                 let row = match line {
                     Line::Commit(_) => row,
-                    Line::Body(commit, body) => {
-                        let text = self.body_text(commit, body).unwrap_or_default();
-                        return Some(
-                            lettered(
-                                row.when(selected, |row| row.bg(selected_bg))
-                                    .text_color(ui.muted_text)
-                                    .on_click(cx.listener(move |panel, _, window, cx| {
-                                        panel.click(line, 1, window, cx)
-                                    })),
-                                lead().child(rail(commit)).child(ellipsized(text)),
-                                ix,
-                                seen.clone(),
-                            )
-                            .into_any_element(),
-                        );
-                    }
                     Line::File(commit, file) => {
                         let parts = self.file_parts(commit, file)?;
                         return Some(
@@ -1739,22 +1686,6 @@ impl GitLogPanel {
                                 .on_mouse_down(MouseButton::Right, menu_on(line, cx))
                                 .child(file_cell(rail(commit), parts, &colors, ix, seen.clone()))
                                 .into_any_element(),
-                        );
-                    }
-                    Line::Summary(commit) => {
-                        let text = self.summary_text(commit);
-                        return Some(
-                            lettered(
-                                row.when(selected, |row| row.bg(selected_bg))
-                                    .text_color(ui.muted_text)
-                                    .on_click(cx.listener(move |panel, _, window, cx| {
-                                        panel.click(line, 1, window, cx)
-                                    })),
-                                lead().child(rail(commit)).child(ellipsized(text)),
-                                ix,
-                                seen.clone(),
-                            )
-                            .into_any_element(),
                         );
                     }
                     Line::Note(commit) => {
@@ -2441,9 +2372,7 @@ impl GitLogPanel {
                 Line::Commit(ix) => {
                     commit_rows::texts(&self.commits[ix].commit, self.now)[0].clone()
                 }
-                Line::Body(ix, row) => self.body_text(ix, row).unwrap_or_default(),
                 Line::File(ix, file) => self.file_text(ix, file).unwrap_or_default(),
-                Line::Summary(ix) => self.summary_text(ix),
                 Line::Note(ix) => match self.expanded.get(&ix) {
                     Some(Listing::Failed(error)) => error.clone(),
                     _ => LOADING.to_owned(),
@@ -2513,6 +2442,10 @@ mod git_log_select_tests;
 #[cfg(test)]
 #[path = "git_log_file_rows_tests.rs"]
 mod git_log_file_rows_tests;
+
+#[cfg(test)]
+#[path = "git_log_expanded_tests.rs"]
+mod git_log_expanded_tests;
 
 #[cfg(test)]
 #[path = "git_log_ref_pills_tests.rs"]

@@ -161,7 +161,7 @@ impl GitLogPanel {
         let items = match line {
             Line::Commit(_) => COMMIT_ITEMS,
             Line::File(..) => FILE_ITEMS,
-            Line::Body(..) | Line::Note(_) | Line::Summary(_) => return,
+            Line::Note(_) => return,
         };
         self.select(ix, cx);
         self.menu = Some(RowMenu {
