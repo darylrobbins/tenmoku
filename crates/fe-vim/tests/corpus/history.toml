@@ -488,6 +488,18 @@ cursor = [0, 0]
 keys = "/zed<CR>qa/<CR>q:/foo/normal @a<CR>0/<Up><CR>"
 
 [[case]]
+name = "global_macro_with_several_searches"
+buffer = "zed zip\nfoo\nbar"
+keys = "qa/zed<CR>?zip<CR>/<CR>q/new<CR>j0:g/foo/normal @a<CR>0/<Up><Up><CR>"
+cursor = [0, 0]
+
+[[case]]
+name = "address_macro_with_several_searches"
+buffer = "zed zip\nfoo\nbar"
+keys = "qa/zed<CR>?zip<CR>/<CR>q/new<CR>j0:/foo/normal @a<CR>0/<Up><Up><CR>"
+cursor = [0, 0]
+
+[[case]]
 name = "global_macro_final_search_with_delimiter_recalled_on_slash"
 buffer = "x a/b\nfoo\nbar"
 cursor = [0, 0]

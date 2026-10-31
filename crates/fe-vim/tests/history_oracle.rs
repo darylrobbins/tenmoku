@@ -38,6 +38,8 @@ fn history_matches_neovim() {
         "address_pattern_recalled",
         "global_macro_of_empty_searches_keeps_the_pattern",
         "address_macro_of_empty_searches_keeps_the_pattern",
+        "global_macro_with_several_searches",
+        "address_macro_with_several_searches",
         "global_macro_final_search_with_delimiter_recalled_on_slash",
         "global_macro_final_search_with_delimiter_recalled_on_question",
         "address_macro_final_search_with_offset_recalled_on_slash",
@@ -221,7 +223,7 @@ fn star_global_and_address_patterns_go_into_the_search_history() {
 }
 
 #[test]
-fn searches_submitted_inside_an_ex_line_wait_for_it_to_end() {
+fn searches_submitted_inside_an_ex_line_are_added_as_they_run() {
     for ex in [":g/foo/normal @a<CR>", ":/foo/normal @a<CR>"] {
         // Register `a` holds two searches (the second typed on `?`), then an
         // empty one, which adds nothing and doesn't clear the second.
@@ -232,12 +234,12 @@ fn searches_submitted_inside_an_ex_line_wait_for_it_to_end() {
             ["zed", "zip", "new"]
         );
         vim.feed(ex).unwrap();
-        // Only the second is added again, the newest.
+        // Each is added as it runs, as in nvim: `zed` and `zip` again, newest.
         let searches = history(vim.registers(), SearchForward);
-        assert_eq!(searches, ["zed", "new", "zip"], "{ex}");
+        assert_eq!(searches, ["new", "zed", "zip"], "{ex}");
         assert_eq!(
             recalls(vim.registers(), SearchBackward, ""),
-            ["zip", "new", "zed"],
+            ["zip", "zed", "new"],
             "{ex}"
         );
     }

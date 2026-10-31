@@ -1922,6 +1922,60 @@
       }
     },
     {
+      "name": "global_macro_with_several_searches",
+      "buffer": "zed zip\nfoo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qa/zed<CR>?zip<CR>/<CR>q/new<CR>j0:g/foo/normal @a<CR>0/<Up><Up><CR>",
+      "expect": {
+        "buffer": "zed zip\nfoo\nbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zed",
+            "linewise": false
+          },
+          "a": {
+            "text": "/zed\r?zip\r/\r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "address_macro_with_several_searches",
+      "buffer": "zed zip\nfoo\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qa/zed<CR>?zip<CR>/<CR>q/new<CR>j0:/foo/normal @a<CR>0/<Up><Up><CR>",
+      "expect": {
+        "buffer": "zed zip\nfoo\nbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zed",
+            "linewise": false
+          },
+          "a": {
+            "text": "/zed\r?zip\r/\r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
       "name": "global_macro_final_search_with_delimiter_recalled_on_slash",
       "buffer": "x a/b\nfoo\nbar",
       "cursor": [

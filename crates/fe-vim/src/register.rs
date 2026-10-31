@@ -409,15 +409,14 @@ impl Registers {
     }
 
     /// Adds a search line submitted on a command line of `kind`
-    /// ([`Registers::add_history`]); inside an ex line (`:normal`) it waits
-    /// for the line to end, replacing any entry the line set before, and an
-    /// empty one leaves that entry be.
+    /// ([`Registers::add_history`]); inside an ex line (`:normal`) it is
+    /// added as it runs, in nvim's order, and replaces the pattern the line
+    /// set before; an empty one leaves that pattern be.
     pub(crate) fn submit_search(&mut self, kind: CommandLineKind, text: &str) {
-        if self.ex_depth == 0 {
-            self.add_history(kind, text);
-        } else if !text.is_empty() {
-            self.pending_pattern = Some((text.to_owned(), delimiter(kind)));
+        if !text.is_empty() {
+            self.pending_pattern = None;
         }
+        self.add_history(kind, text);
     }
 
     /// An ex line starts running: patterns it sets are noted until it ends.
