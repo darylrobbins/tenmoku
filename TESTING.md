@@ -67,7 +67,8 @@ cargo llvm-cov -p fe-buffer --summary-only
 Fuzzing is separate and also by hand; see [Fuzzing](#fuzzing).
 
 Benchmarks and the `fastedit --perf` frame-timing run are described in
-[PERF.md](PERF.md), with the latest numbers.
+[PERF.md](PERF.md), with the latest numbers. Release binaries carry no symbols
+(`strip = "symbols"`); to profile, use the bench profile (`cargo bench`), which keeps them.
 
 `PROPTEST_CASES` sets the case count for every property test, except the
 large-text rope tests, which run a hundredth as many (at least 8). Note that

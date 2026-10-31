@@ -261,6 +261,12 @@ tree-sitter = { opt-level = 3 }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Drops the ~100k-symbol Mach-O table: ~14 MB smaller. Profile with the bench profile.
+strip = "symbols"
+
+# Inherits release; keeps symbols so samply and Instruments can name frames.
+[profile.bench]
+strip = "none"
 
 # tree-sitter-yaml 0.7.2's scanner counts rows in an int16_t, so YAML over
 # 32,768 lines gets error nodes (upstream issue #49). This is 0.7.2 with
