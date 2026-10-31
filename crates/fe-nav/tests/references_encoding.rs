@@ -141,13 +141,20 @@ fn timed_find(
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
+            // Set on drop, so a panic below still stops the watchdog.
+            struct Done<'a>(&'a AtomicBool);
+            impl Drop for Done<'_> {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Relaxed);
+                }
+            }
+            let _done = Done(&done);
             batches = Vec::new();
             search(dir.path())
                 .references(&request(dir.path()), &cancel, &mut |batch| {
                     batches.push(batch)
                 })
                 .unwrap();
-            done.store(true, Ordering::Relaxed);
         });
         cancelled |= cancel.load(Ordering::Relaxed);
         least = least.min(start.elapsed());
