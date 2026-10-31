@@ -370,3 +370,31 @@ fn run_git(dir: &Path, args: &[&str]) -> String {
     );
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
+
+// The box's caret keys move its caret and delete forward, as the other
+// boxes' do: the keymap binds them where the panel hosts it.
+#[gpui::test]
+fn box_caret_keys_edit_inside_the_query(cx: &mut TestAppContext) {
+    let (dir, _) = fixture();
+    let (workbench, mut cx) = window(cx, dir.path());
+    let cx = &mut cx;
+    let panel = panel(&workbench, cx);
+    press("/", cx);
+    cx.simulate_input("wrk");
+    press("left left", cx);
+    cx.simulate_input("o");
+    assert_eq!(box_text(&panel, cx), "work");
+    press("home delete", cx);
+    assert_eq!(box_text(&panel, cx), "ork");
+    press("end backspace", cx);
+    cx.simulate_input("ks");
+    press("right", cx);
+    assert_eq!(box_text(&panel, cx), "orks");
+    press("backspace", cx);
+    assert_eq!(box_text(&panel, cx), "ork");
+    assert_eq!(focus(&panel, cx), (true, false), "the keys stay in the box");
+    wait(FILTER_DELAY, cx);
+    let mut kept = summaries(&lines(&workbench, cx));
+    kept.sort();
+    assert_eq!(kept, ["main work", "topic work"]);
+}

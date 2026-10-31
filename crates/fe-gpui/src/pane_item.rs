@@ -818,7 +818,10 @@ impl PaneItem for EditorView {
     const KIND: &'static str = "fastedit.editor";
 
     fn tab_title(&self, _: &App) -> SharedString {
-        file_name(self.model.path()).into()
+        match &self.tab_title {
+            Some((title, _)) => title.clone(),
+            None => file_name(self.model.path()).into(),
+        }
     }
 
     /// Its file's icon in the project tree, if it's a bundled one.
@@ -829,7 +832,10 @@ impl PaneItem for EditorView {
     /// Its file's icon in the project tree, from the installed icon set; an
     /// untitled buffer's is a plain file's.
     fn tab_icon_ref(&self, cx: &App) -> Option<IconRef> {
-        Some(file_icon_ref(&self.tab_title(cx)))
+        match &self.tab_title {
+            Some((_, icon_by)) => Some(file_icon_ref(icon_by)),
+            None => Some(file_icon_ref(&self.tab_title(cx))),
+        }
     }
 
     fn tab_title_color(&self, _: &App) -> Option<Hsla> {
@@ -924,11 +930,22 @@ impl PaneItem for EditorView {
     }
 
     /// An editor over the same buffer, with its own view of it, in this
-    /// one's theme.
+    /// one's theme: read-only if this one is, with its tab title and the
+    /// language chosen for it, if any.
     fn split(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
         let model = self.model.split();
         let theme = self.theme.clone();
-        Some(cx.new(|cx| EditorView::new(model, theme, cx)))
+        let (read_only, title) = (self.read_only, self.tab_title.clone());
+        let language = self.language_chosen.then_some(self.chosen_language);
+        Some(cx.new(|cx| {
+            let mut view = EditorView::new(model, theme, cx);
+            view.set_read_only(read_only, cx);
+            view.tab_title = title;
+            if let Some(language) = language {
+                view.set_language(language, cx);
+            }
+            view
+        }))
     }
 
     /// Its file's path, or for an untitled buffer its title, and its

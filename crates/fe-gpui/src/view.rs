@@ -57,6 +57,9 @@ pub struct EditorView {
     pub(crate) focus: FocusHandle,
     /// The colour of this editor's tab title, if set: its file's git status.
     pub(crate) tab_tint: Option<Hsla>,
+    /// The tab's title and the file name its icon is picked by, in place of
+    /// its file's name ([`EditorView::set_tab_title`]).
+    pub(crate) tab_title: Option<(gpui::SharedString, gpui::SharedString)>,
     /// How many ems soft wrap leaves free at the right, beyond its usual
     /// margin, for text after a line ([`EditorView::set_wrap_reserve`]).
     pub(crate) wrap_reserve: f32,
@@ -125,6 +128,9 @@ pub struct EditorView {
     /// Whether the language was set by hand ([`EditorView::set_language`])
     /// rather than detected from the path and first lines.
     pub(crate) language_chosen: bool,
+    /// The language [`EditorView::set_language`] last set, `None` for
+    /// plain text: what a split of the view is set to while it's chosen.
+    pub(crate) chosen_language: Option<&'static str>,
     /// Injected languages loading in the background.
     injected_task: Option<Task<()>>,
     /// Runs just before the view takes the injected languages a frame
@@ -382,6 +388,7 @@ impl EditorView {
             theme,
             focus: cx.focus_handle(),
             tab_tint: None,
+            tab_title: None,
             wrap_reserve: 0.,
             gutter: true,
             minimap: None,
@@ -407,6 +414,7 @@ impl EditorView {
             syntax: None,
             language_task: None,
             language_chosen: false,
+            chosen_language: None,
             injected_task: None,
             #[cfg(test)]
             before_taking_missing: None,
@@ -528,6 +536,19 @@ impl EditorView {
             self.tab_tint = tint;
             cx.notify();
         }
+    }
+
+    /// Titles the tab `title`, its icon the one a file named `icon_by` has,
+    /// in place of its file's name: a buffer with no file that stands for
+    /// one, such as a file's text at a commit.
+    pub fn set_tab_title(
+        &mut self,
+        title: impl Into<gpui::SharedString>,
+        icon_by: impl Into<gpui::SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tab_title = Some((title.into(), icon_by.into()));
+        cx.notify();
     }
 
     /// Has soft wrap leave `ems` more of the text area free at the right,
@@ -656,8 +677,9 @@ impl EditorView {
         self.language_task = None;
         self.highlight_epoch += 1;
         cx.notify();
-        let Some(name) = name.and_then(|name| fe_syntax::language_names().find(|&n| n == name))
-        else {
+        let name = name.and_then(|name| fe_syntax::language_names().find(|&n| n == name));
+        self.chosen_language = name;
+        let Some(name) = name else {
             return;
         };
         if let Some(language) = fe_syntax::loaded_language(name) {

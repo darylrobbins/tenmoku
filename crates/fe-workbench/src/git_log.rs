@@ -54,7 +54,8 @@
 //! the same tab.
 //! The selection moves over commit, body and file rows alike; Enter, `o`
 //! and a click on a body row do nothing. Rows too long for the panel end in
-//! an ellipsis.
+//! an ellipsis. A right click on a commit or file row selects it and opens
+//! its menu, whose items are the panel's commands too ([`git_log_menu`]).
 //!
 //! A box at the top of the panel filters the list, as GitLens's Commit
 //! Graph search does: [`FILTER_DELAY`] after the typing stops, the list is
@@ -90,11 +91,11 @@ use fe_ui::{Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, fi
 use gpui::{
     AnyElement, App, AppContext as _, BorderStyle, Bounds, ClickEvent, ClipboardItem, Context, Div,
     ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, KeyContext, KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render,
-    ScrollHandle, ScrollStrategy, ScrollWheelEvent, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle,
-    WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _, px, quad, rgba, size, svg,
-    transparent_black, uniform_list,
+    IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement as _,
+    PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription,
+    UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
+    px, quad, rgba, size, svg, transparent_black, uniform_list,
 };
 
 use super::{
@@ -896,6 +897,8 @@ pub(crate) struct GitLogPanel {
     selected: Option<usize>,
     /// Whether `G` holds the next page back.
     hold: Hold,
+    /// A row's open menu (`git_log_menu`).
+    menu: Option<git_log_menu::RowMenu>,
     keys: ListKeys,
     /// The last list started's number: only its pages land.
     read: u64,
@@ -952,6 +955,7 @@ impl GitLogPanel {
             root: None,
             selected: None,
             hold: Hold::None,
+            menu: None,
             keys: ListKeys::default(),
             read: 0,
             at: None,
@@ -1024,6 +1028,7 @@ impl GitLogPanel {
         self.more = false;
         self.selected = None;
         self.hold = Hold::None;
+        self.menu = None;
     }
 
     /// An edit of the filter box: the list is read again [`FILTER_DELAY`]
@@ -1601,6 +1606,10 @@ impl GitLogPanel {
             return;
         }
         let keystroke = &event.keystroke;
+        if keystroke.key == "escape" && !keystroke.modifiers.modified() && self.menu.is_some() {
+            cx.stop_propagation();
+            return self.close_menu(cx);
+        }
         if keystroke.key == "/" && !keystroke.modifiers.modified() && fe_gpui::vim_enabled(cx) {
             cx.stop_propagation();
             return self.focus_filter(window, cx);
@@ -1714,6 +1723,7 @@ impl GitLogPanel {
                                         panel.click(line, event.click_count(), window, cx)
                                     },
                                 ))
+                                .on_mouse_down(MouseButton::Right, menu_on(line, cx))
                                 .child(file_cell(rail(commit), parts, &colors, ix, seen.clone()))
                                 .into_any_element(),
                         );
@@ -1781,6 +1791,7 @@ impl GitLogPanel {
                     .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
                         panel.click(line, event.click_count(), window, cx)
                     }))
+                    .on_mouse_down(MouseButton::Right, menu_on(line, cx))
                     .hoverable_tooltip(move |_, cx| {
                         let repo = repo.clone();
                         let card = cx.new(|cx| {
@@ -1795,6 +1806,17 @@ impl GitLogPanel {
             })
             .collect()
     }
+}
+
+/// What a right click on `line`'s row does: opens its menu.
+fn menu_on(
+    line: Line,
+    cx: &mut Context<GitLogPanel>,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |panel, event: &MouseDownEvent, window, cx| {
+        cx.stop_propagation();
+        panel.open_menu(line, event.position, window, cx);
+    })
 }
 
 /// `text` as a row's, ending in an ellipsis if it's too long for the row.
@@ -2351,8 +2373,8 @@ impl Render for GitLogPanel {
                     .on_click(cx.listener(|panel, _, _, cx| panel.clear_filter(cx))),
             )
         });
-        div()
-            .track_focus(&self.focus)
+        let menu = self.render_menu(cx);
+        <Self as kiln::ViewCommands>::attach(div().track_focus(&self.focus), cx)
             .key_context(key_context)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
@@ -2379,6 +2401,7 @@ impl Render for GitLogPanel {
                 )
             })
             .child(list)
+            .children(menu)
     }
 }
 
@@ -2451,6 +2474,9 @@ impl GitLogPanel {
         self.card.clone()
     }
 }
+
+#[path = "git_log_menu.rs"]
+mod git_log_menu;
 
 #[cfg(test)]
 #[path = "git_log_tests.rs"]

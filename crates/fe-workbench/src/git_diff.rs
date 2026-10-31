@@ -137,6 +137,9 @@ struct Compared {
     base: Option<Base>,
     /// Whether it compares with nothing, the file gone.
     deleted: bool,
+    /// The full id of the commit whose text of the file it compares with
+    /// the working side ([`Workbench::compare_revision`]), if it does.
+    revision: Option<String>,
     /// The last read of its git side started: only that one lands.
     read: u64,
     /// A model over its working side's buffer that nothing shows: what
@@ -933,6 +936,7 @@ impl Workbench {
             path,
             base,
             deleted,
+            revision: None,
             read: 0,
             source,
             reveal: None,
@@ -1517,6 +1521,104 @@ impl Workbench {
         if self.may_show(&landing, cx) {
             self.show_diff(&diff, window, cx);
         }
+    }
+
+    /// Opens the file at `path` as commit `id`, `short`, has it, read from
+    /// `repo` (nothing if the commit hasn't it), read-only on the left,
+    /// titled `short`, against its working side: its open buffer as the
+    /// read lands, else the file read from disk, else, the file gone from
+    /// the working tree, an empty read-only side. The tab opens in the
+    /// active pane and is shown if it's still the last diff asked for. One
+    /// open for the same commit and file is shown instead, unless its right
+    /// side is empty and the file is back (open, or on disk) as the read
+    /// lands, when the new diff replaces it. `op` is answered if it can't
+    /// be read.
+    pub(crate) fn compare_revision(
+        &mut self,
+        repo: std::sync::Arc<Repo>,
+        (id, short): (String, String),
+        path: PathBuf,
+        op: GitOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((diff, false)) = self.open_revision_diff(&path, &id, cx) {
+            return self.show_diff(&diff, window, cx);
+        }
+        let landing = self.landing(&self.active.clone(), true, cx);
+        let (commit, at) = (id.clone(), path.clone());
+        let read = cx.background_spawn(async move {
+            let text = repo
+                .text_at(&commit, &at)
+                .map_err(|error| error.to_string())?;
+            // The file's read matters only if no buffer's open as it lands.
+            Ok::<_, String>((text, read_file(&at)))
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            let read = read.await;
+            (workbench.update_in(cx, |workbench, window, cx| {
+                let (text, disk) = match read {
+                    Ok(read) => read,
+                    Err(answer) => return workbench.answer_git_op(&op, answer, cx),
+                };
+                let open = workbench.open_revision_diff(&path, &id, cx);
+                let model = match (workbench.file_model(&path, cx), disk) {
+                    (Some(model), _) => Some(model),
+                    (None, Ok(disk)) => disk.map(|disk| EditorModel::new(disk, Some(path.clone()))),
+                    // Shown as it is, if one's open.
+                    (None, Err(_)) if open.is_some() => None,
+                    (None, Err(answer)) => return workbench.answer_git_op(&op, answer, cx),
+                };
+                let old = match open {
+                    // Opened meanwhile, or its right side still has nothing
+                    // to show.
+                    Some((diff, deleted)) if !deleted || model.is_none() => {
+                        if workbench.may_show(&landing, cx) {
+                            workbench.show_diff(&diff, window, cx);
+                        }
+                        return;
+                    }
+                    open => open.map(|(diff, _)| diff),
+                };
+                let deleted = model.is_none();
+                let right = match model {
+                    Some(model) => Ok((WORKING_TREE.into(), model)),
+                    None => Err(fixed_side(WORKING_TREE, "")),
+                };
+                let left = fixed_side(short, &text.unwrap_or_default());
+                let diff = workbench.new_diff((path, None, deleted), left, right, cx);
+                if let Some(compared) = compared(&diff.downgrade(), cx) {
+                    compared.revision = Some(id);
+                }
+                let show = workbench.may_show(&landing, cx);
+                match &old {
+                    Some(old) => workbench.replace_diff(old, &diff, window, cx),
+                    None => workbench.place_diff(&diff, &landing.pane, cx),
+                }
+                if show {
+                    workbench.show_diff(&diff, window, cx);
+                }
+            }))
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The tab open comparing `path`, as commit `id` has it at that path,
+    /// with its working side, and whether its right side is empty, the file having been gone.
+    fn open_revision_diff(
+        &self,
+        path: &Path,
+        id: &str,
+        cx: &mut App,
+    ) -> Option<(Entity<DiffView>, bool)> {
+        let views: Vec<_> = (diff_views(cx).iter())
+            // The path in the commit, not the file it is now: two paths may
+            // resolve to one working file but differ in the commit.
+            .filter(|compared| compared.revision.as_deref() == Some(id) && compared.path == path)
+            .filter_map(|compared| Some((compared.view.upgrade()?, compared.deleted)))
+            .collect();
+        (views.into_iter()).find(|(diff, _)| self.diff_tab(diff, cx).is_some())
     }
 
     /// `path` from the root, or whole if it's outside it.
