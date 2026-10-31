@@ -67,14 +67,14 @@ jump_label_foreground = "#1c1814"
 change_added = "#7fb889"
 change_modified = "#7fa6b8"
 change_deleted = "#c47a72"
-# A diff view's rows: added and removed rows faint, their changed words
-# stronger over them, and the hatch on the filler rows across from them. Green
-# and red only, never the blue of change_modified: a modified pair is removed on
-# the left and added on the right.
-diff_added_row = "#7fb88926"
-diff_removed_row = "#c47a7226"
-diff_added_word = "#7fb88959"
-diff_removed_word = "#c47a7259"
+# A diff view's rows and changed words, at VS Code's translucent levels (its
+# diffEditor.inserted/removedLineBackground and ...TextBackground are #..33; ours are weaker still, so a comment keeps its contrast):
+# the row band is fainter and the word tint over it stronger, both behind the
+# text, so a changed word keeps its syntax colour. Green and red only.
+diff_added_row = "#9bb95514"
+diff_removed_row = "#ff000014"
+diff_added_word = "#9ccc2c1f"
+diff_removed_word = "#ff00001f"
 diff_filler = "#e3d6c31f"
 # A thin line at each indent level, and the one of the caret's block.
 indent_guide = "#ffffff12"

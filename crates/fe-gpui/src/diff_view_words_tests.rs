@@ -301,3 +301,77 @@ fn theme_colours(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// A DiffView's changed words stay readable. The word tint is painted with
+/// the row bands in the background layer, before any glyph
+/// (`Layer::Backgrounds`, ahead of the text), so what decides legibility is
+/// its colour: composited over the row band and the editor background it
+/// must leave the text its contrast.
+mod contrast {
+    use super::*;
+    use gpui::{Hsla, Rgba};
+
+    /// `over` laid on `under`, as the painter blends a translucent fill.
+    fn over(under: Rgba, over: Hsla) -> Rgba {
+        let over = Rgba::from(over);
+        let mix = |u: f32, o: f32| o * over.a + u * (1. - over.a);
+        Rgba {
+            r: mix(under.r, over.r),
+            g: mix(under.g, over.g),
+            b: mix(under.b, over.b),
+            a: 1.,
+        }
+    }
+
+    /// WCAG relative luminance.
+    fn luminance(color: Rgba) -> f32 {
+        let lin = |c: f32| match c <= 0.03928 {
+            true => c / 12.92,
+            false => ((c + 0.055) / 1.055).powf(2.4),
+        };
+        0.2126 * lin(color.r) + 0.7152 * lin(color.g) + 0.0722 * lin(color.b)
+    }
+
+    fn contrast(a: Rgba, b: Rgba) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[gpui::test]
+    fn a_changed_word_keeps_its_text_readable(cx: &mut TestAppContext) {
+        let palettes = [
+            (EditorPalette::fastedit_dark(), "dark"),
+            (EditorPalette::fastedit_light(), "light"),
+        ];
+        for (palette, name) in palettes {
+            let theme =
+                cx.update(|cx| EditorTheme::from_palette(palette, &EditorSettings::default(), cx));
+            let background = Rgba::from(theme.background);
+            let comment = palette.syntax_color("comment").expect("a comment colour");
+            let comment = Rgba::from(Hsla::from(gpui::rgba(comment.to_rgba_u32())));
+            let foreground = Rgba::from(theme.foreground);
+            for (side, row, word) in [
+                ("added", theme.diff_added_row, theme.diff_added_word),
+                ("removed", theme.diff_removed_row, theme.diff_removed_word),
+            ] {
+                // No stronger than VS Code's #..33.
+                assert!(
+                    row.a <= 0.2 + 0.005 && word.a <= 0.2 + 0.005,
+                    "{name} {side}"
+                );
+                let banded = over(background, row);
+                let worded = over(banded, word);
+                // The default text keeps WCAG AA on the word.
+                let ratio = contrast(foreground, worded);
+                assert!(ratio >= 4.5, "{name} {side} foreground {ratio}");
+                // A comment has less than 4.5 even on the bare background in the
+                // dark theme, so it must keep most of what it has there.
+                let (plain, tinted) = (contrast(comment, background), contrast(comment, worded));
+                assert!(
+                    tinted >= 0.65 * plain,
+                    "{name} {side} comment {tinted} of {plain}"
+                );
+            }
+        }
+    }
+}

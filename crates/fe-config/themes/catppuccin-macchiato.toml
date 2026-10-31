@@ -116,6 +116,14 @@ jump_label_foreground = "#181926"
 change_added = "#A6DA95"
 change_modified = "#EED49F"
 change_deleted = "#ED8796"
+# A diff view's rows and changed words, at VS Code's translucent levels (its
+# diffEditor.inserted/removedLineBackground and ...TextBackground are #..33; ours are weaker still, so a comment keeps its contrast):
+# the row band is fainter and the word tint over it stronger, both behind the
+# text, so a changed word keeps its syntax colour. Green and red only.
+diff_added_row = "#9bb95514"
+diff_removed_row = "#ff000014"
+diff_added_word = "#9ccc2c1f"
+diff_removed_word = "#ff00001f"
 indent_guide = "#494D64"
 indent_guide_active = "#5B6078"
 # Sticky scroll: the band of pinned scope headers at the top of the editor,
