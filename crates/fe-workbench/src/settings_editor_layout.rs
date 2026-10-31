@@ -448,6 +448,15 @@ impl SettingsEditor {
                 self.list.remeasure_items(spacer_row..spacer_row + 1);
                 again = true;
             }
+        } else if self.spacer != Pixels::ZERO {
+            // A resize drops the measured heights, and a section taller
+            // than the view leaves the last row unmeasured, or scrolling
+            // leaves the heading out of the list: the old spacer is stale
+            // and, scrolled to the end, could fill the view.
+            self.spacer = Pixels::ZERO;
+            let spacer_row = self.rows.len();
+            self.list.remeasure_items(spacer_row..spacer_row + 1);
+            again = true;
         }
         let at_top = heading.is_some_and(|heading| (heading.top() - view.top()).abs() < px(0.5));
         if self.pinned && !at_top && self.repins < 3 {

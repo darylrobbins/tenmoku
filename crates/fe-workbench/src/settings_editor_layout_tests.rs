@@ -493,3 +493,46 @@ fn a_short_last_section_comes_to_the_top(cx: &mut TestAppContext) {
         "{key}: {end:?} in {list:?}"
     );
 }
+
+/// The space after the last row follows the window: navigating to a
+/// section in a tall window, then narrowing and shortening it, leaves
+/// setting rows drawn at the end of the list, not blank space.
+#[gpui::test]
+fn the_spacer_follows_a_narrow_short_window(cx: &mut TestAppContext) {
+    let dirs = Dirs::new();
+    let (_workbench, editor, cx) = open_settings(cx, &dirs, 1200.);
+    cx.simulate_resize(size(px(1200.), px(2400.)));
+    frames(cx);
+    let sections = editor.read_with(cx, |editor, _| editor.sections().to_vec());
+    // The second to last: short enough that the spacer is needed.
+    let section = &sections[sections.len() - 2];
+    let entry = bounds(&format!("settings-nav-{}", section.title), cx);
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.list_focus().clone(), cx)
+    });
+    draw(cx);
+    cx.simulate_click(entry.center(), Modifiers::none());
+    frames(cx);
+
+    cx.simulate_resize(size(px(360.), px(400.)));
+    frames(cx);
+    let list = bounds("settings-list", cx);
+    // Wheel by wheel, as a user would, each in the frames it asks for.
+    for _ in 0..30 {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: list.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-100_000.))),
+            ..Default::default()
+        });
+        frames(cx);
+    }
+    let key = editor.read_with(cx, |editor, _| match editor.rows().last() {
+        Some(Row::Setting(ix)) => editor.model().unwrap().entries()[*ix].key_path(),
+        _ => unreachable!(),
+    });
+    let end = bounds(&format!("settings-row-{key}"), cx);
+    assert!(
+        end.bottom() > list.top() && end.top() < list.bottom(),
+        "{key}: {end:?} in {list:?}"
+    );
+}
