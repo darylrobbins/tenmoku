@@ -10,8 +10,9 @@ use fe_git::graph::{GraphLayout, GraphRow};
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, commands::RunCommand};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_shell::{
-    Picker,
+    DockView as _, Picker,
     command_palette::{COMMAND_PALETTE, CommandPalette},
+    dock::MIN_DOCK_WIDTH,
 };
 
 use super::{GitLogPanel, PAGE};
@@ -321,7 +322,7 @@ fn expected(log: &[(String, Vec<String>, String)], labels: &[(&str, &str)]) -> R
         .map(|(id, _, summary)| {
             let label = labels.get(summary.as_str());
             let label = label.map(|label| label.to_string()).into_iter().collect();
-            let texts = vec![format!("{}  {summary}", &id[..7]), "just now".to_owned()];
+            let texts = vec![format!("{}  {summary}", &id[..7])];
             (label, texts)
         })
         .collect()
@@ -575,7 +576,7 @@ fn keys_and_pages(cx: &mut TestAppContext) {
     assert_eq!(selected(&workbench, cx), Some(PAGE - 1));
 }
 
-/// Each row's labels and first text, without how long ago it was.
+/// Each row's labels and first text.
 fn labels_and_summaries(rows: Rows) -> Vec<(Vec<String>, String)> {
     (rows.into_iter())
         .map(|(labels, texts)| (labels, texts[0].clone()))
@@ -659,3 +660,81 @@ fn edges(cx: &mut TestAppContext) {
 
 #[path = "git_log_message_tests.rs"]
 mod message_tests;
+
+#[path = "git_log_card_tests.rs"]
+mod git_log_card_tests;
+
+#[gpui::test]
+fn rails_clip_alike_when_narrow(cx: &mut TestAppContext) {
+    // Eleven lanes through `long`, wider than the dock at its least: ten
+    // branches off its parent, made after it.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    let commit_at = |file: &str, summary: &str, seconds: u64| {
+        fs::write(root.join(file), "x\n").unwrap();
+        git(root, &["add", "."]);
+        let date = format!("@{seconds} +0000");
+        let output = (git_command(root, &["commit", "-q", "-m", summary]))
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .output()
+            .expect("run git");
+        assert!(output.status.success(), "{output:?}");
+    };
+    commit_at("a.rs", "base", 10);
+    fs::write(root.join("b.rs"), "b\n").unwrap();
+    commit_at("a.rs", "long", 20);
+    for branch in 0..10 {
+        let name = format!("b{branch}");
+        git(root, &["checkout", "-q", "-b", &name, "HEAD~1"]);
+        commit_at(
+            &format!("{name}.rs"),
+            &format!("branch {branch}"),
+            100 + branch,
+        );
+        git(root, &["checkout", "-q", "main"]);
+    }
+    let (workbench, mut cx) = window(cx, root, "a.rs");
+    let cx = &mut cx;
+    dispatch("git.log_all", cx);
+    workbench.update(cx, |workbench, cx| {
+        (workbench.dock()).update(cx, |dock, cx| {
+            dock.dock_mut().set_size(MIN_DOCK_WIDTH);
+            cx.notify();
+        })
+    });
+    let panel = panel(&workbench, cx);
+    let lines = panel.read_with(cx, |panel, _| panel.lines());
+    let at = (lines.iter().position(|line| line.ends_with("  long")))
+        .unwrap_or_else(|| panic!("no row for long: {lines:?}"));
+    panel.update_in(cx, |panel, window, cx| panel.open_row(at, window, cx));
+    let seen = panel.read_with(cx, |panel, _| panel.rows_seen());
+    seen.borrow_mut().before.clear();
+    seen.borrow_mut().segments.clear();
+    draw(cx);
+    let commit = panel.read_with(cx, |panel, _| panel.lines[at].commit());
+    let rail = panel.read_with(cx, |panel, _| panel.rail(commit).len());
+    assert_eq!(rail, 11, "every lane runs through the commit's rows");
+    let lines = panel.read_with(cx, |panel, _| panel.lines());
+    assert_eq!(lines[at + 1], "A b.rs");
+
+    // Every row drawn, commit and file rows alike, clips its lanes at the
+    // same edge: the lanes past it are cut from all of them, none from
+    // only some.
+    let seen = seen.borrow();
+    let drawn: Vec<usize> = seen.segments.keys().copied().collect();
+    assert!(drawn.len() > at + 2, "{drawn:?}");
+    let clip = seen.before[&at].right();
+    for ix in &drawn {
+        let before = seen.before.get(ix).unwrap_or_else(|| panic!("row {ix}"));
+        assert_eq!(
+            before.right(),
+            clip,
+            "row {ix} ({}) clips alike",
+            lines[*ix]
+        );
+    }
+    let past = |ix: usize| (seen.segments[&ix].iter()).any(|(from, to, _)| from.x.max(to.x) > clip);
+    assert!(past(at) && past(at + 1), "the lanes reach past the edge");
+}

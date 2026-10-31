@@ -1,6 +1,7 @@
-//! A Git Log commit's whole message: the popover hovering its row shows,
-//! its body listed above its files when it's expanded, and its row's muted
-//! text, on repositories built with the `git` CLI in temporary directories.
+//! A Git Log commit's whole message: its body listed above its files when
+//! it's expanded, and its card scrolling a message taller than the window,
+//! on repositories built with the `git` CLI in temporary directories. The
+//! card's contents are `git_log_card_tests.rs`'s.
 
 use std::{path::Path, time::Duration};
 
@@ -10,7 +11,7 @@ use gpui::{
     VisualTestContext, point, px,
 };
 
-use super::{GitLogPanel, dispatch, draw, git, panel, press, rows, window};
+use super::{GitLogPanel, dispatch, draw, git, panel, press, window};
 use crate::Workbench;
 
 /// The message of the newest commit.
@@ -64,45 +65,6 @@ fn cli_date(root: &Path, id: &str) -> String {
     let format = "--date=format:%Y-%m-%d %H:%M %z";
     let date = git(root, &["log", "-1", "--format=%ad", format, id]);
     date.trim().to_owned()
-}
-
-#[gpui::test]
-fn hovering_a_commit_row_shows_its_whole_message(cx: &mut TestAppContext) {
-    let (dir, [second, first]) = fixture();
-    let root = dir.path();
-    let (workbench, mut cx) = log_window(cx, root);
-    let cx = &mut cx;
-    let panel = panel(&workbench, cx);
-    let shown = |cx: &mut VisualTestContext| panel.read_with(cx, |panel, _| panel.last_popover());
-
-    // Not before the delay.
-    let row = row_center(&panel, 0, cx);
-    cx.simulate_mouse_move(row, None, Modifiers::none());
-    cx.executor().advance_clock(Duration::from_millis(400));
-    draw(cx);
-    assert_eq!(shown(cx), None, "not shown before the delay");
-
-    // The summary, the body with its blank lines, the author and email,
-    // the date and how long ago, and the full id.
-    cx.executor().advance_clock(Duration::from_millis(100));
-    draw(cx);
-    let expected = format!(
-        "subject\nline one\nline two\n\npara\nt t@t\n{} (just now)\n{second}",
-        cli_date(root, &second)
-    );
-    assert_eq!(shown(cx), Some(expected));
-    assert_eq!(second.len(), 40);
-
-    // A one-line message has no body.
-    let row = row_center(&panel, 1, cx);
-    cx.simulate_mouse_move(row, None, Modifiers::none());
-    cx.executor().advance_clock(Duration::from_millis(500));
-    draw(cx);
-    let expected = format!(
-        "one line\nt t@t\n{} (just now)\n{first}",
-        cli_date(root, &first)
-    );
-    assert_eq!(shown(cx), Some(expected));
 }
 
 #[gpui::test]
@@ -165,41 +127,7 @@ fn expanding_a_commit_lists_its_body_above_its_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_commit_rows_muted_text_is_its_age_alone(cx: &mut TestAppContext) {
-    let (dir, [second, first]) = fixture();
-    let (workbench, mut cx) = window(cx, dir.path(), "a.rs");
-    let cx = &mut cx;
-
-    // The History panel's rows keep the author.
-    dispatch("git.file_history", cx);
-    let history = workbench.read_with(cx, |workbench, cx| {
-        let dock = workbench.dock().read(cx);
-        let history = dock.history().cloned().expect("the History panel was made");
-        history.read(cx).rows()
-    });
-    let summaries = [
-        format!("{}  subject", &second[..7]),
-        format!("{}  one line", &first[..7]),
-    ];
-    assert_eq!(
-        history,
-        summaries
-            .clone()
-            .map(|summary| vec![summary, "t, just now".to_owned()])
-    );
-
-    // The Git Log's are the age alone.
-    dispatch("git.log", cx);
-    let [newest, oldest] = summaries;
-    let log = vec![
-        (vec!["main".to_owned()], vec![newest, "just now".to_owned()]),
-        (Vec::new(), vec![oldest, "just now".to_owned()]),
-    ];
-    assert_eq!(rows(&workbench, cx), log);
-}
-
-#[gpui::test]
-fn a_message_taller_than_the_window_scrolls_in_its_popover(cx: &mut TestAppContext) {
+fn a_message_taller_than_the_window_scrolls_in_its_card(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     git(root, &["init", "-q"]);
@@ -212,24 +140,26 @@ fn a_message_taller_than_the_window_scrolls_in_its_popover(cx: &mut TestAppConte
     let (workbench, mut cx) = log_window(cx, root);
     let cx = &mut cx;
     let panel = panel(&workbench, cx);
-    let probe = panel.read_with(cx, |panel, _| panel.popover_probe());
+    let probe = panel.read_with(cx, |panel, _| panel.card_probe());
     let drawn = || probe.borrow().drawn.clone();
     let row = row_center(&panel, 0, cx);
     cx.simulate_mouse_move(row, None, Modifiers::none());
     cx.executor().advance_clock(Duration::from_millis(500));
     draw(cx);
-    let text = probe.borrow().text.clone().expect("the popover shows");
-    assert!(text.ends_with(&format!(
-        "line 300\nt t@t\n{} (just now)\n{id}",
-        cli_date(root, &id)
-    )));
+    assert_eq!(probe.borrow().built, 1, "the card shows");
+    assert!(probe.borrow().message.ends_with("line 299\nline 300"));
+    let dates = format!("just now ({})", cli_date(root, &id));
+    assert_eq!(probe.borrow().dates, dates);
+    assert_eq!(probe.borrow().short, id[..7]);
 
-    // It's within the window, the author, date and id in view below the
-    // summary and body, which scroll.
+    // It's within the window, the author and dates above and the totals,
+    // id and buttons below the summary, body and refs, which scroll, in
+    // view.
     let window = cx.update(|window, _| window.viewport_size());
     let parts = drawn();
-    assert_eq!(parts.len(), 4, "the message, author, date and id");
-    for part in &parts {
+    let names: Vec<_> = parts.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["header", "scrolled", "totals", "footer"]);
+    for (_, part) in &parts {
         assert!(
             part.top() >= px(0.) && part.bottom() <= window.height,
             "{part:?} in {window:?}"
@@ -245,7 +175,7 @@ fn a_message_taller_than_the_window_scrolls_in_its_popover(cx: &mut TestAppConte
 
     // The mouse moves into it and it stays open; the wheel scrolls its
     // message, the rest staying put.
-    let message = parts[0];
+    let message = parts[1].1;
     cx.simulate_mouse_move(message.center(), None, Modifiers::none());
     cx.executor().advance_clock(Duration::from_millis(1000));
     probe.borrow_mut().drawn.clear();
@@ -261,7 +191,7 @@ fn a_message_taller_than_the_window_scrolls_in_its_popover(cx: &mut TestAppConte
     assert_eq!(scroll.offset().y, px(-200.));
     assert_eq!(drawn(), parts, "still shown, where it was");
 
-    // Away from the row and the popover, it hides.
+    // Away from the row and the card, it hides.
     cx.simulate_mouse_move(
         point(px(1.), window.height - px(1.)),
         None,
@@ -271,5 +201,5 @@ fn a_message_taller_than_the_window_scrolls_in_its_popover(cx: &mut TestAppConte
     draw(cx);
     probe.borrow_mut().drawn.clear();
     draw(cx);
-    assert_eq!(drawn(), [], "hidden");
+    assert!(drawn().is_empty(), "hidden");
 }

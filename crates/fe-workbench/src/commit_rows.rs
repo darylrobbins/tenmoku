@@ -1,6 +1,7 @@
 //! What the History and Git Log panels' commit lists share: a commit row's
-//! texts, `<short>  <summary>` then `<author>, <time ago>` (shown muted),
-//! and the lists' keys. Up and down move the selection and Enter opens;
+//! texts, `<short>  <summary>` then `<author>, <time ago>` (the History
+//! panel shows both, the second muted; the Git Log panel the first alone,
+//! its commit card the rest), and the lists' keys. Up and down move the selection and Enter opens;
 //! with vim on (the panel's key context then has the `vim` flag), `j` and
 //! `k` move, `g g` and `G` go to the first and last row, `o` opens and `q`
 //! hides the dock, focusing the active editor ([`leave`]). With vim off
@@ -22,7 +23,7 @@ pub(super) fn now() -> i64 {
 
 /// How long ago `seconds` was: `just now`, `5 minutes ago`, `1 day ago`,
 /// as the branch picker says it.
-fn ago(seconds: i64) -> String {
+pub(super) fn ago(seconds: i64) -> String {
     const MINUTE: i64 = 60;
     const HOUR: i64 = 60 * MINUTE;
     const DAY: i64 = 24 * HOUR;

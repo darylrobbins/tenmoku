@@ -20,14 +20,18 @@
 //! Each row has the commit's graph cell (its lanes drawn on a canvas, in
 //! VS Code's five graph colours, its dot a ring for a merge), the refs
 //! pointing at it as small labels (HEAD's branch bold, a tag's prefixed
-//! `tag`, a remote-tracking branch's muted), then its short id and summary
-//! and, muted, how long ago it was made. Hovering a commit row shows its
-//! whole message in a popover, as VS Code's graph and GitLens do: the
-//! summary, bold, the body, its author and email, its date as
-//! `git.blame_line`'s popover gives it and how long ago that was, and its
-//! full id, muted ([`CommitPopover`]). It's no taller than the window: a
-//! longer message scrolls under the mouse, the popover staying open while
-//! the mouse is over it, its author, date and id kept in view below.
+//! `tag`, a remote-tracking branch's muted), then its short id and summary;
+//! who made it and when are left to its card. Hovering a commit row shows
+//! the card, as GitLens's hover does: an avatar of the author's initials,
+//! the author and how long ago and when it was made, its whole message, its
+//! co-author and sign-off trailers, its refs, its files changed and lines
+//! added and removed, its short id with a button copying the full one, and
+//! a link to its page where its remote's host has one ([`CommitCard`]).
+//! It's no taller than the window: a longer message scrolls under the
+//! mouse, the card staying open while the mouse is over it, the rest kept
+//! in view around it. Every row with a graph cell or a rail keeps a file
+//! row's letter's room at its right edge, so however narrow the list the
+//! lanes clip at the same place in every row.
 //!
 //! The panel takes its keys as [`commit_rows`] says: up and down move the
 //! selection; with vim on, `j` and `k` move, `g g` and `G` go to the first
@@ -59,6 +63,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use fe_git::{
@@ -66,14 +71,14 @@ use fe_git::{
     RefKind, RefLabel, Repo,
     graph::{GraphLayout, GraphRow},
 };
-use fe_ui::{ROW_HEIGHT, UiTheme, file_icon_path};
+use fe_ui::{Icon, IconButton, ROW_HEIGHT, UiTheme, file_icon_path};
 use gpui::{
-    AnyElement, App, AppContext as _, BorderStyle, Bounds, Context, Div, ElementId, Entity,
-    FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle, ScrollStrategy,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _,
-    UniformListScrollHandle, WeakEntity, Window, canvas, div, point, prelude::FluentBuilder as _,
-    px, quad, rgba, size, svg, transparent_black, uniform_list,
+    AnyElement, App, AppContext as _, BorderStyle, Bounds, ClipboardItem, Context, Div, ElementId,
+    Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _, IntoElement,
+    KeyDownEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollHandle,
+    ScrollStrategy, ScrollWheelEvent, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, UniformListScrollHandle, WeakEntity, Window, canvas, div, point,
+    prelude::FluentBuilder as _, px, quad, rgba, size, svg, transparent_black, uniform_list,
 };
 
 use super::{
@@ -106,14 +111,27 @@ const NO_COMMITS: &str = "No commits yet";
 /// What the last row says while a page is read.
 const LOADING: &str = "Loading…";
 
-/// The commit popover's widest.
-const POPOVER_WIDTH: Pixels = px(480.);
+/// The commit card's widest.
+const CARD_WIDTH: Pixels = px(480.);
 
-/// How much shorter than the window the commit popover is, at most.
-const POPOVER_MARGIN: Pixels = px(16.);
+/// The commit card's narrowest, so its id, copy button and link fit.
+const CARD_MIN_WIDTH: Pixels = px(280.);
 
-/// The commit popover's text size.
-const POPOVER_TEXT: Pixels = px(12.);
+/// How much shorter than the window the commit card is, at most.
+const CARD_MARGIN: Pixels = px(16.);
+
+/// The commit card's text size.
+const CARD_TEXT: Pixels = px(12.);
+
+/// The commit card's avatar's diameter.
+const AVATAR: Pixels = px(28.);
+
+/// How long the commit card's copy button shows a check after copying.
+const COPIED_FOR: Duration = Duration::from_millis(1500);
+
+/// The width of a file row's change letter, which every row with a graph
+/// cell or a rail keeps clear at its right edge.
+const LETTER_WIDTH: Pixels = px(12.);
 
 /// A lane's width in the graph cell.
 const LANE_WIDTH: Pixels = px(12.);
@@ -193,54 +211,217 @@ fn body_lines(message: &str) -> Vec<&str> {
     lines.skip_while(|line| line.trim().is_empty()).collect()
 }
 
-/// How long ago `commit` was made, at `now`: `just now`, `6 days ago`.
-fn age(commit: &CommitInfo, now: i64) -> String {
-    let [_, when] = commit_rows::texts(commit, now);
-    let author = format!("{}, ", commit.author);
-    when.strip_prefix(&author)
-        .map_or(when.clone(), str::to_owned)
+/// The trailers a commit card lists, by key in any case.
+const TRAILERS: [&str; 2] = ["Co-authored-by", "Signed-off-by"];
+
+/// A [`TRAILERS`] line of a message: its key as written and who it names,
+/// their email dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Trailer {
+    key: String,
+    name: String,
 }
 
-/// What shows on hovering a commit row: its summary, bold; its message's
-/// body, wrapped, its blank lines kept; `<author> <email>`; `<date>
-/// (<ago>)`, the date as `git.blame_line`'s popover gives it; and its full
-/// id, muted. Wraps at [`POPOVER_WIDTH`]; no taller than the window less
-/// [`POPOVER_MARGIN`], the summary and body scrolling above the rest.
-struct CommitPopover {
-    summary: String,
+/// `line` as a [`TRAILERS`] trailer, if it is one.
+fn trailer(line: &str) -> Option<Trailer> {
+    let (key, value) = line.split_once(':')?;
+    if !TRAILERS.iter().any(|known| known.eq_ignore_ascii_case(key)) {
+        return None;
+    }
+    let value = value.trim();
+    let name = value.split_once('<').map_or(value, |(name, _)| name).trim();
+    let name = if name.is_empty() { value } else { name };
+    (!name.is_empty()).then(|| Trailer {
+        key: key.to_owned(),
+        name: name.to_owned(),
+    })
+}
+
+/// `message`'s body as [`body_lines`] gives it, less the [`TRAILERS`] lines
+/// of its last paragraph, and those trailers in order.
+fn split_trailers(message: &str) -> (Vec<&str>, Vec<Trailer>) {
+    let mut body = body_lines(message);
+    let last = (body.iter().rposition(|line| line.trim().is_empty())).map_or(0, |ix| ix + 1);
+    let mut trailers = Vec::new();
+    let paragraph: Vec<&str> = body.drain(last..).collect();
+    for line in paragraph {
+        match trailer(line) {
+            Some(trailer) => trailers.push(trailer),
+            None => body.push(line),
+        }
+    }
+    while body.last().is_some_and(|line| line.trim().is_empty()) {
+        body.pop();
+    }
+    (body, trailers)
+}
+
+/// The initials of `author`: the first letters of their first and last
+/// names, upper case; `?` for a name with no letters.
+fn initials(author: &str) -> String {
+    let mut words =
+        (author.split_whitespace()).filter_map(|word| word.chars().find(|c| c.is_alphanumeric()));
+    let first = words.next();
+    let last = words.next_back();
+    let initials: String = [first, last]
+        .into_iter()
+        .flatten()
+        .flat_map(char::to_uppercase)
+        .collect();
+    if initials.is_empty() {
+        "?".to_owned()
+    } else {
+        initials
+    }
+}
+
+/// The avatar's colour for `email`: a hue hashed from it (FNV-1a, so the
+/// same in every run), any case and surrounding space alike.
+fn avatar_color(email: &str) -> Hsla {
+    let email = email.trim().to_lowercase();
+    let hash = (email.bytes()).fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    gpui::hsla((hash % 360) as f32 / 360., 0.5, 0.4, 1.)
+}
+
+/// A commit's totals as `git show --shortstat` words them: `N files
+/// changed`, `X insertions(+)` and `Y deletions(-)`, each singular for 1.
+fn totals_text(files: usize, added: u32, removed: u32) -> [String; 3] {
+    let plural = |count: u64| if count == 1 { "" } else { "s" };
+    [
+        format!("{files} file{} changed", plural(files as u64)),
+        format!("{added} insertion{}(+)", plural(added.into())),
+        format!("{removed} deletion{}(-)", plural(removed.into())),
+    ]
+}
+
+/// What a commit card's web link says for `url`: the host's name where
+/// it's known.
+fn link_label(url: &str) -> &'static str {
+    if url.starts_with("https://github.com/") {
+        "Open on GitHub"
+    } else {
+        "Open in Browser"
+    }
+}
+
+/// What shows on hovering a commit row, as GitLens's hover does: an avatar,
+/// a circle of the author's initials in a colour from their email (nothing
+/// is fetched); the author, bold, and `<ago> (<date>)`, the date as
+/// `git.blame_line`'s popover gives it; the summary, bold, and the body,
+/// wrapped, its blank lines kept, less its [`TRAILERS`], which follow as
+/// rows naming who they credit; the refs pointing at it, as the row's
+/// labels; its files changed and lines added and removed, green and red,
+/// once read ([`Repo::commit_stats`]); then its short id, a button copying
+/// its full id (a check for [`COPIED_FOR`] after) and, where its remote's
+/// host has commit pages ([`Repo::commit_web_url`]), a link opening its
+/// page. Wraps at [`CARD_WIDTH`]; no taller than the window less
+/// [`CARD_MARGIN`], the summary, body, trailers and refs scrolling between
+/// the header and the totals and footer, which stay in view.
+struct CommitCard {
+    commit: Arc<CommitInfo>,
+    refs: Vec<RefLabel>,
+    initials: String,
+    avatar: Hsla,
+    /// `<ago> (<date>)`.
+    dates: String,
     body: Option<String>,
-    author: String,
-    date: String,
-    id: String,
-    /// The summary and body's scroll.
+    trailers: Vec<Trailer>,
+    /// Files changed and lines added and removed, once read.
+    totals: Option<(usize, u32, u32)>,
+    /// The commit's web page, once found, if its remote has one.
+    web: Option<String>,
+    /// The copy the check shows for, while it does.
+    copied: Option<u64>,
+    /// How many copies were made.
+    copies: u64,
+    /// The scroll of the summary, body, trailers and refs.
     scroll: ScrollHandle,
     #[cfg(test)]
-    probe: Rc<RefCell<PopoverProbe>>,
+    probe: Rc<RefCell<CardProbe>>,
 }
 
-/// What the tests see of the last commit popover built.
+/// What the tests see of the last commit card built, as last drawn.
 #[cfg(test)]
 #[derive(Default)]
-pub(crate) struct PopoverProbe {
-    /// Its text, as [`CommitPopover::text`] gives it.
-    pub(crate) text: Option<String>,
-    /// Its summary and body's scroll.
+pub(crate) struct CardProbe {
+    /// How many cards were built.
+    pub(crate) built: usize,
+    pub(crate) initials: String,
+    pub(crate) avatar: Option<Hsla>,
+    pub(crate) author: String,
+    pub(crate) dates: String,
+    /// The summary and body, joined with `\n`.
+    pub(crate) message: String,
+    /// Each trailer's key and who it names.
+    pub(crate) trailers: Vec<(String, String)>,
+    pub(crate) refs: Vec<String>,
+    pub(crate) short: String,
+    /// The totals' parts, each with the text colour set on it, if any.
+    pub(crate) totals: Vec<(String, Option<Hsla>)>,
+    /// The copy button's icon.
+    pub(crate) copy_icon: Option<Icon>,
+    /// The web link's text and page.
+    pub(crate) link: Option<(String, String)>,
+    /// The scroll of its summary, body, trailers and refs.
     pub(crate) scroll: Option<ScrollHandle>,
-    /// Its parts' bounds as last drawn: the summary and body, then the
-    /// author, date and id.
-    pub(crate) drawn: Vec<Bounds<Pixels>>,
+    /// Its parts' bounds as last drawn, by name: the header, what scrolls,
+    /// the totals and the footer.
+    pub(crate) drawn: Vec<(&'static str, Bounds<Pixels>)>,
+    /// The bounds of the sections that scroll, as last drawn, by name.
+    pub(crate) scrolled: Vec<(&'static str, Bounds<Pixels>)>,
 }
 
-impl CommitPopover {
-    fn new(commit: &CommitInfo, now: i64) -> Self {
-        let body = body_lines(&commit.message);
+impl CommitCard {
+    /// `entry`'s card at `now`, reading its totals and web page from `repo`
+    /// on the background executor.
+    fn new(entry: &LogCommit, now: i64, repo: Option<Arc<Repo>>, cx: &mut Context<Self>) -> Self {
+        let commit = entry.commit.clone();
+        let (body, trailers) = split_trailers(&commit.message);
+        if let Some(repo) = repo {
+            let (id, at) = (commit.id.clone(), repo.clone());
+            let web = cx.background_spawn(async move { at.commit_web_url(&id) });
+            let id = commit.id.clone();
+            let totals = cx.background_spawn(async move {
+                let stats = repo.commit_stats(&id).ok()?;
+                let (added, removed) = stats.total();
+                Some((stats.files.len(), added, removed))
+            });
+            cx.spawn(async move |card, cx| {
+                let web = web.await;
+                card.update(cx, |card, cx| {
+                    card.web = web;
+                    cx.notify();
+                })
+            })
+            .detach();
+            cx.spawn(async move |card, cx| {
+                let totals = totals.await;
+                card.update(cx, |card, cx| {
+                    card.totals = totals;
+                    cx.notify();
+                })
+            })
+            .detach();
+        }
         Self {
-            summary: commit.summary.clone(),
+            refs: entry.refs.clone(),
+            initials: initials(&commit.author),
+            avatar: avatar_color(&commit.email),
+            dates: format!(
+                "{} ({})",
+                commit_rows::ago(now - commit.time),
+                git_blame::date(&commit)
+            ),
             body: (!body.is_empty()).then(|| body.join("\n")),
-            author: format!("{} {}", commit.author, commit.email),
-            date: format!("{} ({})", git_blame::date(commit), age(commit, now)),
-            id: commit.id.clone(),
+            trailers,
+            totals: None,
+            web: None,
+            copied: None,
+            copies: 0,
             scroll: ScrollHandle::new(),
+            commit,
             #[cfg(test)]
             probe: Rc::default(),
         }
@@ -248,29 +429,56 @@ impl CommitPopover {
 
     /// It, telling `probe` what it is and how it's drawn.
     #[cfg(test)]
-    fn probed(mut self, probe: &Rc<RefCell<PopoverProbe>>) -> Self {
-        probe.replace(PopoverProbe {
-            text: Some(self.text()),
-            scroll: Some(self.scroll.clone()),
-            drawn: Vec::new(),
+    fn probed(mut self, probe: &Rc<RefCell<CardProbe>>) -> Self {
+        let built = probe.borrow().built + 1;
+        probe.replace(CardProbe {
+            built,
+            ..CardProbe::default()
         });
         self.probe = probe.clone();
         self
     }
 
-    /// Its lines, joined with `\n`.
-    #[cfg(test)]
-    fn text(&self) -> String {
-        let lines = [Some(&self.summary), self.body.as_ref()]
-            .into_iter()
-            .flatten();
-        let lines = lines.chain([&self.author, &self.date, &self.id]);
-        lines.map(String::as_str).collect::<Vec<_>>().join("\n")
+    /// Puts the full id on the clipboard, the button showing a check for
+    /// [`COPIED_FOR`].
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(self.commit.id.clone()));
+        self.copies += 1;
+        let copy = self.copies;
+        self.copied = Some(copy);
+        cx.notify();
+        cx.spawn(async move |card, cx| {
+            cx.background_executor().timer(COPIED_FOR).await;
+            card.update(cx, |card, cx| {
+                if card.copied == Some(copy) {
+                    card.copied = None;
+                    cx.notify();
+                }
+            })
+        })
+        .detach();
     }
-}
 
-impl CommitPopover {
-    /// Its width: its widest line's, up to [`POPOVER_WIDTH`]. GPUI lays a
+    /// The lines of text it shows, as one string each, for its width.
+    fn lines(&self) -> Vec<(String, FontWeight)> {
+        let normal = |text: String| (text, FontWeight::NORMAL);
+        let mut lines = vec![
+            (self.commit.author.clone(), FontWeight::BOLD),
+            normal(self.dates.clone()),
+            (self.commit.summary.clone(), FontWeight::BOLD),
+        ];
+        let body = self.body.iter().flat_map(|body| body.lines());
+        lines.extend(body.map(|line| normal(line.to_owned())));
+        let trailers = self.trailers.iter();
+        lines.extend(trailers.map(|trailer| normal(format!("{}: {}", trailer.key, trailer.name))));
+        if let Some((files, added, removed)) = self.totals {
+            lines.push(normal(totals_text(files, added, removed).join(", ")));
+        }
+        lines
+    }
+
+    /// Its width: its widest line's, the avatar's beside the author's, at
+    /// least [`CARD_MIN_WIDTH`] and up to [`CARD_WIDTH`]. GPUI lays a
     /// tooltip out at its min-content size, so wrapped text needs a width
     /// set to take the height it wraps to.
     fn width(&self, window: &Window) -> Pixels {
@@ -281,69 +489,204 @@ impl CommitPopover {
             let text = SharedString::from(text.to_owned());
             (window
                 .text_system()
-                .shape_line(text, POPOVER_TEXT, &[run], None))
+                .shape_line(text, CARD_TEXT, &[run], None))
             .width
         };
-        let body = self.body.iter().flat_map(|body| body.lines());
-        let rest = body.chain([&self.author, &self.date, &self.id].map(String::as_str));
-        let widest = (rest.map(|line| measure(line, FontWeight::NORMAL)))
-            .fold(measure(&self.summary, FontWeight::BOLD), Pixels::max);
+        let lines = self.lines();
+        let widest = (lines.iter().enumerate())
+            .map(|(ix, (line, weight))| {
+                // The author and dates sit beside the avatar.
+                let beside = if ix < 2 { AVATAR + px(8.) } else { px(0.) };
+                measure(line, *weight) + beside
+            })
+            .fold(px(0.), Pixels::max);
         // Its padding and border, and a pixel so the widest doesn't wrap.
-        (widest + px(19.)).min(POPOVER_WIDTH)
+        (widest + px(19.)).clamp(CARD_MIN_WIDTH, CARD_WIDTH)
+    }
+
+    /// Tells the probe what it shows.
+    #[cfg(test)]
+    fn note(&self, colors: &FileColors) {
+        let mut probe = self.probe.borrow_mut();
+        probe.initials = self.initials.clone();
+        probe.avatar = Some(self.avatar);
+        probe.author = self.commit.author.clone();
+        probe.dates = self.dates.clone();
+        let message = [Some(&self.commit.summary), self.body.as_ref()];
+        let message = message.into_iter().flatten().map(String::as_str);
+        probe.message = message.collect::<Vec<_>>().join("\n");
+        probe.trailers = (self.trailers.iter())
+            .map(|trailer| (trailer.key.clone(), trailer.name.clone()))
+            .collect();
+        probe.refs = self.refs.iter().map(label_text).collect();
+        probe.short = self.commit.short.clone();
+        probe.totals = match self.totals {
+            Some((files, added, removed)) => {
+                let [files, added, removed] = totals_text(files, added, removed);
+                vec![
+                    (files, None),
+                    (added, Some(colors.added)),
+                    (removed, Some(colors.deleted)),
+                ]
+            }
+            None => Vec::new(),
+        };
+        probe.copy_icon = Some(self.copy_icon());
+        probe.link = (self.web.as_ref()).map(|url| (link_label(url).to_owned(), url.clone()));
+        probe.scroll = Some(self.scroll.clone());
+    }
+
+    /// The copy button's icon: a check just after copying.
+    fn copy_icon(&self) -> Icon {
+        if self.copied.is_some() {
+            Icon::Check
+        } else {
+            Icon::Copy
+        }
     }
 }
 
-impl Render for CommitPopover {
+impl Render for CommitCard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = fe_ui::ui_theme(cx);
-        let message = div()
-            .id("commit-popover-message")
-            .flex()
-            .flex_col()
-            .gap_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
+        let colors = FileColors::new(&ui, cx);
+        #[cfg(test)]
+        self.note(&colors);
+        let avatar = (div()
+            .flex_none()
+            .size(AVATAR)
+            .rounded_full()
+            .bg(self.avatar))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(11.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(gpui::white())
+        .child(self.initials.clone());
+        let who = (div().flex_1().min_w_0().flex().flex_col())
             .child(
                 div()
                     .font_weight(FontWeight::BOLD)
-                    .child(self.summary.clone()),
+                    .child(self.commit.author.clone()),
             )
-            .when_some(self.body.clone(), |message, body| {
-                message.child(div().child(body))
+            .child(div().text_color(ui.muted_text).child(self.dates.clone()));
+        let header = (div().flex_none().flex().items_center().gap_2())
+            .child(avatar)
+            .child(who);
+        // The message, trailers and refs scroll together between the header
+        // and the totals and footer, which stay in view however many there
+        // are of each.
+        let mut sections: Vec<(&'static str, AnyElement)> = vec![(
+            "summary",
+            div()
+                .font_weight(FontWeight::BOLD)
+                .child(self.commit.summary.clone())
+                .into_any_element(),
+        )];
+        if let Some(body) = self.body.clone() {
+            sections.push(("body", div().child(body).into_any_element()));
+        }
+        if !self.trailers.is_empty() {
+            let rows = self.trailers.iter().map(|trailer| {
+                (div().flex().gap_1())
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(ui.muted_text)
+                            .child(format!("{}:", trailer.key)),
+                    )
+                    .child(div().min_w_0().child(trailer.name.clone()))
             });
+            let trailers = div().flex().flex_col().children(rows);
+            sections.push(("trailers", trailers.into_any_element()));
+        }
+        if !self.refs.is_empty() {
+            let refs = (div().flex().flex_wrap().gap_1())
+                .children(self.refs.iter().map(|label| ref_label(label, &ui)));
+            sections.push(("refs", refs.into_any_element()));
+        }
         #[cfg(test)]
-        let probe = self.probe.clone();
-        let popover = div()
+        let (inner_probe, inner) = (
+            self.probe.clone(),
+            sections.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        );
+        let content = (div().flex().flex_col().gap_2())
+            .children(sections.into_iter().map(|(_, section)| section));
+        #[cfg(test)]
+        let content = content.on_children_prepainted(move |drawn, _, _| {
+            inner_probe.borrow_mut().scrolled = inner.iter().copied().zip(drawn).collect();
+        });
+        let scrolled = div()
+            .id("commit-card-message")
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .child(content);
+        let mut parts: Vec<(&'static str, AnyElement)> = vec![
+            ("header", header.into_any_element()),
+            ("scrolled", scrolled.into_any_element()),
+        ];
+        if let Some((files, added, removed)) = self.totals {
+            let [files, added, removed] = totals_text(files, added, removed);
+            let comma = |part: Div| div().flex().child(part).child(",");
+            let totals = (div().flex_none().flex().flex_wrap().gap_1())
+                .child(comma(div().child(files)))
+                .child(comma(div().text_color(colors.added).child(added)))
+                .child(div().text_color(colors.deleted).child(removed));
+            parts.push(("totals", totals.into_any_element()));
+        }
+        let copy = IconButton::new("commit-card-copy", self.copy_icon(), &ui)
+            .on_click(cx.listener(|card, _, _, cx| card.copy(cx)));
+        let footer = (div().flex_none().flex().items_center().gap_1())
+            .child(
+                div()
+                    .text_color(ui.muted_text)
+                    .child(self.commit.short.clone()),
+            )
+            .child(copy)
+            .child(div().flex_1())
+            .when_some(self.web.clone(), |footer, url| {
+                footer.child(
+                    div()
+                        .id("commit-card-web")
+                        .debug_selector(|| "commit-card-web".into())
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_color(ui.accent)
+                        .hover(|link| link.underline())
+                        .child(link_label(&url))
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                )
+            });
+        parts.push(("footer", footer.into_any_element()));
+        #[cfg(test)]
+        let (probe, names) = (
+            self.probe.clone(),
+            parts.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        );
+        let card = div()
             .w(self.width(window))
-            .max_h(window.viewport_size().height - POPOVER_MARGIN)
+            .max_h(window.viewport_size().height - CARD_MARGIN)
             .occlude()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_2()
             .px_2()
-            .py_1()
-            .rounded_sm()
+            .py_2()
+            .rounded_md()
             .bg(ui.panel_background)
             .border_1()
             .border_color(ui.border)
-            .text_size(POPOVER_TEXT)
+            .text_size(CARD_TEXT)
             .text_color(ui.text)
             .whitespace_normal()
-            .child(message)
-            .child(div().flex_none().child(self.author.clone()))
-            .child(div().flex_none().child(self.date.clone()))
-            .child(
-                div()
-                    .flex_none()
-                    .text_color(ui.muted_text)
-                    .child(self.id.clone()),
-            );
+            .children(parts.into_iter().map(|(_, part)| part));
         #[cfg(test)]
-        let popover = popover.on_children_prepainted(move |drawn, _, _| {
-            probe.borrow_mut().drawn = drawn;
+        let card = card.on_children_prepainted(move |drawn, _, _| {
+            probe.borrow_mut().drawn = names.iter().copied().zip(drawn).collect();
         });
-        popover
+        card
     }
 }
 
@@ -507,9 +850,9 @@ pub(crate) struct GitLogPanel {
     first_asked: bool,
     scroll: UniformListScrollHandle,
     focus: FocusHandle,
-    /// What the tests see of the last commit popover built.
+    /// What the tests see of the last commit card built.
     #[cfg(test)]
-    popover: Rc<RefCell<PopoverProbe>>,
+    card: Rc<RefCell<CardProbe>>,
     /// What the tests see of the rows drawn.
     rows_seen: RowsProbe,
 }
@@ -543,7 +886,7 @@ impl GitLogPanel {
             scroll: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
             #[cfg(test)]
-            popover: Rc::default(),
+            card: Rc::default(),
             rows_seen: RowsProbe::default(),
         }
     }
@@ -1098,14 +1441,17 @@ impl GitLogPanel {
                     Line::Body(commit, body) => {
                         let text = self.body_text(commit, body).unwrap_or_default();
                         return Some(
-                            row.when(selected, |row| row.bg(selected_bg))
-                                .text_color(ui.muted_text)
-                                .on_click(cx.listener(move |panel, _, window, cx| {
-                                    panel.click(line, false, window, cx)
-                                }))
-                                .child(rail(commit))
-                                .child(ellipsized(text))
-                                .into_any_element(),
+                            lettered(
+                                row.when(selected, |row| row.bg(selected_bg))
+                                    .text_color(ui.muted_text)
+                                    .on_click(cx.listener(move |panel, _, window, cx| {
+                                        panel.click(line, false, window, cx)
+                                    })),
+                                lead().child(rail(commit)).child(ellipsized(text)),
+                                ix,
+                                seen.clone(),
+                            )
+                            .into_any_element(),
                         );
                     }
                     Line::File(commit, file) => {
@@ -1126,14 +1472,17 @@ impl GitLogPanel {
                             _ => (LOADING.to_owned(), ui.muted_text),
                         };
                         return Some(
-                            row.when(selected, |row| row.bg(selected_bg))
-                                .text_color(color)
-                                .on_click(cx.listener(move |panel, _, window, cx| {
-                                    panel.click(line, false, window, cx)
-                                }))
-                                .child(rail(commit))
-                                .child(text)
-                                .into_any_element(),
+                            lettered(
+                                row.when(selected, |row| row.bg(selected_bg))
+                                    .text_color(color)
+                                    .on_click(cx.listener(move |panel, _, window, cx| {
+                                        panel.click(line, false, window, cx)
+                                    })),
+                                lead().child(rail(commit)).child(ellipsized(text)),
+                                ix,
+                                seen.clone(),
+                            )
+                            .into_any_element(),
                         );
                     }
                 };
@@ -1150,28 +1499,30 @@ impl GitLogPanel {
                     seen.clone(),
                 );
                 let [summary, _] = commit_rows::texts(&entry.commit, self.now);
-                let when = age(&entry.commit, self.now);
-                let (commit, now) = (entry.commit.clone(), self.now);
+                seen.texts(ix, &[&summary]);
+                let lead = (lead().child(graph))
+                    .children(entry.refs.iter().map(|label| ref_label(label, &ui)))
+                    .child(ellipsized(summary));
+                let (hovered, now, repo) = (entry.clone(), self.now, self.repo.clone());
                 #[cfg(test)]
-                let probe = self.popover.clone();
-                Some(
+                let probe = self.card.clone();
+                let row =
                     row.when(selected, |row| row.bg(selected_bg))
                         .hover(move |row| row.bg(ui.row_hover))
                         .on_click(cx.listener(move |panel, _, window, cx| {
                             panel.click(line, true, window, cx)
                         }))
                         .hoverable_tooltip(move |_, cx| {
-                            let popover = CommitPopover::new(&commit, now);
-                            #[cfg(test)]
-                            let popover = popover.probed(&probe);
-                            cx.new(|_| popover).into()
-                        })
-                        .child(graph)
-                        .children(entry.refs.iter().map(|label| ref_label(label, &ui)))
-                        .child(ellipsized(summary))
-                        .child(div().flex_none().text_color(ui.muted_text).child(when))
-                        .into_any_element(),
-                )
+                            let repo = repo.clone();
+                            let card = cx.new(|cx| {
+                                let card = CommitCard::new(&hovered, now, repo, cx);
+                                #[cfg(test)]
+                                let card = card.probed(&probe);
+                                card
+                            });
+                            card.into()
+                        });
+                Some(lettered(row, lead, ix, seen).into_any_element())
             })
             .collect()
     }
@@ -1185,6 +1536,29 @@ fn ellipsized(text: String) -> impl IntoElement {
         .overflow_hidden()
         .text_ellipsis()
         .child(text)
+}
+
+/// What a row with a graph cell or a rail shows before its letter: the
+/// cell, then the rest, clipped together.
+fn lead() -> Div {
+    (div().flex_1().min_w_0().flex().items_center().gap_2()).overflow_hidden()
+}
+
+/// `row` with its `lead` and, after it, the letter's room left empty, so
+/// a graph cell's or rail's lanes clip where a file row's do, before its
+/// letter, and run on unbroken from row to row however narrow the list.
+fn lettered(row: Stateful<Div>, lead: Div, ix: usize, probe: RowsProbe) -> Stateful<Div> {
+    // As a file row's cell holds what's before its letter, then the letter.
+    let cell = (div().flex_1().min_w_0().flex().items_center().gap_2())
+        .child(lead)
+        .child(div().flex_none().w(LETTER_WIDTH));
+    #[cfg(test)]
+    let cell = cell.on_children_prepainted(move |drawn, _, _| {
+        probe.0.borrow_mut().before.insert(ix, drawn[0]);
+    });
+    #[cfg(not(test))]
+    let _ = (ix, probe);
+    row.child(cell)
 }
 
 /// A ref label's text: a tag's prefixed `tag`.
@@ -1253,7 +1627,7 @@ fn file_cell(
         (removed > 0).then(|| (format!("-{removed}"), count(colors.deleted))),
     ];
     let mut letter =
-        (div().flex_none().min_w(px(12.)).text_right()).text_color(colors.letter(parts.kind));
+        (div().flex_none().w(LETTER_WIDTH).text_right()).text_color(colors.letter(parts.kind));
     // The icon's cell is noted by its icon's path, and shows no text.
     let mut cells: Vec<_> = [
         (icon.to_string(), icon_cell),
@@ -1383,7 +1757,10 @@ pub(crate) struct RowsSeen {
     pub(crate) segments: BTreeMap<usize, Vec<Segment>>,
     /// A file row's cells in order: text, text colour set on it and bounds.
     pub(crate) cells: BTreeMap<usize, Vec<CellSeen>>,
-    /// The bounds a file row's rail and cells before its letter clip to.
+    /// A commit row's texts after its ref labels.
+    pub(crate) texts: BTreeMap<usize, Vec<String>>,
+    /// The bounds a row's graph cell or rail and what follows it clip to,
+    /// before the letter.
     pub(crate) before: BTreeMap<usize, Bounds<Pixels>>,
     /// The muted text colour the rows were drawn with.
     pub(crate) muted: Hsla,
@@ -1458,6 +1835,15 @@ impl RowsProbe {
                 bounds: None,
             });
             self.0.borrow_mut().cells.insert(_ix, cells.collect());
+        }
+    }
+
+    /// Notes commit row `ix`'s texts after its ref labels.
+    fn texts(&self, _ix: usize, _texts: &[&str]) {
+        #[cfg(test)]
+        {
+            let texts = _texts.iter().map(|text| text.to_string()).collect();
+            self.0.borrow_mut().texts.insert(_ix, texts);
         }
     }
 
@@ -1634,7 +2020,7 @@ impl GitLogPanel {
         let commits = self.commits.iter().map(|entry| {
             let labels = entry.refs.iter().map(label_text).collect();
             let [summary, _] = commit_rows::texts(&entry.commit, self.now);
-            (labels, vec![summary, age(&entry.commit, self.now)])
+            (labels, vec![summary])
         });
         let tail = self
             .tail_text()
@@ -1679,11 +2065,6 @@ impl GitLogPanel {
         self.selected
     }
 
-    /// The text of the last commit popover built.
-    pub(crate) fn last_popover(&self) -> Option<String> {
-        self.popover.borrow().text.clone()
-    }
-
     /// The muted text colour the last rows drawn used.
     pub(crate) fn muted_text(&self) -> Hsla {
         self.rows_seen.0.borrow().muted
@@ -1694,9 +2075,9 @@ impl GitLogPanel {
         self.rows_seen.0.clone()
     }
 
-    /// What the tests see of the last commit popover built.
-    pub(crate) fn popover_probe(&self) -> Rc<RefCell<PopoverProbe>> {
-        self.popover.clone()
+    /// What the tests see of the last commit card built.
+    pub(crate) fn card_probe(&self) -> Rc<RefCell<CardProbe>> {
+        self.card.clone()
     }
 }
 
