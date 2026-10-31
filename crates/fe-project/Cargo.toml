@@ -32,8 +32,16 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSURL",
 ] }
 
+[features]
+# Test builds of the crates above: `fs_ops::trash` moves into a test trash of
+# the process's own, never the user's Trash, unless a thread holds
+# `fs_ops::testing::real_trash()`. Never on in a release or normal build.
+test-support = []
+
 [dev-dependencies]
 criterion.workspace = true
+# This crate's own integration tests trash into the test trash too.
+fe-project = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
 
 # Reads the freedesktop.org trash back in the tests.

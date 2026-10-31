@@ -60,6 +60,8 @@ toml.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
+# The tests' trashes go to a test trash, never the user's Trash.
+fe-project = { workspace = true, features = ["test-support"] }
 # Card 1's fake server and its launcher, and the LSP types it speaks.
 fe-lsp = { workspace = true, features = ["test-support"] }
 lsp-types.workspace = true

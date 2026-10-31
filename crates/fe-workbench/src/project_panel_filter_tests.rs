@@ -442,47 +442,21 @@ fn ops(cx: &mut TestAppContext) {
     select(&panel, root, "docs/intro.md", cx);
 }
 
-/// A temporary project the system trash takes into the home trash, as the
-/// name field's tests make one; `None` (saying why) where there's none.
-fn trashable_project() -> Option<tempfile::TempDir> {
-    let base = match std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir),
-        None => match std::env::var_os("HOME") {
-            Some(home) if cfg!(target_os = "macos") => PathBuf::from(home),
-            Some(home) => Path::new(&home).join(".local/share"),
-            None => {
-                eprintln!("skipped: no HOME, so no home trash");
-                return None;
-            }
-        },
-    };
-    match tempfile::Builder::new()
+/// A temporary project for the trash tests, its name a prefix of their own
+/// files' names, to find them in the test trash by.
+fn trashable_project() -> tempfile::TempDir {
+    tempfile::Builder::new()
         .prefix("fe-workbench-trash-")
-        .tempdir_in(&base)
-    {
-        Ok(dir) => Some(dir),
-        Err(err) => {
-            eprintln!(
-                "skipped: no temporary folder under {}: {err}",
-                base.display()
-            );
-            None
-        }
-    }
+        .tempdir()
+        .unwrap()
 }
 
-/// Removes what a test trashed as `name` from the home trash, where it can.
-fn purge(name: &str) {
-    let trash = match std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir).join("Trash"),
-        None if cfg!(target_os = "macos") => {
-            Path::new(&std::env::var_os("HOME").unwrap()).join(".Trash")
-        }
-        None => Path::new(&std::env::var_os("HOME").unwrap()).join(".local/share/Trash"),
-    };
-    let _ = fs::remove_file(trash.join("files").join(name));
-    let _ = fs::remove_file(trash.join("info").join(format!("{name}.trashinfo")));
-    let _ = fs::remove_file(trash.join(name));
+/// The one entry named `name` in the test trash, where every trash of a
+/// test build goes (`fe_project::fs_ops::testing`).
+fn in_test_trash(name: &str) -> PathBuf {
+    let found = fe_project::fs_ops::testing::trashed(name);
+    assert_eq!(found.len(), 1, "{name} in the test trash: {found:?}");
+    found.into_iter().next().unwrap()
 }
 
 /// With the filter kept, d moves the selected match to the Trash as it
@@ -490,9 +464,7 @@ fn purge(name: &str) {
 /// the filter set, saying nothing matches.
 #[gpui::test]
 fn ops_delete(cx: &mut TestAppContext) {
-    let Some(dir) = trashable_project() else {
-        return;
-    };
+    let dir = trashable_project();
     // Names of the test's own, to find them in the trash.
     let unique = (dir.path().file_name().unwrap().to_string_lossy()).into_owned();
     let root = &fs::canonicalize(dir.path()).unwrap();
@@ -521,9 +493,8 @@ fn ops_delete(cx: &mut TestAppContext) {
     press("d", cx);
     cx.simulate_prompt_answer("Move to Trash");
     cx.run_until_parked();
-    let gone = !root.join("src").join(&first).exists();
-    purge(&first);
-    assert!(gone);
+    assert!(!root.join("src").join(&first).exists());
+    in_test_trash(&first);
     assert_eq!(list(&panel, cx), [(0, "web".to_owned()), (1, last.clone())]);
     assert_eq!(selected(&panel, cx), Some(last.clone()));
 
@@ -531,9 +502,8 @@ fn ops_delete(cx: &mut TestAppContext) {
     press("d", cx);
     cx.simulate_prompt_answer("Move to Trash");
     cx.run_until_parked();
-    let gone = !root.join("web").join(&last).exists();
-    purge(&last);
-    assert!(gone);
+    assert!(!root.join("web").join(&last).exists());
+    in_test_trash(&last);
     assert_eq!(filter_text(&panel, cx), Some(format!("{unique}-")));
     assert_eq!(list(&panel, cx), []);
     assert_eq!(message(&panel, cx), Some(NO_MATCHES));

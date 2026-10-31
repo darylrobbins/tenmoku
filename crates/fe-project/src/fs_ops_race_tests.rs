@@ -555,6 +555,8 @@ fn a_bind_mounted_projects_mount_is_told_without_statx_child() {
     if std::env::var_os(CHILD).is_none() {
         return;
     }
+    // The real trash, at the top of the bind mount, in this test's folder.
+    let _real = testing::real_trash();
     let base = PathBuf::from(std::env::var_os(BASE).unwrap());
     let root = base.join("mount/project");
     let home = base.join("home");

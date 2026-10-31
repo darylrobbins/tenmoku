@@ -2058,6 +2058,7 @@ dependencies = [
  "fe-config",
  "fe-gpui",
  "fe-lsp",
+ "fe-project",
  "fe-syntax",
  "fe-vim",
  "fe-workbench",
@@ -2395,6 +2396,7 @@ name = "fe-project"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "fe-project",
  "frizbee",
  "grep-matcher",
  "grep-regex",

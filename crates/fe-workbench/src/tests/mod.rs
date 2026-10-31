@@ -60,6 +60,7 @@ mod status_bar_icons;
 mod tabs;
 mod title_bar;
 mod toolbar_history;
+mod trash_isolation;
 mod tree_keys;
 mod tree_style;
 mod vim_line;

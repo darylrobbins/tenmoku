@@ -5,7 +5,7 @@
 use std::{
     fs,
     os::unix::fs::MetadataExt as _,
-    path::{Path, PathBuf},
+    path::Path,
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -43,53 +43,13 @@ impl Lsp {
     }
 }
 
-/// Where the Trash keeps what's moved there: the home trash, and the ones
-/// at the top of `path`'s mount.
-fn trashes(path: &Path) -> Vec<PathBuf> {
-    let home = match std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir).join("Trash"),
-        None => Path::new(&std::env::var_os("HOME").unwrap_or_default()).join(".local/share/Trash"),
-    };
-    let device = fs::metadata(path).unwrap().dev();
-    let mut top = path;
-    while let Some(up) = top
-        .parent()
-        .filter(|up| fs::metadata(up).unwrap().dev() == device)
-    {
-        top = up;
-    }
-    // SAFETY: getuid has no preconditions and can't fail.
-    let uid = unsafe { libc::getuid() };
-    vec![
-        home,
-        top.join(format!(".Trash-{uid}")),
-        top.join(".Trash").join(uid.to_string()),
-    ]
-}
-
-/// Removes `path`, moved to the Trash, from it, where it can: each entry
-/// whose `.trashinfo` records it.
-fn purge(root: &Path, path: &Path) {
-    let rel = path.strip_prefix(root).unwrap();
-    let ending = Path::new(root.file_name().unwrap()).join(rel);
-    for trash in trashes(root) {
-        let Ok(infos) = fs::read_dir(trash.join("info")) else {
-            continue;
-        };
-        for info in infos.flatten() {
-            let recorded = fs::read_to_string(info.path()).unwrap_or_default();
-            let ours = (recorded.lines())
-                .filter_map(|line| line.strip_prefix("Path="))
-                .any(|recorded| Path::new(recorded).ends_with(&ending));
-            if !ours {
-                continue;
-            }
-            if let Some(stem) = info.path().file_stem() {
-                let _ = fs::remove_file(trash.join("files").join(stem));
-            }
-            let _ = fs::remove_file(info.path());
-        }
-    }
+/// Whether `path`, as it was, is in the test trash, where every trash of a
+/// test build goes (`fe_project::fs_ops::testing`): an entry of its name
+/// that is the file it was.
+fn in_test_trash(path: &Path, ino: u64) -> bool {
+    fe_project::fs_ops::testing::trashed(path.file_name().unwrap())
+        .iter()
+        .any(|found| fs::symlink_metadata(found).is_ok_and(|meta| meta.ino() == ino))
 }
 
 #[gpui::test]
@@ -97,6 +57,7 @@ fn renames_creates_and_deletes_apply_in_order(cx: &mut gpui::TestAppContext) {
     let (mut s, _) = setup(cx);
     fs::write(s.path("src/a.rs"), "pub fn a() {}\n").unwrap();
     fs::write(s.path("src/d.rs"), "pub fn d() {}\n").unwrap();
+    let d = fs::metadata(s.path("src/d.rs")).unwrap().ino();
     s.open("src/a.rs");
     (s.fake)
         .wait_for_document(&s.uri("src/a.rs"), "didOpen", |r| r.is_some())
@@ -111,8 +72,6 @@ fn renames_creates_and_deletes_apply_in_order(cx: &mut gpui::TestAppContext) {
         { "kind": "delete", "uri": s.uri("src/d.rs") },
     ]);
     let answer = s.push_changes(changes);
-    let trashed = !s.path("src/d.rs").exists();
-    purge(&s.root, &s.path("src/d.rs"));
     assert_eq!(answer, json!({ "applied": true }));
 
     // a.rs's editor followed it to b.rs, and took the edit there.
@@ -123,7 +82,8 @@ fn renames_creates_and_deletes_apply_in_order(cx: &mut gpui::TestAppContext) {
     assert_eq!(s.bytes("src/b.rs"), b"pub fn a() {}\n");
     // Made, with its text; and moved to the Trash.
     assert_eq!(s.bytes("src/c.rs"), b"pub fn c() {}\n");
-    assert!(trashed, "src/d.rs is still there");
+    assert!(!s.path("src/d.rs").exists(), "src/d.rs is still there");
+    assert!(in_test_trash(&s.path("src/d.rs"), d));
 }
 
 #[gpui::test]
@@ -411,13 +371,13 @@ fn a_create_over_a_symlink_replaces_the_link(cx: &mut gpui::TestAppContext) {
     let (mut s, server) = setup(cx);
     let link = s.path("src/link.rs");
     std::os::unix::fs::symlink(s.path("src/main.rs"), &link).unwrap();
+    let link_ino = fs::symlink_metadata(&link).unwrap().ino();
     let main = s.bytes("src/main.rs");
     let changes = json!([
         { "kind": "create", "uri": s.uri("src/link.rs"), "options": { "overwrite": true } },
     ]);
-    let applied = s.apply_changes(server, changes);
-    purge(&s.root, &link);
-    applied.unwrap();
+    s.apply_changes(server, changes).unwrap();
+    assert!(in_test_trash(&link, link_ino), "the link went to the trash");
     assert!(fs::symlink_metadata(&link).unwrap().is_file());
     assert_eq!(s.bytes("src/link.rs"), b"");
     assert_eq!(s.bytes("src/main.rs"), main);

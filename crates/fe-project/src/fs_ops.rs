@@ -331,6 +331,19 @@ pub fn trash(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[path = "fs_ops_test_trash.rs"]
+mod test_trash;
+
+/// What tests of this crate and of the crates above it use to keep their
+/// trashes out of the user's Trash: in test builds (`cfg(test)` or the
+/// `test-support` feature), [`trash`] moves into a test trash of the
+/// process's own unless the thread holds [`testing::real_trash`].
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    pub use super::test_trash::{RealTrash, real_trash, trash_dir, trashed};
+}
+
 /// Where tests can change the disk in the middle of an operation, to check
 /// what another process racing it there can do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -418,6 +431,10 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
         ));
     }
     reach(Point::Checked)?;
+    #[cfg(any(test, feature = "test-support"))]
+    if !test_trash::reaching_real() {
+        return test_trash::move_into(target);
+    }
     NSFileManager::defaultManager()
         .trashItemAtURL_resultingItemURL_error(&reference, None)
         .map_err(|err| io::Error::other(err.localizedDescription().to_string()))
@@ -462,6 +479,11 @@ fn reference_ids(url: &str) -> Option<(i32, u64)> {
 /// renamed into `files` from its folder's handle.
 #[cfg(target_os = "linux")]
 fn trash_target(target: &Target<'_>) -> io::Result<()> {
+    #[cfg(any(test, feature = "test-support"))]
+    if !test_trash::reaching_real() {
+        reach(Point::Checked)?;
+        return test_trash::move_into(target);
+    }
     let volume = freedesktop::Volume::of(&target.parent)?;
     // The home trash records the entry's absolute path; a volume's, its path
     // below the volume's top, so it still restores with the volume mounted
@@ -2139,11 +2161,39 @@ mod tests {
         // file id, wherever its folder went.
         result.unwrap();
         assert!(!moved_file.exists());
-        purge(target.path.parent().unwrap(), &format!("{name}.txt"));
+        let trashed = format!("{name}.txt");
+        if test_trash::real_held() {
+            purge(target.path.parent().unwrap(), &trashed);
+        } else {
+            let found = testing::trashed(&trashed);
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert_eq!(fs::read_to_string(&found[0]).unwrap(), "inside");
+        }
     }
 
     #[test]
     fn trash_never_follows_a_parent_swapped_for_a_symlink() {
+        for when in [Swap::BeforeCheck, Swap::AfterCheck] {
+            let (_dir, base) = temp();
+            trash_after_a_swap(&base, "project/a/b", "a/b", when);
+        }
+    }
+
+    #[test]
+    fn trash_never_follows_a_root_swapped_for_a_symlink() {
+        for when in [Swap::BeforeCheck, Swap::AfterCheck] {
+            let (_dir, base) = temp();
+            trash_after_a_swap(&base, "project", "a", when);
+        }
+    }
+
+    /// [`trash_never_follows_a_parent_swapped_for_a_symlink`] through the
+    /// system Trash, which it leaves the file in on macOS without Full Disk
+    /// Access: run by hand with `--ignored`.
+    #[test]
+    #[ignore = "reaches the user's Trash"]
+    fn the_system_trash_never_follows_a_parent_swapped_for_a_symlink() {
+        let _real = testing::real_trash();
         for when in [Swap::BeforeCheck, Swap::AfterCheck] {
             let Some((_dir, base)) = trashable_temp() else {
                 return;
@@ -2152,8 +2202,12 @@ mod tests {
         }
     }
 
+    /// [`trash_never_follows_a_root_swapped_for_a_symlink`] through the
+    /// system Trash: run by hand with `--ignored`.
     #[test]
-    fn trash_never_follows_a_root_swapped_for_a_symlink() {
+    #[ignore = "reaches the user's Trash"]
+    fn the_system_trash_never_follows_a_root_swapped_for_a_symlink() {
+        let _real = testing::real_trash();
         for when in [Swap::BeforeCheck, Swap::AfterCheck] {
             let Some((_dir, base)) = trashable_temp() else {
                 return;

@@ -8,7 +8,8 @@ use std::{
 };
 
 use fe_project::{
-    NameError, create_dir, create_file, duplicate, relative_path, rename, trash, validate_name,
+    NameError, create_dir, create_file, duplicate, fs_ops::testing, relative_path, rename, trash,
+    validate_name,
 };
 use tempfile::TempDir;
 
@@ -600,7 +601,11 @@ fn relative_path_is_slash_separated_under_the_root() {
     );
 }
 
-// C4: the Trash.
+// C4: the Trash. These tests' trashes go to the test trash
+// (`fs_ops::testing`) unless they hold `testing::real_trash()`. Those that
+// reach the user's own Trash (which macOS won't let them empty without Full
+// Disk Access) are `#[ignore]`d, run by hand with `--ignored`; those that
+// reach a trash of their own temporary folders, on Linux, run.
 
 /// A temporary project the platform's trash takes into the user's Trash, or
 /// `None` (saying why) where there is none to use.
@@ -640,21 +645,49 @@ fn trashable_temp() -> Option<(TempDir, PathBuf)> {
 }
 
 #[test]
+fn trash_moves_a_file_and_a_folder_to_the_trash() {
+    let (_dir, root) = temp();
+    let (gone, folder) = trash_a_file_and_a_folder(&root);
+    let found = |name: &str| {
+        let found = testing::trashed(name);
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+        assert!(found[0].starts_with(testing::trash_dir()));
+        found.into_iter().next().unwrap()
+    };
+    assert_eq!(fs::read_to_string(found(&gone)).unwrap(), "gone");
+    assert_eq!(
+        snapshot(&found(&folder)),
+        ["inner.txt = inner", "sub/", "sub/deep.txt = deep"]
+    );
+}
+
+/// [`trash_moves_a_file_and_a_folder_to_the_trash`] into the user's Trash
+/// (`NSFileManager` on macOS, the freedesktop.org home trash on Linux).
+#[test]
+#[ignore = "reaches the user's Trash"]
 fn trash_moves_a_file_and_a_folder_to_the_system_trash() {
+    let _real = testing::real_trash();
     let Some((_dir, root)) = trashable_temp() else {
         return;
     };
+    let (gone, folder) = trash_a_file_and_a_folder(&root);
+    assert_in_trash_and_purge(&root, &[&folder, &gone]);
+}
+
+/// Trashes a file and a folder of `root` (and an entry in that folder, given
+/// with it), keeping another; their names.
+fn trash_a_file_and_a_folder(root: &Path) -> (String, String) {
     // Names of their own, as the macOS Trash is emptied of them by name.
     let tag = root.file_name().unwrap().to_str().unwrap().to_owned();
     let (gone, folder) = (format!("{tag}.txt"), format!("{tag}-folder"));
-    write(&root, "keep.txt", "keep");
-    write(&root, &gone, "gone");
-    write(&root, &format!("{folder}/inner.txt"), "inner");
-    write(&root, &format!("{folder}/sub/deep.txt"), "deep");
+    write(root, "keep.txt", "keep");
+    write(root, &gone, "gone");
+    write(root, &format!("{folder}/inner.txt"), "inner");
+    write(root, &format!("{folder}/sub/deep.txt"), "deep");
 
     // An entry inside another one given goes with it.
     trash(
-        &root,
+        root,
         &[
             Path::new(&gone),
             &Path::new(&folder).join("sub/deep.txt"),
@@ -662,11 +695,11 @@ fn trash_moves_a_file_and_a_folder_to_the_system_trash() {
         ],
     )
     .unwrap();
-    assert_eq!(snapshot(&root), ["keep.txt = keep"]);
-    assert_in_trash_and_purge(&root, &[&folder, &gone]);
+    assert_eq!(snapshot(root), ["keep.txt = keep"]);
 
-    let err = trash(&root, &[Path::new(&gone)]).unwrap_err();
+    let err = trash(root, &[Path::new(&gone)]).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::NotFound);
+    (gone, folder)
 }
 
 /// Off macOS, a project on another volume than the home trash's goes to the
@@ -676,6 +709,7 @@ fn trash_moves_a_file_and_a_folder_to_the_system_trash() {
 fn trash_moves_to_the_volume_trash_off_the_home_volume() {
     use std::os::unix::fs::MetadataExt;
 
+    let _real = testing::real_trash();
     let data = match std::env::var_os("XDG_DATA_HOME").filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => match std::env::var_os("HOME").filter(|dir| !dir.is_empty()) {
@@ -870,25 +904,21 @@ fn broad_folders_and_selections_need_few_open_files_child() {
     }
 
     // Many entries of one folder, trashed together.
-    let Some((_trash_dir, root)) = trashable_temp() else {
-        return;
-    };
+    let (_trash_dir, root) = temp();
     let names: Vec<String> = (0..BROAD).map(|ix| format!("{ix:03}.txt")).collect();
     for name in &names {
         write(&root, name, "x");
     }
     trash(&root, &names).unwrap();
     assert!(snapshot(&root).is_empty());
-    #[cfg(target_os = "linux")]
-    {
-        let items: Vec<_> = trash::os_limited::list()
-            .unwrap()
-            .into_iter()
-            .filter(|item| item.original_parent == root)
-            .collect();
-        assert_eq!(items.len(), BROAD);
-        trash::os_limited::purge_all(items).unwrap();
-    }
+    // This child process's own test trash holds them all.
+    let mut trashed: Vec<_> = fs::read_dir(testing::trash_dir())
+        .unwrap()
+        .flat_map(|slot| fs::read_dir(slot.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    trashed.sort();
+    assert_eq!(trashed, names);
 }
 
 /// A project on a bind mount of the home trash's file system can't be
@@ -962,6 +992,7 @@ fn a_bind_mounted_project_trashes_on_its_own_mount_child() {
     if !in_child() {
         return;
     }
+    let _real = testing::real_trash();
     let base = PathBuf::from(std::env::var_os("FE_PROJECT_FS_OPS_BASE").unwrap());
     let root = base.join("mount/project");
     trash(&root, &[Path::new("gone.txt")]).unwrap();
@@ -1043,6 +1074,7 @@ fn a_bind_mounted_project_trashes_on_its_own_mount_without_statx_child() {
         return;
     }
     deny_statx();
+    let _real = testing::real_trash();
     let base = PathBuf::from(std::env::var_os("FE_PROJECT_FS_OPS_BASE").unwrap());
     let root = base.join("mount/project");
     trash(&root, &[Path::new("gone.txt")]).unwrap();
