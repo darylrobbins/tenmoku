@@ -140,6 +140,14 @@ lanes_max = 1
 # alone and 14.2 min beside two others, and two or more ran at once 59% of the time, tripping timing flakes.
 host_pipeline_slots = 2
 
+[teardown]
+# cargo's build-dir (~/.cargo/config.toml on the Mac: /Volumes/Builds/cargo/{workspace-path-hash})
+# lives outside the worktree, so a removed lane, gate or post-check left ~40 GiB behind each time.
+# cargo clean in the worktree removes it first. MIN_FREE_GIB=0: ci-env.sh refuses .verify commands
+# below its disk floor, which is exactly when this cleanup is needed.
+command = "FASTEDIT_MIN_FREE_GIB=0 scripts/ci-env.sh cargo clean"
+timeout = "5m"
+
 [review]
 on_finish = true
 
