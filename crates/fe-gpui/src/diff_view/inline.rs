@@ -15,31 +15,14 @@ use crate::commands::{HostBlock, HostBlockKind};
 /// Below this window width a newly opened [`DiffView`] starts inline.
 pub(super) const NARROW: f32 = 900.;
 
-/// Inline, the screen row right row `row` shows on: the row plus the
-/// removed rows above it.
+/// Inline, the screen row right row `row` shows on, nothing hidden: the
+/// row plus the removed rows above it.
+#[cfg(test)]
 pub(super) fn screen_row(diff: &TextDiff, row: u32) -> u32 {
     row + (diff.removed_above().into_iter())
         .take_while(|&(above, _)| above <= row)
         .map(|(_, removed)| removed.len() as u32)
         .sum::<u32>()
-}
-
-/// Inline, the right row at `screen`, and whether `screen` is a removed
-/// row; in one, the row below the block.
-pub(super) fn row_at_screen(diff: &TextDiff, screen: u32) -> (u32, bool) {
-    let mut above_rows = 0;
-    for (above, removed) in diff.removed_above() {
-        let start = above + above_rows;
-        if screen < start {
-            break;
-        }
-        let len = removed.len() as u32;
-        if screen < start + len {
-            return (above, true);
-        }
-        above_rows += len;
-    }
-    (screen - above_rows, false)
 }
 
 /// The right row paired with left row `row`: in a hunk, the same row in it
@@ -139,17 +122,11 @@ impl DiffView {
         // The top row, and how far into it, in the mode left.
         let top = self.views[1].read(cx).scroll_top();
         let whole = top.floor();
-        let (row, filler) = match self.inline {
-            true => row_at_screen(&self.diff, whole as u32),
-            false => self.diff.row_at_screen(Side::Right, whole as u32),
-        };
-        let part = if filler { 0. } else { top - whole };
+        let (row, block) = self.right_screen_rows().row_at_screen(whole as u32);
+        let part = if block { 0. } else { top - whole };
         self.inline = inline;
         self.show_blocks(cx);
-        let screen = match inline {
-            true => screen_row(&self.diff, row),
-            false => self.diff.screen_row(Side::Right, row),
-        };
+        let screen = self.right_screen_rows().screen_row(row);
         let top = screen as f32 + part;
         for view in &self.views {
             view.update(cx, |view, cx| view.set_scroll_top(top, cx));

@@ -250,6 +250,10 @@ fn texts(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> [String; 2] {
     sides(diff, cx).map(|side| text(&side, cx))
 }
 
+fn folding(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> bool {
+    diff.read_with(cx, |diff, _| diff.is_folding())
+}
+
 fn read_only(diff: &Entity<DiffView>, cx: &mut VisualTestContext) -> [bool; 2] {
     sides(diff, cx).map(|side| side.read_with(cx, |side, _| side.is_read_only()))
 }
@@ -310,6 +314,8 @@ fn opens_index_and_head(cx: &mut TestAppContext) {
     assert_eq!(title(&workbench, cx), "a.rs (HEAD ↔ Working Tree)");
     assert_eq!(texts(&by_head, cx), [head(), working()]);
     assert_eq!(tab_count(&workbench, cx), 3);
+    // Git's diffs hide their unchanged rows.
+    assert!(folding(&by_index, cx) && folding(&by_head, cx));
 
     // Asking again shows the same tab.
     activate(&workbench, 0, cx);
@@ -436,6 +442,67 @@ fn panel_opens_a_file_no_tab_has(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn change_bar_far_down_a_folded_diff(cx: &mut TestAppContext) {
+    // 400 rows, rows 10 and 300 changed: the diff hides most of the rest.
+    let head: String = (0..400).map(|row| format!("line {row}\n")).collect();
+    change_bar_far_down(&head, cx);
+}
+
+#[gpui::test]
+fn change_bar_far_down_a_large_folded_diff(cx: &mut TestAppContext) {
+    // Over 64 KiB: diffed off the main thread, its folds landing after the
+    // view opens and the change is revealed.
+    let pad = "x".repeat(200);
+    let head: String = (0..400).map(|row| format!("line {row} {pad}\n")).collect();
+    assert!(head.len() > 64 * 1024);
+    change_bar_far_down(&head, cx);
+}
+
+/// A diff of `head`, its rows 10 and 300 changed, opened from the change
+/// bar of each: the change's row is shown and drawn, on both sides.
+fn change_bar_far_down(head: &str, cx: &mut TestAppContext) {
+    let dir = repo(&[("a.rs", head)]);
+    let changed = |row: usize, line: &str| match row {
+        10 | 300 => line.replacen("line", "changed", 1),
+        _ => line.to_owned(),
+    };
+    let working: String = (head.lines().enumerate())
+        .map(|(row, line)| changed(row, line) + "\n")
+        .collect();
+    fs::write(dir.path().join("a.rs"), working).unwrap();
+    let (workbench, mut cx) = window(cx, dir.path(), Some("a.rs"));
+    let cx = &mut cx;
+    let tab = tab_editor(&workbench, cx).unwrap();
+
+    for row in [300, 10] {
+        cx.update(|_, cx| {
+            tab.update(cx, |_, cx| {
+                cx.emit(EditorViewEvent::ChangeBarClicked { rows: row..row + 1 })
+            })
+        });
+        draw(cx);
+        let by_bar = diff(&workbench, cx);
+        assert!(folding(&by_bar, cx));
+        let [left, right] = sides(&by_bar, cx);
+        assert_eq!(caret_row(&right, cx), row);
+        // Shown, and drawn on both sides, where the folds put it.
+        let hidden = by_bar.read_with(cx, |diff, _| diff.hidden_blocks().to_vec());
+        assert!(!hidden.is_empty());
+        assert!(hidden.iter().all(|block| !block.right.contains(&row)));
+        let screen = by_bar.read_with(cx, |diff, _| diff.right_screen_row(row)) as f32;
+        let (first, shown) = right.read_with(cx, |right, _| right.viewport_rows().expect("drawn"));
+        assert!(first <= row, "row {first} drawn first, below {row}");
+        for view in [&left, &right] {
+            let top = view.read_with(cx, |view, _| view.scroll_top());
+            assert!(
+                top <= screen && screen < top + shown as f32,
+                "{screen} in {top}+{shown}"
+            );
+        }
+    }
+}
+
+#[gpui::test]
 fn compare_file(cx: &mut TestAppContext) {
     let dir = fixture();
     let (workbench, mut cx) = window(cx, dir.path(), Some("a.rs"));
@@ -450,6 +517,8 @@ fn compare_file(cx: &mut TestAppContext) {
     assert_eq!(title(&workbench, cx), "a.rs (b.rs ↔ a.rs)");
     assert_eq!(texts(&picked, cx), [B.to_owned(), working()]);
     assert_eq!(read_only(&picked, cx), [true, false]);
+    // Two files compared show every row.
+    assert!(!folding(&picked, cx));
     let [_, right] = sides(&picked, cx);
     assert!(shares_buffer(&right, &tab, cx));
 
@@ -460,6 +529,7 @@ fn compare_file(cx: &mut TestAppContext) {
     assert_eq!(title(&workbench, cx), "a.rs (b.rs ↔ a.rs)");
     assert_eq!(texts(&typed, cx), [B.to_owned(), working()]);
     assert_eq!(read_only(&typed, cx), [true, false]);
+    assert!(!folding(&typed, cx));
 
     activate(&workbench, 0, cx);
     ex("diffsplit nope.rs", cx);

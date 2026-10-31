@@ -11,7 +11,9 @@
 //! side scrolls the other to the same screen row, and `diff.next_change` /
 //! `diff.previous_change` move between hunks, wrapping at the ends.
 //! `diff.toggle_inline` shows the right side alone instead, the removed
-//! rows as blocks above their place ([`inline`]).
+//! rows as blocks above their place ([`inline`]). Unchanged rows away from
+//! the hunks are hidden on both sides behind `36 hidden lines` rows
+//! ([`fold`]), until `diff.toggle_folding` shows them.
 //!
 //! The diff is redone when either side's buffer moves on, at most once a
 //! frame (on render), off the main thread when a side is over
@@ -46,13 +48,17 @@ use fe_editor::{
 
 use fe_ui::{Icon, IconButton, Tooltip};
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+    AnyElement, AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptLevel, Render,
     SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use kiln_shell::{CloseAnswer, PaneItem};
 
+#[path = "diff_fold.rs"]
+mod fold;
 mod inline;
+
+pub use fold::{CONTEXT_ROWS, EXPAND_ROWS, Expand, HiddenBlock};
 
 use crate::{
     EditorView,
@@ -72,6 +78,9 @@ pub const PREVIOUS_CHANGE: &str = "diff.previous_change";
 
 /// Switches between side by side and inline.
 pub const TOGGLE_INLINE: &str = "diff.toggle_inline";
+
+/// Hides unchanged rows away from the hunks, or shows them all.
+pub const TOGGLE_FOLDING: &str = "diff.toggle_folding";
 
 /// A side over this many bytes is diffed off the main thread.
 pub const ASYNC_BYTES: usize = 1024 * 1024;
@@ -114,13 +123,15 @@ impl CommandTarget for DiffCommands {
     type Target<'a> = ();
 }
 
-/// [`NEXT_CHANGE`], [`PREVIOUS_CHANGE`] and [`TOGGLE_INLINE`], in the
-/// [`KEY_CONTEXT`] context. Their handlers do nothing: the view runs them.
+/// [`NEXT_CHANGE`], [`PREVIOUS_CHANGE`], [`TOGGLE_INLINE`] and
+/// [`TOGGLE_FOLDING`], in the [`KEY_CONTEXT`] context. Their handlers do
+/// nothing: the view runs them.
 pub(crate) fn registry() -> Registry<DiffCommands> {
     let commands = [
         (NEXT_CHANGE, "Go to Next Difference"),
         (PREVIOUS_CHANGE, "Go to Previous Difference"),
         (TOGGLE_INLINE, "Toggle Inline Diff"),
+        (TOGGLE_FOLDING, "Toggle Unchanged Regions"),
     ];
     let mut registry = Registry::new();
     for (id, title) in commands {
@@ -197,8 +208,31 @@ pub struct DiffView {
     sized: bool,
     /// The texts last diffed.
     texts: [Arc<str>; 2],
+    /// How many rows each has.
+    rows: [u32; 2],
     /// Each side's changed words in the diff shown.
     words: [Arc<Words>; 2],
+    /// Whether unchanged rows away from the hunks are hidden.
+    folding: bool,
+    /// The left rows shown of those folding would hide, sorted and apart.
+    revealed: Vec<Range<u32>>,
+    /// The blocks hidden.
+    hidden: Vec<HiddenBlock>,
+    /// Each side's folds as last set, as `(start, end)`, and the buffer
+    /// version they were set at.
+    folded: [Option<fold::Folded>; 2],
+    /// Each side's outline, for the labels of the blocks hidden, and the
+    /// language and syntax version it's of.
+    outlines: [Option<(fold::OutlineKey, Arc<fe_syntax::Outline>)>; 2],
+    /// An outline being found off the main thread, and what it's of.
+    outlining: [Option<(fold::OutlineKey, Task<()>)>; 2],
+    /// Each side's carets' heads when last looked at, which tell a caret
+    /// moved.
+    heads: [Vec<usize>; 2],
+    /// A right row revealed, and the rows the view shows to centre it in,
+    /// shown and scrolled to again as each diff lands until one of the
+    /// texts as they are has, or a side is scrolled.
+    revealing: Option<(u32, Option<u32>)>,
     _subscriptions: Vec<Subscription>,
     /// Looks for edits from elsewhere every [`POLL`].
     _poll: Task<()>,
@@ -269,8 +303,13 @@ impl DiffView {
             subscriptions.push(cx.subscribe(
                 &views[from],
                 move |this: &mut Self, _, event: &EditorViewEvent, cx| match *event {
-                    EditorViewEvent::Scrolled { top } if !this.inline => this.follow(to, top, cx),
-                    EditorViewEvent::Scrolled { .. } => {}
+                    EditorViewEvent::Scrolled { top } => {
+                        // Scrolled away from a row being revealed.
+                        this.revealing = None;
+                        if !this.inline {
+                            this.follow(to, top, cx);
+                        }
+                    }
                     // A side's change bar is the host's to act on; it doesn't move the other side.
                     EditorViewEvent::ChangeBarClicked { .. } => {}
                     // As is a jump within a side.
@@ -302,7 +341,16 @@ impl DiffView {
             chosen: false,
             sized: false,
             texts: [Arc::from(""), Arc::from("")],
+            rows: [1, 1],
             words: Default::default(),
+            folding: true,
+            revealed: Vec::new(),
+            hidden: Vec::new(),
+            folded: [None, None],
+            outlines: [None, None],
+            outlining: [None, None],
+            heads: Default::default(),
+            revealing: None,
             _subscriptions: subscriptions,
             _poll: poll,
             #[cfg(test)]
@@ -405,11 +453,13 @@ impl DiffView {
         let Diffed {
             diff,
             texts,
+            rows,
             words,
             versions,
         } = diffed;
         self.diff = diff;
         self.texts = texts;
+        self.rows = rows;
         self.words = words.map(Arc::new);
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
             let mut tints = self.tints[ix].borrow_mut();
@@ -425,48 +475,40 @@ impl DiffView {
                 cx.notify();
             });
         }
-        self.show_blocks(cx);
+        self.refold(cx);
+        self.go_on_revealing(cx);
         // What navigation said was about the last diff.
         self.message = None;
         self.visited = None;
         cx.notify();
     }
 
-    /// Places each side's blocks: fillers side by side, inline the removed
-    /// rows above the right side's.
+    /// Places each side's blocks.
     fn show_blocks(&mut self, cx: &mut Context<Self>) {
-        for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
-            let blocks = match (self.inline, ix) {
-                (true, 0) => Vec::new(),
-                (true, _) => inline::removed_blocks(&self.diff, &self.texts[0], &self.words[0]),
-                (false, _) => (self.diff.fillers(side).into_iter().enumerate())
-                    .map(|(id, (above, rows))| HostBlock {
-                        above,
-                        rows,
-                        kind: HostBlockKind::Filler,
-                        id: id as u64,
-                    })
-                    .collect(),
-            };
+        for ix in 0..2 {
+            let blocks = self.blocks_of(ix);
             self.views[ix].update(cx, |view, cx| view.set_blocks(blocks, cx));
         }
     }
 
-    /// Keeps both sides unwrapped and unfolded: fillers line up buffer
-    /// rows, so a row wrapped or folded on one side alone would put the
-    /// rows below it out of line.
-    fn keep_aligned(&mut self, cx: &mut Context<Self>) {
-        for view in &self.views {
-            let model = view.read(cx).model();
-            if model.soft_wrap() || !model.display().folds().is_empty() {
-                view.update(cx, |view, cx| {
-                    let model = view.model_mut();
-                    model.set_soft_wrap(false);
-                    model.unfold_all();
-                    cx.notify();
-                });
-            }
-        }
+    /// Side `ix`'s blocks: fillers side by side, inline the removed rows
+    /// above the right side's; and the label rows of the blocks hidden.
+    fn blocks_of(&self, ix: usize) -> Vec<HostBlock> {
+        let side = [Side::Left, Side::Right][ix];
+        let mut blocks = match (self.inline, ix) {
+            (true, 0) => return Vec::new(),
+            (true, _) => inline::removed_blocks(&self.diff, &self.texts[0], &self.words[0]),
+            (false, _) => (self.diff.fillers(side).into_iter().enumerate())
+                .map(|(id, (above, rows))| HostBlock {
+                    above,
+                    rows,
+                    kind: HostBlockKind::Filler,
+                    id: id as u64,
+                })
+                .collect(),
+        };
+        blocks.extend(self.label_blocks(ix));
+        blocks
     }
 
     /// Moves the focused side's caret to the start of the next hunk
@@ -628,6 +670,7 @@ impl DiffView {
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         match run.0.command.as_str() {
             TOGGLE_INLINE => self.toggle_inline(window, cx),
+            TOGGLE_FOLDING => self.toggle_folding(cx),
             NEXT_CHANGE => self.next_change(window, cx),
             PREVIOUS_CHANGE => self.previous_change(window, cx),
             _ => cx.propagate(),
@@ -647,11 +690,13 @@ fn key_label(command: &str, cx: &App) -> Option<String> {
         .map(fe_keymap::shortcut_label)
 }
 
-/// A diff and the texts it was made from, as diff bases, each side's
-/// changed words, and the buffer versions they were read at.
+/// A diff and the texts it was made from, as diff bases, with their row
+/// counts, each side's changed words, and the buffer versions they were
+/// read at.
 struct Diffed {
     diff: TextDiff,
     texts: [Arc<str>; 2],
+    rows: [u32; 2],
     words: [Words; 2],
     versions: [Version; 2],
 }
@@ -669,6 +714,7 @@ impl Diffed {
         Self {
             words: Words::of(&diff, &diff.inline(&texts[0], &texts[1])),
             diff,
+            rows: texts.each_ref().map(|text| fold::row_count(text)),
             texts,
             versions,
         }
@@ -874,6 +920,7 @@ impl Render for DiffView {
         self.start_narrow(window, cx);
         self.keep_aligned(cx);
         self.sync_buffers(cx);
+        self.sync_outlines(cx);
         // The sides' theme, as the host last set it.
         let theme = self.views[0].read(cx).theme.clone();
         let mut key_context = KeyContext::default();
@@ -893,8 +940,15 @@ impl Render for DiffView {
                 .children(message.map(|message| div().flex_none().child(message)))
         };
         let buttons = self.change_buttons(window, cx);
-        let side =
-            |view: &Entity<EditorView>| div().flex_1().min_w_0().h_full().child(view.clone());
+        // Inline, the left side isn't shown.
+        let labels = [0, 1].map(|ix| (!self.inline || ix == 1).then(|| self.label_layer(ix, cx)));
+        let labels = labels.map(Option::flatten);
+        let side = |view: &Entity<EditorView>, labels: Option<AnyElement>| {
+            (div().relative().flex_1().min_w_0().h_full())
+                .child(view.clone())
+                .children(labels)
+        };
+        let [left_labels, right_labels] = labels;
         div()
             .key_context(key_context)
             .size_full()
@@ -924,11 +978,11 @@ impl Render for DiffView {
                     .flex()
                     .flex_row()
                     .children((!self.inline).then(|| {
-                        side(&self.views[0])
+                        side(&self.views[0], left_labels)
                             .border_r_1()
                             .border_color(theme.popover_border)
                     }))
-                    .child(side(&self.views[1])),
+                    .child(side(&self.views[1], right_labels)),
             )
     }
 }
@@ -1039,3 +1093,7 @@ mod diff_view_words_tests;
 #[cfg(test)]
 #[path = "diff_view_change_buttons_tests.rs"]
 mod diff_view_change_buttons_tests;
+
+#[cfg(test)]
+#[path = "diff_fold_tests.rs"]
+mod diff_fold_tests;

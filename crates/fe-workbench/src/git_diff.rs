@@ -64,11 +64,7 @@ use std::{
 };
 
 use fe_buffer::{Bias, Buffer, Origin};
-use fe_editor::{
-    EditorModel,
-    row_changes::RowChange,
-    text_diff::{Side, TextDiff},
-};
+use fe_editor::{EditorModel, row_changes::RowChange, text_diff::TextDiff};
 use fe_git::Repo;
 use fe_gpui::{
     DiffSide, DiffView, EditorView,
@@ -588,29 +584,12 @@ fn reveal_change(diff: &Entity<DiffView>, then: Reveal, window: &mut Window, cx:
 }
 
 /// Puts `diff`'s right caret at the start of `reveal`'s row, centring it
-/// when the rows shown are known. Both sides scroll there: fillers line
-/// their screen rows up.
+/// when the rows shown are known, the unchanged rows hiding it shown, as
+/// they are once the diff lands: [`DiffView::reveal_right_row`].
 fn reveal(diff: &Entity<DiffView>, reveal: Reveal, cx: &mut App) {
-    let (left, right) = {
-        let diff = diff.read(cx);
-        (diff.left().clone(), diff.right().clone())
-    };
-    right.update(cx, |view, cx| {
-        let text = view.model().text();
-        let at = text.row_start(reveal.row.min(text.row_count().saturating_sub(1)));
-        view.select_and_reveal(at..at, cx);
+    diff.update(cx, |diff, cx| {
+        diff.reveal_right_row(reveal.row, reveal.shown, cx)
     });
-    let Some(shown) = reveal.shown else {
-        return;
-    };
-    let fillers: u32 = (diff.read(cx).diff().fillers(Side::Right).into_iter())
-        .filter(|(above, _)| *above <= reveal.row)
-        .map(|(_, rows)| rows)
-        .sum();
-    let top = (reveal.row + fillers) as f32 - (shown / 2) as f32;
-    for side in [left, right] {
-        side.update(cx, |view, cx| view.set_scroll_top(top, cx));
-    }
 }
 
 /// Replaces `side`'s text, a diff's git side's, with `text`, if it
@@ -1443,6 +1422,8 @@ impl Workbench {
                     let left = EditorModel::new(buffer, None);
                     let left = DiffSide::new(workbench.relative(&other), left).read_only();
                     let diff = workbench.new_diff((path, None, false), left, right, cx);
+                    // Two files compared show every row, as VS Code does.
+                    diff.update(cx, |diff, cx| diff.set_folding(false, cx));
                     let left = diff.read(cx).left().clone();
                     left.update(cx, |left, cx| left.set_language(language, cx));
                     workbench.place_diff(&diff, &landing.pane, cx);

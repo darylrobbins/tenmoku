@@ -52,6 +52,12 @@ fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+/// Shows every row, for tests of scrolling and moving over them all.
+fn unfold(diff: &Entity<DiffView>, cx: &mut VisualTestContext) {
+    diff.update(cx, |diff, cx| diff.set_folding(false, cx));
+    draw(cx);
+}
+
 fn side(diff: &Entity<DiffView>, ix: usize, cx: &mut VisualTestContext) -> Entity<EditorView> {
     diff.read_with(cx, |diff, _| diff.views[ix].clone())
 }
@@ -260,6 +266,7 @@ fn wide_texts(count: usize) -> (String, String) {
 fn scroll_synced(cx: &mut TestAppContext) {
     let (left_text, right_text) = long_texts(500);
     let (diff, cx) = diff_view(&left_text, &right_text, cx);
+    unfold(&diff, cx);
     let (left, right) = (side(&diff, 0, cx), side(&diff, 1, cx));
     let sets = |cx: &mut VisualTestContext| diff.read_with(cx, |diff, _| diff.scroll_sets);
 
@@ -346,6 +353,7 @@ fn navigation(cx: &mut TestAppContext) {
         right.insert(50, format!("new{row}"));
     }
     let (diff, cx) = diff_view(&left.join("\n"), &right.join("\n"), cx);
+    unfold(&diff, cx);
     let (left, right) = (side(&diff, 0, cx), side(&diff, 1, cx));
     let carets = |cx: &mut VisualTestContext| (caret(&left, cx), caret(&right, cx));
     bind_navigation(cx);
@@ -437,6 +445,7 @@ fn large_sides_diff_off_the_main_thread(cx: &mut TestAppContext) {
     let (left_text, right_text) = wide_texts(6_000);
     assert!(left_text.len() > ASYNC_BYTES);
     let (diff, cx) = diff_view(&left_text, &right_text, cx);
+    unfold(&diff, cx);
     let left = side(&diff, 0, cx);
     assert_eq!(blocks(&left, cx), [filler(20, 3, 0)]);
     // Row changes from the diff that landed, not diffed by the model on
@@ -691,6 +700,7 @@ fn navigation_across_tall_hunks_keeps_the_sides_together(cx: &mut TestAppContext
         right.insert(200, format!("new{row}"));
     }
     let (diff, cx) = diff_view(&left.join("\n"), &right.join("\n"), cx);
+    unfold(&diff, cx);
     cx.update(|_, cx| crate::set_vim_enabled(cx, true));
     let (left, right) = (side(&diff, 0, cx), side(&diff, 1, cx));
     let viewport = right.read_with(cx, |view, _| view.viewport_rows().unwrap().1);
