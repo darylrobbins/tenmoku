@@ -101,6 +101,11 @@ impl Workbench {
             };
             let identity = (self.lsp.manager.as_ref())
                 .and_then(|manager| super::lock(manager).active_identity(buffer, server));
+            // Nothing is asked of a document the server hasn't been told of;
+            // the next draw looks again once it activates.
+            if identity.is_none() {
+                continue;
+            }
             let slot = self
                 .lsp
                 .colors

@@ -268,3 +268,34 @@ fn exhausted_retries_clear_the_swatches(cx: &mut TestAppContext) {
     s.draw();
     assert_eq!(requests(&s, COLORS).len(), 10);
 }
+
+#[gpui::test]
+fn drawing_before_the_document_activates_asks_nothing(cx: &mut TestAppContext) {
+    let mut s = Lsp::with_fake_clock(cx, script(), Script::default());
+    s.fake
+        .set_reply(COLORS, Scripted::now(Reply::Result(colors())));
+    s.set_trust(true);
+    std::fs::write(s.path("src/main.rs"), MAIN).unwrap();
+    let manager = || {
+        s.workbench
+            .read_with(&s.cx, |w, _| w.lsp.manager.clone())
+            .expect("trusted, so there's a manager")
+    };
+    let manager = manager();
+    crate::lsp::lock(&manager).hold_next_activation();
+    s.open("src/main.rs");
+    crate::lsp::lock(&manager).wait_activation_held();
+    let editor = (s.workbench)
+        .read_with(&s.cx, |w, cx| w.active_editor(cx).cloned())
+        .expect("main.rs is shown");
+    s.cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
+    for _ in 0..5 {
+        s.clock.advance(Duration::from_millis(20));
+        s.draw();
+    }
+    assert!(requests(&s, COLORS).is_empty());
+
+    crate::lsp::lock(&manager).release_activation();
+    until_ticking(&mut s, "the swatches", |s| shown(s, &editor) == swatches());
+    assert_eq!(requests(&s, COLORS).len(), 1);
+}

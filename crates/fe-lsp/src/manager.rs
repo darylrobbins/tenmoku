@@ -1374,6 +1374,29 @@ impl LspManager {
         &self.identities
     }
 
+    /// Holds the next document open to reach its server's thread before it
+    /// activates, for tests of what runs in that window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_next_activation(&self) {
+        self.identities
+            .pauses()
+            .arm(crate::identity::Point::Activate);
+    }
+
+    /// Blocks until a thread is held by [`hold_next_activation`](Self::hold_next_activation).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_activation_held(&self) {
+        self.identities
+            .pauses()
+            .wait_held(crate::identity::Point::Activate);
+    }
+
+    /// Lets a held activation go on.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn release_activation(&self) {
+        self.identities.pauses().resume();
+    }
+
     /// The LSP and buffer versions in `buffer`'s ring on its server,
     /// oldest first, once the commands before this one are done.
     #[cfg(test)]

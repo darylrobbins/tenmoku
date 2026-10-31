@@ -47,7 +47,7 @@ pub(crate) struct Identities(Arc<Shared>);
 #[derive(Default)]
 struct Shared {
     table: Mutex<Table>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pauses: pause::Pauses,
 }
 
@@ -183,7 +183,7 @@ impl Identities {
     }
 
     /// Where an actor may be held by a test, outside the table's lock.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn pauses(&self) -> &pause::Pauses {
         &self.0.pauses
     }
@@ -191,9 +191,9 @@ impl Identities {
     /// Holds the calling thread at `point` if a test armed it.
     #[inline]
     pub(crate) fn pause(&self, point: Point) {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         self.0.pauses.reach(point);
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let _ = point;
     }
 }
@@ -217,7 +217,7 @@ impl Drop for EndSession {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) mod pause {
     use std::sync::{Condvar, Mutex, PoisonError};
     use std::time::{Duration, Instant};
