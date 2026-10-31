@@ -387,6 +387,7 @@ impl DiffView {
         for view in &self.views {
             view.update(cx, |view, _| view.model_mut().sync_display());
         }
+        self.note_touched(cx);
         loop {
             let heads = [0, 1].map(|ix| self.caret_rows(ix, false, cx));
             let caret_in: Vec<_> = (self.hidden.iter())
@@ -410,6 +411,16 @@ impl DiffView {
         cx.notify();
     }
 
+    /// Notes each side whose carets have moved since last looked at: its
+    /// initial caret is touched for good, wherever it is now.
+    fn note_touched(&mut self, cx: &App) {
+        for ix in 0..2 {
+            if !self.heads[ix].is_empty() && self.heads_of(ix, cx) != self.heads[ix] {
+                self.touched[ix] = true;
+            }
+        }
+    }
+
     /// Side `ix`'s carets, as their heads, sorted.
     fn heads_of(&self, ix: usize, cx: &App) -> Vec<usize> {
         let model = self.views[ix].read(cx).model();
@@ -429,7 +440,7 @@ impl DiffView {
         let model = self.views[ix].read(cx).model();
         let selections = model.selections();
         let untouched = matches!(&selections[..], [only] if only.range == (0..0));
-        if untouched && !moved {
+        if untouched && !moved && !self.touched[ix] {
             return Vec::new();
         }
         let text = model.text();
@@ -474,6 +485,9 @@ impl DiffView {
     /// Until the diff of an edit lands, the folds stay as the edit left
     /// them.
     pub(super) fn keep_aligned(&mut self, cx: &mut Context<Self>) {
+        // Before any early return below, since each path ends by taking the
+        // heads as looked at.
+        self.note_touched(cx);
         let mut opened = Vec::new();
         let mut refold = false;
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {

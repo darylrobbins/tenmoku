@@ -748,9 +748,9 @@ fn a_caret_moved_onto_the_first_row(cx: &mut TestAppContext) {
     assert_aligned(&diff, cx);
 
     // As by vim's gg.
-    dispatch(TOGGLE_FOLDING, cx);
-    dispatch(TOGGLE_FOLDING, cx);
     set_carets(&right, &[39], cx);
+    dispatch(TOGGLE_FOLDING, cx);
+    dispatch(TOGGLE_FOLDING, cx);
     assert_eq!(hidden_left(&diff, cx), [0..36, 43..80]);
     cx.update(|_, cx| crate::set_vim_enabled(cx, true));
     cx.update(|window, cx| window.focus(&right.focus_handle(cx), cx));
@@ -758,6 +758,50 @@ fn a_caret_moved_onto_the_first_row(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(caret(&right, cx), 0);
     assert_eq!(hidden_left(&diff, cx), only(43..80));
+}
+
+#[gpui::test]
+fn a_caret_moved_to_offset_zero_stays_shown(cx: &mut TestAppContext) {
+    let (diff, cx) = changed_view(80, &[39], cx);
+    let right = side(&diff, 1, cx);
+    // Untouched, under the first label: hidden.
+    assert_eq!(hidden_left(&diff, cx), [0..36, 43..80]);
+    // Moved off and back to offset 0: shown, and still after refolds.
+    set_carets(&right, &[39], cx);
+    set_carets(&right, &[0], cx);
+    assert_eq!(hidden_left(&diff, cx), only(43..80));
+    dispatch(TOGGLE_FOLDING, cx);
+    dispatch(TOGGLE_FOLDING, cx);
+    assert_eq!(caret(&right, cx), 0);
+    assert_eq!(hidden_left(&diff, cx), only(43..80));
+    assert_aligned(&diff, cx);
+}
+
+#[gpui::test]
+fn a_caret_moved_while_a_diff_is_pending_stays_touched(cx: &mut TestAppContext) {
+    let left = rows(80);
+    let right = changed(&left, &[39]).join("\n");
+    let model = EditorModel::new(Buffer::new(&right), Some("a.txt".into()));
+    let mut other = model.split();
+    let (diff, cx) = diff_view_of(&left.join("\n"), model, cx);
+    let right = side(&diff, 1, cx);
+    assert_eq!(hidden_left(&diff, cx), [0..36, 43..80]);
+
+    // An edit through another model leaves the diff pending; the caret
+    // moves off row 0 and back across frames meanwhile.
+    other
+        .buffer_mut()
+        .edit([(0..0, "x")], fe_buffer::Origin::User);
+    set_carets(&right, &[39], cx);
+    draw(cx);
+    set_carets(&right, &[0], cx);
+    draw(cx);
+    cx.executor().advance_clock(POLL);
+    draw(cx);
+    draw(cx);
+    assert_eq!(caret_rows(&right, cx), [0]);
+    assert!(hidden_left(&diff, cx).iter().all(|rows| !rows.contains(&0)));
+    assert_aligned(&diff, cx);
 }
 
 /// The crumbs side `ix`'s labels show.

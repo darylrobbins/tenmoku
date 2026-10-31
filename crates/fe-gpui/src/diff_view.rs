@@ -229,6 +229,9 @@ pub struct DiffView {
     /// Each side's carets' heads when last looked at, which tell a caret
     /// moved.
     heads: [Vec<usize>; 2],
+    /// Whether each side's initial caret has been touched: moved from where
+    /// the view opened it, kept across refolds.
+    touched: [bool; 2],
     /// A right row revealed, and the rows the view shows to centre it in,
     /// shown and scrolled to again as each diff lands until one of the
     /// texts as they are has, or a side is scrolled.
@@ -350,6 +353,7 @@ impl DiffView {
             outlines: [None, None],
             outlining: [None, None],
             heads: Default::default(),
+            touched: [false; 2],
             revealing: None,
             _subscriptions: subscriptions,
             _poll: poll,
