@@ -10,7 +10,10 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{Launch, Workbench};
 
-fn cnoremap(from: &str, to: &str) -> Remap {
+// Declared here, a test file, so the regression check keeps it.
+mod unmapped_input_tests;
+
+pub(super) fn cnoremap(from: &str, to: &str) -> Remap {
     Remap {
         modes: vec![RemapMode::CmdLine],
         from: from.to_string(),
@@ -19,14 +22,14 @@ fn cnoremap(from: &str, to: &str) -> Remap {
     }
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 /// A workbench showing a file holding `aaa`, focused, with vim on and
 /// `remaps` set.
-fn opened(
+pub(super) fn opened(
     cx: &mut TestAppContext,
     remaps: Vec<Remap>,
 ) -> (
@@ -66,21 +69,24 @@ fn opened(
     (dir, workbench, editor, cx)
 }
 
-fn line(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<(char, String)> {
+pub(super) fn line(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Option<(char, String)> {
     let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
     bar.read_with(cx, |bar, cx| bar.line(cx))
 }
 
-fn text(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
+pub(super) fn text(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
     editor.read_with(cx, |editor, _| editor.model().text().to_string())
 }
 
-fn time_out(cx: &mut VisualTestContext) {
+pub(super) fn time_out(cx: &mut VisualTestContext) {
     cx.executor().advance_clock(CHORD_TIMEOUT * 2);
     draw(cx);
 }
 
-fn typed(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
+pub(super) fn typed(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> String {
     line(workbench, cx).expect("a line is open").1
 }
 

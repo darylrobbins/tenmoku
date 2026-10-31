@@ -43,6 +43,30 @@ pub enum Typed {
 /// [`Typed`], and defers anything else.
 type TypingFilter = Rc<dyn Fn(&str, &mut Window, &mut App) -> Typed>;
 
+/// An edit a host makes to the text before the platform's goes in: see
+/// [`TextInput::set_before_platform_input`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettleEdit {
+    /// Adds this text at the end.
+    Insert(String),
+    /// Deletes the last char.
+    Backspace,
+}
+
+/// What a host settles before the platform's text goes in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Settled {
+    /// Made to the text, in order, before the platform's edit.
+    pub edits: Vec<SettleEdit>,
+    /// The platform's edit is dropped: the host takes it over.
+    pub swallow: bool,
+}
+
+/// Asked, with the text and the platform's, before an edit from the
+/// platform that isn't a single typed character goes in: see
+/// [`TextInput::set_before_platform_input`].
+type BeforeInput = Rc<dyn Fn(&str, &str, &mut Window, &mut App) -> Settled>;
+
 /// A single-line text input. Typed text goes in at the caret, which the
 /// `move_*` methods move by kiln-core's [`Motion`] rules (graphemes and
 /// words); it starts at the end. The one selection it has is all of the
@@ -93,6 +117,8 @@ pub struct TextInput {
     /// The caret it last painted, and the bounds it was painted in.
     #[cfg(test)]
     pub(crate) painted_caret: Option<(Bounds<Pixels>, Bounds<Pixels>)>,
+    /// See [`TextInput::set_before_platform_input`].
+    before_input: Option<BeforeInput>,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -120,7 +146,61 @@ impl TextInput {
             typing_filter: None,
             #[cfg(test)]
             painted_caret: None,
+            before_input: None,
         }
+    }
+
+    /// Asks `hook` before an edit from the platform goes in that isn't a
+    /// single typed character [`TextInput::set_typing_filter`] took: a
+    /// commit of several characters, a replacement or deletion of a range,
+    /// and the start of an IME composition. Not a paste or
+    /// [`TextInput::insert`]. It is given the text and the platform's
+    /// text (empty for a deletion or a composition's start), and answers
+    /// with the edits to make first, so a host holding typed characters
+    /// back puts them in ahead of the platform's edit, in the order they
+    /// came. An insertion at the end of the text stays at the end.
+    /// It runs while the input is being updated, so it can't read or edit
+    /// the input.
+    pub fn set_before_platform_input(
+        &mut self,
+        hook: Option<impl Fn(&str, &str, &mut Window, &mut App) -> Settled + 'static>,
+    ) {
+        self.before_input = hook.map(|hook| Rc::new(hook) as BeforeInput);
+    }
+
+    /// Makes the edits [`TextInput::set_before_platform_input`] gives for
+    /// `platform`, and moves `range` to match. `None`: the platform's edit
+    /// is dropped.
+    fn before_platform_input(
+        &mut self,
+        platform: &str,
+        range: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Option<Range<usize>>> {
+        let Some(hook) = self.before_input.clone() else {
+            return Some(range);
+        };
+        let old = self.utf16_len();
+        let settled = hook(&self.text.clone(), platform, window, cx);
+        for edit in settled.edits {
+            match edit {
+                SettleEdit::Insert(text) => self.insert(&text, cx),
+                SettleEdit::Backspace => self.backspace(cx),
+            }
+        }
+        if settled.swallow {
+            return None;
+        }
+        let new = self.utf16_len();
+        // An insertion at the end stays at the end; any other range keeps
+        // the text it named, which settling only added to after.
+        Some(
+            range.map(|range| match range.is_empty() && range.start >= old {
+                true => new..new,
+                false => range.start.min(new)..range.end.min(new),
+            }),
+        )
     }
 
     /// Asks `filter` about each character typed on its own, before it goes
@@ -507,7 +587,7 @@ impl EntityInputHandler for TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let commits = range.is_none() || range == self.marked_utf16();
+        let mut commits = range.is_none() || range == self.marked_utf16();
         if commits
             && self.marked.is_none()
             && text.chars().count() == 1
@@ -518,6 +598,14 @@ impl EntityInputHandler for TextInput {
                 Typed::Swallow => return,
                 Typed::Insert(text) => return self.insert(&text, cx),
             }
+        }
+        let mut range = range;
+        if self.marked.is_none() {
+            match self.before_platform_input(text, range, window, cx) {
+                Some(moved) => range = moved,
+                None => return,
+            }
+            commits = range.is_none();
         }
         if self.selected && (range.is_none() || range == Some(0..self.utf16_len())) {
             // The platform replaces the selection, as typing does.
@@ -548,10 +636,17 @@ impl EntityInputHandler for TextInput {
         range: Option<Range<usize>>,
         text: &str,
         selected: Option<Range<usize>>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let line = text.lines().next().unwrap_or_default();
+        let mut range = range;
+        if self.marked.is_none() && !line.is_empty() {
+            match self.before_platform_input("", range, window, cx) {
+                Some(moved) => range = moved,
+                None => return,
+            }
+        }
         if line.is_empty() {
             // An empty mark ends the composition, whatever its range, and
             // edits nothing (it replaces a selection, though).

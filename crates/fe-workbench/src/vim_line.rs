@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, keymap::CHORD_TIMEOUT, vim_registers};
-use fe_ui::{ROW_HEIGHT, TextInput, TextInputEvent, Typed};
+use fe_ui::{ROW_HEIGHT, SettleEdit, Settled, TextInput, TextInputEvent, Typed};
 use fe_vim::{CommandLineKind, Ex, HistoryRecall, HostCommand, Mode, VimKey, VimState};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _, FontWeight,
@@ -218,6 +218,7 @@ impl StatusBar {
                     }
                 }));
                 let bar = cx.weak_entity();
+                let settle = bar.clone();
                 input.update(cx, |input, _| {
                     input.set_typing_filter(Some(
                         move |text: &str, window: &mut Window, cx: &mut gpui::App| {
@@ -226,6 +227,16 @@ impl StatusBar {
                             };
                             let typed = bar.update(cx, |bar, cx| bar.line_typed(ch, window, cx));
                             typed.unwrap_or(Typed::Pass)
+                        },
+                    ));
+                    input.set_before_platform_input(Some(
+                        move |text: &str,
+                              platform: &str,
+                              window: &mut Window,
+                              cx: &mut gpui::App| {
+                            let held = settle
+                                .update(cx, |bar, cx| bar.line_settle(text, platform, window, cx));
+                            held.unwrap_or_default()
                         },
                     ));
                 });
@@ -334,6 +345,68 @@ impl StatusBar {
             true => Typed::Swallow,
             false => Typed::Insert(text),
         }
+    }
+
+    /// An edit from the platform is about to go into the line (several
+    /// characters at once, a range replaced or deleted, or an IME
+    /// composition starting; `platform` is its text), the line holding
+    /// `text`: the keys held for a longer `c` map resolve first, and the
+    /// input makes the edits they come to before the platform's, so they
+    /// come before it. A key that ends the line takes the platform's edit
+    /// over: the input drops it, and it goes in once the line's keys have
+    /// run (to the editor, if the line ended).
+    fn line_settle(
+        &mut self,
+        text: &str,
+        platform: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Settled {
+        self.line.remap_timer = None;
+        let mut settled = Settled::default();
+        let Some(editor) = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade())
+        else {
+            return settled;
+        };
+        let mut len = text.chars().count();
+        while editor.read(cx).remap_line_waiting() {
+            let line = editor.update(cx, |editor, _| editor.remap_line_timeout());
+            let mut keys: VecDeque<VimKey> = line.typed.into_iter().map(|(key, _)| key).collect();
+            let mut ends = !line.rest.is_empty();
+            while !ends && let Some(&key) = keys.front() {
+                match key {
+                    VimKey::Char(ch) => {
+                        settled.edits.push(SettleEdit::Insert(ch.to_string()));
+                        len += 1;
+                    }
+                    VimKey::Backspace if len > 0 => {
+                        settled.edits.push(SettleEdit::Backspace);
+                        len -= 1;
+                    }
+                    VimKey::Backspace | VimKey::Enter | VimKey::Esc => ends = true,
+                    VimKey::Ctrl('j' | 'c') => ends = true,
+                    _ => {}
+                }
+                if !ends {
+                    keys.pop_front();
+                }
+            }
+            if ends {
+                // The platform's text follows the keys, as typed after them.
+                keys.extend(platform.chars().map(VimKey::Char));
+                settled.swallow = true;
+                self.line.typing = true;
+                let bar = cx.weak_entity();
+                window.defer(cx, move |window, cx| {
+                    bar.update(cx, |bar, cx| {
+                        bar.type_line_keys(keys, line.rest, window, cx)
+                    })
+                    .ok();
+                });
+                break;
+            }
+        }
+        settled
     }
 
     /// Tells the editor of an edit to the line that the `c` maps never saw,
@@ -571,6 +644,9 @@ impl StatusBar {
         };
         if let Some(text) = self.line.recall.step(registers, kind, &line, older) {
             input.update(cx, |input, cx| input.set_text(text, cx));
+            // set_text raises no Changed: the editor is told of the recall
+            // before it sees the keys typed next.
+            self.sync_line_edit(cx);
             self.preview_line(cx);
         }
     }
@@ -612,6 +688,7 @@ impl StatusBar {
         };
         let text = cycle.step(!shift).to_owned();
         input.update(cx, |input, cx| input.set_text(text, cx));
+        self.sync_line_edit(cx);
     }
 
     /// The line, while it's open: a `COMMAND` segment in the editor

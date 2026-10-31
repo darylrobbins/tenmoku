@@ -1745,7 +1745,7 @@ impl EditorView {
             let taken = echo.chars().count() - kept;
             let typed: Vec<VimKey> = (0..taken)
                 .map(|_| VimKey::Backspace)
-                .chain(text.chars().skip(kept).map(VimKey::Char))
+                .chain(literal_keys(text.chars().skip(kept)))
                 .chain((!expanded).then_some(end))
                 .collect();
             for key in typed {
@@ -1771,7 +1771,9 @@ impl EditorView {
     }
 
     /// The line's text changed to `text` by an edit the `c` maps never saw
-    /// (a `<BS>`, a paste): recorded now, as typed, so it comes before the
+    /// (a `<BS>`, a paste, an IME commit, a history recall or a completion):
+    /// recorded now, its text as literal input ([`LITERAL_NEXT`] before each
+    /// character, which a replay reads unmapped), so it comes before the
     /// keys the maps see next. Only once a line goes through the maps; until
     /// then [`EditorView::record_command_line`] records the line whole.
     pub fn sync_line_text(&mut self, text: &str) {
@@ -1796,7 +1798,7 @@ impl EditorView {
         let taken = echo.chars().count() - kept;
         let typed: Vec<VimKey> = (0..taken)
             .map(|_| VimKey::Backspace)
-            .chain(text.chars().skip(kept).map(VimKey::Char))
+            .chain(literal_keys(text.chars().skip(kept)))
             .collect();
         *echo = text.to_owned();
         for key in typed {
@@ -1809,6 +1811,7 @@ impl EditorView {
     pub fn begin_command_line(&mut self) {
         self.vim_line_echo = None;
         self.vim_line_end_expanded = false;
+        self.vim_line_literal = false;
     }
 
     /// A character typed on the command line, asked of the `c` maps
@@ -2922,8 +2925,17 @@ impl EditorView {
             }
             fe_vim::Mode::CmdLine(_) => {
                 // A character, or any key while keys are held, goes through
-                // the `c` maps; the line's other keys are its own.
-                if matches!(key, VimKey::Char(_)) || state.remap_waiting() {
+                // the `c` maps; the line's other keys are its own. The
+                // character after a [`LITERAL_NEXT`] is literal text, unmapped.
+                let literal = std::mem::take(&mut self.vim_line_literal);
+                if literal && key == VimKey::Char(LITERAL_NEXT) {
+                    // The marker's own char, as literal text.
+                    state.record_key(key);
+                    line.get_or_insert_with(|| state.command_line_prefill().to_owned())
+                        .push(LITERAL_NEXT);
+                    return true;
+                }
+                if !literal && (matches!(key, VimKey::Char(_)) || state.remap_waiting()) {
                     return match state.remap_insert(key) {
                         RemapInsert::Wait => !state.failed(),
                         RemapInsert::Keys(keys) => keys
@@ -2956,6 +2968,12 @@ impl EditorView {
         let mapped = state.expanding();
         let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
         let invocation = match key {
+            // The next character is literal text: how a paste, a recall or
+            // an IME commit is recorded.
+            VimKey::Char(LITERAL_NEXT) => {
+                self.vim_line_literal = true;
+                return true;
+            }
             VimKey::Char(ch) => {
                 text.push(ch);
                 return true;
@@ -2975,7 +2993,9 @@ impl EditorView {
                     .expect("a valid command ID")
                     .args(fe_command::Value::from_iter([("text", text.as_str())]))
             }
-            _ => return false,
+            // Keys the line has no use for are dropped, as the live line
+            // drops them when a map types them.
+            _ => return true,
         };
         *line = None;
         let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
@@ -3281,3 +3301,16 @@ impl From<ViewPlace> for SearchPreview {
 #[cfg(test)]
 #[path = "vim_indent_keys_tests.rs"]
 mod vim_indent_keys_tests;
+
+/// The key before a character that no typed key made, in a recording: the
+/// character after it is literal text. A private-use character no map has a
+/// left side for, so it breaks a held prefix as any key does and no map
+/// matches it.
+const LITERAL_NEXT: char = '\u{F8FF}';
+
+/// `chars` as the keys a recording holds for text no typed key made: each
+/// after a [`LITERAL_NEXT`], so a replay reads it as literal text and no `c` map
+/// matches it.
+fn literal_keys(chars: impl Iterator<Item = char>) -> impl Iterator<Item = VimKey> {
+    chars.flat_map(|ch| [VimKey::Char(LITERAL_NEXT), VimKey::Char(ch)])
+}

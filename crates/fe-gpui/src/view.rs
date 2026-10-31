@@ -172,6 +172,9 @@ pub struct EditorView {
     /// The key that ended the line came from a map's right side, so a
     /// recording has it in the map's keys already.
     pub(crate) vim_line_end_expanded: bool,
+    /// A replay read the literal-next marker on the command line: the next character is
+    /// literal text, not matched against the `c` maps.
+    pub(crate) vim_line_literal: bool,
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
@@ -441,6 +444,7 @@ impl EditorView {
             vim_unrecorded_logged: false,
             vim_line_echo: None,
             vim_line_end_expanded: false,
+            vim_line_literal: false,
             fold_column_hovered: false,
             gutter_glyph: None,
             overlay: None,
