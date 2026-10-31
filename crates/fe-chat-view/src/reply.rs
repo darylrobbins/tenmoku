@@ -4,6 +4,7 @@
 //! a header over each code block to copy or apply it (§ 8).
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     path::{Component, Path},
     rc::Rc,
@@ -12,12 +13,10 @@ use std::{
 
 use fe_gpui::EditorTheme;
 use fe_markdown::{Block, BlockKind, Document, LinkTarget, link_target};
-use fe_markdown_view::{
-    CodeHeader, ElementOptions, Images, LinkHandler, MarkdownStyle, document_element,
-};
+use fe_markdown_view::{CodeHeader, ElementOptions, LinkHandler, MarkdownStyle, document_element};
 use gpui::{
-    AnyElement, App, ClipboardItem, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, WeakEntity, Window, div,
+    AnyElement, App, Bounds, ClipboardItem, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, ScrollHandle, SharedString, Styled as _, WeakEntity, Window, div,
 };
 use kiln_ui::{Button, UiTheme, h_flex};
 
@@ -190,8 +189,123 @@ pub(crate) fn thinking_style(reply: &MarkdownStyle) -> MarkdownStyle {
     }
 }
 
-/// Turn `turn`'s reply, `document`, with a header over each code block.
-/// Apply is off while the reply streams, its blocks unfinished.
+/// Where a reply's code block was last drawn in the transcript.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CodeSpan {
+    pub(crate) turn: usize,
+    pub(crate) block: usize,
+    /// Its top and bottom, header included, below the top of the
+    /// transcript's content, unscrolled: they don't change as the
+    /// transcript scrolls.
+    pub(crate) top: Pixels,
+    pub(crate) bottom: Pixels,
+    /// Its left, from the transcript's, and its width.
+    pub(crate) left: Pixels,
+    pub(crate) width: Pixels,
+    /// How tall its header is drawn: a long path wraps.
+    pub(crate) header: Pixels,
+}
+
+/// Where the transcript's reply code blocks are drawn, for the copy of a
+/// header pinned over the transcript's top while its block is scrolled
+/// under it. Each frame's prepaint records the blocks, and
+/// [`CodeSpans::commit`], after the transcript, makes them the ones
+/// [`CodeSpans::pinned`] reads.
+#[derive(Clone)]
+pub(crate) struct CodeSpans(Rc<RefCell<Spans>>);
+
+struct Spans {
+    /// The transcript's.
+    scroll: ScrollHandle,
+    /// The blocks this frame has drawn so far.
+    drawing: Vec<CodeSpan>,
+    /// The blocks the last frame drew.
+    drawn: Vec<CodeSpan>,
+    /// How tall the transcript was when they were drawn.
+    viewport: Pixels,
+    /// The heights of the headers this frame has drawn so far, by turn and
+    /// block: each is drawn before its block is recorded.
+    headers: HashMap<(usize, usize), Pixels>,
+}
+
+impl CodeSpans {
+    pub(crate) fn new(scroll: &ScrollHandle) -> CodeSpans {
+        CodeSpans(Rc::new(RefCell::new(Spans {
+            scroll: scroll.clone(),
+            drawing: Vec::new(),
+            drawn: Vec::new(),
+            viewport: Pixels::ZERO,
+            headers: HashMap::new(),
+        })))
+    }
+
+    /// Code block `block` of turn `turn`'s reply is drawn at `bounds`, in
+    /// the window, at prepaint, when the transcript's bounds and offset are
+    /// this frame's.
+    fn record(&self, turn: usize, block: usize, bounds: Bounds<Pixels>) {
+        let mut spans = self.0.borrow_mut();
+        // A block drawn with no header has none to pin.
+        let Some(header) = spans.headers.remove(&(turn, block)) else {
+            return;
+        };
+        let (viewport, offset) = (spans.scroll.bounds(), spans.scroll.offset());
+        let top = bounds.top() - viewport.top() - offset.y;
+        spans.drawing.push(CodeSpan {
+            turn,
+            block,
+            top,
+            bottom: top + bounds.size.height,
+            left: bounds.left() - viewport.left(),
+            width: bounds.size.width,
+            header,
+        });
+    }
+
+    /// Code block `block` of turn `turn`'s reply's header is drawn
+    /// `height` tall, at prepaint.
+    fn header_drawn(&self, turn: usize, block: usize, height: Pixels) {
+        self.0.borrow_mut().headers.insert((turn, block), height);
+    }
+
+    /// Makes the blocks this frame drew the ones [`CodeSpans::pinned`]
+    /// reads, and returns the block whose header is pinned as the
+    /// transcript is scrolled now.
+    pub(crate) fn commit(&self) -> Option<CodeSpan> {
+        let offset = {
+            let mut spans = self.0.borrow_mut();
+            spans.drawn = std::mem::take(&mut spans.drawing);
+            spans.headers.clear();
+            spans.viewport = spans.scroll.bounds().size.height;
+            spans.scroll.offset().y
+        };
+        self.pinned(offset)
+    }
+
+    /// The block whose header is pinned with the transcript scrolled to
+    /// `offset`: the one whose top is above the transcript's and of which
+    /// at least its header's height is still in view, in a transcript at
+    /// least that tall.
+    pub(crate) fn pinned(&self, offset: Pixels) -> Option<CodeSpan> {
+        let spans = self.0.borrow();
+        (spans.drawn.iter().copied()).find(|span| {
+            let in_view = (span.bottom + offset).min(spans.viewport);
+            span.top + offset < Pixels::ZERO && in_view >= span.header
+        })
+    }
+}
+
+/// Where a code block's header is drawn.
+#[derive(Clone)]
+pub(crate) enum HeaderAt {
+    /// Over its block, which reports its height to `spans`.
+    Block(CodeSpans),
+    /// Pinned over the transcript's top.
+    Pinned,
+}
+
+/// Turn `turn`'s reply, `document`, with a header over each code block,
+/// each block's place reported to `spans`. Apply is off while the reply
+/// streams, its blocks unfinished.
 pub(crate) fn reply_element(
     turn: usize,
     document: &Arc<Document>,
@@ -199,17 +313,24 @@ pub(crate) fn reply_element(
     streaming: bool,
     ui: UiTheme,
     view: WeakEntity<ChatView>,
+    spans: CodeSpans,
 ) -> AnyElement {
     let header = {
-        let view = view.clone();
+        let (view, spans) = (view.clone(), spans.clone());
         Rc::new(move |block: CodeHeader<'_>, _: &mut Window, _: &mut App| {
-            code_header(turn, block, streaming, &ui, view.clone())
+            let code = CodeBlock::new(block.info, block.code);
+            let at = HeaderAt::Block(spans.clone());
+            code_header(turn, block.index, code, streaming, &ui, view.clone(), at)
         })
     };
+    let on_code_bounds = Rc::new(move |block, bounds, _: &mut Window, _: &mut App| {
+        spans.record(turn, block, bounds)
+    });
     let options = ElementOptions {
-        images: Images::AltText,
         on_link: Some(link_handler(view)),
         code_header: Some(header),
+        on_code_bounds: Some(on_code_bounds),
+        ..ElementOptions::default()
     };
     document_element(document, style, options)
 }
@@ -221,30 +342,32 @@ pub(crate) fn thinking_element(
     view: WeakEntity<ChatView>,
 ) -> AnyElement {
     let options = ElementOptions {
-        images: Images::AltText,
         on_link: Some(link_handler(view)),
-        code_header: None,
+        ..ElementOptions::default()
     };
     document_element(document, style, options)
 }
 
-/// Code block `block.index` of turn `turn`'s reply's header: its language
-/// and path, Copy, and Apply, which asks the host to apply it. Its
-/// `debug_selector` is `chat-code-<turn>-<block>`, and its buttons'
-/// `chat-copy-<turn>-<block>` and `chat-apply-<turn>-<block>`.
-fn code_header(
+/// Code block `index` of turn `turn`'s reply's header, `block`: its
+/// language and path, Copy, and Apply, which asks the host to apply it.
+/// Over its block, its `debug_selector` is `chat-code-<turn>-<index>`, and
+/// its buttons' `chat-copy-<turn>-<index>` and `chat-apply-<turn>-<index>`;
+/// pinned, they are `chat-code-pinned`, `chat-copy-pinned` and
+/// `chat-apply-pinned`.
+pub(crate) fn code_header(
     turn: usize,
-    block: CodeHeader<'_>,
+    index: usize,
+    block: CodeBlock,
     streaming: bool,
     ui: &UiTheme,
     view: WeakEntity<ChatView>,
+    at: HeaderAt,
 ) -> AnyElement {
-    let index = block.index;
     let CodeBlock {
         language,
         path,
         code,
-    } = CodeBlock::new(block.info, block.code);
+    } = block;
     let copy = move |_: &_, _: &mut Window, cx: &mut App| {
         cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
     };
@@ -254,9 +377,14 @@ fn code_header(
         })
         .ok();
     };
-    let id = |name: &str| SharedString::from(format!("{name}-{turn}-{index}"));
-    h_flex()
-        .debug_selector(move || format!("chat-code-{turn}-{index}"))
+    let suffix = match at {
+        HeaderAt::Block(_) => format!("{turn}-{index}"),
+        HeaderAt::Pinned => "pinned".to_owned(),
+    };
+    let id = |name: &str| SharedString::from(format!("{name}-{suffix}"));
+    let (code_id, copy_id, apply_id) = (id("chat-code"), id("chat-copy"), id("chat-apply"));
+    let header = h_flex()
+        .debug_selector(move || code_id.to_string())
         .gap_2()
         .px_2()
         .py_1()
@@ -268,19 +396,32 @@ fn code_header(
         .children(path.map(|path| div().min_w_0().text_color(ui.text).child(path)))
         .child(div().flex_1())
         .child(
-            Button::new(id("chat-copy"), "Copy")
+            Button::new(copy_id.clone(), "Copy")
                 .small()
-                .debug_selector(move || format!("chat-copy-{turn}-{index}"))
+                .debug_selector(move || copy_id.to_string())
                 .on_click(copy),
         )
         .child(
-            Button::new(id("chat-apply"), "Apply")
+            Button::new(apply_id.clone(), "Apply")
                 .small()
                 .disabled(streaming)
-                .debug_selector(move || format!("chat-apply-{turn}-{index}"))
+                .debug_selector(move || apply_id.to_string())
                 .on_click(apply),
-        )
-        .into_any_element()
+        );
+    match at {
+        // In a column of its own, which tells `spans` how tall it is.
+        HeaderAt::Block(spans) => div()
+            .flex()
+            .flex_col()
+            .on_children_prepainted(move |bounds, _, _| {
+                if let Some(header) = bounds.first() {
+                    spans.header_drawn(turn, index, header.size.height);
+                }
+            })
+            .child(header)
+            .into_any_element(),
+        HeaderAt::Pinned => header.into_any_element(),
+    }
 }
 
 /// Where a link in a reply goes.

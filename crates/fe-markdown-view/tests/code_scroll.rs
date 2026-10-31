@@ -4,9 +4,7 @@ use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
 use fe_markdown::Document;
-use fe_markdown_view::{
-    CodeHeader, ElementOptions, Images, MarkdownStyle, MarkdownView, document_element,
-};
+use fe_markdown_view::{CodeHeader, ElementOptions, MarkdownStyle, MarkdownView, document_element};
 use gpui::{
     AnyElement, Bounds, Context, IntoElement, Modifiers, ParentElement as _, Pixels, Render,
     ScrollDelta, ScrollWheelEvent, Styled as _, TestAppContext, TouchPhase, VisualTestContext,
@@ -33,9 +31,8 @@ impl Render for Host {
             ) as fe_markdown_view::CodeHeaderFn
         });
         let options = ElementOptions {
-            images: Images::AltText,
-            on_link: None,
             code_header,
+            ..ElementOptions::default()
         };
         div().w(px(320.)).flex().flex_col().child(document_element(
             &self.document,

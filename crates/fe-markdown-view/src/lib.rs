@@ -17,7 +17,11 @@
 //!   with no scroll or width cap, for a host that places documents in a
 //!   scrolling view of its own: a chat's replies. Images are loaded or
 //!   shown as their alt text, link clicks go to a callback, and a host can
-//!   draw a header over each code block.
+//!   draw a header over each code block and be told where each code block
+//!   is drawn ([`ElementOptions::on_code_bounds`]), to pin a copy of its
+//!   header while the block is scrolled under the top of its view.
+//!   [`ElementOptions::default`] shows images as their alt text and has no
+//!   callbacks.
 //!
 //! Test builds give elements `debug_selector`s: `md-block-<ix>` for each
 //! top-level block; `md-image-<n>` and `md-image-blocked-<n>` for the
@@ -37,7 +41,9 @@ mod view;
 
 use gpui::{App, Global, TextRun};
 
-pub use blocks::{CodeHeader, CodeHeaderFn, ElementOptions, Images, document_element};
+pub use blocks::{
+    CodeBoundsFn, CodeHeader, CodeHeaderFn, ElementOptions, Images, document_element,
+};
 pub use compact::markdown_element;
 pub use style::MarkdownStyle;
 pub use view::LinkHandler;

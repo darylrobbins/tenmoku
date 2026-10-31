@@ -56,6 +56,7 @@ impl Render for Host {
             images: self.images.clone(),
             on_link: Some(on_link),
             code_header: Some(code_header),
+            ..ElementOptions::default()
         };
         // A short box, which a scrolling element would fit itself to.
         div()

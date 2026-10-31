@@ -22,9 +22,9 @@ use std::{
 
 use fe_markdown::{Block, BlockKind, Document, ListItem};
 use gpui::{
-    AnyElement, App, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _,
-    IntoElement, ParentElement as _, RenderOnce, StatefulInteractiveElement as _, Styled as _,
-    StyledText, Window, div, img, prelude::FluentBuilder as _, px, relative,
+    AnyElement, App, Bounds, Div, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, RenderOnce, StatefulInteractiveElement as _,
+    Styled as _, StyledText, Window, div, img, prelude::FluentBuilder as _, px, relative,
 };
 
 use crate::{
@@ -49,10 +49,30 @@ pub struct ElementOptions {
     pub on_link: Option<LinkHandler>,
     /// Draws the header above each code block, fenced or indented.
     pub code_header: Option<CodeHeaderFn>,
+    /// Told where each code block is drawn, at prepaint: see
+    /// [`CodeBoundsFn`].
+    pub on_code_bounds: Option<CodeBoundsFn>,
+}
+
+impl Default for ElementOptions {
+    /// Images as their alt text, and no callbacks.
+    fn default() -> ElementOptions {
+        ElementOptions {
+            images: Images::AltText,
+            on_link: None,
+            code_header: None,
+            on_code_bounds: None,
+        }
+    }
 }
 
 /// Draws a code block's header: see [`ElementOptions::code_header`].
 pub type CodeHeaderFn = Rc<dyn Fn(CodeHeader<'_>, &mut Window, &mut App) -> AnyElement>;
+
+/// Called at prepaint with a code block's place among the document's code
+/// blocks, as [`CodeHeader::index`] counts it, and its bounds in the
+/// window, header included: see [`ElementOptions::on_code_bounds`].
+pub type CodeBoundsFn = Rc<dyn Fn(usize, Bounds<Pixels>, &mut Window, &mut App)>;
 
 /// Whether a document's images are drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +158,7 @@ impl RenderOnce for DocumentElement {
         let element = Element {
             alt_text: self.options.images == Images::AltText,
             code_header: self.options.code_header.clone(),
+            on_code_bounds: self.options.on_code_bounds.clone(),
         };
         let blocks: Vec<_> = with_element(element, || {
             (self.document.blocks.iter().enumerate())
@@ -172,6 +193,7 @@ pub(crate) struct Element {
     /// Images drawn as their alt text.
     pub(crate) alt_text: bool,
     code_header: Option<CodeHeaderFn>,
+    on_code_bounds: Option<CodeBoundsFn>,
 }
 
 thread_local! {
@@ -345,15 +367,32 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                         .flex_none()
                         .child(StyledText::new(code.to_owned()).with_runs(runs)),
                 );
-            match header {
-                None => block.into_any_element(),
-                Some(header) => div()
+            let on_bounds = (element.as_ref())
+                .and_then(|element| element.on_code_bounds.clone())
+                .map(|on_bounds| {
+                    move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
+                        // The header and the code, one over the other.
+                        let union = bounds.into_iter().reduce(|all, one| all.union(&one));
+                        if let Some(union) = union {
+                            on_bounds(id, union, window, cx);
+                        }
+                    }
+                });
+            match (header, on_bounds) {
+                (None, None) => block.into_any_element(),
+                (None, Some(on_bounds)) => div()
+                    .w_full()
+                    .on_children_prepainted(on_bounds)
+                    .child(block)
+                    .into_any_element(),
+                (Some(header), on_bounds) => div()
                     .flex()
                     .flex_col()
                     .w_full()
                     .rounded(px(4.))
                     .overflow_hidden()
                     .bg(style.code_background)
+                    .when_some(on_bounds, Div::on_children_prepainted)
                     .child(header)
                     .child(block)
                     .into_any_element(),

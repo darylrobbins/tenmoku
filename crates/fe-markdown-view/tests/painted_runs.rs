@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
 use fe_markdown::Document;
-use fe_markdown_view::{ElementOptions, Images, MarkdownStyle, PaintedRuns, document_element};
+use fe_markdown_view::{ElementOptions, MarkdownStyle, PaintedRuns, document_element};
 use fe_syntax::Highlight;
 use gpui::{Context, IntoElement, Render, TestAppContext, Window};
 use kiln_ui::UiTheme;
@@ -16,15 +16,7 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        document_element(
-            &self.document,
-            &self.style,
-            ElementOptions {
-                images: Images::AltText,
-                on_link: None,
-                code_header: None,
-            },
-        )
+        document_element(&self.document, &self.style, ElementOptions::default())
     }
 }
 

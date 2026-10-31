@@ -18,7 +18,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, canvas, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _, px, relative,
 };
 use kiln::{Cx, ViewCommands};
 use kiln_ui::{Button, ScrollArea, UiTheme, h_flex, ui_theme, v_flex};
@@ -26,7 +26,7 @@ use serde_json::Value;
 
 use crate::{
     COMPOSER_CONTEXT,
-    reply::{self, CodeBlock, Documents},
+    reply::{self, CodeBlock, CodeSpan, CodeSpans, Documents, HeaderAt},
 };
 
 /// The context window the meter measures against.
@@ -196,6 +196,11 @@ pub struct ChatView {
     /// the request.
     stream: Option<Task<()>>,
     scroll: ScrollHandle,
+    /// Where the replies' code blocks are drawn in the transcript.
+    code_spans: CodeSpans,
+    /// The code block whose header is pinned over the transcript's top, as
+    /// last drawn.
+    pinned: Option<CodeSpan>,
     tail: Tail,
     /// The turns whose thinking is open.
     thinking_open: HashSet<usize>,
@@ -347,6 +352,7 @@ impl ChatView {
             this.composer_edited(cx);
             cx.notify();
         });
+        let scroll = ScrollHandle::new();
         ChatView {
             provider: Some(provider),
             conversation,
@@ -365,7 +371,9 @@ impl ChatView {
             context_budget: CONTEXT_BUDGET,
             notice: false,
             stream: None,
-            scroll: ScrollHandle::new(),
+            code_spans: CodeSpans::new(&scroll),
+            pinned: None,
+            scroll,
             tail: Tail::Off,
             thinking_open: HashSet::new(),
             documents: Documents::default(),
@@ -613,6 +621,14 @@ impl ChatView {
         if removed {
             cx.emit(ChatViewEvent::AttachFileRequested);
         }
+    }
+
+    /// The `(turn, block)` of the reply code block whose header is pinned
+    /// over the transcript's top, as last drawn: one whose top is scrolled
+    /// above the transcript's and of which at least a header's height is
+    /// still in view.
+    pub fn pinned_code_block(&self) -> Option<(usize, usize)> {
+        self.pinned.map(|span| (span.turn, span.block))
     }
 
     /// Whether a reply is streaming in.
@@ -951,7 +967,8 @@ impl ChatView {
         } else {
             let document = self.documents.reply(index, &shown.reply, !streaming);
             let view = cx.weak_entity();
-            reply::reply_element(index, &document, &style, streaming, *ui, view)
+            let spans = self.code_spans.clone();
+            reply::reply_element(index, &document, &style, streaming, *ui, view, spans)
         };
         let answered_by = shown.answered_by.clone().map(|model| {
             div()
@@ -1002,6 +1019,42 @@ impl ChatView {
             .children(answered_by)
             .children(banner)
             .into_any_element()
+    }
+
+    /// A copy of the pinned code block's header, over the transcript's top
+    /// and as wide as its block. The text under it takes no clicks, but a
+    /// wheel over it scrolls the transcript.
+    fn render_pinned(&mut self, ui: &UiTheme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let span = self.pinned?;
+        let turn = self.conversation.turns.get(span.turn)?;
+        let streaming = turn.state == TurnState::Streaming;
+        let document = self.documents.reply(span.turn, &turn.text(), !streaming);
+        let block = reply::code_blocks(&document).into_iter().nth(span.block)?;
+        let style = reply::reply_style(self.composer.read(cx).theme(), ui);
+        let view = cx.weak_entity();
+        let header = reply::code_header(
+            span.turn,
+            span.block,
+            block,
+            streaming,
+            ui,
+            view,
+            HeaderAt::Pinned,
+        );
+        let pinned = div()
+            .absolute()
+            .top_0()
+            .left(span.left)
+            .w(span.width)
+            .rounded_b(px(4.))
+            .bg(style.code_background)
+            // As the reply's document element draws its headers.
+            .text_color(ui.text)
+            .text_size(style.text_size)
+            .line_height(relative(style.line_height))
+            .block_mouse_except_scroll()
+            .child(header);
+        Some(pinned.into_any_element())
     }
 
     fn render_banner(
@@ -1240,6 +1293,17 @@ impl Render for ChatView {
             .flex_1()
             .min_h_0()
             .child(v_flex().p_3().gap_4().children(turns));
+        self.pinned = self.code_spans.pinned(self.scroll.offset().y);
+        let pinned = self.render_pinned(&ui, cx);
+        let transcript = v_flex()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            // The pinned header with it.
+            .overflow_hidden()
+            .child(transcript)
+            .children(pinned)
+            .child(pin_check(&self.code_spans, self.pinned, cx));
         let meter = self.meter().map(|meter| {
             div()
                 .debug_selector(|| "chat-meter".into())
@@ -1294,6 +1358,34 @@ fn rewrap_check(
                 .map(|composer| composer.read(cx).model().display().row_count())
                 .map(|now| now.clamp(1, COMPOSER_ROWS));
             if now.is_some_and(|now| now != rows) {
+                let chat = chat.clone();
+                window.defer(cx, move |_, cx| {
+                    chat.update(cx, |_, cx| cx.notify()).ok();
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_0()
+}
+
+/// An empty element after the transcript that, once its code blocks are
+/// drawn, makes them the ones the next frame pins a header by, and asks for
+/// that frame now if, as drawn and scrolled, a header other than `pinned`,
+/// the one this frame drew, should be: the replies reflowed or the
+/// transcript followed its tail after this view rendered.
+fn pin_check(
+    spans: &CodeSpans,
+    pinned: Option<CodeSpan>,
+    cx: &mut Context<ChatView>,
+) -> impl IntoElement {
+    let (spans, chat) = (spans.clone(), cx.weak_entity());
+    // What the copy draws: which header, and where across.
+    let drawn = |span: Option<CodeSpan>| span.map(|s| (s.turn, s.block, s.left, s.width));
+    canvas(
+        move |_, window, cx| {
+            if drawn(spans.commit()) != drawn(pinned) {
                 let chat = chat.clone();
                 window.defer(cx, move |_, cx| {
                     chat.update(cx, |_, cx| cx.notify()).ok();
