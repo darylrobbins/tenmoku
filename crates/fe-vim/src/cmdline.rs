@@ -155,6 +155,31 @@ impl VimState {
             .map(|(_, pattern, _)| pattern)
     }
 
+    /// What submitting the open `:` line as `line` would replace now, in
+    /// `model`'s text ('inccommand', nvim's `nosplit`): for a `:s` (`:&`,
+    /// `:&&`, `:~`) over its range (`:%s`, `:'<,'>s`, `.,+3s`, a count), the
+    /// first [`SUBSTITUTE_PREVIEW_CAP`](crate::SUBSTITUTE_PREVIEW_CAP)
+    /// matches, by its pattern, flags (`g`, `i`, `I`, `&`) and the options,
+    /// and what each becomes, the replacement's specials (`&`, `\1`, `\u`,
+    /// `~`, `\r`) expanded. It reads the range as submit would (an
+    /// address's pattern, a `;`), but changes nothing: not the text, the
+    /// registers, the last substitute or search, the history, the marks or
+    /// the jumps. `None` with no `:` line open, 'inccommand' off
+    /// ([`Registers::set_inccommand`]), for a line that isn't one such
+    /// command or whose range fails, a `:s` still being typed (its name
+    /// alone, or no delimiter after its pattern), an empty pattern, an
+    /// invalid pattern or replacement, the `c` and `n` flags, no match, or
+    /// past [`SEARCH_PREVIEW_LIMIT`] (or [`search::time_limit`], if
+    /// shorter).
+    pub fn substitute_preview(
+        &self,
+        model: &EditorModel,
+        registers: &Registers,
+        line: &str,
+    ) -> Option<crate::SubstitutePreview> {
+        crate::substitute::preview(self, model, registers, line)
+    }
+
     /// The open search line `line`'s direction, pattern and offset text, as
     /// the preview reads them.
     fn preview_line<'l>(

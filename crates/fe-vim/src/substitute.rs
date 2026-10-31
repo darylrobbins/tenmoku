@@ -12,10 +12,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Mode, Pending, Step, VimKey, VimState, VimTarget,
+    CommandLineKind, Mode, Pending, Registers, Step, VimKey, VimState, VimTarget,
     args::JoinArgs,
+    cmdline::search_preview_limit,
     edit,
-    ex::{ExError, global},
+    ex::{self, ExError, Peek, global},
     insert, marks,
     motion::Cursor,
     operator, reducer,
@@ -257,6 +258,20 @@ fn expand_tilde(raw: &str, previous: &str) -> String {
     out
 }
 
+/// The length of [`expand_tilde`]'s result, without building it.
+fn tilde_len(raw: &str, previous: &str) -> usize {
+    let mut len = 0usize;
+    let mut chars = raw.chars();
+    while let Some(ch) = chars.next() {
+        len = len.saturating_add(match ch {
+            '\\' => 1 + chars.next().map_or(0, char::len_utf8),
+            '~' => previous.len(),
+            _ => ch.len_utf8(),
+        });
+    }
+    len
+}
+
 /// One piece of a compiled replacement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Piece {
@@ -338,38 +353,189 @@ impl Replacement {
     /// Appends the replacement for a match to `out`, `group` giving each
     /// group's text; returns how many line breaks it wrote.
     fn apply<'a>(&self, group: impl Fn(usize) -> &'a str, out: &mut String) -> usize {
+        match self.apply_within(group, out, None) {
+            Ok(breaks) => breaks,
+            Err(_) => unreachable!("nothing to spend"),
+        }
+    }
+
+    /// [`Replacement::apply`], spending `budget`, if any: a unit for each
+    /// piece (a case operator or an empty group too) and for each byte
+    /// written, and checking its deadline as it goes. `Err`, with what was
+    /// written so far, once it would run out or the deadline passed.
+    fn apply_within<'a>(
+        &self,
+        group: impl Fn(usize) -> &'a str,
+        out: &mut String,
+        mut budget: Option<&mut Budget<'_>>,
+    ) -> Result<usize, Stopped> {
+        let mut spend = |n: usize| {
+            budget
+                .as_deref_mut()
+                .map_or(Ok(()), |budget| budget.spend(n))
+        };
         let mut one: Option<bool> = None;
         let mut run: Option<bool> = None;
         let mut breaks = 0;
-        let mut put = |text: &str, one: &mut Option<bool>, run: Option<bool>| {
-            for ch in text.chars() {
-                breaks += usize::from(ch == '\n');
-                match one.take().or(run) {
-                    Some(true) => out.push(edit::raised(ch)),
-                    Some(false) => out.push(edit::lowered(ch)),
-                    None => out.push(ch),
-                }
-            }
-        };
         for piece in &self.pieces {
-            match piece {
-                Piece::Text(text) => put(text, &mut one, run),
-                Piece::Group(n) => put(group(*n), &mut one, run),
-                Piece::One(upper) => one = Some(*upper),
+            spend(1)?;
+            let text = match piece {
+                Piece::Text(text) => text.as_str(),
+                Piece::Group(n) => group(*n),
+                Piece::One(upper) => {
+                    one = Some(*upper);
+                    continue;
+                }
                 Piece::Run(case) => {
                     run = *case;
                     // `\E` ends a `\u` or `\l` still waiting, too.
                     if case.is_none() {
                         one = None;
                     }
+                    continue;
                 }
+            };
+            for ch in text.chars() {
+                let ch = match one.take().or(run) {
+                    Some(true) => edit::raised(ch),
+                    Some(false) => edit::lowered(ch),
+                    None => ch,
+                };
+                spend(ch.len_utf8())?;
+                breaks += usize::from(ch == '\n');
+                out.push(ch);
             }
         }
-        breaks
+        Ok(breaks)
+    }
+}
+
+/// What a preview's replacements may still take: work units (see
+/// [`Replacement::apply_within`]) out of [`SUBSTITUTE_PREVIEW_BYTES`], and
+/// the time to.
+struct Budget<'a> {
+    left: usize,
+    deadline: &'a Deadline,
+    /// Spends since the deadline was last checked.
+    since_check: u32,
+}
+
+/// Why a replacement stopped short.
+#[derive(Debug)]
+enum Stopped {
+    /// Its budget ran out: the preview is cut there.
+    Full,
+    /// The deadline passed.
+    Interrupted,
+}
+
+impl Budget<'_> {
+    fn spend(&mut self, n: usize) -> Result<(), Stopped> {
+        self.left = self.left.checked_sub(n).ok_or(Stopped::Full)?;
+        self.since_check += 1;
+        if self.since_check == 256 {
+            self.since_check = 0;
+            self.deadline.check().map_err(|_| Stopped::Interrupted)?;
+        }
+        Ok(())
     }
 }
 
 type Handled = Result<Dispatched<TransactionId>, CommandError>;
+
+/// A substitute's flags, `&` (`keep`) starting from `last`'s: `g` and `e`
+/// toggle theirs.
+fn flags_of(last: &LastSubstitute, flags: Flags) -> Flags {
+    match flags.keep {
+        true => Flags {
+            global: last.flags.global != flags.global,
+            ignore_case: flags.ignore_case.or(last.flags.ignore_case),
+            count_only: last.flags.count_only || flags.count_only,
+            quiet: last.flags.quiet != flags.quiet,
+            search_pattern: flags.search_pattern,
+            confirm: last.flags.confirm || flags.confirm,
+            keep: false,
+        },
+        false => flags,
+    }
+}
+
+/// What a substitute runs with, read from `registers`' last search and last
+/// substitute ([`resolve`]).
+struct Resolved {
+    /// The pattern, and whether it is `*`'s or `#`'s.
+    pattern: String,
+    word: bool,
+    /// The replacement as typed (or the last substitute's), and with `~`
+    /// expanded, compiled.
+    raw: String,
+    replacement: String,
+    compiled: Replacement,
+    /// Whether a search for the pattern ignores case, by the options.
+    searched_ignoring: bool,
+    /// The pattern parsed, matching case by `flags` and the options.
+    parsed: Result<Pattern, PatternError>,
+}
+
+/// `sub`'s pattern and replacement, with `flags` ([`flags_of`]): an empty
+/// pattern or `r` the last search's, `\&` and a repeat's the last
+/// substitute's, `~` its replacement.
+fn resolve(
+    registers: &Registers,
+    sub: &Substitute,
+    flags: Flags,
+    limit: Option<usize>,
+) -> Result<Resolved, ExError> {
+    let last = &registers.substitute;
+    // The last search's pattern, and whether it is `*`'s or `#`'s.
+    let last_search = || {
+        registers
+            .last_search()
+            .map(|(pattern, _)| (pattern.to_string(), registers.last_search_word()))
+            .ok_or(ExError::NoPreviousSearch)
+    };
+    let last_substitute = || {
+        last.pattern
+            .clone()
+            .map(|pattern| (pattern, last.word))
+            .ok_or(ExError::NoPreviousSubstitute)
+    };
+    // A pattern taken from the last search or the last substitute keeps
+    // whether it was `*`'s or `#`'s, as nvim's does.
+    let ((pattern, word), raw) = match &sub.with {
+        Some((pattern, raw)) => {
+            let pattern = match pattern.as_str() {
+                // `r` makes it the last search's, as for a repeat.
+                LAST_SUBSTITUTE_PATTERN if !flags.search_pattern => last_substitute()?,
+                LAST_SUBSTITUTE_PATTERN | "" => last_search()?,
+                typed => (typed.to_string(), false),
+            };
+            (pattern, raw.clone())
+        }
+        None if flags.search_pattern => (last_search()?, last.replacement.clone()),
+        None => (last_substitute()?, last.replacement.clone()),
+    };
+    // A preview's: `~` expanded no further than `limit`, before it's built.
+    if limit.is_some_and(|limit| tilde_len(&raw, &last.tilde) > limit) {
+        return Err(ExError::Unsupported(
+            "a replacement past the preview's size".into(),
+        ));
+    }
+    let replacement = expand_tilde(&raw, &last.tilde);
+    let compiled = Replacement::compile(&replacement)?;
+    let searched_ignoring = registers.ignores_case(&pattern, word);
+    let ignore_case = flags.ignore_case.unwrap_or(searched_ignoring);
+    let parsed = Pattern::parse_across(&pattern, ignore_case);
+    Ok(Resolved {
+        pattern,
+        word,
+        raw,
+        replacement,
+        compiled,
+        searched_ignoring,
+        parsed,
+    })
+}
 
 /// Runs `sub` over `rows` (checked against the text) as nvim
 /// does: the pattern (but a repeat's) becomes the last search, keeping its
@@ -405,60 +571,23 @@ pub(crate) fn run(
     // `q` would.
     target.state.confirm = None;
     let last = target.registers.substitute.clone();
-    // `&` starts from the last flags: `g` and `e` toggle theirs.
-    let flags = match sub.flags.keep {
-        true => Flags {
-            global: last.flags.global != sub.flags.global,
-            ignore_case: sub.flags.ignore_case.or(last.flags.ignore_case),
-            count_only: last.flags.count_only || sub.flags.count_only,
-            quiet: last.flags.quiet != sub.flags.quiet,
-            search_pattern: sub.flags.search_pattern,
-            confirm: last.flags.confirm || sub.flags.confirm,
-            keep: false,
-        },
-        false => sub.flags,
-    };
+    let flags = flags_of(&last, sub.flags);
     // `n` counts without asking, as in nvim.
     let confirm = flags.confirm && !flags.count_only;
     if confirm && UNASKED.get() {
         return Err(ExError::Unsupported("the c flag (confirm) under :g".into()));
     }
-    // The last search's pattern, and whether it is `*`'s or `#`'s.
-    let last_search = || {
-        target
-            .registers
-            .last_search()
-            .map(|(pattern, _)| (pattern.to_string(), target.registers.last_search_word()))
-            .ok_or(ExError::NoPreviousSearch)
-    };
-    let last_substitute = || {
-        last.pattern
-            .clone()
-            .map(|pattern| (pattern, last.word))
-            .ok_or(ExError::NoPreviousSubstitute)
-    };
-    // A pattern taken from the last search or the last substitute keeps
-    // whether it was `*`'s or `#`'s, as nvim's does.
-    let ((pattern, word), raw) = match &sub.with {
-        Some((pattern, raw)) => {
-            let pattern = match pattern.as_str() {
-                // `r` makes it the last search's, as for a repeat.
-                LAST_SUBSTITUTE_PATTERN if !flags.search_pattern => last_substitute()?,
-                LAST_SUBSTITUTE_PATTERN | "" => last_search()?,
-                typed => (typed.to_string(), false),
-            };
-            (pattern, raw.clone())
-        }
-        None if flags.search_pattern => (last_search()?, last.replacement.clone()),
-        None => (last_substitute()?, last.replacement.clone()),
-    };
-    let replacement = expand_tilde(&raw, &last.tilde);
-    let compiled = Replacement::compile(&replacement)?;
+    let Resolved {
+        pattern,
+        word,
+        raw,
+        replacement,
+        compiled,
+        searched_ignoring,
+        parsed,
+    } = resolve(target.registers, sub, flags, None)?;
     // The prompt shows the replacement `~` expanded, as nvim's does.
     let replacement_shown = replacement.clone();
-    let searched_ignoring = target.registers.ignores_case(&pattern, word);
-    let ignore_case = flags.ignore_case.unwrap_or(searched_ignoring);
-    let parsed = Pattern::parse_across(&pattern, ignore_case);
     // As nvim's: the next `~` is this replacement only if the pattern is
     // valid, matching or not. `:s/\n//` leaves the last flags be.
     target.registers.substitute = LastSubstitute {
@@ -512,10 +641,16 @@ pub(crate) fn run(
         };
         return ask(target, asked, rows, pattern);
     }
-    let found = match parsed.spans_rows() {
-        true => find_across(target, &parsed, &compiled, rows, flags),
-        false => find(target, &parsed, &compiled, rows, flags),
-    };
+    target.model.sync_display();
+    let found = matches(
+        target.model.text(),
+        &parsed,
+        &compiled,
+        rows,
+        flags,
+        &Deadline::new(),
+        None,
+    );
     let Ok(found) = found else {
         return Err(ExError::Pattern(Interrupted.to_string()));
     };
@@ -569,6 +704,100 @@ pub(crate) fn run(
     ))
 }
 
+/// The most matches a [`SubstitutePreview`] holds.
+pub const SUBSTITUTE_PREVIEW_CAP: usize = 500;
+
+/// The most bytes a [`SubstitutePreview`]'s replacements take together, so
+/// a replacement that grows each match (`&&&&`) can't hold up typing.
+pub const SUBSTITUTE_PREVIEW_BYTES: usize = 1 << 20;
+
+/// What submitting the open `:s` line would replace
+/// ([`VimState::substitute_preview`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubstitutePreview {
+    /// Each match, a range of the text, and what replaces it, in the
+    /// text's order and apart: replacing each in a copy of the text gives
+    /// the text after the `:s`. At most [`SUBSTITUTE_PREVIEW_CAP`], their
+    /// replacements at most [`SUBSTITUTE_PREVIEW_BYTES`] together.
+    pub matches: Vec<(Range<usize>, String)>,
+    /// More matched than it holds: past the cap, or the next replacement
+    /// would pass the bytes.
+    pub truncated: bool,
+}
+
+/// [`VimState::substitute_preview`]: `line`, an open `:` line, read and
+/// matched as submitting it would, with copies of what that would set.
+pub(crate) fn preview(
+    state: &VimState,
+    model: &EditorModel,
+    registers: &Registers,
+    line: &str,
+) -> Option<SubstitutePreview> {
+    if !registers.inccommand() || state.cmdline.as_ref()?.args.kind != CommandLineKind::Ex {
+        return None;
+    }
+    let deadline = Deadline::after(search_preview_limit().min(search::time_limit()));
+    let mut peek = Peek {
+        model,
+        state,
+        registers: std::borrow::Cow::Borrowed(registers),
+        cursor: None,
+        deadline: &deadline,
+    };
+    let (rows, sub) = ex::substitute_rows(&mut peek, line)?;
+    // An empty pattern is the last search's: not one being typed.
+    if sub
+        .with
+        .as_ref()
+        .is_some_and(|(pattern, _)| pattern.is_empty())
+    {
+        return None;
+    }
+    let registers = &peek.registers;
+    let flags = flags_of(&registers.substitute, sub.flags);
+    if flags.confirm || flags.count_only {
+        return None;
+    }
+    let Resolved {
+        compiled, parsed, ..
+    } = resolve(registers, &sub, flags, Some(SUBSTITUTE_PREVIEW_BYTES)).ok()?;
+    let parsed = parsed.ok()?;
+    let text = model.text();
+    let preview = match sub.joins {
+        true => joins(text, rows),
+        false => {
+            let cap = Some(SUBSTITUTE_PREVIEW_CAP);
+            let found = matches(text, &parsed, &compiled, rows, flags, &deadline, cap);
+            let each = found.ok()?.each?;
+            SubstitutePreview {
+                matches: each.matches,
+                truncated: each.truncated,
+            }
+        }
+    };
+    (!preview.matches.is_empty()).then_some(preview)
+}
+
+/// The line breaks [`join`] takes out over `rows`, each replaced by
+/// nothing, for a preview.
+fn joins(text: &fe_text::Text, rows: Range<u32>) -> SubstitutePreview {
+    let last_row = text.row_count() - 1;
+    let first = rows.start.min(last_row);
+    let last = rows.end.saturating_sub(1).clamp(first, last_row);
+    let count = last - first + 1 + u32::from(last < last_row);
+    let matches = (first..first + count - 1)
+        .take(SUBSTITUTE_PREVIEW_CAP)
+        .map(|row| {
+            let end = text.row_start(row) + text.row_len(row) as usize;
+            (end..text.row_start(row + 1), String::new())
+        })
+        .collect();
+    SubstitutePreview {
+        truncated: count - 1 > SUBSTITUTE_PREVIEW_CAP as u32,
+        matches,
+    }
+}
+
 /// nvim's report of `matches` (with `n`, `count_only`) or substitutions on
 /// `lines` lines: `n`'s count always, substitutions past two.
 fn report(matches: usize, lines: usize, count_only: bool) -> Option<String> {
@@ -603,34 +832,125 @@ struct Found {
     /// The rows (first and last) that replacements join to the row before
     /// them, which go.
     joined: Vec<(u32, u32)>,
+    /// For a preview, each match and its replacement.
+    each: Option<Each>,
+}
+
+impl Found {
+    /// Nothing found yet; with `each`, each match is kept, up to that many.
+    fn new(each: Option<usize>) -> Self {
+        Self {
+            edits: Vec::new(),
+            matches: 0,
+            lines: 0,
+            first_row: 0,
+            last_row: 0,
+            joined: Vec::new(),
+            each: each.map(|cap| Each {
+                cap,
+                matches: Vec::new(),
+                left: SUBSTITUTE_PREVIEW_BYTES,
+                truncated: false,
+            }),
+        }
+    }
+
+    /// For a preview, what its replacements may still take, until `deadline`.
+    fn budget<'a>(&self, deadline: &'a Deadline) -> Option<Budget<'a>> {
+        self.each.as_ref().map(|each| Budget {
+            left: each.left,
+            deadline,
+            since_check: 0,
+        })
+    }
+
+    /// What applying a replacement left of the [`Found::budget`], and how
+    /// it went: its line breaks, or `None` once a preview has all it takes
+    /// (and is `truncated`), which ends the finding.
+    fn spent(
+        &mut self,
+        budget: Option<Budget<'_>>,
+        applied: Result<usize, Stopped>,
+    ) -> Result<Option<usize>, Interrupted> {
+        if let (Some(each), Some(budget)) = (&mut self.each, budget) {
+            each.left = budget.left;
+        }
+        match applied {
+            Ok(breaks) => Ok(Some(breaks)),
+            Err(Stopped::Interrupted) => Err(Interrupted),
+            Err(Stopped::Full) => {
+                if let Some(each) = &mut self.each {
+                    each.truncated = true;
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// Keeps a match, `range` of the text before the `:s`, and its
+    /// replacement, for a preview: false once the preview has all it
+    /// takes, which ends the finding.
+    fn keep(&mut self, range: Range<usize>, new: &str) -> bool {
+        let Some(each) = &mut self.each else {
+            return true;
+        };
+        if each.matches.len() == each.cap {
+            each.truncated = true;
+            return false;
+        }
+        each.matches.push((range, new.to_string()));
+        true
+    }
+}
+
+/// The matches a preview keeps ([`Found::keep`]).
+struct Each {
+    cap: usize,
+    matches: Vec<(Range<usize>, String)>,
+    /// What is left of [`SUBSTITUTE_PREVIEW_BYTES`] for their replacements
+    /// ([`Budget`]).
+    left: usize,
+    /// There were more than `cap`, or their replacements passed it.
+    truncated: bool,
+}
+
+/// The matches on `rows` of `text` and their replacements: [`find`], or
+/// [`find_across`] for a pattern that [`Pattern::spans_rows`]. With
+/// `each`, each match is kept too, up to that many.
+fn matches(
+    text: &fe_text::Text,
+    pattern: &Pattern,
+    replacement: &Replacement,
+    rows: Range<u32>,
+    flags: Flags,
+    deadline: &Deadline,
+    each: Option<usize>,
+) -> Result<Found, Interrupted> {
+    let found = Found::new(each);
+    match pattern.spans_rows() {
+        true => find_across(text, pattern, replacement, rows, flags, deadline, found),
+        false => find(text, pattern, replacement, rows, flags, deadline, found),
+    }
 }
 
 /// The matches on `rows` (the first on each, or all with `g`) and their
 /// replacements, each row read once; `Err` if the time limit ran out.
 fn find(
-    target: &mut VimTarget<'_>,
+    text: &fe_text::Text,
     pattern: &Pattern,
     replacement: &Replacement,
     rows: Range<u32>,
     flags: Flags,
+    deadline: &Deadline,
+    mut found: Found,
 ) -> Result<Found, Interrupted> {
-    let deadline = Deadline::new();
-    target.model.sync_display();
-    let text = target.model.text();
-    let mut found = Found {
-        edits: Vec::new(),
-        matches: 0,
-        lines: 0,
-        first_row: 0,
-        last_row: 0,
-        joined: Vec::new(),
-    };
     // Line breaks the replacements put in, so far.
     let mut breaks = 0;
     let mut buf = String::new();
+    let mut full = false;
     for row in rows.start..rows.end.min(text.row_count()) {
         let (start, hay) = search::row_text(text, row, &mut buf);
-        let mut matches = pattern.substitutions(hay, replacement.groups, &deadline);
+        let mut matches = pattern.substitutions(hay, replacement.groups, deadline);
         let mut on_row = 0;
         // One edit per row, from its first match to its last, the text
         // between matches copied: a `g` over many matches is one edit.
@@ -645,12 +965,26 @@ fn find(
                 };
                 let span = span.get_or_insert(range.start..range.start);
                 new.push_str(&hay[span.end..range.start]);
-                breaks += replacement.apply(group, &mut new);
+                let at = new.len();
+                let mut budget = found.budget(deadline);
+                let applied = replacement.apply_within(group, &mut new, budget.as_mut());
+                let Some(written) = found.spent(budget, applied)? else {
+                    full = true;
+                    break;
+                };
+                breaks += written;
                 span.end = range.end;
+                if !found.keep(start + range.start..start + range.end, &new[at..]) {
+                    full = true;
+                    break;
+                }
             }
             if !flags.global {
                 break;
             }
+        }
+        if full {
+            break;
         }
         deadline.check()?;
         if let Some(span) = span {
@@ -676,15 +1010,14 @@ fn find(
 /// written. Each line written is one edit, those written one after another
 /// on a line its joins make one, as for one row.
 fn find_across(
-    target: &mut VimTarget<'_>,
+    text: &fe_text::Text,
     pattern: &Pattern,
     replacement: &Replacement,
     rows: Range<u32>,
     flags: Flags,
+    deadline: &Deadline,
+    found: Found,
 ) -> Result<Found, Interrupted> {
-    let deadline = Deadline::new();
-    target.model.sync_display();
-    let text = target.model.text();
     let groups = match (flags.count_only, replacement.groups) {
         (true, _) => 0,
         (false, true) => 10,
@@ -692,18 +1025,11 @@ fn find_across(
     };
     let mut across = Across {
         text,
-        finder: Finder::new(pattern, text, &deadline, groups),
+        finder: Finder::new(pattern, text, deadline, groups),
         walk: Walk::new(text, rows, flags.global),
         longer: 0,
         edit: None,
-        found: Found {
-            edits: Vec::new(),
-            matches: 0,
-            lines: 0,
-            first_row: 0,
-            last_row: 0,
-            joined: Vec::new(),
-        },
+        found,
     };
     let mut pass = None;
     let mut line: Option<Line> = None;
@@ -750,8 +1076,20 @@ fn find_across(
                 _ => found.joined.push((start_row + 1, end_row)),
             }
         }
+        let mut budget = across.found.budget(deadline);
         let new = Line::open(&mut line, across.finder.text(), &taken);
-        replacement.apply(|n| taken.group(n), new);
+        let at = new.len();
+        let applied = replacement.apply_within(|n| taken.group(n), new, budget.as_mut());
+        if across.found.spent(budget, applied)?.is_none() {
+            break;
+        }
+        // Past the lines written, the text read is the text's, `longer`
+        // on.
+        let back = |at: usize| at.wrapping_add_signed(-across.longer);
+        let range = back(taken.range.start)..back(taken.range.end);
+        if !across.found.keep(range, &new[at..]) {
+            break;
+        }
         if taken.joins() {
             across.write(line.take().expect("a line open"), None);
         }
@@ -918,6 +1256,28 @@ pub(crate) fn repeat(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u3
         count => format!(".,.+{}&&", count - 1),
     };
     crate::ex::run(target, actor, &line)
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn tilde_len_is_the_expanded_length() {
+        for (raw, previous) in [
+            ("a~b", "xyz"),
+            (r"\~~", "é"),
+            ("~~~", ""),
+            (r"a\", "x"),
+            ("", "x"),
+        ] {
+            assert_eq!(
+                tilde_len(raw, previous),
+                expand_tilde(raw, previous).len(),
+                "{raw:?}"
+            );
+        }
+    }
 }
 
 thread_local! {

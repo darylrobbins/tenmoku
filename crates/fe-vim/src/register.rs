@@ -101,6 +101,9 @@ pub struct Registers {
     /// case options. Each editor's [`crate::VimState`] takes it from here
     /// before a preview ([`crate::VimState::set_incsearch`]).
     incsearch_off: bool,
+    /// 'inccommand' is off: on by default (nvim's `nosplit`), global as
+    /// 'incsearch' is ([`crate::VimState::substitute_preview`]).
+    inccommand_off: bool,
     /// The last `:s`, which `:&` repeats; shared like the last search.
     pub(crate) substitute: LastSubstitute,
     /// `clipboard=unnamedplus`: registers named by no command are `+`.
@@ -164,6 +167,18 @@ impl Registers {
     /// Whether 'incsearch' is on ([`Registers::set_incsearch`]).
     pub fn incsearch(&self) -> bool {
         !self.incsearch_off
+    }
+
+    /// Turns 'inccommand' on (`nosplit`) or off for every editor sharing
+    /// these registers: with it off, [`crate::VimState::substitute_preview`]
+    /// gives nothing.
+    pub fn set_inccommand(&mut self, on: bool) {
+        self.inccommand_off = !on;
+    }
+
+    /// Whether 'inccommand' is on ([`Registers::set_inccommand`]).
+    pub fn inccommand(&self) -> bool {
+        !self.inccommand_off
     }
 
     /// Whether a search for `pattern` ignores case, by 'ignorecase' and,

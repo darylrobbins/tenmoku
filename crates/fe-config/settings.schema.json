@@ -1144,6 +1144,11 @@
           "description": "true: a search with `/`, `?`, `n` or `N` ignores case, as nvim's\n'ignorecase' does. `\\c` and `\\C` in a pattern override it.",
           "type": "boolean"
         },
+        "inccommand": {
+          "default": true,
+          "description": "true: a `:s` shows what it would replace as it is typed, its matches\nhighlighted and each row it changes as it would read after the row,\nas nvim's 'inccommand' (`nosplit`) does; Esc puts everything back.",
+          "type": "boolean"
+        },
         "incsearch": {
           "default": true,
           "description": "true: a search shows its first match as the pattern is typed, as\nnvim's 'incsearch' does.",
@@ -1401,6 +1406,7 @@
         "highlight_yank": true,
         "highlight_yank_ms": 150,
         "ignorecase": false,
+        "inccommand": true,
         "incsearch": true,
         "jump_on_s": false,
         "leader": "\\",

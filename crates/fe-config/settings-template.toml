@@ -165,6 +165,8 @@
 # smartcase = false
 # true: a search shows its first match as the pattern is typed.
 # incsearch = true
+# true: a :s shows what it would replace as it is typed (nvim's inccommand).
+# inccommand = true
 # true: gr{motion}, grr and visual gr replace text with a register's contents,
 # as the ReplaceWithRegister plugin does, instead of running nvim 0.12's
 # language-server gr keys (grr references, grn rename, gra code action, gri,

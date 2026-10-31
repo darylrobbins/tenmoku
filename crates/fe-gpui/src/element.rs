@@ -769,6 +769,7 @@ impl Element for EditorElement {
             view.model.sync_display();
             view.sync_visual();
             view.sync_yank_flash();
+            view.sync_substitute_preview();
             view.sync_inlay_hints();
             view.sync_color_swatches();
             // Caught up with edits made through another view of the buffer:

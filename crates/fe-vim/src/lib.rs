@@ -262,6 +262,9 @@
 //! search for the keyword at the cursor. While a `/` or `?` line is typed,
 //! [`VimState::search_preview`] gives the match it would land on, for the
 //! host to highlight and reveal ('incsearch', [`VimState::set_incsearch`]).
+//! While a `:s` line is typed, [`VimState::substitute_preview`] gives each
+//! match it would replace and with what, for the host to paint
+//! ('inccommand', [`Registers::set_inccommand`]).
 //!
 //! `/`, `?`, `n` and `N` (an operator or a visual selection over them too)
 //! also take a pattern that matches across rows, with `\n`, `\_x`, `\_.`
@@ -865,7 +868,10 @@ pub use remap::{
 };
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
-pub use substitute::{Answer, AnswerArgs, Flags, Substitute};
+pub use substitute::{
+    Answer, AnswerArgs, Flags, SUBSTITUTE_PREVIEW_BYTES, SUBSTITUTE_PREVIEW_CAP, Substitute,
+    SubstitutePreview,
+};
 pub use vimrc::{Vimrc, VimrcIssue, parse_vimrc, parse_vimrc_with_leader};
 pub use which_key::{BUILTIN_KEYS, BuiltinKeys, WhichKey, WhichKeyEntry, WhichKeyLabel};
 

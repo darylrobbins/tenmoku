@@ -81,9 +81,11 @@ use std::ops::Range;
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
+use fe_editor::EditorModel;
+
 use crate::{
     KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, SearchOffset, Target,
-    VimKey, VimTarget,
+    VimKey, VimState, VimTarget,
     feature::filter,
     history, insert, marks,
     motion::{self, Cursor},
@@ -1305,10 +1307,7 @@ fn execute_one(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<
     // As in nvim, a line before the first fails once the command is
     // recognised, before its arguments are read; and a command that goes to
     // the range's last line doesn't mind its first.
-    let command = command(line, &range, rest, |both| match lines {
-        Some((first, end)) if end < 0 || both && first < 0 => Err(ExError::InvalidRange),
-        _ => Ok(()),
-    });
+    let command = command(line, &range, rest, |both| range_check(lines, both));
     // As in nvim, `:sort` of one line ignores its arguments.
     let command = match command {
         Err(
@@ -1549,6 +1548,16 @@ fn destination(target: &mut VimTarget<'_>, to: &Address, last: i64) -> Result<u3
     }
 }
 
+/// As in nvim, a line before the first fails once the command is
+/// recognised, before its arguments are read; and a command that goes to
+/// the range's last line (`both` false) doesn't mind its first.
+fn range_check(lines: Option<(i64, i64)>, both: bool) -> Result<(), ExError> {
+    match lines {
+        Some((first, end)) if end < 0 || both && first < 0 => Err(ExError::InvalidRange),
+        _ => Ok(()),
+    }
+}
+
 /// The lines a command taking a range and a count acts on, from 1: the
 /// range's (the cursor's line with none), or with a count that many from
 /// its last, within the text.
@@ -1558,10 +1567,17 @@ fn counted_lines(
     count: Option<u32>,
     last: i64,
 ) -> Result<(i64, i64), ExError> {
-    let (first, end) = lines.unwrap_or_else(|| {
-        let line = cursor_line(target);
-        (line, line)
-    });
+    counted(cursor_line(target), lines, count, last)
+}
+
+/// [`counted_lines`] with the cursor on line `cursor`.
+fn counted(
+    cursor: i64,
+    lines: Option<(i64, i64)>,
+    count: Option<u32>,
+    last: i64,
+) -> Result<(i64, i64), ExError> {
+    let (first, end) = lines.unwrap_or((cursor, cursor));
     if end > last {
         return Err(ExError::InvalidRange);
     }
@@ -1588,18 +1604,18 @@ fn cursor_line(target: &VimTarget<'_>) -> i64 {
 /// The range's first and last lines, from 1 (0 is before the first), or
 /// `None` with no range. Reading a `;` moves the cursor to its line, or the
 /// nearest there is.
-fn lines(target: &mut VimTarget<'_>, range: &[Address]) -> Result<Option<(i64, i64)>, ExError> {
+fn lines(target: &mut impl Lines, range: &[Address]) -> Result<Option<(i64, i64)>, ExError> {
     if range.is_empty() {
         return Ok(None);
     }
-    let last = i64::from(target.model.text().row_count());
-    let mut current = cursor_line(target);
+    let last = i64::from(target.text().row_count());
+    let mut current = target.cursor_line();
     let (mut first, mut end) = (current, current);
     for address in range {
         let line = resolve(target, address, current, last)?;
         if address.semicolon {
             current = line.clamp(0, last);
-            goto(target, line.clamp(1, last));
+            target.goto(line.clamp(1, last));
         }
         (first, end) = match address.base {
             Base::All => (1, line),
@@ -1617,7 +1633,7 @@ fn lines(target: &mut VimTarget<'_>, range: &[Address]) -> Result<Option<(i64, i
 /// One line specifier's line, from `current`, the cursor's: before the
 /// first if negative.
 fn resolve(
-    target: &mut VimTarget<'_>,
+    target: &mut impl Lines,
     address: &Address,
     current: i64,
     last: i64,
@@ -1627,15 +1643,11 @@ fn resolve(
         Base::Line(line) => i64::from(line),
         Base::Last => last,
         Base::All => return Ok(last),
-        Base::Mark(name) => {
-            let snapshot = target.model.snapshot();
-            let mark = target.state.mark(name).and_then(|mark| mark.get(snapshot));
-            i64::from(mark.ok_or(ExError::MarkNotSet)?.0) + 1
-        }
+        Base::Mark(name) => mark_line(target.state(), target.model(), name)?,
     };
     for part in &address.parts {
         line = match part {
-            Part::Search(search) => search_line(target, search, line.clamp(0, last))?,
+            Part::Search(search) => target.search_line(search, line.clamp(0, last))?,
             Part::Offset(by) => offset(line, *by)?,
         };
     }
@@ -1675,18 +1687,177 @@ pub(crate) fn note_address_pattern(registers: &mut Registers, search: &LineSearc
     }
 }
 
-/// The next line after `from` (or the last before it) that `search`
-/// matches, wrapping round the text, `from` itself last.
-fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Result<i64, ExError> {
+/// Mark `name`'s line, from 1.
+fn mark_line(state: &VimState, model: &EditorModel, name: char) -> Result<i64, ExError> {
+    let mark = state.mark(name).and_then(|mark| mark.get(model.snapshot()));
+    Ok(i64::from(mark.ok_or(ExError::MarkNotSet)?.0) + 1)
+}
+
+/// Where an ex line's range is read: the editor, for a line that runs, or
+/// a [`Peek`] at it, for a preview that changes nothing.
+trait Lines {
+    fn model(&self) -> &EditorModel;
+    fn state(&self) -> &VimState;
+
+    fn text(&self) -> &fe_text::Text {
+        self.model().text()
+    }
+
+    /// The cursor's line, from 1.
+    fn cursor_line(&self) -> i64;
+
+    /// A `;` read: the cursor goes to `line`.
+    fn goto(&mut self, line: i64);
+
+    /// The next line after `from` (or the last before it) that `search`
+    /// matches, wrapping round the text, `from` itself last; its pattern
+    /// becoming the last search.
+    fn search_line(&mut self, search: &LineSearch, from: i64) -> Result<i64, ExError>;
+}
+
+impl Lines for VimTarget<'_> {
+    fn model(&self) -> &EditorModel {
+        self.model
+    }
+
+    fn state(&self) -> &VimState {
+        self.state
+    }
+
+    fn cursor_line(&self) -> i64 {
+        cursor_line(self)
+    }
+
+    fn goto(&mut self, line: i64) {
+        goto(self, line);
+    }
+
+    fn search_line(&mut self, search: &LineSearch, from: i64) -> Result<i64, ExError> {
+        let (parsed, forward, pattern) =
+            line_search(self.registers, &mut self.state.highlight, search)?;
+        scan_lines(
+            self.model.text(),
+            &parsed,
+            forward,
+            from,
+            &Deadline::new(),
+            pattern,
+        )
+    }
+}
+
+/// An editor's text, its vim state and its registers, for reading an ex
+/// line's range as running it would without changing anything: the last
+/// search an address's pattern becomes goes to a copy of the registers,
+/// made then, a `;` moves a copy of the cursor, and its searches stop at
+/// `deadline`.
+pub(crate) struct Peek<'a> {
+    pub(crate) model: &'a EditorModel,
+    pub(crate) state: &'a VimState,
+    pub(crate) registers: std::borrow::Cow<'a, Registers>,
+    /// The cursor's line, once a `;` moved it.
+    pub(crate) cursor: Option<i64>,
+    pub(crate) deadline: &'a Deadline,
+}
+
+impl Lines for Peek<'_> {
+    fn model(&self) -> &EditorModel {
+        self.model
+    }
+
+    fn state(&self) -> &VimState {
+        self.state
+    }
+
+    fn cursor_line(&self) -> i64 {
+        let model = self.model;
+        let row = model
+            .text()
+            .offset_to_point(model.primary_selection().head())
+            .row;
+        self.cursor.unwrap_or(i64::from(row) + 1)
+    }
+
+    fn goto(&mut self, line: i64) {
+        self.cursor = Some(line);
+    }
+
+    fn search_line(&mut self, search: &LineSearch, from: i64) -> Result<i64, ExError> {
+        let mut highlight = None;
+        let registers = self.registers.to_mut();
+        let (parsed, forward, pattern) = line_search(registers, &mut highlight, search)?;
+        scan_lines(
+            self.model.text(),
+            &parsed,
+            forward,
+            from,
+            self.deadline,
+            pattern,
+        )
+    }
+}
+
+/// The rows the `:s` (`:&`, `:&&`, `:~`) that `line` is would run over, and
+/// the substitute, read as running it reads them but changing nothing but
+/// `peek`'s copies. `None` for a line that isn't one such command, or
+/// whose range fails.
+pub(crate) fn substitute_rows(peek: &mut Peek<'_>, line: &str) -> Option<(Range<u32>, Substitute)> {
+    let [piece] = Ex::commands(line)[..] else {
+        return None;
+    };
+    let (line, range, rest) = split(piece);
+    if half_typed_substitute(rest) {
+        return None;
+    }
+    let last = i64::from(peek.text().row_count());
+    let lines = lines(peek, &range).ok()?;
+    let command = command(line, &range, rest, |both| range_check(lines, both)).ok()?;
+    let ExCommand::Substitute(sub) = command else {
+        return None;
+    };
+    let (first, end) = counted(peek.cursor_line(), lines, sub.count, last).ok()?;
+    Some((row(first)..row(end) + 1, sub))
+}
+
+/// Whether `rest`, a line's text from its command, is a `:s` still being
+/// typed: its name alone (`:s`, `:%su`), which would repeat the last
+/// substitute, or a pattern with no delimiter after it yet (`:s/a`).
+fn half_typed_substitute(rest: &str) -> bool {
+    let name_len = rest
+        .find(|ch: char| !ch.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_len);
+    if name.is_empty() || is_substitute_with_flags(name) || !"substitute".starts_with(name) {
+        return false;
+    }
+    let args = after.trim_start_matches([' ', '\t']);
+    let Some(delimiter) = args.chars().next() else {
+        return true;
+    };
+    if delimiter.is_ascii_alphanumeric() || matches!(delimiter, '\\' | '"' | '|') {
+        return false;
+    }
+    search::split_search(&args[delimiter.len_utf8()..], delimiter)
+        .1
+        .is_none()
+}
+
+/// `search`'s pattern, parsed (matching case by `registers`' options),
+/// its direction, and as given, which becomes the last search in
+/// `registers` and the `highlight`.
+fn line_search(
+    registers: &mut Registers,
+    highlight: &mut Option<Pattern>,
+    search: &LineSearch,
+) -> Result<(Pattern, bool, String), ExError> {
     let last_search = || {
-        target
-            .registers
+        registers
             .last_search()
             .map(|(pattern, _)| pattern.to_string())
             .ok_or(ExError::NoPreviousSearch)
     };
     let (pattern, forward) = match search {
-        LineSearch::LastSubstitute => match target.registers.substitute.pattern() {
+        LineSearch::LastSubstitute => match registers.substitute.pattern() {
             Some(pattern) => (pattern.to_string(), true),
             None => return Err(ExError::NoPreviousSubstitute),
         },
@@ -1703,33 +1874,45 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     let keep = !matches!(search, LineSearch::LastSearch { .. });
     // The address's own pattern drops the last search's offset (`//` too).
     let drops_offset = matches!(search, LineSearch::Pattern { .. });
-    let word = search_word(target.registers, search);
-    let parsed = match Pattern::parse_with(&pattern, target.registers.ignores_case(&pattern, word))
-    {
+    let word = search_word(registers, search);
+    let parsed = match Pattern::parse_with(&pattern, registers.ignores_case(&pattern, word)) {
         Ok(parsed) => parsed,
         Err(error) => {
             if keep && matches!(error, PatternError::Invalid(_)) {
-                target.registers.set_search(&pattern, forward);
-                target.registers.set_search_word(word);
-                note_address_pattern(target.registers, search);
+                registers.set_search(&pattern, forward);
+                registers.set_search_word(word);
+                note_address_pattern(registers, search);
                 if drops_offset {
-                    target.registers.set_search_offset(SearchOffset::None);
+                    registers.set_search_offset(SearchOffset::None);
                 }
-                target.state.highlight = None;
+                *highlight = None;
             }
             return Err(ExError::Pattern(error.to_string()));
         }
     };
     if keep {
-        target.registers.set_search(&pattern, forward);
-        target.registers.set_search_word(word);
-        note_address_pattern(target.registers, search);
+        registers.set_search(&pattern, forward);
+        registers.set_search_word(word);
+        note_address_pattern(registers, search);
         if drops_offset {
-            target.registers.set_search_offset(SearchOffset::None);
+            registers.set_search_offset(SearchOffset::None);
         }
     }
-    target.state.highlight = Some(parsed.clone());
-    let text = target.model.text();
+    *highlight = Some(parsed.clone());
+    Ok((parsed, forward, pattern))
+}
+
+/// The next line of `text` after `from` (from 1; or with `forward` false
+/// the last before it) that `parsed` matches, wrapping round the text,
+/// `from` itself last; E486 for `pattern` if none does.
+fn scan_lines(
+    text: &fe_text::Text,
+    parsed: &Pattern,
+    forward: bool,
+    from: i64,
+    deadline: &Deadline,
+    pattern: String,
+) -> Result<i64, ExError> {
     let rows = text.row_count();
     // `from` counts from 1, so as a row it's the line after it.
     let from = u32::try_from(from).unwrap_or(rows).min(rows);
@@ -1741,9 +1924,8 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
         }
     };
     // Past the time limit, `Interrupted`, not a line further on.
-    let deadline = Deadline::new();
     for row in order {
-        match search::first_in_row(text, row, &parsed, &deadline) {
+        match search::first_in_row(text, row, parsed, deadline) {
             Ok(Some(_)) => return Ok(i64::from(row) + 1),
             Ok(None) => {}
             Err(interrupted) => return Err(ExError::Pattern(interrupted.to_string())),

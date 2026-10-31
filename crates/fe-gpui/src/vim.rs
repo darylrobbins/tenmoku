@@ -192,7 +192,9 @@ pub(crate) struct YankFlash {
 }
 
 /// An open `/` or `?` line's preview ('incsearch'), from the line opening
-/// until it closes: see [`EditorView::preview_search`].
+/// until it closes: see [`EditorView::preview_search`]; or a `:` line's
+/// ('inccommand'), from its first preview: see
+/// [`EditorView::preview_substitute`].
 pub(crate) struct SearchPreview {
     /// Where the view was before the line opened.
     place: ViewPlace,
@@ -208,6 +210,9 @@ pub(crate) struct SearchPreview {
     /// Where the next frame scrolls to, as it does to a caret: the shown
     /// match's start.
     reveal: Option<usize>,
+    /// A `:s` line's matches and rows as they would read, painted by this
+    /// provider on the model, of the buffer at this version.
+    substitute: Option<(ProviderId, Version)>,
 }
 
 /// `folds`, row ranges of the text `before`, followed through the batches
@@ -526,6 +531,23 @@ pub fn set_vim_search_case(cx: &mut App, ignorecase: bool, smartcase: bool) {
 /// Sets 'incsearch' on the shared registers (`vim.incsearch`).
 pub fn set_vim_incsearch(cx: &mut App, on: bool) {
     cx.default_global::<Vim>().registers.set_incsearch(on);
+}
+
+/// Sets 'inccommand' on the shared registers (`vim.inccommand`): with it
+/// off, a `:s` line previews nothing ([`EditorView::preview_substitute`]).
+pub fn set_vim_inccommand(cx: &mut App, on: bool) {
+    let vim = cx.default_global::<Vim>();
+    vim.registers.set_inccommand(on);
+    if on {
+        return;
+    }
+    // A preview shown comes down now, not at the line's next edit.
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, cx| view.drop_substitute_preview(cx))
+            .ok();
+    }
 }
 
 /// Lets `s` and `S` start the jump in every editor, and in any opened or
@@ -1529,6 +1551,7 @@ impl EditorView {
         if restore {
             self.undo_search_preview();
         }
+        self.end_substitute_preview();
         self.search_preview = None;
     }
 
@@ -1540,9 +1563,13 @@ impl EditorView {
         };
         preview.shown = None;
         preview.reveal = None;
+        let substitute = preview.substitute.take();
         let opened = std::mem::take(&mut preview.opened);
         let opened_in = preview.opened_in.take();
         let place = preview.place;
+        if let Some((provider, _)) = substitute {
+            self.model.remove_decoration_provider(provider);
+        }
         // The buffer may have changed since the folds were opened.
         self.model.sync_display();
         let opened = match opened_in {
@@ -3172,6 +3199,7 @@ impl EditorView {
         };
         let mut ok = result.is_ok();
         self.sync_yank_flash();
+        self.sync_substitute_preview();
         self.flash_new_yank(before, cx);
         let mutates = registry
             .get(&invocation.command)
@@ -3232,6 +3260,11 @@ mod search_tests;
 
 #[cfg(test)]
 pub(crate) mod incsearch_tests;
+
+mod substitute_preview;
+
+#[cfg(test)]
+mod substitute_preview_tests;
 
 #[cfg(test)]
 mod incsearch_fold_tests;
@@ -3294,6 +3327,7 @@ impl From<ViewPlace> for SearchPreview {
             opened: Vec::new(),
             shown: None,
             reveal: None,
+            substitute: None,
         }
     }
 }

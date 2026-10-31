@@ -300,6 +300,10 @@ pub struct VimSettings {
     /// true: a search shows its first match as the pattern is typed, as
     /// nvim's 'incsearch' does.
     pub incsearch: bool,
+    /// true: a `:s` shows what it would replace as it is typed, its matches
+    /// highlighted and each row it changes as it would read after the row,
+    /// as nvim's 'inccommand' (`nosplit`) does; Esc puts everything back.
+    pub inccommand: bool,
     /// true: `gr{motion}`, `grr` and visual `gr` replace text with a
     /// register's contents, as the ReplaceWithRegister plugin does, instead
     /// of running nvim 0.12's language-server `gr` keys (`grr` references,
@@ -360,6 +364,7 @@ impl Default for VimSettings {
             ignorecase: false,
             smartcase: false,
             incsearch: true,
+            inccommand: true,
             replace_with_register: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,

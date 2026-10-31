@@ -148,6 +148,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         let jump_on_s = now.vim.jump_on_s;
         let (ignorecase, smartcase, incsearch) =
             (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
+        let inccommand = now.vim.inccommand;
         let replace_with_register = now.vim.replace_with_register;
         let now_limit = now.vim.regex_time_limit;
         let which_key = (now.vim.which_key, now.vim.which_key_delay_ms);
@@ -167,6 +168,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
         fe_gpui::set_vim_search_case(cx, ignorecase, smartcase);
         fe_gpui::set_vim_incsearch(cx, incsearch);
+        fe_gpui::set_vim_inccommand(cx, inccommand);
         fe_gpui::set_vim_replace_with_register(cx, replace_with_register);
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         fe_gpui::set_vim_which_key(cx, which_key.0, Duration::from_millis(which_key.1));
@@ -583,6 +585,7 @@ fn main() {
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
         fe_gpui::set_vim_search_case(cx, settings.vim.ignorecase, settings.vim.smartcase);
         fe_gpui::set_vim_incsearch(cx, settings.vim.incsearch);
+        fe_gpui::set_vim_inccommand(cx, settings.vim.inccommand);
         fe_gpui::set_vim_replace_with_register(cx, settings.vim.replace_with_register);
         fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_gpui::set_vim_which_key(

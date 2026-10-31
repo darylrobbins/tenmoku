@@ -21,7 +21,9 @@
 //! After each edit or recall of a `/` or `?` line, the editor shows the
 //! match submitting it would land on ('incsearch',
 //! [`EditorView::preview_search`]), scrolled into view; cancelling the line
-//! puts the view back.
+//! puts the view back. A `:` line that is a `:s` shows what it would
+//! replace ('inccommand', [`EditorView::preview_substitute`]) unless
+//! `vim.inccommand` is off; cancelling it puts the text's look back.
 //!
 //! A line cancelled other than by a key (focus leaving it, a click outside
 //! it, a tab switch) tells the editor its text and `<C-c>`, which a replay
@@ -32,7 +34,9 @@ use std::collections::VecDeque;
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, keymap::CHORD_TIMEOUT, vim_registers};
 use fe_ui::{ROW_HEIGHT, SettleEdit, Settled, TextInput, TextInputEvent, Typed};
-use fe_vim::{CommandLineKind, Ex, HistoryRecall, HostCommand, Mode, VimKey, VimState};
+use fe_vim::{
+    CommandLineKind, Ex, ExCommand, HistoryRecall, HostCommand, Mode, Registers, VimKey, VimState,
+};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
@@ -44,6 +48,18 @@ use crate::{
     picker::{self, PaletteOp},
     search_panel::{self, SearchOp},
 };
+
+/// Whether `line`, a `:` line's text, is one `:s`, `:&`, `:&&` or `:~`,
+/// typed so far.
+fn is_substitute(line: &str) -> bool {
+    matches!(
+        Ex::parse(line),
+        Ok(Ex {
+            command: ExCommand::Substitute(_),
+            ..
+        })
+    )
+}
 
 /// The key context the line's element sets.
 pub(crate) const KEY_CONTEXT: &str = "vim_line";
@@ -78,6 +94,13 @@ pub(super) struct VimLine {
     /// Keys a map gave are still on their way into the input: its text
     /// isn't what the editor's echo of the line says yet.
     typing: bool,
+    /// The editor previews the open `:` line as a `:s` ('inccommand'): an
+    /// edit that makes it anything else tells the editor once more, which
+    /// takes the preview down.
+    substituting: bool,
+    /// The `:` lines told to the editor to preview, in order.
+    #[cfg(test)]
+    forwarded: Vec<String>,
     _changed: Option<Subscription>,
     /// The mode segment's background and label colours in the last render.
     #[cfg(test)]
@@ -253,6 +276,7 @@ impl StatusBar {
         self.line.open = Some((editor.downgrade(), prefix(kind)));
         self.line.recall = HistoryRecall::default();
         self.line.typing = false;
+        self.line.substituting = false;
         self.line.complete = None;
         self.line.remap_timer = None;
         editor.update(cx, |editor, _| editor.begin_command_line());
@@ -500,19 +524,31 @@ impl StatusBar {
         }
     }
 
-    /// Shows in its editor what the open `/` or `?` line would land on.
-    fn preview_line(&self, cx: &mut Context<Self>) {
+    /// Shows in its editor what the open `/` or `?` line would land on, or
+    /// what the `:s` a `:` line is would replace, while 'inccommand' is on
+    /// (`vim.inccommand`). A `:` line that is no `:s` isn't sent, but for
+    /// once after one that was, to take its preview down.
+    fn preview_line(&mut self, cx: &mut Context<Self>) {
         let Some((editor, prefix)) = &self.line.open else {
             return;
         };
         let (Some(editor), Some(input)) = (editor.upgrade(), &self.line.input) else {
             return;
         };
-        if *prefix == ':' {
+        let text = input.read(cx).text().to_owned();
+        if *prefix != ':' {
+            editor.update(cx, |editor, cx| editor.preview_search(&text, cx));
             return;
         }
-        let text = input.read(cx).text().to_owned();
-        editor.update(cx, |editor, cx| editor.preview_search(&text, cx));
+        let on = vim_registers(cx).is_none_or(Registers::inccommand);
+        let substitute = on && is_substitute(&text);
+        if !substitute && !self.line.substituting {
+            return;
+        }
+        self.line.substituting = substitute;
+        #[cfg(test)]
+        self.line.forwarded.push(text.clone());
+        editor.update(cx, |editor, cx| editor.preview_substitute(&text, cx));
     }
 
     /// Ends the line by `key`: submits `text`, or cancels with `None`, in
@@ -811,4 +847,13 @@ impl StatusBar {
     pub(crate) fn line_input(&self) -> Option<&Entity<TextInput>> {
         self.line.input.as_ref()
     }
+
+    /// The `:` lines told to their editor to preview, taken.
+    pub(crate) fn take_forwarded(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.line.forwarded)
+    }
 }
+
+#[cfg(test)]
+#[path = "vim_line/substitute_preview_tests.rs"]
+mod substitute_preview_tests;
