@@ -32,6 +32,11 @@
 //! window closes while others stay open, its entry is deleted; closing the
 //! last window, or quitting, keeps it. Its claim is released after its
 //! last write.
+//!
+//! A launch on the folder restores only the last session's windows
+//! ([`LayoutStore::restore_last_session`]), at most [`MAX_RESTORED`]; older
+//! sessions' windows are deleted. A file launch's window marks its entries
+//! `"restore": false`, so no later launch restores it.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -50,6 +55,9 @@ use crate::{
     pane_group::{Axis, Member, PaneGroup},
     persist::Writer,
 };
+
+/// The most windows one folder launch reopens: a safety net.
+pub const MAX_RESTORED: usize = 8;
 
 /// Rebuilds an item of a kind from its saved state.
 pub type Restore = Rc<dyn Fn(Value, &mut Window, &mut App) -> Restoring>;
@@ -464,19 +472,34 @@ fn writer(cx: &mut App) -> Writer<(PathBuf, u64), Job> {
 
 /// The windows a launch on `store`'s root opens, each with its layout and
 /// the entry it restores, if any. With `restore` (a launch on the folder
-/// itself), every entry no live window holds, newest first; failing that,
-/// or without `restore`, one window with a fresh id. Empty only if no id
+/// itself), the last session's windows (see the module docs), newest first;
+/// failing that, or without `restore` (a file launch, whose window is never
+/// restored later), one window with a fresh id. Empty only if no id
 /// can be claimed (the state directory can't be written, say).
 pub fn launch(store: &LayoutStore, restore: bool) -> Vec<(WindowLayout, Option<Value>)> {
     let mut windows: Vec<_> = match restore {
-        true => (store.restorable().into_iter())
-            .map(|(claim, entry)| (WindowLayout::new(store.clone(), claim), Some(entry)))
-            .collect(),
+        true => {
+            let last = store.restore_last_session(MAX_RESTORED);
+            if last.dropped > 0 {
+                log::info!(
+                    "dropped {} saved windows of {}: older sessions, file launches, or beyond {MAX_RESTORED}",
+                    last.dropped,
+                    store.file().display()
+                );
+            }
+            (last.windows.into_iter())
+                .map(|(claim, entry)| (WindowLayout::new(store.clone(), claim), Some(entry)))
+                .collect()
+        }
         false => Vec::new(),
     };
     if windows.is_empty() {
         match store.claim_new() {
-            Ok(claim) => windows.push((WindowLayout::new(store.clone(), claim), None)),
+            Ok(claim) => {
+                let mut layout = WindowLayout::new(store.clone(), claim);
+                layout.restores = restore;
+                windows.push((layout, None));
+            }
             Err(error) => log::error!("can't keep this window's layout: {error}"),
         }
     }
@@ -518,6 +541,8 @@ pub struct WindowLayout {
     claim: Option<Arc<Claim>>,
     /// The shape last saved.
     saved: Option<Value>,
+    /// False for a file launch's window: its entries say `"restore": false`.
+    restores: bool,
 }
 
 impl WindowLayout {
@@ -527,6 +552,15 @@ impl WindowLayout {
             store,
             claim: Some(Arc::new(claim)),
             saved: None,
+            restores: true,
+        }
+    }
+
+    fn mark(&self, entry: &mut Value) {
+        if !self.restores
+            && let Some(object) = entry.as_object_mut()
+        {
+            object.insert("restore".into(), Value::Bool(false));
         }
     }
 
@@ -549,7 +583,8 @@ impl WindowLayout {
     }
 
     /// Saves `entry` in the background.
-    pub fn save(&mut self, entry: Value, cx: &mut App) {
+    pub fn save(&mut self, mut entry: Value, cx: &mut App) {
+        self.mark(&mut entry);
         let Some(claim) = self.claim.clone() else {
             return;
         };
@@ -577,7 +612,8 @@ impl WindowLayout {
     /// The window is closing: unless the app is quitting, its entry is
     /// saved as `entry` if no other window stays open, or else deleted.
     /// Its claim is released once that's done.
-    pub fn close(mut self, entry: Value, others_open: bool, cx: &mut App) {
+    pub fn close(mut self, mut entry: Value, others_open: bool, cx: &mut App) {
+        self.mark(&mut entry);
         let Some(claim) = self.claim.take() else {
             return;
         };

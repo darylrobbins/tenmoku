@@ -8,6 +8,16 @@
 //! was `saved` (milliseconds since the Unix epoch). A file of another
 //! version, or one that doesn't parse, reads as empty.
 //!
+//! **Sessions.** Each entry is also stamped with the `session` of the
+//! process that wrote it ([`session`]; an entry from before sessions has
+//! none, and all such entries are one legacy session). A launch on the
+//! folder restores only the last session's windows ([`LayoutStore::
+//! restore_last_session`]): the windows open when the app last quit, or
+//! crashed. It re-writes them under its own session, and deletes every
+//! other entry no live window holds: older sessions' windows, and the
+//! entries of file launches (marked `"restore": false`), which are never
+//! restored. A cap bounds how many windows one launch reopens.
+//!
 //! **Each window id has one live owner, across processes.** A window takes
 //! a [`Claim`] on an id before it uses it: an exclusive lock on
 //! `<key>.<id>.lock`, held for as long as the window is open, which the OS
@@ -29,7 +39,10 @@ use std::{
     hash::{BuildHasher as _, Hash as _, Hasher as _},
     io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -63,6 +76,12 @@ fn fresh_id() -> u64 {
     hasher.finish()
 }
 
+/// This process's session id: random, fixed for the life of the process.
+pub fn session() -> u64 {
+    static SESSION: OnceLock<u64> = OnceLock::new();
+    *SESSION.get_or_init(fresh_id)
+}
+
 fn now_millis() -> u64 {
     let since = SystemTime::now().duration_since(UNIX_EPOCH);
     since.map_or(0, |since| since.as_millis() as u64)
@@ -71,6 +90,26 @@ fn now_millis() -> u64 {
 /// The id of a saved entry.
 pub fn entry_id(entry: &Value) -> Option<u64> {
     entry.get("id")?.as_u64()
+}
+
+/// The session of a saved entry: `None` for one saved before sessions.
+pub fn entry_session(entry: &Value) -> Option<u64> {
+    entry.get("session")?.as_u64()
+}
+
+/// Whether a launch on the folder may restore `entry`: not a file
+/// launch's.
+fn restores(entry: &Value) -> bool {
+    entry.get("restore").and_then(Value::as_bool) != Some(false)
+}
+
+/// What [`LayoutStore::restore_last_session`] found.
+#[derive(Debug)]
+pub struct LastSession {
+    /// The last session's windows to restore, newest first.
+    pub windows: Vec<(Claim, Value)>,
+    /// How many saved windows it deleted.
+    pub dropped: usize,
 }
 
 /// The saved layouts of one root folder's windows.
@@ -180,13 +219,56 @@ impl LayoutStore {
             .collect()
     }
 
+    /// What a launch on the folder restores: the windows of the last
+    /// session, at most `max` (see the module docs). Entries a live window
+    /// holds are never touched.
+    pub fn restore_last_session(&self, max: usize) -> LastSession {
+        let mut dropped = 0;
+        let mut candidates = Vec::new();
+        for (claim, entry) in self.restorable() {
+            if restores(&entry) {
+                candidates.push((claim, entry));
+            } else {
+                self.forget(claim);
+                dropped += 1;
+            }
+        }
+        let last = candidates.first().map(|(_, entry)| entry_session(entry));
+        let mut windows = Vec::new();
+        for (claim, entry) in candidates {
+            if Some(entry_session(&entry)) == last && windows.len() < max {
+                windows.push((claim, entry));
+            } else {
+                self.forget(claim);
+                dropped += 1;
+            }
+        }
+        // Oldest first, so their order stays.
+        for (claim, entry) in windows.iter().rev() {
+            if let Err(error) = self.write(claim, entry.clone()) {
+                log::error!("can't keep a restored window's layout: {error}");
+            }
+        }
+        LastSession { windows, dropped }
+    }
+
+    fn forget(&self, claim: Claim) {
+        if let Err(error) = self.delete(&claim) {
+            log::error!("can't delete a saved window's layout: {error}");
+        }
+        claim.release(true);
+    }
+
     /// The newest entry no live window holds, claimed: what a new window
-    /// on the root restores.
+    /// on the root restores. A file launch's is skipped.
     pub fn newest_restorable(&self) -> Option<(Claim, Value)> {
-        self.entries().into_iter().find_map(|entry| {
-            let claim = self.claim(entry_id(&entry)?).ok()??;
-            Some((claim, entry))
-        })
+        self.entries()
+            .into_iter()
+            .filter(restores)
+            .find_map(|entry| {
+                let claim = self.claim(entry_id(&entry)?).ok()??;
+                Some((claim, entry))
+            })
     }
 
     /// Puts `entry` in the file as `claim`'s window's, replacing its last,
@@ -195,6 +277,7 @@ impl LayoutStore {
         if let Some(object) = entry.as_object_mut() {
             object.insert("id".into(), Value::from(claim.id));
             object.insert("saved".into(), Value::from(now_millis()));
+            object.insert("session".into(), Value::from(session()));
         }
         self.update(claim.id, Some(entry))
     }
@@ -252,3 +335,7 @@ fn read(path: &Path) -> Vec<Value> {
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+#[path = "layout_session_tests.rs"]
+mod session_tests;

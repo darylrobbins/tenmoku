@@ -385,6 +385,7 @@ fn entries_save_as_the_shape_changes_and_go_as_windows_close(cx: &mut TestAppCon
             let object = entry.as_object_mut().unwrap();
             object.remove("id");
             object.remove("saved");
+            object.remove("session");
         }
         entries
     };

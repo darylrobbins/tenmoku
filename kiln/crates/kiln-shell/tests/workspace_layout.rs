@@ -174,6 +174,7 @@ fn saved(store: &LayoutStore) -> Vec<Value> {
         let object = entry.as_object_mut().unwrap();
         object.remove("id");
         object.remove("saved");
+        object.remove("session");
     }
     entries
 }
