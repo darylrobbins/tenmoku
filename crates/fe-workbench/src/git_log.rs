@@ -1405,6 +1405,19 @@ impl GitLogPanel {
         cx.notify();
     }
 
+    /// Commit `commit`'s change to all its files as one model
+    /// ([`commit_diff`]), read from the list's repository; `None` if no
+    /// commit `commit` is listed.
+    #[allow(dead_code)] // The commit diff view's card opens one.
+    pub(crate) fn commit_diff_for(
+        &self,
+        commit: usize,
+        cx: &mut App,
+    ) -> Option<Entity<commit_diff::CommitDiff>> {
+        let (repo, entry) = (self.repo.clone()?, self.commits.get(commit)?.clone());
+        Some(cx.new(|cx| commit_diff::CommitDiff::new(repo, entry, cx)))
+    }
+
     /// Opens file `file` of commit `commit`'s change: in the pane's preview
     /// tab if `preview`, else to stay.
     fn open_file(
@@ -2477,6 +2490,13 @@ impl GitLogPanel {
 
 #[path = "git_log_menu.rs"]
 mod git_log_menu;
+
+#[path = "commit_diff.rs"]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the commit diff view's card uses it")
+)]
+pub(crate) mod commit_diff;
 
 #[cfg(test)]
 #[path = "git_log_tests.rs"]
