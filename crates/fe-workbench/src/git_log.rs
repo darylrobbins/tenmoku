@@ -322,6 +322,8 @@ fn link_label(url: &str) -> &'static str {
 struct CommitCard {
     commit: Arc<CommitInfo>,
     refs: Vec<RefLabel>,
+    /// The lane colour index of its commit's row, which its ref pills take.
+    lane: usize,
     initials: String,
     avatar: Hsla,
     /// `<ago> (<date>)`.
@@ -376,7 +378,13 @@ pub(crate) struct CardProbe {
 impl CommitCard {
     /// `entry`'s card at `now`, reading its totals and web page from `repo`
     /// on the background executor.
-    fn new(entry: &LogCommit, now: i64, repo: Option<Arc<Repo>>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        entry: &LogCommit,
+        lane: usize,
+        now: i64,
+        repo: Option<Arc<Repo>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let commit = entry.commit.clone();
         let (body, trailers) = split_trailers(&commit.message);
         if let Some(repo) = repo {
@@ -407,6 +415,7 @@ impl CommitCard {
         }
         Self {
             refs: entry.refs.clone(),
+            lane,
             initials: initials(&commit.author),
             avatar: avatar_color(&commit.email),
             dates: format!(
@@ -602,8 +611,11 @@ impl Render for CommitCard {
             sections.push(("trailers", trailers.into_any_element()));
         }
         if !self.refs.is_empty() {
-            let refs = (div().flex().flex_wrap().gap_1())
-                .children(self.refs.iter().map(|label| ref_label(label, &ui)));
+            let refs = (div().flex().flex_wrap().gap_1()).children(
+                self.refs
+                    .iter()
+                    .map(|label| ref_label(label, self.lane, &ui)),
+            );
             sections.push(("refs", refs.into_any_element()));
         }
         #[cfg(test)]
@@ -1491,6 +1503,7 @@ impl GitLogPanel {
                 };
                 let entry = self.commits.get(ix_commit)?;
                 let merge = entry.parents.len() > 1;
+                let lane = self.rows[ix_commit].color;
                 let graph = graph_cell(
                     self.rows[ix_commit].clone(),
                     merge,
@@ -1501,7 +1514,7 @@ impl GitLogPanel {
                 let [summary, _] = commit_rows::texts(&entry.commit, self.now);
                 seen.texts(ix, &[&summary]);
                 let lead = (lead().child(graph))
-                    .children(entry.refs.iter().map(|label| ref_label(label, &ui)))
+                    .children(ref_pills(&entry.refs, lane, &ui))
                     .child(ellipsized(summary));
                 let (hovered, now, repo) = (entry.clone(), self.now, self.repo.clone());
                 #[cfg(test)]
@@ -1515,7 +1528,7 @@ impl GitLogPanel {
                         .hoverable_tooltip(move |_, cx| {
                             let repo = repo.clone();
                             let card = cx.new(|cx| {
-                                let card = CommitCard::new(&hovered, now, repo, cx);
+                                let card = CommitCard::new(&hovered, lane, now, repo, cx);
                                 #[cfg(test)]
                                 let card = card.probed(&probe);
                                 card
@@ -1562,6 +1575,7 @@ fn lettered(row: Stateful<Div>, lead: Div, ix: usize, probe: RowsProbe) -> State
 }
 
 /// A ref label's text: a tag's prefixed `tag`.
+#[cfg(test)]
 fn label_text(label: &RefLabel) -> String {
     match label.kind {
         RefKind::Tag => format!("tag {}", label.name),
@@ -1569,21 +1583,94 @@ fn label_text(label: &RefLabel) -> String {
     }
 }
 
-/// A ref pointing at a commit, as a small label: HEAD's bold, a remote's
-/// muted.
-fn ref_label(label: &RefLabel, ui: &UiTheme) -> impl IntoElement {
+/// How many ref pills a row shows before the rest collapse into `+N`.
+const MAX_PILLS: usize = 3;
+
+/// How a ref's pill looks, apart from its text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PillStyle {
+    /// The text and border colour: the commit's lane colour.
+    color: Hsla,
+    /// The fill: solid for HEAD's pill, a tint of `color` for the others.
+    fill: Hsla,
+    /// The text colour: the theme's background on HEAD's solid fill,
+    /// `color` itself on a tint.
+    text: Hsla,
+    /// A remote-tracking branch's cloud, a tag's tag.
+    icon: Option<Icon>,
+}
+
+/// `label`'s pill on a commit of lane colour `lane`.
+fn pill_style(label: &RefLabel, lane: usize, ui: &UiTheme) -> PillStyle {
+    let color = lane_color(lane);
+    let head = label.is_head || label.kind == RefKind::Head;
+    PillStyle {
+        color,
+        fill: if head { color } else { color.opacity(0.18) },
+        text: if head { ui.background } else { color },
+        icon: match label.kind {
+            RefKind::Remote => Some(Icon::Cloud),
+            RefKind::Tag => Some(Icon::Tag),
+            RefKind::Head | RefKind::Branch => None,
+        },
+    }
+}
+
+/// A ref's text in its pill: the name, with a tag's `tag` left to its icon.
+fn pill_text(label: &RefLabel) -> &str {
+    &label.name
+}
+
+/// The first [`MAX_PILLS`] of `refs`, and how many more there are.
+fn visible_pills(refs: &[RefLabel]) -> (&[RefLabel], usize) {
+    let shown = refs.len().min(MAX_PILLS);
+    (&refs[..shown], refs.len() - shown)
+}
+
+/// A row's ref pills: the first few, then a muted `+N` for the rest, which
+/// the commit's card lists.
+fn ref_pills(refs: &[RefLabel], lane: usize, ui: &UiTheme) -> Vec<AnyElement> {
+    let (shown, more) = visible_pills(refs);
+    let mut pills: Vec<AnyElement> = (shown.iter())
+        .map(|label| ref_label(label, lane, ui).into_any_element())
+        .collect();
+    if more > 0 {
+        let rest = div()
+            .flex_none()
+            .text_size(px(11.))
+            .text_color(ui.muted_text)
+            .child(format!("+{more}"));
+        pills.push(rest.into_any_element());
+    }
+    pills
+}
+
+/// A ref pointing at a commit, as a small pill in its commit's lane colour:
+/// HEAD's filled and bold, the others tinted, a remote's after a cloud and a
+/// tag's after a tag.
+fn ref_label(label: &RefLabel, lane: usize, ui: &UiTheme) -> impl IntoElement {
+    let style = pill_style(label, lane, ui);
     div()
         .flex_none()
+        .flex()
+        .items_center()
+        .gap_0p5()
         .px_1()
         .rounded_sm()
         .border_1()
-        .border_color(ui.border)
+        .border_color(style.color)
+        .bg(style.fill)
+        .text_color(style.text)
         .text_size(px(11.))
         .when(label.is_head, |label| label.font_weight(FontWeight::BOLD))
-        .when(label.kind == RefKind::Remote, |label| {
-            label.text_color(ui.muted_text)
-        })
-        .child(label_text(label))
+        .children(style.icon.map(|icon| {
+            svg()
+                .path(icon.path())
+                .size(px(11.))
+                .flex_none()
+                .text_color(style.text)
+        }))
+        .child(pill_text(label).to_owned())
 }
 
 /// A file row after its commit's `rail`: the file's icon from the installed
@@ -2092,3 +2179,7 @@ mod git_log_open_tests;
 #[cfg(test)]
 #[path = "git_log_file_rows_tests.rs"]
 mod git_log_file_rows_tests;
+
+#[cfg(test)]
+#[path = "git_log_ref_pills_tests.rs"]
+mod git_log_ref_pills_tests;

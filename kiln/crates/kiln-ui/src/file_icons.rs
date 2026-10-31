@@ -134,6 +134,9 @@ icons! {
     UnfoldVertical => "unfold-vertical",
     // The Settings tab's Reset to Default; not mapped from names.
     RotateCcw => "rotate-ccw",
+    // The Git Log's ref pills: a remote branch and a tag.
+    Cloud => "cloud",
+    Tag => "tag",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.
