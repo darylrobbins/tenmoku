@@ -5,7 +5,8 @@
 //! rename's old one), its lines added and removed ([`Repo::commit_stats`]),
 //! its two texts (the left empty for an added file, the right for a deleted
 //! one), their row diff ([`TextDiff`]) and whether it's collapsed. The Graph
-//! hands a commit to it ([`GitLogPanel::commit_diff_for`]).
+//! hands a commit to it ([`Workbench::open_commit_diff`]), and its view
+//! ([`commit_diff_view`]) shows it.
 //!
 //! The model lays its sections out as rows ([`Row`]): each section's header,
 //! then, unless it's collapsed, its diff in one column as `git diff` shows
@@ -32,16 +33,17 @@
 //! collapsed is kept by path, through [`CommitDiff::reload`] and showing the
 //! same commit again ([`CommitDiff::show`]).
 //!
-//! [`GitLogPanel::commit_diff_for`]: super::GitLogPanel::commit_diff_for
+//! [`Workbench::open_commit_diff`]: crate::Workbench::open_commit_diff
+//! [`commit_diff_view`]: super::commit_diff_view
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use fe_editor::text_diff::{MAX_DIFF_BYTES, TextDiff};
+use fe_editor::text_diff::{HunkKind, MAX_DIFF_BYTES, Side, TextDiff};
 use fe_git::{ChangeKind, CommitFile, CommitStats, LogCommit, Repo};
 use fe_gpui::diff_view::CONTEXT_ROWS;
 use gpui::{AppContext as _, Context};
@@ -141,14 +143,26 @@ pub(crate) struct Diffed {
     pub(crate) left: SideText,
     pub(crate) right: SideText,
     pub(crate) lines: Vec<Line>,
+    /// Each side's changed words within the paired rows of its modified
+    /// hunks, by row ([`InlineDiff::changed_spans`]), the view tinting
+    /// them darker than the row; a pair over the caps has none.
+    ///
+    /// [`InlineDiff::changed_spans`]: fe_editor::inline_diff::InlineDiff::changed_spans
+    pub(crate) words: [HashMap<u32, Vec<Range<usize>>>; 2],
 }
 
 impl Diffed {
     fn new(left: String, right: String) -> Self {
         let diff = TextDiff::new(&left, &right);
+        let words = words(&diff, &left, &right);
         let (left, right) = (SideText::new(left), SideText::new(right));
         let lines = lines(&diff, [left.row_count(), right.row_count()]);
-        Self { left, right, lines }
+        Self {
+            left,
+            right,
+            lines,
+            words,
+        }
     }
 
     /// Line `line`'s text: a row's, or how many rows it hides.
@@ -162,6 +176,29 @@ impl Diffed {
             },
         }
     }
+}
+
+/// Each side's changed words in `diff` of `left` and `right`: see
+/// [`Diffed::words`].
+fn words(diff: &TextDiff, left: &str, right: &str) -> [HashMap<u32, Vec<Range<usize>>>; 2] {
+    let inline = diff.inline(left, right);
+    let mut words: [HashMap<u32, Vec<Range<usize>>>; 2] = Default::default();
+    for hunk in diff.hunks() {
+        if hunk.kind() != HunkKind::Modified {
+            continue;
+        }
+        let paired = hunk.left.len().min(hunk.right.len()) as u32;
+        for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
+            let start = hunk.range(side).start;
+            for row in start..start + paired {
+                let spans = inline.changed_spans(side, row);
+                if !spans.is_empty() {
+                    words[ix].insert(row, spans.to_vec());
+                }
+            }
+        }
+    }
+    words
 }
 
 /// The rows of the diff `diff` of texts of `rows` rows (left, right): see
@@ -260,7 +297,7 @@ enum Listing {
 
 /// What a section's read found.
 enum Read {
-    Texts(Diffed),
+    Texts(Box<Diffed>),
     NotShown(NotShown),
 }
 
@@ -331,7 +368,11 @@ impl CommitDiff {
         self.reading = 0;
         self.relayout();
         let (repo, id) = (self.repo.clone(), self.commit.commit.id.clone());
+        #[cfg(test)]
+        let gate = crate::workbench::git_stage::test_gate(cx);
         let read = cx.background_spawn(async move {
+            #[cfg(test)]
+            gate.await;
             let files = (repo.commit_files(&id)).map_err(|error| error.to_string());
             (files, repo.commit_stats(&id).ok())
         });
@@ -438,7 +479,13 @@ impl CommitDiff {
         let repo = self.repo.clone();
         let id = self.commit.commit.id.clone();
         let parent = self.commit.parents.first().cloned();
-        let read = cx.background_spawn(async move { read(&repo, &id, parent.as_deref(), &file) });
+        #[cfg(test)]
+        let gate = crate::workbench::git_stage::test_gate(cx);
+        let read = cx.background_spawn(async move {
+            #[cfg(test)]
+            gate.await;
+            read(&repo, &id, parent.as_deref(), &file)
+        });
         cx.spawn(async move |diff, cx| {
             let read = read.await;
             (diff.update(cx, |diff, cx| diff.land_texts(ix, request, read, cx))).ok();
@@ -463,7 +510,7 @@ impl CommitDiff {
         }
         self.reading -= 1;
         section.texts = match read {
-            Ok(Read::Texts(diffed)) => Texts::Read(Arc::new(diffed)),
+            Ok(Read::Texts(diffed)) => Texts::Read(Arc::from(diffed)),
             Ok(Read::NotShown(why)) => Texts::NotShown(why),
             Err(error) => Texts::Failed(error),
         };
@@ -534,6 +581,11 @@ impl CommitDiff {
         (self.sections.get(ix)).is_some_and(|section| self.collapsed.contains(&section.path))
     }
 
+    /// The working tree of the repository it's read from.
+    pub(crate) fn workdir(&self) -> &Path {
+        self.repo.workdir()
+    }
+
     pub(crate) fn commit(&self) -> &LogCommit {
         &self.commit
     }
@@ -557,7 +609,7 @@ impl CommitDiff {
     }
 
     /// `path` from the repository's working tree.
-    fn display_path(&self, path: &Path) -> String {
+    pub(crate) fn display_path(&self, path: &Path) -> String {
         let relative = path.strip_prefix(self.repo.workdir()).unwrap_or(path);
         relative.display().to_string()
     }
@@ -624,7 +676,7 @@ fn read(
     if left.len() > MAX_DIFF_BYTES || right.len() > MAX_DIFF_BYTES {
         return Ok(Read::NotShown(NotShown::TooLarge));
     }
-    Ok(Read::Texts(Diffed::new(left, right)))
+    Ok(Read::Texts(Box::new(Diffed::new(left, right))))
 }
 
 #[cfg(test)]

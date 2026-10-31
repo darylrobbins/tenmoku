@@ -26,7 +26,9 @@
 //! the author and how long ago and when it was made, its whole message, its
 //! co-author and sign-off trailers, its refs, its files changed and lines
 //! added and removed, its short id with a button copying the full one, and
-//! a link to its page where its remote's host has one ([`CommitCard`]).
+//! a link to its page where its remote's host has one ([`CommitCard`]). A
+//! click on its files changed opens its change to all its files in one tab
+//! ([`commit_diff_view`]), as its menu's Open Changes does.
 //! It's no taller than the window: a longer message scrolls under the
 //! mouse, the card staying open while the mouse is over it, the rest kept
 //! in view around it. Every row with a graph cell or a rail keeps a file
@@ -50,7 +52,8 @@
 //! `M` amber, `A` green, `D` red, `R` blue; doing it again collapses it.
 //! Enter, `o` or a click on a file opens its change at that commit as the
 //! History panel opens one ([`Workbench::open_commit`]), so the same one is
-//! the same tab.
+//! the same tab; with the commit's change to all its files open
+//! ([`commit_diff_view`]), it shows that tab scrolled to the file instead.
 //! Only its file rows are listed: its message, trailers and totals are left
 //! to its card. The selection moves over commit and file rows alike. Rows too long for the panel end in
 //! an ellipsis. A right click on a commit or file row selects it and opens
@@ -349,6 +352,11 @@ fn link_label(url: &str) -> &'static str {
 /// the header and the totals and footer, which stay in view.
 struct CommitCard {
     commit: Arc<CommitInfo>,
+    /// The commit and where it's read from, which its files-changed count
+    /// opens in one tab in `workbench`.
+    entry: LogCommit,
+    repo: Option<Arc<Repo>>,
+    workbench: WeakEntity<Workbench>,
     refs: Vec<RefLabel>,
     /// The lane colour index of its commit's row, which its ref pills take.
     lane: usize,
@@ -411,11 +419,12 @@ impl CommitCard {
         lane: usize,
         now: i64,
         repo: Option<Arc<Repo>>,
+        workbench: WeakEntity<Workbench>,
         cx: &mut Context<Self>,
     ) -> Self {
         let commit = entry.commit.clone();
         let (body, trailers) = split_trailers(&commit.message);
-        if let Some(repo) = repo {
+        if let Some(repo) = repo.clone() {
             let (id, at) = (commit.id.clone(), repo.clone());
             let web = cx.background_spawn(async move { at.commit_web_url(&id) });
             let id = commit.id.clone();
@@ -442,6 +451,9 @@ impl CommitCard {
             .detach();
         }
         Self {
+            entry: entry.clone(),
+            repo,
+            workbench,
             refs: entry.refs.clone(),
             lane,
             initials: initials(&commit.author),
@@ -669,10 +681,33 @@ impl Render for CommitCard {
         ];
         if let Some((files, added, removed)) = self.totals {
             let [files, added, removed] = totals_text(files, added, removed);
-            let comma = |part: Div| div().flex().child(part).child(",");
+            let comma = |part: AnyElement| div().flex().child(part).child(",");
+            // The count opens the commit's change to all its files.
+            let files = match self.repo.clone() {
+                Some(repo) => {
+                    let (workbench, entry) = (self.workbench.clone(), self.entry.clone());
+                    div()
+                        .id("commit-card-files")
+                        .debug_selector(|| "commit-card-files".into())
+                        .cursor_pointer()
+                        .hover(|link| link.underline())
+                        .child(files)
+                        .on_click(move |_, window, cx| {
+                            let (workbench, repo) = (workbench.clone(), repo.clone());
+                            open_commit_diff(workbench, repo, entry.clone(), window, cx);
+                        })
+                        .into_any_element()
+                }
+                None => div().child(files).into_any_element(),
+            };
             let totals = (div().flex_none().flex().flex_wrap().gap_1())
-                .child(comma(div().child(files)))
-                .child(comma(div().text_color(colors.added).child(added)))
+                .child(comma(files))
+                .child(comma(
+                    div()
+                        .text_color(colors.added)
+                        .child(added)
+                        .into_any_element(),
+                ))
                 .child(div().text_color(colors.deleted).child(removed));
             parts.push(("totals", totals.into_any_element()));
         }
@@ -1368,17 +1403,49 @@ impl GitLogPanel {
         cx.notify();
     }
 
-    /// Commit `commit`'s change to all its files as one model
-    /// ([`commit_diff`]), read from the list's repository; `None` if no
-    /// commit `commit` is listed.
-    #[allow(dead_code)] // The commit diff view's card opens one.
-    pub(crate) fn commit_diff_for(
-        &self,
+    /// Opens commit `commit`'s change to all its files in one tab
+    /// ([`commit_diff_view`]), or shows the one open.
+    pub(crate) fn open_commit_diff(&mut self, commit: usize, window: &mut Window, cx: &mut App) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.commits.get(commit).cloned())
+        else {
+            return;
+        };
+        open_commit_diff(self.workbench.clone(), repo, entry, window, cx);
+    }
+
+    /// Shows the open view of commit `commit`'s change to all its files
+    /// scrolled to file `file`'s section: whether one is open.
+    fn reveal_file(
+        &mut self,
         commit: usize,
+        file: usize,
+        window: &mut Window,
         cx: &mut App,
-    ) -> Option<Entity<commit_diff::CommitDiff>> {
-        let (repo, entry) = (self.repo.clone()?, self.commits.get(commit)?.clone());
-        Some(cx.new(|cx| commit_diff::CommitDiff::new(repo, entry, cx)))
+    ) -> bool {
+        let (Some(entry), Some(Listing::Files(files))) =
+            (self.commits.get(commit), self.expanded.get(&commit))
+        else {
+            return false;
+        };
+        let (Some(file), Some(workbench), Some(repo)) = (
+            files.get(file),
+            self.workbench.upgrade(),
+            self.repo.as_ref(),
+        ) else {
+            return false;
+        };
+        let (id, workdir) = (entry.commit.id.clone(), repo.workdir().to_owned());
+        if (workbench.read(cx).commit_diff_tab(&id, &workdir, cx)).is_none() {
+            return false;
+        }
+        let path = file.path.clone();
+        // Once this update is over: the workbench moves focus.
+        window.defer(cx, move |window, cx| {
+            workbench.update(cx, |workbench, cx| {
+                workbench.reveal_in_commit_diff((&id, &workdir), &path, window, cx)
+            });
+        });
+        true
     }
 
     /// Opens file `file` of commit `commit`'s change: in the pane's preview
@@ -1425,6 +1492,7 @@ impl GitLogPanel {
         self.select(ix, cx);
         match line {
             Line::Commit(commit) if clicks == 1 => self.toggle(commit, cx),
+            Line::File(commit, file) if self.reveal_file(commit, file, window, cx) => {}
             Line::File(commit, file) => self.open_file(commit, file, clicks == 1, window, cx),
             _ => {}
         }
@@ -1435,6 +1503,7 @@ impl GitLogPanel {
     fn open(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.lines.get(ix).copied() {
             Some(Line::Commit(commit)) => self.toggle(commit, cx),
+            Some(Line::File(commit, file)) if self.reveal_file(commit, file, window, cx) => {}
             Some(Line::File(commit, file)) => self.open_file(commit, file, false, window, cx),
             Some(Line::Note(_)) | None => {}
         }
@@ -1727,6 +1796,7 @@ impl GitLogPanel {
                     .children(ref_pills(&entry.refs, lane, &ui))
                     .child(ellipsized(summary));
                 let (hovered, now, repo) = (entry.clone(), self.now, self.repo.clone());
+                let workbench = self.workbench.clone();
                 #[cfg(test)]
                 let probe = self.card.clone();
                 let row = row
@@ -1737,9 +1807,9 @@ impl GitLogPanel {
                     }))
                     .on_mouse_down(MouseButton::Right, menu_on(line, cx))
                     .hoverable_tooltip(move |_, cx| {
-                        let repo = repo.clone();
+                        let (repo, workbench) = (repo.clone(), workbench.clone());
                         let card = cx.new(|cx| {
-                            let card = CommitCard::new(&hovered, lane, now, repo, cx);
+                            let card = CommitCard::new(&hovered, lane, now, repo, workbench, cx);
                             #[cfg(test)]
                             let card = card.probed(&probe);
                             card
@@ -1750,6 +1820,23 @@ impl GitLogPanel {
             })
             .collect()
     }
+}
+
+/// Opens `entry`'s change to all its files, read from `repo`, in
+/// `workbench`, once this update is over: the workbench moves focus.
+fn open_commit_diff(
+    workbench: WeakEntity<Workbench>,
+    repo: Arc<Repo>,
+    entry: LogCommit,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.defer(cx, move |window, cx| {
+        (workbench.update(cx, |workbench, cx| {
+            workbench.open_commit_diff(repo, entry, window, cx);
+        }))
+        .ok();
+    });
 }
 
 /// What a right click on `line`'s row does: opens its menu.
@@ -2420,10 +2507,13 @@ impl GitLogPanel {
 #[path = "git_log_menu.rs"]
 mod git_log_menu;
 
+#[path = "commit_diff_view.rs"]
+pub(crate) mod commit_diff_view;
+
 #[path = "commit_diff.rs"]
 #[cfg_attr(
     not(test),
-    allow(dead_code, reason = "the commit diff view's card uses it")
+    allow(dead_code, reason = "the view uses part of the model's API")
 )]
 pub(crate) mod commit_diff;
 

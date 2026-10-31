@@ -1,8 +1,9 @@
 //! The Graph's right-click menu and its commands, as VS Code's Source
 //! Control Graph and GitLens offer them. A right click on a commit row
-//! selects it and offers Copy Commit Hash (its full id) and Copy Subject
-//! (its message's first line), each put on the clipboard; nothing that
-//! rewrites history. A right click on a file row selects it and offers Open
+//! selects it and offers Open Changes (its change to all its files in one
+//! tab, [`commit_diff_view`](super::commit_diff_view)), Copy Commit Hash
+//! (its full id) and Copy Subject (its message's first line), each put on
+//! the clipboard; nothing that rewrites history. A right click on a file row selects it and offers Open
 //! Changes (its change at that commit, as a click on it opens it, kept),
 //! Open File at This Revision (the file's text at that commit,
 //! [`Repo::text_at`], in a read-only editor tab titled `a.rs @ abc1234`,
@@ -51,7 +52,11 @@ pub(crate) enum MenuItem {
 }
 
 /// What a commit row's menu offers.
-const COMMIT_ITEMS: &[MenuItem] = &[MenuItem::CopyCommitHash, MenuItem::CopySubject];
+const COMMIT_ITEMS: &[MenuItem] = &[
+    MenuItem::OpenChanges,
+    MenuItem::CopyCommitHash,
+    MenuItem::CopySubject,
+];
 
 /// What a file row's menu offers.
 const FILE_ITEMS: &[MenuItem] = &[
@@ -102,7 +107,8 @@ impl GitLogPanel {
 
     /// Git: Open Changes
     ///
-    /// Opens the selected file's change at its commit.
+    /// Opens the selected commit's change to all its files, or the
+    /// selected file's change at its commit.
     #[command(id = "git_log.open_changes")]
     fn open_changes(&mut self, cx: &mut Cx<Self>) {
         self.run_menu_item(MenuItem::OpenChanges, cx.window, cx.cx);
@@ -213,11 +219,11 @@ impl GitLogPanel {
             MenuItem::CopySubject => {
                 cx.write_to_clipboard(ClipboardItem::new_string(commit.summary.clone()));
             }
-            MenuItem::OpenChanges => {
-                if let Line::File(ix, file) = line {
-                    self.open_file(ix, file, false, window, cx);
-                }
-            }
+            MenuItem::OpenChanges => match line {
+                Line::Commit(ix) => self.open_commit_diff(ix, window, cx),
+                Line::File(ix, file) => self.open_file(ix, file, false, window, cx),
+                Line::Note(_) => {}
+            },
             MenuItem::OpenFileAtRevision | MenuItem::CompareWithWorkingTree => {
                 let Line::File(ix, file) = line else {
                     return;

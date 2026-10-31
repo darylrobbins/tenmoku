@@ -131,11 +131,12 @@ fn commit_menu(cx: &mut TestAppContext) {
     let all = lines(&workbench, cx);
     let edit = row_of(&all, "edit");
 
-    // Copy Commit Hash and Copy Subject; nothing that rewrites history.
+    // Open Changes, Copy Commit Hash and Copy Subject; nothing that
+    // rewrites history.
     right_click(&workbench, edit, cx);
     assert_eq!(
         menu(&workbench, cx).unwrap(),
-        ["Copy Commit Hash", "Copy Subject"]
+        ["Open Changes", "Copy Commit Hash", "Copy Subject"]
     );
     assert_eq!(selected(&workbench, cx), Some(edit));
     assert_eq!(lines(&workbench, cx), all, "a right click expands nothing");
