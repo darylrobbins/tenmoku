@@ -47,6 +47,13 @@ mod compare_saved;
 #[path = "compare_saved_tests.rs"]
 mod compare_saved_tests;
 
+#[path = "local_history_view.rs"]
+mod local_history_view;
+
+#[cfg(test)]
+#[path = "local_history_view_tests.rs"]
+mod local_history_view_tests;
+
 #[path = "focus_group.rs"]
 mod focus_group;
 
@@ -283,6 +290,20 @@ impl Workbench {
     fn diff_compare_saved(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.compare_saved(cx.window, cx.cx);
+    }
+
+    /// Local History: Show History
+    #[command(id = "history.show_local", context = "editor")]
+    fn history_show_local(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.show_local_history(cx.window, cx.cx);
+    }
+
+    /// Local History: Restore This Version
+    #[command(id = "history.restore_local", context = "DiffView")]
+    fn history_restore_local(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.restore_local_history(cx.window, cx.cx);
     }
 
     /// Go to Next Change

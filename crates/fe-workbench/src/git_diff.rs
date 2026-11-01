@@ -34,6 +34,9 @@
 //! left with the active file on the right. `diff.compare_saved` (see
 //! `compare_saved`) compares the active file with its saved text, a
 //! snapshot, `a.rs (Saved ↔ Working Tree)`, through [`Workbench::begin_saved_diff`].
+//! `history.show_local` (see `local_history_view`) opens a local history
+//! entry the same way, `a.rs (Local History 2026-11-01 14:05 ↔ Working Tree)`,
+//! through [`Workbench::begin_history_diff`].
 //!
 //! Each git diff's git sides are read again after a git refresh
 //! ([`Workbench::refresh_git_diffs`]), a staged diff's both. Only a view's
@@ -63,7 +66,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::{Bias, Buffer, Origin};
+use fe_buffer::{Bias, Buffer, Origin, local_history::EntryId};
 use fe_editor::{EditorModel, row_changes::RowChange, text_diff::TextDiff};
 use fe_git::Repo;
 use fe_gpui::{
@@ -79,9 +82,10 @@ use gpui::{
 use kiln_shell::{ItemHandle as _, PaneItem as _, PaneView as _};
 
 use super::{
-    Palette, Workbench,
+    Palette, Workbench, active_diff_view,
     git_commands::{self, GitCommand, GitOp, Owner},
     git_stage,
+    toast::{self, Toast},
     vim_host::{self, E37, NO_SHELL, RELOAD, message},
 };
 use crate::{Pane, Picker, QuickOpen, git, loader, quick_open::Pick};
@@ -103,6 +107,9 @@ const COMPARE_WITH: &str = "Compare with…";
 
 /// The right side's title in a git diff.
 const WORKING_TREE: &str = "Working Tree";
+
+/// The left side's title in `diff.compare_saved`.
+const SAVED: &str = "Saved";
 
 /// What a file too large to edit answers, before its name.
 const TOO_LARGE: &str = "Too large to compare";
@@ -140,6 +147,9 @@ struct Compared {
     /// The full id of the commit whose text of the file it compares with
     /// the working side ([`Workbench::compare_revision`]), if it does.
     revision: Option<String>,
+    /// The local history entry it compares with the working side, if it
+    /// does. Its title has the entry's minute, which entries can share.
+    history: Option<EntryId>,
     /// The last read of its git side started: only that one lands.
     read: u64,
     /// A model over its working side's buffer that nothing shows: what
@@ -696,10 +706,14 @@ struct Landing {
     guard: Option<Guard>,
 }
 
-/// A `diff.compare_saved` asked for: the file and where its diff lands.
+/// A `diff.compare_saved`, or a local history entry's diff, asked for: the
+/// file, where its diff lands, its left side's label, and the entry if it's
+/// one.
 pub(crate) struct SavedAsk {
     path: PathBuf,
     landing: Landing,
+    label: String,
+    entry: Option<EntryId>,
 }
 
 impl SavedAsk {
@@ -787,7 +801,7 @@ impl Workbench {
     /// The file a command typed or run in `editor` is for: its own, a diff
     /// view side's working file, or the file a staged diff, whose sides are
     /// git's, compares.
-    pub(super) fn op_path(&self, editor: &Entity<EditorView>, cx: &App) -> Option<PathBuf> {
+    pub(crate) fn op_path(&self, editor: &Entity<EditorView>, cx: &App) -> Option<PathBuf> {
         let file = self.file_editor(editor, cx);
         if let Some(path) = file.read(cx).model().path() {
             return Some(path.to_owned());
@@ -937,6 +951,7 @@ impl Workbench {
             base,
             deleted,
             revision: None,
+            history: None,
             read: 0,
             source,
             reveal: None,
@@ -1471,19 +1486,59 @@ impl Workbench {
     ) -> Option<Option<SavedAsk>> {
         let editor = self.active_editor(cx).cloned();
         let path = editor.and_then(|editor| self.op_path(&editor, cx))?;
-        if let Some(diff) = self.open_saved_diff(&path, cx) {
+        if let Some(diff) = self.open_saved_diff(&path, SAVED, None, cx) {
             self.show_diff(&diff, window, cx);
             return Some(None);
         }
         let landing = self.landing(&self.active.clone(), true, cx);
-        Some(Some(SavedAsk { path, landing }))
+        Some(Some(SavedAsk {
+            path,
+            landing,
+            label: SAVED.to_owned(),
+            entry: None,
+        }))
     }
 
-    /// The tab open comparing `path` with its saved text.
-    fn open_saved_diff(&self, path: &Path, cx: &mut App) -> Option<Entity<DiffView>> {
-        let title = format!("{} (Saved ↔ {WORKING_TREE})", file_name(path));
+    /// Starts the diff of local history entry `entry` of `path`, labelled
+    /// `label`: `None` if it was open, now shown; else what to pass
+    /// [`Self::finish_saved_diff`] once the entry is read.
+    pub(crate) fn begin_history_diff(
+        &mut self,
+        path: &Path,
+        label: String,
+        entry: EntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<SavedAsk> {
+        if let Some(diff) = self.open_saved_diff(path, &label, Some(entry), cx) {
+            self.show_diff(&diff, window, cx);
+            return None;
+        }
+        let landing = self.landing(&self.active.clone(), true, cx);
+        Some(SavedAsk {
+            path: path.to_owned(),
+            landing,
+            label,
+            entry: Some(entry),
+        })
+    }
+
+    /// The tab open comparing `path` with its text labelled `label`: the
+    /// saved text, or local history entry `entry`.
+    fn open_saved_diff(
+        &self,
+        path: &Path,
+        label: &str,
+        entry: Option<EntryId>,
+        cx: &mut App,
+    ) -> Option<Entity<DiffView>> {
+        let title = format!("{} ({label} ↔ {WORKING_TREE})", file_name(path));
         let views: Vec<_> = (diff_views(cx).iter())
-            .filter(|compared| compared.base.is_none() && same_file(&compared.path, path))
+            .filter(|compared| {
+                compared.base.is_none()
+                    && compared.history == entry
+                    && same_file(&compared.path, path)
+            })
             .filter_map(|compared| compared.view.upgrade())
             .collect();
         (views.into_iter()).find(|diff| {
@@ -1491,10 +1546,22 @@ impl Workbench {
         })
     }
 
-    /// Opens `ask`'s tab: `saved`, read-only, against the open buffer of
-    /// the file (else the file as `saved`), added to the pane it was asked
-    /// in and shown if it's still the last diff asked for. The left side is
-    /// a snapshot no refresh, edit or save changes.
+    /// The active tab, if it's a diff of a local history entry.
+    pub(crate) fn active_history_diff(&self, cx: &App) -> Option<Entity<DiffView>> {
+        let diff = active_diff_view(self.active.read(cx))?.clone();
+        let view = diff.downgrade();
+        let state = cx.try_global::<DiffState>()?;
+        (state.views.iter())
+            .any(|compared| compared.view == view && compared.history.is_some())
+            .then_some(diff)
+    }
+
+    /// Opens `ask`'s tab: `saved`, read-only and titled its label, against
+    /// the open buffer of the file, added to the pane it was asked in and shown
+    /// if it's still the last diff asked for. The left side is a snapshot no
+    /// refresh, edit or save changes. With no buffer open, the file as
+    /// `saved` is the right side when that's the file's saved text; a local
+    /// history entry isn't the file, so a toast says it's closed instead.
     pub(crate) fn finish_saved_diff(
         &mut self,
         ask: SavedAsk,
@@ -1502,21 +1569,36 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let SavedAsk { path, landing } = ask;
+        let SavedAsk {
+            path,
+            landing,
+            label,
+            entry,
+        } = ask;
         // Another ask for the file may have landed meanwhile.
-        if let Some(diff) = self.open_saved_diff(&path, cx) {
+        if let Some(diff) = self.open_saved_diff(&path, &label, entry, cx) {
             if self.may_show(&landing, cx) {
                 self.show_diff(&diff, window, cx);
             }
             return;
         }
-        let model = (self.file_model(&path, cx)).unwrap_or_else(|| {
-            let text = saved.text().to_string();
-            EditorModel::new(Buffer::from_file_contents(&text), Some(path.clone()))
-        });
-        let left = DiffSide::new("Saved", EditorModel::new(saved, None)).read_only();
+        let model = match self.file_model(&path, cx) {
+            Some(model) => model,
+            None if entry.is_some() => {
+                let closed = format!("{} is no longer open", file_name(&path));
+                return toast::show(cx, Toast::info(closed));
+            }
+            None => {
+                let text = saved.text().to_string();
+                EditorModel::new(Buffer::from_file_contents(&text), Some(path.clone()))
+            }
+        };
+        let left = DiffSide::new(label, EditorModel::new(saved, None)).read_only();
         let right = Ok((WORKING_TREE.into(), model));
         let diff = self.new_diff((path, None, false), left, right, cx);
+        if let Some(compared) = compared(&diff.downgrade(), cx) {
+            compared.history = entry;
+        }
         self.place_diff(&diff, &landing.pane, cx);
         if self.may_show(&landing, cx) {
             self.show_diff(&diff, window, cx);
