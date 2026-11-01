@@ -404,9 +404,35 @@ struct Vim {
     host_waits: HashMap<gpui::EntityId, HostWait>,
     /// The last [`VimHostHold`] handed out.
     host_token: u64,
+    /// Each editor whose keys after a map's `<Cmd>` go on from the host's
+    /// open line ([`EditorView::replay_line_rest`]), and how far they are.
+    live_lines: HashMap<gpui::EntityId, LiveLine>,
     /// Drops a pending `<C-r>` when its editor loses focus; one at a time,
     /// as only the focused editor takes keys.
     register_blur: Option<gpui::Subscription>,
+}
+
+/// Where the keys after a map's `<Cmd>` on the host's open line are
+/// ([`EditorView::replay_line_rest`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LiveLine {
+    /// They run, or wait for a command they ran; `closed` once they've
+    /// closed the host's line (any line they open after is theirs).
+    Running { closed: bool },
+    /// They're over, the line still open: what they left it.
+    Done(LineContinued),
+}
+
+/// What the keys after a map's `<Cmd>` did to the host's open line, once
+/// they've run ([`EditorView::take_line_text`],
+/// [`EditorView::take_line_ended`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LineContinued {
+    /// The line is still open, holding this text.
+    Shows(String),
+    /// They ended the line, and may have opened another
+    /// ([`VimState::command_line_prefill`] its text).
+    Ended,
 }
 
 /// What the `c` maps make of keys typed on the command line
@@ -416,9 +442,16 @@ pub struct LineKeys {
     /// The keys to type now, in order, each with whether a map's right
     /// side made it.
     pub typed: Vec<(VimKey, bool)>,
-    /// The keys after one that ends the line, or a `<Cmd>`: the editor's to
-    /// feed ([`EditorView::replay_line_rest`]) once the line is over.
+    /// The keys after one that ends the line (`<CR>`, `<Esc>`, `<C-c>`), or
+    /// from a `<Cmd>` on: the editor's to feed
+    /// ([`EditorView::replay_line_rest`]), matched in the mode they find.
     pub rest: Vec<VimKey>,
+    /// Matching stopped at the last key typed, a `<BS>`, for the line it
+    /// leaves: the keys after it, not yet matched. The host takes the
+    /// `<BS>` out as its line does, then hands these back with the text left
+    /// ([`EditorView::remap_line_more`]); or, if it cancelled the line (on
+    /// an empty one), feeds them with `rest`, in the mode that leaves.
+    pub then: Option<Vec<VimKey>>,
 }
 
 /// A map's replay, suspended while the host runs the file or window command
@@ -774,6 +807,7 @@ pub(crate) fn register(focus: &FocusHandle, cx: &mut Context<EditorView>) {
         vim.editors.retain(|(_, view)| view.entity_id() != id);
         vim.origins.retain(|(editor, _)| *editor != id);
         vim.host_waits.remove(&id);
+        vim.live_lines.remove(&id);
     })
     .detach();
 }
@@ -1901,11 +1935,143 @@ impl EditorView {
         self.remapped_line_keys(rest.into())
     }
 
-    /// Feeds the keys a line that ended left over to the editor, as the mode
-    /// it left takes them: after a map's `<CR>` or `<Esc>`, or a `<Cmd>`.
-    pub fn replay_line_rest(&mut self, rest: Vec<VimKey>, cx: &mut Context<Self>) {
-        if !rest.is_empty() {
-            self.replay_from(rest.into(), None, None, cx);
+    /// Takes the last grapheme out of `text`, a command line's, as the
+    /// host's line's `<BS>` does with the caret at its end: whether there
+    /// was one.
+    pub fn line_backspace(text: &mut String) -> bool {
+        use unicode_segmentation::UnicodeSegmentation as _;
+        let Some((at, _)) = text.grapheme_indices(true).next_back() else {
+            return false;
+        };
+        text.truncate(at);
+        true
+    }
+
+    /// Goes on matching `keys`, which [`LineKeys::then`] left after a
+    /// `<BS>` the host's line took out, against the `c` maps, the line now
+    /// holding `text`; as [`EditorView::remap_line_key`] gives them.
+    pub fn remap_line_more(&mut self, keys: Vec<VimKey>, text: &str) -> LineKeys {
+        self.vim_line_echo = Some(text.to_owned());
+        // The `<BS>` didn't end the line.
+        self.vim_line_end_expanded = false;
+        self.remapped_line_keys(keys.into())
+    }
+
+    /// Feeds the keys a map left after the command line ended to the
+    /// editor, as the mode it left takes them, or after a `<Cmd>`, with
+    /// `line` the text the host's line, still open, shows: they type into
+    /// it, and the text they leave it with, once they've run (after the
+    /// fastedit or host commands they wait for too), is the host's line's
+    /// to show ([`EditorView::take_line_text`]). `handed`: the line's submit
+    /// left the host a file or window command (`:w`), which they wait for
+    /// as a replay's keys do ([`EditorView::finish_vim_host`]).
+    pub fn replay_line_rest(
+        &mut self,
+        rest: Vec<VimKey>,
+        line: Option<String>,
+        handed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if rest.is_empty() {
+            return;
+        }
+        if line.is_some() {
+            let id = cx.entity_id();
+            let running = LiveLine::Running { closed: false };
+            (cx.default_global::<Vim>().live_lines).insert(id, running);
+        }
+        if handed {
+            self.vim_replaying = true;
+            self.suspend_for_host(rest.into(), line, None, cx);
+            return;
+        }
+        self.replay_from(rest.into(), line, None, cx);
+    }
+
+    /// The text the keys after a map's `<Cmd>` left the host's open line
+    /// with, once they've run and if it's still open
+    /// ([`EditorView::replay_line_rest`]), and then `None`: for the host's
+    /// line to show. Its echo is that text already, so a recording doesn't
+    /// take it as typed.
+    pub fn take_line_text(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let id = cx.entity_id();
+        let lines = &mut cx.default_global::<Vim>().live_lines;
+        let Some(LiveLine::Done(LineContinued::Shows(_))) = lines.get(&id) else {
+            return None;
+        };
+        match lines.remove(&id) {
+            Some(LiveLine::Done(LineContinued::Shows(text))) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Whether the keys after a map's `<Cmd>` ended the host's open line,
+    /// once they've run, and then `false`: the host's line is over, and it
+    /// follows the line they may have opened since
+    /// ([`VimState::command_line_prefill`] its text).
+    pub fn take_line_ended(&mut self, cx: &mut Context<Self>) -> bool {
+        let id = cx.entity_id();
+        let lines = &mut cx.default_global::<Vim>().live_lines;
+        let ended = lines.get(&id) == Some(&LiveLine::Done(LineContinued::Ended));
+        if ended {
+            lines.remove(&id);
+        }
+        ended
+    }
+
+    /// Whether the keys after a map's `<Cmd>` on the host's open line wait
+    /// for a command they ran: keys typed there wait for them.
+    pub fn line_continuing(&self, cx: &Context<Self>) -> bool {
+        (cx.try_global::<Vim>()).is_some_and(|vim| {
+            matches!(
+                vim.live_lines.get(&cx.entity_id()),
+                Some(LiveLine::Running { .. })
+            )
+        })
+    }
+
+    /// A replay that went on from the host's open line is over, or ends,
+    /// leaving it `line` if it's still open: what it did is the host's to
+    /// show; if they closed it and opened another, `line` is that one's,
+    /// which its prefill holds for the host's line to open with, whether
+    /// they're over or failed. Returns whether the replay went on from the
+    /// host's line.
+    fn end_live_line(&mut self, line: Option<&str>, cx: &mut Context<Self>) -> bool {
+        let id = cx.entity_id();
+        let open =
+            (self.vim.as_ref()).is_some_and(|s| matches!(s.mode(), fe_vim::Mode::CmdLine(_)));
+        let lines = &mut cx.default_global::<Vim>().live_lines;
+        match lines.get(&id) {
+            Some(LiveLine::Running { closed: false }) => {}
+            Some(LiveLine::Running { closed: true }) => {
+                lines.insert(id, LiveLine::Done(LineContinued::Ended));
+                if let (Some(text), Some(state)) = (line.filter(|_| open), &mut self.vim) {
+                    state.set_command_line_prefill(text);
+                }
+                return true;
+            }
+            _ => return false,
+        }
+        let done = match line.filter(|_| open) {
+            Some(text) => {
+                self.vim_line_echo = Some(text.to_owned());
+                LineContinued::Shows(text.to_owned())
+            }
+            None => LineContinued::Ended,
+        };
+        lines.insert(id, LiveLine::Done(done));
+        true
+    }
+
+    /// The command line a replay's keys typed into is closed: if it was the
+    /// host's open line, a line they open next is one of their own. The
+    /// host's line hears of it once they're over, with that line's text.
+    fn live_line_closed(&mut self, cx: &mut Context<Self>) {
+        let id = cx.entity_id();
+        if let Some(LiveLine::Running { closed }) =
+            cx.default_global::<Vim>().live_lines.get_mut(&id)
+        {
+            *closed = true;
         }
     }
 
@@ -1936,8 +2102,15 @@ impl EditorView {
                 line.typed.push((key, expanded));
                 match key {
                     VimKey::Char(ch) => echo.push(ch),
+                    // What it takes out, or whether it cancels, is the
+                    // line's to say: the keys after it wait for that.
                     VimKey::Backspace => {
-                        echo.pop();
+                        Self::line_backspace(echo);
+                        self.vim_line_end_expanded |= expanded;
+                        keys.extend(state.take_replay());
+                        keys.extend(queue.drain(..));
+                        line.then = Some(keys.into());
+                        return line;
                     }
                     VimKey::Enter | VimKey::Ctrl('j' | 'c') | VimKey::Esc => {
                         self.vim_line_end_expanded |= expanded;
@@ -2550,7 +2723,10 @@ impl EditorView {
     /// submits it. A map's keys that leave it open put its text on the
     /// host's line, as the line's prefill
     /// ([`VimState::set_command_line_prefill`]); known limit: a `<Left>` or
-    /// `<Right>` in it isn't followed, and the caret starts at the end.
+    /// `<Right>` in it isn't followed, and the caret starts at the end. The
+    /// keys after a map's `<Cmd>` on the host's open line go on from its
+    /// text, and the host's line shows what they leave
+    /// ([`EditorView::replay_line_rest`]).
     ///
     /// A fastedit command a key leaves (a map's `<Cmd>fe:…<CR>`, or one a
     /// `:normal` ran) holds the replay there, and it goes on once the
@@ -2591,27 +2767,58 @@ impl EditorView {
     ) {
         self.vim_replaying = true;
         let mut handed = None;
+        // A key of the line's own that held keys resolved before, and how
+        // many keys come after it: it comes once what they resolved to has
+        // run, if the line is still open, as the host's line drops it if
+        // they closed it.
+        let mut held_back: Option<(VimKey, usize)> = None;
         loop {
+            if let Some((key, after)) = held_back
+                && queue.len() <= after
+            {
+                held_back = None;
+                let Some(state) = &mut self.vim else {
+                    break;
+                };
+                match state.mode() {
+                    fe_vim::Mode::CmdLine(_) => queue.push_front(key),
+                    // Read but not run: its place in the replay goes with
+                    // it, so the next key isn't taken for the replay's.
+                    _ => state.record_key(key),
+                }
+            }
             if let Some(command) = self.vim.as_mut().and_then(VimState::take_remap_command) {
+                put_back(&mut queue, held_back);
                 return self.run_remap_command_later(command, queue, line, origin, cx);
             }
             let Some(key) = queue.pop_front() else {
                 break;
             };
-            if self.marker_after_held(key) {
+            if self.unmapped_after_held(key) {
                 // The held keys resolve as a timeout resolves them, then
-                // the marker comes, which no map takes.
+                // the key comes, which no map takes.
                 let Some(state) = &mut self.vim else {
                     break;
                 };
                 state.remap_timeout();
-                queue.push_front(key);
+                if state.failed() {
+                    // Their maps recursed (E223): the replay stops there,
+                    // as at a key that fails, the message kept.
+                    self.stop_map(true, None);
+                    break;
+                }
+                held_back = Some((key, queue.len()));
                 for key in state.take_replay().into_iter().rev() {
                     queue.push_front(key);
                 }
                 continue;
             }
-            if !self.replay_key(key, &mut line, &mut handed, cx) {
+            let ok = self.replay_key(key, &mut line, &mut handed, cx);
+            if line.is_none() {
+                self.live_line_closed(cx);
+            }
+            if !ok {
+                put_back(&mut queue, held_back.take());
                 // The host runs a file or window command after this update:
                 // what the map does after it waits for the host's report.
                 if handed.is_some() && self.wait_for_host(&mut queue, &mut line, &origin, cx) {
@@ -2630,6 +2837,9 @@ impl EditorView {
         self.vim_replaying = false;
         self.release_held_keys(cx);
         self.wait_for_remap_later(origin, cx);
+        if self.end_live_line(line.as_deref(), cx) {
+            return cx.notify();
+        }
         if let Some(text) = line
             && let Some(state) = &mut self.vim
         {
@@ -2665,8 +2875,28 @@ impl EditorView {
         if queue.is_empty() && !state.has_remap_command() {
             return false;
         }
+        let token = self.suspend_for_host(std::mem::take(queue), line.take(), origin.clone(), cx);
+        let view = cx.weak_entity();
+        cx.defer(move |cx| {
+            (view.update(cx, |view, cx| view.host_untaken(token, cx))).ok();
+        });
+        true
+    }
+
+    /// Suspends the replay, `queue` and `line` left of it, until the host
+    /// reports on the file or window command it has or takes
+    /// ([`EditorView::finish_vim_host`]). Returns the wait's token.
+    fn suspend_for_host(
+        &mut self,
+        queue: VecDeque<VimKey>,
+        line: Option<String>,
+        origin: Option<ReplayOrigin>,
+        cx: &mut Context<Self>,
+    ) -> u64 {
         // The host's answer is what comes after.
-        state.clear_message();
+        if let Some(state) = &mut self.vim {
+            state.clear_message();
+        }
         let id = cx.entity_id();
         let generation = switch(cx).1;
         let vim = cx.default_global::<Vim>();
@@ -2675,19 +2905,15 @@ impl EditorView {
         let wait = HostWait {
             token,
             generation,
-            queue: std::mem::take(queue),
-            line: line.take(),
-            origin: origin.clone(),
+            queue,
+            line,
+            origin,
             claimed: false,
             reported: false,
         };
         vim.host_waits.insert(id, wait);
         cx.notify();
-        let view = cx.weak_entity();
-        cx.defer(move |cx| {
-            (view.update(cx, |view, cx| view.host_untaken(token, cx))).ok();
-        });
-        true
+        token
     }
 
     /// The replay suspended as `token` ends: its host command is still the
@@ -2701,6 +2927,7 @@ impl EditorView {
             return;
         };
         self.vim_replaying = false;
+        self.end_live_line(wait.line.as_deref(), cx);
         self.stop_map(true, Some(HANDED_HOST_COMMAND));
         self.release_held_keys(cx);
         self.wait_for_remap_later(wait.origin, cx);
@@ -2727,6 +2954,7 @@ impl EditorView {
             return;
         };
         self.vim_replaying = false;
+        self.end_live_line(wait.line.as_deref(), cx);
         self.stop_map(true, None);
         self.release_held_keys(cx);
         self.wait_for_remap_later(wait.origin, cx);
@@ -2884,6 +3112,7 @@ impl EditorView {
         self.vim_replaying = false;
         // A command that switched vim off, or on anew, ends what it held.
         if self.sync_vim(cx) || self.vim.is_none() {
+            self.end_live_line(None, cx);
             self.release_held_keys(cx);
             return cx.notify();
         }
@@ -2904,6 +3133,7 @@ impl EditorView {
                     .source(Source::Keyboard);
                 let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
                 if !self.run_vim_once(&resume.context(context), cx) {
+                    self.end_live_line(line.as_deref(), cx);
                     self.stop_map(rest, None);
                     self.release_held_keys(cx);
                     self.wait_for_remap_later(origin, cx);
@@ -2918,6 +3148,7 @@ impl EditorView {
             }
             return self.replay_from(queue, line, origin, cx);
         }
+        self.end_live_line(line.as_deref(), cx);
         self.release_held_keys(cx);
         self.wait_for_remap_later(origin, cx);
         cx.notify();
@@ -2990,19 +3221,21 @@ impl EditorView {
                 }
             }
             fe_vim::Mode::CmdLine(_) => {
-                // A character, or any key while keys are held, goes through
-                // the `c` maps; the line's other keys are its own. A
-                // replay's [`LITERAL_NEXT`] is read before the maps, with
-                // none held ([`EditorView::marker_after_held`]): the
+                // As on the host's line: a character, and any key of a map's
+                // right side (a recursive map's `<C-x>` too), goes through
+                // the `c` maps; the line's other keys are its own, read
+                // with none held ([`EditorView::unmapped_after_held`]). A
+                // replay's [`LITERAL_NEXT`] is read before the maps too: the
                 // character after it is literal text, unmapped. A map's is
                 // a character.
                 let literal = std::mem::take(&mut self.vim_line_literal);
-                if !literal && key == VimKey::Char(LITERAL_NEXT) && !state.remap_expansion_next() {
+                let expansion = state.remap_expansion_next();
+                if !literal && key == VimKey::Char(LITERAL_NEXT) && !expansion {
                     state.record_key(key);
                     self.vim_line_literal = true;
                     return true;
                 }
-                if !literal && (matches!(key, VimKey::Char(_)) || state.remap_waiting()) {
+                if !literal && (matches!(key, VimKey::Char(_)) || expansion) {
                     return match state.remap_insert(key) {
                         RemapInsert::Wait => !state.failed(),
                         RemapInsert::Keys(keys) => keys
@@ -3019,15 +3252,21 @@ impl EditorView {
         }
     }
 
-    /// Whether `key`, the next a replay feeds, is a replay's
-    /// [`LITERAL_NEXT`] on the command line while keys are held for a longer
-    /// `c` map: they resolve first, so no map takes the marker.
-    fn marker_after_held(&self, key: VimKey) -> bool {
+    /// Whether `key`, the next a replay feeds on the command line while keys
+    /// are held for a longer `c` map, is one the host's line never asks the
+    /// maps about: a replay's [`LITERAL_NEXT`], or a key that's no
+    /// character (`<CR>`, `<BS>`, `<C-c>`) and no map's. The held keys
+    /// resolve first, as the host's line resolves them before its own keys
+    /// (on a timeout), so no map takes it.
+    fn unmapped_after_held(&self, key: VimKey) -> bool {
         let Some(state) = &self.vim else {
             return false;
         };
-        key == VimKey::Char(LITERAL_NEXT)
-            && !self.vim_line_literal
+        let unmapped = match key {
+            VimKey::Char(ch) => ch == LITERAL_NEXT && !self.vim_line_literal,
+            _ => true,
+        };
+        unmapped
             && matches!(state.mode(), fe_vim::Mode::CmdLine(_))
             && state.remap_waiting()
             && !state.remap_expansion_next()
@@ -3055,7 +3294,7 @@ impl EditorView {
                 text.push(ch);
                 return true;
             }
-            VimKey::Backspace if text.pop().is_some() => return true,
+            VimKey::Backspace if Self::line_backspace(text) => return true,
             // `<BS>` on an empty line, and `<C-c>`, cancel it. A
             // replay's `<Esc>` runs it, as in nvim (`:help c_<Esc>`).
             VimKey::Backspace | VimKey::Ctrl('c') => {
@@ -3393,10 +3632,19 @@ mod vim_indent_keys_tests;
 /// character after it is literal text. A private-use character, read as
 /// this only when a replay feeds it on the command line, before the `c`
 /// maps and once any keys held for a longer one resolve
-/// ([`EditorView::marker_after_held`]), so no map's left side takes it; a
+/// ([`EditorView::unmapped_after_held`]), so no map's left side takes it; a
 /// map's right side's is a character. One in a line recorded whole is
 /// itself written after one ([`text_keys`]).
 const LITERAL_NEXT: char = '\u{F8FF}';
+
+/// Puts `held_back`, a key [`EditorView::replay_from`] holds until the keys
+/// before it have run, back in `queue` where it was, for a replay that
+/// stops or waits there.
+fn put_back(queue: &mut VecDeque<VimKey>, held_back: Option<(VimKey, usize)>) {
+    if let Some((key, after)) = held_back {
+        queue.insert(queue.len().saturating_sub(after), key);
+    }
+}
 
 /// `chars` as the keys a recording holds for a line's text: each itself,
 /// but a [`LITERAL_NEXT`] after one, so a replay reads it as text.

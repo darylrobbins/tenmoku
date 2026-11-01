@@ -39,7 +39,7 @@ use fe_vim::{
 };
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _, FontWeight,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
+    InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, ParentElement as _, Styled as _,
     Subscription, Task, WeakEntity, Window, div, px,
 };
 
@@ -94,6 +94,14 @@ pub(super) struct VimLine {
     /// Keys a map gave are still on their way into the input: its text
     /// isn't what the editor's echo of the line says yet.
     typing: bool,
+    /// The line's last end handed the workbench a file or window command
+    /// ([`VimHostCommand`]), which a map's keys after it wait for.
+    handed: bool,
+    /// Holds the keys typed on the line while a `<Cmd>`'s keys wait for a
+    /// command they ran ([`EditorView::line_continuing`]).
+    _hold: Option<Subscription>,
+    /// The keys it held, to go on as typed once they're over.
+    held: Vec<Keystroke>,
     /// The editor previews the open `:` line as a `:s` ('inccommand'): an
     /// edit that makes it anything else tells the editor once more, which
     /// takes the preview down.
@@ -212,8 +220,10 @@ impl StatusBar {
                 if focused {
                     window.focus(&editor.focus_handle(cx), cx);
                 }
+                self.release_line_keys(window, cx);
                 cx.notify();
             }
+            (Some(_), true) => self.show_line_text(window, cx),
             _ => {}
         }
     }
@@ -276,10 +286,16 @@ impl StatusBar {
         self.line.open = Some((editor.downgrade(), prefix(kind)));
         self.line.recall = HistoryRecall::default();
         self.line.typing = false;
+        self.line.handed = false;
         self.line.substituting = false;
         self.line.complete = None;
         self.line.remap_timer = None;
-        editor.update(cx, |editor, _| editor.begin_command_line());
+        editor.update(cx, |editor, cx| {
+            editor.begin_command_line();
+            // What a `<Cmd>`'s keys did to a line that has since ended.
+            editor.take_line_text(cx);
+            editor.take_line_ended(cx);
+        });
         window.focus(&input.focus_handle(cx), cx);
         cx.notify();
     }
@@ -323,6 +339,7 @@ impl StatusBar {
     /// replayed line as this did (a replay's `<Esc>` would run it).
     fn cancel_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_line_prefix(window, cx);
+        self.release_line_keys(window, cx);
         if let Some((editor, _)) = self.line.open.take() {
             if let Some(editor) = editor.upgrade() {
                 let typed = (self.line.input.as_ref())
@@ -355,12 +372,12 @@ impl StatusBar {
             text.push(ch);
             keys.pop_front();
         }
-        if !keys.is_empty() || !line.rest.is_empty() {
+        if !keys.is_empty() || !line.rest.is_empty() || line.then.is_some() {
             self.line.typing = true;
             let bar = cx.weak_entity();
             window.defer(cx, move |window, cx| {
                 bar.update(cx, |bar, cx| {
-                    bar.type_line_keys(keys, line.rest, window, cx)
+                    bar.type_line_keys(keys, line.then, line.rest, Vec::new(), window, cx)
                 })
                 .ok();
             });
@@ -376,9 +393,10 @@ impl StatusBar {
     /// composition starting; `platform` is its text), the line holding
     /// `text`: the keys held for a longer `c` map resolve first, and the
     /// input makes the edits they come to before the platform's, so they
-    /// come before it. A key that ends the line takes the platform's edit
-    /// over: the input drops it, and it goes in once the line's keys have
-    /// run (to the editor, if the line ended).
+    /// come before it, the maps going on after a `<BS>` from the text it
+    /// leaves. A key that ends the line takes the platform's edit over: the
+    /// input drops it, and it goes in once the line's keys have run (to the
+    /// editor, if the line ended).
     fn line_settle(
         &mut self,
         text: &str,
@@ -392,20 +410,29 @@ impl StatusBar {
         else {
             return settled;
         };
-        let mut len = text.chars().count();
-        while editor.read(cx).remap_line_waiting() {
-            let line = editor.update(cx, |editor, _| editor.remap_line_timeout());
+        // The line as the edits leave it.
+        let mut line_text = text.to_owned();
+        let mut more = None;
+        loop {
+            let line = match more.take() {
+                Some(keys) => {
+                    editor.update(cx, |editor, _| editor.remap_line_more(keys, &line_text))
+                }
+                None if editor.read(cx).remap_line_waiting() => {
+                    editor.update(cx, |editor, _| editor.remap_line_timeout())
+                }
+                None => break,
+            };
             let mut keys: VecDeque<VimKey> = line.typed.into_iter().map(|(key, _)| key).collect();
             let mut ends = !line.rest.is_empty();
             while !ends && let Some(&key) = keys.front() {
                 match key {
                     VimKey::Char(ch) => {
                         settled.edits.push(SettleEdit::Insert(ch.to_string()));
-                        len += 1;
+                        line_text.push(ch);
                     }
-                    VimKey::Backspace if len > 0 => {
+                    VimKey::Backspace if EditorView::line_backspace(&mut line_text) => {
                         settled.edits.push(SettleEdit::Backspace);
-                        len -= 1;
                     }
                     VimKey::Backspace | VimKey::Enter | VimKey::Esc => ends = true,
                     VimKey::Ctrl('j' | 'c') => ends = true,
@@ -417,18 +444,19 @@ impl StatusBar {
             }
             if ends {
                 // The platform's text follows the keys, as typed after them.
-                keys.extend(platform.chars().map(VimKey::Char));
+                let after = platform.chars().map(VimKey::Char).collect();
                 settled.swallow = true;
                 self.line.typing = true;
                 let bar = cx.weak_entity();
                 window.defer(cx, move |window, cx| {
                     bar.update(cx, |bar, cx| {
-                        bar.type_line_keys(keys, line.rest, window, cx)
+                        bar.type_line_keys(keys, line.then, line.rest, after, window, cx)
                     })
                     .ok();
                 });
                 break;
             }
+            more = line.then;
         }
         settled
     }
@@ -478,27 +506,80 @@ impl StatusBar {
             }
             let line = editor.update(cx, |editor, _| editor.remap_line_timeout());
             let keys = line.typed.into_iter().map(|(key, _)| key).collect();
-            self.type_line_keys(keys, line.rest, window, cx);
+            self.type_line_keys(keys, line.then, line.rest, Vec::new(), window, cx);
         }
     }
 
     /// Types `keys`, which maps gave, into the line, as the line takes
-    /// them: text goes in, `<BS>` takes a char out, and `<CR>`, `<Esc>`
-    /// and `<C-c>` end it, the keys after it then the editor's with `rest`.
+    /// them: text goes in, `<BS>` takes a grapheme or the selection out,
+    /// and `<CR>`, `<Esc>`, `<C-c>` and `<BS>` on an empty line end it,
+    /// every key after it then the editor's with `rest`, as the mode it
+    /// left takes them, after the file or window command a submit handed
+    /// the workbench. `then`, the keys after a last `<BS>` (see
+    /// [`fe_gpui::EditorView::remap_line_more`]), are matched once it's
+    /// done, from the text it leaves; then `after`, typed. With the line
+    /// still open, `rest` is a `<Cmd>`'s and the keys after it: they go on
+    /// from the text the line shows, and the line shows what they leave.
     /// Keys the line has no use for are dropped.
     fn type_line_keys(
         &mut self,
         mut keys: VecDeque<VimKey>,
+        mut then: Option<Vec<VimKey>>,
         mut rest: Vec<VimKey>,
+        mut after: Vec<VimKey>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let editor = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade());
         self.line.typing = false;
-        while let Some(key) = keys.pop_front() {
-            let Some(input) = self.line.input.clone().filter(|_| self.line.open.is_some()) else {
-                break;
-            };
+        self.line.handed = false;
+        loop {
+            self.type_line_some(&mut keys, window, cx);
+            let input = (self.line.input.clone()).filter(|_| self.line.open.is_some());
+            match (then.take(), &editor, input) {
+                (Some(more), Some(editor), Some(input)) => {
+                    let text = input.read(cx).text().to_owned();
+                    let line = editor.update(cx, |editor, _| editor.remap_line_more(more, &text));
+                    // They may leave keys held for a longer map.
+                    self.arm_remap_timer(editor, window, cx);
+                    keys = line.typed.into_iter().map(|(key, _)| key).collect();
+                    then = line.then;
+                    rest.extend(line.rest);
+                }
+                // The `<BS>` cancelled the line: the keys after it are the
+                // editor's.
+                (Some(more), ..) => keys.extend(more),
+                (None, ..) if !after.is_empty() => keys.extend(after.drain(..)),
+                (None, ..) => break,
+            }
+        }
+        // The line ended on a key: whatever is left of the keys is the
+        // editor's now. With the line open, it's nothing but a `<Cmd>`'s.
+        rest.splice(0..0, keys);
+        let Some(editor) = editor.filter(|_| !rest.is_empty()) else {
+            return;
+        };
+        let line = (self.line.input.as_ref())
+            .filter(|_| self.line.open.is_some())
+            .map(|input| input.read(cx).text().to_owned());
+        let handed = std::mem::take(&mut self.line.handed);
+        editor.update(cx, |editor, cx| {
+            editor.replay_line_rest(rest, line, handed, cx)
+        });
+        self.show_line_text(window, cx);
+    }
+
+    /// [`StatusBar::type_line_keys`]' keys, up to one that ends the line.
+    fn type_line_some(
+        &mut self,
+        keys: &mut VecDeque<VimKey>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        while self.line.open.is_some()
+            && let Some(input) = self.line.input.clone()
+            && let Some(key) = keys.pop_front()
+        {
             match key {
                 VimKey::Char(ch) => input.update(cx, |input, cx| {
                     input.insert(ch.encode_utf8(&mut [0; 4]), cx)
@@ -516,12 +597,77 @@ impl StatusBar {
                 _ => {}
             }
         }
-        // The line ended on a key: whatever is left of the keys is the
-        // editor's now. With the line open, it's nothing but a `<Cmd>`'s.
-        rest.splice(0..0, keys);
-        if let Some(editor) = editor.filter(|_| !rest.is_empty()) {
-            editor.update(cx, |editor, cx| editor.replay_line_rest(rest, cx));
+    }
+
+    /// Shows what a `<Cmd>`'s keys did to the open line, once they've run:
+    /// the text they left it ([`EditorView::take_line_text`]), or, if they
+    /// ended it, the line they opened since, if any
+    /// ([`EditorView::take_line_ended`]). While they wait for a command they
+    /// ran, keys typed on the line wait too.
+    fn show_line_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = (self.line.open.as_ref()).and_then(|(editor, _)| editor.upgrade());
+        let (Some(editor), Some(input)) = (editor, self.line.input.clone()) else {
+            return;
+        };
+        if editor.update(cx, |editor, cx| editor.take_line_ended(cx)) {
+            let focused = input.focus_handle(cx).is_focused(window);
+            self.line.open = None;
+            cx.notify();
+            match open_kind(editor.read(cx)) {
+                Some(kind) => {
+                    self.open_line(kind, &editor, window, cx);
+                    self.preview_line(cx);
+                }
+                None if focused => window.focus(&editor.focus_handle(cx), cx),
+                None => {}
+            }
+        } else if let Some(text) = editor.update(cx, |editor, cx| editor.take_line_text(cx)) {
+            input.update(cx, |input, cx| input.set_text(text, cx));
+            self.preview_line(cx);
         }
+        match editor.update(cx, |editor, cx| editor.line_continuing(cx)) {
+            true => self.hold_line_keys(cx),
+            false => self.release_line_keys(window, cx),
+        }
+    }
+
+    /// Holds the keys typed on the line from now, until
+    /// [`StatusBar::release_line_keys`]: they can't come between the keys a
+    /// `<Cmd>` left, which wait for a command they ran.
+    fn hold_line_keys(&mut self, cx: &mut Context<Self>) {
+        if self.line._hold.is_some() {
+            return;
+        }
+        let bar = cx.weak_entity();
+        self.line._hold = Some(cx.intercept_keystrokes(move |event, window, cx| {
+            let keystroke = event.keystroke.clone();
+            (bar.update(cx, |bar, cx| bar.hold_line_key(keystroke, window, cx))).ok();
+        }));
+    }
+
+    fn hold_line_key(&mut self, keystroke: Keystroke, window: &Window, cx: &mut Context<Self>) {
+        let focused = (self.line.input.as_ref())
+            .filter(|_| self.line.open.is_some())
+            .is_some_and(|input| input.focus_handle(cx).is_focused(window));
+        if focused {
+            self.line.held.push(keystroke);
+            cx.stop_propagation();
+        }
+    }
+
+    /// Stops holding the line's keys, and types those held, as typed, once
+    /// this update is over.
+    fn release_line_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.line._hold = None;
+        let held = std::mem::take(&mut self.line.held);
+        if held.is_empty() {
+            return;
+        }
+        window.defer(cx, move |window, cx| {
+            for keystroke in held {
+                window.dispatch_keystroke(keystroke, cx);
+            }
+        });
     }
 
     /// Shows in its editor what the open `/` or `?` line would land on, or
@@ -603,6 +749,7 @@ impl StatusBar {
         let command = submit
             .then(|| editor.update(cx, |editor, _| editor.take_vim_host_command()))
             .flatten();
+        self.line.handed = command.is_some();
         if let Some(command) = command {
             cx.emit(VimHostCommand {
                 editor: editor.downgrade(),

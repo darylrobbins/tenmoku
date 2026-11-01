@@ -280,3 +280,361 @@ fn a_cmd_map_runs_its_command(cx: &mut TestAppContext) {
     // As in nvim, a `<Cmd>` leaves the command line open.
     assert_eq!(line(&workbench, cx), Some((':', String::new())));
 }
+
+fn cmap(from: &str, to: &str) -> Remap {
+    Remap {
+        recursive: true,
+        ..cnoremap(from, to)
+    }
+}
+
+fn nnoremap(from: &str, to: &str) -> Remap {
+    Remap {
+        modes: vec![RemapMode::Normal],
+        ..cnoremap(from, to)
+    }
+}
+
+fn register(name: char, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| {
+        let registers = fe_gpui::vim_registers(cx)?;
+        registers.get(name).map(|register| register.text.clone())
+    })
+}
+
+/// Text no typed key made, as a recording has it: each character after the
+/// literal marker a replay reads unmapped.
+fn literal(text: &str) -> String {
+    text.chars().flat_map(|ch| ['\u{F8FF}', ch]).collect()
+}
+
+/// A map's `<BS>` on an empty line cancels it, and every key after it is
+/// the editor's: both `x`s delete.
+#[gpui::test]
+fn a_map_s_cancelling_backspace_keeps_every_key_after_it(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("jk", "<BS>xx")]);
+    cx.simulate_keystrokes(": j k");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "a");
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.vim_mode()),
+        Some("normal")
+    );
+}
+
+/// The keys after a recursive map's cancelling `<BS>` are matched against
+/// the maps of the mode it leaves, normal's.
+#[gpui::test]
+fn keys_after_a_map_s_cancel_match_the_mode_it_leaves(cx: &mut TestAppContext) {
+    let maps = vec![cmap("jk", "<BS>Q"), nnoremap("Q", "x")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(": j k");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "aa");
+}
+
+/// The cancel is recorded once, in the map's keys: a replay cancels and
+/// deletes as the line did.
+#[gpui::test]
+fn a_recorded_mapped_cancel_replays_identically(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("jk", "<BS>x")]);
+    cx.simulate_keystrokes("q a : j k q");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "aa");
+    assert_eq!(register('a', cx).as_deref(), Some(":jk"));
+    cx.simulate_keystrokes("@ a");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "a");
+}
+
+/// A map's `<CR>` that submits `:w` hands the write to the workbench, and
+/// the map's keys after it wait for it: the file has the text from before
+/// the `x`.
+#[gpui::test]
+fn keys_after_a_mapped_submit_wait_for_its_write(cx: &mut TestAppContext) {
+    let (dir, workbench, editor, cx) = opened(cx, vec![cnoremap("jk", "<CR>x")]);
+    cx.simulate_keystrokes("x : w j k");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    let saved = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+    assert_eq!(saved, "aa");
+    assert_eq!(text(&editor, cx), "a");
+}
+
+/// A `<Cmd>`'s keys type into the line as it shows, and it shows what they
+/// typed; Enter then submits it.
+#[gpui::test]
+fn a_cmd_map_s_keys_type_into_the_visible_line(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("zz", "<Cmd>s/a/b/<CR>x/")]);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "baa");
+    assert_eq!(line(&workbench, cx), Some((':', "s/a/x/".to_owned())));
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "bxa");
+}
+
+/// A `<Cmd>`'s keys that end the line submit the text it showed with
+/// theirs, and a recording has the map's keys once, as typed.
+#[gpui::test]
+fn a_cmd_map_s_keys_submit_the_visible_line(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("zz", "<Cmd>s/a/b/<CR>x/<CR>")]);
+    cx.simulate_keystrokes("q a :");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z q");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "bxa");
+    assert_eq!(register('a', cx).as_deref(), Some(":s/a/zz"));
+    cx.simulate_keystrokes("@ a");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "bxb", "the `:s/a/x/` finds no `a`");
+}
+
+/// A `<Cmd>`'s keys run on the line's text, taking it out and cancelling
+/// it on an empty line, then go on in the mode that leaves: the `x` deletes.
+#[gpui::test]
+fn a_cmd_map_s_backspaces_run_on_the_visible_line(cx: &mut TestAppContext) {
+    let maps = vec![cnoremap("zz", "<Cmd>s/a/b/<CR><BS><BS><BS>x")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("ab");
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "aa");
+}
+
+/// The keys after a `<Cmd>fe:…<CR>` wait for the command, then type into
+/// the line as it shows.
+#[gpui::test]
+fn a_cmd_map_s_keys_after_an_fe_command_type_into_the_line(cx: &mut TestAppContext) {
+    let maps = vec![cnoremap("zz", "<Cmd>fe:editor.save<CR>x/")];
+    let (dir, workbench, _editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes("x :");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    let saved = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+    assert_eq!(saved, "aa");
+    assert_eq!(line(&workbench, cx), Some((':', "s/a/x/".to_owned())));
+}
+
+/// A replayed `<CR>` is the line's, as the typed one is: the held `j`
+/// resolves first, and the map `j<CR>` doesn't take it.
+#[gpui::test]
+fn enter_resolves_a_held_prefix_live_and_in_a_replay(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("j<CR>", "Z")]);
+    cx.simulate_keystrokes("q a :");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("j enter q");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "jaa");
+    cx.simulate_keystrokes("@ a");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "jja");
+}
+
+/// A recursive map's special key goes through the maps, live and in a
+/// replay.
+#[gpui::test]
+fn a_recursive_map_s_special_key_maps_live_and_in_a_replay(cx: &mut TestAppContext) {
+    let maps = vec![cmap("zz", "x<C-x>"), cnoremap("<C-x>", "y")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes("q a :");
+    cx.simulate_input("s/a/");
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(typed(&workbench, cx), "s/a/xy");
+    cx.simulate_keystrokes("enter q");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "xyaa");
+    cx.simulate_keystrokes("@ a");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "xyxya");
+}
+
+/// Edits the maps never saw, a `<BS>`, a paste and a recall, are recorded
+/// before the map's keys that end the line, which a replay then submits.
+#[gpui::test]
+fn bypassed_edits_are_recorded_before_a_map_that_ends_the_line(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx, vec![cnoremap("jk", "<CR>")]);
+    let replays = |name: char, before: &str, after: &str, cx: &mut VisualTestContext| {
+        assert_eq!(text(&editor, cx), after, "@{name}");
+        cx.simulate_keystrokes("u");
+        draw(cx);
+        assert_eq!(text(&editor, cx), before, "@{name}");
+        cx.simulate_keystrokes(&format!("@ {name}"));
+        draw(cx);
+        assert_eq!(line(&workbench, cx), None);
+        assert_eq!(text(&editor, cx), after, "@{name}");
+    };
+    // A `<BS>`.
+    cx.simulate_keystrokes("q a :");
+    cx.simulate_input("s/a/b/x");
+    cx.simulate_keystrokes("backspace j k q");
+    draw(cx);
+    assert_eq!(register('a', cx).as_deref(), Some(":s/a/b/x<BS>jk"));
+    replays('a', "aaa", "baa", cx);
+    // A `<BS>` that takes out a held `j`, which goes in first.
+    cx.simulate_keystrokes("q b :");
+    cx.simulate_input("s/a/c/");
+    cx.simulate_keystrokes("j backspace j k q");
+    draw(cx);
+    assert_eq!(register('b', cx).as_deref(), Some(":s/a/c/j<BS>jk"));
+    replays('b', "baa", "bca", cx);
+    // A paste.
+    cx.simulate_keystrokes("q c :");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("s/a/d/".into()));
+    crate::tests::find_bar::run("text_input.paste", cx);
+    cx.simulate_keystrokes("j k q");
+    draw(cx);
+    let pasted = format!(":{}jk", literal("s/a/d/"));
+    assert_eq!(register('c', cx), Some(pasted.clone()));
+    replays('c', "bca", "bcd", cx);
+    // A recall of the last line, the paste's.
+    cx.simulate_keystrokes("u q d : up j k q");
+    draw(cx);
+    assert_eq!(register('d', cx), Some(pasted));
+    replays('d', "bca", "bcd", cx);
+}
+
+fn paste(string: &str, cx: &mut VisualTestContext) {
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(string.into()));
+    crate::tests::find_bar::run("text_input.paste", cx);
+    draw(cx);
+}
+
+/// A map's `<BS>` takes out what the line's does, a grapheme of more than
+/// one character: the second `<BS>` cancels the line, and the `x` after it
+/// is the editor's, not matched against the `c` maps.
+#[gpui::test]
+fn a_map_s_backspace_takes_a_grapheme_out(cx: &mut TestAppContext) {
+    let maps = vec![cmap("zz", "<BS><BS>x"), cnoremap("x", "Y")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(":");
+    paste("e\u{301}", cx);
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "aa");
+}
+
+/// A map's `<BS>` takes the selection out, as the line's does.
+#[gpui::test]
+fn a_map_s_backspace_takes_the_selection_out(cx: &mut TestAppContext) {
+    let maps = vec![cmap("zz", "<BS><BS>x"), cnoremap("x", "Y")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("ab");
+    let bar = workbench.read_with(cx, |workbench, _| workbench.status_bar().clone());
+    let input = bar.read_with(cx, |bar, _| bar.line_input().cloned().unwrap());
+    input.update(cx, |input, cx| input.select_all(cx));
+    cx.simulate_keystrokes("z z");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    assert_eq!(text(&editor, cx), "aa");
+}
+
+/// Keys typed on the line while a `<Cmd>`'s keys wait for the write they
+/// ran wait too, and go in after them.
+#[gpui::test]
+fn keys_typed_while_a_cmd_waits_go_in_after_it(cx: &mut TestAppContext) {
+    let (dir, workbench, _editor, cx) = opened(cx, vec![cnoremap("zz", "<Cmd>w<CR>x/")]);
+    cx.simulate_keystrokes("x :");
+    cx.simulate_input("s/a/");
+    // One go: the write is still on its way when `a` and `b` are typed.
+    cx.simulate_keystrokes("z z a b");
+    draw(cx);
+    let saved = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+    assert_eq!(saved, "aa");
+    assert_eq!(line(&workbench, cx), Some((':', "s/a/x/ab".to_owned())));
+}
+
+/// A `<Cmd>`'s keys that cancel the line and open another: the bar shows
+/// the new one, its prefix and its text.
+#[gpui::test]
+fn a_cmd_s_keys_that_open_another_line_show_it(cx: &mut TestAppContext) {
+    let maps = vec![cnoremap("zz", "<Cmd>s/a/b/<CR><BS>/a")];
+    let (_dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(": z z");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "baa");
+    assert_eq!(line(&workbench, cx), Some(('/', "a".to_owned())));
+    let preview = editor.read_with(cx, |editor, _| editor.search_preview());
+    assert_eq!(preview, Some(1..2), "the new line previews its search");
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+    let caret = editor.read_with(cx, |editor, _| editor.model().selections()[0].range.start);
+    assert_eq!(caret, 1, "the search landed on the `a` after `b`");
+}
+
+/// Keys a map's `<BS>` leaves that are held for a longer map wait
+/// `CHORD_TIMEOUT` as typed ones do, then go in.
+#[gpui::test]
+fn a_prefix_after_a_map_s_backspace_times_out(cx: &mut TestAppContext) {
+    let (_dir, workbench, _editor, cx) = opened(cx, vec![cmap("zz", "<BS>j"), cnoremap("jk", "Z")]);
+    cx.simulate_keystrokes(": a z z");
+    draw(cx);
+    assert_eq!(typed(&workbench, cx), "");
+    time_out(cx);
+    assert_eq!(typed(&workbench, cx), "j");
+}
+
+/// A `<Cmd>`'s keys that close the line, open another and then wait for a
+/// command: the bar shows the new line once they're over, with what they
+/// typed into it, and keys typed meanwhile go in after them.
+#[gpui::test]
+fn a_cmd_s_reopened_line_waits_for_the_keys_after_it(cx: &mut TestAppContext) {
+    let maps = vec![
+        cnoremap("zz", "<Cmd>s/a/b/<CR><BS>/a<Cmd>fe:editor.save<CR>b"),
+        cnoremap("yy", "<Cmd>s/a/b/<CR><BS>/a<Cmd>w<CR>b"),
+    ];
+    let (dir, workbench, editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(": z z");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "baa");
+    assert_eq!(line(&workbench, cx), Some(('/', "ab".to_owned())));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    // One go: the write is still on its way when `c` is typed.
+    cx.simulate_keystrokes(": y y c");
+    draw(cx);
+    assert_eq!(text(&editor, cx), "bba");
+    let saved = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+    assert_eq!(saved, "bba");
+    assert_eq!(line(&workbench, cx), Some(('/', "abc".to_owned())));
+}
+
+/// A `<Cmd>`'s keys that reopen a line, then fail at a command: the new
+/// line shows what they typed into it before.
+#[gpui::test]
+fn a_cmd_s_reopened_line_keeps_its_text_when_a_command_fails(cx: &mut TestAppContext) {
+    let maps = vec![
+        cnoremap("zz", "<Cmd>s/a/b/<CR><BS>/a<Cmd>fe:no.such_command<CR>b"),
+        cnoremap("yy", "<Cmd>s/a/b/<CR><BS>/a<Cmd>w<CR>b"),
+    ];
+    let (dir, workbench, _editor, cx) = opened(cx, maps);
+    cx.simulate_keystrokes(": z z");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), Some(('/', "a".to_owned())));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    // The file's folder is gone, so the write fails.
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    cx.simulate_keystrokes(": y y");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), Some(('/', "a".to_owned())));
+}

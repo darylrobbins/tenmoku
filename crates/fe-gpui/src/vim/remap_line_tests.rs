@@ -275,3 +275,159 @@ fn a_line_recorded_whole_keeps_a_marker_char(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("@ a");
     assert_eq!(text(&view, cx), "\u{F8FF}\u{F8FF}a");
 }
+
+fn cmap(from: &str, to: &str) -> Remap {
+    Remap {
+        recursive: true,
+        ..cnoremap(from, to)
+    }
+}
+
+/// A replay's `<CR>` is the line's own, as the host's line's is: the held
+/// `j` resolves first, and the map `j<CR>` doesn't take it.
+#[gpui::test]
+fn a_replayed_enter_resolves_a_held_prefix_first(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("j<CR>", "Z")]);
+    set_register('a', ":s/a/j\r", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "jaa");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.vim_mode()),
+        Some("normal")
+    );
+}
+
+/// A recursive map's `<C-x>` goes through the maps in a replay, as it does
+/// on the host's line.
+#[gpui::test]
+fn a_recursive_map_s_special_key_is_mapped_in_a_replay(cx: &mut TestAppContext) {
+    let maps = vec![cmap("zz", "x<C-x>"), cnoremap("<C-x>", "y")];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    cx.simulate_keystrokes(":");
+    view.update(cx, |view, _| view.remap_line_key('z'));
+    let keys = view.update(cx, |view, _| view.remap_line_key('z')).unwrap();
+    let live: Vec<VimKey> = keys.typed.into_iter().map(|(key, _)| key).collect();
+    assert_eq!(live, [VimKey::Char('x'), VimKey::Char('y')]);
+    cx.simulate_keystrokes("escape");
+    set_register('a', ":s/a/zz/\r", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "xyaa");
+}
+
+/// The keys after a `<Cmd>` go on from the text the host's line shows, and
+/// leave it what they typed, once, for the host to show.
+#[gpui::test]
+fn a_cmd_s_keys_go_on_from_the_host_s_line(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("zz", "<Cmd>s/a/b/<CR>x/")]);
+    cx.simulate_keystrokes(":");
+    view.update(cx, |view, _| view.remap_line_key('z'));
+    let keys = view.update(cx, |view, _| view.remap_line_key('z')).unwrap();
+    assert_eq!(keys.typed, []);
+    view.update(cx, |view, cx| {
+        view.replay_line_rest(keys.rest, Some("s/a/".into()), false, cx)
+    });
+    assert_eq!(text(&view, cx), "baa");
+    let shown = view.update(cx, |view, cx| view.take_line_text(cx));
+    assert_eq!(shown.as_deref(), Some("s/a/x/"));
+    assert_eq!(view.update(cx, |view, cx| view.take_line_text(cx)), None);
+    // The echo is the line shown: none of it is recorded as typed.
+    assert_eq!(
+        view.read_with(cx, |view, _| view.vim_line_echo.clone()),
+        Some("s/a/x/".to_owned())
+    );
+}
+
+/// Matching stops at a map's `<BS>`, for the line to take it out: the
+/// keys after it go on from the text it leaves, and once a `<BS>` finds the
+/// line empty, they're the editor's, unmatched against the `c` maps.
+#[gpui::test]
+fn a_map_s_backspace_waits_for_the_line_it_leaves(cx: &mut TestAppContext) {
+    let maps = vec![cnoremap("jk", "a<BS><BS>xx"), cnoremap("x", "Y")];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    cx.simulate_keystrokes(":");
+    view.update(cx, |view, _| view.remap_line_key('j'));
+    let keys = view.update(cx, |view, _| view.remap_line_key('k')).unwrap();
+    let typed: Vec<VimKey> = keys.typed.into_iter().map(|(key, _)| key).collect();
+    assert_eq!(typed, [VimKey::Char('a'), VimKey::Backspace]);
+    let then = keys.then.expect("keys after the <BS>");
+    assert_eq!(
+        then,
+        [VimKey::Backspace, VimKey::Char('x'), VimKey::Char('x')]
+    );
+    // The line took the `a` out.
+    let keys = view.update(cx, |view, _| view.remap_line_more(then, ""));
+    let typed: Vec<VimKey> = keys.typed.into_iter().map(|(key, _)| key).collect();
+    assert_eq!(typed, [VimKey::Backspace]);
+    assert_eq!(keys.then, Some(vec![VimKey::Char('x'), VimKey::Char('x')]));
+}
+
+/// The hidden line's `<BS>` takes a grapheme out, as the host's does.
+#[gpui::test]
+fn a_replayed_backspace_takes_a_grapheme_out(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("zz", "<BS><BS>x")]);
+    set_register('a', ":e\u{301}zz", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "aa");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.vim_mode()),
+        Some("normal")
+    );
+}
+
+/// A held prefix that a replay's `<CR>` or `<BS>` resolves, and which
+/// cancels the line, takes the key with it, as the host's line does: no
+/// normal map gets it.
+#[gpui::test]
+fn a_key_after_a_held_prefix_that_ends_the_line_is_dropped(cx: &mut TestAppContext) {
+    let maps = vec![
+        cnoremap("j", "<BS>"),
+        cnoremap("jk", "Z"),
+        Remap {
+            modes: vec![RemapMode::Normal],
+            ..cnoremap("<CR>", "x")
+        },
+        Remap {
+            modes: vec![RemapMode::Normal],
+            ..cnoremap("<BS>", "x")
+        },
+    ];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    for keys in [":j\r", ":j<BS>"] {
+        set_register('a', keys, cx);
+        cx.simulate_keystrokes("@ a");
+        assert_eq!(text(&view, cx), "aaa", "{keys:?}");
+        assert_eq!(
+            view.read_with(cx, |view, _| view.vim_mode()),
+            Some("normal")
+        );
+        // The dropped key was the replay's last: a key typed next is the
+        // user's, which a recording takes.
+        cx.simulate_keystrokes("q b l q");
+        assert_eq!(register('b', cx).as_deref(), Some("l"), "{keys:?}");
+    }
+}
+
+/// Held keys that a replay's `<CR>` resolves into maps that recurse stop
+/// the replay with E223: the `<CR>` doesn't submit, nor does the `x` after
+/// it run.
+#[gpui::test]
+fn a_held_prefix_that_recurses_stops_the_replay(cx: &mut TestAppContext) {
+    let maps = vec![
+        cmap("j", "k"),
+        cmap("k", "j"),
+        cnoremap("jj", "X"),
+        cnoremap("kk", "Y"),
+    ];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    set_register('a', ":j\rx", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "aaa");
+    let message = view.read_with(cx, |view, _| {
+        view.vim_state()
+            .and_then(|state| state.message().map(str::to_owned))
+    });
+    assert!(
+        message.as_deref().is_some_and(|m| m.contains("E223")),
+        "{message:?}"
+    );
+}
