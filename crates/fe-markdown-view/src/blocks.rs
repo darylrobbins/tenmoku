@@ -52,6 +52,9 @@ pub struct ElementOptions {
     /// Told where each code block is drawn, at prepaint: see
     /// [`CodeBoundsFn`].
     pub on_code_bounds: Option<CodeBoundsFn>,
+    /// Draws a code block's body in place of its code text: see
+    /// [`CodeBodyFn`].
+    pub code_body: Option<CodeBodyFn>,
 }
 
 impl Default for ElementOptions {
@@ -62,6 +65,7 @@ impl Default for ElementOptions {
             on_link: None,
             code_header: None,
             on_code_bounds: None,
+            code_body: None,
         }
     }
 }
@@ -73,6 +77,30 @@ pub type CodeHeaderFn = Rc<dyn Fn(CodeHeader<'_>, &mut Window, &mut App) -> AnyE
 /// blocks, as [`CodeHeader::index`] counts it, and its bounds in the
 /// window, header included: see [`ElementOptions::on_code_bounds`].
 pub type CodeBoundsFn = Rc<dyn Fn(usize, Bounds<Pixels>, &mut Window, &mut App)>;
+
+/// Draws a code block's body in place of its code text, or gives `None`
+/// for the code as written: see [`ElementOptions::code_body`]. What it
+/// gives is laid out in the block's sideways-scrolling body, with the
+/// body's vertical padding but none at its sides, so its rows can be
+/// tinted from edge to edge; it pads them itself.
+pub type CodeBodyFn = Rc<dyn Fn(CodeBody<'_>, &mut Window, &mut App) -> Option<AnyElement>>;
+
+/// A code block, for a host drawing its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodeBody<'a> {
+    /// Its place among the document's code blocks, as
+    /// [`CodeHeader::index`] counts it.
+    pub index: usize,
+    /// The fence's info string; empty for an indented block.
+    pub info: &'a str,
+    /// The fe-syntax language the info string names.
+    pub language: Option<&'static str>,
+    /// The code, with `\n` line endings.
+    pub code: &'a str,
+    /// Its highlights, by byte range of `code`, in order: for
+    /// [`MarkdownStyle::code_runs_in`].
+    pub highlights: &'a [fe_syntax::HighlightSpan],
+}
 
 /// Whether a document's images are drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,6 +187,7 @@ impl RenderOnce for DocumentElement {
             alt_text: self.options.images == Images::AltText,
             code_header: self.options.code_header.clone(),
             on_code_bounds: self.options.on_code_bounds.clone(),
+            code_body: self.options.code_body.clone(),
         };
         let blocks: Vec<_> = with_element(element, || {
             (self.document.blocks.iter().enumerate())
@@ -194,6 +223,7 @@ pub(crate) struct Element {
     pub(crate) alt_text: bool,
     code_header: Option<CodeHeaderFn>,
     on_code_bounds: Option<CodeBoundsFn>,
+    code_body: Option<CodeBodyFn>,
 }
 
 thread_local! {
@@ -337,9 +367,18 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                     };
                     header(block, cx.window, cx.app)
                 });
-            let code = code.strip_suffix('\n').unwrap_or(code);
-            let runs = style.code_runs(code, highlights);
-            crate::PaintedRuns::record(cx.app, code, &runs);
+            let body = (element.as_ref())
+                .and_then(|element| element.code_body.as_ref())
+                .and_then(|body| {
+                    let block = CodeBody {
+                        index: id,
+                        info,
+                        language: *language,
+                        code,
+                        highlights,
+                    };
+                    body(block, cx.window, cx.app)
+                });
             let block = div()
                 .id(("md-code", id))
                 .debug_selector(|| format!("md-code-{id}"))
@@ -355,18 +394,23 @@ pub(crate) fn render(block: &Block, first: bool, cx: &mut RenderCx) -> AnyElemen
                 .when(element.is_some(), |this| this.restrict_scroll_to_axis())
                 .when(header.is_none(), |this| this.rounded(px(4.)))
                 .bg(style.code_background)
-                .p(px(16.))
+                .py(px(16.))
+                .when(body.is_none(), |this| this.px(px(16.)))
                 .font_family(style.code_font_family.clone())
                 .font_features(style.code_font_features.clone())
                 .text_size(style.code_font_size)
                 .line_height(relative(style.code_line_height))
                 .whitespace_nowrap()
-                .child(
+                .child(body.unwrap_or_else(|| {
+                    let code = code.strip_suffix('\n').unwrap_or(code);
+                    let runs = style.code_runs(code, highlights);
+                    crate::PaintedRuns::record(cx.app, code, &runs);
                     div()
                         .debug_selector(|| format!("md-code-{id}-text"))
                         .flex_none()
-                        .child(StyledText::new(code.to_owned()).with_runs(runs)),
-                );
+                        .child(StyledText::new(code.to_owned()).with_runs(runs))
+                        .into_any_element()
+                }));
             let on_bounds = (element.as_ref())
                 .and_then(|element| element.on_code_bounds.clone())
                 .map(|on_bounds| {

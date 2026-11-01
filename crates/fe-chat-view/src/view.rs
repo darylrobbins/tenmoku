@@ -968,7 +968,8 @@ impl ChatView {
             let document = self.documents.reply(index, &shown.reply, !streaming);
             let view = cx.weak_entity();
             let spans = self.code_spans.clone();
-            reply::reply_element(index, &document, &style, streaming, *ui, view, spans)
+            let tints = reply::DiffTints::new(self.composer.read(cx).theme());
+            reply::reply_element(index, &document, &style, streaming, *ui, tints, view, spans)
         };
         let answered_by = shown.answered_by.clone().map(|model| {
             div()

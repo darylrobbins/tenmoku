@@ -19,7 +19,10 @@
 //!   shown as their alt text, link clicks go to a callback, and a host can
 //!   draw a header over each code block and be told where each code block
 //!   is drawn ([`ElementOptions::on_code_bounds`]), to pin a copy of its
-//!   header while the block is scrolled under the top of its view.
+//!   header while the block is scrolled under the top of its view. A host
+//!   can also draw a code block's body in place of its code text
+//!   ([`ElementOptions::code_body`]), such as an edit's sections as a
+//!   diff, keeping syntax colours with [`MarkdownStyle::code_runs_in`].
 //!   [`ElementOptions::default`] shows images as their alt text and has no
 //!   callbacks.
 //!
@@ -42,7 +45,8 @@ mod view;
 use gpui::{App, Global, TextRun};
 
 pub use blocks::{
-    CodeBoundsFn, CodeHeader, CodeHeaderFn, ElementOptions, Images, document_element,
+    CodeBody, CodeBodyFn, CodeBoundsFn, CodeHeader, CodeHeaderFn, ElementOptions, Images,
+    document_element,
 };
 pub use compact::markdown_element;
 pub use style::MarkdownStyle;

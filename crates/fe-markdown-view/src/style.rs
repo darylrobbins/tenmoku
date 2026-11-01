@@ -1,6 +1,8 @@
 //! The preview's colours, fonts and sizes, from the editor's theme and the
 //! chrome's.
 
+use std::ops::Range;
+
 use fe_gpui::EditorTheme;
 use fe_syntax::{Highlight, HighlightSpan};
 use gpui::{Font, FontWeight, Hsla, Pixels, SharedString, TextRun, font, px};
@@ -116,8 +118,23 @@ impl MarkdownStyle {
     /// order; a span overlapping the one before is drawn from where that
     /// one ends.
     pub fn code_runs(&self, code: &str, highlights: &[HighlightSpan]) -> Vec<TextRun> {
+        self.code_runs_in(code, highlights, 0..code.len())
+    }
+
+    /// The runs for `code[range]` alone, as [`MarkdownStyle::code_runs`]
+    /// draws that stretch of `code`: for a host laying a block's lines out
+    /// again in its own rows, keeping their syntax colours. `highlights`
+    /// are by byte range of the whole of `code`; the runs cover
+    /// `range.len()` bytes, `range` cut to `code`'s length.
+    pub fn code_runs_in(
+        &self,
+        code: &str,
+        highlights: &[HighlightSpan],
+        range: Range<usize>,
+    ) -> Vec<TextRun> {
+        let last = range.end.min(code.len());
         let mut runs = Vec::new();
-        let mut at = 0;
+        let mut at = range.start.min(last);
         let mut push = |len: usize, color: Hsla| {
             if len > 0 {
                 runs.push(TextRun {
@@ -131,8 +148,8 @@ impl MarkdownStyle {
             }
         };
         for span in highlights {
-            let start = span.range.start.max(at).min(code.len());
-            let end = span.range.end.min(code.len());
+            let start = span.range.start.max(at).min(last);
+            let end = span.range.end.min(last);
             if start >= end || !code.is_char_boundary(start) || !code.is_char_boundary(end) {
                 continue;
             }
@@ -141,10 +158,67 @@ impl MarkdownStyle {
             push(end - start, color);
             at = end;
         }
-        push(code.len() - at, self.foreground);
+        push(last - at, self.foreground);
         runs
     }
 
     /// Headings' weight, as VS Code's preview's.
     pub const HEADING_WEIGHT: FontWeight = FontWeight::SEMIBOLD;
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::hsla;
+
+    use super::*;
+
+    #[test]
+    fn code_runs_in_cut_the_runs_to_the_range() {
+        let keyword = Highlight::from_capture("keyword").expect("keyword");
+        let (foreground, red) = (hsla(0., 0., 0.9, 1.), hsla(0., 1., 0.5, 1.));
+        let mut syntax = vec![None; Highlight::all().len()];
+        syntax[keyword.index()] = Some(red);
+        let style = MarkdownStyle {
+            background: hsla(0., 0., 0., 1.),
+            foreground,
+            muted: foreground,
+            border: foreground,
+            link: foreground,
+            code_background: foreground,
+            row_tint: foreground,
+            code_font_family: "Menlo".into(),
+            code_font_features: gpui::FontFeatures::default(),
+            code_font_size: px(13.),
+            code_line_height: 1.5,
+            syntax,
+            text_size: px(14.),
+            line_height: 1.6,
+        };
+        let code = "let a = 1;\nlet b = 2;\n";
+        let span = |range| HighlightSpan {
+            range,
+            highlight: keyword,
+        };
+        // `let`, twice.
+        let highlights = [span(0..3), span(11..14)];
+        let runs = |range| {
+            (style.code_runs_in(code, &highlights, range).into_iter())
+                .map(|run| (run.len, run.color))
+                .collect::<Vec<_>>()
+        };
+        // The second line's alone, its keyword still coloured.
+        assert_eq!(runs(11..21), [(3, red), (7, foreground)]);
+        // From inside the first keyword, and across the line break.
+        assert_eq!(runs(1..13), [(2, red), (8, foreground), (2, red)]);
+        // With no highlight in it, or empty.
+        assert_eq!(runs(4..10), [(6, foreground)]);
+        assert_eq!(runs(5..5), []);
+        // Past the code's end, cut to it.
+        assert_eq!(runs(20..40), [(2, foreground)]);
+        // The whole of it is code_runs.
+        let whole: Vec<_> = (style.code_runs(code, &highlights).into_iter())
+            .map(|run| (run.len, run.color))
+            .collect();
+        assert_eq!(whole, runs(0..code.len()));
+    }
 }

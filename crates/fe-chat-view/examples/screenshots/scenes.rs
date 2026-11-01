@@ -43,23 +43,71 @@ pub fn double(x: u32) -> u32 {
 
 Then call `double(21)`."#;
 
+/// A reply whose block for `deny.toml` is two SEARCH/REPLACE sections,
+/// drawn as a diff.
+const DIFF_REPLY: &str = r#"Make the bans strict and set a licence threshold:
+
+```toml path=deny.toml
+<<<<<<< SEARCH
+[bans]
+multiple-versions = "warn"
+=======
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+>>>>>>> REPLACE
+
+<<<<<<< SEARCH
+[licenses]
+=======
+[licenses]
+confidence-threshold = 0.9
+>>>>>>> REPLACE
+```
+
+Then run `cargo deny check`."#;
+
 const THINKING: &str = "The user wants a *small* helper; a `u32` function is enough.";
 
 struct Scene {
     name: &'static str,
+    chat: Chat,
     palette: &'static EditorPalette,
     ui: UiTheme,
+}
+
+/// What a scene's chat holds.
+#[derive(Clone, Copy)]
+enum Chat {
+    /// Three turns: answered with thinking, refused, and streaming.
+    Transcript,
+    /// One finished reply with an edit drawn as a diff.
+    Diff,
 }
 
 fn scenes() -> Vec<Scene> {
     vec![
         Scene {
             name: "chat_dark",
+            chat: Chat::Transcript,
             palette: EditorPalette::fastedit_dark(),
             ui: UiTheme::default_dark(),
         },
         Scene {
             name: "chat_light",
+            chat: Chat::Transcript,
+            palette: EditorPalette::fastedit_light(),
+            ui: Theme::light().ui_theme(),
+        },
+        Scene {
+            name: "chat_diff_dark",
+            chat: Chat::Diff,
+            palette: EditorPalette::fastedit_dark(),
+            ui: UiTheme::default_dark(),
+        },
+        Scene {
+            name: "chat_diff_light",
+            chat: Chat::Diff,
             palette: EditorPalette::fastedit_light(),
             ui: Theme::light().ui_theme(),
         },
@@ -145,6 +193,23 @@ fn script() -> Script {
     Script(Mutex::new(VecDeque::from([answered, refused, streaming])))
 }
 
+/// The one turn: [`DIFF_REPLY`], finished.
+fn diff_script() -> Script {
+    let mut answered = vec![started()];
+    answered.extend(text(0, DIFF_REPLY));
+    answered.extend([
+        ChatEvent::BlockFinished {
+            index: 0,
+            block: json!({"type": "text", "text": DIFF_REPLY}),
+        },
+        ChatEvent::Finished {
+            stop_reason: StopReason::EndTurn,
+            stop_details: None,
+        },
+    ]);
+    Script(Mutex::new(VecDeque::from([answered])))
+}
+
 /// Sends `question` from the composer, as Send does.
 fn send(
     cx: &mut VisualTestAppContext,
@@ -172,7 +237,10 @@ fn capture(cx: &mut VisualTestAppContext, scene: &Scene) -> Result<RgbaImage> {
             show_thinking: true,
             ..ChatSettings::default()
         });
-        let provider: Arc<dyn ChatProvider> = Arc::new(script());
+        let provider: Arc<dyn ChatProvider> = Arc::new(match scene.chat {
+            Chat::Transcript => script(),
+            Chat::Diff => diff_script(),
+        });
         let settings = EditorSettings {
             font_family: Some(FONT_FAMILY.to_owned()),
             ..EditorSettings::default()
@@ -184,10 +252,15 @@ fn capture(cx: &mut VisualTestAppContext, scene: &Scene) -> Result<RgbaImage> {
             view
         })
     })?;
-    send(cx, window, "How do I double a number?")?;
-    send(cx, window, "And how do I get into my neighbour's router?")?;
-    send(cx, window, "Add it to the crate")?;
-    window.update(cx, |view, _, cx| view.set_thinking_open(0, true, cx))?;
+    match scene.chat {
+        Chat::Transcript => {
+            send(cx, window, "How do I double a number?")?;
+            send(cx, window, "And how do I get into my neighbour's router?")?;
+            send(cx, window, "Add it to the crate")?;
+            window.update(cx, |view, _, cx| view.set_thinking_open(0, true, cx))?;
+        }
+        Chat::Diff => send(cx, window, "Tighten deny.toml")?,
+    }
     let view = window.update(cx, |_, _, cx| cx.entity())?;
     let mut settle = Settle::new();
     settle.observe(&view, cx);

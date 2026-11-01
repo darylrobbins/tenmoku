@@ -6,17 +6,22 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    ops::Range,
     path::{Component, Path},
     rc::Rc,
     sync::Arc,
 };
 
+use fe_chat::{DIVIDER_MARKER, EditBlock, EditBody, REPLACE_MARKER, SEARCH_MARKER};
 use fe_gpui::EditorTheme;
 use fe_markdown::{Block, BlockKind, Document, LinkTarget, link_target};
-use fe_markdown_view::{CodeHeader, ElementOptions, LinkHandler, MarkdownStyle, document_element};
+use fe_markdown_view::{
+    CodeBody, CodeHeader, ElementOptions, LinkHandler, MarkdownStyle, document_element,
+};
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, ScrollHandle, SharedString, Styled as _, WeakEntity, Window, div,
+    AnyElement, App, Bounds, ClipboardItem, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, ScrollHandle, SharedString, Styled as _, StyledText, WeakEntity,
+    Window, div, px,
 };
 use kiln_ui::{Button, UiTheme, h_flex};
 
@@ -83,6 +88,165 @@ pub(crate) fn code_blocks(document: &Document) -> Vec<CodeBlock> {
     let mut out = Vec::new();
     walk(&document.blocks, &mut out);
     out
+}
+
+/// How many code blocks `document` has, in quotes and lists too.
+fn code_block_count(document: &Document) -> usize {
+    fn walk(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .map(|block| match &block.kind {
+                BlockKind::Code { .. } => 1,
+                BlockKind::Quote(blocks) => walk(blocks),
+                BlockKind::List { items, .. } => items.iter().map(|item| walk(&item.blocks)).sum(),
+                _ => 0,
+            })
+            .sum()
+    }
+    walk(&document.blocks)
+}
+
+/// A row of a SEARCH/REPLACE block drawn as a diff.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DiffRow {
+    pub(crate) kind: DiffKind,
+    /// The line's text, by byte range of the block's code, its line ending
+    /// left out; empty for a [`DiffKind::Gap`].
+    pub(crate) range: Range<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiffKind {
+    /// A line of a section's search text.
+    Removed,
+    /// A line of its replacement.
+    Added,
+    /// Between two sections.
+    Gap,
+}
+
+/// A code block's `code` as a diff, when it reads as SEARCH/REPLACE
+/// sections: each section's search lines removed and its replace lines
+/// added, with a gap between each two sections, empty ones too. `None`
+/// for any other code: a whole file, or markers that don't make whole
+/// sections. The info string isn't read, so a path the block can't be
+/// applied to still shows as a diff.
+pub(crate) fn diff_rows(code: &str) -> Option<Vec<DiffRow>> {
+    let Ok(EditBlock {
+        body: EditBody::Sections(_),
+        ..
+    }) = fe_chat::parse_edit_block("", code)
+    else {
+        return None;
+    };
+    // The sections are whole, so each marker is where it belongs.
+    let mut rows: Vec<DiffRow> = Vec::new();
+    let (mut side, mut sections) = (None, 0);
+    let mut at = 0;
+    for line in code.split_inclusive('\n') {
+        let start = at;
+        at += line.len();
+        let text = line.strip_suffix('\n').unwrap_or(line);
+        let text = text.strip_suffix('\r').unwrap_or(text);
+        match text {
+            SEARCH_MARKER => {
+                // Every section after the first, even an empty one.
+                if sections > 0 {
+                    let range = start..start;
+                    rows.push(DiffRow {
+                        kind: DiffKind::Gap,
+                        range,
+                    });
+                }
+                sections += 1;
+                side = Some(DiffKind::Removed);
+            }
+            DIVIDER_MARKER => side = Some(DiffKind::Added),
+            REPLACE_MARKER => side = None,
+            _ => {
+                if let Some(kind) = side {
+                    let range = start..start + text.len();
+                    rows.push(DiffRow { kind, range });
+                }
+            }
+        }
+    }
+    Some(rows)
+}
+
+/// The rows' tints in a code block drawn as a diff: the editor's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DiffTints {
+    pub(crate) removed: Hsla,
+    pub(crate) added: Hsla,
+}
+
+impl DiffTints {
+    pub(crate) fn new(editor: &EditorTheme) -> DiffTints {
+        DiffTints {
+            removed: editor.diff_removed_row,
+            added: editor.diff_added_row,
+        }
+    }
+}
+
+/// Code block `block` of turn `turn`'s reply as a diff, if its code is
+/// SEARCH/REPLACE sections ([`diff_rows`]): a row per line in its syntax
+/// colours, after a `-` or `+`, tinted from edge to edge, the rows as wide
+/// as the widest so they scroll sideways together. Its `debug_selector` is
+/// `chat-diff-<turn>-<index>`, and its rows'
+/// `chat-diff-<turn>-<index>-removed-<k>` and `-added-<k>`, `k` counted
+/// for each kind.
+fn diff_body(
+    turn: usize,
+    block: CodeBody<'_>,
+    style: &MarkdownStyle,
+    tints: DiffTints,
+) -> Option<AnyElement> {
+    let index = block.index;
+    let (mut removed, mut added) = (0, 0);
+    let rows = diff_rows(block.code)?.into_iter().map(|row| {
+        let (sign, tint, name, k) = match row.kind {
+            DiffKind::Removed => {
+                removed += 1;
+                ("-", tints.removed, "removed", removed - 1)
+            }
+            DiffKind::Added => {
+                added += 1;
+                ("+", tints.added, "added", added - 1)
+            }
+            DiffKind::Gap => {
+                let height = style.code_font_size * style.code_line_height;
+                return div().h(height).into_any_element();
+            }
+        };
+        let text = block.code[row.range.clone()].to_owned();
+        let runs = style.code_runs_in(block.code, block.highlights, row.range);
+        div()
+            .debug_selector(move || format!("chat-diff-{turn}-{index}-{name}-{k}"))
+            .flex()
+            .flex_row()
+            .pl(px(8.))
+            .pr(px(16.))
+            .bg(tint)
+            .child(
+                div()
+                    .flex_none()
+                    .w(style.code_font_size)
+                    .text_color(style.muted)
+                    .child(sign),
+            )
+            .child(StyledText::new(text).with_runs(runs))
+            .into_any_element()
+    });
+    let body = div()
+        .debug_selector(move || format!("chat-diff-{turn}-{index}"))
+        .flex_none()
+        .min_w_full()
+        .flex()
+        .flex_col()
+        .children(rows.collect::<Vec<_>>());
+    Some(body.into_any_element())
 }
 
 /// How many of `document`'s code blocks are for a file: those whose info
@@ -304,17 +468,33 @@ pub(crate) enum HeaderAt {
 }
 
 /// Turn `turn`'s reply, `document`, with a header over each code block,
-/// each block's place reported to `spans`. Apply is off while the reply
-/// streams, its blocks unfinished.
+/// each block's place reported to `spans`, and each SEARCH/REPLACE block
+/// drawn as a diff in `tints` ([`diff_body`]). Apply is off while the
+/// reply streams, its blocks unfinished, and its last code block, which
+/// may still be coming, is drawn as code until it finishes.
+#[allow(clippy::too_many_arguments)] // Each is one thing the reply needs.
 pub(crate) fn reply_element(
     turn: usize,
     document: &Arc<Document>,
     style: &MarkdownStyle,
     streaming: bool,
     ui: UiTheme,
+    tints: DiffTints,
     view: WeakEntity<ChatView>,
     spans: CodeSpans,
 ) -> AnyElement {
+    let growing = streaming
+        .then(|| code_block_count(document).checked_sub(1))
+        .flatten();
+    let body = {
+        let style = style.clone();
+        Rc::new(move |block: CodeBody<'_>, _: &mut Window, _: &mut App| {
+            if Some(block.index) == growing {
+                return None;
+            }
+            diff_body(turn, block, &style, tints)
+        })
+    };
     let header = {
         let (view, spans) = (view.clone(), spans.clone());
         Rc::new(move |block: CodeHeader<'_>, _: &mut Window, _: &mut App| {
@@ -330,6 +510,7 @@ pub(crate) fn reply_element(
         on_link: Some(link_handler(view)),
         code_header: Some(header),
         on_code_bounds: Some(on_code_bounds),
+        code_body: Some(body),
         ..ElementOptions::default()
     };
     document_element(document, style, options)
@@ -514,6 +695,86 @@ mod tests {
         assert_eq!(block("py"), (some("py"), None));
         assert_eq!(block("rust path="), (some("rust"), None));
         assert_eq!(block(""), (None, None));
+    }
+
+    #[test]
+    fn diff_rows_split_sections_into_removed_and_added() {
+        // Two lines replaced by one, a blank line, a line deleted, then a
+        // line added at the top of an empty search; the last marker has no
+        // `\n`.
+        let code = "<<<<<<< SEARCH\na = 1\nb = 2\n=======\na = 3\n>>>>>>> REPLACE\n\n\
+                    <<<<<<< SEARCH\nc = 4\n=======\n>>>>>>> REPLACE\n\
+                    <<<<<<< SEARCH\n=======\n\n>>>>>>> REPLACE";
+        let rows = diff_rows(code).expect("sections");
+        let texts: Vec<_> = (rows.iter())
+            .map(|row| (row.kind, &code[row.range.clone()]))
+            .collect();
+        use DiffKind::{Added, Gap, Removed};
+        assert_eq!(
+            texts,
+            [
+                (Removed, "a = 1"),
+                (Removed, "b = 2"),
+                (Added, "a = 3"),
+                (Gap, ""),
+                (Removed, "c = 4"),
+                (Gap, ""),
+                (Added, ""),
+            ]
+        );
+        // By byte range of the code as written, markers and all.
+        assert_eq!(rows[0].range, 15..20);
+        assert_eq!(rows[2].range, 35..40);
+        let second = code.find("c = 4").unwrap();
+        assert_eq!(rows[4].range, second..second + "c = 4".len());
+        // Each gap stands where the next section opens.
+        let third = code.rfind(SEARCH_MARKER).unwrap();
+        assert_eq!(rows[5].range, third..third);
+
+        // A `\r\n` line keeps its text, and its markers are markers.
+        let crlf = "<<<<<<< SEARCH\r\nx\r\n=======\r\ny\r\n>>>>>>> REPLACE\r\n";
+        let rows = diff_rows(crlf).expect("sections");
+        let texts: Vec<_> = (rows.iter())
+            .map(|row| (row.kind, &crlf[row.range.clone()]))
+            .collect();
+        assert_eq!(texts, [(Removed, "x"), (Added, "y")]);
+
+        // Sections with both sides empty, first and in a row, each have
+        // their gap.
+        let empty = "<<<<<<< SEARCH\n=======\n>>>>>>> REPLACE\n";
+        let full = "<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\n";
+        let kinds = |code: &str| {
+            let rows = diff_rows(code).expect("sections");
+            rows.iter().map(|row| row.kind).collect::<Vec<_>>()
+        };
+        assert_eq!(kinds(empty), []);
+        assert_eq!(kinds(&[empty, empty].concat()), [Gap]);
+        assert_eq!(kinds(&[empty, full].concat()), [Gap, Removed, Added]);
+        assert_eq!(
+            kinds(&[full, empty, empty, full].concat()),
+            [Removed, Added, Gap, Gap, Gap, Removed, Added]
+        );
+    }
+
+    #[test]
+    fn diff_rows_are_none_for_code_that_is_not_sections() {
+        for code in [
+            // A whole file.
+            "[package]\nname = \"demo\"\n",
+            "",
+            // A section never closed.
+            "<<<<<<< SEARCH\na\n=======\nb\n",
+            "<<<<<<< SEARCH\na\n",
+            // Text between sections.
+            "<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\nstray\n\
+             <<<<<<< SEARCH\nc\n=======\nd\n>>>>>>> REPLACE\n",
+            // Text before the first.
+            "intro\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n",
+            // A marker out of place.
+            "=======\n",
+        ] {
+            assert_eq!(diff_rows(code), None, "{code:?}");
+        }
     }
 
     #[test]
