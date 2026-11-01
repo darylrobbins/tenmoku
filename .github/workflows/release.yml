@@ -1,0 +1,79 @@
+name: Release
+
+# A vX.Y.Z tag builds Tenmoku.app on macOS arm64 and attaches a zip and its SHA-256 to a
+# GitHub Release. Signing and notarization run only when the repository has the secrets;
+# without them the app ships ad-hoc signed. A manual run builds the same zip as a workflow
+# artifact and publishes nothing. See docs/release/macos-signing.md, "Releasing".
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    # macos-latest is Apple Silicon, so the binary is arm64.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the release binary
+        run: cargo build --release -p fastedit --locked
+      - name: Bundle Tenmoku.app
+        id: bundle
+        run: |
+          # A tag names the version; a manual run takes Cargo.toml's.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            scripts/bundle-macos.sh --version "${GITHUB_REF_NAME#v}"
+          else
+            scripts/bundle-macos.sh
+          fi
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            target/bundle/Tenmoku.app/Contents/Info.plist)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - name: Sign and notarize (skipped when the secrets are absent)
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: scripts/sign-notarize-macos.sh target/bundle/Tenmoku.app "$RUNNER_TEMP/notarize.zip"
+      - name: Zip the app and its checksum
+        env:
+          VERSION: ${{ steps.bundle.outputs.version }}
+        run: |
+          name="Tenmoku-$VERSION-macos-arm64.zip"
+          mkdir -p dist
+          ditto -c -k --keepParent target/bundle/Tenmoku.app "dist/$name"
+          (cd dist && shasum -a 256 "$name" >"$name.sha256")
+          cat "dist/$name.sha256"
+      - name: Publish the GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
+              --title "Tenmoku $GITHUB_REF_NAME"
+          fi
+      - name: Upload the zip as a workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Tenmoku-${{ steps.bundle.outputs.version }}-macos-arm64
+          path: dist/
+          if-no-files-found: error

@@ -107,3 +107,45 @@ xcrun stapler validate Tenmoku.app
 
 An ad-hoc build shows `Signature=adhoc` in `codesign -dvv` and `rejected` from `spctl`; that is
 expected for local builds.
+
+## Releasing
+
+`.github/workflows/release.yml` does the steps above on a GitHub macOS arm64 runner. To cut a
+release, tag the commit `vX.Y.Z` (dotted numbers only: the tag minus its `v` becomes the app's
+version, and `scripts/bundle-macos.sh` refuses anything else) and push the tag:
+
+```zsh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The workflow builds `cargo build --release -p fastedit --locked`, bundles `Tenmoku.app`, runs
+`scripts/sign-notarize-macos.sh`, zips the app as `Tenmoku-X.Y.Z-macos-arm64.zip` with a
+`.sha256` beside it, and attaches both to the GitHub Release for the tag (creating it with
+generated notes, or replacing the files on a release that already exists). Running the
+workflow by hand (Actions > Release > Run workflow) builds the same zip as a workflow
+artifact and publishes nothing.
+
+Signing and notarization use six repository secrets (Settings > Secrets and variables >
+Actions). Each stage runs only when its secrets are all set; otherwise the log says
+`skipping ...` and the release carries on with what it has:
+
+| Secret | Stage | Value |
+| --- | --- | --- |
+| `MACOS_CERTIFICATE` | signing | the Developer ID Application certificate and key, exported from Keychain Access as a `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERTIFICATE_PASSWORD` | signing | the password chosen when exporting the `.p12` |
+| `MACOS_SIGN_IDENTITY` | signing | the identity name, `Developer ID Application: <name> (<team>)` |
+| `APPLE_ID` | notarization | the Apple ID email |
+| `APPLE_TEAM_ID` | notarization | the ten-character Team ID |
+| `APPLE_APP_PASSWORD` | notarization | an app-specific password for that Apple ID (step 4) |
+
+- No `MACOS_CERTIFICATE`: no Developer ID signature and no notarization. The release is
+  ad-hoc signed, and Gatekeeper on another Mac refuses to open it until the user allows it
+  (right-click > Open, or System Settings > Privacy & Security > Open Anyway).
+- The signing secrets but not all three notarization ones: Developer ID signed, not
+  notarized. Gatekeeper still warns.
+- All six: signed, notarized and stapled; it opens without a warning.
+
+The certificate lives in a temporary keychain for the job only. To check the signing script
+locally without any secrets, `scripts/test-release-workflow.sh` runs it against a fixture
+bundle along with `actionlint` and checks on the workflow.
