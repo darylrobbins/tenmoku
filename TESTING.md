@@ -30,6 +30,11 @@ are only caught by `fe-gpui`'s tests; add `--test-workspace true` to count them.
 cargo nextest run --workspace     # what CI runs on every push; each test in its own process
 ```
 
+**macOS app bundle.** `scripts/bundle-macos.sh` turns a built `target/release/tenmoku` into an
+ad-hoc-signed `target/bundle/Tenmoku.app` (it does not build; Developer ID signing and
+notarization are person steps in `docs/release/macos-signing.md`). `scripts/test-bundle-macos.sh`
+checks it in about a second, bundling a copy of `/usr/bin/true` instead of the real binary.
+
 **Slow tests.** A test belongs in the `profile.ci` `default-filter` slow set
 (`.config/nextest.toml`) when it takes over 30 s on the gate machine in a
 nextest run, or over 10 s and is not on a path the gate exists to protect. Add it
