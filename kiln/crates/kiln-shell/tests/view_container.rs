@@ -9,7 +9,7 @@
 //! own, or a layout saved before panels had state, saves and restores as
 //! before.
 
-mod support;
+use crate::support;
 
 use std::{
     cell::Cell,

@@ -3,7 +3,7 @@
 //! The side docks run the main area's full height, to the status bar; the
 //! bottom dock lies between them, under the centre only.
 
-mod support;
+use crate::support;
 
 use std::{cell::Cell, rc::Rc};
 

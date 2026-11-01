@@ -55,6 +55,21 @@ whole workspace, and so does `post_merge`. So a test that a task criterion or
 that crate's reverse dependencies: Regatta refuses a criterion whose test did
 not run in the gate.
 
+**Integration tests, one binary per crate.** Cargo links each `tests/*.rs`
+into an executable of its own, a copy of GPUI in each (100–375 MB apiece),
+and every lane, gate and regression build holds them all. `kiln-shell`
+builds its integration tests as one, `tests/it.rs`: its `build.rs`
+(`kiln/scripts/it_mods.rs`) lists `tests/*.rs` into a module each, so a new
+test is a new file in `tests/`, with no list to edit, and its ID is
+`<file>::<test>` (`cargo nextest run -p kiln-shell -E 'test(=close::a_tab_closes_as_its_item_answers)'`).
+`it_lists_every_test_file` fails if the binary was built before a file was
+added. Directories such as `tests/support/` aren't listed: `tests/it.rs`
+declares `support` once and files `use crate::support;`, since GPUI
+registers an action once per binary. Adding or editing a test file reruns
+the build script, and cargo then rebuilds the crate's library too.
+Under nextest each test still runs in its own process; `cargo test -p
+kiln-shell --test it` runs them in one, which they also pass.
+
 ```zsh
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code

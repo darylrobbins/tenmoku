@@ -5,7 +5,7 @@
 //! the insertion marker, and a tab dragged to the pane's own edge.
 //! Generalised from the editor's tab and drag tests, over notes.
 
-mod support;
+use crate::support;
 
 use std::{cell::RefCell, rc::Rc};
 

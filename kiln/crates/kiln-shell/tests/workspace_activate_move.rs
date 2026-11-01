@@ -5,7 +5,7 @@
 //! a tab as a drop does, a pane it splits off watched like any other, and
 //! the pane it empties closed.
 
-mod support;
+use crate::support;
 
 use std::{cell::RefCell, rc::Rc, slice};
 

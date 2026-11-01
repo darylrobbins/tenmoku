@@ -4,7 +4,7 @@
 //! buttons, the drag area and the resize edges, and nothing of them under
 //! server-side ones.
 
-mod support;
+use crate::support;
 
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, Pixels, Point, ResizeEdge, TestAppContext, Tiling,

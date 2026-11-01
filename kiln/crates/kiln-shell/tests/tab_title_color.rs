@@ -5,7 +5,7 @@
 //! default keeps the theme's. Read from the tabs the pane builds, and from
 //! the glyphs of the frame it paints.
 
-mod support;
+use crate::support;
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla, InteractiveElement as _,

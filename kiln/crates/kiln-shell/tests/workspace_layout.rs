@@ -9,7 +9,7 @@
 //! the panes a restore leaves empty closing, focus going to the active
 //! item.
 
-mod support;
+use crate::support;
 
 use std::{
     collections::HashMap,

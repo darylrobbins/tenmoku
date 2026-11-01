@@ -3,7 +3,7 @@
 //! The tab strip scrolls to show the active tab whenever it changes, and
 //! otherwise stays where a hand left it.
 
-mod support;
+use crate::support;
 
 use gpui::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,

@@ -6,7 +6,7 @@
 //! elsewhere or a chosen item. Moved from the editor it was written for,
 //! with its tests.
 
-mod support;
+use crate::support;
 
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
 use kiln_shell::Root;

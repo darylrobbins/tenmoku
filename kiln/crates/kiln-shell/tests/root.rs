@@ -4,7 +4,7 @@
 //! element that stops being drawn, and the theme following the system's
 //! appearance.
 
-mod support;
+use crate::support;
 
 use gpui::{
     AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement,

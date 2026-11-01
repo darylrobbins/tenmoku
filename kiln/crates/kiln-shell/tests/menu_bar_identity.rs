@@ -3,7 +3,7 @@
 //! The open menu and its highlight follow their menu and command when the
 //! installed menus change, rather than staying at their positions.
 
-mod support;
+use crate::support;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use kiln_core::MenuBar;

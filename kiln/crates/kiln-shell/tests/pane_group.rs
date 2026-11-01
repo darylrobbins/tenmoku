@@ -5,7 +5,7 @@
 //! a document already showing that copy, and a divider's drag. Generalised
 //! from the editor's split and drag tests, over notes.
 
-mod support;
+use crate::support;
 
 use std::{cell::RefCell, rc::Rc};
 

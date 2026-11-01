@@ -66,7 +66,8 @@ impl PickerDelegate for Words {
 const WORDS: [&str; 5] = ["apple", "apricot", "banana", "cherry", "grape"];
 
 thread_local! {
-    /// The switch the tests install, as [`switch`] reads it.
+    /// The switch the tests install, as [`switch`] reads it: one per
+    /// thread, so one per test even in `cargo test`'s one process.
     static VIM: Cell<bool> = const { Cell::new(false) };
 }
 

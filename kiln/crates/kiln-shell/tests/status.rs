@@ -6,7 +6,7 @@
 //! element's context. Generalised from the editor's status bar tests
 //! (`host_items`).
 
-mod support;
+use crate::support;
 
 use gpui::{
     Context, Entity, FocusHandle, Focusable, InteractiveElement as _, IntoElement, Modifiers,

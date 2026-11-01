@@ -5,7 +5,7 @@
 //! run in, the chrome as each platform has it, and the modal layer, which
 //! gives focus back to the centre.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 

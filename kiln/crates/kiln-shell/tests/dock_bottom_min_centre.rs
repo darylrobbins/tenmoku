@@ -3,7 +3,7 @@
 //! A window shorter than the bottom dock's size shrinks the dock before the
 //! centre, which keeps `MIN_PANE_HEIGHT`.
 
-mod support;
+use crate::support;
 
 use gpui::{
     AppContext as _, Context, FocusHandle, Focusable, InteractiveElement as _, IntoElement, Render,

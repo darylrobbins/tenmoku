@@ -5,7 +5,7 @@
 //! and events following the active item, focus going back to it, the
 //! window's close asking every pane, and a pane view of a host's own.
 
-mod support;
+use crate::support;
 
 use std::{
     cell::{Cell, RefCell},

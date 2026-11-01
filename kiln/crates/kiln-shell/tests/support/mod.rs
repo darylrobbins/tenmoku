@@ -3,7 +3,10 @@
 //! A small app for the shell's tests: a `Pad` view in a [`Root`], with
 //! commands, a keymap and menus, and what the chrome asked of the window.
 
-#![allow(dead_code, reason = "each test file uses its own share")]
+#![allow(
+    dead_code,
+    reason = "each test file uses its own share; tests/it.rs holds the one copy"
+)]
 
 use std::{cell::RefCell, path::Path, rc::Rc};
 

@@ -4,7 +4,7 @@
 //! preview takes its place; an edit, a double-click on its tab or pinning
 //! keeps it, as an ordinary item the next preview doesn't replace.
 
-mod support;
+use crate::support;
 
 use gpui::{
     AppContext as _, Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent,

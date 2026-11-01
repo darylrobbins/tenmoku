@@ -3,7 +3,7 @@
 //! The unified title bar: the title centred clear of the traffic lights,
 //! the content below it, and the window dragged and zoomed from it.
 
-mod support;
+use crate::support;
 
 use gpui::{
     Modifiers, MouseButton, MouseDownEvent, Pixels, Point, TestAppContext, VisualTestContext,

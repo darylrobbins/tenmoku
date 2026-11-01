@@ -49,6 +49,7 @@ impl PickerDelegate for Words {
 const WORDS: [&str; 4] = ["apple", "banana", "cherry", "grape"];
 
 thread_local! {
+    /// One per thread, so one per test even in `cargo test`'s one process.
     static VIM: Cell<bool> = const { Cell::new(true) };
 }
 

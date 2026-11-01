@@ -5,7 +5,7 @@
 //! borders between them, and a picker in the modal layer, all draw in the
 //! active theme rather than the one they were built with.
 
-mod support;
+use crate::support;
 
 use std::collections::HashSet;
 
