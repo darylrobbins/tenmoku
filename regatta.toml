@@ -135,7 +135,9 @@ shared_append_only = [
 # 1 since 2026-10-30 (user-approved): with ~90 GB free, one lane build (~45 GB) and one finish gate
 # (~42 GB, plus ~31 GB per regression side for a bugfix) don't fit beside each other; free disk fell
 # below 12 GB five times in a day.
-lanes_max = 1
+# 2 since 2026-11-01 (user-approved): cargo's build-dir moved to /Volumes/Builds and teardown now cleans
+# it (T1255, [teardown]), leaving ~350 GB free.
+lanes_max = 2
 # 2 builds at a time on the host, down from the default 4 (2026-10-14, user-approved): a gate takes 6.2 min
 # alone and 14.2 min beside two others, and two or more ran at once 59% of the time, tripping timing flakes.
 host_pipeline_slots = 2
