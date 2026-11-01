@@ -10,7 +10,8 @@
 //!   and cut-off banners, with their actions.
 //! - Replies and thinking are drawn as Markdown as they stream, each code
 //!   block with a header to copy it or ask the host to apply it
-//!   ([`ChatViewEvent::ApplyBlock`]); a link opens in the browser or asks
+//!   ([`ChatViewEvent::ApplyBlock`]), and what came of it, as the host
+//!   says ([`ChatView::set_block_state`]); a link opens in the browser or asks
 //!   the host to open a project file ([`ChatViewEvent::OpenPath`]).
 //!
 //! It knows nothing of fastedit's workbench: the host gives it a provider
@@ -21,7 +22,7 @@ use gpui::App;
 mod reply;
 mod view;
 
-pub use reply::CodeBlock;
+pub use reply::{BlockState, CodeBlock};
 pub use view::{
     Banner, BannerAction, ChatOptions, ChatView, ChatViewEvent, RetryTurn, SendMessage, StopReply,
     TurnDisplay,

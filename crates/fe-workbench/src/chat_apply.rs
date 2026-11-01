@@ -50,6 +50,14 @@
 //!   same text, markers that don't match up, a file read-only (the view,
 //!   or the file's permissions for this process) or binary, a path outside
 //!   the root: a toast names the file and why, and nothing is proposed.
+//!
+//!   The block's header shows what came of it
+//!   ([`ChatView::set_block_state`]): why it wasn't applied, as the toast
+//!   says, that it changes nothing, or its proposal's hunks as the user
+//!   decides them in the editor ([`ProposalEvent`]). Applying it again
+//!   shows what came of that instead, and only that: an earlier Apply of
+//!   it landing later changes nothing on the header. Closing its file's
+//!   editor with hunks still to decide clears it.
 //! - **Links** ([`ChatViewEvent::OpenPath`]) open the file under the root
 //!   at their row, located as a block's file is; one whose real path is
 //!   outside the root does nothing.
@@ -57,6 +65,7 @@
 //! [`ChatViewEvent::ApplyBlock`]: fe_chat_view::ChatViewEvent::ApplyBlock
 //! [`ChatViewEvent::OpenPath`]: fe_chat_view::ChatViewEvent::OpenPath
 //! [`notify_observers`]: kiln::platform::commands::notify_observers
+//! [`ChatView::set_block_state`]: fe_chat_view::ChatView::set_block_state
 
 use std::{
     cell::RefCell,
@@ -68,13 +77,14 @@ use std::{
     sync::Arc,
 };
 
-use fe_buffer::{Anchor, Bias, BufferId, BufferSnapshot, Origin, ProposedChange};
+use fe_buffer::{Anchor, Bias, BufferId, BufferSnapshot, HunkStatus, Origin, ProposedChange};
 use fe_chat::{
     AttachmentKind, ContextItem, ContextKind, EditBlockError, EditBody, info_path,
     parse_edit_block, render_user_content,
 };
+use fe_chat_view::BlockState;
 use fe_command::{Actor, CommandTarget, Dispatched, Effect, Invocation, Registry, Source, Value};
-use fe_gpui::EditorView;
+use fe_gpui::{EditorView, ProposalEvent};
 use fe_markdown::{Block, BlockKind};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Subscription, Task, Window};
 use kiln::{schemars, serde};
@@ -172,6 +182,42 @@ pub(super) struct Applies {
     /// Counts the chats, and the root's context changes: a file located
     /// under an earlier one isn't applied to, nor a link opened.
     chats: u64,
+    /// The current chat's blocks proposed, by `(turn, block)`, followed
+    /// until their hunks are decided or their editor goes.
+    applied: HashMap<(usize, usize), Applied>,
+    /// Counts the Applies.
+    attempts: u64,
+    /// The current chat's blocks applied, by `(turn, block)`: the serial of
+    /// the last Apply, the one whose outcome the header shows.
+    latest: HashMap<(usize, usize), u64>,
+    /// Holds the next Apply's file's landing, once located, until the
+    /// sender sends or is dropped.
+    #[cfg(test)]
+    held: Option<async_channel::Receiver<()>>,
+}
+
+/// One Apply of code block `at`, `(turn, block)`: the `serial`th.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Attempt {
+    at: (usize, usize),
+    serial: u64,
+}
+
+/// A block's proposal, followed for its header.
+struct Applied {
+    proposal: Rc<RefCell<ProposedChange>>,
+    /// The editor's hunk decisions.
+    _decided: Subscription,
+    /// The editor going.
+    _released: Subscription,
+}
+
+/// What came of proposing a block in an editor ([`show_proposal`]).
+enum Shown {
+    Proposed(Rc<RefCell<ProposedChange>>),
+    NoChange,
+    /// Why not, as the toast said.
+    Refused(String),
 }
 
 /// A block to apply once its file is in an editor.
@@ -186,6 +232,8 @@ struct Waiting {
 /// A parsed block to propose, by whom, where, and its file as the toasts
 /// name it.
 struct Edit {
+    /// Which Apply of which block it is.
+    attempt: Attempt,
     body: EditBody,
     origin: Origin,
     /// The selection it replaces; the whole file if none.
@@ -204,6 +252,11 @@ impl Applies {
             seen: 0,
             waiting: Vec::new(),
             chats: 0,
+            applied: HashMap::new(),
+            attempts: 0,
+            latest: HashMap::new(),
+            #[cfg(test)]
+            held: None,
         }
     }
 
@@ -211,7 +264,33 @@ impl Applies {
     pub(super) fn new_chat(&mut self) {
         self.turns.clear();
         self.seen = 0;
+        self.applied.clear();
+        self.latest.clear();
         self.stale();
+    }
+
+    /// A new Apply of block `at`, the one its header shows from now.
+    fn attempt(&mut self, at: (usize, usize)) -> Attempt {
+        self.attempts += 1;
+        self.latest.insert(at, self.attempts);
+        Attempt {
+            at,
+            serial: self.attempts,
+        }
+    }
+
+    /// Whether `attempt` is its block's last Apply.
+    fn is_latest(&self, attempt: Attempt) -> bool {
+        self.latest.get(&attempt.at) == Some(&attempt.serial)
+    }
+
+    /// Holds the next Apply's file's landing, once located, until the
+    /// sender sends or is dropped.
+    #[cfg(test)]
+    fn hold_next_locate(&mut self) -> async_channel::Sender<()> {
+        let (sender, gate) = async_channel::unbounded();
+        self.held = Some(gate);
+        sender
     }
 
     /// The chat or the root's context changed: nothing asked before is
@@ -478,6 +557,19 @@ fn propose_whole(
     propose(&snapshot, 0..snapshot.len(), body, origin)
 }
 
+/// The state a proposal's hunks give its block: proposed while any is
+/// still to decide, a stale one too, else decided.
+fn proposal_state(proposal: &ProposedChange) -> BlockState {
+    let hunks = proposal.hunk_count();
+    let accepted = proposal.status_count(HunkStatus::Accepted);
+    let pending = hunks - accepted - proposal.status_count(HunkStatus::Rejected);
+    if pending > 0 {
+        BlockState::Proposed { pending, hunks }
+    } else {
+        BlockState::Decided { accepted, hunks }
+    }
+}
+
 /// A toast that the block couldn't be applied to `file`, and why.
 fn refused(file: &str, why: &str, cx: &mut App) {
     toast::show(
@@ -613,20 +705,22 @@ impl ChatPanel {
         let Some((info, code)) = fence(&document.blocks, args.block) else {
             return;
         };
+        let attempt = self.applies.attempt((args.turn, args.block));
         let block = match parse_edit_block(&info, &code) {
             Ok(block) => block,
             Err(EditBlockError::Path(path)) => {
-                return refused(&path, "it's outside the folder", cx);
+                return self.refuse(attempt, &path, "it's outside the folder", cx);
             }
             Err(error @ EditBlockError::Malformed { .. }) => {
                 let file = info_path(&info).unwrap_or("the selection");
-                return refused(file, &error.to_string(), cx);
+                return self.refuse(attempt, file, &error.to_string(), cx);
             }
         };
         let origin = origin_of(actor);
         match block.path {
             Some(path) => {
                 let edit = Edit {
+                    attempt,
                     body: block.body,
                     origin,
                     within: None,
@@ -637,13 +731,15 @@ impl ChatPanel {
             None => {
                 let Some(label) = selection else {
                     let message = "This block doesn't say which file it's for";
+                    self.set_state(attempt, Some(BlockState::Failed(message.to_owned())), cx);
                     return toast::show(cx, Toast::warning(message));
                 };
                 let Some(sent) = self.applies.turns.get(&args.turn) else {
                     let why = "the selection it was sent with was cut to fit, or isn't known";
-                    return refused(&label, why, cx);
+                    return self.refuse(attempt, &label, why, cx);
                 };
                 let edit = Edit {
+                    attempt,
                     body: block.body,
                     origin,
                     within: Some(sent.anchored.clone()),
@@ -667,7 +763,7 @@ impl ChatPanel {
             return;
         };
         let Some(root) = workbench.read(cx).root().map(Path::to_owned) else {
-            return refused(rel, "no folder is open", cx);
+            return self.refuse(edit.attempt, rel, "no folder is open", cx);
         };
         let open = self.open_paths(&workbench, cx);
         let rel = rel.to_owned();
@@ -688,11 +784,11 @@ impl ChatPanel {
             .chain(workbench.read(cx).active_editor(cx).cloned())
             .find(|editor| editor.read(cx).model().buffer().id() == within.buffer);
         let Some(editor) = found else {
-            return refused(&edit.shown, "its file is closed", cx);
+            return self.refuse(edit.attempt, &edit.shown, "its file is closed", cx);
         };
         let Some(path) = editor.read(cx).model().path().map(Path::to_owned) else {
             // Untitled: in the editor it's in.
-            return show_proposal(&editor, None, edit, window, cx);
+            return self.show(&editor, None, edit, window, cx);
         };
         let located = cx.background_spawn(async move {
             let read_only = is_read_only(&path);
@@ -718,15 +814,23 @@ impl ChatPanel {
         cx: &mut Context<Self>,
     ) {
         let chats = self.applies.chats;
+        #[cfg(test)]
+        let held = self.applies.held.take();
         cx.spawn_in(window, async move |panel, cx| {
             let located = located.await;
+            #[cfg(test)]
+            if let Some(held) = held {
+                held.recv().await.ok();
+            }
             (panel.update_in(cx, |panel, window, cx| {
                 if panel.applies.chats != chats {
                     return;
                 }
                 match located {
-                    Err(why) => refused(&edit.shown, why, cx),
-                    Ok(located) if located.read_only => refused(&edit.shown, "it's read-only", cx),
+                    Err(why) => panel.refuse(edit.attempt, &edit.shown, why, cx),
+                    Ok(located) if located.read_only => {
+                        panel.refuse(edit.attempt, &edit.shown, "it's read-only", cx)
+                    }
                     Ok(located) => panel.open_to_apply(located.path, edit, window, cx),
                 }
             }))
@@ -750,10 +854,11 @@ impl ChatPanel {
         let pane = workbench.read(cx).pane().clone();
         pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx));
         if let Some(editor) = editor_at(&pane, &path, cx) {
-            return show_proposal(&editor, Some((&pane, &path)), edit, window, cx);
+            return self.show(&editor, Some((&pane, &path)), edit, window, cx);
         }
         if !pane.read(cx).reading().any(|reading| reading == path) {
-            return refused(&edit.shown, "it couldn't be opened in an editor", cx);
+            let why = "it couldn't be opened in an editor";
+            return self.refuse(edit.attempt, &edit.shown, why, cx);
         }
         let watch = cx.observe_in(&pane, window, Self::file_read);
         self.applies.waiting.push(Waiting {
@@ -783,20 +888,94 @@ impl ChatPanel {
             }
             let waiting = self.applies.waiting.remove(ix);
             match editor {
-                Some(editor) => show_proposal(
+                Some(editor) => self.show(
                     &editor,
                     Some((&pane, &waiting.path)),
                     waiting.edit,
                     window,
                     cx,
                 ),
-                None => refused(
-                    &waiting.edit.shown,
-                    "it couldn't be opened in an editor",
-                    cx,
-                ),
+                None => {
+                    let why = "it couldn't be opened in an editor";
+                    self.refuse(waiting.edit.attempt, &waiting.edit.shown, why, cx);
+                }
             }
         }
+    }
+
+    /// Shows what came of `attempt` on its block's header, or nothing, in
+    /// place of what came of it before, which is no longer followed; unless
+    /// the block was applied again since.
+    fn set_state(&mut self, attempt: Attempt, state: Option<BlockState>, cx: &mut App) {
+        if !self.applies.is_latest(attempt) {
+            return;
+        }
+        let at = attempt.at;
+        self.applies.applied.remove(&at);
+        (self.view).update(cx, |view, cx| view.set_block_state(at.0, at.1, state, cx));
+    }
+
+    /// `attempt` couldn't be applied to `file`, and why: toasts it, and
+    /// its block's header says it.
+    fn refuse(&mut self, attempt: Attempt, file: &str, why: &str, cx: &mut App) {
+        refused(file, why, cx);
+        self.set_state(attempt, Some(BlockState::Failed(why.to_owned())), cx);
+    }
+
+    /// Proposes `edit` in `editor` ([`show_proposal`]) and shows what came
+    /// of it on its block's header, a proposal followed as the user decides
+    /// its hunks, until the editor goes.
+    fn show(
+        &mut self,
+        editor: &Entity<EditorView>,
+        tab: Option<(&Entity<Pane>, &Path)>,
+        edit: Edit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let attempt = edit.attempt;
+        let proposal = match show_proposal(editor, tab, edit, window, cx) {
+            Shown::Proposed(proposal) => proposal,
+            Shown::NoChange => return self.set_state(attempt, Some(BlockState::NoChange), cx),
+            Shown::Refused(why) => {
+                return self.set_state(attempt, Some(BlockState::Failed(why)), cx);
+            }
+        };
+        // Applied again since: that Apply's outcome is the one shown.
+        if !self.applies.is_latest(attempt) {
+            return;
+        }
+        let at = attempt.at;
+        let state = proposal_state(&proposal.borrow());
+        self.set_state(attempt, Some(state), cx);
+        let decided = cx.subscribe(editor, move |panel, _, _: &ProposalEvent, cx| {
+            if let Some(applied) = panel.applies.applied.get(&at) {
+                let state = proposal_state(&applied.proposal.borrow());
+                (panel.view).update(cx, |view, cx| {
+                    view.set_block_state(at.0, at.1, Some(state), cx)
+                });
+            }
+        });
+        let released = cx.observe_release(editor, move |panel, _, cx| {
+            let Some(applied) = panel.applies.applied.remove(&at) else {
+                return;
+            };
+            // Hunks left to decide went with it.
+            if matches!(
+                proposal_state(&applied.proposal.borrow()),
+                BlockState::Proposed { .. }
+            ) {
+                (panel.view).update(cx, |view, cx| view.set_block_state(at.0, at.1, None, cx));
+            }
+        });
+        self.applies.applied.insert(
+            at,
+            Applied {
+                proposal,
+                _decided: decided,
+                _released: released,
+            },
+        );
     }
 
     /// A reply's link to `path` under the root: opens it in the active pane,
@@ -850,37 +1029,43 @@ impl ChatPanel {
 /// Proposes `edit` in `editor`, over its selection or the whole text,
 /// beside the proposals it shows, and shows its first hunk: through
 /// `tab`, the pane and path the editor's tab is at, so the text shows if
-/// the tab showed a preview.
+/// the tab showed a preview. A toast says why not, or that it changes
+/// nothing; either way, what came of it.
 fn show_proposal(
     editor: &Entity<EditorView>,
     tab: Option<(&Entity<Pane>, &Path)>,
     edit: Edit,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> Shown {
+    let refuse = |shown: &str, why: &str, cx: &mut App| {
+        refused(shown, why, cx);
+        Shown::Refused(why.to_owned())
+    };
     let Edit {
+        attempt: _,
         body,
         origin,
         within,
         shown,
     } = edit;
     if let Some(why) = refusal(editor.read(cx)) {
-        return refused(&shown, why, cx);
+        return refuse(&shown, why, cx);
     }
     let snapshot = editor.read(cx).model().buffer().snapshot();
     let range = match &within {
         None => 0..snapshot.len(),
         Some(within) if within.buffer != snapshot.id() => {
-            return refused(&shown, "its file is closed", cx);
+            return refuse(&shown, "its file is closed", cx);
         }
         Some(within) if within.range.start.version() < snapshot.oldest_version() => {
-            return refused(&shown, "the selection it was sent with is lost", cx);
+            return refuse(&shown, "the selection it was sent with is lost", cx);
         }
         Some(within) => snapshot.resolve_range(&within.range),
     };
     let proposal = match propose(&snapshot, range, body, origin) {
         Ok(proposal) => proposal,
-        Err(why) => return refused(&shown, &why, cx),
+        Err(why) => return refuse(&shown, &why, cx),
     };
     let Some(first) = proposal
         .hunks(&snapshot)
@@ -888,11 +1073,13 @@ fn show_proposal(
         .map(|hunk| hunk.range.start)
     else {
         let message = format!("The block changes nothing in {shown}");
-        return toast::show(cx, Toast::info(message));
+        toast::show(cx, Toast::info(message));
+        return Shown::NoChange;
     };
+    let proposal = Rc::new(RefCell::new(proposal));
     editor.update(cx, |editor, cx| {
         let mut proposals = editor.proposals().to_vec();
-        proposals.push(Rc::new(RefCell::new(proposal)));
+        proposals.push(Rc::clone(&proposal));
         editor.set_proposals(proposals, cx);
     });
     match tab {
@@ -908,4 +1095,9 @@ fn show_proposal(
         }),
         None => editor.update(cx, |editor, cx| editor.select_and_reveal(first..first, cx)),
     }
+    Shown::Proposed(proposal)
 }
+
+#[cfg(test)]
+#[path = "chat_apply_state_tests.rs"]
+mod chat_apply_state_tests;

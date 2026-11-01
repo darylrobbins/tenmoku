@@ -26,7 +26,7 @@ use serde_json::Value;
 
 use crate::{
     COMPOSER_CONTEXT,
-    reply::{self, CodeBlock, CodeSpan, CodeSpans, Documents, HeaderAt},
+    reply::{self, BlockState, CodeBlock, CodeSpan, CodeSpans, Documents, HeaderAt},
 };
 
 /// The context window the meter measures against.
@@ -201,6 +201,9 @@ pub struct ChatView {
     /// The code block whose header is pinned over the transcript's top, as
     /// last drawn.
     pinned: Option<CodeSpan>,
+    /// What came of applying each reply code block, by `(turn, block)`, as
+    /// the host set it.
+    block_states: HashMap<(usize, usize), BlockState>,
     tail: Tail,
     /// The turns whose thinking is open.
     thinking_open: HashSet<usize>,
@@ -373,6 +376,7 @@ impl ChatView {
             stream: None,
             code_spans: CodeSpans::new(&scroll),
             pinned: None,
+            block_states: HashMap::new(),
             scroll,
             tail: Tail::Off,
             thinking_open: HashSet::new(),
@@ -629,6 +633,30 @@ impl ChatView {
     /// still in view.
     pub fn pinned_code_block(&self) -> Option<(usize, usize)> {
         self.pinned.map(|span| (span.turn, span.block))
+    }
+
+    /// Sets what came of applying code block `block` of turn `turn`'s
+    /// reply, which its header shows, or clears it.
+    pub fn set_block_state(
+        &mut self,
+        turn: usize,
+        block: usize,
+        state: Option<BlockState>,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = match state {
+            Some(state) => self.block_states.insert((turn, block), state.clone()) != Some(state),
+            None => self.block_states.remove(&(turn, block)).is_some(),
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// What came of applying code block `block` of turn `turn`'s reply, as
+    /// the host last set it.
+    pub fn block_state(&self, turn: usize, block: usize) -> Option<&BlockState> {
+        self.block_states.get(&(turn, block))
     }
 
     /// Whether a reply is streaming in.
@@ -969,7 +997,13 @@ impl ChatView {
             let view = cx.weak_entity();
             let spans = self.code_spans.clone();
             let tints = reply::DiffTints::new(self.composer.read(cx).theme());
-            reply::reply_element(index, &document, &style, streaming, *ui, tints, view, spans)
+            let states = (self.block_states.iter())
+                .filter(|((turn, _), _)| *turn == index)
+                .map(|(&(_, block), state)| (block, state.clone()))
+                .collect();
+            reply::reply_element(
+                index, &document, &style, streaming, *ui, tints, view, spans, states,
+            )
         };
         let answered_by = shown.answered_by.clone().map(|model| {
             div()
@@ -1037,6 +1071,7 @@ impl ChatView {
             span.turn,
             span.block,
             block,
+            self.block_states.get(&(span.turn, span.block)),
             streaming,
             ui,
             view,

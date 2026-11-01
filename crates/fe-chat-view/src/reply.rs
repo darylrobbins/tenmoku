@@ -20,8 +20,8 @@ use fe_markdown_view::{
 };
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, ScrollHandle, SharedString, Styled as _, StyledText, WeakEntity,
-    Window, div, px,
+    ParentElement as _, Pixels, ScrollHandle, SharedString, Styled, StyledText, WeakEntity, Window,
+    div, px,
 };
 use kiln_ui::{Button, UiTheme, h_flex};
 
@@ -48,6 +48,35 @@ impl CodeBlock {
             language: language.map(str::to_owned),
             path: info_path(info).map(str::to_owned),
             code: code.to_owned(),
+        }
+    }
+}
+
+/// What came of applying a code block, as its header shows it: set by the
+/// host ([`ChatView::set_block_state`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlockState {
+    /// Proposed in its file, `pending` of its `hunks` still to decide.
+    Proposed { pending: usize, hunks: usize },
+    /// Every hunk decided, `accepted` of `hunks` accepted.
+    Decided { accepted: usize, hunks: usize },
+    /// It changes nothing in its file.
+    NoChange,
+    /// It couldn't be applied, and why.
+    Failed(String),
+}
+
+impl BlockState {
+    /// The header's label for it.
+    pub fn label(&self) -> String {
+        match *self {
+            BlockState::Proposed { pending, hunks } if pending >= hunks => "Proposed".to_owned(),
+            BlockState::Proposed { pending, .. } => format!("Proposed · {pending} left"),
+            BlockState::Decided { accepted, hunks } if accepted >= hunks => "Accepted".to_owned(),
+            BlockState::Decided { accepted: 0, .. } => "Rejected".to_owned(),
+            BlockState::Decided { accepted, hunks } => format!("Accepted {accepted} of {hunks}"),
+            BlockState::NoChange => "No changes".to_owned(),
+            BlockState::Failed(_) => "Not applied".to_owned(),
         }
     }
 }
@@ -468,6 +497,7 @@ pub(crate) enum HeaderAt {
 }
 
 /// Turn `turn`'s reply, `document`, with a header over each code block,
+/// showing its state in `states`, by block,
 /// each block's place reported to `spans`, and each SEARCH/REPLACE block
 /// drawn as a diff in `tints` ([`diff_body`]). Apply is off while the
 /// reply streams, its blocks unfinished, and its last code block, which
@@ -482,6 +512,7 @@ pub(crate) fn reply_element(
     tints: DiffTints,
     view: WeakEntity<ChatView>,
     spans: CodeSpans,
+    states: HashMap<usize, BlockState>,
 ) -> AnyElement {
     let growing = streaming
         .then(|| code_block_count(document).checked_sub(1))
@@ -500,7 +531,17 @@ pub(crate) fn reply_element(
         Rc::new(move |block: CodeHeader<'_>, _: &mut Window, _: &mut App| {
             let code = CodeBlock::new(block.info, block.code);
             let at = HeaderAt::Block(spans.clone());
-            code_header(turn, block.index, code, streaming, &ui, view.clone(), at)
+            let state = states.get(&block.index);
+            code_header(
+                turn,
+                block.index,
+                code,
+                state,
+                streaming,
+                &ui,
+                view.clone(),
+                at,
+            )
         })
     };
     let on_code_bounds = Rc::new(move |block, bounds, _: &mut Window, _: &mut App| {
@@ -529,16 +570,25 @@ pub(crate) fn thinking_element(
     document_element(document, style, options)
 }
 
+/// How much faster a code header's state label shrinks than its path.
+const LABEL_SHRINK: f32 = 1000.;
+
 /// Code block `index` of turn `turn`'s reply's header, `block`: its
-/// language and path, Copy, and Apply, which asks the host to apply it.
-/// Over its block, its `debug_selector` is `chat-code-<turn>-<index>`, and
-/// its buttons' `chat-copy-<turn>-<index>` and `chat-apply-<turn>-<index>`;
-/// pinned, they are `chat-code-pinned`, `chat-copy-pinned` and
-/// `chat-apply-pinned`.
+/// language and path, what came of applying it, `state`, Copy, and Apply,
+/// which asks the host to apply it, again too. Over its block, its
+/// `debug_selector` is `chat-code-<turn>-<index>`, its state's
+/// `chat-block-state-<turn>-<index>`, and its buttons'
+/// `chat-copy-<turn>-<index>` and `chat-apply-<turn>-<index>`, and a block
+/// that couldn't be applied says why in a row under it,
+/// `chat-block-error-<turn>-<index>`; pinned, they are `chat-code-pinned`,
+/// `chat-block-state-pinned`, `chat-copy-pinned` and `chat-apply-pinned`,
+/// and there's no row.
+#[allow(clippy::too_many_arguments)] // Each is one thing the header shows.
 pub(crate) fn code_header(
     turn: usize,
     index: usize,
     block: CodeBlock,
+    state: Option<&BlockState>,
     streaming: bool,
     ui: &UiTheme,
     view: WeakEntity<ChatView>,
@@ -564,6 +614,20 @@ pub(crate) fn code_header(
     };
     let id = |name: &str| SharedString::from(format!("{name}-{suffix}"));
     let (code_id, copy_id, apply_id) = (id("chat-code"), id("chat-copy"), id("chat-apply"));
+    let failed = matches!(state, Some(BlockState::Failed(_)));
+    let label = state.map(|state| {
+        let state_id = id("chat-block-state");
+        let mut label = div();
+        label.style().flex_shrink = Some(LABEL_SHRINK);
+        label
+            .debug_selector(move || state_id.to_string())
+            // In a narrow panel it gives way first, before the path and
+            // the buttons.
+            .min_w_0()
+            .truncate()
+            .text_color(if failed { ui.error_text } else { ui.muted_text })
+            .child(state.label())
+    });
     let header = h_flex()
         .debug_selector(move || code_id.to_string())
         .gap_2()
@@ -576,6 +640,7 @@ pub(crate) fn code_header(
         .children(language.map(|language| div().child(language)))
         .children(path.map(|path| div().min_w_0().text_color(ui.text).child(path)))
         .child(div().flex_1())
+        .children(label)
         .child(
             Button::new(copy_id.clone(), "Copy")
                 .small()
@@ -590,17 +655,35 @@ pub(crate) fn code_header(
                 .on_click(apply),
         );
     match at {
-        // In a column of its own, which tells `spans` how tall it is.
-        HeaderAt::Block(spans) => div()
-            .flex()
-            .flex_col()
-            .on_children_prepainted(move |bounds, _, _| {
-                if let Some(header) = bounds.first() {
-                    spans.header_drawn(turn, index, header.size.height);
-                }
-            })
-            .child(header)
-            .into_any_element(),
+        // In a column of its own, which tells `spans` how tall it is, the
+        // reason a block wasn't applied under it.
+        HeaderAt::Block(spans) => {
+            let why = match state {
+                Some(BlockState::Failed(why)) => Some(why.clone()),
+                _ => None,
+            };
+            let error = why.map(|why| {
+                div()
+                    .debug_selector(move || format!("chat-block-error-{turn}-{index}"))
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(ui.border)
+                    .text_color(ui.error_text)
+                    .child(why)
+            });
+            div()
+                .flex()
+                .flex_col()
+                .on_children_prepainted(move |bounds, _, _| {
+                    if let Some(header) = bounds.first() {
+                        spans.header_drawn(turn, index, header.size.height);
+                    }
+                })
+                .child(header)
+                .children(error)
+                .into_any_element()
+        }
         HeaderAt::Pinned => header.into_any_element(),
     }
 }
