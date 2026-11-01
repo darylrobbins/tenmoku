@@ -242,6 +242,11 @@ fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &m
 /// root's newest saved window no live window holds, or else a fresh one,
 /// a little below and right of the active window.
 fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
+    open_window_at(root, cx);
+}
+
+/// [`open_window_on`], giving the window it opened.
+fn open_window_at(root: Option<PathBuf>, cx: &mut App) -> Option<WindowHandle<Workbench>> {
     let settings = current_settings(cx);
     let theme = theme::editor_theme(&settings.editor, cx);
     let capabilities = Capabilities::current();
@@ -277,9 +282,33 @@ fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
         new_workbench(launch, &settings, theme, layout, entry, window, cx)
     });
     match opened {
-        Ok(window) => watch_window(window, given, cx),
-        Err(error) => log::error!("can't open a window: {error}"),
+        Ok(window) => {
+            watch_window(window, given, cx);
+            Some(window)
+        }
+        Err(error) => {
+            log::error!("can't open a window: {error}");
+            None
+        }
     }
+}
+
+/// Opens what the system handed the app: see
+/// [`fe_workbench::open_documents`]. A file with no window on its folder
+/// gets one, with the file opened in it.
+fn open_documents(paths: &[PathBuf], cx: &mut App) {
+    fe_workbench::open_documents(paths, cx, |root, file, cx| {
+        let Some(window) = open_window_at(Some(root), cx) else {
+            return;
+        };
+        if let Some(file) = file {
+            window
+                .update(cx, |workbench, window, cx| {
+                    workbench.open_document(file, window, cx)
+                })
+                .ok();
+        }
+    });
 }
 
 /// The windows a launch on `root` opens, each with its layout (unless
@@ -397,15 +426,41 @@ fn main() {
     if perf {
         args.remove(0);
     }
-    let mut launch = fe_workbench::resolve_launch(args.into_iter().next().map(PathBuf::from));
-    let reading = launch.file.take().map(|(path, _)| loader::start(path));
-    let store = load_settings(launch.root.as_deref());
-    let settings: Arc<Settings> = store.settings().clone();
+    let argv_path = args.into_iter().next().map(PathBuf::from);
 
     let application = kiln::application();
+    // What macOS hands the app as open-document events (Finder's Open With,
+    // `open -a Tenmoku <path>`, a drop on the Dock icon), in the order they
+    // came: read at launch, and routed to windows after it.
+    let (opened_tx, opened_rx) = async_channel::unbounded::<Vec<PathBuf>>();
+    application.on_open_urls(move |urls| {
+        let paths: Vec<_> = urls
+            .iter()
+            .filter_map(|url| {
+                let path = fe_workbench::path_of_url(url);
+                if path.is_none() {
+                    log::warn!("not opening {url}: not a file URL");
+                }
+                path
+            })
+            .collect();
+        opened_tx.try_send(paths).ok();
+    });
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
+        // Paths macOS handed the app before this point (a cold launch by
+        // open-document event): the first is the launch's when argv gave
+        // none, so no empty window opens beside it.
+        let mut handed: Vec<PathBuf> = Vec::new();
+        while let Ok(paths) = opened_rx.try_recv() {
+            handed.extend(paths);
+        }
+        let argv_path = argv_path.or_else(|| (!handed.is_empty()).then(|| handed.remove(0)));
+        let mut launch = fe_workbench::resolve_launch(argv_path);
+        let reading = launch.file.take().map(|(path, _)| loader::start(path));
+        let store = load_settings(launch.root.as_deref());
+        let settings: Arc<Settings> = store.settings().clone();
         app_icon::set();
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
@@ -545,6 +600,17 @@ fn main() {
                 Err(error) => log::error!("can't open a saved window: {error}"),
             }
         }
+        // The rest of what was handed at launch, and what comes later.
+        open_documents(&handed, cx);
+        cx.spawn(async move |cx| {
+            while let Ok(paths) = opened_rx.recv().await {
+                cx.update(|cx| {
+                    open_documents(&paths, cx);
+                    cx.activate(true);
+                });
+            }
+        })
+        .detach();
         cx.activate(true);
     });
 }

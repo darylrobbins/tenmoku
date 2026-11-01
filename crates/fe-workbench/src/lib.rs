@@ -91,7 +91,7 @@ pub use lsp_consent::{
     decline_extension_server, grant_extension_server, pending_extension_consents,
     set_extension_consent_file, set_extension_servers,
 };
-pub use open::set_window_opener;
+pub use open::{DocumentRoute, open_documents, path_of_url, route_document, set_window_opener};
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};

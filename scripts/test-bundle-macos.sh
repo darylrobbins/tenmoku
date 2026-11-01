@@ -57,6 +57,19 @@ expect CFBundleVersion "$version"
 ! grep -q '@VERSION@' "$plist" || fail "@VERSION@ left in Info.plist"
 ok "no @VERSION@ left"
 
+# T1272: document types for folders and text/source/data files, all Alternate and Editor.
+types=$(plutil -extract CFBundleDocumentTypes json -o - "$plist") || fail "Info.plist has no CFBundleDocumentTypes"
+n=$(/usr/libexec/PlistBuddy -c "Print :CFBundleDocumentTypes" "$plist" | grep -c 'LSHandlerRank = Alternate') || true
+[ "$n" -eq 2 ] || fail "expected 2 document types with LSHandlerRank Alternate, found $n"
+ok "document types are Alternate"
+for uti in public.folder public.text public.source-code public.data; do
+	echo "$types" | grep -q "\"$uti\"" || fail "CFBundleDocumentTypes lacks $uti"
+done
+ok "document types cover public.folder, public.text, public.source-code, public.data"
+roles=$(echo "$types" | grep -o '"CFBundleTypeRole":"Editor"' | wc -l | tr -d ' ')
+[ "$roles" -eq 2 ] || fail "expected both document types to be role Editor"
+ok "document types are role Editor"
+
 # C3: the bundle id is fe_config::paths::app_id()'s reverse DNS.
 app_id=$(sed -n 's/.*AppId::new("\([^"]*\)".*/\1/p' "$root/crates/fe-config/src/paths.rs")
 [ -n "$app_id" ] || fail "no AppId::new(\"...\") in crates/fe-config/src/paths.rs"

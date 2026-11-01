@@ -93,6 +93,131 @@ pub(crate) fn open_window(root: Option<PathBuf>, cx: &mut App) {
     cx.defer(move |cx| open(root, cx));
 }
 
+/// Where a path the system asked the app to open goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentRoute {
+    /// A live window (its index in the roots given) shows it: a folder is
+    /// that window's root, a file is opened in it.
+    Window {
+        window: usize,
+        file: Option<PathBuf>,
+    },
+    /// No live window does: a new one, on the folder itself or on the
+    /// file's parent, with the file opened in it.
+    NewWindow {
+        root: PathBuf,
+        file: Option<PathBuf>,
+    },
+}
+
+/// `path` with symlinks resolved as far as it exists, so a missing file
+/// compares by its folder.
+fn resolved(path: &Path) -> PathBuf {
+    if let Ok(real) = fs::canonicalize(path) {
+        return real;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => resolved(parent).join(name),
+        _ => path.to_owned(),
+    }
+}
+
+/// Where `path` goes given the `roots` of the live windows: a folder to a
+/// window on it, else a new one; a file to the window whose root contains
+/// it (the deepest, when several do), else a new window on its parent.
+pub fn route_document(path: &Path, roots: &[Option<PathBuf>]) -> DocumentRoute {
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    let real = resolved(&path);
+    let roots: Vec<_> = roots.iter().map(|r| r.as_deref().map(resolved)).collect();
+    if path.is_dir() {
+        return match roots.iter().position(|root| root.as_ref() == Some(&real)) {
+            Some(window) => DocumentRoute::Window { window, file: None },
+            None => DocumentRoute::NewWindow {
+                root: path,
+                file: None,
+            },
+        };
+    }
+    let deepest = (roots.iter().enumerate())
+        .filter_map(|(i, root)| Some((i, root.as_ref()?)))
+        .filter(|(_, root)| real.starts_with(root))
+        .max_by_key(|(_, root)| root.components().count());
+    match deepest {
+        Some((window, _)) => DocumentRoute::Window {
+            window,
+            file: Some(path),
+        },
+        None => DocumentRoute::NewWindow {
+            root: path.parent().map(Path::to_owned).unwrap_or_default(),
+            file: Some(path),
+        },
+    }
+}
+
+/// The path a `file://` URL names, percent-decoded; `None` for any other
+/// URL, or a path that isn't UTF-8.
+pub fn path_of_url(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    // `file://host/path`: only the local machine's.
+    let path = &rest[rest.find('/')?..];
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(hex) = path.get(i + 1..i + 3)
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok().map(PathBuf::from)
+}
+
+/// Opens what the system handed the app (Finder's Open With, `open -a`, a
+/// drop on the Dock icon), each of `paths` by [`route_document`] over the
+/// live workbench windows. `new_window` opens a window on a folder, with a
+/// file to open in it.
+pub fn open_documents(
+    paths: &[PathBuf],
+    cx: &mut App,
+    new_window: impl Fn(PathBuf, Option<PathBuf>, &mut App),
+) {
+    for path in paths {
+        let windows: Vec<_> = cx
+            .windows()
+            .into_iter()
+            .filter_map(|w| w.downcast::<crate::Workbench>())
+            .collect();
+        let roots: Vec<_> = windows
+            .iter()
+            .map(|w| {
+                w.read_with(cx, |wb, _| wb.root().map(Path::to_owned))
+                    .ok()
+                    .flatten()
+            })
+            .collect();
+        match route_document(path, &roots) {
+            DocumentRoute::Window { window, file } => {
+                windows[window]
+                    .update(cx, |wb, window, cx| {
+                        window.activate_window();
+                        if let Some(file) = file {
+                            wb.open_document(file, window, cx);
+                        }
+                    })
+                    .ok();
+            }
+            DocumentRoute::NewWindow { root, file } => new_window(root, file, cx),
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "save_as_tests.rs"]
 mod save_as_tests;

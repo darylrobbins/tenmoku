@@ -13,6 +13,7 @@ name = "tenmoku"
 path = "src/main.rs"
 
 [dependencies]
+async-channel.workspace = true
 fe-buffer.workspace = true
 fe-config.workspace = true
 fe-gpui.workspace = true

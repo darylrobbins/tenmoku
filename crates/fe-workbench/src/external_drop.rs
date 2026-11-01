@@ -39,6 +39,12 @@ fn classify(paths: &[PathBuf]) -> Vec<Dropped> {
 }
 
 impl Workbench {
+    /// Opens `path` in the active pane, as a tab.
+    pub fn open_document(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.active.clone();
+        pane.update(cx, |pane, cx| pane.open(path, window, cx));
+    }
+
     /// Opens what was dropped at `position`: the first folder as the
     /// project, as Open Folder does, then the files, in order, as tabs of
     /// the pane under `position` (else the active one), the last active and
