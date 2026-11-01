@@ -27,12 +27,15 @@
 //! - [`BackupStore`] keeps backups of unsaved buffers on disk, privately and
 //!   atomically, for hot exit and crash recovery; [`Buffer::from_backup`]
 //!   restores one, dirty over the file's current text.
+//! - [`LocalHistory`] keeps past texts of each file on disk, by path, newest
+//!   first, bounded by count, age and total size; see [`local_history`].
 //!
 //! This crate must never depend on GPUI.
 
 mod backup;
 mod buffer;
 mod edit;
+pub mod local_history;
 mod log;
 mod marker;
 mod proposed;
@@ -47,6 +50,7 @@ pub use buffer::{
 };
 pub use edit::Edit;
 pub use fe_text::{Bias, DecodedFile, Encoding, FileEncoding, LineEnding, Point, PointUtf16, Text};
+pub use local_history::LocalHistory;
 pub use marker::{MarkerError, MarkerId, MarkerSet};
 pub use proposed::{
     Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
