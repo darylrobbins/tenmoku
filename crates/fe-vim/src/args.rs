@@ -20,7 +20,7 @@ use crate::{feature::definition_motions, line_motions, prose};
 /// `surround` (`ys`, which `vim.operate` refuses) to `feature/surround.rs`;
 /// `replace_with_register` (`gr`) to `feature/replace_register.rs`;
 /// `comment` (`gc`) to `feature/comment.rs`; `filter` (`!`) to
-/// `feature/filter.rs`.
+/// `feature/filter.rs`; `coerce` (`cr{char}`) to `feature/abolish.rs`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -76,6 +76,12 @@ pub enum Operator {
     /// `!`: opens the command line on the rows it covers, for a filter
     /// through a shell command (`feature/filter.rs`).
     Filter,
+    /// `cr{char}`: coerces the words it covers to the case `to` names, as
+    /// vim-abolish does (`feature/abolish.rs`): `{"coerce": {"to": "s"}}`
+    /// is `crs`. It takes no selection.
+    Coerce {
+        to: char,
+    },
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are

@@ -35,6 +35,7 @@
 //! to the feature, which waits on a prefix holding it
 //! ([`FeaturePrefix::with_target`]).
 
+pub(crate) mod abolish;
 pub(crate) mod argument;
 pub(crate) mod comment;
 pub(crate) mod definition;
@@ -210,6 +211,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &exchange::FEATURE,
     &filter::FEATURE,
     &seek::FEATURE,
+    &abolish::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

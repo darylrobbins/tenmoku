@@ -19,7 +19,7 @@ use fe_text::{Bias, Text};
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
     Registers, Target, TextObject, VimState, VimTarget, Write, cmdline,
-    feature::{comment, exchange, filter, replace_register},
+    feature::{abolish, comment, exchange, filter, replace_register},
     folds, g_operators, history, insert, line_motions, marks,
     motion::{self, Cursor},
     text_object, visual,
@@ -621,7 +621,8 @@ fn keeping_last_change<R>(
 /// `vim.operate`: over a motion or text object in normal mode, or over the
 /// selection in a visual mode (see `visual::operate`). Over a motion or
 /// object, `gr` is `feature::replace_register::operate`'s, `cx`
-/// `feature::exchange::operate`'s, `!` (over a selection too)
+/// `feature::exchange::operate`'s, `cr` `feature::abolish::operate`'s, `!`
+/// (over a selection too)
 /// `feature::filter::operate`'s and an operator but `d y c > < = zf gc`
 /// is `g_operators::operate`'s; visual `zf` is
 /// `folds::fold_selection`. Any operator over the `gc` object is
@@ -716,6 +717,10 @@ fn operate_over(
         return keeping_last_change(target, |target| {
             comment::operate_object(target, actor, args)
         });
+    }
+    // `cr` refuses a selection itself.
+    if let Operator::Coerce { .. } = args.operator {
+        return keeping_last_change(target, |target| abolish::operate(target, actor, args));
     }
     // Over a selection too: the `gc` object's rows.
     if args.operator == Operator::Exchange {

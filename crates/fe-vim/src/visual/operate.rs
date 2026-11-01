@@ -411,6 +411,7 @@ fn operate_as_wide(
         Operator::Comment => unreachable!("comment's own"),
         Operator::Exchange => unreachable!("refused by operator::operate"),
         Operator::Filter => unreachable!("filter's own"),
+        Operator::Coerce { .. } => unreachable!("refused by operator::operate"),
         Operator::ToggleCase
         | Operator::Lowercase
         | Operator::Uppercase
