@@ -8,7 +8,7 @@ use std::{
 };
 
 use fe_editor::EditorModel;
-use fe_gpui::{EditorSettings, EditorTheme};
+use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
 use fe_workbench::{Launch, Workbench};
 use gpui::{
     AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, WindowHandle, px, size,
@@ -16,12 +16,12 @@ use gpui::{
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
 /// The window size of the scene, in logical pixels.
-const SCENE_SIZE: Size<Pixels> = size(px(1000.), px(600.));
+pub(crate) const SCENE_SIZE: Size<Pixels> = size(px(1000.), px(600.));
 
 /// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
 const FONT_FAMILY: &str = "Menlo";
 
-const SCENE: &str = "workbench";
+pub(crate) const SCENE: &str = "workbench";
 
 const MAIN_RS: &str = r#"mod util;
 
@@ -39,7 +39,7 @@ fn main() {
 
 /// Writes the demo project into `<parent>/demo`, so the root's name is fixed,
 /// and returns its path.
-fn write_project(parent: &Path) -> Result<PathBuf> {
+pub(crate) fn write_project(parent: &Path) -> Result<PathBuf> {
     let root = parent.join("demo");
     fs::create_dir_all(root.join("src/util"))?;
     fs::create_dir_all(root.join("target"))?;
@@ -63,11 +63,13 @@ fn write_project(parent: &Path) -> Result<PathBuf> {
 /// Opens `root` in a workbench, off screen, with `src/` expanded and
 /// `README.md` and `src/main.rs` open, then renders it once the background
 /// work its frames start (the listing, loading languages, parsing) has landed.
-fn capture(
+/// `palette` gives the editors their colours.
+pub(crate) fn capture(
     cx: &mut VisualTestAppContext,
     root: &Path,
     size: Size<Pixels>,
     open_demo: bool,
+    palette: &EditorPalette,
 ) -> Result<RgbaImage> {
     let launch = Launch {
         root: Some(root.to_owned()),
@@ -76,7 +78,7 @@ fn capture(
     let window = cx.open_offscreen_window(size, |window, cx| {
         let theme = EditorTheme {
             font_family: FONT_FAMILY.into(),
-            ..EditorTheme::default_dark(cx)
+            ..EditorTheme::from_palette(palette, &EditorSettings::default(), cx)
         };
         cx.new(|cx| {
             let mut workbench =
@@ -147,7 +149,7 @@ fn check_scene(cx: &mut VisualTestAppContext) -> Result<bool> {
     let goldens = Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden");
     let parent = tempfile::tempdir()?;
     let root = write_project(parent.path())?;
-    let image = capture(cx, &root, SCENE_SIZE, true)?;
+    let image = capture(cx, &root, SCENE_SIZE, true, EditorPalette::fastedit_dark())?;
     goldens.check(SCENE, &image)
 }
 
@@ -157,7 +159,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <dir> [--size WxH]";
     let (out, dir, size) = render_args(args, SCENE_SIZE, usage)?;
     let root = std::path::absolute(dir)?;
-    capture(cx, &root, size, false)?.save(out)?;
+    capture(cx, &root, size, false, EditorPalette::fastedit_dark())?.save(out)?;
     println!("wrote {out}");
     Ok(())
 }
@@ -174,7 +176,8 @@ pub(crate) fn main() -> ExitCode {
     });
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
-        None => check_scene(&mut cx),
+        None => check_scene(&mut cx)
+            .and_then(|matched| Ok(crate::token_probe::check(&mut cx)? && matched)),
         Some(_) => Err("usage: screenshots [render <out.png> <dir> [--size WxH]]".into()),
     })
 }

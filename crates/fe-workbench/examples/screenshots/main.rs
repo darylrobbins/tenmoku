@@ -12,9 +12,16 @@
 //! `main` is but test threads aren't, so the scenes render only under
 //! `cargo run`, and only on macOS: elsewhere `main` says so and exits
 //! cleanly, as the goldens are Metal's.
+//!
+//! After the golden, the comparing run renders the scene under two probe
+//! themes and fails when more of its pixels than `token_probe` allows are
+//! the same in both: a colour that bypasses the theme. It writes
+//! `target/screenshots/workbench_tokens.diff.png`, those pixels in magenta.
 
 #[cfg(target_os = "macos")]
 mod scenes;
+#[cfg(target_os = "macos")]
+mod token_probe;
 
 use std::process::ExitCode;
 
