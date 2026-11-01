@@ -259,6 +259,22 @@ fn hiding_the_gutter_hides_an_entrys_popover(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn hiding_and_showing_the_gutter_before_the_delay_cancels_the_wait(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    annotate_two(&view, cx);
+    let row_0 = slot(&view, cx, 0);
+    cx.simulate_mouse_move(row_0, None, Modifiers::none());
+    cx.run_until_parked();
+    for shown in [false, true] {
+        view.update(cx, |view, cx| view.set_gutter(shown, cx));
+        cx.run_until_parked();
+    }
+    cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.popover_text()), None);
+}
+
+#[gpui::test]
 fn edited_rows_go_blank_and_later_rows_follow(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
     let (_, text_left) = column(&view, cx);

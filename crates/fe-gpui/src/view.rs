@@ -576,6 +576,11 @@ impl EditorView {
     pub fn set_gutter(&mut self, shown: bool, cx: &mut Context<Self>) {
         if self.gutter != shown {
             self.gutter = shown;
+            // A popover waiting or shown for an annotation goes with the
+            // column, so showing it again doesn't revive the old timer.
+            if !shown && self.popover_shows_annotation() {
+                self.hide_popover(cx);
+            }
             cx.notify();
         }
     }

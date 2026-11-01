@@ -1486,6 +1486,21 @@ impl Element for EditorElement {
                 cx,
             );
         }
+        // An annotation popover whose column is no longer under the still
+        // pointer (the editor moved, or the column went) is reconciled.
+        if view.popover_shows_annotation() {
+            let position = window.mouse_position();
+            let over = layout
+                .annotation_hitbox
+                .as_ref()
+                .is_some_and(|column| column.is_hovered_at(position, window));
+            if !over {
+                let handle = self.view.clone();
+                window.defer(cx, move |window, cx| {
+                    handle.update(cx, |view, cx| pointer_still(view, window, cx));
+                });
+            }
+        }
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, theme.background));
             if self.view.read(cx).paints_cursor_line() {
@@ -1500,6 +1515,8 @@ impl Element for EditorElement {
                     bounds: text_bounds,
                 }),
                 |window| {
+                    // Under the foreground of blocks, lenses and proposals.
+                    rulers::paint(&layout.rulers, theme.ruler, window);
                     host_blocks::paint(
                         &layout.host_blocks,
                         &layout,
@@ -1526,7 +1543,6 @@ impl Element for EditorElement {
                         &mut painted_proposals,
                     );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
-                    rulers::paint(&layout.rulers, theme.ruler, window);
                     indent_guides::paint(&layout.indent_guides, window);
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
