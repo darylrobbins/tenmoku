@@ -133,7 +133,8 @@ impl Macros {
 
     /// The jump being read landed with `count` (`None` for a counted one,
     /// whose count was typed before the trigger): its keys so far, from the
-    /// trigger, become `{count}gs{c1}{c2}` (`gS` backward), which replays
+    /// trigger, become `{count}gs{c1}{c2}` (`gS` backward; `{c1}` alone in
+    /// the flash style), which replays
     /// as that counted jump, showing no labels, from wherever it plays.
     /// Landing again (a label after an autojump) writes it again.
     pub(crate) fn jump_landed(&mut self, count: Option<u32>, jump: JumpMotion) {
@@ -150,7 +151,7 @@ impl Macros {
         recording
             .text
             .push_str(if jump.forward { "gs" } else { "gS" });
-        for ch in jump.chars.0 {
+        for ch in jump.chars.iter() {
             encode(VimKey::Char(ch), &mut recording.text);
         }
     }

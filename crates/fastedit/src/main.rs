@@ -145,7 +145,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
             return;
         }
         let (now, before) = (global.settings(), global.previous());
-        let jump_on_s = now.vim.jump_on_s;
+        let (jump_on_s, jump_style) = (now.vim.jump_on_s, now.vim.jump_style);
         let (ignorecase, smartcase, incsearch) =
             (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
         let inccommand = now.vim.inccommand;
@@ -166,6 +166,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
+        fe_gpui::set_vim_jump_style(cx, jump_style);
         fe_gpui::set_vim_search_case(cx, ignorecase, smartcase);
         fe_gpui::set_vim_incsearch(cx, incsearch);
         fe_gpui::set_vim_inccommand(cx, inccommand);
@@ -583,6 +584,7 @@ fn main() {
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
+        fe_gpui::set_vim_jump_style(cx, settings.vim.jump_style);
         fe_gpui::set_vim_search_case(cx, settings.vim.ignorecase, settings.vim.smartcase);
         fe_gpui::set_vim_incsearch(cx, settings.vim.incsearch);
         fe_gpui::set_vim_inccommand(cx, settings.vim.inccommand);

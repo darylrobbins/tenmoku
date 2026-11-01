@@ -157,6 +157,10 @@
 # true: s and S start the forward and backward jump, as leap and flash map
 # them, instead of changing a char or a line. gs and gS start it either way.
 # jump_on_s = false
+# How the jump reads its target: "leap" takes two chars, then labels; "flash"
+# takes one char, then labels every match in the view, before and after the
+# caret (gS before only).
+# jump_style = "leap"
 # true: a search ignores case, as nvim's 'ignorecase'. \c and \C in a pattern
 # override it.
 # ignorecase = false

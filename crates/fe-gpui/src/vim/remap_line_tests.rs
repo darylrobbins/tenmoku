@@ -225,3 +225,53 @@ fn a_new_line_forgets_the_last_ones_keys(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("escape q");
     assert_eq!(register('a', cx).as_deref(), Some(":zz\r\u{1b}"));
 }
+
+/// Puts `text` in register `name`, as a recording would leave it.
+fn set_register(name: char, text: &str, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        let mut host = fe_editor::commands::HeadlessHost::new();
+        let register = fe_vim::Register::new(text, false);
+        let registers = &mut cx.global_mut::<Vim>().registers;
+        registers
+            .write(Some(name), fe_vim::Write::Yank, register, &mut host)
+            .unwrap();
+    });
+}
+
+#[gpui::test]
+fn a_replayed_marker_is_read_before_the_maps(cx: &mut TestAppContext) {
+    // `j` is held for `jk`; the marker resolves it, as a timeout does,
+    // and no map's left side takes the marker.
+    let maps = vec![cnoremap("jk", "<CR>"), cnoremap("j\u{F8FF}", "Z")];
+    let (view, cx) = vim_editor(cx, "aaa", maps);
+    set_register('a', ":s/a/j\u{F8FF}x/\r", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "jxaa");
+    // With nothing held, the same.
+    set_register('a', ":s/a/\u{F8FF}j/\r", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "jxja");
+}
+
+#[gpui::test]
+fn a_map_s_marker_char_is_text(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("zz", "y\u{F8FF}w")]);
+    set_register('a', ":s/a/zz/\r", cx);
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "y\u{F8FF}waa");
+}
+
+#[gpui::test]
+fn a_line_recorded_whole_keeps_a_marker_char(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "aaa", vec![cnoremap("jk", "<CR>")]);
+    cx.simulate_keystrokes("q a :");
+    submit(&view, "s/a/\u{F8FF}/", cx);
+    cx.simulate_keystrokes("q");
+    assert_eq!(text(&view, cx), "\u{F8FF}aa");
+    assert_eq!(
+        register('a', cx).as_deref(),
+        Some(":s/a/\u{F8FF}\u{F8FF}/\r")
+    );
+    cx.simulate_keystrokes("@ a");
+    assert_eq!(text(&view, cx), "\u{F8FF}\u{F8FF}a");
+}

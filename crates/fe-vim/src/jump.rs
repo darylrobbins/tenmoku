@@ -53,6 +53,19 @@
 //! normal mode, a visual mode or after an operator) start the jump as `gs`
 //! and `gS` do. Macros record the jump resolved ([`crate::macros`]).
 //!
+//! # The flash style
+//!
+//! With [`VimState::set_jump_style`] [`JumpStyle::Flash`], as flash.nvim
+//! does, the jump takes one char, `gs{c1}` (or `s{c1}`), and the motion
+//! matches that alone ([`label::targets`]). Without a count `gs` commits
+//! `vim.jump` with `both`: the targets are the matches before and after
+//! the caret ([`label::around`]), nearest first; `gS` takes those before it
+//! only. One target it goes to at once; more, [`label::flash`] labels them
+//! all (no autojump) and they wait as above. A label commits the motion in
+//! its target's direction, counted from where the jump started, so `.`,
+//! registers, marks and a recording see `{count}gs{c1}` after the caret or
+//! `{count}gS{c1}` before it, which replays in the flash style.
+//!
 //! The host paints [`VimState::jump_overlay`] and shows
 //! [`VimState::jump_query`].
 
@@ -95,8 +108,10 @@ pub(crate) const FEATURE: Feature = Feature {
 };
 
 /// `vim.jump`'s args: the jump [`VimState::feed`] commits once both chars
-/// are in with no count, carrying what was pending. With a `count` it's the
-/// counted motion.
+/// (one in the flash style) are in with no count, carrying what was
+/// pending. With a `count` it's the counted motion. With `both` and no
+/// count it labels the matches before the caret too, whatever `forward`
+/// is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JumpArgs {
     #[schemars(with = "String")]
@@ -108,6 +123,8 @@ pub struct JumpArgs {
     pub register: Option<char>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator: Option<Operator>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub both: bool,
 }
 
 impl JumpArgs {
@@ -138,10 +155,13 @@ impl Query {
     }
 }
 
-/// `gs` or `gS`, the chars typed so far: while labels wait, both.
+/// `gs` or `gS`, the chars typed so far: while labels wait, all of them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct JumpPrefix {
     forward: bool,
+    /// The jump takes one char (the flash style's), which [`key`] decides
+    /// as the char comes, the trigger not knowing the style.
+    one: bool,
     first: Option<char>,
     query: Query,
 }
@@ -150,36 +170,75 @@ impl JumpPrefix {
     fn new(forward: bool) -> Self {
         Self {
             forward,
+            one: false,
             first: None,
             query: Query::default(),
         }
     }
 
     /// The next typed char: the prefix still waiting for the second, or
-    /// the motion once both are in.
+    /// the motion once all are in.
     pub(crate) fn then(self, ch: char) -> ControlFlow<Motion, Self> {
-        match self.first {
-            None => ControlFlow::Continue(Self {
-                first: Some(ch),
-                query: self.query.push(ch),
-                ..self
-            }),
-            Some(first) => ControlFlow::Break(Motion::Jump(JumpMotion {
-                chars: JumpChars([first, ch]),
-                forward: self.forward,
-            })),
-        }
+        let chars = match (self.one, self.first) {
+            (true, _) => JumpChars::one(ch),
+            (false, None) => {
+                return ControlFlow::Continue(Self {
+                    first: Some(ch),
+                    query: self.query.push(ch),
+                    ..self
+                });
+            }
+            (false, Some(first)) => JumpChars::pair(first, ch),
+        };
+        ControlFlow::Break(Motion::Jump(JumpMotion {
+            chars,
+            forward: self.forward,
+        }))
     }
 
     /// The prefix whose labels wait for `jump`.
     fn labelling(jump: JumpMotion) -> Self {
-        let [c1, c2] = jump.chars.0;
         Self {
             forward: jump.forward,
-            first: Some(c1),
-            query: Query::default().push(c1).push(c2),
+            one: jump.chars.second.is_none(),
+            first: Some(jump.chars.first),
+            query: jump.chars.iter().fold(Query::default(), Query::push),
         }
     }
+
+    /// The prefix that, given the last char of `jump`, is `jump`.
+    fn before_last(jump: JumpMotion) -> (Self, char) {
+        let prefix = Self::new(jump.forward);
+        match jump.chars.second {
+            Some(c2) => {
+                let first = jump.chars.first;
+                let prefix = Self {
+                    first: Some(first),
+                    query: prefix.query.push(first),
+                    ..prefix
+                };
+                (prefix, c2)
+            }
+            None => (
+                Self {
+                    one: true,
+                    ..prefix
+                },
+                jump.chars.first,
+            ),
+        }
+    }
+}
+
+/// How the jump reads its target ([`VimState::set_jump_style`]).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum JumpStyle {
+    /// Two chars, then labels, as leap.nvim does.
+    #[default]
+    Leap,
+    /// One char, then labels on every match in the view, both ways, as
+    /// flash.nvim does.
+    Flash,
 }
 
 /// `s` and `S` after `g`.
@@ -203,7 +262,7 @@ fn register(registry: &mut Registry<VimCommands>) {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Jumps to a match of two chars in the view, forward or backward, as gs and gS do without a count: straight to it if it's the only one, or to the nearest with safe labels on the rest (not after an operator), otherwise labelling them all and waiting for a label. With a count it's the counted jump over the whole text. With an operator it acts on the text up to the target.",
+            "Jumps to a match of two chars in the view, forward or backward, as gs and gS do without a count: straight to it if it's the only one, or to the nearest with safe labels on the rest (not after an operator), otherwise labelling them all and waiting for a label. One char is the flash style's: straight to its only match, otherwise labels on them all (with both, before and after the caret). With a count it's the counted jump over the whole text. With an operator it acts on the text up to the target.",
         )
         .context(
             ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
@@ -217,10 +276,12 @@ fn register(registry: &mut Registry<VimCommands>) {
 pub(crate) struct Jumps {
     /// Labels waiting.
     session: Option<Session>,
-    /// The last jump's chars and direction, for `<CR>` as `{c1}`.
-    last: Option<JumpMotion>,
+    /// The last jump's chars and direction, and whether it labelled both
+    /// ways, for `<CR>` as `{c1}`.
+    last: Option<(JumpMotion, bool)>,
     /// `s` and `S` start the jump.
     on_s: bool,
+    style: JumpStyle,
     /// The label just picked: set as it commits, taken by the motion it
     /// commits ([`check_pick`]).
     picked: Option<Picked>,
@@ -233,8 +294,19 @@ struct Picked {
     count: u32,
     /// What the labels were found for.
     basis: Basis,
-    /// After an autojump, where the jump started and the count it went.
-    start: Option<(Start, u32)>,
+    /// After an autojump, where the jump started and the jump it went.
+    start: Option<(Start, u32, JumpMotion)>,
+}
+
+/// A session's target.
+#[derive(Copy, Clone, Debug)]
+struct Labelled {
+    offset: usize,
+    /// Its count from where the jump started, in its direction.
+    count: u32,
+    /// After the caret (the flash style labels both ways).
+    forward: bool,
+    label: Option<Label>,
 }
 
 /// Labels waiting for a key.
@@ -243,9 +315,8 @@ struct Session {
     jump: JumpMotion,
     register: Option<char>,
     operator: Option<Operator>,
-    /// The targets in the view, nearest first: each one's offset, its count
-    /// from where the jump started, and its label.
-    targets: Vec<(usize, u32, Option<Label>)>,
+    /// The targets in the view, nearest first.
+    targets: Vec<Labelled>,
     page: usize,
     pages: usize,
     /// After an autojump, where the jump started.
@@ -256,6 +327,15 @@ struct Session {
 }
 
 impl Session {
+    /// The motion that reaches `target`, and its count.
+    fn reach(&self, target: &Labelled) -> (JumpMotion, u32) {
+        let jump = JumpMotion {
+            forward: target.forward,
+            ..self.jump
+        };
+        (jump, target.count)
+    }
+
     /// Whether the labels still name what they show in `model`.
     fn holds(&self, model: &EditorModel, state: &VimState) -> bool {
         Basis::now(model, state) == self.basis
@@ -312,14 +392,20 @@ fn run(target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs) -> Handled {
     let view = scroll::viewport(&*target.host);
     let rows = view_rows(target.model, view, target.host.top_display_row());
     let text = target.model.text();
-    let mut found = label::targets(text, rows, caret, jump.chars.0, jump.forward);
+    let mut found = match args.both {
+        true => label::around(text, rows, caret, jump.chars),
+        false => label::targets(text, rows, caret, jump.chars, jump.forward),
+    };
     found.retain(|&offset| shown(target.model, text.offset_to_point(offset).row));
     if found.is_empty() {
         target.state.failed = true;
         return Ok(Dispatched::new(Effect::Nothing));
     }
-    let counts = counts(text, caret, jump, &found);
-    let labeled = label::label(found.len(), args.operator.is_some());
+    let counts = counts(text, caret, jump.chars, &found);
+    let labeled = match jump.chars.second {
+        Some(_) => label::label(found.len(), args.operator.is_some()),
+        None => label::flash(found.len()),
+    };
     let pages = labeled.labels.iter().flatten().map(|l| l.page + 1).max();
     let mut session = Session {
         jump,
@@ -327,7 +413,12 @@ fn run(target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs) -> Handled {
         operator: args.operator,
         targets: (found.into_iter().zip(counts))
             .zip(labeled.labels)
-            .map(|((offset, count), label)| (offset, count, label))
+            .map(|((offset, count), label)| Labelled {
+                offset,
+                count,
+                forward: offset > caret,
+                label,
+            })
             .collect(),
         page: 0,
         pages: pages.unwrap_or(1),
@@ -339,8 +430,12 @@ fn run(target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs) -> Handled {
         return Ok(Dispatched::new(Effect::Notify));
     }
     let start = Start::save(target);
-    let first = session.targets[0].1;
-    target.state.macros.jump_landed(Some(first), jump);
+    let (first_jump, first) = session.reach(&session.targets[0]);
+    target.state.macros.jump_landed(Some(first), first_jump);
+    let args = JumpArgs {
+        forward: first_jump.forward,
+        ..args
+    };
     let landed = counted(target, actor, args, first)?;
     if session.targets.len() > 1 {
         target.model.sync_display();
@@ -415,17 +510,30 @@ fn wait(state: &mut VimState, session: Session) {
     state.jump.session = Some(session);
 }
 
-/// Each of `found` (matches of `jump` from `caret`, in order) as the count
-/// the motion takes to reach it.
-fn counts(text: &Text, caret: usize, jump: JumpMotion, found: &[usize]) -> Vec<u32> {
-    let mut counts = Vec::with_capacity(found.len());
-    let all = label::matches(text, 0..text.row_count(), caret, jump.chars.0, jump.forward);
-    for (ix, offset) in all.enumerate() {
-        if counts.len() == found.len() {
-            break;
+/// Each of `found` (matches of `chars` from `caret`, in any order, either
+/// side of it) as the count the motion takes to reach it in its direction.
+fn counts(text: &Text, caret: usize, chars: JumpChars, found: &[usize]) -> Vec<u32> {
+    let mut counts = vec![u32::MAX; found.len()];
+    for forward in [true, false] {
+        let mut side: Vec<(usize, usize)> = (found.iter().enumerate())
+            .filter(|&(_, &offset)| (offset > caret) == forward)
+            .map(|(ix, &offset)| (offset, ix))
+            .collect();
+        // Nearest first in this direction, as the matches come.
+        match forward {
+            true => side.sort_unstable(),
+            false => side.sort_unstable_by(|a, b| b.cmp(a)),
         }
-        if offset == found[counts.len()] {
-            counts.push(u32::try_from(ix + 1).unwrap_or(u32::MAX));
+        let mut side = side.into_iter().peekable();
+        let all = label::matches(text, 0..text.row_count(), caret, chars, forward);
+        for (n, offset) in all.enumerate() {
+            let Some(&(next, ix)) = side.peek() else {
+                break;
+            };
+            if offset == next {
+                counts[ix] = u32::try_from(n + 1).unwrap_or(u32::MAX);
+                side.next();
+            }
         }
     }
     counts
@@ -451,8 +559,8 @@ pub(crate) fn label_key(state: &mut VimState, key: VimKey) -> Option<Step> {
     }
     state.pending = Pending::new();
     let picked = match key {
-        VimKey::Char(ch) => session.targets.iter().find(|(_, _, label)| {
-            *label
+        VimKey::Char(ch) => session.targets.iter().find(|target| {
+            target.label
                 == Some(Label {
                     ch,
                     page: session.page,
@@ -460,16 +568,16 @@ pub(crate) fn label_key(state: &mut VimState, key: VimKey) -> Option<Step> {
         }),
         _ => None,
     };
-    if let Some(&(_, count, _)) = picked {
+    if let Some(picked) = picked {
+        let (jump, count) = session.reach(picked);
+        let (first_jump, first) = session.reach(&session.targets[0]);
         state.jump.picked = Some(Picked {
-            jump: session.jump,
+            jump,
             count,
-            basis: session.basis,
-            start: session
-                .autojumped
-                .map(|start| (start, session.targets[0].1)),
+            basis: session.basis.clone(),
+            start: (session.autojumped.take()).map(|start| (start, first, first_jump)),
         });
-        let motion = Motion::Jump(session.jump);
+        let motion = Motion::Jump(jump);
         return Some(match session.operator {
             Some(operator) => invocation(
                 "vim.operate",
@@ -502,9 +610,9 @@ pub(crate) fn label_key(state: &mut VimState, key: VimKey) -> Option<Step> {
 }
 
 /// Keys [`VimState::feed`] reads for the jump before [`crate::step`]: `s`
-/// and `S` starting it when opted in, `<CR>` as `{c1}`, and `{c2}`, which
-/// commits `vim.jump` with no count (with one, the motion, as `step`
-/// commits it). Anything else comes back.
+/// and `S` starting it when opted in, `<CR>` as `{c1}`, and `{c2}` (`{c1}`
+/// in the flash style), which commits `vim.jump` with no count (with one,
+/// the motion, as `step` commits it). Anything else comes back.
 pub(crate) fn key(state: &mut VimState, pending: Pending, key: VimKey) -> Result<Step, Pending> {
     let Some(&prefix) = pending.jump() else {
         let forward = match key {
@@ -517,29 +625,33 @@ pub(crate) fn key(state: &mut VimState, pending: Pending, key: VimKey) -> Result
         }
         return Ok(Step::Wait(pending.jumping(JumpPrefix::new(forward))));
     };
-    let (prefix, c2) = match (prefix.first, key) {
+    let flash = state.jump.style == JumpStyle::Flash;
+    let ((prefix, last), both) = match (prefix.first, key) {
         (None, VimKey::Enter) => match state.jump.last {
-            Some(last) => {
-                let [c1, c2] = last.chars.0;
-                let prefix = JumpPrefix {
-                    forward: last.forward,
-                    first: Some(c1),
-                    query: Query::default().push(c1),
-                };
-                (prefix, c2)
-            }
+            Some((last, both)) => (JumpPrefix::before_last(last), both),
             None => return Ok(Step::Cancel),
         },
-        (Some(_), VimKey::Char(ch)) => (prefix, ch),
+        // `gs` labels both ways, `gS` before the caret only.
+        (None, VimKey::Char(ch)) if flash => (
+            (
+                JumpPrefix {
+                    one: true,
+                    ..prefix
+                },
+                ch,
+            ),
+            prefix.forward,
+        ),
+        (Some(_), VimKey::Char(ch)) => ((prefix, ch), false),
         _ => return Err(pending),
     };
-    let ControlFlow::Break(Motion::Jump(jump)) = prefix.then(c2) else {
-        unreachable!("a jump with its first char takes the second");
+    let ControlFlow::Break(Motion::Jump(jump)) = prefix.then(last) else {
+        unreachable!("a jump with all but its last char takes the last");
     };
-    state.jump.last = Some(jump);
+    state.jump.last = Some((jump, both));
     if pending.count().is_some() {
         state.macros.jump_landed(None, jump);
-        return Ok(crate::step(pending.jumping(prefix), VimKey::Char(c2)));
+        return Ok(crate::step(pending.jumping(prefix), VimKey::Char(last)));
     }
     Ok(invocation(
         "vim.jump",
@@ -549,6 +661,7 @@ pub(crate) fn key(state: &mut VimState, pending: Pending, key: VimKey) -> Result
             count: None,
             register: pending.register(),
             operator: pending.operator(),
+            both,
         },
     ))
 }
@@ -588,7 +701,7 @@ pub(crate) fn check_pick(target: &mut VimTarget<'_>) -> Option<Dispatched<Transa
     target.model.sync_display();
     if Basis::now(target.model, target.state) != picked.basis {
         match &picked.start {
-            Some((_, first)) => target.state.macros.jump_landed(Some(*first), picked.jump),
+            Some((_, first, jump)) => target.state.macros.jump_landed(Some(*first), *jump),
             None => target.state.macros.jump_cancelled(),
         }
         return Some(target.state.fail("jump: the labels are stale"));
@@ -597,7 +710,7 @@ pub(crate) fn check_pick(target: &mut VimTarget<'_>) -> Option<Dispatched<Transa
         .state
         .macros
         .jump_landed(Some(picked.count), picked.jump);
-    if let Some((start, _)) = picked.start {
+    if let Some((start, _, _)) = picked.start {
         target.model.set_selections(start.selections);
         target.state.goals = start.goals;
         if start.visual.is_some() {
@@ -629,7 +742,7 @@ pub(crate) fn nth(
     count: Option<u32>,
 ) -> Option<usize> {
     let n = count.unwrap_or(1).max(1) as usize;
-    label::matches(text, 0..text.row_count(), caret, jump.chars.0, jump.forward).nth(n - 1)
+    label::matches(text, 0..text.row_count(), caret, jump.chars, jump.forward).nth(n - 1)
 }
 
 /// Whether `motion`, if it's a jump, finds its match from the vim cursor or
@@ -677,8 +790,18 @@ impl VimState {
         self.jump.on_s = on;
     }
 
+    /// How the jump reads its target from the next one on: two chars then
+    /// labels ([`JumpStyle::Leap`], the default), or one char then labels
+    /// on every match in the view, both ways ([`JumpStyle::Flash`]). Labels
+    /// waiting go on as they started; a jump waiting for its first char
+    /// reads it in the new style.
+    pub fn set_jump_style(&mut self, style: JumpStyle) {
+        self.jump.style = style;
+    }
+
     /// The labels a host paints in `rows` of `model`'s text while a jump is
-    /// pending: none until `{c2}` is typed; while labels wait, the current
+    /// pending: none until `{c2}` is typed (`{c1}` in the flash style);
+    /// while labels wait, the current
     /// page's, then the other pages' as concealed. A target jumped to has
     /// none. `None` with no jump pending.
     pub fn jump_overlay(&self, model: &EditorModel, rows: Range<u32>) -> Option<JumpOverlay> {
@@ -694,8 +817,8 @@ impl VimState {
             (Some(session), _) => session
                 .targets
                 .iter()
-                .filter(|&&(offset, _, _)| in_rows(offset))
-                .filter_map(|&(offset, _, label)| {
+                .filter(|target| in_rows(target.offset))
+                .filter_map(|&Labelled { offset, label, .. }| {
                     let label = label?;
                     Some(JumpLabel {
                         offset,
@@ -716,7 +839,8 @@ impl VimState {
     }
 
     /// The chars typed into a pending jump (`""`, `"a"`, then `"ab"` while
-    /// labels wait), for the host to show; `None` with none pending.
+    /// labels wait; `"a"` while they wait in the flash style), for the host
+    /// to show; `None` with none pending.
     pub fn jump_query(&self) -> Option<&str> {
         self.pending.jump().map(|prefix| prefix.query.as_str())
     }

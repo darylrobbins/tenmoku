@@ -727,6 +727,14 @@ impl VimState {
         self.remap.cmd_next()
     }
 
+    /// Whether the next key the host feeds of those it took
+    /// ([`VimState::take_replay`]) is a map's right side, not a replay's or
+    /// a typed key's: a host that gives a replay's key a meaning of its own
+    /// (a marker) leaves a map's alone.
+    pub fn remap_expansion_next(&self) -> bool {
+        self.remap.expansion_next()
+    }
+
     /// The next fastedit command a map's `<Cmd>fe:{command id}<CR>` ran
     /// ([`VimState::feed`]), each once, then `None`: the host dispatches it
     /// as a keymap binding, from the keyboard in the editor's context,

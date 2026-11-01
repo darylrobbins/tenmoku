@@ -1,6 +1,6 @@
 //! The jump's matching and labelling, pure: which places two typed chars
-//! match ([`targets`]) and how labels name them ([`label`]). The host's
-//! overlay shares them.
+//! match ([`targets`]), or one in the flash style ([`around`]), and how
+//! labels name them ([`label`], [`flash`]). The host's overlay shares them.
 //!
 //! Matching (fastedit's own spec, after leap):
 //!
@@ -15,13 +15,15 @@
 //!   space's wildcard plays no part, so a space and a tab (either order)
 //!   are a distinct pair, matched wherever they occur.
 //! - The match is at `{c1}`'s grapheme.
+//! - One char alone (the flash style) matches each grapheme `{c1}` would,
+//!   and a typed space an empty row's start too.
 
 use std::ops::Range;
 
 use fe_text::Text;
 use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
 
-use crate::motion::Line;
+use crate::{JumpChars, motion::Line};
 
 /// The labels that can't be mistaken for the start of a command after an
 /// autojump, in the order they're given.
@@ -36,10 +38,37 @@ pub fn targets(
     text: &Text,
     rows: Range<u32>,
     caret: usize,
-    chars: [char; 2],
+    chars: impl Into<JumpChars>,
     forward: bool,
 ) -> Vec<usize> {
-    matches(text, rows, caret, chars, forward).collect()
+    matches(text, rows, caret, chars.into(), forward).collect()
+}
+
+/// The matches of `chars` in `rows` before and after `caret`, as byte
+/// offsets, nearest first: by rows apart, then by bytes apart along the
+/// row from the caret's column, the one after the caret first of two as
+/// near.
+pub fn around(
+    text: &Text,
+    rows: Range<u32>,
+    caret: usize,
+    chars: impl Into<JumpChars>,
+) -> Vec<usize> {
+    let chars = chars.into();
+    let caret = caret.min(text.len());
+    let at = text.offset_to_point(caret);
+    let mut found: Vec<usize> = matches(text, rows.clone(), caret, chars, true)
+        .chain(matches(text, rows, caret, chars, false))
+        .collect();
+    found.sort_by_key(|&offset| {
+        let point = text.offset_to_point(offset);
+        (
+            point.row.abs_diff(at.row),
+            point.column.abs_diff(at.column),
+            offset < caret,
+        )
+    });
+    found
 }
 
 /// [`targets`] over the whole text, lazily.
@@ -47,7 +76,7 @@ pub(crate) fn matches(
     text: &Text,
     rows: Range<u32>,
     caret: usize,
-    chars: [char; 2],
+    chars: JumpChars,
     forward: bool,
 ) -> impl Iterator<Item = usize> {
     let rows = rows.start..rows.end.min(text.row_count());
@@ -70,15 +99,22 @@ pub(crate) fn matches(
 }
 
 /// The matches on one row, first to last.
-fn on_row(line: &Line, [c1, c2]: [char; 2]) -> Vec<usize> {
+fn on_row(line: &Line, chars: JumpChars) -> Vec<usize> {
     if line.len() == 0 {
-        return match c1 == ' ' && c2 == ' ' {
+        return match chars.iter().all(|ch| ch == ' ') {
             true => vec![line.start],
             false => Vec::new(),
         };
     }
-    let (c1, c2) = (Typed::new(c1), Typed::new(c2));
     let at = |ix: usize| (ix < line.len()).then(|| line.grapheme(ix));
+    let c1 = Typed::new(chars.first);
+    let Some(c2) = chars.second else {
+        return (0..line.len())
+            .filter(|&ix| c1.takes(at(ix)))
+            .map(|ix| line.start + line.starts[ix])
+            .collect();
+    };
+    let c2 = Typed::new(c2);
     // Same by case folding alone: a space and a tab are a distinct pair.
     let same = c1.folds_with(c2.ch);
     (0..line.len())
@@ -143,6 +179,19 @@ pub struct Label {
     pub page: usize,
 }
 
+/// Labels `count` targets of the flash style, nearest first: one it goes
+/// to at once, more [`FULL`] labels all, page after page, as [`label`]
+/// does where it doesn't autojump.
+pub fn flash(count: usize) -> Labeled {
+    match count {
+        1 => label(1, false),
+        _ => Labeled {
+            autojump: false,
+            labels: full(count),
+        },
+    }
+}
+
 /// Labels `count` targets, nearest first, after an operator if
 /// `op_pending`. It autojumps when every target after the first fits
 /// [`SAFE`] (so always for one), but never after an operator with more than
@@ -156,17 +205,20 @@ pub fn label(count: usize, op_pending: bool) -> Labeled {
             .chain(safe.iter().map(|&ch| Some(Label { ch, page: 0 })))
             .take(count)
             .collect(),
-        false => {
-            let full: Vec<char> = FULL.chars().collect();
-            (0..count)
-                .map(|ix| {
-                    Some(Label {
-                        ch: full[ix % full.len()],
-                        page: ix / full.len(),
-                    })
-                })
-                .collect()
-        }
+        false => full(count),
     };
     Labeled { autojump, labels }
+}
+
+/// [`FULL`] labelling `count` targets, page after page.
+fn full(count: usize) -> Vec<Option<Label>> {
+    let full: Vec<char> = FULL.chars().collect();
+    (0..count)
+        .map(|ix| {
+            Some(Label {
+                ch: full[ix % full.len()],
+                page: ix / full.len(),
+            })
+        })
+        .collect()
 }

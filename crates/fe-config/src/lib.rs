@@ -44,7 +44,8 @@ pub use settings::{
     FormatterSettings, PROJECT_CHAT, PROJECT_EXTENSIONS, PROJECT_FORMATTERS,
     PROJECT_TERMINAL_SHELL, PROJECT_VIM_USER_ONLY, Settings, SettingsEvent, SettingsStore,
     StickyScrollModel, StickyScrollSettings, TerminalSettings, ThemeModeSetting, ThemeSettings,
-    TreeSettings, VimPreset, VimRemap, VimRemapMode, VimRemapModes, VimSettings, settings_schema,
+    TreeSettings, VimJumpStyle, VimPreset, VimRemap, VimRemapMode, VimRemapModes, VimSettings,
+    settings_schema,
 };
 pub use settings_edit::{SettingEditError, SettingScope, reset_setting, set_setting};
 pub use settings_model::{

@@ -20,7 +20,7 @@ use crate::{
 fn jump(chars: &str, forward: bool) -> Motion {
     let chars: Vec<char> = chars.chars().collect();
     Motion::Jump(JumpMotion {
-        chars: JumpChars([chars[0], chars[1]]),
+        chars: JumpChars::pair(chars[0], chars[1]),
         forward,
     })
 }
@@ -75,7 +75,15 @@ fn keys_commit_the_motion() {
         serde_json::from_value::<Motion>(json).unwrap(),
         jump("ab", true)
     );
-    for chars in ["a", "abc", ""] {
+    // One char is the flash style's motion.
+    let json = serde_json::json!({"jump": {"chars": "a", "forward": false}});
+    let one = Motion::Jump(JumpMotion {
+        chars: JumpChars::one('a'),
+        forward: false,
+    });
+    assert_eq!(serde_json::to_value(one).unwrap(), json);
+    assert_eq!(serde_json::from_value::<Motion>(json).unwrap(), one);
+    for chars in ["abc", ""] {
         let json = serde_json::json!({"jump": {"chars": chars, "forward": true}});
         assert!(serde_json::from_value::<Motion>(json).is_err(), "{chars:?}");
     }

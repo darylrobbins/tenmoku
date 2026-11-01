@@ -212,7 +212,8 @@ pub struct MarkMotion {
 /// `gs{c1}{c2}`, or `gS{c1}{c2}` if not `forward`, as a motion: the
 /// `count`th match of the two chars after the caret, or before it, over the
 /// whole text with no wrap, landing on `{c1}` ([`crate::jump::label::targets`]
-/// says what matches).
+/// says what matches). In the flash style ([`crate::jump::JumpStyle`]) it
+/// takes one char, `gs{c1}`, and matches that alone.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct JumpMotion {
     #[schemars(with = "String")]
@@ -220,14 +221,52 @@ pub struct JumpMotion {
     pub forward: bool,
 }
 
-/// The two chars a jump matches, typed as they are. It serializes as a
-/// two-char string.
+/// The chars a jump matches, typed as they are: two, or one in the flash
+/// style. It serializes as a string of them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct JumpChars(pub [char; 2]);
+pub struct JumpChars {
+    pub first: char,
+    pub second: Option<char>,
+}
+
+impl JumpChars {
+    /// `{c1}{c2}`.
+    pub fn pair(first: char, second: char) -> Self {
+        Self {
+            first,
+            second: Some(second),
+        }
+    }
+
+    /// `{c1}` alone.
+    pub fn one(first: char) -> Self {
+        Self {
+            first,
+            second: None,
+        }
+    }
+
+    /// Them in order.
+    pub fn iter(self) -> impl Iterator<Item = char> {
+        std::iter::once(self.first).chain(self.second)
+    }
+}
+
+impl From<[char; 2]> for JumpChars {
+    fn from([first, second]: [char; 2]) -> Self {
+        Self::pair(first, second)
+    }
+}
+
+impl From<char> for JumpChars {
+    fn from(first: char) -> Self {
+        Self::one(first)
+    }
+}
 
 impl Serialize for JumpChars {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&self.0.iter().collect::<String>())
+        serializer.collect_str(&self.iter().collect::<String>())
     }
 }
 
@@ -236,9 +275,10 @@ impl<'de> Deserialize<'de> for JumpChars {
         let text = String::deserialize(deserializer)?;
         let mut chars = text.chars();
         match (chars.next(), chars.next(), chars.next()) {
-            (Some(c1), Some(c2), None) => Ok(Self([c1, c2])),
+            (Some(c1), Some(c2), None) => Ok(Self::pair(c1, c2)),
+            (Some(c1), None, None) => Ok(Self::one(c1)),
             _ => Err(serde::de::Error::custom(format!(
-                "a jump takes two chars, not {text:?}"
+                "a jump takes one or two chars, not {text:?}"
             ))),
         }
     }

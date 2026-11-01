@@ -290,6 +290,12 @@ pub struct VimSettings {
     /// flash map them, instead of changing a char or a line (`cl` and `cc`
     /// still do). `gs` and `gS` start it either way.
     pub jump_on_s: bool,
+    /// How the jump (`gs`, `gS`, and `s` and `S` with `jump_on_s`) reads
+    /// its target: `"leap"` takes two chars, then labels the matches in the
+    /// view; `"flash"` takes one char, then labels every match of it in the
+    /// view at once, before and after the caret (`gS` before only), as
+    /// flash.nvim does.
+    pub jump_style: VimJumpStyle,
     /// true: a search with `/`, `?`, `n` or `N` ignores case, as nvim's
     /// 'ignorecase' does. `\c` and `\C` in a pattern override it.
     pub ignorecase: bool,
@@ -361,6 +367,7 @@ impl Default for VimSettings {
             enabled: false,
             clipboard: VimClipboard::default(),
             jump_on_s: false,
+            jump_style: VimJumpStyle::default(),
             ignorecase: false,
             smartcase: false,
             incsearch: true,
@@ -449,6 +456,18 @@ pub enum VimClipboard {
     /// Yanks, deletes and puts that name no register use the system clipboard.
     #[serde(rename = "unnamedplus")]
     Unnamedplus,
+}
+
+/// `vim.jump_style`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum VimJumpStyle {
+    /// Two chars, then a label, as leap.nvim does.
+    #[default]
+    Leap,
+    /// One char, then a label on every match in the view, both ways, as
+    /// flash.nvim does.
+    Flash,
 }
 
 /// `vim.quick_scope`.

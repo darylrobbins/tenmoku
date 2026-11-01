@@ -132,13 +132,14 @@ use std::{
 use fe_buffer::{BufferEvent, Subscription as BufferSubscription, Text, TransactionId, Version};
 use fe_command::{CommandId, CommandMeta, Value};
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
+use fe_config::VimJumpStyle;
 use fe_config::settings::VimQuickScope;
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_vim::{
     CommandLineKind, Registers, Remap, RemapCommand, RemapInsert, RemapIssue, RemapSet, Step,
-    VimCommands, VimKey, VimState, VimTarget, search::Pattern,
+    VimCommands, VimKey, VimState, VimTarget, jump::JumpStyle, search::Pattern,
 };
 use gpui::{
     AnyWindowHandle, App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, Pixels,
@@ -377,6 +378,8 @@ struct Vim {
     registers: Registers,
     /// `vim.jump_on_s`: whether `s` and `S` start the jump.
     jump_on_s: bool,
+    /// `vim.jump_style`: how the jump reads its target.
+    jump_style: JumpStyle,
     /// `vim.replace_with_register`: whether `gr` is ReplaceWithRegister's.
     replace_with_register: bool,
     /// `vim.remap` and `vim.leader`, built.
@@ -561,6 +564,28 @@ pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
             .update(cx, |view, _| {
                 if let Some(state) = &mut view.vim {
                     state.set_jump_on_s(on);
+                }
+            })
+            .ok();
+    }
+}
+
+/// Sets how the jump reads its target in every editor, and in any opened or
+/// switched on later (`vim.jump_style`): two chars then labels (leap), or
+/// one char then labels on every match in view, both ways (flash).
+pub fn set_vim_jump_style(cx: &mut App, style: VimJumpStyle) {
+    let style = match style {
+        VimJumpStyle::Leap => JumpStyle::Leap,
+        VimJumpStyle::Flash => JumpStyle::Flash,
+    };
+    let vim = cx.default_global::<Vim>();
+    vim.jump_style = style;
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, _| {
+                if let Some(state) = &mut view.vim {
+                    state.set_jump_style(style);
                 }
             })
             .ok();
@@ -1253,6 +1278,7 @@ impl EditorView {
             let mut state = VimState::new();
             if let Some(vim) = cx.try_global::<Vim>() {
                 state.set_jump_on_s(vim.jump_on_s);
+                state.set_jump_style(vim.jump_style);
                 state.set_replace_with_register(vim.replace_with_register);
                 state.set_remaps(Arc::clone(&vim.remaps));
             }
@@ -1789,7 +1815,7 @@ impl EditorView {
         let taken = prefill.chars().count() - kept;
         let typed: Vec<VimKey> = (0..taken)
             .map(|_| VimKey::Backspace)
-            .chain(text.chars().skip(kept).map(VimKey::Char))
+            .chain(text_keys(text.chars().skip(kept)))
             .chain([end])
             .collect();
         for key in typed {
@@ -2572,6 +2598,19 @@ impl EditorView {
             let Some(key) = queue.pop_front() else {
                 break;
             };
+            if self.marker_after_held(key) {
+                // The held keys resolve as a timeout resolves them, then
+                // the marker comes, which no map takes.
+                let Some(state) = &mut self.vim else {
+                    break;
+                };
+                state.remap_timeout();
+                queue.push_front(key);
+                for key in state.take_replay().into_iter().rev() {
+                    queue.push_front(key);
+                }
+                continue;
+            }
             if !self.replay_key(key, &mut line, &mut handed, cx) {
                 // The host runs a file or window command after this update:
                 // what the map does after it waits for the host's report.
@@ -2952,14 +2991,15 @@ impl EditorView {
             }
             fe_vim::Mode::CmdLine(_) => {
                 // A character, or any key while keys are held, goes through
-                // the `c` maps; the line's other keys are its own. The
-                // character after a [`LITERAL_NEXT`] is literal text, unmapped.
+                // the `c` maps; the line's other keys are its own. A
+                // replay's [`LITERAL_NEXT`] is read before the maps, with
+                // none held ([`EditorView::marker_after_held`]): the
+                // character after it is literal text, unmapped. A map's is
+                // a character.
                 let literal = std::mem::take(&mut self.vim_line_literal);
-                if literal && key == VimKey::Char(LITERAL_NEXT) {
-                    // The marker's own char, as literal text.
+                if !literal && key == VimKey::Char(LITERAL_NEXT) && !state.remap_expansion_next() {
                     state.record_key(key);
-                    line.get_or_insert_with(|| state.command_line_prefill().to_owned())
-                        .push(LITERAL_NEXT);
+                    self.vim_line_literal = true;
                     return true;
                 }
                 if !literal && (matches!(key, VimKey::Char(_)) || state.remap_waiting()) {
@@ -2979,6 +3019,21 @@ impl EditorView {
         }
     }
 
+    /// Whether `key`, the next a replay feeds, is a replay's
+    /// [`LITERAL_NEXT`] on the command line while keys are held for a longer
+    /// `c` map: they resolve first, so no map takes the marker.
+    fn marker_after_held(&self, key: VimKey) -> bool {
+        let Some(state) = &self.vim else {
+            return false;
+        };
+        key == VimKey::Char(LITERAL_NEXT)
+            && !self.vim_line_literal
+            && matches!(state.mode(), fe_vim::Mode::CmdLine(_))
+            && state.remap_waiting()
+            && !state.remap_expansion_next()
+            && !state.remap_command_next()
+    }
+
     /// One `key` of a replay or of a map's keys, typed on the command line.
     fn replay_line_key(
         &mut self,
@@ -2995,12 +3050,7 @@ impl EditorView {
         let mapped = state.expanding();
         let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
         let invocation = match key {
-            // The next character is literal text: how a paste, a recall or
-            // an IME commit is recorded.
-            VimKey::Char(LITERAL_NEXT) => {
-                self.vim_line_literal = true;
-                return true;
-            }
+            // [`LITERAL_NEXT`] too, read as the marker before this.
             VimKey::Char(ch) => {
                 text.push(ch);
                 return true;
@@ -3288,6 +3338,9 @@ mod viewport_resize_tests;
 mod jump_setting_tests;
 
 #[cfg(test)]
+mod jump_flash_tests;
+
+#[cfg(test)]
 mod remap_setting_tests;
 
 #[cfg(test)]
@@ -3337,10 +3390,22 @@ impl From<ViewPlace> for SearchPreview {
 mod vim_indent_keys_tests;
 
 /// The key before a character that no typed key made, in a recording: the
-/// character after it is literal text. A private-use character no map has a
-/// left side for, so it breaks a held prefix as any key does and no map
-/// matches it.
+/// character after it is literal text. A private-use character, read as
+/// this only when a replay feeds it on the command line, before the `c`
+/// maps and once any keys held for a longer one resolve
+/// ([`EditorView::marker_after_held`]), so no map's left side takes it; a
+/// map's right side's is a character. One in a line recorded whole is
+/// itself written after one ([`text_keys`]).
 const LITERAL_NEXT: char = '\u{F8FF}';
+
+/// `chars` as the keys a recording holds for a line's text: each itself,
+/// but a [`LITERAL_NEXT`] after one, so a replay reads it as text.
+fn text_keys(chars: impl Iterator<Item = char>) -> impl Iterator<Item = VimKey> {
+    chars.flat_map(|ch| {
+        let marker = (ch == LITERAL_NEXT).then_some(VimKey::Char(LITERAL_NEXT));
+        marker.into_iter().chain([VimKey::Char(ch)])
+    })
+}
 
 /// `chars` as the keys a recording holds for text no typed key made: each
 /// after a [`LITERAL_NEXT`], so a replay reads it as literal text and no `c` map

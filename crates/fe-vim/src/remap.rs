@@ -531,6 +531,12 @@ impl RemapState {
         self.taken.front().is_some_and(|tag| tag.cmd.is_some())
     }
 
+    /// Whether the next key the host feeds of those it took is a map's
+    /// right side.
+    pub(crate) fn expansion_next(&self) -> bool {
+        (self.taken.front()).is_some_and(|tag| tag.origin.is_some_and(Origin::expansion))
+    }
+
     /// Hands out `replay`, a `@`'s keys, and then the keys resolved, which
     /// the host feeds in that order before what it holds; their tags go in
     /// front of the tags taken before.
