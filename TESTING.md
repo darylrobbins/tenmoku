@@ -156,7 +156,7 @@ cp -R crates/fe-lsp/tests/fixtures/real /tmp/fe-lsp-real
 printf '[package]\nname = "real"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n' \
   > /tmp/fe-lsp-real/rust/Cargo.toml
 for project in rust python typescript; do
-  FASTEDIT_CONFIG_DIR=/tmp/fe-lsp-check cargo run -p fastedit -- /tmp/fe-lsp-real/$project
+  TENMOKU_CONFIG_DIR=/tmp/fe-lsp-check cargo run -p fastedit -- /tmp/fe-lsp-real/$project
 done
 ```
 

@@ -130,7 +130,7 @@ pub(crate) const NOTHING_FOUND: &str = "No settings found";
 pub(crate) enum Scope {
     /// The user's `settings.toml`.
     User,
-    /// The root's `.fastedit/settings.toml`.
+    /// The root's `.tenmoku/settings.toml`.
     Workspace,
 }
 
@@ -420,7 +420,7 @@ impl SettingsEditor {
             assert_eq!(
                 files.0,
                 fe_config::user_settings_path(),
-                "a test writing the user's settings sets FASTEDIT_CONFIG_DIR to its config directory",
+                "a test writing the user's settings sets TENMOKU_CONFIG_DIR to its config directory",
             );
         }
         self.next_generation += 1;

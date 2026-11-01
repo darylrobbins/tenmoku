@@ -36,7 +36,7 @@
 # punctuation's and string's. `label`, `property` and `variable` have no
 # scope of their own and take the text colour.
 #
-# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
+# To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
 
 kiln_theme = 1

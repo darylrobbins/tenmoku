@@ -36,7 +36,7 @@ impl Dirs {
         fs::create_dir_all(&root).unwrap();
         // SAFETY: every test takes the lock first, so no other thread is
         // running to read the environment.
-        unsafe { std::env::set_var("FASTEDIT_CONFIG_DIR", &config) };
+        unsafe { std::env::set_var("TENMOKU_CONFIG_DIR", &config) };
         Self {
             _guard: guard,
             _temp: temp,
@@ -50,7 +50,7 @@ impl Dirs {
     }
 
     fn workspace(&self) -> PathBuf {
-        self.root.join(".fastedit/settings.toml")
+        self.root.join(".tenmoku/settings.toml")
     }
 }
 
@@ -265,7 +265,7 @@ fn reset_of_an_absent_key_writes_nothing() {
     reset_setting(SettingScope::User, &dirs.root, &["editor", "tab_size"]).unwrap();
     reset_setting(SettingScope::Workspace, &dirs.root, &["editor", "tab_size"]).unwrap();
     assert!(!dirs.config.exists());
-    assert!(!dirs.root.join(".fastedit").exists());
+    assert!(!dirs.root.join(".tenmoku").exists());
 
     // A file without the key isn't written, an empty table in it kept.
     fs::create_dir_all(dirs.workspace().parent().unwrap()).unwrap();

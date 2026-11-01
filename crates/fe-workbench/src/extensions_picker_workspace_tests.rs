@@ -31,7 +31,7 @@ fn install(extensions: &Path, dir: &str, id: &str, name: &str) {
         dir.join(MANIFEST_FILE),
         format!(
             "id = \"{id}\"\nname = \"{name}\"\nversion = \"1.2.3\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n[contributes.lsp.zls]\ncommand = \"zls\"\n"
+             [engine]\ntenmoku = \"1.0\"\n\n[contributes.lsp.zls]\ncommand = \"zls\"\n"
         ),
     )
     .unwrap();
@@ -46,7 +46,7 @@ fn host(dir: &Path, cx: &mut TestAppContext) -> std::path::PathBuf {
     install(&user, "zig", "acme.zig", "Zig");
     let root = dir.join("project");
     install(
-        &root.join(".fastedit/extensions"),
+        &root.join(".tenmoku/extensions"),
         "odin",
         "team.odin",
         "Odin",
@@ -54,7 +54,11 @@ fn host(dir: &Path, cx: &mut TestAppContext) -> std::path::PathBuf {
     let root = canonical(&root);
     let (_sender, batches) = batch_channel();
     let config = Config::new("dev.fastedit.test", "fastedit")
-        .extensions(user, "fastedit", ApiVersion { major: 1, minor: 0 })
+        .extensions(
+            user,
+            &fe_config::paths::app_id().short,
+            ApiVersion { major: 1, minor: 0 },
+        )
         .extension_kind("lsp", json!({ "type": "object" }))
         .workspace_extensions(["lsp"])
         // Not the real watcher, whose thread the test scheduler can't follow.
@@ -157,7 +161,7 @@ fn the_list_shows_source_and_skipped(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_skipped_row_with_a_users_id_is_its_own_row(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let workspace = dir.path().join("project/.fastedit/extensions");
+    let workspace = dir.path().join("project/.tenmoku/extensions");
     install(&workspace, "zig", "acme.zig", "Zig");
     let root = host(dir.path(), cx);
     let (workbench, mut cx) = workbench(&root, cx);

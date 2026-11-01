@@ -22,7 +22,7 @@ impl Dirs {
         let temp = tempfile::tempdir().unwrap();
         let base = fs::canonicalize(temp.path()).unwrap();
         let (root, config) = (base.join("project"), base.join("config"));
-        fs::create_dir_all(root.join(".fastedit")).unwrap();
+        fs::create_dir_all(root.join(".tenmoku")).unwrap();
         fs::create_dir_all(&config).unwrap();
         Self {
             _temp: temp,

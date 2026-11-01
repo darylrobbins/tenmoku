@@ -28,7 +28,7 @@
 # has one `keyword` name, so control flow shows #CF222E here. Names 2026-light.json
 # and its includes do not colour (punctuation) take Tenmoku Light's.
 #
-# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "light"`.
+# To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "light"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
 
 kiln_theme = 1

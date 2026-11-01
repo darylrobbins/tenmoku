@@ -225,7 +225,7 @@ mod tests {
         fs::write(
             extensions.join("solarized/extension.toml"),
             "id = \"acme.solarized\"\nname = \"Solarized\"\nversion = \"1.0.0\"\n\
-             license = \"MIT\"\n\n[engine]\nfastedit = \"1.0\"\n\n\
+             license = \"MIT\"\n\n[engine]\ntenmoku = \"1.0\"\n\n\
              [contributes]\nthemes = [\"themes/solarized-dark.toml\"]\n",
         )
         .unwrap();

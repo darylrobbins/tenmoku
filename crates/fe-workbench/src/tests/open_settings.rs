@@ -91,7 +91,7 @@ fn open_settings_and_wait(cx: &mut VisualTestContext) {
 fn creates_and_opens_the_file(cx: &mut TestAppContext) {
     let project = tempfile::tempdir().unwrap();
     let config = tempfile::tempdir().unwrap();
-    let dir = config.path().join("fastedit");
+    let dir = config.path().join("tenmoku");
     let file = dir.join("settings.toml");
     let (workbench, cx) = workbench_with(cx, project.path(), Some(dir));
 

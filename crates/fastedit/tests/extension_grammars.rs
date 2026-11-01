@@ -47,7 +47,7 @@ fn jsonx(
         dir.join("extension.toml"),
         format!(
             "id = \"acme.jsonx\"\nname = \"JSONX\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n\
+             [engine]\ntenmoku = \"1.0\"\n\n\
              [[contributes.grammars]]\nlanguage = \"{language}\"\n\
              wasm = \"grammars/tree-sitter-json.wasm\"\nextensions = [\"{language}\"]\n\
              highlights = \"queries/highlights.scm\"\n"
@@ -147,7 +147,7 @@ fn extension_grammars_register(cx: &mut TestAppContext) {
     fs::write(
         dir.join("extension.toml"),
         "id = \"acme.jsonx\"\nname = \"JSONX\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-         [engine]\nfastedit = \"1.0\"\n\n\
+         [engine]\ntenmoku = \"1.0\"\n\n\
          [[contributes.grammars]]\nlanguage = \"jsonx\"\n\
          wasm = \"grammars/tree-sitter-json.wasm\"\nextensions = [\"jsonx\"]\n\
          file_names = [\"JSONXFILE\"]\nhighlights = \"queries/highlights.scm\"\n\

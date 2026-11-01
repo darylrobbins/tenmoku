@@ -21,6 +21,7 @@ use perf::Startup;
 use vim_remaps::VimRemaps;
 
 use fe_buffer::Buffer;
+use fe_config::paths::app_id;
 use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore, settings::VimClipboard};
 use fe_gpui::EditorTheme;
 use fe_workbench::{
@@ -251,7 +252,11 @@ fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
         },
         None => (None, None),
     };
-    let mut options = window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
+    let mut options = window_options(
+        &WindowSpec::main(fe_config::APP_NAME).app_id(app_id().reverse_dns),
+        &capabilities,
+        cx,
+    );
     // The active window, or the last opened where the platform has none
     // (an X server without a window manager).
     let from = cx.active_window().or_else(|| cx.windows().last().copied());
@@ -461,7 +466,11 @@ fn main() {
         let mut failed = None;
         // The launch file's read hadn't finished as the window opened.
         let mut loading = false;
-        let mut options = window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
+        let mut options = window_options(
+            &WindowSpec::main(fe_config::APP_NAME).app_id(app_id().reverse_dns),
+            &capabilities,
+            cx,
+        );
         if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
             options.window_bounds = Some(bounds);
         }
@@ -520,8 +529,11 @@ fn main() {
                 file: None,
             };
             let theme = theme.clone();
-            let mut options =
-                window_options(&WindowSpec::main(fe_config::APP_NAME), &capabilities, cx);
+            let mut options = window_options(
+                &WindowSpec::main(fe_config::APP_NAME).app_id(app_id().reverse_dns),
+                &capabilities,
+                cx,
+            );
             if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
                 options.window_bounds = Some(bounds);
             }

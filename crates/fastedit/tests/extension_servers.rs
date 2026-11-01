@@ -27,7 +27,7 @@ fn install(extensions: &Path, dir: &str, id: &str, lsp: &str) {
         dir.join("extension.toml"),
         format!(
             "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n{lsp}"
+             [engine]\ntenmoku = \"1.0\"\n\n{lsp}"
         ),
     )
     .unwrap();

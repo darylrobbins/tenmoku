@@ -1,5 +1,5 @@
 //! A trusted folder's own extensions (extensions record §3):
-//! `<root>/.fastedit/extensions`, for the launch root only, as the project
+//! `<root>/.tenmoku/extensions`, for the launch root only, as the project
 //! settings file is, and only while the user trusts it. kiln loads them
 //! beside the user's ([`kiln::extensions`]), rescans them as they change,
 //! and drops them when trust is withdrawn; until then they're listed as

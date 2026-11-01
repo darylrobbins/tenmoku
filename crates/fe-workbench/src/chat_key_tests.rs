@@ -11,7 +11,7 @@ use super::{ChatPanel, KeyOrigin, chat, dispatch, last_key, opened, scripted, se
 use crate::Workbench;
 use gpui::{Entity, Focusable as _, VisualTestContext};
 
-const SERVICE: &str = "dev.fastedit.fastedit";
+const SERVICE: &str = "dev.tenmoku.tenmoku";
 const ACCOUNT: &str = "chat.anthropic";
 
 /// A store whose writes fail.
@@ -153,10 +153,22 @@ fn a_store_error_keeps_the_form(cx: &mut gpui::TestAppContext) {
     assert!(shown[0].contains("the keychain is locked"), "{shown:?}");
     assert!(cx.debug_bounds("chat-key-form").is_some());
     assert_eq!(origin(&panel, cx), None);
-    // The text is still there: save it again once the store works.
+    // The text is still there: switch to a working store and save it again,
+    // without typing.
+    let store = Arc::new(MemoryStore::new());
+    cx.update(|_, cx| {
+        cx.set_global(super::KeySource {
+            env: None,
+            store: store.clone(),
+        });
+    });
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
-    assert_eq!(toasts(&workbench, cx).len(), 1, "the same toast, once more");
+    let stored = store
+        .get(SERVICE, ACCOUNT)
+        .unwrap()
+        .map(Secret::into_string);
+    assert_eq!(stored.as_deref(), Some("sk-ant-test"));
 }
 
 /// A store noting its writes, in the order they ran.

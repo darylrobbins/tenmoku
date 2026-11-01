@@ -29,7 +29,7 @@ fn project(features: &str) -> String {
     )
 }
 
-/// Writes `root`'s `.fastedit/settings.toml`.
+/// Writes `root`'s `.tenmoku/settings.toml`.
 fn write_project(root: &std::path::Path, text: &str) {
     let path = fe_config::project_settings_path(root);
     fs::create_dir_all(path.parent().unwrap()).unwrap();

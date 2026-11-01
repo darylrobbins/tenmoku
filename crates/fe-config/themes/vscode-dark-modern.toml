@@ -31,7 +31,7 @@
 # several scopes colour differently takes the general scope's colour
 # (`keyword` is `keyword`'s #569CD6, not `keyword.control`'s #C586C0).
 #
-# To try it, copy it to ~/.config/fastedit/theme.toml with `mode = "dark"`.
+# To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
 
 kiln_theme = 1

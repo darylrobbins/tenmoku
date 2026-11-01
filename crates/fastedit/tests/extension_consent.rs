@@ -29,7 +29,7 @@ fn install(extensions: &Path, args: &str) {
         dir.join("extension.toml"),
         format!(
             "id = \"acme.zig\"\nname = \"Zig\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n\
+             [engine]\ntenmoku = \"1.0\"\n\n\
              [contributes.lsp.zls]\ncommand = \"zls\"\nargs = {args}\nlanguages = [\"zig\"]\n"
         ),
     )

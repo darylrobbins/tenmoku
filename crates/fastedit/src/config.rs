@@ -75,7 +75,7 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 
 /// `config` with the user's extensions, a directory each under `dir`,
 /// loaded and reloaded by kiln: their manifests name
-/// `[engine] fastedit = "1.0"`, or `"1.1"` for snippets. Their themes are chosen by the settings'
+/// `[engine] tenmoku = "1.0"`, or `"1.1"` for snippets. Their themes are chosen by the settings'
 /// `theme.dark` and `theme.light` ([`theme::init`]). Their language
 /// servers, `[contributes.lsp.<name>]` tables of the keys
 /// `[lsp.servers.<name>]` takes, go to every workbench

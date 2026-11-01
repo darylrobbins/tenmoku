@@ -1,5 +1,5 @@
 //! The user's vim remaps as a source of kiln's config service: the vimrc
-//! (`~/.config/fastedit/vimrc`, the subset [`fe_vim::parse_vimrc`] reads)
+//! (`~/.config/tenmoku/vimrc`, the subset [`fe_vim::parse_vimrc`] reads)
 //! and the settings' `[[vim.remap]]` table with `vim.leader`, built into
 //! one set for every editor and reloaded when any of their files changes.
 //! Beneath them, a bundled preset (`vim.preset`) in the same vimrc subset.

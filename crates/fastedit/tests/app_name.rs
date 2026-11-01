@@ -36,12 +36,9 @@ fn app_menu_and_display_name_say_tenmoku() {
     assert!(titles.contains(&"Quit Tenmoku"), "{titles:?}");
 }
 
-/// Whether `text` names fastedit, but for the project directory
-/// `.fastedit/`, which T1258 moves.
+/// Whether `text` names fastedit.
 fn names_fastedit(text: &str) -> bool {
-    text.to_lowercase()
-        .replace(".fastedit/", "")
-        .contains("fastedit")
+    text.to_lowercase().contains("fastedit")
 }
 
 #[gpui::test]

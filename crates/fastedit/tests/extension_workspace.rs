@@ -1,4 +1,4 @@
-//! A trusted folder's own extensions, `<root>/.fastedit/extensions`, load
+//! A trusted folder's own extensions, `<root>/.tenmoku/extensions`, load
 //! through fastedit's kinds beside the user's (extensions record §3), and
 //! a workspace extension's language server needs consent of its own: the
 //! user's grant of a server of the same name doesn't cover it.
@@ -34,7 +34,7 @@ fn install(extensions: &Path, dir: &str, id: &str) {
         dir.join(MANIFEST_FILE),
         format!(
             "id = \"{id}\"\nname = \"Zig\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n\
+             [engine]\ntenmoku = \"1.0\"\n\n\
              [contributes.lsp.zls]\ncommand = \"zls\"\nargs = [\"--config-path\", \"zls.json\"]\n\
              languages = [\"zig\"]\n"
         ),
@@ -60,9 +60,9 @@ fn a_trusted_workspace_server_needs_its_own_consent(cx: &mut TestAppContext) {
     let user_extensions = state.path().join("extensions");
     install(&user_extensions, "zig", "acme.zig");
     let root = state.path().join("project");
-    install(&root.join(".fastedit/extensions"), "zig", "team.zig");
+    install(&root.join(".tenmoku/extensions"), "zig", "team.zig");
     let root = canonical(&root);
-    let workspace_zig = root.join(".fastedit/extensions/zig");
+    let workspace_zig = root.join(".tenmoku/extensions/zig");
 
     let user = state.path().join("settings.toml");
     fs::write(&user, "").unwrap();
@@ -168,7 +168,7 @@ fn grammar_extension_highlighting(
         dir.join(MANIFEST_FILE),
         format!(
             "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n\
+             [engine]\ntenmoku = \"1.0\"\n\n\
              [[contributes.grammars]]\nlanguage = \"{language}\"\n\
              wasm = \"tree-sitter-json.wasm\"\nextensions = [\"{language}\"]\n\
              highlights = \"highlights.scm\"\n"
@@ -222,12 +222,7 @@ fn a_workspace_grammar_goes_with_trust(cx: &mut TestAppContext) {
     const NAME: &str = "jsonws";
     let state = tempfile::tempdir().unwrap();
     let root = state.path().join("project");
-    grammar_extension(
-        &root.join(".fastedit/extensions"),
-        "team.jsonws",
-        NAME,
-        true,
-    );
+    grammar_extension(&root.join(".tenmoku/extensions"), "team.jsonws", NAME, true);
     let root = canonical(&root);
     load_with_root(cx, state.path(), &root);
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -260,7 +255,7 @@ fn a_users_broken_grammar_of_the_name_doesnt_keep_the_workspaces(cx: &mut TestAp
     grammar_extension(&state.path().join("extensions"), "acme.broken", NAME, false);
     let root = state.path().join("project");
     grammar_extension(
-        &root.join(".fastedit/extensions"),
+        &root.join(".tenmoku/extensions"),
         "team.jsonshared",
         NAME,
         true,
@@ -284,10 +279,10 @@ fn another_roots_broken_grammar_of_the_name_doesnt_keep_the_first(cx: &mut TestA
     const NAME: &str = "jsonroots";
     let state = tempfile::tempdir().unwrap();
     let first = state.path().join("first");
-    grammar_extension(&first.join(".fastedit/extensions"), "team.json", NAME, true);
+    grammar_extension(&first.join(".tenmoku/extensions"), "team.json", NAME, true);
     let second = state.path().join("second");
     grammar_extension(
-        &second.join(".fastedit/extensions"),
+        &second.join(".tenmoku/extensions"),
         "team.json",
         NAME,
         false,
@@ -312,7 +307,7 @@ fn a_broken_edit_keeps_its_own_last_good_grammar(cx: &mut TestAppContext) {
     const NAME: &str = "jsonedit";
     let state = tempfile::tempdir().unwrap();
     let root = state.path().join("project");
-    let extensions = root.join(".fastedit/extensions");
+    let extensions = root.join(".tenmoku/extensions");
     grammar_extension(&extensions, "team.jsonedit", NAME, true);
     let root = canonical(&root);
     let sender = load_with_root(cx, state.path(), &root);
@@ -327,7 +322,7 @@ fn a_broken_edit_keeps_its_own_last_good_grammar(cx: &mut TestAppContext) {
         "broken",
     )
     .unwrap();
-    sender.send(vec![root.join(".fastedit/extensions")]);
+    sender.send(vec![root.join(".tenmoku/extensions")]);
     cx.run_until_parked();
     std::thread::sleep(std::time::Duration::from_millis(500));
     cx.run_until_parked();
@@ -343,7 +338,7 @@ fn withdrawing_trust_keeps_the_users_grammar_of_the_name(cx: &mut TestAppContext
     let user = state.path().join("extensions");
     grammar_extension_highlighting(&user, "acme.json", NAME, true, "(string) @string\n");
     let root = state.path().join("project");
-    let workspace = root.join(".fastedit/extensions");
+    let workspace = root.join(".tenmoku/extensions");
     grammar_extension_highlighting(&workspace, "team.json", NAME, true, "(number) @number\n");
     let root = canonical(&root);
     load_with_root(cx, state.path(), &root);

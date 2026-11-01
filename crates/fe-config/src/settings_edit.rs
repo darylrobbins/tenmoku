@@ -23,7 +23,7 @@ use crate::{
 pub enum SettingScope {
     /// The user's `settings.toml`.
     User,
-    /// The project's `.fastedit/settings.toml`.
+    /// The project's `.tenmoku/settings.toml`.
     Workspace,
 }
 

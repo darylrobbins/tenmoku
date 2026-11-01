@@ -1,6 +1,6 @@
 # Tenmoku settings.
 #
-# This file reloads when you save it. A project's `.fastedit/settings.toml`
+# This file reloads when you save it. A project's `.tenmoku/settings.toml`
 # overrides it, key by key. Uncomment a line to change that setting.
 
 [editor]

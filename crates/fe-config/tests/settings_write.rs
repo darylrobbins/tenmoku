@@ -80,7 +80,7 @@ fn creates_from_the_template() {
     let file = dir
         .path()
         .join("config")
-        .join("fastedit")
+        .join("tenmoku")
         .join("settings.toml");
     write_setting(&file, &["vim", "enabled"], true).unwrap();
 

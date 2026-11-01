@@ -17,7 +17,7 @@
 //!   new manager; the old one's servers shut down.
 //! - **Trusted settings.** While the root is trusted, its manager gets the
 //!   project file's `[lsp]` table unfiltered: the root's
-//!   `.fastedit/settings.toml` read as an [`LspLayer`], which keeps its last
+//!   `.tenmoku/settings.toml` read as an [`LspLayer`], which keeps its last
 //!   good table while the file has errors, laid over the user's file read
 //!   the same way, over the defaults. The user's layer is the app's, kept
 //!   for every window whatever the host's reads of the file give them, and

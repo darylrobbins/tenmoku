@@ -4,7 +4,7 @@
 //! write that fails; and Edit in settings.toml.
 //!
 //! `set_setting` puts the user's file where the environment says
-//! (`FASTEDIT_CONFIG_DIR`), so these tests write the workspace's file,
+//! (`TENMOKU_CONFIG_DIR`), so these tests write the workspace's file,
 //! all but [`user_scope_writes_user_file`], which runs again in a process
 //! of its own with the variable set. The tab reads the user's file from
 //! the test-only override, set to the same directory.
@@ -48,7 +48,7 @@ impl Dirs {
     /// The directories under `base`, made if they aren't there.
     fn at(base: &Path) -> Self {
         let (root, config) = (base.join("project"), base.join("config"));
-        fs::create_dir_all(root.join(".fastedit")).unwrap();
+        fs::create_dir_all(root.join(".tenmoku")).unwrap();
         fs::create_dir_all(&config).unwrap();
         Self {
             _temp: None,
@@ -67,7 +67,7 @@ impl Dirs {
 }
 
 /// Runs the test `name` of this module again, in a process of its own
-/// whose `FASTEDIT_CONFIG_DIR` is a temporary config directory, and checks
+/// whose `TENMOKU_CONFIG_DIR` is a temporary config directory, and checks
 /// that it passed: `None` here, once it has. There, it's `Some` with the
 /// directories it runs in.
 fn in_own_process(name: &str) -> Option<Dirs> {
@@ -79,7 +79,7 @@ fn in_own_process(name: &str) -> Option<Dirs> {
     let module = module_path!().split_once("::").unwrap().1;
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([&format!("{module}::{name}"), "--exact", "--test-threads=1"])
-        .env("FASTEDIT_CONFIG_DIR", &dirs.config)
+        .env("TENMOKU_CONFIG_DIR", &dirs.config)
         .env(OWN_PROCESS_DIRS, &base)
         .output()
         .unwrap();
@@ -1349,7 +1349,7 @@ fn changes_to_a_key_in_two_user_files_stay_apart(cx: &mut TestAppContext) {
     // process has it set.
     let config = |dirs: &Dirs, cx: &mut VisualTestContext| {
         // SAFETY: the test runs alone in its own process, on one thread.
-        unsafe { std::env::set_var("FASTEDIT_CONFIG_DIR", &dirs.config) };
+        unsafe { std::env::set_var("TENMOKU_CONFIG_DIR", &dirs.config) };
         cx.update(|_, cx| cx.set_global(ConfigDirOverride(Some(dirs.config.clone()))));
         editor.update(cx, |editor, cx| editor.reload(cx));
         draw(cx);

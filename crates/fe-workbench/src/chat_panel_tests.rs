@@ -218,7 +218,7 @@ fn the_key_comes_from_the_environment_then_the_keychain(cx: &mut TestAppContext)
     let (workbench, cx) = opened(cx, dir.path());
     let made = scripted(cx);
     let store = Arc::new(MemoryStore::new());
-    (store.set("dev.fastedit.fastedit", "chat.anthropic", "store-key")).unwrap();
+    (store.set("dev.tenmoku.tenmoku", "chat.anthropic", "store-key")).unwrap();
 
     // The environment's first, said in the header.
     set_source(Some("env-key"), &store, cx);
@@ -248,7 +248,7 @@ fn the_key_comes_from_the_environment_then_the_keychain(cx: &mut TestAppContext)
     assert_eq!(origin, Some(KeyOrigin::Keychain));
 
     // With neither, the view's no-key state.
-    (store.delete("dev.fastedit.fastedit", "chat.anthropic")).unwrap();
+    (store.delete("dev.tenmoku.tenmoku", "chat.anthropic")).unwrap();
     let keys = made.borrow().len();
     reload_key(&panel, cx);
     assert_eq!(panel.read_with(cx, |panel, _| panel.key_origin()), None);
@@ -256,7 +256,7 @@ fn the_key_comes_from_the_environment_then_the_keychain(cx: &mut TestAppContext)
     assert!(cx.debug_bounds("chat-no-key").is_some());
 
     // A key set since is read again.
-    (store.set("dev.fastedit.fastedit", "chat.anthropic", "new-key")).unwrap();
+    (store.set("dev.tenmoku.tenmoku", "chat.anthropic", "new-key")).unwrap();
     reload_key(&panel, cx);
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.key_origin()),
@@ -272,7 +272,7 @@ fn the_keychain_is_read_on_open(cx: &mut TestAppContext) {
     let (workbench, cx) = opened(cx, dir.path());
     let made = scripted(cx);
     let store = Arc::new(MemoryStore::new());
-    (store.set("dev.fastedit.fastedit", "chat.anthropic", "store-key")).unwrap();
+    (store.set("dev.tenmoku.tenmoku", "chat.anthropic", "store-key")).unwrap();
     set_source(None, &store, cx);
     dispatch("chat.open", cx);
     let panel = chat(&workbench, cx).expect("made");

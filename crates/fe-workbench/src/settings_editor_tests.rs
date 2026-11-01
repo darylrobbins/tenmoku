@@ -154,7 +154,7 @@ impl Dirs {
         let temp = tempfile::tempdir().unwrap();
         let base = fs::canonicalize(temp.path()).unwrap();
         let (root, config) = (base.join("project"), base.join("config"));
-        fs::create_dir_all(root.join(".fastedit")).unwrap();
+        fs::create_dir_all(root.join(".tenmoku")).unwrap();
         fs::create_dir_all(&config).unwrap();
         Self {
             _temp: temp,
@@ -759,7 +759,7 @@ fn activating_the_tab_rereads(cx: &mut TestAppContext) {
     // Re-rooted at a folder no watcher watches: an edit to its settings
     // shows once focus comes back.
     let other = dirs.root.parent().unwrap().join("other");
-    fs::create_dir_all(other.join(".fastedit")).unwrap();
+    fs::create_dir_all(other.join(".tenmoku")).unwrap();
     workbench.update_in(cx, |workbench, window, cx| {
         workbench.set_root(other.clone(), window, cx)
     });
@@ -878,10 +878,10 @@ fn window_on(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, Visual
     (workbench, vcx)
 }
 
-/// A folder `name` beside the fixture's root, with a `.fastedit` folder.
+/// A folder `name` beside the fixture's root, with a `.tenmoku` folder.
 fn another_root(dirs: &Dirs, name: &str) -> PathBuf {
     let root = dirs.root.with_file_name(name);
-    fs::create_dir_all(root.join(".fastedit")).unwrap();
+    fs::create_dir_all(root.join(".tenmoku")).unwrap();
     root
 }
 

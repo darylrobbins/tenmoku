@@ -47,24 +47,24 @@ fn config_dir_resolution() {
         config_dir_from(|name| vars.get(name).cloned())
     };
     let all = [
-        ("FASTEDIT_CONFIG_DIR", "/override"),
+        ("TENMOKU_CONFIG_DIR", "/override"),
         ("XDG_CONFIG_HOME", "/xdg"),
         ("HOME", "/home/me"),
     ];
     assert_eq!(resolve(&all), Some(PathBuf::from("/override")));
-    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/fastedit")));
+    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/tenmoku")));
     assert_eq!(
         resolve(&all[2..]),
-        Some(PathBuf::from("/home/me/.config/fastedit"))
+        Some(PathBuf::from("/home/me/.config/tenmoku"))
     );
     // Empty or relative values don't count.
     assert_eq!(
         resolve(&[
-            ("FASTEDIT_CONFIG_DIR", ""),
+            ("TENMOKU_CONFIG_DIR", ""),
             ("XDG_CONFIG_HOME", "relative"),
             ("HOME", "/home/me")
         ]),
-        Some(PathBuf::from("/home/me/.config/fastedit"))
+        Some(PathBuf::from("/home/me/.config/tenmoku"))
     );
     assert_eq!(resolve(&[]), None);
 }

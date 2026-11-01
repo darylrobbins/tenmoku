@@ -131,7 +131,7 @@ fn the_key_is_not_read_until_the_chat_shows(cx: &mut TestAppContext) {
     });
     (store
         .inner
-        .set("dev.fastedit.fastedit", "chat.anthropic", "k"))
+        .set("dev.tenmoku.tenmoku", "chat.anthropic", "k"))
     .unwrap();
     cx.update(|cx| {
         cx.set_global(KeySource {

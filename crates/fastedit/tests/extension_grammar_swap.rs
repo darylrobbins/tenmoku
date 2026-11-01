@@ -48,7 +48,7 @@ fn extension_grammar_swap_serves_the_new_highlights(cx: &mut TestAppContext) {
         dir.join("extension.toml"),
         format!(
             "id = \"acme.jsonx\"\nname = \"JSONX\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n\n\
+             [engine]\ntenmoku = \"1.0\"\n\n\
              [[contributes.grammars]]\nlanguage = \"{NAME}\"\n\
              wasm = \"grammars/tree-sitter-json.wasm\"\nextensions = [\"{NAME}\"]\n\
              highlights = \"queries/highlights.scm\"\n"

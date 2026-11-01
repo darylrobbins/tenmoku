@@ -34,7 +34,7 @@ fn serially() -> MutexGuard<'static, ()> {
     let guard = SERIAL
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for var in ["FASTEDIT_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
+    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
         // SAFETY: every test takes the lock before it starts gpui, so no
         // other thread is running to read the environment.
         unsafe { std::env::remove_var(var) };

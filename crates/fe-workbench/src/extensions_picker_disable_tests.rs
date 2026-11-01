@@ -39,7 +39,7 @@ fn host(
         fs::create_dir_all(&path).unwrap();
         let mut manifest = format!(
             "id = \"{id}\"\nname = \"{}\"\nversion = \"1.2.3\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.0\"\n",
+             [engine]\ntenmoku = \"1.0\"\n",
             name[..1].to_uppercase() + &name[1..]
         );
         for server in servers {
@@ -55,7 +55,7 @@ fn host(
     let config = Config::new("dev.fastedit.test", "fastedit")
         .extensions(
             dir.path().join("extensions"),
-            "fastedit",
+            &fe_config::paths::app_id().short,
             ApiVersion { major: 1, minor: 0 },
         )
         .extension_kind("lsp", json!({ "type": "object" }))

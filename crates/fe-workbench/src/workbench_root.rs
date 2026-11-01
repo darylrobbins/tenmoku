@@ -25,7 +25,7 @@ impl Workbench {
         git
     }
 
-    /// Has kiln's config service watch `root`'s `.fastedit/settings.toml`,
+    /// Has kiln's config service watch `root`'s `.tenmoku/settings.toml`,
     /// with no root nothing, so a Settings tab on it re-reads an edit
     /// ([`kiln::platform::config::ChangedFiles`]) though the service loads
     /// only the launch root's.
@@ -115,7 +115,7 @@ impl Workbench {
     /// ones included, stay open. Emits [`RootChanged`].
     ///
     /// The config service's watcher watches `root`'s
-    /// `.fastedit/settings.toml` in place of the old root's, so a Settings
+    /// `.tenmoku/settings.toml` in place of the old root's, so a Settings
     /// tab on it follows its edits; the service still loads only the launch
     /// root's.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {

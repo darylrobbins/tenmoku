@@ -32,7 +32,7 @@ fn extension(extensions: &Path, name: &str, api: &str, contributes: &str) {
         dir.join("extension.toml"),
         format!(
             "id = \"acme.{name}\"\nname = \"Acme {name}\"\nversion = \"1.0.0\"\n\
-             license = \"MIT\"\n\n[engine]\nfastedit = \"{api}\"\n\n{contributes}"
+             license = \"MIT\"\n\n[engine]\ntenmoku = \"{api}\"\n\n{contributes}"
         ),
     )
     .unwrap();

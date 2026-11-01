@@ -24,7 +24,7 @@ fn opened(
     // config directory of its own: with none, it neither reads the user's
     // settings nor watches them on a thread the test scheduler would
     // reject. Before gpui starts any thread, the only test in this binary.
-    for var in ["FASTEDIT_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
+    for var in ["TENMOKU_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"] {
         // SAFETY: no other thread is running yet to read the environment.
         unsafe { std::env::remove_var(var) };
     }

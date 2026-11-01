@@ -25,7 +25,7 @@ use crate::{
 fn manifest(id: &str, name: &str, license: &str, contributes: &str) -> String {
     format!(
         "id = \"{id}\"\nname = \"{name}\"\nversion = \"1.2.3\"\nlicense = \"{license}\"\n\n\
-         [engine]\nfastedit = \"1.0\"\n\n[contributes]\n{contributes}"
+         [engine]\ntenmoku = \"1.0\"\n\n[contributes]\n{contributes}"
     )
 }
 
@@ -56,7 +56,11 @@ fn host(cx: &mut TestAppContext) -> TempDir {
     let (_sender, batches) = batch_channel();
     let api = ApiVersion { major: 1, minor: 0 };
     let config = Config::new("dev.fastedit.test", "fastedit")
-        .extensions(dir.path().join("extensions"), "fastedit", api)
+        .extensions(
+            dir.path().join("extensions"),
+            &fe_config::paths::app_id().short,
+            api,
+        )
         .extension_kind("lsp", json!({ "type": "object" }))
         .extension_kind("grammars", json!({ "type": "array" }))
         // Not the real watcher, whose thread the test scheduler can't follow.

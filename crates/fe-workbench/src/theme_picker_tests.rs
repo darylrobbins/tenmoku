@@ -37,7 +37,7 @@ version = \"1.0.0\"
 license = \"MIT\"
 
 [engine]
-fastedit = \"1.0\"
+tenmoku = \"1.0\"
 
 [contributes]
 themes = [\"themes/midnight.toml\", \"themes/noon.toml\"]
@@ -122,7 +122,11 @@ fn host(user: &str, cx: &mut TestAppContext) -> Host {
         .settings_store(store.into_inner())
         .theme_mode(ThemeMode::Dark)
         .theme_extensions(EXTENSIONS)
-        .extensions(dir.path().join("extensions"), "fastedit", api)
+        .extensions(
+            dir.path().join("extensions"),
+            &fe_config::paths::app_id().short,
+            api,
+        )
         .watch_with(batches);
     cx.update(|cx| {
         assert_eq!(kiln::init(cx, kiln), []);

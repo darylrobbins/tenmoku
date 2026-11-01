@@ -3,7 +3,7 @@
 //! Change Color Theme does, and a pick writes what that would.
 //!
 //! `set_setting` puts the user's file where the environment says
-//! (`FASTEDIT_CONFIG_DIR`), and a project can't set the theme, so the
+//! (`TENMOKU_CONFIG_DIR`), and a project can't set the theme, so the
 //! tests that write run again in a process of their own with the variable
 //! set. The tab reads the user's file from the test-only override, set to
 //! the same directory.
@@ -52,7 +52,7 @@ fn extension(base: &Path, id: &str, themes: &[(&str, &str, &str)]) {
         .collect();
     let manifest = format!(
         "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-         [engine]\nfastedit = \"1.0\"\n\n[contributes]\nthemes = [{}]\n",
+         [engine]\ntenmoku = \"1.0\"\n\n[contributes]\nthemes = [{}]\n",
         files.join(", ")
     );
     fs::write(dir.join(MANIFEST_FILE), manifest).unwrap();
@@ -84,7 +84,7 @@ impl Dirs {
     /// The directories under `base`, made if they aren't there.
     fn at(base: &Path) -> Self {
         let (root, config) = (base.join("project"), base.join("config"));
-        fs::create_dir_all(root.join(".fastedit")).unwrap();
+        fs::create_dir_all(root.join(".tenmoku")).unwrap();
         fs::create_dir_all(&config).unwrap();
         extension(base, "acme.solarized", ACME);
         Self {
@@ -105,7 +105,7 @@ impl Dirs {
 }
 
 /// Runs the test `name` of this module again, in a process of its own
-/// whose `FASTEDIT_CONFIG_DIR` is a temporary config directory, and checks
+/// whose `TENMOKU_CONFIG_DIR` is a temporary config directory, and checks
 /// that it passed: `None` here, once it has. There, it's `Some` with the
 /// directories it runs in.
 fn in_own_process(name: &str) -> Option<Dirs> {
@@ -121,7 +121,7 @@ pub(super) fn in_own_process_of(module: &str, name: &str) -> Option<Dirs> {
     let module = module.split_once("::").unwrap().1;
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([&format!("{module}::{name}"), "--exact", "--test-threads=1"])
-        .env("FASTEDIT_CONFIG_DIR", &dirs.config)
+        .env("TENMOKU_CONFIG_DIR", &dirs.config)
         .env(OWN_PROCESS_DIRS, &dirs.base)
         .output()
         .unwrap();
@@ -144,7 +144,11 @@ pub(super) fn workbench<'a>(
     let api = ApiVersion { major: 1, minor: 0 };
     let (sender, batches) = batch_channel();
     let kiln = Config::new("dev.fastedit.test", "fastedit")
-        .extensions(dirs.base.join("extensions"), "fastedit", api)
+        .extensions(
+            dirs.base.join("extensions"),
+            &fe_config::paths::app_id().short,
+            api,
+        )
         .watch_with(batches);
     cx.update(|cx| assert_eq!(kiln::init(cx, kiln), []));
     let launch = Launch {

@@ -1,6 +1,6 @@
-//! Where fastedit's config files live: kiln-core's [`AppPaths`] for the
-//! `fastedit` app, in the XDG layout on every platform, so they stay where
-//! they've always been (`~/.config/fastedit`, `~/.local/state/fastedit`).
+//! Where Tenmoku's config files live: kiln-core's [`AppPaths`] for the
+//! `tenmoku` app, in the XDG layout on every platform (`~/.config/tenmoku`,
+//! `~/.local/state/tenmoku`).
 
 use std::{
     ffi::OsString,
@@ -20,10 +20,10 @@ pub const VIMRC_FILE: &str = "vimrc";
 /// The name people see: the app menu, window titles and prompts.
 pub const APP_NAME: &str = "Tenmoku";
 
-/// Tenmoku, as kiln knows it. Its reverse DNS and short name still key the
-/// config and state directories as `fastedit`.
+/// Tenmoku, as kiln knows it. Its reverse DNS and short name key the
+/// config and state directories as `tenmoku`.
 pub fn app_id() -> AppId {
-    AppId::new("dev.fastedit.fastedit", "fastedit", APP_NAME)
+    AppId::new("dev.tenmoku.tenmoku", "tenmoku", APP_NAME)
 }
 
 /// Tenmoku's directories, reading variables through `env`.
@@ -44,9 +44,9 @@ pub fn config_dir() -> Option<PathBuf> {
 
 /// The user config directory, reading variables through `env`:
 ///
-/// 1. `$FASTEDIT_CONFIG_DIR`
-/// 2. `$XDG_CONFIG_HOME/fastedit`
-/// 3. `$HOME/.config/fastedit`
+/// 1. `$TENMOKU_CONFIG_DIR`
+/// 2. `$XDG_CONFIG_HOME/tenmoku`
+/// 3. `$HOME/.config/tenmoku`
 ///
 /// Empty variables count as unset, and so does a relative
 /// `$XDG_CONFIG_HOME`, as the XDG spec says.
@@ -72,7 +72,7 @@ pub fn user_vimrc_path() -> Option<PathBuf> {
     Some(config_dir()?.join(VIMRC_FILE))
 }
 
-/// `<root>/.fastedit/settings.toml`.
+/// `<root>/.tenmoku/settings.toml`.
 pub fn project_settings_path(root: &Path) -> PathBuf {
     app_paths().project_settings_file(root)
 }
@@ -86,9 +86,9 @@ pub fn state_dir() -> Option<PathBuf> {
 /// The user state directory, for what fastedit records about this machine
 /// (not settings to sync), reading variables through `env`:
 ///
-/// 1. `$FASTEDIT_STATE_DIR`
-/// 2. `$XDG_STATE_HOME/fastedit`
-/// 3. `$HOME/.local/state/fastedit`
+/// 1. `$TENMOKU_STATE_DIR`
+/// 2. `$XDG_STATE_HOME/tenmoku`
+/// 3. `$HOME/.local/state/tenmoku`
 ///
 /// Empty variables count as unset, and so does a relative
 /// `$XDG_STATE_HOME`, as the XDG spec says.

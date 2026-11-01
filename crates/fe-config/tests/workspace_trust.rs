@@ -112,30 +112,30 @@ fn state_dir_resolution() {
         state_dir_from(|name| vars.get(name).cloned())
     };
     let all = [
-        ("FASTEDIT_STATE_DIR", "/state/fe"),
+        ("TENMOKU_STATE_DIR", "/state/fe"),
         ("XDG_STATE_HOME", "/xdg"),
         ("HOME", "/home/u"),
     ];
     assert_eq!(resolve(&all), Some(PathBuf::from("/state/fe")));
-    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/fastedit")));
+    assert_eq!(resolve(&all[1..]), Some(PathBuf::from("/xdg/tenmoku")));
     assert_eq!(
         resolve(&all[2..]),
-        Some(PathBuf::from("/home/u/.local/state/fastedit"))
+        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(resolve(&[]), None);
 
     // Empty variables, and a relative XDG_STATE_HOME, count as unset.
     assert_eq!(
-        resolve(&[("FASTEDIT_STATE_DIR", ""), ("XDG_STATE_HOME", "/xdg")]),
-        Some(PathBuf::from("/xdg/fastedit"))
+        resolve(&[("TENMOKU_STATE_DIR", ""), ("XDG_STATE_HOME", "/xdg")]),
+        Some(PathBuf::from("/xdg/tenmoku"))
     );
     assert_eq!(
         resolve(&[("XDG_STATE_HOME", "relative"), ("HOME", "/home/u")]),
-        Some(PathBuf::from("/home/u/.local/state/fastedit"))
+        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(
         resolve(&[("XDG_STATE_HOME", ""), ("HOME", "/home/u")]),
-        Some(PathBuf::from("/home/u/.local/state/fastedit"))
+        Some(PathBuf::from("/home/u/.local/state/tenmoku"))
     );
     assert_eq!(resolve(&[("HOME", "")]), None);
 

@@ -50,7 +50,7 @@ fn install(extensions: &Path) {
         dir.join("extension.toml"),
         format!(
             "id = \"acme.tomlx\"\nname = \"TOMLX\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-             [engine]\nfastedit = \"1.1\"\n\n\
+             [engine]\ntenmoku = \"1.1\"\n\n\
              [contributes.lsp.{SERVER}]\ncommand = \"/usr/bin/true\"\nlanguages = [\"toml\"]\n\n\
              [[contributes.grammars]]\nlanguage = \"{LANGUAGE}\"\n\
              wasm = \"tree-sitter-json.wasm\"\nextensions = [\"{LANGUAGE}\"]\n\n\
@@ -63,7 +63,7 @@ fn install(extensions: &Path) {
     fs::write(
         other.join("extension.toml"),
         "id = \"acme.other\"\nname = \"Other\"\nversion = \"1.0.0\"\nlicense = \"MIT\"\n\n\
-         [engine]\nfastedit = \"1.1\"\n\n\
+         [engine]\ntenmoku = \"1.1\"\n\n\
          [[contributes.snippets]]\nprefix = \"todo\"\nbody = \"TODO: $0\"\n",
     )
     .unwrap();
