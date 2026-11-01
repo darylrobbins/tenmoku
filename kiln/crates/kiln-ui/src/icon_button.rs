@@ -17,6 +17,7 @@ pub struct IconButton {
     id: SharedString,
     icon: Icon,
     disabled: bool,
+    selected: bool,
     on_click: Option<ClickHandler>,
     tooltip: Option<TooltipBuilder>,
 }
@@ -31,6 +32,7 @@ impl IconButton {
             id: id.into(),
             icon,
             disabled: false,
+            selected: false,
             on_click: None,
             tooltip: None,
         }
@@ -38,6 +40,12 @@ impl IconButton {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Draws the button on a highlighted background, as a toggle that is on.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 
@@ -65,6 +73,7 @@ impl RenderOnce for IconButton {
             colors.list.icon
         };
         let hover = colors.list.row_hover;
+        let selected_bg = colors.list.row_selected;
         let id = self.id.clone();
         div()
             .id(ElementId::Name(self.id))
@@ -75,12 +84,19 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(px(22.))
             .rounded_sm()
+            .when(self.selected, |button| button.bg(selected_bg))
             .child(
-                svg()
-                    .path(self.icon.path())
-                    .size(px(16.))
+                div()
                     .flex_none()
-                    .text_color(color),
+                    .size(px(16.))
+                    .debug_selector(|| format!("icon-button-icon:{id}:{}", self.icon.path()))
+                    .child(
+                        svg()
+                            .path(self.icon.path())
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(color),
+                    ),
             )
             .when(!self.disabled, |button| {
                 button

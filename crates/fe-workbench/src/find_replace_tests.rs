@@ -275,9 +275,15 @@ fn the_chevron_toggles_the_replace_row(cx: &mut TestAppContext) {
     let one_row = cx.debug_bounds("pane-find-bar").expect("drawn");
 
     let chevron = cx.debug_bounds("find-replace-toggle").expect("drawn");
+    let glyph = |icon: fe_ui::Icon| -> &'static str {
+        Box::leak(format!("icon-button-icon:find-replace-toggle:{}", icon.path()).into_boxed_str())
+    };
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronRight)).is_some());
     cx.simulate_click(chevron.center(), gpui::Modifiers::none());
     draw(cx);
     assert!(replacing(&pane, cx));
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronDown)).is_some());
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronRight)).is_none());
     assert!(input_focused(&pane, cx), "focus stays in the query");
     let two_rows = cx.debug_bounds("pane-find-bar").expect("drawn");
     assert!(two_rows.size.height > one_row.size.height);

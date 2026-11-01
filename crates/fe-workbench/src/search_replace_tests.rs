@@ -366,7 +366,20 @@ fn per_file_and_dismiss(cx: &mut TestAppContext) {
     ]);
     let (_, search, cx) = searching(cx, dir.path(), "foo");
     assert_eq!(files(&search, cx), ["a.rs", "b.rs", "c.rs"]);
+    let glyph = |icon: fe_ui::Icon| -> &'static str {
+        Box::leak(
+            format!("icon-button-icon:search-replace-toggle:{}", icon.path()).into_boxed_str(),
+        )
+    };
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronRight)).is_some());
     click("search-replace-toggle", cx);
+    let replace_focused = cx.update(|window, cx| {
+        let input = search.read(cx).replace_input().clone();
+        input.focus_handle(cx).is_focused(window)
+    });
+    assert!(!replace_focused, "the chevron keeps focus where it was");
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronDown)).is_some());
+    assert!(cx.debug_bounds(glyph(fe_ui::Icon::ChevronRight)).is_none());
     replace_with(&search, "bar", cx);
 
     // Rows: a.rs and its line, b.rs and its two, c.rs and its line. b.rs's

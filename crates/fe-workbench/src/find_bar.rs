@@ -32,7 +32,7 @@ use std::ops::Range;
 use fe_buffer::{Anchor, BufferId, Origin, Text};
 use fe_editor::Movement;
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_ui::{TextInput, TextInputEvent, ToggleButton, UiTheme};
+use fe_ui::{Icon, IconButton, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use fe_vim::search::{
     Deadline, FindQuery, Interrupted, Pattern, PatternError, matches_reaching_until,
     replace::{Replacement, replace_all},
@@ -601,12 +601,16 @@ impl FindBar {
             // As the toggles do, the chevron keeps focus where it was.
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .child(
-                ToggleButton::new(
+                IconButton::new(
                     "find-replace-toggle",
-                    if self.replacing { "▾" } else { "▸" },
+                    if self.replacing {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
                     ui,
                 )
-                .on(self.replacing)
+                .selected(self.replacing)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.run_find(FindOp::ToggleReplace, window, cx)
                 })),

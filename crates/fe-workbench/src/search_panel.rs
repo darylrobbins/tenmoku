@@ -2059,13 +2059,25 @@ impl Render for SearchPanel {
             .pl_1()
             .debug_selector(|| "search-replace-toggle".into())
             .child(
-                ToggleButton::new(
+                IconButton::new(
                     "search-replace-toggle",
-                    if self.replace_shown { "▾" } else { "▸" },
+                    if self.replace_shown {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
                     &ui,
                 )
-                .on(self.replace_shown)
-                .on_click(cx.listener(|panel, _, window, cx| panel.toggle_replace(window, cx))),
+                .selected(self.replace_shown)
+                .on_click(cx.listener(|panel, _, window, cx| {
+                    // Showing replace from the chevron keeps focus where it was.
+                    if panel.replace_shown {
+                        panel.toggle_replace(window, cx)
+                    } else {
+                        panel.replace_shown = true;
+                        cx.notify();
+                    }
+                })),
             );
         let replace = self.replace_shown.then(|| {
             div()
