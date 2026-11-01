@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Text};
+use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Text, local_history::Reason};
 use fe_gpui::{EditorView, pane_item::file_name};
 use fe_project::FsChange;
 use gpui::{AppContext as _, Context, Entity, EntityId, PromptLevel, Subscription, Window};
@@ -413,6 +413,18 @@ impl Workbench {
             let buffer = editor.read(cx).model().buffer();
             (same_text(buffer.text(), &file.text), buffer.is_dirty())
         };
+        if !same && let Some(history) = fe_gpui::pane_item::local_history(cx) {
+            let path = editor.read(cx).model().path().map(Path::to_owned);
+            if let Some(path) = path {
+                fe_gpui::pane_item::record_history(
+                    history,
+                    path,
+                    file.text.clone(),
+                    Reason::External,
+                    cx.background_executor(),
+                );
+            }
+        }
         if same {
             set_stamp(&editor, stamp, cx);
         } else if !dirty {
@@ -652,3 +664,7 @@ mod tests;
 #[cfg(test)]
 #[path = "disk_sync_rename_tests.rs"]
 mod disk_sync_rename_tests;
+
+#[cfg(test)]
+#[path = "local_history_record_tests.rs"]
+mod local_history_record_tests;

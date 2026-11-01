@@ -471,6 +471,16 @@ fn main() {
         // extensions load, so their servers are checked against it.
         if let Some(dir) = fe_config::paths::state_dir() {
             fe_workbench::set_extension_consent_file(cx, dir.join(fe_workbench::CONSENT_FILE));
+            let history = fe_buffer::LocalHistory::new(dir.join("history"));
+            let pruned = history.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = pruned.prune(std::time::SystemTime::now()) {
+                        log::debug!("local history: pruning: {error}");
+                    }
+                })
+                .detach();
+            fe_gpui::pane_item::set_local_history(cx, Some(history));
         }
         kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.

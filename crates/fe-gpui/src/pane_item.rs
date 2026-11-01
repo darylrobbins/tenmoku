@@ -20,7 +20,8 @@ use std::{
 };
 
 use fe_buffer::{
-    Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, FileEncoding, Version,
+    Backup, BackupId, BackupMeta, BackupStore, Bias, Buffer, BufferId, FileEncoding, LocalHistory,
+    Version, local_history::Reason,
 };
 use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved, auto_save::SaveReason};
 
@@ -767,6 +768,7 @@ async fn save_asking(
         None => this.update(cx, |view, _| prepare_save_in(&mut view.model, encoding))?,
     }?;
     let name = file_name(Some(job.path()));
+    let saved_path = job.path().to_owned();
     let saved = match run(job.clone(), cx).await {
         Err(SaveError::ChangedOnDisk) if let Some(window) = window => {
             let answer = cx.update_window(window, |_, window, cx| {
@@ -786,6 +788,7 @@ async fn save_asking(
         saved => saved,
     };
     let saved = saved.map_err(io::Error::from)?;
+    let saved_text = saved.snapshot().text().clone();
     let recorded = this.update(cx, |view, _| {
         let recorded = view.model.finish_save(saved);
         if let Some(encoding) = encoding
@@ -795,6 +798,15 @@ async fn save_asking(
         }
         recorded
     })?;
+    if recorded && let Some(history) = cx.update(|cx| local_history(cx)) {
+        record_history(
+            history,
+            saved_path,
+            saved_text,
+            Reason::Saved,
+            cx.background_executor(),
+        );
+    }
     // In an encoding, the buffer keeps its own unless the save is its.
     if let Some(encoding) = encoding
         && !recorded
@@ -807,6 +819,41 @@ async fn save_asking(
         .into());
     }
     Ok(())
+}
+
+/// Records `text` as `path`'s past text on the background executor. A
+/// failure is logged at debug and never reaches the caller.
+pub fn record_history(
+    history: LocalHistory,
+    path: PathBuf,
+    text: Text,
+    reason: Reason,
+    executor: &gpui::BackgroundExecutor,
+) {
+    executor
+        .spawn(async move {
+            let bytes = text.chunks().collect::<String>().into_bytes();
+            if let Err(error) = history.record(&path, &bytes, reason, SystemTime::now()) {
+                log::debug!("local history: recording {}: {error}", path.display());
+            }
+        })
+        .detach();
+}
+
+/// The local history, if the app installed one.
+struct LocalHistoryGlobal(Option<LocalHistory>);
+
+impl Global for LocalHistoryGlobal {}
+
+/// Has saves (and, in the workbench, changes found on disk) recorded in
+/// `history`, or in none. Only the app installs one.
+pub fn set_local_history(cx: &mut App, history: Option<LocalHistory>) {
+    cx.set_global(LocalHistoryGlobal(history));
+}
+
+/// The installed local history, if any.
+pub fn local_history(cx: &App) -> Option<LocalHistory> {
+    cx.try_global::<LocalHistoryGlobal>()?.0.clone()
 }
 
 /// Runs `job` on the background executor.
