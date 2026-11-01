@@ -17,6 +17,7 @@ use crate::{
     Backup, BufferId, BufferSnapshot, Edit, Version,
     edit::{Mapping, normalize},
     log::{Collapse, EditLog},
+    provenance::{Author, Provenance, ReplacedSpans, Runs},
 };
 
 /// Who made an edit. Undo can be scoped by origin, so the AI's edits can be
@@ -267,6 +268,11 @@ pub struct Buffer {
     restore: Option<Restore>,
     /// Set by [`Buffer::mark_unsaved`] until the next save.
     unsaved: bool,
+    /// Who wrote which of the text; see [`Buffer::provenance`].
+    provenance: Provenance,
+    /// Who new text is by, instead of its batch's origin, while
+    /// [`Buffer::with_author`] or a load has it set.
+    authoring: Option<Option<Author>>,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
 
@@ -317,6 +323,12 @@ struct AppliedBatch {
     edits: Arc<[Edit]>,
     old_texts: Vec<Arc<str>>,
     new_texts: Vec<Arc<str>>,
+    /// The authored spans of `old_texts`, laid end to end: what undoing this
+    /// batch gives back to who wrote them. They go when the batch does, so the
+    /// history cap bounds them, though [`batch_bytes`] doesn't count them: a
+    /// fresh batch's aren't known when it's charged, and each span takes at
+    /// least a byte of `old_texts`, which it does count.
+    old_authors: ReplacedSpans,
     /// For undo and redo batches: the log entries whose replacements
     /// collapsed positions this batch was computed from. If one of them is
     /// reverted, this batch's positions can no longer be trusted.
@@ -417,8 +429,10 @@ impl Buffer {
             buffer.record_empty(origin)
         } else {
             let new_text = backup.text.slice_to_string(new);
+            // A backup doesn't say who wrote its text, so none of it is the
+            // user's for being restored under their undo.
             buffer
-                .edit([(old, new_text)], origin)
+                .with_authoring(None, |buffer| buffer.edit([(old, new_text)], origin))
                 .expect("the texts differ")
         };
         let meta = &backup.meta;
@@ -514,6 +528,8 @@ impl Buffer {
             disk_stamp: None,
             restore: None,
             unsaved: false,
+            provenance: Provenance::unauthored(text.len()),
+            authoring: None,
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -545,6 +561,39 @@ impl Buffer {
 
     pub fn text(&self) -> &Text {
         &self.snapshot.text
+    }
+
+    /// Who wrote which of the text: each batch's new text is by its origin,
+    /// or by the author [`Buffer::with_author`] gives. Undo and redo give the
+    /// text they put back to who wrote it. Text as loaded or reloaded has no
+    /// author, and neither has a restored backup's.
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    /// Runs `f` with the text its batches write authored by `author`,
+    /// whatever origin they apply under: the undo history follows the origin,
+    /// the [`Buffer::provenance`] this. Each batch's history entry keeps the
+    /// spans, so its redo authors the text the same way. Calls nest; the
+    /// innermost author wins.
+    pub fn with_author<R>(&mut self, author: Origin, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_authoring(Some(Author::from(&author)), f)
+    }
+
+    fn with_authoring<R>(&mut self, author: Option<Author>, f: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = self.authoring.replace(author);
+        let result = f(self);
+        self.authoring = outer;
+        result
+    }
+
+    /// Follows a fresh `batch` of `origin` in the provenance.
+    fn attribute(&mut self, batch: &mut AppliedBatch, origin: &Origin) {
+        let author = match &self.authoring {
+            Some(author) => author.clone(),
+            None => Some(Author::from(origin)),
+        };
+        batch.old_authors = self.provenance.record(&batch.edits, author);
     }
 
     /// The current state, borrowed. Use [`Buffer::snapshot`] to keep it.
@@ -776,12 +825,17 @@ impl Buffer {
     /// reload, and a new one, as deeply nested, opens after it, so edits
     /// that follow come after the reload in undo order; the matching
     /// [`Buffer::end_transaction`]s close the new one.
+    ///
+    /// The text has no author after, even where the file's equals it, and an
+    /// undo of the reload brings the old text back with none. Undoing an older
+    /// transaction still gives back the spans it replaced.
     pub fn reload(
         &mut self,
         file: DecodedFile,
         stamp: Option<DiskStamp>,
         origin: Origin,
     ) -> Option<TransactionId> {
+        self.provenance.clear(self.snapshot.text.len());
         let (old, new) = differing_ranges(&self.snapshot.text, &file.text);
         let id = if old.is_empty() && new.is_empty() {
             None
@@ -797,8 +851,10 @@ impl Buffer {
                     None
                 }
             };
-            let id = self
-                .with_transaction_aside(|buffer| buffer.edit([(old, new_text)], origin.clone()));
+            let id = self.with_authoring(None, |buffer| {
+                buffer
+                    .with_transaction_aside(|buffer| buffer.edit([(old, new_text)], origin.clone()))
+            });
             if let Some(depth) = split {
                 self.start_transaction(origin);
                 if let Some(open) = &mut self.open {
@@ -853,6 +909,8 @@ impl Buffer {
     /// transaction whose batches derive, through earlier undos and redos,
     /// from an edit below the floor.
     pub fn compact_log(&mut self, floor: Version) {
+        // Batches waiting in the provenance hold their edits like the log does.
+        self.provenance.settle();
         self.snapshot.log.compact(floor);
         let floor = self.snapshot.log.floor();
         let open = self.open.as_ref().map(|open| open.id);
@@ -901,7 +959,8 @@ impl Buffer {
             .into_iter()
             .map(|(range, new_text)| (clip_range(text, range), normalize_newlines(new_text.into())))
             .collect();
-        let batch = apply(&mut self.snapshot, edits, None)?;
+        let mut batch = apply(&mut self.snapshot, edits, None)?;
+        self.attribute(&mut batch, &origin);
         let id = self.record(origin.clone(), batch.clone());
         let text = self.snapshot.text.clone();
         self.note_batch(&batch.edits);
@@ -941,9 +1000,10 @@ impl Buffer {
             .into_iter()
             .map(|(range, new_text)| (clip_range(text, range), normalize_newlines(new_text.into())))
             .collect();
-        let Some(batch) = apply(&mut self.snapshot, edits, None) else {
+        let Some(mut batch) = apply(&mut self.snapshot, edits, None) else {
             return Ok(None);
         };
+        self.attribute(&mut batch, &origin);
         self.charge_batch(&origin, &batch);
         self.history
             .iter_mut()
@@ -1097,12 +1157,14 @@ impl Buffer {
             return Ok(None);
         };
         let mut state = self.snapshot.clone();
+        let mut runs = self.provenance.settled();
         let entry = &self.history[ix];
-        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &entry.batches)
+        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &mut runs, &entry.batches)
             .map_err(|()| UndoError::Conflict(entry.id))?
             .into_iter()
             .unzip();
         self.snapshot = state;
+        self.provenance.set_settled(runs);
         self.undo_clock += 1;
         let entry = &mut self.history[ix];
         let added = batches_bytes(&batches);
@@ -1144,13 +1206,15 @@ impl Buffer {
             return Ok(None);
         };
         let mut state = self.snapshot.clone();
+        let mut runs = self.provenance.settled();
         let entry = &self.history[ix];
         let undone = entry.undone.as_ref().expect("filtered on undone");
-        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &undone.batches)
+        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &mut runs, &undone.batches)
             .map_err(|()| UndoError::Conflict(entry.id))?
             .into_iter()
             .unzip();
         self.snapshot = state;
+        self.provenance.set_settled(runs);
         let entry = &mut self.history[ix];
         let removed = entry_bytes(entry);
         entry.undone = None;
@@ -1421,6 +1485,7 @@ fn apply(
         edits,
         old_texts,
         new_texts,
+        old_authors: ReplacedSpans::default(),
         collapsed_by: Arc::from([]),
     })
 }
@@ -1428,9 +1493,12 @@ fn apply(
 /// Applies the inverse of `batches`, newest first, mapping each through the
 /// edits made since. Fails without a partial result if any text the batches
 /// wrote has since changed. Returns the inverse batches, which `revert` can
-/// take again to redo, each with the text right after it.
+/// take again to redo, each with the text right after it. `runs` follows, each
+/// batch's replaced spans going back with its old text and the spans the
+/// inverse replaces kept in it for the redo.
 fn revert(
     state: &mut BufferSnapshot,
+    runs: &mut Runs,
     batches: &[AppliedBatch],
 ) -> Result<Vec<(AppliedBatch, Text)>, ()> {
     let mut produced = Vec::with_capacity(batches.len());
@@ -1466,6 +1534,10 @@ fn revert(
             inverse.push((range, old_text.clone()));
         }
         if let Some(mut applied) = apply(state, inverse, Some(batch.version)) {
+            // Mapping keeps a batch's edits in order, so however `apply`
+            // merged them, its new texts end to end are `old_texts` end to
+            // end, which is what `old_authors` counts in.
+            applied.old_authors = runs.restore(&applied.edits, &batch.old_authors);
             collapsed_by.sort_unstable();
             collapsed_by.dedup();
             applied.collapsed_by = collapsed_by.into();

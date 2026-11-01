@@ -304,7 +304,8 @@ impl ProposedChange {
 
     /// As [`ProposedChange::accept`], but the transaction is under `origin`,
     /// so that origin's undo reverts the hunk. The proposal's own origin is
-    /// unchanged, and the hunk stays accepted after an undo.
+    /// unchanged, and the hunk stays accepted after an undo. The text is the
+    /// proposal's origin's in the [`Buffer::provenance`], whatever `origin`.
     ///
     /// # Errors
     /// As [`ProposedChange::accept`].
@@ -329,8 +330,11 @@ impl ProposedChange {
             return Err(ProposalError::Stale);
         }
         let new_text = hunk.new_text.clone();
-        let transaction = buffer.with_transaction_aside(|buffer| {
-            buffer.edit([(range.clone(), new_text.clone())], origin)
+        let author = self.origin.clone();
+        let transaction = buffer.with_author(author, |buffer| {
+            buffer.with_transaction_aside(|buffer| {
+                buffer.edit([(range.clone(), new_text.clone())], origin)
+            })
         });
         let landed = range.start..range.start + new_text.len();
         self.landed(buffer.current(), id, landed);
@@ -350,7 +354,7 @@ impl ProposedChange {
     }
 
     /// As [`ProposedChange::accept_all`], but the transaction is under
-    /// `origin`, as in [`ProposedChange::accept_as`].
+    /// `origin`, with the text authored as in [`ProposedChange::accept_as`].
     ///
     /// # Panics
     /// As [`ProposedChange::accept`].
@@ -379,7 +383,9 @@ impl ProposedChange {
         let transaction = if edits.is_empty() {
             None
         } else {
-            buffer.with_transaction_aside(|buffer| buffer.edit(edits, origin))
+            buffer.with_author(self.origin.clone(), |buffer| {
+                buffer.with_transaction_aside(|buffer| buffer.edit(edits, origin))
+            })
         };
         if accepted.is_empty() {
             return (None, stale);

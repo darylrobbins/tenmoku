@@ -24,6 +24,9 @@
 //!   brings it back. Text the user types at the region's edges stays outside
 //!   it. Cancelling, by [`EditStream::finish`] or by dropping the stream,
 //!   keeps what landed.
+//! - [`Provenance`] holds who wrote which bytes of a buffer's text, an
+//!   [`Author`] per span, following edits, undo and redo; text accepted from a
+//!   proposal is its agent's, whatever origin it's applied under.
 //! - [`BackupStore`] keeps backups of unsaved buffers on disk, privately and
 //!   atomically, for hot exit and crash recovery; [`Buffer::from_backup`]
 //!   restores one, dirty over the file's current text.
@@ -39,6 +42,7 @@ pub mod local_history;
 mod log;
 mod marker;
 mod proposed;
+mod provenance;
 mod selection;
 mod snapshot;
 mod stream;
@@ -56,6 +60,7 @@ pub use proposed::{
     Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
     ProposedChange,
 };
+pub use provenance::{Author, Provenance};
 pub use selection::{ResolvedSelection, Selection, SelectionSet};
 pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
 pub use stream::{EditStream, StreamError};

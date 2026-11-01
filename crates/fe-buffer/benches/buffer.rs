@@ -150,6 +150,59 @@ fn benches(c: &mut Criterion) {
         );
     }
 
+    // What a keystroke's author costs once something reads it, as a gutter
+    // would each frame. The keystroke cases above leave it to the first read.
+    c.bench_function(
+        "provenance/typing in one place, read after each keystroke, in 100MB",
+        |b| {
+            let mut buffer = Buffer::new(&source);
+            let mut at = len / 2;
+            at = buffer.text().clip_offset(at, Bias::Left);
+            b.iter(|| {
+                buffer.edit([(at..at, "x")], Origin::User);
+                at += 1;
+                let row = buffer.text().offset_to_point(at).row;
+                black_box(buffer.provenance().row_authors(buffer.text(), row..row + 1));
+            })
+        },
+    );
+    c.bench_function(
+        "provenance/keystroke anywhere, read after each, in 100MB",
+        |b| {
+            let mut buffer = Buffer::new(&source);
+            b.iter_batched(
+                || rng.random_range(0..len),
+                |offset| {
+                    buffer.edit([(offset..offset, "x")], Origin::User);
+                    black_box(buffer.provenance().row_authors(buffer.text(), 0..1));
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+    for keystrokes in [1_000, 100_000] {
+        c.bench_function(
+            &format!("provenance/first read after {keystrokes} keystrokes anywhere, in 100MB"),
+            |b| {
+                b.iter_batched(
+                    || {
+                        let mut buffer = Buffer::new(&source);
+                        for _ in 0..keystrokes {
+                            let offset = rng.random_range(0..len);
+                            buffer.edit([(offset..offset, "x")], Origin::User);
+                        }
+                        buffer
+                    },
+                    |buffer| {
+                        black_box(buffer.provenance().row_authors(buffer.text(), 0..1));
+                        buffer
+                    },
+                    BatchSize::PerIteration,
+                )
+            },
+        );
+    }
+
     // Undo of a keystroke deep in history, with later edits elsewhere.
     c.bench_function("undo/keystroke after 100 later edits", |b| {
         b.iter_batched(
