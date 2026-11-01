@@ -78,6 +78,7 @@ scripts/lsp-real.sh               # fe-lsp against real language servers; see Re
 scripts/check-framework-standalone.sh    # kiln/ builds and tests outside this repo; see Kiln on its own
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
+scripts/prune-build-dirs.sh --dry-run    # orphaned external build-dirs; scripts/test-prune-build-dirs.sh tests it
 scripts/ci-test-affected.sh       # the gate's test stage: changed packages and their reverse deps
 scripts/test-ci-test-affected.sh  # self-test for the affected-packages script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
@@ -260,8 +261,13 @@ only serves their dependencies; snapshots (`CARGO_INCREMENTAL=0`) get their own 
 
 `scripts/prune-build-cache.sh [--dry-run] [--older-than MIN] [--if-below GIB]` deletes
 incremental session dirs older than `--older-than` minutes (default 180) from the
-lane's own `target/debug/incremental` (`$CARGO_TARGET_DIR` if set), always keeping each crate's newest, and prints the GiB
+lane's `debug/incremental` under cargo's build-dir (`cargo metadata` `.build_directory`; with
+`[build] build-dir` set it is outside `target/`), always keeping each crate's newest, and prints the GiB
 freed. `--if-below` does nothing while that much is free.
+
+`scripts/prune-build-dirs.sh [--dry-run]` removes build-dirs under the external build-dir root
+(e.g. `/Volumes/Builds/cargo`) whose worktree no longer exists and that were untouched for 2 hours;
+`ci-env.sh` runs it before its free-space check. `scripts/test-prune-build-dirs.sh` is its fixture test.
 
 ## Screenshots
 

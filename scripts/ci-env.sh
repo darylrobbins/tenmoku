@@ -37,12 +37,16 @@ case "$PWD" in
 	# Repeat the workspace [profile.dev] settings so a gate does not depend on the file.
 	export CARGO_INCREMENTAL=0
 	export CARGO_PROFILE_DEV_DEBUG=line-tables-only
+	# Sweep build-dirs of deleted worktrees first; never fatal, quiet unless it frees something.
+	if out=$("$(dirname "$0")/prune-build-dirs.sh" 2>&1); then
+		case "$out" in *"freed 0.00 GiB"*) ;; *) echo "$out" >&2 ;; esac
+	fi
 	min=${FASTEDIT_MIN_FREE_GIB:-10}
 	df_line=$(df -Pk "$PWD" | tail -n 1)
 	free_gib=$(echo "$df_line" | awk '{ print int($4 / 1048576) }')
 	mount=$(echo "$df_line" | awk '{ $1 = $2 = $3 = $4 = $5 = ""; sub(/^ +/, ""); print }')
 	if [ "$free_gib" -lt "$min" ]; then
-		echo "ci-env: only $free_gib GiB free on $mount, need FASTEDIT_MIN_FREE_GIB=$min; free space with scripts/prune-build-cache.sh in a lane, or remove old lane target/ dirs" >&2
+		echo "ci-env: only $free_gib GiB free on $mount, need FASTEDIT_MIN_FREE_GIB=$min; the build volume (cargo build-dir, e.g. /Volumes/Builds) shares this free space; run scripts/prune-build-dirs.sh to sweep build-dirs of deleted worktrees, scripts/prune-build-cache.sh in a lane for stale incremental data, or remove old lane target/ dirs" >&2
 		exit 75
 	fi
 	;;

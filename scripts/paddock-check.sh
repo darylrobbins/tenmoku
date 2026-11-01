@@ -19,7 +19,7 @@
 #   revert            revert the landing on the local base, check the revert, and advance the base
 #   sync-hosts        push the base to each Linux host's refs/remotes/mac/main and prompt its lead
 #                     (hosts from $FASTEDIT_HOSTS, "host:pane" words)
-#   cleanup           delete this worktree's target/
+#   cleanup           cargo clean: delete this worktree's target/ and its cargo build-dir
 # Every command refuses to run in the main checkout: workflow steps work only in worktrees.
 # Must run under macOS's bash 3.2: no associative arrays, no empty arrays under set -u.
 set -euo pipefail
@@ -330,8 +330,16 @@ sync-hosts)
   echo "SYNC OK: $(git rev-parse --short "$sha") on every host"
   ;;
 cleanup)
-  rm -rf "$CARGO_TARGET_DIR"
-  echo "CLEANUP OK: removed $CARGO_TARGET_DIR"
+  # cargo clean removes target/ and the external build-dir (deps, incremental, ...). If it fails,
+  # remove both by path; the build-dir is found first, as it is keyed by this worktree's path.
+  build_dir=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.build_directory // empty' 2>/dev/null || true)
+  if cargo clean 2>/dev/null; then
+    echo "CLEANUP OK: cargo clean removed $CARGO_TARGET_DIR and ${build_dir:-its build-dir}"
+  else
+    [ -z "$build_dir" ] || rm -rf "$build_dir"
+    rm -rf "$CARGO_TARGET_DIR"
+    echo "CLEANUP OK: removed $CARGO_TARGET_DIR${build_dir:+ and $build_dir}"
+  fi
   ;;
 *)
   die "usage: $0 red|relock|green|green-if-locked <crate>... | guard | ci | rerun-failed | deps <task>... | land | land-ff | post | revert | sync-hosts | cleanup"

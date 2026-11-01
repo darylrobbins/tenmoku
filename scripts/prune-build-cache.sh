@@ -6,7 +6,7 @@
 #   scripts/prune-build-cache.sh [--dry-run] [--older-than MINUTES] [--if-below GIB]
 #
 # --older-than defaults to 180. --if-below makes this a no-op while the volume has at
-# least GIB free. Run it from the lane to prune; it only looks at that lane's target.
+# least GIB free. Run it from the lane to prune; it only looks at that lane's build-dir.
 set -eu
 
 older=180
@@ -24,9 +24,15 @@ done
 case "$older" in '' | *[!0-9]*) echo "prune-build-cache: --older-than must be a whole number of minutes" >&2; exit 2 ;; esac
 case "$below" in *[!0-9]*) echo "prune-build-cache: --if-below must be a whole number of GiB" >&2; exit 2 ;; esac
 
-# The target is $CARGO_TARGET_DIR if set (rgt sets it per lane), else the target/ of the
-# checkout this script lives in. FASTEDIT_PRUNE_TARGET overrides both, for the test.
-target=${FASTEDIT_PRUNE_TARGET:-${CARGO_TARGET_DIR:-$(cd "$(dirname "$0")/.." && pwd)/target}}
+# Incremental data lives in cargo's build-dir (`cargo metadata` .build_directory), which is
+# outside target/ when [build] build-dir is configured. FASTEDIT_PRUNE_TARGET overrides it, for
+# the test; without cargo or jq, fall back to $CARGO_TARGET_DIR or this checkout's target/.
+root=$(cd "$(dirname "$0")/.." && pwd)
+target=${FASTEDIT_PRUNE_TARGET:-}
+if [ -z "$target" ] && command -v cargo >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+	target=$(cd "$root" && cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.build_directory // empty') || target=
+fi
+target=${target:-${CARGO_TARGET_DIR:-$root/target}}
 inc="$target/debug/incremental"
 if [ ! -d "$inc" ]; then
 	echo "prune-build-cache: $inc doesn't exist; nothing to prune"
