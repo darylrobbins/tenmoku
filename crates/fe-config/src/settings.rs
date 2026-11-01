@@ -276,6 +276,12 @@ pub struct VimSettings {
     /// which-key popup shows (which-key.nvim's default). 0 shows it at once.
     #[schemars(range(min = 0, max = 5000))]
     pub which_key_delay_ms: u64,
+    /// true: a yank briefly highlights the text it took, as nvim's
+    /// vim.hl.on_yank does.
+    pub highlight_yank: bool,
+    /// How long, in milliseconds, the yank highlight stays.
+    #[schemars(range(min = 1, max = 5000))]
+    pub highlight_yank_ms: u64,
     /// The leader key `<leader>` stands for in a remap, in vim notation
     /// (`"<Space>"` works). Left at `"\\"`, a preset's leader applies.
     pub leader: String,
@@ -306,6 +312,8 @@ impl Default for VimSettings {
             filter_time_limit: 10_000,
             which_key: true,
             which_key_delay_ms: 200,
+            highlight_yank: true,
+            highlight_yank_ms: 150,
             leader: "\\".to_string(),
             preset: VimPreset::default(),
             remap: Vec::new(),

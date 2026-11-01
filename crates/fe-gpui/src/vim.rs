@@ -158,6 +158,13 @@ pub use which_key::{set_host_commands, set_vim_which_key};
 /// How long a yank's text stays highlighted: nvim's `vim.hl.on_yank` default.
 const YANK_FLASH: Duration = Duration::from_millis(150);
 
+/// Sets whether a vim yank flashes the text it took and for how long
+/// (`vim.highlight_yank`, `vim.highlight_yank_ms`). A flash under way keeps
+/// its timer.
+pub fn set_vim_highlight_yank(cx: &mut App, on: bool, duration: Duration) {
+    cx.default_global::<Vim>().highlight_yank = Some((on, duration));
+}
+
 /// A yank's text highlighted for [`YANK_FLASH`], or until the buffer next
 /// changes. Dropped, its timer ends; [`EditorView::end_yank_flash`] also
 /// takes its provider off the model.
@@ -355,6 +362,8 @@ struct Vim {
     remaps: Arc<RemapSet>,
     /// `vim.which_key` and `vim.which_key_delay_ms`.
     which_key: which_key::WhichKeySettings,
+    /// `vim.highlight_yank` and `vim.highlight_yank_ms`; unset, on for [`YANK_FLASH`].
+    highlight_yank: Option<(bool, Duration)>,
     /// The editor holding keys for a longer map: one at a time, as only the
     /// focused editor takes keys.
     remap_wait: Option<RemapWait>,
@@ -1318,16 +1327,20 @@ impl EditorView {
             return;
         }
         self.yank_seen = serial;
+        let (on, duration) = cx
+            .try_global::<Vim>()
+            .and_then(|vim| vim.highlight_yank)
+            .unwrap_or((true, YANK_FLASH));
         let ranges = ranges.to_vec();
         self.end_yank_flash();
         let snapshot = self.model.snapshot().clone();
         let version = snapshot.version();
-        if ranges.is_empty() || version != before {
+        if !on || ranges.is_empty() || version != before {
             return;
         }
         let items = ranges
             .into_iter()
-            .map(|range| Decoration::new(range, DecorationKind::Highlight, Tint::Accent))
+            .map(|range| Decoration::new(range, DecorationKind::Highlight, Tint::Yank))
             .collect();
         let mut set = DecorationSet::new();
         set.apply(&snapshot, version, items);
@@ -1335,7 +1348,7 @@ impl EditorView {
             .model
             .add_decoration_provider(Rc::new(RefCell::new(set)));
         let timer = cx.spawn(async move |view, cx| {
-            cx.background_executor().timer(YANK_FLASH).await;
+            cx.background_executor().timer(duration).await;
             view.update(cx, |view, cx| {
                 view.end_yank_flash();
                 cx.notify();
@@ -3187,6 +3200,9 @@ mod incsearch_fold_tests;
 
 #[cfg(test)]
 mod yank_flash_reset_tests;
+
+#[cfg(test)]
+mod yank_flash_setting_tests;
 
 #[cfg(test)]
 mod clipboard_tests;

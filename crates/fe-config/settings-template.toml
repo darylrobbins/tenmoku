@@ -172,6 +172,10 @@
 # How long, in milliseconds, a prefix waits for its next key before the
 # which-key popup shows. 0 shows it at once.
 # which_key_delay_ms = 200
+# true: a yank briefly highlights the text it took, as nvim's vim.hl.on_yank does.
+# highlight_yank = true
+# How long, in milliseconds, the yank highlight stays.
+# highlight_yank_ms = 150
 # The key <leader> stands for in a remap, in vim notation. Left at "\\", a
 # preset's leader applies.
 # leader = "\\"

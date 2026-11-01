@@ -141,6 +141,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         let replace_with_register = now.vim.replace_with_register;
         let now_limit = now.vim.regex_time_limit;
         let which_key = (now.vim.which_key, now.vim.which_key_delay_ms);
+        let yank = (now.vim.highlight_yank, now.vim.highlight_yank_ms);
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
         let (enabled, unnamed) = (
             (now.vim.enabled, before.vim.enabled),
@@ -158,6 +159,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         fe_gpui::set_vim_replace_with_register(cx, replace_with_register);
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         fe_gpui::set_vim_which_key(cx, which_key.0, Duration::from_millis(which_key.1));
+        fe_gpui::set_vim_highlight_yank(cx, yank.0, Duration::from_millis(yank.1));
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
                 settle(window, diagnostics.clone(), cx);
@@ -496,6 +498,11 @@ fn main() {
             cx,
             settings.vim.which_key,
             Duration::from_millis(settings.vim.which_key_delay_ms),
+        );
+        fe_gpui::set_vim_highlight_yank(
+            cx,
+            settings.vim.highlight_yank,
+            Duration::from_millis(settings.vim.highlight_yank_ms),
         );
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,

@@ -42,6 +42,8 @@ pub enum Tint {
     DiffAdded,
     /// A diff view's removed text, as [`Tint::DiffAdded`].
     DiffRemoved,
+    /// The flash over text a vim yank took, in a colour of its own.
+    Yank,
 }
 
 /// A mark in the gutter.

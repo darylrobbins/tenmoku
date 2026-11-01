@@ -71,6 +71,7 @@ pub(super) fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
         Tint::Removed | Tint::DiffRemoved => theme.change_deleted,
         Tint::Hint => theme.hint,
         Tint::Accent => theme.cursor,
+        Tint::Yank => theme.vim_yank_highlight,
         Tint::Muted => theme.foreground,
     }
 }
@@ -84,6 +85,7 @@ pub(super) fn diff_color(theme: &EditorTheme, tint: Tint, kind: &DecorationKind)
         (Tint::DiffRemoved, DecorationKind::RowBackground) => Some(theme.diff_removed_row),
         (Tint::DiffAdded, DecorationKind::Highlight) => Some(theme.diff_added_word),
         (Tint::DiffRemoved, DecorationKind::Highlight) => Some(theme.diff_removed_word),
+        (Tint::Yank, DecorationKind::Highlight) => Some(theme.vim_yank_highlight),
         _ => None,
     }
 }

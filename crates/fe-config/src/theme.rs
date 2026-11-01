@@ -93,6 +93,8 @@ colors! {
         jump_label_preview,
         /// The glyph on a jump label's box.
         jump_label_foreground,
+        /// The flash over text a vim yank took.
+        vim_yank_highlight,
         /// The gutter bar of rows added since the git base.
         change_added,
         /// The gutter bar of rows modified since the git base.

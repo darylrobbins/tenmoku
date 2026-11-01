@@ -983,6 +983,19 @@
           "minimum": 100,
           "type": "integer"
         },
+        "highlight_yank": {
+          "default": true,
+          "description": "true: a yank briefly highlights the text it took, as nvim's\nvim.hl.on_yank does.",
+          "type": "boolean"
+        },
+        "highlight_yank_ms": {
+          "default": 150,
+          "description": "How long, in milliseconds, the yank highlight stays.",
+          "format": "uint64",
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "ignorecase": {
           "default": false,
           "description": "true: a search with `/`, `?`, `n` or `N` ignores case, as nvim's\n'ignorecase' does. `\\c` and `\\C` in a pattern override it.",
@@ -1221,6 +1234,8 @@
         "clipboard": "",
         "enabled": false,
         "filter_time_limit": 10000,
+        "highlight_yank": true,
+        "highlight_yank_ms": 150,
         "ignorecase": false,
         "incsearch": true,
         "jump_on_s": false,

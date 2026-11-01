@@ -23,6 +23,7 @@ popover_border = "#3e4452"
 jump_label = "#ff79c6"
 jump_label_preview = "#5fd7d7"
 jump_label_foreground = "#16181d"
+vim_yank_highlight = "#7aa2f738"
 # The git change bar. These are muted on purpose, with low saturation so the
 # bar is noticeable but quiet; they are not derived from `information` or `error`.
 change_added = "#4f8a5b"

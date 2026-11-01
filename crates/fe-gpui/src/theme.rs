@@ -66,6 +66,7 @@ impl EditorTheme {
             jump_label: hsla(editor.jump_label),
             jump_label_preview: hsla(editor.jump_label_preview),
             jump_label_foreground: hsla(editor.jump_label_foreground),
+            vim_yank_highlight: hsla(editor.vim_yank_highlight),
             change_added: hsla(editor.change_added),
             change_modified: hsla(editor.change_modified),
             change_deleted: hsla(editor.change_deleted),
