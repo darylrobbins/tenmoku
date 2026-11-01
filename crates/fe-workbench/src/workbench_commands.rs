@@ -54,6 +54,13 @@ mod local_history_view;
 #[path = "local_history_view_tests.rs"]
 mod local_history_view_tests;
 
+#[path = "provenance_column.rs"]
+pub(crate) mod provenance_column;
+
+#[cfg(test)]
+#[path = "provenance_column_tests.rs"]
+mod provenance_column_tests;
+
 #[path = "focus_group.rs"]
 mod focus_group;
 
@@ -297,6 +304,13 @@ impl Workbench {
     fn history_show_local(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.show_local_history(cx.window, cx.cx);
+    }
+
+    /// Toggle Edit Provenance
+    #[command(id = "editor.toggle_provenance", context = "editor")]
+    fn editor_toggle_provenance(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_provenance(cx.cx);
     }
 
     /// Local History: Restore This Version

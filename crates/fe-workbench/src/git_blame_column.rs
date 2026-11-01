@@ -45,6 +45,7 @@ use crate::workbench::{
     Workbench,
     git_commands::{GitCommand, GitOp},
 };
+use crate::workbench_commands::provenance_column;
 
 /// An author date less than this many seconds ago shows how long ago it
 /// was; from then on, its date.
@@ -63,6 +64,9 @@ pub(super) struct Column {
     /// The toggle that turned it on, answered if the first blame finds
     /// none; `None` once one is shown.
     asked: Option<GitOp>,
+    /// The buffer last followed: an edit to it is blamed after [`EDIT_REST`],
+    /// even while the first blame is still running.
+    followed: Option<BufferId>,
     /// The buffer and version the annotations shown are for.
     shown: Option<(BufferId, Version)>,
     /// Whether it was the active editor when last looked at.
@@ -97,11 +101,18 @@ pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Work
         return workbench.answer_git_op(&op, NO_FILE.to_owned(), cx);
     };
     let buffer = model.buffer().id();
+    // One annotation column: provenance yields to blame, and blame to it.
+    provenance_column::yield_to_blame(remove, cx);
+    provenance_column::off(id, cx);
     let status_bar = workbench.status_bar.clone();
     let changes = workbench.dock.read(cx).changes().clone();
     let subscriptions = vec![
         cx.observe(&editor, move |workbench, _, cx| follow(workbench, id, cx)),
         cx.observe_release(&editor, move |_, _, cx| {
+            state(cx).columns.remove(&id);
+        }),
+        // Closing the window before the first blame lands frees the editor.
+        cx.on_release(move |_, cx| {
             state(cx).columns.remove(&id);
         }),
         cx.observe_self(move |workbench, cx| look(workbench, id, cx)),
@@ -117,6 +128,7 @@ pub(super) fn toggle(workbench: &mut Workbench, op: GitOp, cx: &mut Context<Work
         path,
         buffer,
         asked: Some(op),
+        followed: None,
         shown: None,
         active: true,
         listed,
@@ -224,7 +236,7 @@ fn follow(workbench: &mut Workbench, id: EntityId, cx: &mut Context<Workbench>) 
     // A blame of another version is of no use now.
     column.blaming = None;
     let first = column.asked.is_some();
-    let edited = (column.shown).is_some_and(|(shown, _)| shown == buffer);
+    let edited = column.followed.replace(buffer) == Some(buffer);
     let path = column.path.clone();
     // The first blame shown is a fresh one unless it found something: the
     // file may be tracked by now.
