@@ -243,6 +243,8 @@ impl ProjectPanel {
     /// entries too if `show_ignored`; the tree it replaces, if any, goes.
     fn start(&mut self, show_ignored: bool, cx: &mut Context<Self>) {
         let options = TreeOptions { show_ignored };
+        // `cx.is_test()` also covers other crates' tests, where `cfg!(test)` is off.
+        let in_tests = cfg!(test) || cx.is_test();
         let watch = self.root.clone().map(|root| {
             let (sender, batches) = async_channel::unbounded::<Vec<FsChange>>();
             let opened = cx.background_spawn(async move {
@@ -250,7 +252,7 @@ impl ProjectPanel {
                 // arrive. Not in tests, which hand batches to
                 // `apply_fs_changes`: GPUI's test scheduler rejects wakeups
                 // from the watcher's thread.
-                let watcher = if cfg!(test) {
+                let watcher = if in_tests {
                     drop(sender);
                     None
                 } else {
