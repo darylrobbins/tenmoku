@@ -209,6 +209,16 @@ impl Pending {
         })
     }
 
+    /// Which way a pending find points: `Some(true)` while `f` or `t` waits
+    /// for its char, `Some(false)` for `F` or `T`, else `None`.
+    pub fn find_direction(&self) -> Option<bool> {
+        match self.prefix {
+            Some(Prefix::Find(Motion::FindForward(_) | Motion::TillForward(_))) => Some(true),
+            Some(Prefix::Find(_)) => Some(false),
+            _ => None,
+        }
+    }
+
     /// Whether at most a count and a register are pending, which a
     /// replay's `q` drops.
     pub(crate) fn only_count_or_register(&self) -> bool {
