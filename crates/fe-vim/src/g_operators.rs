@@ -500,15 +500,17 @@ fn cover(
                     // word`); after an empty row, `gq` still takes the row
                     // after it as moved back from.
                     covered.ended_after = match motion {
-                        Motion::WordForward | Motion::BigWordForward
-                            if word_row > row(head) && text.row_len(word_row) == 0 =>
+                        motion
+                            if matches!(motion.word(), Some((Motion::WordForward, _)))
+                                && word_row > row(head)
+                                && text.row_len(word_row) == 0 =>
                         {
                             if let Some(rows) = &mut covered.rows {
                                 *rows = *rows.start()..=word_row;
                             }
                             true
                         }
-                        Motion::WordForward | Motion::BigWordForward => false,
+                        motion if matches!(motion.word(), Some((Motion::WordForward, _))) => false,
                         _ if motion.class() == RangeClass::Exclusive => {
                             let ended = row(hi) > row(lo) && text.row_start(row(hi)) == hi;
                             if let Some(rows) = &mut covered.rows {

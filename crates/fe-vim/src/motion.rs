@@ -16,7 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     Mode, Motion, MoveArgs, VimState, VimTarget, cmdline,
-    feature::{definition_motions, sections},
+    feature::{definition_motions, sections, subword},
     folds, jump, line_motions, marks, prose, search,
     state::Goals,
     unmatched, visual,
@@ -127,22 +127,15 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
     after != before
 }
 
-/// Whether a word motion (`w b e W B E`) from `from` fails as Vim's error
-/// does, stopping a macro, though it goes as far as it can and resets the
-/// goal column: `w e W E` when a step of the count can't move (so the last
-/// can't), and `b B` only when they can't move at all.
+/// Whether a word motion (`w b e`, by any [`Granularity`]) from `from`
+/// fails as Vim's error does, stopping a macro, though it goes as far as it
+/// can and resets the goal column: `w e W E` when a step of the count can't
+/// move (so the last can't), and `b B` only when they can't move at all.
 pub(crate) fn word_fails(text: &Text, from: usize, args: MoveArgs, tab: usize) -> bool {
-    if !matches!(
-        args.motion,
-        Motion::WordForward
-            | Motion::WordBackward
-            | Motion::WordEnd
-            | Motion::BigWordForward
-            | Motion::BigWordBackward
-            | Motion::BigWordEnd
-    ) {
-        return false;
-    }
+    let word = match args.motion.word() {
+        Some((word @ (Motion::WordForward | Motion::WordBackward | Motion::WordEnd), _)) => word,
+        _ => return false,
+    };
     let after = |count: u32| {
         let mut cursor = Cursor::at(text, from);
         if count > 0 {
@@ -155,9 +148,9 @@ pub(crate) fn word_fails(text: &Text, from: usize, args: MoveArgs, tab: usize) -
         cursor.offset()
     };
     let count = args.count.unwrap_or(1).max(1);
-    match args.motion {
+    match word {
         // From where it is, a visual cursor at a row's end included.
-        Motion::WordBackward | Motion::BigWordBackward => after(count) == from,
+        Motion::WordBackward => after(count) == from,
         _ => after(count) == after(count - 1),
     }
 }
@@ -227,27 +220,21 @@ pub(crate) fn motion(
 ) -> Result<Option<usize>, Option<usize>> {
     // Only these read along the row a window at a time; the rest need it
     // whole.
-    if !matches!(
-        args.motion,
-        Motion::WordForward
-            | Motion::WordBackward
-            | Motion::WordEnd
-            | Motion::BigWordForward
-            | Motion::BigWordBackward
-            | Motion::BigWordEnd
-            | Motion::WordEndBackward
-            | Motion::BigWordEndBackward
-            | Motion::FindForward(_)
-            | Motion::FindBackward(_)
-            | Motion::TillForward(_)
-            | Motion::TillBackward(_)
-            | Motion::RepeatFind
-            | Motion::RepeatFindReverse
-            | Motion::Left
-            | Motion::Right
-            | Motion::LineStart
-            | Motion::LineEnd
-    ) && !(args.motion == Motion::MatchPair && args.count.is_none())
+    if args.motion.word().is_none()
+        && !matches!(
+            args.motion,
+            Motion::FindForward(_)
+                | Motion::FindBackward(_)
+                | Motion::TillForward(_)
+                | Motion::TillBackward(_)
+                | Motion::RepeatFind
+                | Motion::RepeatFindReverse
+                | Motion::Left
+                | Motion::Right
+                | Motion::LineStart
+                | Motion::LineEnd
+        )
+        && !(args.motion == Motion::MatchPair && args.count.is_none())
     {
         cursor.widen();
     }
@@ -354,11 +341,14 @@ pub(crate) fn motion(
             }
         }
         Motion::WordForward | Motion::WordBackward | Motion::WordEnd => {
-            cursor.words(args.motion, count, false)
+            cursor.words(args.motion, count, Granularity::Word)
         }
-        Motion::BigWordForward => cursor.words(Motion::WordForward, count, true),
-        Motion::BigWordBackward => cursor.words(Motion::WordBackward, count, true),
-        Motion::BigWordEnd => cursor.words(Motion::WordEnd, count, true),
+        Motion::BigWordForward => cursor.words(Motion::WordForward, count, Granularity::BigWord),
+        Motion::BigWordBackward => cursor.words(Motion::WordBackward, count, Granularity::BigWord),
+        Motion::BigWordEnd => cursor.words(Motion::WordEnd, count, Granularity::BigWord),
+        Motion::SubwordForward => cursor.words(Motion::WordForward, count, Granularity::Subword),
+        Motion::SubwordBackward => cursor.words(Motion::WordBackward, count, Granularity::Subword),
+        Motion::SubwordEnd => cursor.words(Motion::WordEnd, count, Granularity::Subword),
         // At a row's end, past its last character, the match is that
         // character, as in nvim. The offset moves on from the match.
         Motion::Search(search) | Motion::SearchWord(search) => {
@@ -407,6 +397,7 @@ pub(crate) fn motion(
         | Motion::SentenceBackward => return prose::motion(cursor, args, goal, tab),
         Motion::WordEndBackward
         | Motion::BigWordEndBackward
+        | Motion::SubwordEndBackward
         | Motion::NextLineFirstNonBlank
         | Motion::PrevLineFirstNonBlank
         | Motion::Column
@@ -437,6 +428,16 @@ pub(crate) enum Class {
     Blank,
     Of(u32),
     EmptyRow,
+}
+
+/// What a word motion steps by: words (`w b e ge`), WORDs (`W B E gE`), or
+/// the subwords of keyword runs ([`subword`]), each the same motion by
+/// another kind of word.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Granularity {
+    Word,
+    BigWord,
+    Subword,
 }
 
 /// nvim's `charclass()` and `strdisplaywidth()` for every code point, as hex
@@ -947,6 +948,9 @@ pub(crate) struct Cursor<'a> {
     /// Whether rows this caret goes to are read in windows too, as the one
     /// it began on is ([`Cursor::widen`] ends that).
     bounded: bool,
+    /// The last run of `_` a subword motion measured: its offsets and
+    /// whether subwords pass over it ([`subword::passed_over`]).
+    pub(crate) underscores: std::cell::Cell<Option<(usize, usize, bool)>>,
 }
 
 impl<'a> Cursor<'a> {
@@ -969,6 +973,7 @@ impl<'a> Cursor<'a> {
             rows_matched: false,
             windowed: false,
             bounded: true,
+            underscores: std::cell::Cell::new(None),
         };
         cursor.windowed = cursor.partial();
         cursor.goto(offset);
@@ -1271,6 +1276,32 @@ impl<'a> Cursor<'a> {
         (ix < self.line.len()).then(|| class(self.line.grapheme(ix), big))
     }
 
+    /// The class a word motion stepping `by` sees at the caret: its
+    /// [`Cursor::class`], but subwords pass over a run of `_` inside a
+    /// keyword run as over blanks.
+    pub(crate) fn unit(&self, by: Granularity) -> Class {
+        match by == Granularity::Subword && subword::passed_over(self, self.ix) {
+            true => Class::Blank,
+            false => self.class(by == Granularity::BigWord),
+        }
+    }
+
+    /// [`Cursor::unit`] for grapheme `ix` on this row, if it has one.
+    pub(crate) fn unit_on_row(&self, ix: usize, by: Granularity) -> Option<Class> {
+        let class = self.class_on_row(ix, by == Granularity::BigWord)?;
+        match by == Granularity::Subword && subword::passed_over(self, ix) {
+            true => Some(Class::Blank),
+            false => Some(class),
+        }
+    }
+
+    /// Whether stepping `by`, a word ends between graphemes `ix - 1` and
+    /// `ix` of this row though their [`Cursor::unit`]s are alike: between
+    /// two subwords of a keyword run.
+    pub(crate) fn splits(&self, ix: usize, by: Granularity) -> bool {
+        by == Granularity::Subword && subword::splits(&self.line, ix)
+    }
+
     /// To the next grapheme, or the next row's first; false at the end.
     pub(crate) fn forward(&mut self) -> bool {
         if self.step(true) {
@@ -1299,16 +1330,16 @@ impl<'a> Cursor<'a> {
         true
     }
 
-    /// `w`, `b` or `e` (`W B E` if `big`) `count` times, stopping once a step
-    /// doesn't move.
-    pub(crate) fn words(&mut self, motion: Motion, count: u32, big: bool) {
+    /// `w`, `b` or `e`, stepping `by` words, WORDs or subwords, `count`
+    /// times, stopping once a step doesn't move.
+    pub(crate) fn words(&mut self, motion: Motion, count: u32, by: Granularity) {
         for step in 0..count {
             let before = (self.row, self.offset());
             self.word_row = self.row;
             match motion {
-                Motion::WordForward => self.word_forward(big),
-                Motion::WordBackward => self.word_backward(big),
-                _ => self.word_end(big),
+                Motion::WordForward => self.word_forward(by),
+                Motion::WordBackward => self.word_backward(by),
+                _ => self.word_end(by),
             }
             if (self.row, self.offset()) == before {
                 self.stuck_at_start = motion == Motion::WordBackward
@@ -1322,19 +1353,19 @@ impl<'a> Cursor<'a> {
     /// `w`: past this word, then past blanks to the next word or empty row.
     /// Off the end of the text, it stays on the last grapheme (noting
     /// [`Cursor::hit_end`]).
-    fn word_forward(&mut self, big: bool) {
-        let (class, row) = (self.class(big), self.row);
+    fn word_forward(&mut self, by: Granularity) {
+        let (class, row) = (self.unit(by), self.row);
         let mut moved = if !matches!(class, Class::Blank | Class::EmptyRow) {
             loop {
                 let moved = self.forward();
-                if !moved || self.row != row || self.class(big) != class {
+                if !moved || self.row != row || self.unit(by) != class || self.splits(self.ix, by) {
                     break moved;
                 }
             }
         } else {
             self.forward()
         };
-        while moved && self.class(big) == Class::Blank {
+        while moved && self.unit(by) == Class::Blank {
             moved = self.forward();
         }
         self.hit_end |= !moved;
@@ -1342,18 +1373,18 @@ impl<'a> Cursor<'a> {
 
     /// `e`: at least one step, past blanks and empty rows, to the end of the
     /// word reached.
-    fn word_end(&mut self, big: bool) {
+    fn word_end(&mut self, by: Granularity) {
         if !self.forward() {
             return;
         }
-        while matches!(self.class(big), Class::Blank | Class::EmptyRow) {
+        while matches!(self.unit(by), Class::Blank | Class::EmptyRow) {
             if !self.forward() {
                 return;
             }
         }
-        let class = self.class(big);
+        let class = self.unit(by);
         while self.step(true) {
-            if self.class(big) != class {
+            if self.unit(by) != class || self.splits(self.ix, by) {
                 self.step(false);
                 break;
             }
@@ -1362,14 +1393,14 @@ impl<'a> Cursor<'a> {
 
     /// `b`: at least one step back, past blanks (stopping on an empty row),
     /// to the start of the word reached.
-    fn word_backward(&mut self, big: bool) {
+    fn word_backward(&mut self, by: Granularity) {
         if !self.backward() {
             return;
         }
-        while self.class(big) == Class::Blank && self.backward() {}
-        let class = self.class(big);
+        while self.unit(by) == Class::Blank && self.backward() {}
+        let class = self.unit(by);
         while class != Class::EmptyRow && self.step(false) {
-            if self.class(big) != class {
+            if self.unit(by) != class || self.splits(self.ix + 1, by) {
                 self.step(true);
                 break;
             }

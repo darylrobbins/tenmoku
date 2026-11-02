@@ -490,6 +490,12 @@ impl HeadlessVim {
         self.state.set_jump_on_s(on);
     }
 
+    /// Makes `w b e ge` step by subwords
+    /// ([`VimState::set_subword_motions`]).
+    pub fn set_subword_motions(&mut self, on: bool) {
+        self.state.set_subword_motions(on);
+    }
+
     /// Gives `gr` to ReplaceWithRegister
     /// ([`VimState::set_replace_with_register`]).
     pub fn set_replace_with_register(&mut self, on: bool) {

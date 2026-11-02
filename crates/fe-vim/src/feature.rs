@@ -47,6 +47,7 @@ pub(crate) mod objects;
 pub(crate) mod replace_register;
 pub(crate) mod sections;
 pub(crate) mod seek;
+pub(crate) mod subword;
 pub(crate) mod surround;
 
 use fe_command::Registry;

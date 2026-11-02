@@ -10,7 +10,7 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{feature::definition_motions, line_motions, prose};
+use crate::{feature::definition_motions, line_motions, motion::Granularity, prose};
 
 /// `d y c > < =`, and over a visual selection only, `~ u U J r{char}`, and
 /// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
@@ -86,6 +86,8 @@ pub enum Operator {
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
 /// `word_forward word_backward word_end`, and `W B E` the `big_word_` ones;
+/// `subword_forward subword_backward subword_end subword_end_backward` are
+/// `w b e ge` while subword motions are on (`feature/subword.rs`);
 /// `0 ^ $` are `line_start first_non_blank line_end`; `gg G` are
 /// `document_start document_end`; and `f F t T` are `find_forward
 /// find_backward till_forward till_backward`, carrying the char, and `; ,`
@@ -124,6 +126,9 @@ pub enum Motion {
     BigWordForward,
     BigWordBackward,
     BigWordEnd,
+    SubwordForward,
+    SubwordBackward,
+    SubwordEnd,
     LineStart,
     FirstNonBlank,
     LineEnd,
@@ -189,6 +194,7 @@ pub enum Motion {
     SentenceBackward,
     WordEndBackward,
     BigWordEndBackward,
+    SubwordEndBackward,
     NextLineFirstNonBlank,
     PrevLineFirstNonBlank,
     Column,
@@ -421,6 +427,8 @@ impl Motion {
             | Self::WordBackward
             | Self::BigWordForward
             | Self::BigWordBackward
+            | Self::SubwordForward
+            | Self::SubwordBackward
             | Self::LineStart
             | Self::FirstNonBlank
             | Self::FindBackward(_)
@@ -441,6 +449,7 @@ impl Motion {
             Self::Function { end, .. } => definition_motions::class(end),
             Self::WordEnd
             | Self::BigWordEnd
+            | Self::SubwordEnd
             | Self::LineEnd
             | Self::FindForward(_)
             | Self::TillForward(_)
@@ -462,6 +471,7 @@ impl Motion {
             | Self::SentenceBackward => prose::class(self),
             Self::WordEndBackward
             | Self::BigWordEndBackward
+            | Self::SubwordEndBackward
             | Self::NextLineFirstNonBlank
             | Self::PrevLineFirstNonBlank
             | Self::Column
@@ -508,6 +518,27 @@ impl Motion {
         )
     }
 
+    /// For `w b e ge` and their WORD and subword kinds: the word motion it
+    /// is (`WordForward`, `WordBackward`, `WordEnd` or `WordEndBackward`)
+    /// and what it steps by.
+    pub(crate) fn word(self) -> Option<(Self, Granularity)> {
+        use Granularity::*;
+        Some(match self {
+            Self::WordForward | Self::WordBackward | Self::WordEnd | Self::WordEndBackward => {
+                (self, Word)
+            }
+            Self::BigWordForward => (Self::WordForward, BigWord),
+            Self::BigWordBackward => (Self::WordBackward, BigWord),
+            Self::BigWordEnd => (Self::WordEnd, BigWord),
+            Self::BigWordEndBackward => (Self::WordEndBackward, BigWord),
+            Self::SubwordForward => (Self::WordForward, Subword),
+            Self::SubwordBackward => (Self::WordBackward, Subword),
+            Self::SubwordEnd => (Self::WordEnd, Subword),
+            Self::SubwordEndBackward => (Self::WordEndBackward, Subword),
+            _ => return None,
+        })
+    }
+
     /// Whether `prose.rs` owns it.
     fn is_prose(self) -> bool {
         matches!(
@@ -525,6 +556,7 @@ impl Motion {
             self,
             Self::WordEndBackward
                 | Self::BigWordEndBackward
+                | Self::SubwordEndBackward
                 | Self::NextLineFirstNonBlank
                 | Self::PrevLineFirstNonBlank
                 | Self::Column

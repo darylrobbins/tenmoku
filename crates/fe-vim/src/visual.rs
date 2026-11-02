@@ -839,28 +839,29 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
             motion::motion(&mut cursor, args, state.last_find, goal, tab)
         }
         // From a row's end, the word ending the row is the first one back.
-        Motion::WordBackward | Motion::BigWordBackward
-            if cursor.ix == cursor.line.len() && cursor.ix > 0 =>
+        _ if let Some((Motion::WordBackward, by)) = args.motion.word()
+            && cursor.ix == cursor.line.len()
+            && cursor.ix > 0 =>
         {
-            let big = args.motion == Motion::BigWordBackward;
             cursor.ix -= 1;
-            let class = cursor.class(big);
-            let starts = cursor.ix == 0 || cursor.class_on_row(cursor.ix - 1, big) != Some(class);
+            let class = cursor.unit(by);
+            let starts = cursor.ix == 0
+                || cursor.unit_on_row(cursor.ix - 1, by) != Some(class)
+                || cursor.splits(cursor.ix, by);
             let steps = match class != Class::Blank && starts {
                 true => n - 1,
                 false => n,
             };
-            cursor.words(Motion::WordBackward, steps as u32, big);
+            cursor.words(Motion::WordBackward, steps as u32, by);
             Ok(None)
         }
-        Motion::WordEnd | Motion::BigWordEnd => {
+        _ if let Some((Motion::WordEnd, by)) = args.motion.word() => {
             cursor.ix = cursor.ix.min(cursor.line.last());
-            let big = args.motion == Motion::BigWordEnd;
             for _ in 0..n {
                 let before = (cursor.row, cursor.ix);
-                cursor.words(Motion::WordEnd, 1, big);
+                cursor.words(Motion::WordEnd, 1, by);
                 // Stopping on a blank, it ran out of words.
-                if (cursor.row, cursor.ix) == before || cursor.class(big) == Class::Blank {
+                if (cursor.row, cursor.ix) == before || cursor.unit(by) == Class::Blank {
                     ran_out = true;
                     break;
                 }

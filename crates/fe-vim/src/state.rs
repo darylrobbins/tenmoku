@@ -169,6 +169,8 @@ pub struct VimState {
     pub(crate) scroll: Option<(u32, u32)>,
     /// The jump's labels waiting, the last jump and the `s` opt-in.
     pub(crate) jump: jump::Jumps,
+    /// `w b e ge` step by subwords ([`VimState::set_subword_motions`]).
+    pub(crate) subword_motions: bool,
     /// The buffer's version when a linewise delete last left its text
     /// empty. As in nvim, such a buffer has no rows to take, so while the
     /// version still equals this a delete or change writes no register (a
@@ -616,7 +618,9 @@ impl VimState {
             (VimKey::Down, true) => VimKey::Char('j'),
             (key, _) => key,
         };
-        let pending = std::mem::take(&mut self.pending).in_visual(kind);
+        let pending = std::mem::take(&mut self.pending)
+            .in_visual(kind)
+            .with_subwords(self.subword_motions);
         let result = match jump::key(self, pending, key).or_else(|p| p.command_line(key)) {
             Ok(step) => step,
             Err(pending) => step(pending, key),

@@ -47,7 +47,7 @@ use fe_text::Text;
 use crate::{
     Change, CountArgs, InsertArgs, InsertAt, LastChange, MarkMotion, Mode, Motion, OperateArgs,
     RangeClass, Register, Registers, Target, VimState, VimTarget, Write, history, marks,
-    motion::Cursor,
+    motion::{Cursor, Granularity},
     operator::{
         MAX_PUT, Op, Span, apply, apply_planned, caret, grapheme_len, merge, row_end, sync,
     },
@@ -1808,18 +1808,19 @@ fn suggested_indent(
 /// (`:help cw`). `None` on a blank or an empty row, where they act as `dw`
 /// and `dW` do.
 pub(crate) fn change_word(text: &Text, head: usize, motion: Motion, count: u32) -> Option<Span> {
-    let big = motion == Motion::BigWordForward;
+    let by = motion.word().map_or(Granularity::Word, |(_, by)| by);
     // The word's run is stepped along `line`, which may be a window.
     let mut cursor = Cursor::whole(text, head);
-    if cursor.line.len() == 0 || cursor.class(big) == crate::motion::Class::Blank {
+    if cursor.line.len() == 0 || cursor.unit(by) == crate::motion::Class::Blank {
         return None;
     }
     let start = cursor.offset();
-    let class = cursor.class(big);
-    while cursor.class_on_row(cursor.ix + 1, big) == Some(class) {
+    let class = cursor.unit(by);
+    while cursor.unit_on_row(cursor.ix + 1, by) == Some(class) && !cursor.splits(cursor.ix + 1, by)
+    {
         cursor.ix += 1;
     }
-    cursor.words(Motion::WordEnd, count.max(1) - 1, big);
+    cursor.words(Motion::WordEnd, count.max(1) - 1, by);
     let end = cursor.offset();
     Some(Span::Chars(start..end + grapheme_len(text, end)))
 }

@@ -288,7 +288,9 @@ pub(crate) fn motion_span(
         // A failed `b` leaves the caret where it got to, as do `ge gE gj gk`
         // if they moved it.
         return match motion {
-            Motion::WordBackward | Motion::BigWordBackward => Span::Move(cursor.offset()),
+            motion if matches!(motion.word(), Some((Motion::WordBackward, _))) => {
+                Span::Move(cursor.offset())
+            }
             motion if line_motions::moves_when_failing(motion) && cursor.offset() != head => {
                 Span::Move(cursor.offset())
             }
@@ -316,7 +318,7 @@ pub(crate) fn motion_span(
         // onto the text's empty last row ends at its column 0 instead, which
         // the exclusive rule below moves back to the end of the row before.
         RangeClass::Exclusive
-            if matches!(motion, Motion::WordForward | Motion::BigWordForward)
+            if matches!(motion.word(), Some((Motion::WordForward, _)))
                 && !(cursor.hit_end
                     && target == text.len()
                     && row(target) > row(head)
@@ -843,8 +845,9 @@ fn operate_unless_failing(
             let head = Cursor::at(&text, selection.head()).offset();
             let span = match measured {
                 // `cw` on a non-blank is `ce` (`:help cw`).
-                Target::Motion(motion @ (Motion::WordForward | Motion::BigWordForward))
-                    if args.operator == Operator::Change =>
+                Target::Motion(motion)
+                    if args.operator == Operator::Change
+                        && matches!(motion.word(), Some((Motion::WordForward, _))) =>
                 {
                     insert::change_word(&text, head, motion, args.count.unwrap_or(1))
                         .unwrap_or_else(|| {

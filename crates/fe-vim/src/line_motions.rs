@@ -28,7 +28,7 @@ use crate::{
     args::{Motion, RangeClass},
     feature::{Feature, definition},
     insert,
-    motion::{Class, Cursor, Line},
+    motion::{Class, Cursor, Granularity, Line},
     operator,
     repeat::Change,
 };
@@ -57,6 +57,7 @@ fn key(pending: &Pending, key: VimKey) -> Option<Step> {
 /// `e E j k _ $ m` after `g`.
 fn g(pending: &Pending, key: VimKey) -> Option<Step> {
     let motion = match key {
+        VimKey::Char('e') if pending.subwords() => Motion::SubwordEndBackward,
         VimKey::Char('e') => Motion::WordEndBackward,
         VimKey::Char('E') => Motion::BigWordEndBackward,
         VimKey::Char('j') => Motion::DisplayDown,
@@ -74,6 +75,7 @@ pub(crate) fn class(motion: Motion) -> RangeClass {
     match motion {
         Motion::WordEndBackward
         | Motion::BigWordEndBackward
+        | Motion::SubwordEndBackward
         | Motion::LastNonBlank
         | Motion::DisplayLineEnd => RangeClass::Inclusive,
         Motion::NextLineFirstNonBlank
@@ -100,6 +102,7 @@ pub(crate) fn moves_when_failing(motion: Motion) -> bool {
         motion,
         Motion::WordEndBackward
             | Motion::BigWordEndBackward
+            | Motion::SubwordEndBackward
             | Motion::DisplayDown
             | Motion::DisplayUp
             | Motion::DisplayLineEnd
@@ -589,15 +592,15 @@ pub(crate) fn motion(
         None => (false, None),
     });
     match args.motion {
-        Motion::WordEndBackward | Motion::BigWordEndBackward => {
+        Motion::WordEndBackward | Motion::BigWordEndBackward | Motion::SubwordEndBackward => {
             let from = cursor.offset();
             // A visual cursor past the row's end was clamped onto its last
             // character, which is then the first word end back.
             let from_end = visual
                 && cursor.ix == cursor.line.last()
                 && clamped == Some(cursor.line.start + cursor.line.text.len());
-            let big = args.motion == Motion::BigWordEndBackward;
-            match word_ends_back(cursor, count, big, from_end) {
+            let by = args.motion.word().map_or(Granularity::Word, |(_, by)| by);
+            match word_ends_back(cursor, count, by, from_end) {
                 false => Ok(None),
                 true => failed(cursor, from, from_end, visual, None),
             }
@@ -741,28 +744,32 @@ fn past_end(cursor: &mut Cursor, visual: bool, goal: usize, tab: usize) {
     }
 }
 
-/// `ge` (`gE` if `big`) `count` times: each time past the word the caret is
-/// on (a row's end ends it), then back over blanks to the end of a word or
+/// `ge`, stepping `by` words, WORDs or subwords, `count` times: each time
+/// past the word the caret is on (a row's end ends it), then back over blanks to the end of a word or
 /// to an empty row. From past a row's end (`from_end`), the first time
 /// starts with the blanks. A step that runs into the start of the text
 /// stops there; returns whether one couldn't move at all, which fails the
 /// motion (nvim's `ge` from the start, or with steps left on an empty first
 /// row).
-fn word_ends_back(cursor: &mut Cursor, count: u32, big: bool, from_end: bool) -> bool {
+fn word_ends_back(cursor: &mut Cursor, count: u32, by: Granularity, from_end: bool) -> bool {
     for step in 0..count {
         if !(from_end && step == 0) {
-            let (class, row) = (cursor.class(big), cursor.row);
+            let (class, row) = (cursor.unit(by), cursor.row);
             let in_word = !matches!(class, Class::Blank | Class::EmptyRow);
             if !cursor.backward() {
                 return true;
             }
-            while in_word && cursor.row == row && cursor.class(big) == class {
+            while in_word
+                && cursor.row == row
+                && cursor.unit(by) == class
+                && !cursor.splits(cursor.ix + 1, by)
+            {
                 if !cursor.backward() {
                     return false;
                 }
             }
         }
-        while cursor.class(big) == Class::Blank {
+        while cursor.unit(by) == Class::Blank {
             if !cursor.backward() {
                 return false;
             }

@@ -39,6 +39,9 @@ pub struct Pending {
     visual: bool,
     /// The visual mode is blockwise.
     block: bool,
+    /// `w b e ge` step by subwords ([`VimState::set_subword_motions`]),
+    /// which [`VimState`] sets before each key as it does `visual`.
+    subword: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,6 +173,20 @@ impl Pending {
             block: kind == Some(VisualKind::Block),
             ..self
         }
+    }
+
+    /// The same pending input, with `w b e ge` stepping by subwords, or
+    /// not.
+    pub(crate) fn with_subwords(self, on: bool) -> Self {
+        Self {
+            subword: on,
+            ..self
+        }
+    }
+
+    /// Whether `w b e ge` step by subwords.
+    pub(crate) fn subwords(&self) -> bool {
+        self.subword
     }
 
     /// Nothing is pending (in either mode).
@@ -677,7 +694,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                     Some(_) => pending.reject(key),
                 };
             }
-            if let Some(motion) = motion(ch) {
+            if let Some(motion) = motion(ch, pending.subword) {
                 return pending.commit(Target::Motion(motion));
             }
             // The rest stand alone: after an operator they cancel.
@@ -783,7 +800,7 @@ impl Pending {
                 );
             }
             _ => {
-                return match motion(ch) {
+                return match motion(ch, self.subword) {
                     Some(motion) => self.commit(Target::Motion(motion)),
                     None => self.reject(key),
                 };
@@ -825,12 +842,16 @@ fn operator(ch: char) -> Option<Operator> {
     })
 }
 
-fn motion(ch: char) -> Option<Motion> {
+/// The motion `ch` is, `w b e` by subwords if `subword`.
+fn motion(ch: char, subword: bool) -> Option<Motion> {
     Some(match ch {
         'h' => Motion::Left,
         'l' => Motion::Right,
         'k' => Motion::Up,
         'j' => Motion::Down,
+        'w' if subword => Motion::SubwordForward,
+        'b' if subword => Motion::SubwordBackward,
+        'e' if subword => Motion::SubwordEnd,
         'w' => Motion::WordForward,
         'b' => Motion::WordBackward,
         'e' => Motion::WordEnd,
