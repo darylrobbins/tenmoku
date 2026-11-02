@@ -28,8 +28,8 @@ use gpui::{
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
     LineLayout, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent,
-    SharedString, Style, TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window,
-    WindowId, WindowTextSystem, fill, outline, point, px, relative, rgb, size,
+    ShapedRun, SharedString, Style, TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity,
+    Window, WindowId, WindowTextSystem, fill, outline, point, px, relative, rgb, size,
 };
 
 use crate::{
@@ -80,8 +80,8 @@ pub(crate) struct FrameLayout {
     /// The indexes of long rows, kept from frame to frame, and the char
     /// widths they're measured with, for the tab size they're laid out
     /// with.
-    long_rows: LongRows,
-    glyph_widths: GlyphWidths,
+    pub(crate) long_rows: LongRows,
+    pub(crate) glyph_widths: GlyphWidths,
     tab_size: usize,
     /// The buffer version laid out: positions in the frame are offsets in
     /// that text, which a later edit may have shortened.
@@ -406,6 +406,49 @@ impl Line {
 }
 
 impl Line {
+    /// A line of this one's glyphs, as shaped: each moved along by what
+    /// `moved` gives for its byte index, or left out if it gives nothing.
+    pub(crate) fn with_glyphs_moved(
+        &self,
+        width: f32,
+        moved: impl Fn(usize) -> Option<f32>,
+    ) -> Self {
+        let layout = &self.layout;
+        let runs = (layout.runs.iter())
+            .map(|run| ShapedRun {
+                font_id: run.font_id,
+                glyphs: (run.glyphs.iter())
+                    .filter_map(|glyph| {
+                        let by = moved(glyph.index)?;
+                        let mut glyph = glyph.clone();
+                        glyph.position.x += px(by);
+                        Some(glyph)
+                    })
+                    .collect(),
+            })
+            .collect();
+        Self {
+            layout: Arc::new(LineLayout {
+                font_size: layout.font_size,
+                width: px(width),
+                ascent: layout.ascent,
+                descent: layout.descent,
+                runs,
+                len: layout.len,
+            }),
+            decorations: self.decorations.clone(),
+        }
+    }
+
+    /// The byte index and x of each glyph, in the order they're painted.
+    #[cfg(test)]
+    pub(crate) fn glyphs(&self) -> Vec<(usize, Pixels)> {
+        (self.layout.runs.iter())
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| (glyph.index, glyph.position.x))
+            .collect()
+    }
+
     /// The byte boundary of the shaped text closest to `x`.
     fn x_to_boundary(&self, x: f32) -> usize {
         MeasuredLine::index_for_x(self, x)
@@ -453,6 +496,17 @@ pub(crate) struct Shaper {
     text_system: Arc<WindowTextSystem>,
     font: Font,
     font_size: Pixels,
+}
+
+impl Shaper {
+    /// Shapes in the editor font, for what's laid out at paint time.
+    pub(crate) fn editor_font(theme: &EditorTheme, window: &Window) -> Self {
+        Self {
+            text_system: window.text_system().clone(),
+            font: theme.font(),
+            font_size: theme.font_size,
+        }
+    }
 }
 
 impl TextMeasure for Shaper {
@@ -1423,9 +1477,18 @@ impl Element for EditorElement {
         let matches = mem::take(&mut layout.matches);
         let current_match = mem::take(&mut layout.current_match);
         let brackets = mem::take(&mut layout.brackets);
-        let (squiggles, mut marks, strikes) = {
+        let (squiggles, mut marks, strikes, inline_diagnostics) = {
             let diagnostics = view.model.diagnostics();
-            diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
+            let (squiggles, marks, strikes) =
+                diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme);
+            let inline = crate::inline_diagnostics::layout(
+                &mut layout,
+                view.model.text(),
+                &diagnostics,
+                &theme,
+                window,
+            );
+            (squiggles, marks, strikes, inline)
         };
         // The marks go in the gutter.
         if !view.gutter {
@@ -1634,6 +1697,12 @@ impl Element for EditorElement {
                         #[cfg(test)]
                         &mut painted_swatches,
                     );
+                    crate::inline_diagnostics::paint(
+                        &inline_diagnostics.shown,
+                        line_height,
+                        window,
+                        cx,
+                    );
                     #[cfg(test)]
                     decorations::note("text");
                     for marker in &frame.fold_markers {
@@ -1830,6 +1899,7 @@ impl Element for EditorElement {
                 view.painted_ghost = painted_ghost;
                 view.painted_inlay_hints = painted_inlay_hints;
                 view.painted_swatches = painted_swatches;
+                view.painted_inline_diagnostics = inline_diagnostics.painted();
                 view.painted_minimap = painted_minimap;
                 view.painted_sticky_scroll = painted_sticky_scroll;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();

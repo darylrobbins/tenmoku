@@ -25,6 +25,7 @@ impl EditorTheme {
         let (indent_guides, bracket_pair_colors) = (self.indent_guides, self.bracket_pair_colors);
         let sticky_scroll = self.sticky_scroll.clone();
         let (render_whitespace, rulers) = (self.render_whitespace, mem::take(&mut self.rulers));
+        let inline_diagnostics = self.inline_diagnostics;
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
         self.font_features = font_features;
         self.indent_guides = indent_guides;
@@ -32,6 +33,7 @@ impl EditorTheme {
         self.sticky_scroll = sticky_scroll;
         self.render_whitespace = render_whitespace;
         self.rulers = rulers;
+        self.inline_diagnostics = inline_diagnostics;
     }
 
     /// `palette`'s colours with the given metrics.
@@ -97,6 +99,7 @@ impl EditorTheme {
             bracket_pair_colors: false,
             render_whitespace: RenderWhitespace::default(),
             rulers: Vec::new(),
+            inline_diagnostics: Default::default(),
             minimap_background: hsla(editor.minimap_background),
             minimap_slider: hsla(editor.minimap_slider),
             minimap_slider_hover: hsla(editor.minimap_slider_hover),

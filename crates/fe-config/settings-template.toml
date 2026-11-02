@@ -101,6 +101,11 @@
 # Tenmoku keeps the editor default. :set cursorline changes one editor's.
 # cursor_line = true
 
+# Show a row's most severe diagnostic message, dimmed, after the row's end:
+# "off", "error", "warning" (errors and warnings) or "all" (information and
+# hints too).
+# inline_diagnostics = "warning"
+
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.
 # enabled = true

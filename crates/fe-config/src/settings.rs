@@ -581,6 +581,26 @@ pub struct EditorSettings {
     /// default is off and VS Code's on; Tenmoku keeps the editor default.
     /// `:set cursorline` changes one editor's.
     pub cursor_line: bool,
+    /// Which diagnostics show their message, dimmed, after the end of their
+    /// row, as VS Code's Error Lens extension: `"off"`, `"error"`,
+    /// `"warning"` (errors and warnings) or `"all"` (information and hints
+    /// too).
+    pub inline_diagnostics: InlineDiagnostics,
+}
+
+/// `editor.inline_diagnostics`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineDiagnostics {
+    /// No messages after rows.
+    Off,
+    /// Errors' messages only.
+    Error,
+    /// Errors' and warnings' messages.
+    #[default]
+    Warning,
+    /// Every diagnostic's message, information and hints too.
+    All,
 }
 
 /// `editor.line_numbers`.
@@ -787,6 +807,7 @@ impl Default for EditorSettings {
             line_numbers: LineNumbersSetting::default(),
             cursor_surrounding_lines: 3,
             cursor_line: true,
+            inline_diagnostics: InlineDiagnostics::default(),
         }
     }
 }

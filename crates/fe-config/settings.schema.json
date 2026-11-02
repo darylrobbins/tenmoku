@@ -201,6 +201,11 @@
           "description": "Show the caret row's git blame after the line in every new window; Git:\nToggle Line Blame turns it on or off for one window.",
           "type": "boolean"
         },
+        "inline_diagnostics": {
+          "$ref": "#/$defs/InlineDiagnostics",
+          "default": "warning",
+          "description": "Which diagnostics show their message, dimmed, after the end of their\nrow, as VS Code's Error Lens extension: `\"off\"`, `\"error\"`,\n`\"warning\"` (errors and warnings) or `\"all\"` (information and hints\ntoo)."
+        },
         "lightbulb": {
           "default": true,
           "description": "Show a lightbulb by the caret's row when a language server has quick\nfixes or refactorings there.",
@@ -300,6 +305,31 @@
         }
       },
       "type": "object"
+    },
+    "InlineDiagnostics": {
+      "description": "`editor.inline_diagnostics`.",
+      "oneOf": [
+        {
+          "const": "off",
+          "description": "No messages after rows.",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "Errors' messages only.",
+          "type": "string"
+        },
+        {
+          "const": "warning",
+          "description": "Errors' and warnings' messages.",
+          "type": "string"
+        },
+        {
+          "const": "all",
+          "description": "Every diagnostic's message, information and hints too.",
+          "type": "string"
+        }
+      ]
     },
     "LineNumbersSetting": {
       "description": "`editor.line_numbers`.",
@@ -1167,6 +1197,7 @@
         "indent_guides": true,
         "inlay_hints": true,
         "inline_blame": false,
+        "inline_diagnostics": "warning",
         "lightbulb": true,
         "line_height": 1.6,
         "line_numbers": "on",

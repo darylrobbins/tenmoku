@@ -27,6 +27,7 @@ mod gutter_annotations;
 mod hover;
 mod image_viewer;
 pub mod inlay_hints;
+mod inline_diagnostics;
 pub mod keymap;
 mod keymap_remap_conflicts;
 pub mod lens;
@@ -44,7 +45,8 @@ pub use color_swatches::ColorSwatch;
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use diff_view::{DiffSide, DiffView};
 pub use fe_config::{
-    EditorSettings, SettingsEvent, StickyScrollSettings, settings::RenderWhitespace,
+    EditorSettings, SettingsEvent, StickyScrollSettings,
+    settings::{InlineDiagnostics, RenderWhitespace},
     theme::EditorPalette,
 };
 use fe_editor::diagnostics::Severity;
@@ -210,6 +212,9 @@ pub struct EditorTheme {
     pub render_whitespace: RenderWhitespace,
     /// The columns a ruler is drawn at, from `editor.rulers`.
     pub rulers: Vec<i32>,
+    /// Which diagnostics show their message after their row, from
+    /// `editor.inline_diagnostics`.
+    pub inline_diagnostics: InlineDiagnostics,
     /// Behind the minimap.
     pub minimap_background: Hsla,
     /// The minimap's slider over the visible rows: at rest, under the
@@ -261,6 +266,7 @@ impl EditorTheme {
         self.sticky_scroll = settings.sticky_scroll.clone();
         self.render_whitespace = settings.render_whitespace;
         self.rulers = settings.rulers.clone();
+        self.inline_diagnostics = settings.inline_diagnostics;
     }
 
     /// The editor's font: `font_family` with `font_features`.

@@ -340,6 +340,9 @@ pub struct EditorView {
     /// The colour swatches the last frame painted.
     #[cfg(test)]
     pub(crate) painted_swatches: Vec<crate::color_swatches::Painted>,
+    /// The diagnostic messages the last frame painted after their rows.
+    #[cfg(test)]
+    pub(crate) painted_inline_diagnostics: crate::inline_diagnostics::Painted,
     /// The minimap the last frame painted.
     #[cfg(test)]
     pub(crate) painted_minimap: Option<crate::element::minimap::Painted>,
@@ -511,6 +514,8 @@ impl EditorView {
             painted_inlay_hints: Vec::new(),
             #[cfg(test)]
             painted_swatches: Vec::new(),
+            #[cfg(test)]
+            painted_inline_diagnostics: Default::default(),
             #[cfg(test)]
             painted_minimap: None,
             #[cfg(test)]

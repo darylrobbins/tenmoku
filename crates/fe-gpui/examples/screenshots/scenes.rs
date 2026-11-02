@@ -442,10 +442,12 @@ fn capture(
     sticky_scroll: bool,
     find: Option<Pattern>,
     size: Size<Pixels>,
+    font_family: &'static str,
+    gutter: bool,
 ) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
         let theme = EditorTheme {
-            font_family: FONT_FAMILY.into(),
+            font_family: font_family.into(),
             sticky_scroll: fe_config::StickyScrollSettings {
                 enabled: sticky_scroll,
                 ..Default::default()
@@ -458,6 +460,7 @@ fn capture(
             view.set_gutter_annotations(shown, cx);
             view.set_minimap(minimap, cx);
             view.set_find(find, cx);
+            view.set_gutter(gutter, cx);
             if let Some(top) = top {
                 view.set_scroll_top(top, cx);
             }
@@ -474,6 +477,34 @@ fn capture(
     let mut settle = Settle::new();
     settle.observe(&view, cx);
     settle.capture(cx, window.into())
+}
+
+/// A font whose `f` has ink past its advance, which a message's last glyph
+/// must keep, whole or cut.
+const OVERHANG_FONT: &str = "Times New Roman";
+
+/// Barely more than the messages, with no gutter, so the ink past an advance
+/// is more of the scene than a comparison's tolerance: a mask at the advance
+/// fails it, where it would pass in a scene of the usual size.
+const OVERHANG_SIZE: Size<Pixels> = size(px(50.), px(84.));
+
+/// Messages after their rows, all at an `f`: two whole and two cut.
+fn overhang_model() -> EditorModel {
+    let text = "a\nb\nc\nd\n";
+    let mut model = EditorModel::new(Buffer::new(text), Some("scene.txt".into()));
+    let cut = "f".repeat(100);
+    let items = (["of", "elf", &cut, &cut].iter().enumerate())
+        .map(|(row, message)| {
+            let start = row * 2;
+            (
+                start..start + 1,
+                Diagnostic::new(Severity::Error, message.to_string()),
+            )
+        })
+        .collect();
+    let version = model.snapshot().version();
+    assert!(model.apply_diagnostics(1u32, (1u64, 1u64), version, items, Some((1, 1))));
+    model
 }
 
 /// Renders every scene and compares it with its golden, or rewrites the
@@ -512,6 +543,8 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
             scene.sticky_scroll,
             find,
             SCENE_SIZE,
+            FONT_FAMILY,
+            true,
         )?;
         if !scene.cold.is_empty() && notifications < 2 {
             return Err(format!(
@@ -522,6 +555,19 @@ fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
         }
         passed &= goldens.check(scene.name, &image)?;
     }
+    let (image, _) = capture(
+        cx,
+        overhang_model(),
+        &[],
+        None,
+        None,
+        false,
+        None,
+        OVERHANG_SIZE,
+        OVERHANG_FONT,
+        false,
+    )?;
+    passed &= goldens.check("inline_diagnostics_overhang", &image)?;
     Ok(passed)
 }
 
@@ -530,9 +576,20 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
     let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, &[], None, None, true, None, size)?
-        .0
-        .save(out)?;
+    capture(
+        cx,
+        model,
+        &[],
+        None,
+        None,
+        true,
+        None,
+        size,
+        FONT_FAMILY,
+        true,
+    )?
+    .0
+    .save(out)?;
     println!("wrote {out}");
     Ok(())
 }
