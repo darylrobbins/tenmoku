@@ -105,6 +105,7 @@ fn opens_in_live_windows_or_asks_for_one(cx: &mut TestAppContext) {
     let outside = elsewhere.join("b.txt");
     fs::write(&inside, "a").unwrap();
     fs::write(&outside, "b").unwrap();
+    cx.executor().allow_parking();
     window(cx, &project);
     cx.run_until_parked();
 
