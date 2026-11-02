@@ -358,8 +358,9 @@ recorded and replayable.
   - **Environment.** T839 gives plugins no app environment. The chat reads
     `ANTHROPIC_API_KEY` (§ 7) as a first-party exception, for development only.
   v1 has no `buffer.write`: an edit is a proposal the user accepts. T839 is
-  not yet signed off, so the strings may change with its sign-off; the grants card
-  follows it.
+  not yet signed off, but card 2 (grants) implements this record's accepted
+  reconciliation and the capability strings as written here, without waiting
+  for T839's sign-off.
 
 ## 10. Privacy
 
