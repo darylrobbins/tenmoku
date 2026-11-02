@@ -112,7 +112,7 @@ fn palette(
 }
 
 /// The card's commands: id and palette title.
-const CARD: [(&str, &str); 23] = [
+const CARD: [(&str, &str); 27] = [
     ("git.diff_index", "Git: Compare with Index"),
     ("git.diff_head", "Git: Compare with HEAD"),
     ("diff.compare_file", "Compare Active File With…"),
@@ -139,6 +139,10 @@ const CARD: [(&str, &str); 23] = [
     ),
     ("git.stash_pop", "Git: Pop Stash…"),
     ("git.stash_apply", "Git: Apply Stash…"),
+    ("git.fetch", "Git: Fetch"),
+    ("git.pull", "Git: Pull"),
+    ("git.push", "Git: Push"),
+    ("git.push_force_with_lease", "Git: Push (Force with Lease)"),
 ];
 
 #[gpui::test]
@@ -266,6 +270,48 @@ fn ex_routes(cx: &mut TestAppContext) {
         ex(line, cx);
         assert_eq!(routed(&workbench, cx), [], ":{line}");
         assert_eq!(message(&editor, cx).as_deref(), Some(answer), ":{line}");
+    }
+}
+
+/// `:Git fetch`, `:Git pull` and `:Git push` are the palette's commands, typed;
+/// force-pushing has no ex form, and nothing else follows those words.
+#[gpui::test]
+fn ex_forms_fetch_pull_push(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (workbench, mut cx) = window(cx, dir.path());
+    let cx = &mut cx;
+    let editor = active(&workbench, cx);
+    let forms = [
+        ("Git fetch", GitCommand::Fetch),
+        ("G fetch", GitCommand::Fetch),
+        ("Git pull", GitCommand::Pull),
+        ("Git push", GitCommand::Push),
+    ];
+    for (line, command) in forms {
+        ex(line, cx);
+        let op = GitOp {
+            command,
+            args: String::new(),
+            range: None,
+            editor: Some(editor.clone()),
+            typed: true,
+        };
+        assert_eq!(routed(&workbench, cx), [Routed::Op(op)], ":{line}");
+        let answer = "Not in a git repository";
+        assert_eq!(message(&editor, cx).as_deref(), Some(answer), ":{line}");
+    }
+    for line in [
+        "Git push!",
+        "Git! push",
+        "Git push --force",
+        "Git push --force-with-lease",
+        "Git pull --rebase",
+        "Git fetch origin",
+    ] {
+        ex(line, cx);
+        assert_eq!(routed(&workbench, cx), [], ":{line}");
+        let answer = format!("Not supported: :{line}");
+        assert_eq!(message(&editor, cx), Some(answer), ":{line}");
     }
 }
 

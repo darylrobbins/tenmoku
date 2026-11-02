@@ -260,6 +260,48 @@ fn push() {
     assert_eq!(rev(&r.origin, "main"), rev(&r.a, "HEAD"));
 }
 
+/// A commit goes to the destination named, wherever HEAD is, under the lease
+/// and the refusal to sign that any push has.
+#[test]
+fn force_push_commit() {
+    if !isolated("force_push_commit") {
+        return;
+    }
+    let r = remotes();
+    let a = open(&r.a);
+    let main = "refs/heads/main";
+    git(&r.a, &["commit", "-q", "--amend", "-m", "amended"]);
+    let confirmed = rev(&r.a, "HEAD");
+    git(&r.a, &["switch", "-q", "-c", "elsewhere"]);
+    commit(&r.a, "g", "elsewhere\n");
+
+    a.force_push_commit(&confirmed, "origin", main).unwrap();
+    assert_eq!(rev(&r.origin, "main"), confirmed);
+    assert!(!has_ref(&r.origin, "refs/heads/elsewhere"));
+
+    // The remote moved since A last fetched, so the lease is stale.
+    git(&r.b, &["fetch", "-q"]);
+    git(&r.b, &["reset", "-q", "--hard", "origin/main"]);
+    commit(&r.b, "h", "from b\n");
+    git(&r.b, &["push", "-q"]);
+    let theirs = rev(&r.b, "HEAD");
+    let elsewhere = rev(&r.a, "HEAD");
+    match a.force_push_commit(&elsewhere, "origin", main) {
+        Err(RemoteError::Rejected { output }) => {
+            assert!(output.contains("[rejected]"), "{output}");
+        }
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    assert_eq!(rev(&r.origin, "main"), theirs);
+
+    git(&r.a, &["config", "push.gpgSign", "true"]);
+    expect_signing_refused(
+        a.force_push_commit(&elsewhere, "origin", main),
+        "force_push_commit",
+    );
+    assert_eq!(rev(&r.origin, "main"), theirs);
+}
+
 #[test]
 fn publish_and_errors() {
     if !isolated("publish_and_errors") {

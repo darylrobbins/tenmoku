@@ -5,7 +5,7 @@
 //! on the vim line and routed here by fe-vim's host commands. Either way it
 //! becomes a [`GitOp`] that [`Workbench::run_git_op`] hands to its
 //! feature's module: `git_diff`, `git_stage`, `git_commit`, `git_blame`,
-//! `git_branch`, [`git_stash`], [`git_history`] or [`git_log`], each with a `run` that
+//! `git_branch`, [`git_stash`], [`git_remote`], [`git_history`] or [`git_log`], each with a `run` that
 //! answers `Not supported yet: <title>` until its card fills it in.
 //!
 //! The ex forms follow the plugins vim users know them from: fugitive's
@@ -42,6 +42,8 @@ mod commit_rows;
 pub(crate) mod git_history;
 #[path = "git_log.rs"]
 pub(crate) mod git_log;
+#[path = "git_remote.rs"]
+pub(crate) mod git_remote;
 #[path = "git_stash.rs"]
 pub(crate) mod git_stash;
 
@@ -76,6 +78,10 @@ pub(crate) enum GitCommand {
     StashIncludeUntracked,
     StashPop,
     StashApply,
+    Fetch,
+    Pull,
+    Push,
+    PushForceWithLease,
 }
 
 use GitCommand::*;
@@ -91,6 +97,7 @@ pub(crate) enum Feature {
     History,
     Log,
     Stash,
+    Remote,
 }
 
 impl GitCommand {
@@ -125,6 +132,10 @@ impl GitCommand {
             StashIncludeUntracked => "Git: Stash (Include Untracked)",
             StashPop => "Git: Pop Stash…",
             StashApply => "Git: Apply Stash…",
+            Fetch => "Git: Fetch",
+            Pull => "Git: Pull",
+            Push => "Git: Push",
+            PushForceWithLease => "Git: Push (Force with Lease)",
         }
     }
 
@@ -139,6 +150,7 @@ impl GitCommand {
             FileHistory => Feature::History,
             Log | LogAll => Feature::Log,
             Stash | StashIncludeUntracked | StashPop | StashApply => Feature::Stash,
+            Fetch | Pull | Push | PushForceWithLease => Feature::Remote,
         }
     }
 }
@@ -223,6 +235,9 @@ const EX_FORMS: &[(&[&str], &[&str], Takes, GitCommand)] = &[
     (GIT, &["checkout"], Takes::MaybeName, SwitchBranch),
     (GIT, &["switch", "-c"], Takes::Name, CreateBranch),
     (GIT, &["checkout", "-b"], Takes::Name, CreateBranch),
+    (GIT, &["fetch"], Takes::Nothing, Fetch),
+    (GIT, &["pull"], Takes::Nothing, Pull),
+    (GIT, &["push"], Takes::Nothing, Push),
     (&[GCLOG], &[], Takes::Anything, FileHistory),
 ];
 
@@ -327,6 +342,7 @@ impl Workbench {
             Feature::History => git_history::run(self, op, window, cx),
             Feature::Log => git_log::run(self, op, window, cx),
             Feature::Stash => git_stash::run(self, op, window, cx),
+            Feature::Remote => git_remote::run(self, op, window, cx),
         }
     }
 

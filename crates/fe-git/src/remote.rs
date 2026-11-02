@@ -185,6 +185,28 @@ impl Repo {
         outcome(output)
     }
 
+    /// Force-pushes `commit` to `merge`, a full ref name, on `remote`, with
+    /// `--force-with-lease`, as [`Repo::push`] does. It reads neither HEAD nor
+    /// the upstream config, so what the caller confirmed is what's pushed, even
+    /// if the branch is switched meanwhile. Nothing is signed, and no submodule
+    /// is pushed (see the module docs).
+    pub fn force_push_commit(
+        &self,
+        commit: &str,
+        remote: &str,
+        merge: &str,
+    ) -> Result<(), RemoteError> {
+        let mut args = self.push_args()?;
+        args.push("--force-with-lease".into());
+        args.extend([
+            "--".into(),
+            remote.into(),
+            format!("{commit}:{merge}").into(),
+        ]);
+        let output = self.run_remote(&args)?;
+        outcome(output)
+    }
+
     /// Pushes HEAD's branch to a branch of the same name on `remote` and makes
     /// that its upstream (`git push -u <remote> HEAD`). Nothing is signed, and
     /// no submodule is pushed (see the module docs).

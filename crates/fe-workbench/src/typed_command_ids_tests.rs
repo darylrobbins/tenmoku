@@ -420,6 +420,14 @@ const MOVED: &[(&str, &str, &str)] = &[
     ),
     ("git.stash_pop", "Git: Pop Stash…", "workbench"),
     ("git.stash_apply", "Git: Apply Stash…", "workbench"),
+    ("git.fetch", "Git: Fetch", "workbench"),
+    ("git.pull", "Git: Pull", "workbench"),
+    ("git.push", "Git: Push", "workbench"),
+    (
+        "git.push_force_with_lease",
+        "Git: Push (Force with Lease)",
+        "workbench",
+    ),
     (
         "git.toggle_blame_annotations",
         "Git: Toggle Blame Annotations",

@@ -538,6 +538,30 @@ impl Workbench {
         self.run_typed_git(GitCommand::StashApply, cx);
     }
 
+    /// Git: Fetch
+    #[command(id = "git.fetch")]
+    fn git_fetch(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Fetch, cx);
+    }
+
+    /// Git: Pull
+    #[command(id = "git.pull")]
+    fn git_pull(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Pull, cx);
+    }
+
+    /// Git: Push
+    #[command(id = "git.push")]
+    fn git_push(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::Push, cx);
+    }
+
+    /// Git: Push (Force with Lease)
+    #[command(id = "git.push_force_with_lease")]
+    fn git_push_force_with_lease(&mut self, cx: &mut Cx<Self>) {
+        self.run_typed_git(GitCommand::PushForceWithLease, cx);
+    }
+
     /// Grow Pane Width
     #[command(id = "pane.grow_width")]
     fn grow_pane_width(&mut self, cx: &mut Cx<Self>) {
