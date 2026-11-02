@@ -73,6 +73,12 @@ impl Pane {
         self.find_command(FindOp::ToggleRegex, cx);
     }
 
+    /// Find in Selection
+    #[command(id = "find.toggle_in_selection", context = "find_bar")]
+    pub(crate) fn toggle_in_selection(&mut self, cx: &mut Cx<Self>) {
+        self.find_command(FindOp::ToggleInSelection, cx);
+    }
+
     /// Toggle Replace
     #[command(id = "find.toggle_replace", context = "find_bar")]
     pub(crate) fn toggle_replace(&mut self, cx: &mut Cx<Self>) {
@@ -195,6 +201,11 @@ pub(crate) fn handle_in<E: InteractiveElement, V: 'static>(
             run,
         ))
         .on_action(handler::<ToggleRegex, V>(FindOp::ToggleRegex, cx, run))
+        .on_action(handler::<ToggleInSelection, V>(
+            FindOp::ToggleInSelection,
+            cx,
+            run,
+        ))
         .on_action(handler::<ToggleReplace, V>(FindOp::ToggleReplace, cx, run))
         .on_action(handler::<ReplaceNext, V>(FindOp::ReplaceNext, cx, run))
         .on_action(handler::<ReplaceAll, V>(FindOp::ReplaceAll, cx, run))

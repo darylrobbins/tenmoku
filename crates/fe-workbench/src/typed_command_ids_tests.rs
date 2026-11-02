@@ -317,6 +317,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Toggle Preserve Case",
         "find_bar",
     ),
+    ("find.toggle_in_selection", "Find in Selection", "find_bar"),
     ("find.toggle_replace", "Toggle Replace", "find_bar"),
     ("find.replace_next", "Replace", "find_bar"),
     ("find.replace_all", "Replace All", "find_bar"),

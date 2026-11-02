@@ -22,6 +22,15 @@
 //! row), each match's replacement, expanded, then takes the match's case
 //! ([`preserve_case::apply`]).
 //!
+//! Find in Selection (`find.toggle_in_selection`) limits all of that to the
+//! editor's non-empty selections when it's turned on: only matches wholly
+//! inside them are found, counted and replaced, and they're drawn as a band
+//! ([`EditorView::set_find_scoped`]). If the bar's own finding has moved the
+//! selection off the ones the user made, as a remembered query's does when the
+//! bar opens, it's those. With no such selection it stays off. Turning it off,
+//! closing the bar or the bar's following another editor drops them; an edit
+//! inside moves their ends.
+//!
 //! The commands are the pane's typed commands ([`crate::find_commands`]),
 //! which its root runs ([`crate::Pane::run_find`]). The bar's element sets
 //! [`KEY_CONTEXT`] and its inputs `text_input`, the replace input
@@ -35,7 +44,7 @@ use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{Icon, IconButton, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use fe_vim::search::{
     Deadline, FindQuery, Interrupted, Pattern, PatternError, matches_reaching_until,
-    replace::{Replacement, replace_all},
+    replace::{Replacement, replace_all, replace_where},
 };
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
@@ -79,6 +88,7 @@ pub(crate) enum FindOp {
     ToggleCase,
     ToggleWholeWord,
     ToggleRegex,
+    ToggleInSelection,
     ToggleReplace,
     ShowReplace,
     ReplaceNext,
@@ -101,6 +111,13 @@ pub(crate) struct FindBar {
     /// Whether a replacement takes the case of the match it replaces. It
     /// changes no match, so toggling it doesn't search again.
     preserve_case: bool,
+    /// The selections Find in Selection captured, in the buffer of
+    /// [`FindBar::editor`]; `None` while it's off.
+    scope: Option<Vec<Range<Anchor>>>,
+    /// The non-empty selections the user last made, which the bar's finding
+    /// may have moved off, for Find in Selection: see
+    /// [`FindBar::note_selections`].
+    selected: Option<Vec<Range<Anchor>>>,
     /// What the query makes; `None` while it's empty.
     pattern: Option<Result<Pattern, PatternError>>,
     /// Where a change to the query or an option finds from, in the buffer
@@ -109,6 +126,8 @@ pub(crate) struct FindBar {
     /// The primary selection as the bar last left it, in that buffer: one
     /// that has moved since is the user's, and its start the anchor.
     left: Option<(BufferId, Range<Anchor>)>,
+    /// All the selections as the bar last left them, in that buffer.
+    left_all: Option<(BufferId, Vec<Range<Anchor>>)>,
     /// The editor the bar set its pattern on, while it's open.
     editor: Option<WeakEntity<EditorView>>,
     _input: Subscription,
@@ -134,9 +153,12 @@ impl FindBar {
             whole_word: false,
             regex: false,
             preserve_case: false,
+            scope: None,
+            selected: None,
             pattern: None,
             anchor: None,
             left: None,
+            left_all: None,
             editor: None,
             _input: changed,
         }
@@ -165,6 +187,11 @@ impl FindBar {
     #[cfg(test)]
     pub(crate) fn preserves_case(&self) -> bool {
         self.preserve_case
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_selection(&self) -> bool {
+        self.scope.is_some()
     }
 
     /// Flips Preserve Case, which the next replace follows.
@@ -201,11 +228,14 @@ impl FindBar {
             FindOp::Previous => self.step(false, editor, cx),
             FindOp::Close => {
                 self.open = false;
+                self.scope = None;
+                self.selected = None;
                 self.set_editor(None, cx);
             }
             FindOp::ToggleCase => self.toggle(|bar| &mut bar.match_case, editor, cx),
             FindOp::ToggleWholeWord => self.toggle(|bar| &mut bar.whole_word, editor, cx),
             FindOp::ToggleRegex => self.toggle(|bar| &mut bar.regex, editor, cx),
+            FindOp::ToggleInSelection => self.toggle_in_selection(editor, cx),
             FindOp::ToggleReplace => self.toggle_replace(window, cx),
             FindOp::ReplaceNext => self.replace_next(editor, cx),
             FindOp::ReplaceAll => self.replace_all(editor, cx),
@@ -225,7 +255,9 @@ impl FindBar {
     ) {
         self.open = true;
         self.replacing |= replace;
+        self.set_editor(editor, cx);
         if let Some(editor) = editor {
+            editor.update(cx, |editor, _| self.note_selections(editor));
             let view = editor.read(cx);
             let selection = view.model().primary_selection().range;
             let text = view.model().text();
@@ -239,7 +271,6 @@ impl FindBar {
                     .update(cx, |input, cx| input.set_text(selected, cx));
             }
         }
-        self.set_editor(editor, cx);
         self.search(editor, cx);
         let input = if replace {
             &self.replace_input
@@ -247,6 +278,60 @@ impl FindBar {
             &self.input
         };
         window.focus(&input.focus_handle(cx), cx);
+    }
+
+    /// Turns Find in Selection on or off, and finds again from the anchor.
+    /// On, it captures the non-empty selections the user last made
+    /// ([`FindBar::selected`]), or else `editor`'s, which are the bar's own
+    /// finding's. With neither it stays off and nothing else changes.
+    fn toggle_in_selection(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut App) {
+        if !self.open {
+            return;
+        }
+        if self.scope.take().is_none() {
+            let Some(editor) = editor else {
+                return;
+            };
+            self.scope = editor.update(cx, |editor, _| {
+                self.note_selections(editor);
+                self.selected.clone().or_else(|| editor.selection_scope())
+            });
+            if self.scope.is_none() {
+                return;
+            }
+        }
+        self.search(editor, cx);
+    }
+
+    /// Before the bar moves the selection: if any selection has changed since
+    /// the bar left them, they're the user's, to remember for Find in
+    /// Selection. With the bar closed there's nothing to remember them for.
+    fn note_selections(&mut self, editor: &mut EditorView) {
+        if !self.open {
+            return;
+        }
+        let left = self.left_all.as_ref().and_then(|(buffer, ranges)| {
+            (ranges.iter())
+                .map(|range| {
+                    Some(
+                        resolve(*buffer, &range.start, editor)?
+                            ..resolve(*buffer, &range.end, editor)?,
+                    )
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+        let now = (editor.model().selections().into_iter())
+            .map(|selection| selection.range)
+            .collect();
+        if left != Some(now) {
+            self.selected = editor.selection_scope();
+        }
+    }
+
+    /// The scope in `editor`'s text as it is, with it on: empty rather than
+    /// `None` if `editor` hasn't got it, so a replace never goes outside it.
+    fn scope_in(&self, editor: &EditorView) -> Option<Vec<Range<usize>>> {
+        (self.scope.as_ref()).map(|_| editor.find_scope().unwrap_or_default())
     }
 
     /// Shows or hides the replace row. Hiding it with focus in the replace
@@ -271,7 +356,8 @@ impl FindBar {
     /// found before anything changes, the next in the text as the replace
     /// will leave it: if that runs out of time, the label says so and the
     /// text, selection and vim's mode stay as they are. An open vim insert or
-    /// replace session stays open ([`apply`]).
+    /// replace session stays open ([`apply`]). With Find in Selection on, a
+    /// selected match outside the scope is no match, and the next is in it.
     fn replace_next(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut App) {
         let (Some(editor), Some(pattern)) = (editor, self.valid_pattern()) else {
             return;
@@ -284,6 +370,7 @@ impl FindBar {
             // Catching up with edits through another view of the buffer
             // first, so the offsets read are the text's as it is.
             editor.model_mut().sync_display();
+            self.note_selections(editor);
             let step = match self.plan_next(editor, &pattern, &with, self.preserve_case) {
                 Ok(step) => step,
                 Err(Interrupted) => {
@@ -325,27 +412,52 @@ impl FindBar {
         preserve_case: bool,
     ) -> Result<Step, Interrupted> {
         let mut deadline = Deadline::new();
+        let scope = self.scope_in(editor);
         let current = match editor.is_read_only() {
             true => None,
-            false => current_match(editor, pattern, with, preserve_case, &mut deadline)?,
+            false => current_match(
+                editor,
+                pattern,
+                with,
+                preserve_case,
+                scope.as_deref(),
+                &mut deadline,
+            )?,
         };
         let text = editor.model().text();
         let Some((range, new)) = current else {
             let from = self.from(editor);
-            let next = next_match(editor.model().text(), pattern, from, true, &mut deadline)?;
+            let scope = scope.as_deref();
+            let next = next_match(
+                editor.model().text(),
+                pattern,
+                from,
+                true,
+                scope,
+                &mut deadline,
+            )?;
             return Ok(Step::Select(next));
         };
         let mut replaced = text.clone();
         replaced.replace(range.clone(), &new);
         let end = range.start + new.len();
-        let next = next_match(&replaced, pattern, end, !range.is_empty(), &mut deadline)?;
+        let scope = scope.map(|scope| scope_after(scope, &range, new.len()));
+        let empty_at_end = !range.is_empty();
+        let next = next_match(
+            &replaced,
+            pattern,
+            end,
+            empty_at_end,
+            scope.as_deref(),
+            &mut deadline,
+        )?;
         Ok(Step::Replace((range, new), next))
     }
 
-    /// Replaces every match in one edit, the caret after the last, and says
-    /// how many in the label, or that the search took too long, replacing
-    /// none and changing nothing. An open vim insert or replace session
-    /// stays open ([`apply`]).
+    /// Replaces every match, with Find in Selection on every one inside the
+    /// scope, in one edit, the caret after the last, and says how many in the
+    /// label, or that the search took too long, replacing none and changing
+    /// nothing. An open vim insert or replace session stays open ([`apply`]).
     fn replace_all(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut App) {
         let (Some(editor), Some(pattern)) = (editor, self.valid_pattern()) else {
             return;
@@ -356,8 +468,20 @@ impl FindBar {
         let with = self.replacement(cx);
         editor.update(cx, |editor, cx| {
             editor.model_mut().sync_display();
+            self.note_selections(editor);
+            let scope = self.scope_in(editor);
             let text = editor.model().text();
-            let edits = match replace_all(text, &pattern, &with) {
+            let found = match &scope {
+                Some(scope) => replace_where(
+                    text,
+                    EditorView::find_scope_rows(text, scope),
+                    &pattern,
+                    &with,
+                    |found| EditorView::in_find_scope(text, scope, found),
+                ),
+                None => replace_all(text, &pattern, &with),
+            };
+            let edits = match found {
                 Ok(edits) if self.preserve_case => (edits.into_iter())
                     .map(|(range, new)| {
                         let new = preserve_case::apply(&text.slice_to_string(range.clone()), &new);
@@ -405,8 +529,9 @@ impl FindBar {
         };
         let pattern = self.valid_pattern();
         editor.update(cx, |editor, cx| {
+            self.note_selections(editor);
             let found = pattern.is_some();
-            editor.set_find(pattern, cx);
+            editor.set_find_scoped(pattern, self.scope.clone(), cx);
             if found {
                 let from = self.from(editor);
                 editor.find_from(from, cx);
@@ -434,6 +559,7 @@ impl FindBar {
             },
         };
         editor.update(cx, |editor, cx| {
+            self.note_selections(editor);
             let transient = pattern.is_some();
             if transient {
                 editor.set_find(pattern, cx);
@@ -484,6 +610,8 @@ impl FindBar {
         let pattern = self.valid_pattern();
         editor.update(cx, |editor, cx| {
             editor.set_find(pattern, cx);
+            // Selected before the bar came here, they're the user's.
+            self.note_selections(editor);
             self.leave(editor, true);
         });
     }
@@ -506,24 +634,41 @@ impl FindBar {
         })
     }
 
-    /// Notes `editor`'s primary selection as the bar leaves it, and with
-    /// `anchor` makes its start the anchor.
+    /// Notes `editor`'s selections as the bar leaves them, and with `anchor`
+    /// makes the primary one's start the anchor.
     fn leave(&mut self, editor: &EditorView, anchor: bool) {
         let selection = editor.model().primary_selection().range;
         let snapshot = editor.model().snapshot();
         let range = snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end);
         self.left = Some((snapshot.id(), range));
+        let all = (editor.model().selections().into_iter())
+            .map(|selection| {
+                let range = selection.range;
+                snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
+            })
+            .collect();
+        self.left_all = Some((snapshot.id(), all));
         if anchor {
             self.anchor = Some(place(editor, selection.start));
         }
     }
 
     /// Makes `editor` the one the bar's pattern is on, clearing the find of
-    /// the one it was on before, if another.
+    /// the one it was on before, if another, and dropping Find in Selection's
+    /// selections, which were in that one's buffer.
     fn set_editor(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut App) {
         let old = self.editor.take().and_then(|old| old.upgrade());
+        let same = match (&old, editor) {
+            (Some(old), Some(new)) => old.entity_id() == new.entity_id(),
+            _ => false,
+        };
+        if !same {
+            self.scope = None;
+            self.selected = None;
+            self.left_all = None;
+        }
         if let Some(old) = old
-            && Some(old.entity_id()) != editor.map(Entity::entity_id)
+            && !same
         {
             old.update(cx, |old, cx| old.set_find(None, cx));
         }
@@ -583,6 +728,13 @@ impl FindBar {
                         ),
                 )
         });
+        let in_selection = div().debug_selector(|| "find-in-selection".into()).child(
+            ToggleButton::new("find-in-selection", "[ ]", ui)
+                .on(self.scope.is_some())
+                .on_click(cx.listener(|pane, _, window, cx| {
+                    pane.run_find(FindOp::ToggleInSelection, window, cx)
+                })),
+        );
         let label = label.map(|(text, error)| {
             let color = if error { ui.error_text } else { ui.muted_text };
             div()
@@ -631,6 +783,7 @@ impl FindBar {
                     // something prevents the default; a toggle keeps focus
                     // where it was, the input or the editor.
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .child(in_selection)
                     .children(toggles),
             );
         let replace_row = self.replacing.then(|| {
@@ -702,16 +855,24 @@ impl FindBar {
 
 /// The match the primary selection is in `editor`, or with vim on the one
 /// starting at the caret, and its replacement by `with`, in the match's case
-/// with `preserve_case`; `Err` if `deadline` passed before both were known.
+/// with `preserve_case`; none outside `scope`, for which nothing is searched
+/// or expanded; `Err` if `deadline` passed before both were known.
 fn current_match(
     editor: &EditorView,
     pattern: &Pattern,
     with: &Replacement,
     preserve_case: bool,
+    scope: Option<&[Range<usize>]>,
     deadline: &mut Deadline,
 ) -> Result<Option<Edit>, Interrupted> {
     let text = editor.model().text();
+    let inside = |range: &Range<usize>| {
+        scope.is_none_or(|scope| EditorView::in_find_scope(text, scope, range))
+    };
     let selection = editor.model().primary_selection().range;
+    if !inside(&selection) {
+        return Ok(None);
+    }
     let range = match editor.vim_mode() {
         Some(_) if selection.is_empty() => {
             let row = text.offset_to_point(selection.start).row;
@@ -723,6 +884,10 @@ fn current_match(
         }
         _ => selection,
     };
+    // With vim on it's the match at the caret, which may run out of the scope.
+    if !inside(&range) {
+        return Ok(None);
+    }
     let replacement = pattern.replacement_at(text, range.clone(), with);
     // Its own search has its own deadline, which can't pass before this one.
     if deadline.expired() {
@@ -749,12 +914,14 @@ fn normalize_newlines(text: String) -> String {
 /// `empty_at_from`), row by row to the end and round from the start: of
 /// those [`replace_all`] replaces and [`Pattern::replacement_at`] takes,
 /// each row's stepped through only as far as the one wanted, under
-/// `deadline` for every row. `Err` if it passed before that was known.
+/// `deadline` for every row. With a `scope`, only those inside it. `Err` if
+/// it passed before that was known.
 fn next_match(
     text: &Text,
     pattern: &Pattern,
     from: usize,
     empty_at_from: bool,
+    scope: Option<&[Range<usize>]>,
     deadline: &mut Deadline,
 ) -> Result<Option<Range<usize>>, Interrupted> {
     let first = text.offset_to_point(from).row;
@@ -762,6 +929,9 @@ fn next_match(
     let wanted = |found: &Range<usize>| {
         found.start > from || (found.start == from && (empty_at_from || !found.is_empty()))
     };
+    if let Some(scope) = scope {
+        return EditorView::next_in_find_scope(text, pattern, scope, from, wanted, deadline);
+    }
     // The first match reaching `from`'s window, unless it's one from before
     // `from` reaching past it, or the empty one at it: then the one after.
     let mut found = first_reaching(text, first, from..end, pattern, deadline)?;
@@ -786,6 +956,26 @@ fn next_match(
         }
     }
     Ok(None)
+}
+
+/// `scope`, sorted and apart, in the text as replacing `replaced`, which is
+/// inside one of its ranges, with `new_len` bytes leaves it, which is where
+/// its anchors will go, a range that leaves empty gone as from
+/// [`EditorView::find_scope`].
+fn scope_after(
+    scope: Vec<Range<usize>>,
+    replaced: &Range<usize>,
+    new_len: usize,
+) -> Vec<Range<usize>> {
+    let shift = |offset: usize| offset - replaced.len() + new_len;
+    (scope.into_iter())
+        .map(|range| match range {
+            range if range.end < replaced.start => range,
+            range if range.start > replaced.end => shift(range.start)..shift(range.end),
+            range => range.start..shift(range.end),
+        })
+        .filter(|range| !range.is_empty())
+        .collect()
 }
 
 /// The first match on `row` that reaches `window`, of those [`replace_all`]
@@ -898,3 +1088,7 @@ mod replace_tests;
 #[cfg(test)]
 #[path = "find_preserve_case_tests.rs"]
 mod preserve_case_tests;
+
+#[cfg(test)]
+#[path = "find_in_selection_tests.rs"]
+mod in_selection_tests;

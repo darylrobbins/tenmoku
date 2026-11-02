@@ -1944,6 +1944,12 @@ keys = { macos = "alt-cmd-p", default = "alt-p" }
 command = "find.toggle_preserve_case"
 context = "find_bar"
 
+# Find in Selection, VS Code's: matches and replaces only in what's selected.
+[[bindings]]
+keys = { macos = "alt-cmd-l", default = "alt-l" }
+command = "find.toggle_in_selection"
+context = "find_bar"
+
 # Replace, as VS Code binds it on macOS, anywhere in the workbench: from a
 # panel it opens in the active pane. Off macOS ctrl-alt-f is read as vim's
 # <C-f>, so there it's off in an editor with vim on. Replace one is VS Code's cmd-shift-1, named by what it

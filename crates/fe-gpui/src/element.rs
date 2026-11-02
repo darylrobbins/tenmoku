@@ -39,7 +39,7 @@ use crate::{
 };
 
 mod annotation_column;
-mod decorations;
+pub(crate) mod decorations;
 use decorations::{Decorations, Layer};
 mod ghost_text;
 mod host_blocks;
@@ -97,6 +97,8 @@ pub(crate) struct FrameLayout {
     annotation_column: annotation_column::Placed,
     /// Over the column, if there is one, whose entries show popovers.
     annotation_hitbox: Option<Hitbox>,
+    /// The band of the find's scope to paint ([`find_scope_rects`]).
+    find_scope: Vec<Rect>,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
     /// The previewed search match to paint over them
@@ -320,6 +322,12 @@ impl FrameLayout {
         let line_x = at.x - self.frame.line_origin(row).x;
         let index = row.line.index_for_x(line_x);
         (line_x >= 0. && (shown.start..=shown.end).contains(&index)).then(|| index - shown.start)
+    }
+
+    /// Lets the next frame search again though this one's highlighting ran
+    /// out of time.
+    pub(crate) fn forget_highlight_ran_out(&mut self) {
+        self.highlight_ran_out = None;
     }
 
     /// Whether the frame's search highlighting ran out of time.
@@ -1244,6 +1252,7 @@ impl Element for EditorElement {
             text,
             annotation_column: annotations,
             annotation_hitbox: None,
+            find_scope: Vec::new(),
             matches: Vec::new(),
             current_match: Vec::new(),
             highlight_ran_out: None,
@@ -1271,6 +1280,7 @@ impl Element for EditorElement {
             annotation_column::insert_hitboxes(&layout.annotation_column, &layout, view, window);
         layout.annotation_hitbox = column;
         layout.clickable.extend(entries);
+        layout.find_scope = find_scope_rects(&mut layout, view);
         layout.matches = match_rects(&mut layout, view);
         layout.current_match = current_match_rects(&mut layout, view);
         layout.brackets = bracket_rects(&mut layout, view);
@@ -1474,6 +1484,7 @@ impl Element for EditorElement {
             })
         });
         let selections = selection_rects(&mut layout, view);
+        let find_scope = mem::take(&mut layout.find_scope);
         let matches = mem::take(&mut layout.matches);
         let current_match = mem::take(&mut layout.current_match);
         let brackets = mem::take(&mut layout.brackets);
@@ -1526,6 +1537,8 @@ impl Element for EditorElement {
         let mut painted = Vec::new();
         #[cfg(test)]
         let mut painted_selections = Vec::new();
+        #[cfg(test)]
+        let mut painted_find_scope = Vec::new();
         #[cfg(test)]
         let mut painted_matches = Vec::new();
         #[cfg(test)]
@@ -1617,6 +1630,16 @@ impl Element for EditorElement {
                     );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
                     indent_guides::paint(&layout.indent_guides, window);
+                    // Under the matches in it.
+                    for &band in &find_scope {
+                        let band = layout.bounds(band);
+                        window.paint_quad(fill(band, find_scope_color(&theme)));
+                        #[cfg(test)]
+                        {
+                            painted_find_scope.push(band);
+                            decorations::note("find scope");
+                        }
+                    }
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
                         let found = layout.bounds(found);
@@ -1889,6 +1912,7 @@ impl Element for EditorElement {
             {
                 view.painted_carets = painted;
                 view.painted_selections = painted_selections;
+                view.find.painted_scope = painted_find_scope;
                 view.painted_matches = painted_matches;
                 view.painted_current_match = painted_current_match;
                 view.painted_chevrons = painted_chevrons;
@@ -2658,6 +2682,12 @@ fn search_match_color(theme: &EditorTheme) -> Hsla {
     theme.foreground.opacity(0.22)
 }
 
+/// The band of the find's scope: the selection's colour, fainter, as what
+/// was selected when it was captured.
+fn find_scope_color(theme: &EditorTheme) -> Hsla {
+    theme.selection.opacity(0.4)
+}
+
 #[cfg(test)]
 thread_local! {
     /// Overrides the highlight time limit on this thread.
@@ -2694,12 +2724,17 @@ thread_local! {
 /// ([`FrameLayout::highlight_ran_out`]): later frames search nothing and
 /// paint no matches until an edit or a different pattern, so each key
 /// doesn't spend the limit again.
+///
+/// The find pattern's matches are only those inside the find's scope, if it
+/// has one ([`EditorView::find_scope`]), which alone use the budget; a row
+/// shown outside it isn't searched.
 fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
     let previewed = view.previewed_pattern();
     let find = view.find_pattern().filter(|_| previewed.is_none());
     let clip = find.is_some();
+    let scope = find.and_then(|_| view.find_scope());
     let (pattern, mut budget) = match find {
         Some(pattern) => (Some(pattern), MAX_MATCHES),
         None => (view.match_pattern(), usize::MAX),
@@ -2789,11 +2824,18 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
                     shown(ix, long_rows, glyph_widths),
                 )
             })
+            .filter(|(_, shown)| {
+                (scope.as_deref())
+                    .is_none_or(|scope| EditorView::find_scope_window(text, scope, shown).is_some())
+            })
             .collect();
-        let all = fe_vim::search::matches_across_until(text, &rows, pattern, &mut deadline);
+        let mut all = fe_vim::search::matches_across_until(text, &rows, pattern, &mut deadline);
         deadline.expired();
         if deadline.ran_out() {
             latch = Some((pattern.regex_str().to_string(), version));
+        }
+        if let Some(scope) = &scope {
+            all.retain(|found| EditorView::in_find_scope(text, scope, found));
         }
         #[cfg(test)]
         FOUND.with(|n| n.set(n.get() + all.len()));
@@ -2805,14 +2847,28 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
                 break;
             }
             let window = shown(ix, long_rows, glyph_widths);
-            let all = fe_vim::search::matches_reaching_until(
-                text,
-                row.buffer_row,
-                window,
-                pattern,
-                budget,
-                &mut deadline,
-            );
+            let all = match &scope {
+                Some(scope) => match EditorView::find_scope_window(text, scope, &window) {
+                    Some(window) => EditorView::scoped_on_row(
+                        text,
+                        row.buffer_row,
+                        window,
+                        pattern,
+                        scope,
+                        budget,
+                        &mut deadline,
+                    ),
+                    None => Vec::new(),
+                },
+                None => fe_vim::search::matches_reaching_until(
+                    text,
+                    row.buffer_row,
+                    window,
+                    pattern,
+                    budget,
+                    &mut deadline,
+                ),
+            };
             // The clock is only read between regex calls, so a last call
             // that overran the limit is recorded here.
             deadline.expired();
@@ -2888,6 +2944,48 @@ fn part_on_row<L>(
     let (start, end) = (range.start.max(row.start), range.end.min(row.end));
     let line_break = row.last && range.start <= row.end && range.end > row.end;
     (start < end || line_break).then_some((start..end, line_break))
+}
+
+/// The rects of the find's scope ([`EditorView::find_scope`]) on the frame's
+/// displayed rows, as [`part_on_row`] paints a match, clipped to the text area
+/// as the find pattern's matches are.
+fn find_scope_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+    let Some(scope) = view.find_scope() else {
+        return Vec::new();
+    };
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let space = glyph_widths.char_width(' ');
+    let visible = frame.text_bounds();
+    let mut rects = Vec::new();
+    for row in &frame.rows {
+        let first = scope.partition_point(|range| range.end < row.start);
+        for range in scope[first..]
+            .iter()
+            .take_while(|range| range.start <= row.end)
+        {
+            let Some((part, cell)) = part_on_row(range, row) else {
+                continue;
+            };
+            let start = frame.view_x(row.x_for_offset(part.start, long_rows, glyph_widths));
+            let end = frame.view_x(row.x_for_offset(part.end, long_rows, glyph_widths))
+                + if cell { space } else { 0. };
+            let (left, right) = (start.max(visible.x), end.min(visible.x + visible.width));
+            if left < right {
+                rects.push(Rect {
+                    x: left,
+                    y: frame.row_top(row.row),
+                    width: right - left,
+                    height: frame.line_height,
+                });
+            }
+        }
+    }
+    rects
 }
 
 /// The rects of the match a vim search line's preview shows

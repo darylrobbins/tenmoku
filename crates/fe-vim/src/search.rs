@@ -106,6 +106,8 @@ pub struct Deadline {
     end: Option<Instant>,
     /// The [`regex_calls`] count it passes at, from [`set_call_limit`].
     calls_end: Option<u64>,
+    /// What says it has passed whatever the time: see [`Deadline::cancelled_by`].
+    cancelled: Option<Box<dyn Fn() -> bool + Send>>,
     ran_out: std::cell::Cell<bool>,
 }
 
@@ -131,7 +133,19 @@ impl Deadline {
         Self {
             end: None,
             calls_end: None,
+            cancelled: None,
             ran_out: std::cell::Cell::new(false),
+        }
+    }
+
+    /// A deadline with no time limit that passes once `cancelled` says so,
+    /// which it asks before every regex call, those a match iteration makes
+    /// for candidates it rejects too, so stale background work stops within a
+    /// row.
+    pub fn cancelled_by(cancelled: impl Fn() -> bool + Send + 'static) -> Self {
+        Self {
+            cancelled: Some(Box::new(cancelled)),
+            ..Self::never()
         }
     }
 
@@ -145,6 +159,7 @@ impl Deadline {
         Self {
             end: Instant::now().checked_add(limit),
             calls_end,
+            cancelled: None,
             ran_out: std::cell::Cell::new(false),
         }
     }
@@ -153,7 +168,8 @@ impl Deadline {
     fn passed(&self) -> bool {
         if !self.ran_out.get()
             && (self.end.is_some_and(|end| Instant::now() >= end)
-                || self.calls_end.is_some_and(|end| regex_calls() >= end))
+                || self.calls_end.is_some_and(|end| regex_calls() >= end)
+                || self.cancelled.as_ref().is_some_and(|cancelled| cancelled()))
         {
             self.ran_out.set(true);
         }
@@ -1735,6 +1751,30 @@ pub fn matches_reaching_until(
     reaching(text, row, window, pattern, cap, deadline)
 }
 
+/// Gives `visit` the matches [`matches_reaching_until`] finds, one at a time,
+/// searching no further once it breaks, so a host filtering them does no more
+/// work than it needs and allocates nothing for those it leaves out. Past
+/// `deadline` it stops giving any: ask it afterwards whether it passed.
+pub fn visit_reaching(
+    text: &Text,
+    row: u32,
+    window: Range<usize>,
+    pattern: &Pattern,
+    deadline: &mut Deadline,
+    mut visit: impl FnMut(Range<usize>) -> std::ops::ControlFlow<()>,
+) {
+    if row >= text.row_count() || deadline.expired() {
+        return;
+    }
+    let mut buf = String::new();
+    let (start, hay) = row_text(text, row, &mut buf);
+    for found in reaching_in(start, hay, window, pattern, deadline) {
+        if visit(found).is_break() {
+            return;
+        }
+    }
+}
+
 /// For a host painting the matches of a pattern that [`Pattern::spans_rows`]
 /// on rows it shows: `shown` holds each buffer row shown, in order, with the
 /// part of it shown (offsets in the text). The matches are those
@@ -1825,16 +1865,32 @@ fn reaching(
     }
     let mut buf = String::new();
     let (start, hay) = row_text(text, row, &mut buf);
+    reaching_in(start, hay, window, pattern, deadline)
+        .take(cap)
+        .collect()
+}
+
+/// The matches in `hay`, the row at `start`, that reach `window`: see
+/// [`matches_reaching`].
+fn reaching_in<'a>(
+    start: usize,
+    hay: &'a str,
+    window: Range<usize>,
+    pattern: &'a Pattern,
+    deadline: &'a Deadline,
+) -> impl Iterator<Item = Range<usize>> + 'a {
     pattern
         .matches(hay, deadline)
-        .map(|range| start + range.start..start + range.end)
-        .take_while(|range| range.start <= window.end)
-        .filter(|range| match range.is_empty() {
+        .up_to(window.end.saturating_sub(start))
+        .map(move |range| start + range.start..start + range.end)
+        .take_while({
+            let end = window.end;
+            move |range| range.start <= end
+        })
+        .filter(move |range| match range.is_empty() {
             true => window.start <= range.start,
             false => range.end > window.start && range.start < window.end,
         })
-        .take(cap)
-        .collect()
 }
 
 #[cfg(test)]
@@ -1939,6 +1995,17 @@ pub(crate) struct RowMatches<'a> {
 }
 
 impl RowMatches<'_> {
+    /// Stops searching once no match can start at or before `end` in the
+    /// row, so what follows that costs at most the one regex call that finds
+    /// the first candidate past it, rejected ones (not a whole word) included.
+    /// The row stays whole for anchors and boundaries to see.
+    pub(crate) fn up_to(mut self, end: usize) -> Self {
+        // One past it, as the next search has to start before the limit: an
+        // empty match at `end` is still to be found.
+        self.row_end = self.row_end.min(end.saturating_add(1));
+        self
+    }
+
     /// Group `n`'s range in the last match (0 is the whole match), if it
     /// took part; `None` if the groups weren't wanted.
     pub(crate) fn group(&self, n: usize) -> Option<Range<usize>> {

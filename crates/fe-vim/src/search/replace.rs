@@ -212,6 +212,46 @@ pub fn replace_all(
     Ok(edits)
 }
 
+/// [`replace_all`] on `rows` alone, each with the part of it that matters: a
+/// row is searched from its start, whole for its context, and only until a
+/// match starts past that part, and of its matches
+/// only those `keep` takes are expanded. Past [`time_limit`], counted from the
+/// call, `Err(Interrupted)`, never a partial list.
+pub fn replace_where(
+    text: &Text,
+    rows: impl IntoIterator<Item = (u32, Range<usize>)>,
+    pattern: &Pattern,
+    with: &Replacement,
+    keep: impl Fn(&Range<usize>) -> bool,
+) -> Result<Vec<(Range<usize>, String)>, Interrupted> {
+    let deadline = Deadline::within(time_limit());
+    let mut edits = Vec::new();
+    let mut buf = String::new();
+    for (row, window) in rows {
+        if deadline.expired() {
+            return Err(Interrupted);
+        }
+        let (start, hay) = row_text(text, row, &mut buf);
+        let mut matches = pattern
+            .grouped(hay, &deadline)
+            .up_to(window.end.saturating_sub(start));
+        while let Some(found) = matches.next() {
+            let found = start + found.start..start + found.end;
+            if found.start > window.end {
+                break;
+            }
+            if keep(&found) {
+                let new = with.expand(pattern, &matches, hay);
+                edits.push((found, new));
+            }
+        }
+        if deadline.expired() {
+            return Err(Interrupted);
+        }
+    }
+    Ok(edits)
+}
+
 /// A match `:s` takes over rows ([`Walk::next`]), as offsets in the text
 /// the walk reads.
 #[derive(Clone, Debug)]

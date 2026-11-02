@@ -88,7 +88,8 @@ impl TerminalFind {
     }
 
     /// Does `op` in `view`, the panel's active terminal, if any.
-    /// `find.toggle_whole_word` and the replace commands do nothing here.
+    /// `find.toggle_whole_word`, `find.toggle_in_selection` and the replace
+    /// commands do nothing here.
     pub(crate) fn run(
         &mut self,
         op: FindOp,
@@ -114,6 +115,7 @@ impl TerminalFind {
                 self.search(view, cx);
             }
             FindOp::ToggleWholeWord
+            | FindOp::ToggleInSelection
             | FindOp::ToggleReplace
             | FindOp::ShowReplace
             | FindOp::ReplaceNext
