@@ -15,12 +15,13 @@ fn expected(name: &str) -> Vec<(char, char)> {
     match name {
         "markdown_inline" => vec![],
         "rust" => with_quotes(&[dq]),
-        "markdown" => with_quotes(&[dq, bt]),
+        "markdown" | "gitcommit" => with_quotes(&[dq, bt]),
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
         | "json" => with_quotes(&[dq, sq, bt]),
         "gitignore" => with_quotes(&[dq]),
         "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
-        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" => with_quotes(&[dq, sq]),
+        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" | "gitrebase"
+        | "gitconfig" | "gitattributes" => with_quotes(&[dq, sq]),
         other => panic!("no table entry for language {other}"),
     }
 }

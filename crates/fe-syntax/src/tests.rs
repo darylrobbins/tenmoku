@@ -168,6 +168,43 @@ fn each_language_highlights_a_snippet() {
             ],
         ),
         (
+            "COMMIT_EDITMSG",
+            "subject\n\nbody\n# c\n",
+            &[("subject", "markup.heading"), ("# c", "comment")],
+        ),
+        (
+            "git-rebase-todo",
+            "pick abc1234 one\n# c\n",
+            &[
+                ("pick", "keyword"),
+                ("abc1234", "constant.builtin"),
+                ("one", "comment"),
+                ("# c", "comment"),
+            ],
+        ),
+        (
+            ".gitconfig",
+            "[user]\n  name = a # c\n  bare = true\n",
+            &[
+                ("user", "tag"),
+                ("name", "property"),
+                ("a ", "string"),
+                ("# c", "comment"),
+                ("true", "constant.builtin"),
+            ],
+        ),
+        (
+            ".gitattributes",
+            "# c\n*.sh text eol=lf -diff\n",
+            &[
+                ("# c", "comment"),
+                ("*", "string"),
+                ("text", "variable.builtin"),
+                ("lf", "string"),
+                ("-", "operator"),
+            ],
+        ),
+        (
             "x.yaml",
             "key: 1 # c",
             &[("key", "property"), ("1", "number"), ("# c", "comment")],

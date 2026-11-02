@@ -1,0 +1,25 @@
+Fix the parser's handling of empty lines
+
+Closes #123 and reverts 1a2b3c4d. Thanks @octocat.
+
+Signed-off-by: A U Thor <author@example.com>
+Refs=#42
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# On branch main
+# Your branch is up to date with 'origin/main'.
+#
+# Changes to be committed:
+#	new file:   src/new.rs
+#	modified:   src/lib.rs
+#	renamed:    src/old.rs -> src/moved.rs
+#	deleted:    src/gone.rs
+#
+# Untracked files:
+#	notes.txt
+#
+# ------------------------ >8 ------------------------
+# Do not modify or remove the line above.
+# Everything below it will be ignored.
+diff --git a/src/lib.rs b/src/lib.rs

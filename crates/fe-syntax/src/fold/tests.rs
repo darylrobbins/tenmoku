@@ -276,6 +276,30 @@ const CASES: &[Case] = &[
         &[(0, 1), (3, 6), (4, 5), (8, 9)],
     ),
     ("a.gitignore", &["# c", "*.log", "build/"], &[]),
+    ("COMMIT_EDITMSG", &["subject", "", "body", "# c"], &[]),
+    (
+        "git-rebase-todo",
+        &["pick abc1234 one", "# c", "drop def5678 two"],
+        &[],
+    ),
+    (
+        ".gitconfig",
+        &[
+            "# c",
+            "[user]",
+            "    name = a",
+            "    email = b",
+            "",
+            "[core]",
+            "    bare = false",
+        ],
+        &[(1, 3), (5, 6)],
+    ),
+    (
+        ".gitattributes",
+        &["# c", "*.png binary", "*.sh eol=lf"],
+        &[],
+    ),
     (
         "a.yaml",
         &[

@@ -1,0 +1,21 @@
+# A comment
+; Another comment
+[user]
+	name = A U Thor
+	email = "author@example.com" ; inline
+[core]
+	bare = false
+	filemode = yes
+	sshCommand
+	abbrev = 12
+	excludesFile = ~/.gitignore_global
+[remote "origin"]
+	url = git@github.com:example/repo.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+[alias]
+	st = status --short
+	up = !git pull --rebase
+[include]
+	path = ./extra.gitconfig
+[includeIf "gitdir:~/work/"]
+	path = ~/work/.gitconfig

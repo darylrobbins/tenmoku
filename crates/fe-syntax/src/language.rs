@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::OnceLock,
 };
 
@@ -107,9 +107,40 @@ impl std::fmt::Debug for Language {
     }
 }
 
-/// The name of the language for a file, chosen by its extension or name:
-/// a built-in language's, else a [registered](crate::register_language) one's.
+/// Files whose name alone doesn't say what they are, by the end of their path:
+/// `(tail, language)`. Checked before file names and extensions.
+const PATH_SUFFIXES: &[(&str, &str)] = &[
+    (".git/config", "gitconfig"),
+    (".config/git/config", "gitconfig"),
+    (".git/info/attributes", "gitattributes"),
+    (".config/git/attributes", "gitattributes"),
+    (".git/info/exclude", "gitignore"),
+    (".config/git/ignore", "gitignore"),
+];
+
+/// Whether `path` ends with the components of `tail`, ignoring ASCII case as
+/// file names do.
+fn path_ends_with(path: &Path, tail: &str) -> bool {
+    let mut components = path.components().rev();
+    tail.rsplit('/').all(|part| {
+        matches!(
+            components.next(),
+            Some(Component::Normal(name)) if name.eq_ignore_ascii_case(part)
+        )
+    })
+}
+
+/// The name of the language for a file, chosen by the end of its path, its
+/// extension or its name: a built-in language's, else a
+/// [registered](crate::register_language) one's.
 pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
+    let by_tail = PATH_SUFFIXES
+        .iter()
+        .filter(|(tail, _)| path_ends_with(path, tail))
+        .find_map(|(_, language)| listed().find(|def| def.name == *language));
+    if let Some(def) = by_tail {
+        return Some(def.name);
+    }
     let file_name = path.file_name()?.to_str()?;
     let extension = path.extension().and_then(|ext| ext.to_str());
     listed()
@@ -750,6 +781,62 @@ const DEFS: &[Def] = &[
         ],
         grammar: || tree_sitter_gitignore::LANGUAGE.into(),
         highlights: || &[tree_sitter_gitignore::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "gitcommit")]
+    Def {
+        name: "gitcommit",
+        extensions: &[],
+        file_names: &[
+            "COMMIT_EDITMSG",
+            "MERGE_MSG",
+            "TAG_EDITMSG",
+            "SQUASH_MSG",
+            "NOTES_EDITMSG",
+            "EDIT_DESCRIPTION",
+        ],
+        grammar: || tree_sitter_git_commit::LANGUAGE.into(),
+        highlights: || &[include_str!("../queries/gitcommit.scm")],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "gitrebase")]
+    Def {
+        name: "gitrebase",
+        extensions: &[],
+        file_names: &["git-rebase-todo"],
+        grammar: || tree_sitter_git_rebase::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_git_rebase::HIGHLIGHTS_QUERY,
+                include_str!("../queries/gitrebase.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "gitconfig")]
+    Def {
+        name: "gitconfig",
+        extensions: &[],
+        file_names: &[".gitconfig", ".gitmodules"],
+        grammar: || tree_sitter_git_config::LANGUAGE.into(),
+        highlights: || &[tree_sitter_git_config::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "gitattributes")]
+    Def {
+        name: "gitattributes",
+        extensions: &[],
+        file_names: &[".gitattributes"],
+        grammar: || tree_sitter_gitattributes::LANGUAGE.into(),
+        highlights: || &[tree_sitter_gitattributes::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

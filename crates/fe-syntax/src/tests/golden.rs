@@ -14,7 +14,7 @@ use std::{fmt::Write as _, fs, path::PathBuf};
 
 use fe_buffer::Buffer;
 
-use crate::{Language, Syntax, language_for_path, language_names};
+use crate::{Language, Syntax, language_by_name, language_for_path, language_names};
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden");
 const SUFFIX: &str = ".golden";
@@ -26,13 +26,18 @@ fn highlights_match_golden_files() {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| !path.to_string_lossy().ends_with(SUFFIX))
+        // The directory's own `.gitattributes` is detected too, but no sample.
+        .filter(|path| !path.file_name().unwrap().to_string_lossy().starts_with('.'))
         .collect();
     samples.sort();
     let mut covered = Vec::new();
     let mut failures = Vec::new();
     for sample in &samples {
-        // Samples for languages left out of this build are skipped.
-        let Some(language) = language_for_path(sample) else {
+        // Some languages' paths can't be a language's name with an extension
+        // (`gitcommit`, whose files have none). Samples for languages left out
+        // of this build are skipped.
+        let by_stem = || language_by_name(sample.file_stem()?.to_str()?);
+        let Some(language) = language_for_path(sample).or_else(by_stem) else {
             continue;
         };
         let file_name = sample.file_name().unwrap().to_string_lossy();

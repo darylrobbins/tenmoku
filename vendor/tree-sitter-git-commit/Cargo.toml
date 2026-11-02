@@ -1,0 +1,23 @@
+[package]
+name = "tree-sitter-git-commit"
+description = "git-commit grammar for tree-sitter (vendored from the-mikedavis/tree-sitter-git-commit)"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/the-mikedavis/tree-sitter-git-commit"
+edition = "2021"
+publish = false
+autoexamples = false
+build = "bindings/rust/build.rs"
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+cc = "1.2"
+
+# Keeps cargo from walking up to an outer workspace (a gate checkout lives
+# inside the repo): this crate is its own empty workspace root.
+[workspace]

@@ -510,6 +510,11 @@ const KINDS: &[Kinds] = &[
         nodes: &["rule", "conditional", "define_directive"],
         bodies: &[],
     },
+    Kinds {
+        language: "gitconfig",
+        nodes: &["section"],
+        bodies: &[],
+    },
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

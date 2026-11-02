@@ -224,6 +224,11 @@ tree-sitter-xml = "0.7"
 tree-sitter-yaml = "0.7"
 # Vendored: crates.io has no upstream crate (vendor/tree-sitter-gitignore/README.md).
 tree-sitter-gitignore = { path = "vendor/tree-sitter-gitignore" }
+# Vendored: unusable or absent on crates.io (their vendor/*/README.md say which).
+tree-sitter-git-commit = { path = "vendor/tree-sitter-git-commit" }
+tree-sitter-git-rebase = { path = "vendor/tree-sitter-git-rebase" }
+tree-sitter-git-config = { path = "vendor/tree-sitter-git-config" }
+tree-sitter-gitattributes = { path = "vendor/tree-sitter-gitattributes" }
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 # Line diffs for proposed changes (Apache-2.0).

@@ -1,0 +1,28 @@
+pick 1a2b3c4 Add the parser
+p 2b3c4d5 Short form
+reword 3c4d5e6 Fix a typo
+edit 4d5e6f7 Change the API
+squash 5e6f7a8 Tidy up
+fixup 6f7a8b9 More tidying
+fixup -C 7a8b9c0 Take this message
+fixup -c 7a8b9c0 Edit
+f -C 7a8b9c0
+exec cargo test
+x make
+break
+noop
+drop 8b9c0d1 Debug printing
+label onto
+reset onto
+merge -C 9c0d1e2 topic Merge branch 'topic'
+merge -C 9c0d1e2 topic # Merge branch 'topic'
+merge -c 9c0d1e2 topic
+merge topic
+m topic Merge branch 'topic'
+update-ref refs/heads/topic
+u refs/heads/topic
+
+# Rebase 0d1e2f3..9c0d1e2 onto 0d1e2f3 (13 commands)
+#
+# Commands:
+# p, pick <commit> = use commit

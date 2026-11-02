@@ -117,6 +117,10 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | dockerfile | tree-sitter-containerfile | 0.9.2 | https://github.com/wharflab/tree-sitter-containerfile⁵ | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | make | tree-sitter-make | 1.1.1 | https://github.com/tree-sitter-grammars/tree-sitter-make | MIT | `HIGHLIGHTS_QUERY` |
 | gitignore | tree-sitter-gitignore, vendored¹² | commit `f4685bf` | https://github.com/shunsambongi/tree-sitter-gitignore | MIT | `queries/highlights.scm` (ours; upstream has none) |
+| gitcommit | tree-sitter-git-commit, vendored¹³ | commit `5a50da1` | https://github.com/the-mikedavis/tree-sitter-git-commit | MIT | `queries/gitcommit.scm` (ours, in place of upstream's placeholder captures) |
+| gitrebase | tree-sitter-git-rebase, vendored¹³ | commit `32686d6` | https://github.com/the-mikedavis/tree-sitter-git-rebase | MIT | `HIGHLIGHTS_QUERY`, then `queries/gitrebase.scm` (ours) |
+| gitconfig | tree-sitter-git-config, vendored¹³ | commit `3a61756` | https://github.com/the-mikedavis/tree-sitter-git-config | MIT | `HIGHLIGHTS_QUERY` |
+| gitattributes | tree-sitter-gitattributes, vendored¹³ | commit `1b7af09` | https://github.com/tree-sitter-grammars/tree-sitter-gitattributes | MIT | `HIGHLIGHTS_QUERY` |
 
 ¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -229,3 +233,13 @@ crates.io has no upstream crate (only a third-party republish, which we don't
 take). Upstream's `grammar.js` and generated `src/` are unchanged, at commit
 `f4685bf11ac466dd278449bcfe5fd014e94aa504`; the Rust binding and the highlight
 query are ours. The licence is upstream's. The vendored README says how to update it.
+
+¹³ Vendored in `vendor/tree-sitter-git-commit/`, `-git-rebase/`, `-git-config/` and
+`-gitattributes/` as path dependencies: crates.io has none of the first three, and
+`tree-sitter-gitattributes` 0.1.6 there needs `tree-sitter` ~0.20. Upstream's
+`grammar.js`, generated `src/` and query are unchanged, at commits
+`5a50da19b3841ac51e9d483cd9c856a85232233d`,
+`32686d6b72980b36f876ae2d07719c9c3ed154e2`,
+`3a61756a81a86291a0f48e3eeeaa0692b9981aa9` and
+`1b7af09d45b579f9f288453b95ad555f1f431645`; the Rust bindings are ours. The licences
+are upstream's. Each vendored README says how to update it.

@@ -1,0 +1,12 @@
+# A comment
+* text=auto
+*.rs text diff=rust
+*.sh text eol=lf
+*.png binary -text
+*.bin -diff
+docs/** linguist-documentation
+vendor/[a-z]*.c !eol
+"with space.txt" text
+\#notes.txt merge=union
+[attr]generated -diff -merge linguist-generated=true
+target/** generated

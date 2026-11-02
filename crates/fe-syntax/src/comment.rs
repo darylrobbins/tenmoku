@@ -28,7 +28,8 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
     Some(match language {
         "rust" | "json" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java"
         | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
-        "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" | "gitignore" => hash,
+        "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" | "gitignore" | "gitcommit"
+        | "gitrebase" | "gitconfig" | "gitattributes" => hash,
         "python" => tokens(Some("#"), Some(("\"\"\"", "\"\"\""))),
         "lua" => tokens(Some("--"), Some(("--[[", "]]"))),
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
@@ -56,9 +57,10 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
             ('\'', '\''),
             ('`', '`'),
         ],
-        "markdown" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('`', '`')],
+        "markdown" | "gitcommit" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('`', '`')],
         "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
-        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" => {
+        | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" | "gitrebase"
+        | "gitconfig" | "gitattributes" => {
             &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')]
         }
         _ => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
