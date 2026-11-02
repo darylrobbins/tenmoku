@@ -8,8 +8,8 @@ use fe_text::Text;
 
 use crate::{
     TextObject, delimiters,
-    feature::{argument, definition, objects, seek},
-    motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
+    feature::{argument, definition, objects, seek, subword},
+    motion::{Class, Cursor, Granularity, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
     prose,
     search::Deadline,
@@ -27,10 +27,20 @@ pub(crate) fn select(
     let count = count.max(1);
     match object {
         InnerWord | AWord | InnerBigWord | ABigWord => {
-            let big = matches!(object, InnerBigWord | ABigWord);
+            let by = match object {
+                InnerBigWord | ABigWord => Granularity::BigWord,
+                _ => Granularity::Word,
+            };
             let inner = matches!(object, InnerWord | InnerBigWord);
-            words(text, offset, count, big, inner)
+            words(text, offset, count, by, inner)
         }
+        InnerSubword | ASubword => words(
+            text,
+            offset,
+            count,
+            Granularity::Subword,
+            object == InnerSubword,
+        ),
         InnerParen | AParen => brackets(text, offset, PAIRS[0], count, object == InnerParen),
         InnerBrace | ABrace => brackets(text, offset, PAIRS[2], count, object == InnerBrace),
         InnerDoubleQuote | ADoubleQuote => {
@@ -60,11 +70,13 @@ pub(crate) fn select(
 
 /// A run of graphemes on one row with the same class, from grapheme `ix`
 /// (on an empty row, the row itself): its byte range.
-fn run(cursor: &mut Cursor, big: bool) -> Range<usize> {
+fn run(cursor: &mut Cursor, by: Granularity) -> Range<usize> {
     let start = cursor.offset();
     if cursor.line.len() > 0 {
-        let class = cursor.class(big);
-        while cursor.class_on_row(cursor.ix + 1, big) == Some(class) {
+        let class = cursor.unit(by);
+        while cursor.unit_on_row(cursor.ix + 1, by) == Some(class)
+            && !cursor.splits_object(cursor.ix + 1, by)
+        {
             cursor.ix += 1;
         }
     }
@@ -79,10 +91,13 @@ fn run(cursor: &mut Cursor, big: bool) -> Range<usize> {
 }
 
 /// Back to the first grapheme of the run holding the cursor's.
-fn run_start(cursor: &mut Cursor, big: bool) {
+fn run_start(cursor: &mut Cursor, by: Granularity) {
     if cursor.line.len() > 0 {
-        let class = cursor.class(big);
-        while cursor.ix > 0 && cursor.class_on_row(cursor.ix - 1, big) == Some(class) {
+        let class = cursor.unit(by);
+        while cursor.ix > 0
+            && cursor.unit_on_row(cursor.ix - 1, by) == Some(class)
+            && !cursor.splits_object(cursor.ix, by)
+        {
             cursor.ix -= 1;
         }
     }
@@ -94,11 +109,11 @@ fn run_start(cursor: &mut Cursor, big: bool) {
 /// up to (not including) the next row's start. An end like that, at column
 /// 0, makes the rows whole from at or before the first non-blank, as
 /// `exclusive-linewise` does, or else ends at the row before's end.
-fn inner_words(text: &Text, mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
+fn inner_words(text: &Text, mut cursor: Cursor, count: u32, by: Granularity) -> Option<Span> {
     let start = cursor.offset();
     let start_row = cursor.row;
     if cursor.line.len() > 0 {
-        run(&mut cursor, big);
+        run(&mut cursor, by);
     }
     let mut inclusive = true;
     for _ in 1..count {
@@ -113,7 +128,7 @@ fn inner_words(text: &Text, mut cursor: Cursor, count: u32, big: bool) -> Option
         }
         inclusive = true;
         if cursor.line.len() > 0 {
-            run(&mut cursor, big);
+            run(&mut cursor, by);
         } else {
             // Up to the next row's start, or on the last row, its own.
             if cursor.row + 1 < text.row_count() {
@@ -147,8 +162,8 @@ fn inner_words(text: &Text, mut cursor: Cursor, count: u32, big: bool) -> Option
 }
 
 /// Whether the cursor's grapheme is blank (an empty row is not).
-fn blank(cursor: &Cursor, big: bool) -> bool {
-    cursor.line.len() > 0 && cursor.class(big) == Class::Blank
+fn blank(cursor: &Cursor, by: Granularity) -> bool {
+    cursor.line.len() > 0 && cursor.unit(by) == Class::Blank
 }
 
 /// `iw` (`inner`) or `aw`, `count` items: for `iw`, runs of a word class or
@@ -156,10 +171,10 @@ fn blank(cursor: &Cursor, big: bool) -> bool {
 /// with the blanks after them, or before the first if there are none after
 /// the last and they aren't the row's indent. Running out of text cancels,
 /// leaving the caret on the last grapheme as nvim does.
-fn words(text: &Text, offset: usize, count: u32, big: bool, inner: bool) -> Span {
+fn words(text: &Text, offset: usize, count: u32, by: Granularity, inner: bool) -> Span {
     let mut cursor = Cursor::at(text, offset);
     // Counted items, and a WORD, may go on past a window's reach.
-    if count > 1 || big || cursor.runs_reach_edge(big) {
+    if count > 1 || by != Granularity::Word || cursor.runs_reach_edge(false) {
         cursor.widen();
     }
     // On an empty last row, nvim's `iw` takes the line break before it and
@@ -176,12 +191,12 @@ fn words(text: &Text, offset: usize, count: u32, big: bool, inner: bool) -> Span
         let before = Cursor::at(text, text.row_start(last_row) - 1);
         return Span::Chars(before.offset()..text.len());
     }
-    run_start(&mut cursor, big);
+    run_start(&mut cursor, by);
     let last = || Span::Move(Cursor::at(text, text.len()).offset());
     if inner {
-        return inner_words(text, cursor, count, big).unwrap_or_else(last);
+        return inner_words(text, cursor, count, by).unwrap_or_else(last);
     }
-    a_words(cursor, count, big).unwrap_or_else(last)
+    a_words(cursor, count, by).unwrap_or_else(last)
 }
 
 /// One position on: the next grapheme, or the next row's first (an empty
@@ -205,20 +220,20 @@ fn advance(cursor: &mut Cursor) -> bool {
 /// after them is the word. Without blanks after the last word (unless that's
 /// an empty row), the blanks before the first are taken, unless they're the
 /// row's indent.
-fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
+fn a_words(mut cursor: Cursor, count: u32, by: Granularity) -> Option<Span> {
     let text = cursor.text;
     let start = cursor.offset();
-    let started_white = blank(&cursor, big) || cursor.line.len() == 0;
+    let started_white = blank(&cursor, by) || cursor.line.len() == 0;
     // Past blanks (from an empty row or a blank) to the word after them.
     let blanks = |cursor: &mut Cursor| -> bool {
         if cursor.line.len() > 0 {
-            run(cursor, big);
+            run(cursor, by);
         }
         if !advance(cursor) {
             return false;
         }
-        while blank(cursor, big) {
-            run(cursor, big);
+        while blank(cursor, by) {
+            run(cursor, by);
             if !advance(cursor) {
                 return false;
             }
@@ -227,10 +242,10 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
     };
     // The blanks after the word, on its row.
     let after = |cursor: &mut Cursor| -> bool {
-        match cursor.class_on_row(cursor.ix + 1, big) {
+        match cursor.unit_on_row(cursor.ix + 1, by) {
             Some(Class::Blank) => {
                 cursor.ix += 1;
-                run(cursor, big);
+                run(cursor, by);
                 true
             }
             _ => false,
@@ -244,13 +259,13 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
                 if !advance(&mut cursor) {
                     return None;
                 }
-                blank(&cursor, big) || cursor.line.len() == 0
+                blank(&cursor, by) || cursor.line.len() == 0
             }
         };
         if white && !blanks(&mut cursor) {
             return None;
         }
-        run(&mut cursor, big);
+        run(&mut cursor, by);
         ended_white = !white && after(&mut cursor);
     }
     let len = match cursor.line.len() {
@@ -259,24 +274,44 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
     };
     let end = cursor.offset() + len;
     let mut start = start;
+    // A subword that doesn't end its keyword run takes no blanks, but the
+    // `_` run before it, if no run follows, goes with it.
+    let subword = by == Granularity::Subword;
+    let ends_run = !subword
+        || cursor.class_on_row(cursor.ix + 1, false) != cursor.class_on_row(cursor.ix, false);
     if !ended_white && !started_white && cursor.line.len() > 0 {
-        let mut back = match count > 1 || big {
+        let mut back = match count > 1 || by != Granularity::Word {
             true => Cursor::whole(text, start),
             false => Cursor::at(text, start),
         };
-        loop {
-            while back.ix > 0 && back.class_on_row(back.ix - 1, big) == Some(Class::Blank) {
+        let underscores = subword
+            && back.ix > 0
+            && back.unit_on_row(back.ix - 1, by) == Some(Class::Blank)
+            && subword::passed_over(&back, back.ix - 1);
+        if underscores {
+            back.ix -= 1;
+            while back.ix > 0 && !back.splits_object(back.ix, by) {
                 back.ix -= 1;
             }
-            // At a window's start that isn't the row's, the blanks may go
-            // on before it: read the row whole to see where they start.
-            if back.ix > 0 || back.line.start == text.row_start(back.row) {
-                break;
-            }
-            back.widen();
-        }
-        if back.ix > 0 {
             start = back.offset();
+        } else if ends_run {
+            loop {
+                while back.ix > 0
+                    && back.unit_on_row(back.ix - 1, by) == Some(Class::Blank)
+                    && !back.splits_object(back.ix, by)
+                {
+                    back.ix -= 1;
+                }
+                // At a window's start that isn't the row's, the blanks may go
+                // on before it: read the row whole to see where they start.
+                if back.ix > 0 || back.line.start == text.row_start(back.row) {
+                    break;
+                }
+                back.widen();
+            }
+            if back.ix > 0 {
+                start = back.offset();
+            }
         }
     }
     Some(Span::Chars(start..end))

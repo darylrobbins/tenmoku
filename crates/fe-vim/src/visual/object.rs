@@ -1,4 +1,5 @@
 use super::*;
+use crate::motion::Granularity;
 
 /// The positions a text object's span takes: its start and the position its
 /// end is taken at. `None` for a failed object.
@@ -37,6 +38,8 @@ fn object_ends(text: &Text, span: Span, object: TextObject) -> Option<(usize, us
                     | TextObject::AWord
                     | TextObject::InnerBigWord
                     | TextObject::ABigWord
+                    | TextObject::InnerSubword
+                    | TextObject::ASubword
             );
             let last = match text.offset_to_point(range.end).column == 0 {
                 true if words => range.end,
@@ -92,14 +95,22 @@ pub(crate) fn select_object(
     };
     let words = matches!(
         args.text_object,
-        InnerWord | AWord | InnerBigWord | ABigWord
+        InnerWord | AWord | InnerBigWord | ABigWord | InnerSubword | ASubword
     );
-    let forward = ends.cursor > ends.anchor;
-    let big = matches!(args.text_object, InnerBigWord | ABigWord);
+    let by = match args.text_object {
+        InnerBigWord | ABigWord => Granularity::BigWord,
+        InnerSubword | ASubword => Granularity::Subword,
+        _ => Granularity::Word,
+    };
+    // One position: a caret, or a one-char subword an object selected,
+    // which a repeated `iS` grows.
+    let initial =
+        ends.anchor == ends.cursor && !(by == Granularity::Subword && state.visual_by_object());
+    let forward = ends.cursor > ends.anchor || (ends.anchor == ends.cursor && !initial);
     let mut kind = VisualKind::Char;
     // Running out of text part way, which nvim fails, though it selects.
     let mut ran_out = false;
-    let inner = matches!(args.text_object, InnerWord | InnerBigWord);
+    let inner = matches!(args.text_object, InnerWord | InnerBigWord | InnerSubword);
     // A row's end, or a last row that's empty: `iw` grows back from it.
     let at_end = {
         let at = cursor_at(&text, ends.cursor);
@@ -111,7 +122,7 @@ pub(crate) fn select_object(
     // A row's end after blanks: `iw` selects that run of blanks, growing forward.
     let after_blanks = at_end && {
         let at = cursor_at(&text, ends.cursor);
-        at.ix > 0 && at.class_on_row(at.ix - 1, big) == Some(Class::Blank)
+        at.ix > 0 && at.unit_on_row(at.ix - 1, by) == Some(Class::Blank)
     };
     let charwise_selection = ends.kind == VisualKind::Char && ends.anchor != ends.cursor;
     let (anchor, cursor) = if charwise_selection
@@ -177,14 +188,17 @@ pub(crate) fn select_object(
             Some(found) => found,
             None => return failed(state),
         }
-    } else if ends.anchor == ends.cursor && inner && after_blanks {
+    } else if initial && inner && after_blanks {
         let mut start = cursor_at(&text, ends.cursor);
         start.ix -= 1;
-        let class = start.class_on_row(start.ix, big);
-        while start.ix > 0 && start.class_on_row(start.ix - 1, big) == class {
+        let class = start.unit_on_row(start.ix, by);
+        while start.ix > 0
+            && start.unit_on_row(start.ix - 1, by) == class
+            && !start.splits_object(start.ix, by)
+        {
             start.ix -= 1;
         }
-        let end = inner_words(&text, ends.cursor, count, big, false);
+        let end = inner_words(&text, ends.cursor, count, by, false);
         if end.is_none() {
             kind = ends.kind;
             ran_out = true;
@@ -193,20 +207,21 @@ pub(crate) fn select_object(
             start.offset(),
             end.unwrap_or_else(|| position(&text, text.len())),
         )
-    } else if ends.anchor == ends.cursor && inner && at_end {
-        let (back, done) = back_inner_words(&text, ends.cursor, count, big, true);
+    } else if initial && inner && at_end {
+        let (back, done) = back_inner_words(&text, ends.cursor, count, by, true);
         if !done {
             kind = ends.kind;
             ran_out = true;
         }
         (ends.anchor, back)
-    } else if ends.anchor == ends.cursor {
+    } else if initial {
         match object(ends.cursor, 1) {
             // More `iw` than one go on as the selection grows.
             Some((start, _))
-                if count > 1 && matches!(args.text_object, InnerWord | InnerBigWord) =>
+                if count > 1
+                    && matches!(args.text_object, InnerWord | InnerBigWord | InnerSubword) =>
             {
-                let end = inner_words(&text, ends.cursor, count, big, false);
+                let end = inner_words(&text, ends.cursor, count, by, false);
                 if end.is_none() {
                     kind = ends.kind;
                     ran_out = true;
@@ -218,8 +233,11 @@ pub(crate) fn select_object(
                 // Running out of the text: from the caret's run to its end.
                 None if words => {
                     let mut start = cursor_at(&text, ends.cursor);
-                    let class = start.class_on_row(start.ix, big);
-                    while start.ix > 0 && start.class_on_row(start.ix - 1, big) == class {
+                    let class = start.unit_on_row(start.ix, by);
+                    while start.ix > 0
+                        && start.unit_on_row(start.ix - 1, by) == class
+                        && !start.splits_object(start.ix, by)
+                    {
                         start.ix -= 1;
                     }
                     kind = ends.kind;
@@ -237,14 +255,14 @@ pub(crate) fn select_object(
             }
             None => return failed(state),
         }
-    } else if !forward && matches!(args.text_object, AWord | ABigWord) {
-        let (back, done) = back_a_words(&text, ends.cursor, count, big);
+    } else if !forward && matches!(args.text_object, AWord | ABigWord | ASubword) {
+        let (back, done) = back_a_words(&text, ends.cursor, count, by);
         ran_out = !done;
         (ends.anchor, back)
     } else if !forward && inner {
         // At the start of the text there's nothing to grow onto; running out
         // of it part way keeps the kind.
-        match back_inner_words(&text, ends.cursor, count, big, false) {
+        match back_inner_words(&text, ends.cursor, count, by, false) {
             (back, _) if back == ends.cursor => return failed(state),
             (back, done) => {
                 if !done {
@@ -255,7 +273,7 @@ pub(crate) fn select_object(
             }
         }
     } else if forward && inner {
-        match inner_words(&text, ends.cursor, count, big, true) {
+        match inner_words(&text, ends.cursor, count, by, true) {
             Some(end) => (ends.anchor, end),
             // Past the end of the text, onto the last row's end.
             None => {
@@ -379,6 +397,8 @@ fn keeps_block(object: TextObject) -> bool {
             | AWord
             | InnerBigWord
             | ABigWord
+            | InnerSubword
+            | ASubword
             | InnerDoubleQuote
             | ADoubleQuote
             | InnerSingleQuote
@@ -388,7 +408,7 @@ fn keeps_block(object: TextObject) -> bool {
     )
 }
 
-/// `iw` (`iW` if `big`) in a visual mode, `count` items from the cursor at
+/// `iw` (`iW` by WORDs, `iS` by subwords, if `by` says so) in a visual mode, `count` items from the cursor at
 /// `offset`, returning where the cursor goes, or `None` past the end of the
 /// text. An item is a run of one class on a row, or an empty row, which a
 /// selection takes up to the next row's start; each after the first (and
@@ -399,7 +419,13 @@ fn failed(state: &mut VimState) -> Result<Dispatched<TransactionId>, CommandErro
     effect(false)
 }
 
-fn inner_words(text: &Text, offset: usize, count: u32, big: bool, grows: bool) -> Option<usize> {
+fn inner_words(
+    text: &Text,
+    offset: usize,
+    count: u32,
+    by: Granularity,
+    grows: bool,
+) -> Option<usize> {
     let mut cursor = cursor_at(text, offset);
     for item in 0..count {
         let further = grows || item > 0;
@@ -413,8 +439,10 @@ fn inner_words(text: &Text, offset: usize, count: u32, big: bool, grows: bool) -
             }
         } else {
             cursor.ix = cursor.ix.min(cursor.line.last());
-            let class = cursor.class(big);
-            while cursor.class_on_row(cursor.ix + 1, big) == Some(class) {
+            let class = cursor.unit(by);
+            while cursor.unit_on_row(cursor.ix + 1, by) == Some(class)
+                && !cursor.splits_object(cursor.ix + 1, by)
+            {
                 cursor.ix += 1;
             }
         }
@@ -422,14 +450,20 @@ fn inner_words(text: &Text, offset: usize, count: u32, big: bool, grows: bool) -
     Some(cursor.offset())
 }
 
-/// `iw` (`iW` if `big`) `count` times back from the cursor at `offset`, as
+/// `iw` (`iW` by WORDs, `iS` by subwords, if `by` says so) `count` times back from the cursor at `offset`, as
 /// a visual selection grows the way it faces: each item one position back,
 /// then to the start of its run on the row. From a row's `end` (or a last row
 /// that's empty) the first item is only the position before it. Returns where
 /// the cursor goes, and whether every item was done: one that lands on the
 /// text's first position has nothing before it to select, and fails there.
 /// A run of blanks reaching the text's start stops one position on from it.
-fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool) -> (usize, bool) {
+fn back_inner_words(
+    text: &Text,
+    offset: usize,
+    count: u32,
+    by: Granularity,
+    end: bool,
+) -> (usize, bool) {
     let mut cursor = cursor_at(text, offset);
     for item in 0..count {
         if !cursor.backward() {
@@ -439,8 +473,11 @@ fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool
             if cursor.offset() == 0 {
                 return (0, false);
             }
-            let class = cursor.class_on_row(cursor.ix, big);
-            while cursor.ix > 0 && cursor.class_on_row(cursor.ix - 1, big) == class {
+            let class = cursor.unit_on_row(cursor.ix, by);
+            while cursor.ix > 0
+                && cursor.unit_on_row(cursor.ix - 1, by) == class
+                && !cursor.splits_object(cursor.ix, by)
+            {
                 cursor.ix -= 1;
             }
             if class == Some(Class::Blank) && cursor.offset() == 0 && cursor.line.len() > 1 {
@@ -451,19 +488,22 @@ fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool
     (cursor.offset(), true)
 }
 
-/// `aw` (`aW` if `big`) `count` times back from the cursor at `offset`, as a
+/// `aw` (`aW`, `aS` as `by` says) `count` times back from the cursor at `offset`, as a
 /// visual selection grows the way it faces: before it, a word and the blanks
 /// before that, or blanks and the word before them. Returns where the
 /// cursor goes, and whether every item was done, as nvim judges it: an item
 /// whose first step back can't be taken or reaches the text's first
 /// position isn't, nor are those after one that ran into the text's start.
-fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> (usize, bool) {
+fn back_a_words(text: &Text, offset: usize, count: u32, by: Granularity) -> (usize, bool) {
     let mut cursor = cursor_at(text, offset);
-    let blank = |cursor: &Cursor| cursor.class_on_row(cursor.ix, big) == Some(Class::Blank);
+    let blank = |cursor: &Cursor| cursor.unit_on_row(cursor.ix, by) == Some(Class::Blank);
     // Back to the start of the run holding the cursor, on its row.
     let run_start = |cursor: &mut Cursor| {
-        let class = cursor.class_on_row(cursor.ix, big);
-        while cursor.ix > 0 && cursor.class_on_row(cursor.ix - 1, big) == class {
+        let class = cursor.unit_on_row(cursor.ix, by);
+        while cursor.ix > 0
+            && cursor.unit_on_row(cursor.ix - 1, by) == class
+            && !cursor.splits_object(cursor.ix, by)
+        {
             cursor.ix -= 1;
         }
     };
@@ -483,7 +523,7 @@ fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> (usize, bo
         run_start(&mut cursor);
         if !blanks_first
             && cursor.ix > 0
-            && cursor.class_on_row(cursor.ix - 1, big) == Some(Class::Blank)
+            && cursor.unit_on_row(cursor.ix - 1, by) == Some(Class::Blank)
         {
             cursor.ix -= 1;
             run_start(&mut cursor);

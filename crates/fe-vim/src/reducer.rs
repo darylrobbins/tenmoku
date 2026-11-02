@@ -904,6 +904,7 @@ fn text_object(ch: char, inner: bool) -> Option<TextObject> {
     let (i, a) = match ch {
         'w' => (InnerWord, AWord),
         'W' => (InnerBigWord, ABigWord),
+        'S' => (InnerSubword, ASubword),
         '(' | ')' | 'b' => (InnerParen, AParen),
         '{' | '}' | 'B' => (InnerBrace, ABrace),
         '"' => (InnerDoubleQuote, ADoubleQuote),

@@ -579,7 +579,8 @@ impl Motion {
     }
 }
 
-/// `iw aw iW aW i( a( i{ a{ i" a" i' a'` (`ib` and `iB` are `i(` and `i{`).
+/// `iw aw iW aW iS aS i( a( i{ a{ i" a" i' a'` (`ib` and `iB` are `i(` and `i{`;
+/// `iS aS` are the subword, `feature/subword.rs`).
 /// `inner_paragraph` `a_paragraph` `inner_sentence` `a_sentence` are `ip ap
 /// is as` (`prose.rs`); `inner_bracket` `a_bracket` `inner_angle`
 /// `a_angle` `inner_tag` `a_tag` `inner_backtick` `a_backtick` are `` i[ a[
@@ -599,6 +600,8 @@ pub enum TextObject {
     AWord,
     InnerBigWord,
     ABigWord,
+    InnerSubword,
+    ASubword,
     InnerParen,
     AParen,
     InnerBrace,

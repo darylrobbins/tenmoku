@@ -1324,6 +1324,18 @@ impl<'a> Cursor<'a> {
         by == Granularity::Subword && subword::splits(&self.line, ix)
     }
 
+    /// [`Cursor::splits`], or between a run of `_` that subwords pass over
+    /// and blanks beside it, which the objects take apart though the
+    /// motions pass over both alike.
+    pub(crate) fn splits_object(&self, ix: usize, by: Granularity) -> bool {
+        self.splits(ix, by)
+            || by == Granularity::Subword
+                && ix > 0
+                && self.unit_on_row(ix - 1, by) == Some(Class::Blank)
+                && self.unit_on_row(ix, by) == Some(Class::Blank)
+                && subword::passed_over(self, ix - 1) != subword::passed_over(self, ix)
+    }
+
     /// To the next grapheme, or the next row's first; false at the end.
     pub(crate) fn forward(&mut self) -> bool {
         if self.step(true) {
