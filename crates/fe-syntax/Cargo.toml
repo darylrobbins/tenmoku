@@ -40,6 +40,8 @@ default = [
     "gitrebase",
     "gitconfig",
     "gitattributes",
+    "ini",
+    "just",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -74,6 +76,8 @@ gitcommit = ["dep:tree-sitter-git-commit"]
 gitrebase = ["dep:tree-sitter-git-rebase"]
 gitconfig = ["dep:tree-sitter-git-config"]
 gitattributes = ["dep:tree-sitter-gitattributes"]
+ini = ["dep:tree-sitter-ini"]
+just = ["dep:tree-sitter-just"]
 # Highlight queries run to completion, as in this crate's tests, instead of
 # stopping after `QUERY_BUDGET`. For the fuzz targets in `fuzz/`, which compare
 # highlights and can't tell a cut-short result from a complete one.
@@ -96,9 +100,11 @@ tree-sitter-git-rebase = { workspace = true, optional = true }
 tree-sitter-gitattributes = { workspace = true, optional = true }
 tree-sitter-gitignore = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-ini = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }
 tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-just = { workspace = true, optional = true }
 tree-sitter-kotlin-sg = { workspace = true, optional = true }
 tree-sitter-lua = { workspace = true, optional = true }
 tree-sitter-make = { workspace = true, optional = true }

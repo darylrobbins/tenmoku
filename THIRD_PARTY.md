@@ -121,6 +121,9 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | gitrebase | tree-sitter-git-rebase, vendored¹³ | commit `32686d6` | https://github.com/the-mikedavis/tree-sitter-git-rebase | MIT | `HIGHLIGHTS_QUERY`, then `queries/gitrebase.scm` (ours) |
 | gitconfig | tree-sitter-git-config, vendored¹³ | commit `3a61756` | https://github.com/the-mikedavis/tree-sitter-git-config | MIT | `HIGHLIGHTS_QUERY` |
 | gitattributes | tree-sitter-gitattributes, vendored¹³ | commit `1b7af09` | https://github.com/tree-sitter-grammars/tree-sitter-gitattributes | MIT | `HIGHLIGHTS_QUERY` |
+| ini | tree-sitter-ini | 1.4.0 | https://github.com/justinmk/tree-sitter-ini | Apache-2.0 | `HIGHLIGHTS_QUERY`, then `queries/ini.scm` (ours) |
+| dotenv | tree-sitter-bash, as bash above | 0.25.1 | https://github.com/tree-sitter/tree-sitter-bash | MIT | bash's `HIGHLIGHT_QUERY`, then `queries/dotenv.scm` (ours) |
+| just | tree-sitter-just, vendored¹⁴ | commit `5685543` | https://github.com/casey/tree-sitter-just | Apache-2.0¹⁴ | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 
 ¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -243,3 +246,10 @@ query are ours. The licence is upstream's. The vendored README says how to updat
 `3a61756a81a86291a0f48e3eeeaa0692b9981aa9` and
 `1b7af09d45b579f9f288453b95ad555f1f431645`; the Rust bindings are ours. The licences
 are upstream's. Each vendored README says how to update it.
+
+¹⁴ Vendored in `vendor/tree-sitter-just/` as a path dependency, because
+`tree-sitter-just` 0.2.0 on crates.io depends on `tree-sitter` ~0.25.5, which can't
+link beside our 0.27. Upstream's `grammar.js`, generated `src/` and queries are
+unchanged, at commit `5685543a6e64f66335e25518c9ae8ffa1dae3d01`; the Rust binding is
+ours. Upstream's `LICENSE` is Apache-2.0 although its `Cargo.toml` says MIT; we go by
+the licence text and ship it. The vendored README says how to update it.

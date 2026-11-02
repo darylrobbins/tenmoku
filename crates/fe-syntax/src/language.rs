@@ -118,6 +118,10 @@ const PATH_SUFFIXES: &[(&str, &str)] = &[
     (".config/git/ignore", "gitignore"),
 ];
 
+/// Files named by how their name starts, whatever follows: `(prefix, language)`,
+/// ignoring ASCII case. Checked last, so `.env.sh` stays a shell script.
+const FILE_NAME_PREFIXES: &[(&str, &str)] = &[(".env.", "dotenv")];
+
 /// Whether `path` ends with the components of `tail`, ignoring ASCII case as
 /// file names do.
 fn path_ends_with(path: &Path, tail: &str) -> bool {
@@ -132,7 +136,7 @@ fn path_ends_with(path: &Path, tail: &str) -> bool {
 
 /// The name of the language for a file, chosen by the end of its path, its
 /// extension or its name: a built-in language's, else a
-/// [registered](crate::register_language) one's.
+/// [registered](crate::register_language) one's, else by how its name starts.
 pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
     let by_tail = PATH_SUFFIXES
         .iter()
@@ -156,6 +160,21 @@ pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
         })
         .map(|def| def.name)
         .or_else(|| runtime::name_for_file(file_name, extension))
+        .or_else(|| language_by_file_name_prefix(file_name))
+}
+
+/// The built-in language [`FILE_NAME_PREFIXES`] gives a file name.
+fn language_by_file_name_prefix(file_name: &str) -> Option<&'static str> {
+    FILE_NAME_PREFIXES
+        .iter()
+        .filter(|(prefix, _)| {
+            file_name
+                .as_bytes()
+                .get(..prefix.len())
+                .is_some_and(|start| start.eq_ignore_ascii_case(prefix.as_bytes()))
+        })
+        .find_map(|(_, language)| listed().find(|def| def.name == *language))
+        .map(|def| def.name)
 }
 
 /// The language for a file. See [`language_by_name`].
@@ -839,6 +858,59 @@ const DEFS: &[Def] = &[
         highlights: || &[tree_sitter_gitattributes::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
         injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "ini")]
+    Def {
+        name: "ini",
+        extensions: &["ini", "cfg"],
+        file_names: &[
+            ".editorconfig",
+            ".npmrc",
+            ".pypirc",
+            ".flake8",
+            ".coveragerc",
+            ".pylintrc",
+            "pylintrc",
+        ],
+        grammar: || tree_sitter_ini::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_ini::HIGHLIGHTS_QUERY,
+                include_str!("../queries/ini.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    // Bash's grammar, as a dotenv file is its assignments. `.env.local` and the
+    // like come from `FILE_NAME_PREFIXES`.
+    #[cfg(feature = "bash")]
+    Def {
+        name: "dotenv",
+        extensions: &["env"],
+        file_names: &[".env"],
+        grammar: || tree_sitter_bash::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_bash::HIGHLIGHT_QUERY,
+                include_str!("../queries/dotenv.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "just")]
+    Def {
+        name: "just",
+        extensions: &["just"],
+        file_names: &["justfile", ".justfile"],
+        grammar: || tree_sitter_just::LANGUAGE.into(),
+        highlights: || &[tree_sitter_just::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: Some(tree_sitter_just::INJECTIONS_QUERY),
         hidden: false,
     },
 ];

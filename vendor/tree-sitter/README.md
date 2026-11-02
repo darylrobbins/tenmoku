@@ -110,8 +110,13 @@ stops a version instead of asserting or reading a missing lookahead: an action
 other than a reduce with no lookahead, an accept without the end of input, an
 accepted root whose production or structural children don't fit the alias
 sequences (a childless root takes production 0, as an external token's leaf
-holds scanner bytes where a node's production is), and a parse that accepts no
-tree (returns NULL).
+holds scanner bytes where a node's production is), an accepted stack with stray
+structural trees beside its root, and a parse that accepts no tree (returns
+NULL). Beside a root that isn't an ERROR node (error recovery's holds the whole
+stack), the only non-extra tree allowed has children and sends state 1 back to
+itself on its symbol. That is a non-terminal extra the grammar's rules use too,
+reduced with a real lookahead and so not flagged extra: tree-sitter-ini's
+`_blank` before a file's first setting. Upstream has no such check.
 
 `binding_rust/wasm_language.rs`: `with_wasm_interrupt(check, f)`, which runs
 `f` with Wasm code on this thread asking `check` once an epoch whether to stop,

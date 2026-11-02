@@ -1110,10 +1110,18 @@ static void ts_parser__accept(
         // A valid accepted stack holds one non-extra tree besides extras and
         // the end of input, except where error recovery wraps the whole stack
         // in an ERROR root (recover_eof, or an ERROR left in place of a root),
-        // which takes the others as its children.
+        // which takes the others as its children. A non-terminal extra that
+        // the grammar's rules use too (ini's `_blank`) is also valid below the
+        // root: reduced with a real lookahead it isn't flagged extra, but the
+        // first state goes back to itself on it, as it does on any extra.
         if (ts_subtree_symbol(tree) != ts_builtin_sym_error) {
           for (uint32_t k = 0; k < trees.size; k++) {
-            if (k != j && !ts_subtree_extra(*array_get(&trees, k))) well_formed = false;
+            Subtree other = *array_get(&trees, k);
+            if (k == j || ts_subtree_extra(other)) continue;
+            bool extra_rule =
+              ts_subtree_child_count(other) > 0 &&
+              ts_language_next_state(self->language, 1, ts_subtree_symbol(other)) == 1;
+            if (!extra_rule) well_formed = false;
           }
         }
         if (!well_formed) break;

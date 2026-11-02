@@ -29,8 +29,9 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "rust" | "json" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java"
         | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
         "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" | "gitignore" | "gitcommit"
-        | "gitrebase" | "gitconfig" | "gitattributes" => hash,
+        | "gitrebase" | "gitconfig" | "gitattributes" | "dotenv" | "just" => hash,
         "python" => tokens(Some("#"), Some(("\"\"\"", "\"\"\""))),
+        "ini" => tokens(Some(";"), None),
         "lua" => tokens(Some("--"), Some(("--[[", "]]"))),
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
@@ -49,7 +50,7 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
         "markdown_inline" | "rustdoc_inline" => &[],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
-        | "json" => &[
+        | "json" | "just" => &[
             ('(', ')'),
             ('[', ']'),
             ('{', '}'),
@@ -60,7 +61,7 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
         "markdown" | "gitcommit" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('`', '`')],
         "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
         | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" | "gitrebase"
-        | "gitconfig" | "gitattributes" => {
+        | "gitconfig" | "gitattributes" | "ini" | "dotenv" => {
             &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')]
         }
         _ => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],

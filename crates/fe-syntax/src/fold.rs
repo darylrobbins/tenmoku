@@ -515,6 +515,11 @@ const KINDS: &[Kinds] = &[
         nodes: &["section"],
         bodies: &[],
     },
+    Kinds {
+        language: "just",
+        nodes: &["recipe"],
+        bodies: &[],
+    },
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

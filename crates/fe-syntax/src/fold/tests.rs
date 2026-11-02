@@ -300,6 +300,23 @@ const CASES: &[Case] = &[
         &["# c", "*.png binary", "*.sh eol=lf"],
         &[],
     ),
+    ("x.ini", &["; c", "[a]", "b = 1", "c = 2"], &[]),
+    (".env", &["# c", "A=1", "B=\"2\""], &[]),
+    (
+        "justfile",
+        &[
+            "# c",
+            "x := \"1\"",
+            "",
+            "build target:",
+            "    echo {{target}}",
+            "    cargo build",
+            "",
+            "one:",
+            "    echo one",
+        ],
+        &[(3, 5), (7, 8)],
+    ),
     (
         "a.yaml",
         &[

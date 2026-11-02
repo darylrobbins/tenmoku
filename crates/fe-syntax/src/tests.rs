@@ -205,6 +205,40 @@ fn each_language_highlights_a_snippet() {
             ],
         ),
         (
+            "x.ini",
+            "; c\n[sec]\nkey = some value\n",
+            &[
+                ("; c\n", "comment"),
+                ("sec", "type"),
+                ("key", "property"),
+                ("=", "operator"),
+                (" some value", "string"),
+            ],
+        ),
+        (
+            ".env",
+            "# c\nexport NAME=plain\nB=\"q\"\n",
+            &[
+                ("# c", "comment"),
+                ("export", "keyword"),
+                ("NAME", "property"),
+                ("plain", "string"),
+                ("\"q\"", "string"),
+            ],
+        ),
+        (
+            "justfile",
+            "# c\nx := \"1\"\nbuild target: dep\n    echo hi\n",
+            &[
+                ("# c", "comment"),
+                ("x", "variable"),
+                ("\"1\"", "string"),
+                ("build", "function"),
+                ("target", "variable.parameter"),
+                ("dep", "function"),
+            ],
+        ),
+        (
             "x.yaml",
             "key: 1 # c",
             &[("key", "property"), ("1", "number"), ("# c", "comment")],
@@ -368,6 +402,27 @@ fn each_language_highlights_a_snippet() {
     assert_eq!(covered, all, "every language has a case");
 }
 
+/// A blank line can come before an INI file's first setting or section. The
+/// grammar's `_blank` then sits under the root unflagged, as a non-terminal
+/// extra reduced with a real lookahead, and the stack is still a parse.
+#[test]
+fn ini_files_may_start_with_blank_lines() {
+    let ini = language_for_path(Path::new("x.ini")).unwrap();
+    for text in [
+        "\n",
+        "\n\n",
+        "; c\n\n",
+        "; c\n\nk = v\n",
+        "\n[s]\n",
+        "\n[s]\nk = v\n",
+        "\n# c\n\n; d\n[s]\n\nk = v\n\n",
+    ] {
+        let syntax = parsed(ini, &Buffer::new(text));
+        let tree = syntax.tree().unwrap_or_else(|| panic!("{text:?}"));
+        assert!(!tree.root_node().has_error(), "{text:?}");
+    }
+}
+
 /// Random edits, made in batches and caught up with in groups, sometimes
 /// while a background parse is in flight, always leave the same tree a parse
 /// from scratch would build.
@@ -406,6 +461,16 @@ fn incremental_reparse_matches_a_full_parse() {
                 "x",
                 "",
             ],
+        ),
+        (
+            "x.ini",
+            "; c\n\n[s]\nk = v\n\n# d\n[t]\nj = w\n",
+            &["\n", "\n\n", "; c\n", "[a]\n", "k = v\n", "=", "[", "x", ""],
+        ),
+        (
+            "justfile",
+            "x := \"1\"\n\nbuild target: dep\n    echo {{target}}\n\ndep:\n    #!/bin/sh\n    echo\n",
+            &["\n", "    ", "{{", "}}", ":", "a:\n    b\n", "\"", "x", ""],
         ),
     ];
     let mut rng = StdRng::seed_from_u64(7);

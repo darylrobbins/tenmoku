@@ -27,6 +27,7 @@ const INTERPRETERS: &[(&str, &str)] = &[
     ("lua", "lua"),
     ("php", "php"),
     ("make", "make"),
+    ("just", "just"),
 ];
 
 /// The language a `#!` line runs, if its interpreter is known and compiled in.

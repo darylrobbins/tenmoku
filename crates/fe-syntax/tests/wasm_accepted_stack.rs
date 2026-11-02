@@ -1,8 +1,13 @@
 //! An accepted stack holds one structural tree (the root) besides extras and
 //! the end of input, or an ERROR root that error recovery made of the whole
-//! stack. A corrupt grammar that accepts a stack with stray structural trees
-//! under a root fails to parse; error recovery still parses. The module
-//! patched is `tree-sitter-json.wasm`; see `fixtures/tree-sitter-json.wasm.md`.
+//! stack. The one exception is a non-terminal extra that the grammar's rules
+//! use too, reduced with a real lookahead and so not flagged extra: it has
+//! children and state 1 goes back to itself on its symbol, as with
+//! tree-sitter-ini's `_blank` before a file's first setting
+//! (`tests::ini_files_may_start_with_blank_lines`). A corrupt grammar that
+//! accepts a stack with other stray structural trees under a root fails to
+//! parse; error recovery still parses. The module patched is
+//! `tree-sitter-json.wasm`; see `fixtures/tree-sitter-json.wasm.md`.
 
 use std::{fs, path::Path, sync::Once, time::Duration};
 

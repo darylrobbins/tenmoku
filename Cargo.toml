@@ -204,6 +204,7 @@ tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.25"
 tree-sitter-go = "0.25"
 tree-sitter-html = "0.23"
+tree-sitter-ini = "1.4"
 tree-sitter-java = "0.23"
 tree-sitter-javascript = "0.25"
 tree-sitter-json = "0.24"
@@ -229,6 +230,7 @@ tree-sitter-git-commit = { path = "vendor/tree-sitter-git-commit" }
 tree-sitter-git-rebase = { path = "vendor/tree-sitter-git-rebase" }
 tree-sitter-git-config = { path = "vendor/tree-sitter-git-config" }
 tree-sitter-gitattributes = { path = "vendor/tree-sitter-gitattributes" }
+tree-sitter-just = { path = "vendor/tree-sitter-just" }
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 # Line diffs for proposed changes (Apache-2.0).
