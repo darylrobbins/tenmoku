@@ -88,7 +88,7 @@ regex = "1"
 # parser we looked at, with byte ranges for each event (`into_offset_iter`),
 # which give blocks their source lines. Its only new dependency is unicase (MIT
 # OR Apache-2.0). Without default features it has no `getopts` or `html`.
-pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 # Percent-decoding link destinations (already in the lock).
 percent-encoding = "2"
 
@@ -193,8 +193,8 @@ tree-sitter = { version = "0.27", features = ["wasm"] }
 # Plugin host (kiln-plugin). The one wasmtime in the tree: tree-sitter's `wasm`
 # feature links the same 48 through wasmtime-c-api-impl, so a plugin `Engine`
 # is tree-sitter's `wasmtime::Engine`. Tests add the `wat` feature.
-wasmtime = { version = "48", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
-wasmtime-wasi = "48"
+wasmtime = { version = "48.0.8", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime-wasi = "48.0.8"
 sha2 = "0.10"
 tree-sitter-bash = "0.25"
 tree-sitter-c = "0.24"
