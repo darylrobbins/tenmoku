@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_csharp"
+name = "C# syntax"
+version = "0.23.5"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "csharp"
+wasm = "tree-sitter-c-sharp.wasm"
+extensions = ["cs"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

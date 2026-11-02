@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_kotlin"
+name = "Kotlin syntax"
+version = "0.4.1"
+license = "MIT AND Apache-2.0"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "kotlin"
+wasm = "tree-sitter-kotlin.wasm"
+extensions = ["kt", "kts"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
+license = "MIT"

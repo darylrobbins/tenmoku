@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_swift"
+name = "Swift syntax"
+version = "0.7.3"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "swift"
+wasm = "tree-sitter-swift.wasm"
+extensions = ["swift"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

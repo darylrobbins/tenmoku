@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_scala"
+name = "Scala syntax"
+version = "0.26.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "scala"
+wasm = "tree-sitter-scala.wasm"
+extensions = ["scala", "sc"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

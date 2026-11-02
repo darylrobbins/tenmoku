@@ -192,6 +192,20 @@ was read for the rule, not copied: see `earlier_patterns_win` in
 implement tree-sitter's documented `@injection.*` captures and `#set!`
 properties; no code was copied or adapted for them.
 
+### Grammars shipped as WebAssembly
+
+`.github/workflows/grammars.yml` compiles these from the pinned crate's source
+and attaches the modules to a release. `extensions/grammars/<language>/` holds
+each one's manifest, queries (the same as the built-in language's, above) and
+licence. No module is committed.
+
+| Language | Release asset | Pin (`Cargo.lock`) | Licence |
+|---|---|---|---|
+| kotlin | `tree-sitter-kotlin.wasm` | tree-sitter-kotlin-sg 0.4.1 | MIT; `highlights.scm` also has nvim-treesitter's Apache-2.0 patterns⁶, with the text in `LICENSE-APACHE` |
+| csharp | `tree-sitter-c-sharp.wasm` | tree-sitter-c-sharp 0.23.5 | MIT |
+| scala | `tree-sitter-scala.wasm` | tree-sitter-scala 0.26.2 | MIT |
+| swift | `tree-sitter-swift.wasm` | tree-sitter-swift 0.7.3 | MIT |
+
 ## Icons
 
 | Our path | Source | Tag / commit | License | Files |

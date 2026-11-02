@@ -1,0 +1,10 @@
+# Where this extension's WebAssembly grammar comes from: the crate source
+# Cargo.lock pins, which scripts/build-grammar-wasm.sh compiles. The version
+# here must equal Cargo.lock's; crates/fe-syntax/tests/wasm_parity.rs checks it.
+crate = "tree-sitter-scala"
+version = "0.26.2"
+# The export tree_sitter_<grammar>, which fixes the file name
+# tree-sitter-<grammar>.wasm (with - for _).
+grammar = "scala"
+# The directory holding parser.c, and scanner.c if there is one.
+src = "src"

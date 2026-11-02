@@ -1683,8 +1683,8 @@ static const char *ts_wasm_language__validate(
         }
       }
       for (size_t i = 0; i < sizes->supertype_entry_count; i++) {
-        if (language->supertype_map_entries[i] >= language->symbol_count) {
-          return "supertype map entries: a symbol the language doesn't have";
+        if (language->supertype_map_entries[i] >= name_count) {
+          return "supertype map entries: a symbol or alias the language doesn't have";
         }
       }
     }

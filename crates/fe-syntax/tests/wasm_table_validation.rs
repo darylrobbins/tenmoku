@@ -907,6 +907,63 @@ fn a_supertype_table_is_read_where_the_patch_points() {
     result.unwrap();
 }
 
+/// Gives `badlex` an alias and returns its id, the symbol count: a
+/// supertype's subtypes can be aliases, as tree-sitter-c-sharp's are.
+///
+/// The name and metadata tables are then read one entry further. The names
+/// end the data segment, so they start one entry earlier, in the padding
+/// after the language, which moves each name along by one: a load doesn't
+/// mind. The metadata runs into the public symbol map, whose second entry
+/// would mark the alias a supertype unless it's symbol 0.
+fn alias(m: &mut Module) -> u16 {
+    m.set_count(ALIAS_COUNT, 1);
+    let names = m.table(SYMBOL_NAMES);
+    assert_eq!(m.u32(names - 4), 0, "padding before the names");
+    m.set_u32(names - 4, MEMORY_BASE + m.u32(names));
+    m.set_pointer(m.language + SYMBOL_NAMES, MEMORY_BASE + names as u32 - 4);
+    let public = m.table(PUBLIC_SYMBOL_MAP);
+    m.set_u16(public + 2, 0);
+    m.count(SYMBOL_COUNT) as u16
+}
+
+#[test]
+fn a_supertype_map_entry_can_be_an_alias() {
+    let (_, result) = load("supertype-entry-alias", "badlex", |m| {
+        let scratch = supertypes(m);
+        m.set_u16(scratch + 6, 1);
+        let alias = alias(m);
+        m.set_u16(scratch + 8, alias);
+    });
+    result.unwrap();
+}
+
+#[test]
+fn a_supertype_map_entry_past_the_aliases_is_an_error() {
+    // One past the last name, with an alias and without.
+    rejected(
+        "supertype-entry-past-alias",
+        "badlex",
+        |m| {
+            let scratch = supertypes(m);
+            m.set_u16(scratch + 6, 1);
+            let alias = alias(m);
+            m.set_u16(scratch + 8, alias + 1);
+        },
+        "invalid supertype map entries",
+    );
+    rejected(
+        "supertype-entry-no-alias",
+        "badlex",
+        |m| {
+            let scratch = supertypes(m);
+            m.set_u16(scratch + 6, 1);
+            let past = m.count(SYMBOL_COUNT) as u16;
+            m.set_u16(scratch + 8, past);
+        },
+        "invalid supertype map entries",
+    );
+}
+
 #[test]
 fn supertype_tables_naming_what_isnt_there_are_errors() {
     rejected(

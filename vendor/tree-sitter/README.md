@@ -93,7 +93,8 @@ Every change is marked `fastedit patch` in a comment.
   symbol map (tokens), the public symbol map, the alias map and sequences, the field
   map's slices (entries sized by the furthest) and fields, and the supertype
   symbols, map slices and entries all name symbols, states and fields the
-  language has, as does the keyword capture token; the symbol and field names
+  language has (a supertype map entry may be an alias, as tree-sitter-c-sharp's
+  is), as does the keyword capture token; the symbol and field names
   are present and end inside the module's memory; every symbol marked a
   supertype is in the supertype map; the reserved words are sized from the lex
   modes' set ids. Where a table's length isn't in the language (the actions,
