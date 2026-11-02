@@ -61,6 +61,11 @@ pub trait EditorHost {
     fn comment_tokens(&self) -> Option<CommentTokens> {
         None
     }
+    /// The name of the buffer's language, as fe-syntax names it (`lua`,
+    /// `bash`); `None` (the default) if it isn't known.
+    fn language_name(&self) -> Option<&str> {
+        None
+    }
     /// The next larger syntax node around `range`, as
     /// `fe_syntax::larger_syntax_node` finds it; `None` (the default) if
     /// there is none or syntax isn't known.

@@ -1,5 +1,6 @@
-//! Which-key in the editor: once a prefix vim or its remaps hold (`z`, `Z`,
-//! `<leader>`, a map's first keys) has waited `vim.which_key_delay_ms` for
+//! Which-key in the editor: once a prefix vim or its remaps hold in normal
+//! or a visual mode (`z`, `Z`, `<leader>`, a map's first keys; not insert
+//! mode's `j` of `jk`) has waited `vim.which_key_delay_ms` for
 //! its next key, a panel along the editor's bottom lists the keys that go on
 //! from it, each with its title ([`fe_vim::VimState::which_key`]), as which-key.nvim
 //! shows it. A key that comes first ends the wait, so a sequence typed
@@ -138,9 +139,15 @@ impl EditorView {
         self.which_key.shown.as_ref()
     }
 
-    /// What waits now, with the mode it waits in.
+    /// What waits now, with the mode it waits in: in normal or a visual
+    /// mode only. Insert, replace and the command line hold their maps'
+    /// keys too, but a popup there would stop the map timing out, holding
+    /// back the `j` of `inoremap jk <Esc>`, so none shows.
     fn which_key_now(&self) -> Option<(WhichKey, Target)> {
         let state = self.vim.as_ref()?;
+        if !matches!(state.mode(), Mode::Normal | Mode::Visual(_)) {
+            return None;
+        }
         let which = state.which_key()?;
         let target = Target {
             prefix: which.prefix.clone(),

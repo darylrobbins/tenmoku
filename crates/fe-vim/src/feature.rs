@@ -43,6 +43,7 @@ pub(crate) mod definition_motions;
 pub(crate) mod exchange;
 pub(crate) mod filter;
 pub(crate) mod line_edits;
+pub(crate) mod matchit;
 pub(crate) mod objects;
 pub(crate) mod replace_register;
 pub(crate) mod sections;
@@ -213,6 +214,7 @@ pub(crate) const FEATURES: &[&Feature] = &[
     &filter::FEATURE,
     &seek::FEATURE,
     &abolish::FEATURE,
+    &matchit::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.

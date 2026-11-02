@@ -379,6 +379,10 @@ impl EditorHost for ViewHost<'_> {
         })
     }
 
+    fn language_name(&self) -> Option<&str> {
+        Some(self.language.as_ref()?.name)
+    }
+
     fn auto_pairs(&self) -> &[(char, char)] {
         if self.vim {
             return &[];
@@ -920,3 +924,39 @@ mod pairs_host_tests;
 #[cfg(test)]
 #[path = "syntax_objects_tests.rs"]
 mod syntax_objects_tests;
+
+#[cfg(test)]
+mod language_name_tests {
+    use super::*;
+    use crate::tests::editor;
+    use gpui::TestAppContext;
+
+    /// The host's [`EditorHost::language_name`] for `view` as it is now.
+    fn named(view: &gpui::Entity<EditorView>, cx: &mut gpui::VisualTestContext) -> Option<String> {
+        view.update(cx, |view, cx| {
+            let host = ViewHost {
+                cx,
+                page_rows: 20,
+                syntax: None,
+                server_folds: None,
+                language: loaded_language(&view.syntax),
+                vim: true,
+            };
+            host.language_name().map(str::to_string)
+        })
+    }
+
+    #[gpui::test]
+    fn host_names_the_buffers_language(cx: &mut TestAppContext) {
+        let (view, cx) = editor(cx, "|if a then end");
+        assert_eq!(named(&view, cx), None);
+        for language in ["lua", "bash", "make", "rust"] {
+            view.update(cx, |view, cx| view.set_language(Some(language), cx));
+            cx.run_until_parked();
+            assert_eq!(named(&view, cx).as_deref(), Some(language));
+        }
+        view.update(cx, |view, cx| view.set_language(None, cx));
+        cx.run_until_parked();
+        assert_eq!(named(&view, cx), None);
+    }
+}

@@ -41,6 +41,9 @@ pub struct HeadlessVim {
     /// What its host gives as the buffer's comment tokens
     /// ([`HeadlessVim::set_comment_tokens`]).
     comment_tokens: Option<CommentTokens>,
+    /// What its host gives as the buffer's language
+    /// ([`HeadlessVim::set_language`]).
+    language: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -75,6 +78,7 @@ impl HeadlessVim {
             line: String::new(),
             recall: HistoryRecall::default(),
             comment_tokens: None,
+            language: None,
         }
     }
 
@@ -382,6 +386,7 @@ impl HeadlessVim {
             host: &mut self.host,
             view: &mut self.view,
             comment_tokens: self.comment_tokens,
+            language: self.language,
         };
         let mut target = VimTarget {
             model: &mut self.model,
@@ -474,6 +479,13 @@ impl HeadlessVim {
     /// language.
     pub fn set_comment_tokens(&mut self, tokens: Option<CommentTokens>) {
         self.comment_tokens = tokens;
+    }
+
+    /// Sets the name its host gives for the buffer's language (`lua`,
+    /// `bash`, `make`), which `%` and `g%` read keyword pairs from;
+    /// `None` (the default) is no language.
+    pub fn set_language(&mut self, language: Option<&'static str>) {
+        self.language = language;
     }
 
     /// The host, whose `clipboard` is `+` and `*`.
@@ -574,11 +586,12 @@ impl HeadlessVim {
 }
 
 /// The host [`HeadlessVim`] dispatches with: its [`HeadlessHost`], its
-/// view as the viewport, and its comment tokens.
+/// view as the viewport, and its comment tokens and language.
 struct ViewHost<'a> {
     host: &'a mut HeadlessHost,
     view: &'a mut Viewport,
     comment_tokens: Option<CommentTokens>,
+    language: Option<&'static str>,
 }
 
 impl EditorHost for ViewHost<'_> {
@@ -616,6 +629,10 @@ impl EditorHost for ViewHost<'_> {
 
     fn comment_tokens(&self) -> Option<CommentTokens> {
         self.comment_tokens
+    }
+
+    fn language_name(&self) -> Option<&str> {
+        self.language
     }
 
     fn scroll(&mut self, request: ScrollRequest) {

@@ -6,14 +6,18 @@
 //! normal or a visual mode, the keys of [`BUILTIN_KEYS`] that it takes there
 //! now; and while the remap engine holds keys for a longer map (`<leader>`
 //! of `<leader>ff`), the next key of every longer map of the mode, a group
-//! where more keys go on. A map's key wins over a built-in's: with `gx`
-//! mapped, `g` is held and lists both, `x` as the map.
+//! where more keys go on, in insert, replace and command-line mode too. A
+//! map's key wins over a built-in's: with `gx` mapped, `g` is held and
+//! lists both, `x` as the map. With `g` itself mapped too, the held `g` is
+//! the map's, so only the maps list.
 //!
 //! Nothing in operator-pending mode (`d`, `y`, `c` list no motions), nor
 //! after a count or register alone, nor for another prefix (`f`, `"`, `m`,
-//! `gs`); keymap chords (`] d`, `<C-w>`) are the keymap matcher's.
+//! `gs`, insert mode's `<C-r>`); keymap chords (`] d`, `<C-w>`) are the
+//! keymap matcher's.
 
 use crate::feature::replace_register;
+use crate::remap::Lookup;
 use crate::vimrc::notation;
 use crate::{Mode, Pending, RemapMode, Step, VimKey, VimState};
 
@@ -72,6 +76,7 @@ pub const BUILTIN_KEYS: &[BuiltinKeys] = &[
         keys: &[
             (ch('#'), "partial word backward"),
             (ch('$'), "end of screen line"),
+            (ch('%'), "match backward"),
             (ch('&'), "repeat :s on all lines"),
             (ch('*'), "partial word forward"),
             (ch(','), "newer change"),
@@ -183,26 +188,44 @@ impl VimState {
     /// itself: `keys` are those typed since nothing was pending but a count
     /// or a register.
     pub fn which_key_for(&self, keys: &[VimKey]) -> Option<WhichKey> {
+        // The reducer's prefixes wait in normal and the visual modes, as
+        // `Some` of the visual kind; insert, replace and the command line
+        // have maps only.
         let (mode, visual) = match self.mode {
-            Mode::Normal => (RemapMode::Normal, None),
-            Mode::Visual(kind) => (RemapMode::Visual, Some(kind)),
-            _ => return None,
+            Mode::Normal => (RemapMode::Normal, Some(None)),
+            Mode::Visual(kind) => (RemapMode::Visual, Some(Some(kind))),
+            // The key after `<C-r>` names a register, read unmapped.
+            Mode::Insert | Mode::Replace if self.insert_register_waiting() => return None,
+            Mode::Insert | Mode::Replace => (RemapMode::Insert, None),
+            Mode::CmdLine(_) => (RemapMode::CmdLine, None),
         };
-        let pending = self.pending.clone().in_visual(visual);
-        // No map is read after a prefix of the reducer's.
-        if pending.has_operator() || (pending.has_prefix() && !keys.is_empty()) {
-            return None;
-        }
-        // The prefix the reducer waits on, or would once it reads `keys`.
-        let waiting = match keys {
-            [] => Some(pending),
-            [key] => match crate::step(pending, *key) {
-                Step::Wait(pending) => Some(pending),
-                _ => None,
-            },
-            _ => None,
+        let builtin = match visual {
+            Some(visual) => {
+                let pending = self.pending.clone().in_visual(visual);
+                // No map is read after a prefix of the reducer's.
+                if pending.has_operator() || (pending.has_prefix() && !keys.is_empty()) {
+                    return None;
+                }
+                // Keys a map has whole are the map's, not the reducer's.
+                let mapped = matches!(
+                    self.remaps().lookup(mode, keys),
+                    Lookup::Exact { .. } | Lookup::ExactAndPrefix { .. }
+                );
+                // The prefix the reducer waits on, or would once it reads
+                // `keys`.
+                let waiting = match keys {
+                    [] => Some(pending),
+                    [_] if mapped => None,
+                    [key] => match crate::step(pending, *key) {
+                        Step::Wait(pending) => Some(pending),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                waiting.and_then(|pending| Some((pending.which_key_prefix()?, pending)))
+            }
+            None => None,
         };
-        let builtin = waiting.and_then(|pending| Some((pending.which_key_prefix()?, pending)));
         let mut entries = Vec::new();
         if let Some((prefix, pending)) = &builtin {
             let table = BUILTIN_KEYS.iter().find(|keys| keys.prefix == *prefix);
@@ -253,5 +276,93 @@ impl VimState {
             Step::Cancel | Step::Forward => false,
             step => self.replace_with_register || !replace_register::takes(&step),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{HeadlessVim, Remap, RemapMode, RemapSet, VimKey, WhichKey, parse_keys};
+
+    fn vim(remaps: &[(RemapMode, &str, &str)]) -> HeadlessVim {
+        let remaps: Vec<Remap> = (remaps.iter())
+            .map(|&(mode, from, to)| Remap {
+                modes: vec![mode],
+                from: from.into(),
+                to: to.into(),
+                recursive: false,
+            })
+            .collect();
+        let mut vim = HeadlessVim::new("one two\n", (0, 0));
+        let (set, issues) = RemapSet::new(&remaps, "\\");
+        assert!(issues.is_empty(), "{issues:?}");
+        vim.state_mut().set_remaps(Arc::new(set));
+        vim
+    }
+
+    fn keys(text: &str) -> Vec<VimKey> {
+        parse_keys(text).unwrap()
+    }
+
+    fn listed(which: Option<WhichKey>) -> Option<(String, Vec<String>)> {
+        let which = which?;
+        let keys = which.entries.into_iter().map(|entry| entry.key).collect();
+        Some((which.prefix, keys))
+    }
+
+    fn some(prefix: &str, keys: &[&str]) -> Option<(String, Vec<String>)> {
+        Some((prefix.into(), keys.iter().map(|&key| key.into()).collect()))
+    }
+
+    #[test]
+    fn a_mapped_prefix_shadows_the_builtin_keys_after_it() {
+        let n = RemapMode::Normal;
+        // `g` held is the map's: `gg` would run the mapped `g` then `g`.
+        let mut held = vim(&[(n, "g", "x"), (n, "gx", "dd")]);
+        held.feed("g").unwrap();
+        assert!(held.state().remap_waiting());
+        assert_eq!(listed(held.state().which_key()), some("g", &["x"]));
+        let state = held.state();
+        assert_eq!(listed(state.which_key_for(&keys("g"))), some("g", &["x"]));
+        // A leaf map of `g` alone: nothing goes on from it.
+        let leaf = vim(&[(n, "g", "x")]);
+        assert_eq!(leaf.state().which_key_for(&keys("g")), None);
+        // A map under `g` without `g` mapped still lists the built-ins.
+        let under = vim(&[(n, "gx", "dd")]);
+        let which = listed(under.state().which_key_for(&keys("g"))).unwrap();
+        assert!(which.1.contains(&"g".to_string()) && which.1.contains(&"x".to_string()));
+    }
+
+    #[test]
+    fn insert_replace_and_the_command_line_list_their_maps() {
+        let (i, c) = (RemapMode::Insert, RemapMode::CmdLine);
+        let maps = [(i, "jk", "<Esc>"), (i, "jj", "J"), (c, "zz", "s/a/b/")];
+        let mut insert = vim(&maps);
+        insert.feed("ij").unwrap();
+        assert!(insert.state().remap_waiting());
+        assert_eq!(listed(insert.state().which_key()), some("j", &["j", "k"]));
+        let mut replace = vim(&maps);
+        replace.feed("Rj").unwrap();
+        assert_eq!(listed(replace.state().which_key()), some("j", &["j", "k"]));
+        let mut line = vim(&maps);
+        line.feed(":z").unwrap();
+        assert!(line.state().remap_waiting());
+        assert_eq!(listed(line.state().which_key()), some("z", &["z"]));
+        // A host holding the keys itself.
+        let mut host = vim(&maps);
+        host.feed("i").unwrap();
+        let state = host.state();
+        assert_eq!(
+            listed(state.which_key_for(&keys("j"))),
+            some("j", &["j", "k"])
+        );
+        // No built-in table there: `g` lists nothing in insert mode.
+        assert_eq!(state.which_key_for(&keys("g")), None);
+        assert_eq!(state.which_key(), None);
+        // The key after `<C-r>` names a register, unmapped.
+        host.feed("<C-r>").unwrap();
+        assert!(host.state().insert_register_waiting());
+        assert_eq!(host.state().which_key_for(&keys("j")), None);
     }
 }

@@ -873,8 +873,13 @@ fn operate_unless_failing(
                     },
                     _,
                 ) => Some(*from),
-                (Span::Lines { .. }, Target::Motion(Motion::MatchPair)) if args.count.is_none() => {
-                    motion::match_pair(&text, head).map(|found| found.offset.min(head))
+                (
+                    Span::Lines { .. },
+                    Target::Motion(motion @ (Motion::MatchPair | Motion::MatchPairBackward)),
+                ) if args.count.is_none() => {
+                    let backward = motion == Motion::MatchPairBackward;
+                    motion::match_pair_toward(&text, head, backward)
+                        .map(|found| found.offset.min(head))
                 }
                 (Span::Lines { .. }, _) => mark(head).map(|offset| {
                     let mut cursor = Cursor::whole(&text, offset);

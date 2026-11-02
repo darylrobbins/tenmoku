@@ -141,6 +141,11 @@ pub enum Motion {
     RepeatFind,
     RepeatFindReverse,
     MatchPair,
+    /// `g%` (`feature/matchit.rs`): `%` the other way through the buffer
+    /// language's keyword group, from its opener to its closer; it fails
+    /// where the language has no keyword table. A count fails it: the key
+    /// sends `{count}g%` as `{count}%`.
+    MatchPairBackward,
     /// `[(` `[{` `])` `]}` (`unmatched.rs`): the unmatched `(` or `{`
     /// (`brace`) before the caret, or `)` or `}` after it (`forward`).
     Unmatched {
@@ -456,7 +461,8 @@ impl Motion {
             | Self::Jump(JumpMotion { forward: true, .. })
             | Self::RepeatFind
             | Self::RepeatFindReverse
-            | Self::MatchPair => RangeClass::Inclusive,
+            | Self::MatchPair
+            | Self::MatchPairBackward => RangeClass::Inclusive,
             Self::Up | Self::Down | Self::DocumentStart | Self::DocumentEnd | Self::Line => {
                 RangeClass::Linewise
             }
@@ -487,7 +493,7 @@ impl Motion {
     }
 
     /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
-    /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
+    /// (`''`) to where it left from: `gg G % g% / ? n N * #`, `'` and `` ` ``,
     /// `[( [{ ]) ]}`, `]] [[ ][ []`, `]m [m ]M [M`, and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
         if self.is_prose() {
@@ -501,6 +507,7 @@ impl Motion {
             Self::DocumentStart
                 | Self::DocumentEnd
                 | Self::MatchPair
+                | Self::MatchPairBackward
                 | Self::Unmatched { .. }
                 | Self::Section { .. }
                 | Self::Function { .. }

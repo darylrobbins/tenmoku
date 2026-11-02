@@ -2261,7 +2261,8 @@ pub(crate) fn settle(target: &mut VimTarget<'_>) {
 
 /// The jump mark a jump by `motion` (resolved, with `count`) as an
 /// operator's target from the vim cursor or primary caret sets, if it is
-/// one that gets anywhere: `%` finding a bracket, a count of 100 or less,
+/// one that gets anywhere: `%` finding a bracket or keyword (`g%` too), a
+/// count of 100 or less,
 /// `[( [{ ]) ]}` finding their bracket, `]m [m ]M [M` a function, or
 /// `{ } ( ) ]] [[ ][ []` not running out of text (a search is checked before it runs, and a mark
 /// resolved). After an operator `]]` stops at a `}` too.
@@ -2299,6 +2300,10 @@ fn jump_by(
         (Motion::MatchPair, Some(count)) => count <= 100,
         (Motion::MatchPair, None) => {
             motion::match_pair(text, motion::Cursor::at(text, from).offset()).is_some()
+        }
+        (Motion::MatchPairBackward, count) => {
+            let at = motion::Cursor::at(text, from).offset();
+            count.is_none() && motion::match_pair_toward(text, at, true).is_some()
         }
         (Motion::Unmatched { brace, forward }, count) => {
             unmatched::find(text, from, brace, forward, count.unwrap_or(1)).is_some()

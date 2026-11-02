@@ -26,7 +26,7 @@ use crate::{
     CountArgs, Mode, MoveArgs, OperateArgs, Pending, SelectArgs, Step, Target, TextObject, VimKey,
     VimState, VimTarget,
     args::{Motion, RangeClass},
-    feature::{Feature, definition},
+    feature::{Feature, definition, matchit},
     insert,
     motion::{Class, Cursor, Granularity, Line},
     operator,
@@ -153,6 +153,9 @@ struct View {
     definitions: Vec<(usize, Vec<SyntaxObject>)>,
     /// For `]m [m ]M [M`, the host's functions by start.
     functions: Vec<Range<usize>>,
+    /// For `%` without a count and `g%`, the keyword table of the host's
+    /// language, if it has one.
+    matchit: Option<&'static matchit::Table>,
 }
 
 thread_local! {
@@ -175,9 +178,10 @@ impl Drop for Restore {
 /// `viewed` command's motion (with its count) is `gj` or `gk`, the display
 /// rows each caret goes from and to. Only those are looked up, never all
 /// the rows. If its text object is `af if ac ic`, the host's functions and
-/// classes around each caret, for [`definitions`], and if its motion is
-/// `]m [m ]M [M`, the host's functions, for [`functions`]; for no other
-/// command.
+/// classes around each caret, for [`definitions`], if its motion is
+/// `]m [m ]M [M`, the host's functions, for [`functions`], and if it's `%`
+/// without a count or `g%`, the keyword table of the host's language, for
+/// [`matchit`]; for no other command.
 /// Once `f` returns, a visual motion that moved but failed fails
 /// the key.
 pub(crate) fn with_view<'a, R>(
@@ -257,6 +261,17 @@ pub(crate) fn with_view<'a, R>(
         }) => target.host.function_bounds(),
         _ => Vec::new(),
     };
+    let matchit = match viewed {
+        Some(Viewed::Motion {
+            motion: Motion::MatchPair,
+            count: None,
+        })
+        | Some(Viewed::Motion {
+            motion: Motion::MatchPairBackward,
+            ..
+        }) => target.host.language_name().and_then(matchit::table),
+        _ => None,
+    };
     let view = View {
         folds,
         top,
@@ -269,6 +284,7 @@ pub(crate) fn with_view<'a, R>(
         failed: false,
         definitions,
         functions,
+        matchit,
     };
     let restore = Restore(VIEW.with(|cell| cell.replace(Some(view))));
     let result = f(target);
@@ -315,13 +331,15 @@ pub(crate) fn repeated(state: &mut VimState, args: CountArgs) -> Option<Viewed> 
     }
 }
 
-/// A command acting on `target` if it's a text object or `]m [m ]M [M`,
-/// for [`with_view`]: `ys{object}` and `!{object}`, which take no other
-/// part of the view.
+/// A command acting on `target` if it's a text object, `]m [m ]M [M`, or
+/// `%` or `g%` (with no count), for [`with_view`]: `ys{object}`, which
+/// takes no other part of the view.
 pub(crate) fn object(target: Target) -> Option<Viewed> {
     match target {
         Target::TextObject(object) => Some(Viewed::Object(object)),
-        Target::Motion(motion @ Motion::Function { .. }) => Some(Viewed::Motion {
+        Target::Motion(
+            motion @ (Motion::Function { .. } | Motion::MatchPair | Motion::MatchPairBackward),
+        ) => Some(Viewed::Motion {
             motion,
             count: None,
         }),
@@ -381,6 +399,12 @@ pub(crate) fn functions<R>(f: impl FnOnce(&[Range<usize>]) -> R) -> R {
         let view = view.borrow();
         f(view.as_ref().map_or(&[], |view| &view.functions))
     })
+}
+
+/// The keyword table of the host's language, as the [`with_view`] running
+/// looked it up; none outside one, or for a command without `%` or `g%`.
+pub(crate) fn matchit() -> Option<&'static matchit::Table> {
+    VIEW.with(|view| view.borrow().as_ref().and_then(|view| view.matchit))
 }
 
 /// The vim cursor's offset if it's past the last character of its row.

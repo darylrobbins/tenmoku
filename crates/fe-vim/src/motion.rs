@@ -16,7 +16,11 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     Mode, Motion, MoveArgs, VimState, VimTarget, cmdline,
-    feature::{definition_motions, sections, subword},
+    feature::{
+        definition_motions,
+        matchit::{self, Keyword},
+        sections, subword,
+    },
     folds, jump, line_motions, marks, prose, search,
     state::Goals,
     unmatched, visual,
@@ -234,7 +238,8 @@ pub(crate) fn motion(
                 | Motion::LineStart
                 | Motion::LineEnd
         )
-        && !(args.motion == Motion::MatchPair && args.count.is_none())
+        && !(matches!(args.motion, Motion::MatchPair | Motion::MatchPairBackward)
+            && args.count.is_none())
     {
         cursor.widen();
     }
@@ -290,13 +295,24 @@ pub(crate) fn motion(
             let to_row = (u64::from(count) * rows).div_ceil(100).saturating_sub(1);
             return Ok(cursor.vertical(to_row as u32, goal, tab));
         }
-        Motion::MatchPair => match match_pair(cursor.text, cursor.offset()) {
-            Some(Match { offset, rows }) => {
-                cursor.goto(offset);
-                cursor.rows_matched = rows;
+        Motion::MatchPairBackward if args.count.is_some() => return Err(goal),
+        Motion::MatchPair | Motion::MatchPairBackward => {
+            let from = cursor.offset();
+            let backward = args.motion == Motion::MatchPairBackward;
+            match match_pair_toward(cursor.text, from, backward) {
+                Some(Match { offset, rows, end }) => {
+                    // After an operator a keyword ahead is taken whole, as
+                    // matchit's `d%` takes it; its words are ASCII.
+                    let offset = match end {
+                        Some(end) if cursor.op && offset > from => end - 1,
+                        _ => offset,
+                    };
+                    cursor.goto(offset);
+                    cursor.rows_matched = rows;
+                }
+                None => return Err(goal),
             }
-            None => return Err(goal),
-        },
+        }
         Motion::Unmatched { brace, forward } => {
             return unmatched::motion(cursor, brace, forward, count, goal);
         }
@@ -554,6 +570,12 @@ fn char_info(ch: char) -> (u32, usize) {
 pub(crate) fn widest() -> usize {
     let width = runs().iter().filter(|run| run.0 != u32::from('\t'));
     width.map(|run| run.2).max().unwrap_or(1).max(2)
+}
+
+/// Whether `ch` is a keyword char, as `\<` and `\>` read one: nvim's
+/// `charclass()` of 2 or more.
+pub(crate) fn is_word_char(ch: char) -> bool {
+    char_info(ch).0 >= 2
 }
 
 /// A grapheme's class is its first character's, as in nvim.
@@ -1627,10 +1649,12 @@ pub(crate) fn nth_unmatched(
     None
 }
 
-/// Where `%` goes: an offset, and whether it matched preprocessor rows.
+/// Where `%` goes: an offset, whether it matched preprocessor rows, and
+/// for a keyword (`feature/matchit.rs`) where the word it landed on ends.
 pub(crate) struct Match {
     pub(crate) offset: usize,
     pub(crate) rows: bool,
+    pub(crate) end: Option<usize>,
 }
 
 /// `%` without a count (`:help %`): with the caret on `/*` or `*/`, the
@@ -1638,7 +1662,23 @@ pub(crate) struct Match {
 /// blanks before it), the next `#else`, `#elif` or `#endif` at its level,
 /// or from `#endif` its `#if`; otherwise from the first bracket at or after
 /// the caret on its row, its match; failing that, the conditional again.
+/// With a keyword table for the buffer's language
+/// ([`line_motions::matchit`]), a keyword under the caret or the first on
+/// its row ahead of any bracket goes through its group instead
+/// ([`matchit::find`]).
 pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
+    match_pair_toward(text, offset, false)
+}
+
+/// [`match_pair`], or `g%`'s if `backward`: with no keyword table for the
+/// buffer's language it fails; else it goes the other way through a
+/// keyword group or a conditional, and as `%` does from a bracket or a
+/// comment.
+pub(crate) fn match_pair_toward(text: &Text, offset: usize, backward: bool) -> Option<Match> {
+    let table = line_motions::matchit();
+    if backward && table.is_none() {
+        return None;
+    }
     let row = text.offset_to_point(offset).row;
     // A huge row is read a window at a time: the bytes around the caret for
     // what is next to it, and its head for a directive.
@@ -1656,6 +1696,7 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
     let chars = |offset: usize| Match {
         offset,
         rows: false,
+        end: None,
     };
     // A `*` between `/` and `/` closes; a `/` between `*` and `*` opens.
     let opens = at(col, b'/') && at(col + 1, b'*')
@@ -1679,11 +1720,24 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
     if let Some((hash, _)) = directive
         && offset - text.row_start(row) <= hash
     {
-        return conditional(text, row);
+        return conditional(text, row, backward);
+    }
+    if let Some(table) = table {
+        match matchit::find(text, offset, table, backward) {
+            Keyword::Lands(word) => {
+                return Some(Match {
+                    offset: word.start,
+                    rows: false,
+                    end: Some(word.end),
+                });
+            }
+            Keyword::Fails => return None,
+            Keyword::None => {}
+        }
     }
     if spanned {
         return match_bracket(text, row, offset)
-            .or_else(|| directive.and_then(|_| conditional(text, row)));
+            .or_else(|| directive.and_then(|_| conditional(text, row, backward)));
     }
     let bracket = (col..bytes.len()).find_map(|ix| {
         let byte = bytes[ix];
@@ -1694,7 +1748,7 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
         })
     });
     let Some((ix, pair, forward)) = bracket else {
-        return directive.and_then(|_| conditional(text, row));
+        return directive.and_then(|_| conditional(text, row, backward));
     };
     let rules = Rules {
         escaped: scan.escaped[ix],
@@ -1759,6 +1813,7 @@ fn match_bracket(text: &Text, row: u32, offset: usize) -> Option<Match> {
             return unmatched(text, scan.start + ix, forward, pair, rules).map(|offset| Match {
                 offset,
                 rows: false,
+                end: None,
             });
         }
         lo = hi;
@@ -1862,8 +1917,13 @@ fn directive_kind(word: &[u8]) -> Option<Directive> {
 
 /// From the conditional on `row`: the next `#else`, `#elif` or `#endif` at
 /// its level, or from an `#endif`, its `#if`. The `#`'s offset, as rows.
-fn conditional(text: &Text, row: u32) -> Option<Match> {
+/// `backward` (`g%`, as matchit's group runs): from an `#if` its `#endif`,
+/// from the others the `#if`, `#else` or `#elif` before at its level.
+fn conditional(text: &Text, row: u32, backward: bool) -> Option<Match> {
     let (_, kind) = row_directive(text, row)?;
+    if backward {
+        return conditional_backward(text, row, kind);
+    }
     let forward = kind != Directive::Endif;
     let mut depth = 0usize;
     let rows: Box<dyn Iterator<Item = u32>> = match forward {
@@ -1892,9 +1952,52 @@ fn conditional(text: &Text, row: u32) -> Option<Match> {
                 return Some(Match {
                     offset: text.row_start(other) + hash,
                     rows: true,
+                    end: None,
                 });
             }
             _ => {}
+        }
+    }
+    None
+}
+
+/// [`conditional`] for `g%`, from `row`'s directive of `kind`.
+fn conditional_backward(text: &Text, row: u32, kind: Directive) -> Option<Match> {
+    let forward = kind == Directive::If;
+    let rows: Box<dyn Iterator<Item = u32>> = match forward {
+        true => Box::new(row + 1..text.row_count()),
+        false => Box::new((0..row).rev()),
+    };
+    let (deeper, out) = match forward {
+        true => (Directive::If, Directive::Endif),
+        false => (Directive::Endif, Directive::If),
+    };
+    let mut depth = 0usize;
+    for other in rows {
+        let Some((hash, found)) = row_directive(text, other) else {
+            continue;
+        };
+        let lands = match found {
+            _ if found == deeper => {
+                depth += 1;
+                false
+            }
+            _ if found == out && depth > 0 => {
+                depth -= 1;
+                false
+            }
+            _ if found == out => true,
+            // Going back, an `#else` or `#elif` at the level is the one
+            // before; going on to the `#endif`, it's passed over.
+            Directive::Else => !forward && depth == 0,
+            _ => false,
+        };
+        if lands {
+            return Some(Match {
+                offset: text.row_start(other) + hash,
+                rows: true,
+                end: None,
+            });
         }
     }
     None
