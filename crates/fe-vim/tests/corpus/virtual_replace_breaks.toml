@@ -193,3 +193,36 @@ name = "dot_count_combining_bs"
 buffer = "abcdefghijkl\nabcdefghijkl"
 cursor = [0, 0]
 keys = "gRá<BS>日<Esc>j02."
+
+# T388: counts with backspaces and surviving breaks, pending indentation
+# carried into count replay, and a multicaret batch mixing an existing-row
+# break with an EOF break.
+[[case]]
+name = "count_bs_surviving_breaks"
+buffer = "abcdef\nghijkl\nmnopqr"
+cursor = [0, 0]
+keys = "2gRx<CR><BS>y<CR>z<Esc>"
+
+[[case]]
+name = "dot_count_bs_surviving_breaks"
+buffer = "abcdef\nghijkl\nmnopqr\nstuvwx"
+cursor = [0, 0]
+keys = "gRx<CR><BS>y<CR>z<Esc>j02."
+
+[[case]]
+name = "count_break_only_indented"
+buffer = "  abc\ndef\nghi"
+cursor = [0, 2]
+keys = "2gR<CR><Esc>"
+
+[[case]]
+name = "dot_count_break_only_indented"
+buffer = "  abc\ndef\nghi\njkl\nmno"
+cursor = [0, 2]
+keys = "gR<CR><Esc>j03."
+
+[[case]]
+name = "count_break_x_break_indented"
+buffer = "  abc\ndef\nghi\njkl"
+cursor = [0, 2]
+keys = "3gR<CR>x<CR><Esc>"

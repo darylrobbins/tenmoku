@@ -24,6 +24,11 @@ fn virtual_replace_breaks_match_neovim() {
         "bs_over_break",
         "count",
         "dot",
+        "count_bs_surviving_breaks",
+        "dot_count_bs_surviving_breaks",
+        "count_break_only_indented",
+        "dot_count_break_only_indented",
+        "count_break_x_break_indented",
     ] {
         assert!(
             recorded.iter().any(|case| case.name == name),

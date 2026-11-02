@@ -575,13 +575,30 @@ pub(crate) fn retype(state: &VimState, model: &mut EditorModel, keys: &str) {
 /// and the indentation of the caret's row up to it, dropping the blanks
 /// after the caret, as nvim's 'autoindent' does.
 pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
+    // Carets that add a row and carets that replace one are different
+    // batches, as only the added rows' indentation is the session's to take
+    // back at `Esc`.
+    if line_break_pass(state, model, None).is_some() {
+        line_break_pass(state, model, Some(false));
+        line_break_pass(state, model, Some(true));
+    }
+}
+
+/// [`line_break`] at the carets that add a row (`only` true) or don't (false),
+/// or all of them. With none, it types nothing and returns what each caret
+/// adds, if some do and some don't.
+fn line_break_pass(
+    state: &VimState,
+    model: &mut EditorModel,
+    only: Option<bool>,
+) -> Option<Vec<bool>> {
     let (Some(replace), Some(session)) = (&state.replace, &state.session) else {
-        return;
+        return None;
     };
     sync(model);
     let text = model.text().clone();
     let heads = sorted_heads(model);
-    let records = replace.at_carets(&text, &heads);
+    let mut records = replace.at_carets(&text, &heads);
     let tab = model.tab_size().max(1);
     // In a virtual session, the indentation the caret's last key (a line
     // break) typed with nothing after it, which the next line break takes
@@ -602,12 +619,28 @@ pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
     };
     let mut planned = Vec::with_capacity(heads.len());
     let mut added = false;
+    if replace.virtual_ && only.is_none() {
+        let flags: Vec<bool> = heads
+            .iter()
+            .zip(&unused)
+            .map(|(&head, &unused)| virtual_break(&text, head, unused, tab).2)
+            .collect();
+        if flags.iter().any(|&f| f) && flags.iter().any(|&f| !f) {
+            return Some(flags);
+        }
+    }
     let acts = heads
         .iter()
         .zip(&unused)
-        .map(|(&head, &unused)| {
+        .enumerate()
+        .map(|(ix, (&head, &unused))| {
             if replace.virtual_ {
                 let (act, entry, adds) = virtual_break(&text, head, unused, tab);
+                if only.is_some_and(|only| only != adds) {
+                    records[ix] = None;
+                    planned.push(Vec::new());
+                    return Act::stay(head);
+                }
                 added |= adds;
                 planned.push(vec![entry]);
                 return act;
@@ -648,6 +681,7 @@ pub(crate) fn line_break(state: &VimState, model: &mut EditorModel) {
     replace.record().follow(Some(Pending { from, typed }));
     // After `^<C-d>`, the indent it took off, on the row opened.
     state.restore_indent(model);
+    None
 }
 
 /// A line break typed in a virtual session at `head`: the rest of its row
@@ -1220,8 +1254,16 @@ pub(crate) fn repeat_typed(
             if typed.is_empty() {
                 return Act::stay(head);
             }
-            if virtual_ && typed.contains('\n') && !typed.contains(BACKSPACE) {
-                return virtual_copies(&text, head, typed, more, tab, budget);
+            if virtual_ && typed.contains('\n') {
+                // The indentation the copy before ended with, typed by a
+                // line break with nothing after it.
+                let row = text.row_start(text.offset_to_point(head).row);
+                let before = text.slice_to_string(row..head);
+                let pending = match typed.ends_with('\n') && before.trim_start().is_empty() {
+                    true => before.len(),
+                    false => 0,
+                };
+                return virtual_copies(&text, head, typed, more, tab, budget, pending);
             }
             let (line, ix) = rest_of_row(&text, head);
             if virtual_ && !typed.contains('\n') {
@@ -1316,19 +1358,49 @@ fn virtual_copies(
     more: usize,
     tab: usize,
     budget: usize,
+    pending: usize,
 ) -> Act {
     let first = text.offset_to_point(head).row;
     let last = text.row_count().saturating_sub(1);
     let mut cur = text.row_to_string(first);
     let from = head - text.row_start(first);
     let mut at = from;
+    // The caret's indentation just typed by a line break, which the first
+    // break takes out, so the edit starts before the caret.
+    let pending = pending.min(from);
+    let start = from - pending;
     let (mut row, mut end) = (first, row_end(text, first));
     let mut out = String::new();
     // The indentation a line break just typed, with nothing after it.
-    let mut unused = 0;
+    let mut unused = pending;
+    // What a copy's `<BS>` takes back: the state before each key.
+    let mut undo: Vec<(usize, String, usize, u32, usize, usize)> = Vec::new();
     // Where the last copy started, to see the next starts there too.
     let mut began: Option<((String, usize, usize), usize)> = None;
     let mut done = 0;
+    let has_back = keys.contains(BACKSPACE);
+    let mut tokens = Vec::new();
+    let mut run = String::new();
+    for key in keys.chars() {
+        match key {
+            '\n' | BACKSPACE => {
+                if !run.is_empty() {
+                    tokens.push(Token::Run(std::mem::take(&mut run)));
+                }
+                tokens.push(if key == '\n' {
+                    Token::Break
+                } else {
+                    Token::Back
+                });
+            }
+            // With `<BS>`s among them each character is its own.
+            _ if has_back => tokens.push(Token::Run(key.to_string())),
+            _ => run.push(key),
+        }
+    }
+    if !run.is_empty() {
+        tokens.push(Token::Run(run));
+    }
     while done < more && out.len() <= budget {
         if row > last {
             let state = (cur.clone(), at, unused);
@@ -1341,42 +1413,57 @@ fn virtual_copies(
                 break;
             }
         }
-        for (nth, piece) in keys.split('\n').enumerate() {
-            if nth > 0 {
-                let before = &cur[..at];
-                let indent = before[..before.len() - before.trim_start().len()].to_string();
-                cur.truncate(at - unused.min(at));
-                out.push_str(&cur);
-                out.push('\n');
-                row += 1;
-                cur = match row <= last {
-                    true => {
-                        end = row_end(text, row);
-                        text.row_to_string(row)
+        // A copy's `<BS>`s take back only what it typed.
+        undo.clear();
+        for token in &tokens {
+            match token {
+                Token::Back => {
+                    if let Some((len, was, to, at_row, at_end, was_unused)) = undo.pop() {
+                        out.truncate(len);
+                        (cur, at, row, end, unused) = (was, to, at_row, at_end, was_unused);
                     }
-                    false => String::new(),
-                };
-                let line = Line::of(0, cur);
-                let typed = virtual_over(&line, 0, 0, &indent, 1, tab, false);
-                cur = typed.text + &line.text[past(&line, 0, typed.over)..];
-                at = typed.land;
-                unused = typed.land;
+                }
+                Token::Break => {
+                    if has_back {
+                        undo.push((out.len(), cur.clone(), at, row, end, unused));
+                    }
+                    let before = &cur[..at];
+                    let indent = before[..before.len() - before.trim_start().len()].to_string();
+                    cur.truncate(at - unused.min(at));
+                    out.push_str(&cur);
+                    out.push('\n');
+                    row += 1;
+                    cur = match row <= last {
+                        true => {
+                            end = row_end(text, row);
+                            text.row_to_string(row)
+                        }
+                        false => String::new(),
+                    };
+                    let line = Line::of(0, cur);
+                    let typed = virtual_over(&line, 0, 0, &indent, 1, tab, false);
+                    cur = typed.text + &line.text[past(&line, 0, typed.over)..];
+                    at = typed.land;
+                    unused = typed.land;
+                }
+                Token::Run(piece) => {
+                    if has_back {
+                        undo.push((out.len(), cur.clone(), at, row, end, unused));
+                    }
+                    let line = Line::of(0, std::mem::take(&mut cur));
+                    let ix = line.starts.partition_point(|&start| start < at);
+                    let column = width_from(&line.text[..at], 0, tab);
+                    let typed = virtual_over(&line, ix, column, piece, 1, tab, false);
+                    cur = format!(
+                        "{}{}{}",
+                        &line.text[..at],
+                        typed.text,
+                        &line.text[past(&line, ix, typed.over)..]
+                    );
+                    at += typed.land;
+                    unused = 0;
+                }
             }
-            if piece.is_empty() {
-                continue;
-            }
-            let line = Line::of(0, std::mem::take(&mut cur));
-            let ix = line.starts.partition_point(|&start| start < at);
-            let column = width_from(&line.text[..at], 0, tab);
-            let typed = virtual_over(&line, ix, column, piece, 1, tab, false);
-            cur = format!(
-                "{}{}{}",
-                &line.text[..at],
-                typed.text,
-                &line.text[past(&line, ix, typed.over)..]
-            );
-            at += typed.land;
-            unused = 0;
         }
         done += 1;
     }
@@ -1386,13 +1473,20 @@ fn virtual_copies(
         cur.truncate(at - unused.min(at));
         at -= unused.min(at);
     }
-    let land = out.len() + at - from;
+    let land = (out.len() + at).saturating_sub(start);
     out.push_str(&cur);
     Act {
-        range: head..end,
-        text: out.split_off(from.min(out.len())),
+        range: head - pending..end,
+        text: out.split_off(start.min(out.len())),
         land,
     }
+}
+
+/// A key of a virtual copy, see [`virtual_copies`].
+enum Token {
+    Break,
+    Back,
+    Run(String),
 }
 
 /// Types the copy that ended `out` (it cut `cut` bytes, all of it once no

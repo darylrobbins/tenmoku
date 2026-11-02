@@ -572,3 +572,15 @@ fn copies_take_back_whole_graphemes() {
     let (copied, over) = copies("", &rest, "🇦🇧\n\u{8}🇨\u{8}", 1, 1 << 10);
     assert_eq!((copied, over), ("🇦🇧".to_string(), 2));
 }
+
+#[test]
+fn virtual_breaks_mixing_replaced_and_added_rows() {
+    // A caret whose break replaces an existing row keeps its indentation at
+    // `Esc`, though another caret's, at the last row, adds one whose
+    // indentation goes.
+    let mut vim = HeadlessVim::new("  abc\nxx\n  def", (0, 2));
+    vim.feed("gR").unwrap();
+    carets(&mut vim, &[2, 11]);
+    vim.feed("<CR><Esc>").unwrap();
+    assert_eq!(vim.text(), "  \n  \n  \n");
+}
