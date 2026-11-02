@@ -216,10 +216,19 @@ fn prefixes_left_by_a_replay_show_it(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("x");
     wait(DELAY, cx);
     assert_eq!(popup(&view, cx).expect("x's popup").prefix, "x");
-    // The wait for `xx` times out: `x` is `z`, which waits in turn.
-    wait(CHORD_TIMEOUT - DELAY + Duration::from_millis(1), cx);
+    // Shown, the wait for `xx` doesn't time out; `<Esc>` ends it.
+    wait(CHORD_TIMEOUT * 2, cx);
+    assert_eq!(popup(&view, cx).expect("x's popup stays").prefix, "x");
+    cx.simulate_keystrokes("escape");
     assert_eq!(popup(&view, cx), None);
-    wait(DELAY, cx);
+    // With a delay past the timeout, the wait times out before any popup:
+    // `x` is `z`, which waits in turn and shows its own.
+    cx.update(|_, cx| set_vim_which_key(cx, true, CHORD_TIMEOUT + DELAY));
+    cx.simulate_keystrokes("x");
+    wait(CHORD_TIMEOUT + Duration::from_millis(1), cx);
+    assert_eq!(popup(&view, cx), None);
+    cx.update(|_, cx| set_vim_which_key(cx, true, DELAY));
+    wait(CHORD_TIMEOUT + DELAY, cx);
     let which = popup(&view, cx).expect("z's popup after the timeout");
     assert_eq!(which.prefix, "z");
     assert_eq!(title_of(&which, "t", cx), "scroll top");
@@ -337,11 +346,13 @@ fn lists_user_remaps(cx: &mut TestAppContext) {
     assert_eq!(which.prefix, ",f");
     assert_eq!(titles(&which, cx), [("f".into(), "gg".into())]);
 
-    // The held keys resolve, unmapped, and the popup goes with them.
+    // Shown, the held keys don't resolve at the timeout; `<Esc>` ends them.
     wait(CHORD_TIMEOUT * 2, cx);
+    assert_eq!(popup(&view, cx).expect("stays").prefix, ",f");
+    cx.simulate_keystrokes("escape");
     assert_eq!(popup(&view, cx), None);
 
-    cx.simulate_keystrokes("escape j j , f f");
+    cx.simulate_keystrokes("j j , f f");
     wait(DELAY * 4, cx);
     assert_eq!(popup(&view, cx), None);
     let row = view.read_with(cx, |view, _| {
@@ -381,4 +392,30 @@ fn settings_switch_it(cx: &mut TestAppContext) {
     assert_eq!(popup(&view, cx), None);
     wait(DELAY, cx);
     assert_eq!(popup(&view, cx).expect("Z's popup").prefix, "Z");
+}
+
+/// With no delay, a map prefix left by a command's deferred replay and
+/// shown at once is held too: it outlasts [`CHORD_TIMEOUT`] and the keys
+/// after it complete the map.
+#[gpui::test]
+fn a_prefix_left_by_a_command_replay_is_held(cx: &mut TestAppContext) {
+    let mut chain = noremap(",a", "<Cmd>fe:editor.undo<CR>,s");
+    chain.recursive = true;
+    let remaps = vec![chain, noremap(",s", "x"), noremap(",ss", "gg")];
+    let (view, cx) = vim_editor(cx, remaps);
+    cx.update(|_, cx| set_vim_which_key(cx, true, Duration::ZERO));
+    cx.simulate_keystrokes("j j , a");
+    cx.run_until_parked();
+    assert_eq!(popup(&view, cx).expect("shown at once").prefix, ",s");
+    wait(CHORD_TIMEOUT * 3, cx);
+    assert_eq!(popup(&view, cx).expect("still shown").prefix, ",s");
+    cx.simulate_keystrokes("s");
+    let row = view.read_with(cx, |view, _| {
+        let model = view.model();
+        model
+            .text()
+            .offset_to_point(model.primary_selection().head())
+            .row
+    });
+    assert_eq!(row, 0);
 }

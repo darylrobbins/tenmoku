@@ -30,7 +30,7 @@
 //! [`HOLDS_KEYS`], or [`HOLDS_ALL_KEYS`] to keep the platform modifier's
 //! keystrokes too. What goes on from a chord held, for a which-key popup,
 //! is [`pending_continuations`]; the owner hears of each change to it
-//! ([`KeyOwner::chord_changed`]).
+//! ([`KeyOwner::chord_changed`]). [`hold_chord`] stops it timing out.
 //!
 //! [`RunCommand`]: crate::commands::RunCommand
 
@@ -352,6 +352,24 @@ pub fn pending_continuations(window: &Window, cx: &App) -> Option<PendingChord> 
         next,
         stack: chord.stack.clone(),
     })
+}
+
+/// Stops the chord held for `window`'s focused element from timing out,
+/// as a shown which-key popup does: it then waits for the next key, a
+/// focus change or a keymap reload. The next keystroke starts a chord
+/// with a fresh timeout. Returns whether one was held.
+pub fn hold_chord(window: &Window, cx: &mut App) -> bool {
+    let target = Target::of(window, cx);
+    if !cx.has_global::<KeyInput>() {
+        return false;
+    }
+    let Some(chord) =
+        (cx.global_mut::<KeyInput>().pending.as_mut()).filter(|chord| chord.target == target)
+    else {
+        return false;
+    };
+    chord._timeout = Task::ready(());
+    true
 }
 
 /// Tells the owner the chord held may have changed

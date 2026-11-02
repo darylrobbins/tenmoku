@@ -53,6 +53,8 @@ fn vim_editor(
         window.focus(&view.focus_handle(cx), cx);
     });
     cx.update(|_, cx| set_vim_enabled(cx, true));
+    // A shown popup holds its prefix; these tests time prefixes out.
+    cx.update(|_, cx| crate::set_vim_which_key(cx, false, std::time::Duration::ZERO));
     let issues = cx.update(|_, cx| set_vim_remaps(cx, &remaps, ","));
     assert_eq!(issues, []);
     cx.run_until_parked();

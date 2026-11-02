@@ -25,6 +25,10 @@
 //! resolved or failed, its timeout, `<Esc>` or a blur closes it. The keys
 //! a failed chord replays to vim then wait anew there. Chords held outside
 //! an editor (`cmd-k` in a panel) show nothing.
+//!
+//! A prefix a timer holds (a chord, or a map's keys) stops timing out once
+//! its popup shows: it waits for the next key, `<Esc>`, a blur or a keymap
+//! reload, as which-key.nvim does. Until then the timeouts are as ever.
 
 use std::{cell::RefCell, time::Duration};
 
@@ -231,24 +235,61 @@ impl EditorView {
         let delay = settings(cx).delay;
         if at_once || delay.is_zero() {
             popup.shown = Some(which);
+            self.hold_prefix(window, true, cx);
             cx.notify();
             return;
         }
         // A chord's keys don't change while it's held: the matcher tells of
         // each change, which arms the popup anew or closes it.
         let chord = popup.on_chord().then_some(which);
-        popup.timer = Some(cx.spawn(async move |view, cx| {
+        popup.timer = Some(cx.spawn_in(window, async move |view, cx| {
             cx.background_executor().timer(delay).await;
-            (view.update(cx, |view, cx| view.which_key_due(chord, cx))).ok();
+            (view.update_in(cx, |view, window, cx| view.which_key_due(chord, window, cx))).ok();
         }));
+    }
+
+    /// The popup shows for a prefix a timer holds: it stops timing out and
+    /// waits for the next key, `<Esc>`, a blur or a keymap reload.
+    fn hold_prefix(&mut self, window: &Window, retry: bool, cx: &mut Context<Self>) {
+        match self.which_key.target.as_ref() {
+            Some(target) if target.chord => {
+                kiln_platform::keys::hold_chord(window, cx);
+            }
+            Some(_) => {
+                let id = cx.entity_id();
+                let wait = cx
+                    .default_global::<super::Vim>()
+                    .remap_wait
+                    .as_mut()
+                    .filter(|wait| wait.editor.entity_id() == id);
+                match wait {
+                    Some(wait) => wait._timer = Task::ready(()),
+                    // A replay's leftover prefix creates its timer after
+                    // this update: hold it once it's there, if still shown.
+                    None if retry => cx.defer_in(window, |view, window, cx| {
+                        if view.which_key.shown.is_some() {
+                            view.hold_prefix(window, false, cx);
+                        }
+                    }),
+                    None => {}
+                }
+            }
+            None => {}
+        }
     }
 
     /// The delay passed with no key: the popup shows `chord`'s keys, or
     /// what it waited on of vim's if that still waits, in the same mode.
-    fn which_key_due(&mut self, chord: Option<WhichKey>, cx: &mut Context<Self>) {
+    fn which_key_due(
+        &mut self,
+        chord: Option<WhichKey>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.which_key.timer = None;
         if let Some(which) = chord {
             self.which_key.shown = Some(which);
+            self.hold_prefix(window, true, cx);
             cx.notify();
             return;
         }
@@ -256,6 +297,7 @@ impl EditorView {
         match now {
             Some((which, target)) if self.which_key.target.as_ref() == Some(&target) => {
                 self.which_key.shown = Some(which);
+                self.hold_prefix(window, true, cx);
                 cx.notify();
             }
             _ => {

@@ -293,25 +293,21 @@ fn chord_end_closes_the_popup(cx: &mut TestAppContext) {
     assert_eq!(caret(&view, cx), (0, 4));
     assert!(!cx.update(|_, cx| chord_pending(cx)));
 
-    // Timed out: `g` goes to vim, which waits on it, and shows its own
-    // keys once the delay passes again, the keymap's no longer among them.
+    // A popup shown holds the chord past the timeout (see the
+    // `which_key_hold` tests); with none shown it times out as ever: `g`
+    // goes to vim, which waits on it.
     cx.simulate_keystrokes("j");
-    shown("g", "g", cx);
-    wait(CHORD_TIMEOUT - DELAY, cx);
+    cx.update(|_, cx| set_vim_which_key(cx, true, CHORD_TIMEOUT * 2));
+    cx.simulate_keystrokes("g");
+    assert!(cx.update(|_, cx| chord_pending(cx)));
+    wait(CHORD_TIMEOUT + Duration::from_millis(1), cx);
     assert_eq!(popup(&view, cx), None);
     assert!(!cx.update(|_, cx| chord_pending(cx)));
     let pending = view.read_with(cx, |view, _| view.vim_state().unwrap().pending().kind());
     assert!(pending.is_some(), "vim waits on g");
-    wait(DELAY, cx);
-    let which = popup(&view, cx).expect("vim's g popup");
-    assert_eq!(which.prefix, "g");
-    assert!(
-        !(which.entries.iter()).any(|entry| entry.key == "b"),
-        "{which:?}"
-    );
     cx.simulate_keystrokes("g");
-    assert_eq!(popup(&view, cx), None);
     assert_eq!(caret(&view, cx), (0, 4));
+    cx.update(|_, cx| set_vim_which_key(cx, true, DELAY));
 
     // `<Esc>`: the chord fails, and vim drops the `]` it's handed.
     shown("]", "]", cx);
