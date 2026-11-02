@@ -136,6 +136,25 @@ fn caret_of(editor: &Entity<EditorView>, cx: &App) -> Option<(Wanted, usize)> {
     Some((Wanted { version, word, at }, at))
 }
 
+/// What `fe_lsp` says of a buffer no server has open.
+const NOT_OPEN: &str = "not open on a language server";
+
+/// `result` as an [`Answer`]: a buffer no server serves, or a server
+/// without the provider, falls back to the words; any other error shows
+/// nothing.
+pub(super) fn answer_of(
+    result: Result<Option<Vec<DocumentHighlight>>, fe_lsp::LspError>,
+) -> Answer {
+    match result {
+        Ok(found) => Some(found),
+        Err(fe_lsp::LspError::Unavailable(why)) if why == NOT_OPEN => Some(None),
+        Err(error) => {
+            log::debug!("no document highlights: {error}");
+            None
+        }
+    }
+}
+
 impl Workbench {
     /// Gives each open editor its provider, and brings what they show up
     /// to date with the caret: run by [`Self::sync_lsp`] after each draw.
@@ -236,17 +255,7 @@ impl Workbench {
         };
         let buffer_id = slot.editor.read(cx).model().buffer().id();
         let reply = super::lock(manager).document_highlights(buffer_id, wanted.version, at);
-        Box::pin(async move {
-            match reply.await {
-                Ok(found) => Some(found),
-                // Not open on a server, say: the words stand in.
-                Err(fe_lsp::LspError::Unavailable(_)) => Some(None),
-                Err(error) => {
-                    log::debug!("no document highlights: {error}");
-                    None
-                }
-            }
-        })
+        Box::pin(async move { answer_of(reply.await) })
     }
 
     /// Shows `answer`, the reply to the request for `wanted` of editor
@@ -285,6 +294,7 @@ impl Workbench {
                     provider
                         .words
                         .set_target(snapshot, Some(wanted.word.clone()));
+                    provider.words_version = Some(wanted.version);
                 }
                 None => {}
             }
