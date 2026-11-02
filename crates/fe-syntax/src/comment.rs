@@ -36,7 +36,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
-        "markdown_inline" | "rustdoc_inline" | "diff" => tokens(None, None),
+        "markdown_inline" | "rustdoc_inline" | "diff" | "csv" | "tsv" => tokens(None, None),
         _ => return None,
     })
 }
@@ -48,6 +48,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
 pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
     match language {
         "markdown_inline" | "rustdoc_inline" => &[],
+        "csv" | "tsv" => &[('"', '"')],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
         | "json" | "json5" | "just" => &[

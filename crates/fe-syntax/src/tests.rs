@@ -251,6 +251,16 @@ fn each_language_highlights_a_snippet() {
             ],
         ),
         (
+            "x.csv",
+            "a,,\"c,d\",e\n",
+            &[("a", "keyword"), ("\"c,d\"", "number"), ("e", "function")],
+        ),
+        (
+            "x.tsv",
+            "a\t\t\"c\td\"\te\n",
+            &[("a", "keyword"), ("\"c\td\"", "number"), ("e", "function")],
+        ),
+        (
             "x.json5",
             "// c\n{a: 1, 'b': true}",
             &[
@@ -509,6 +519,16 @@ fn incremental_reparse_matches_a_full_parse() {
                 "x",
                 "",
             ],
+        ),
+        (
+            "x.csv",
+            "a,b c,\"d,\"\"e\"\"\nf\",\n,g\n\nh\n",
+            &["\n", ",", "\"", "\"\"", " ", "\t", "x", ""],
+        ),
+        (
+            "x.tsv",
+            "a\tb c\t\"d\t\"\"e\"\"\nf\"\t\n\tg\n\nh\n",
+            &["\n", "\t", "\"", "\"\"", " ", ",", "x", ""],
         ),
         (
             "x.json5",

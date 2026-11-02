@@ -14,6 +14,7 @@ fn expected(name: &str) -> Vec<(char, char)> {
     let bt = ('`', '`');
     match name {
         "markdown_inline" => vec![],
+        "csv" | "tsv" => vec![dq],
         "rust" => with_quotes(&[dq]),
         "markdown" | "gitcommit" => with_quotes(&[dq, bt]),
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"

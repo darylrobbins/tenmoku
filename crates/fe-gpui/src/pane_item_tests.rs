@@ -165,6 +165,8 @@ fn newer_languages_have_labels() {
         ("just", "Just"),
         ("diff", "Diff"),
         ("json5", "JSON5"),
+        ("csv", "CSV"),
+        ("tsv", "TSV"),
     ] {
         assert_eq!(status::language_label(id), label, "{id}");
     }

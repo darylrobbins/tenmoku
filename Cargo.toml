@@ -233,6 +233,11 @@ tree-sitter-git-config = { path = "vendor/tree-sitter-git-config" }
 tree-sitter-gitattributes = { path = "vendor/tree-sitter-gitattributes" }
 tree-sitter-just = { path = "vendor/tree-sitter-just" }
 tree-sitter-json5 = { path = "vendor/tree-sitter-json5" }
+# Ours: no usable upstream (crates/fe-grammar-csv/README.md).
+fe-grammar-csv = { path = "crates/fe-grammar-csv" }
+# For the grammar above, as the vendored grammars use them.
+tree-sitter-language = "0.1"
+cc = "1.2"
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 # Line diffs for proposed changes (Apache-2.0).

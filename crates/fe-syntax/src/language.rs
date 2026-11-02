@@ -946,4 +946,26 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    #[cfg(feature = "csv")]
+    Def {
+        name: "csv",
+        extensions: &["csv"],
+        file_names: &[],
+        grammar: || fe_grammar_csv::LANGUAGE_CSV.into(),
+        highlights: || &[include_str!("../queries/csv.scm")],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "csv")]
+    Def {
+        name: "tsv",
+        extensions: &["tsv", "tab"],
+        file_names: &[],
+        grammar: || fe_grammar_csv::LANGUAGE_TSV.into(),
+        highlights: || &[include_str!("../queries/csv.scm")],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
 ];

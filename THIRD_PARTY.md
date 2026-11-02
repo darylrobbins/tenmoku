@@ -126,6 +126,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | just | tree-sitter-just, vendored¹⁴ | commit `5685543` | https://github.com/casey/tree-sitter-just | Apache-2.0¹⁴ | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | diff | tree-sitter-diff | 0.1.0 | https://github.com/the-mikedavis/tree-sitter-diff | MIT | `HIGHLIGHTS_QUERY`, then `queries/diff.scm` (ours) |
 | json5 | tree-sitter-json5, vendored¹⁵ | commit `248b856` | https://github.com/Joakker/tree-sitter-json5 | MIT | `HIGHLIGHTS_QUERY`, then `queries/json5.scm` (ours) |
+| csv, tsv | fe-grammar-csv, ours¹⁶ | in this repository | `crates/fe-grammar-csv` | ours | `queries/csv.scm` (ours) |
 
 ¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -261,3 +262,8 @@ the licence text and ship it. The vendored README says how to update it.
 beside our 0.27. Upstream's `grammar.js`, `utils.js`, generated `src/` and query are
 unchanged, at commit `248b8564567087d7866be76569b182f6dd7e14e9`; the Rust binding is
 ours. The licence is upstream's. The vendored README says how to update it.
+
+¹⁶ `crates/fe-grammar-csv` is our grammar, with nothing third-party in `grammar.js` or
+the query. `crates/fe-grammar-csv/{csv,tsv}/src/` is what tree-sitter CLI 0.25
+generates from it, as with every grammar here; its `tree_sitter/` headers come from
+the CLI (MIT). We don't use `tree-sitter-csv` from crates.io.

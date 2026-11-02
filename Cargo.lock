@@ -2275,6 +2275,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-grammar-csv"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "tree-sitter",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "fe-keymap"
 version = "0.1.0"
 dependencies = [
@@ -2418,6 +2427,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fe-buffer",
+ "fe-grammar-csv",
  "fe-syntax",
  "log",
  "proptest",

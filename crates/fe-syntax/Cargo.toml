@@ -44,6 +44,7 @@ default = [
     "just",
     "diff",
     "json5",
+    "csv",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -82,6 +83,7 @@ ini = ["dep:tree-sitter-ini"]
 just = ["dep:tree-sitter-just"]
 diff = ["dep:tree-sitter-diff"]
 json5 = ["dep:tree-sitter-json5"]
+csv = ["dep:fe-grammar-csv"]
 # Highlight queries run to completion, as in this crate's tests, instead of
 # stopping after `QUERY_BUDGET`. For the fuzz targets in `fuzz/`, which compare
 # highlights and can't tell a cut-short result from a complete one.
@@ -93,6 +95,7 @@ log.workspace = true
 tree-sitter.workspace = true
 tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
+fe-grammar-csv = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-containerfile = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
