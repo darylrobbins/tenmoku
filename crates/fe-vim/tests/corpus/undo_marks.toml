@@ -1,0 +1,387 @@
+# `u` and `<C-r>` swapping the lowercase marks and the last visual extent for
+# those from before the change, for fe-vim's oracle: after `dd`, `:d`, `J`,
+# `dG`, `:g`, `:sort`, `cc`, `o`, a visual delete, `.`, a macro, `:normal` and
+# `[e`; several steps; a mark set or deleted after the change. Each `u` stays
+# within the case's own changes: one past them would undo nvim's buffer setup.
+# `:m` gets no `<C-r>` case: marks stay behind on the rows it moves (a known
+# limit, see ex.rs), which redo shows; `[e` covers it.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in undo_marks.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "dd_deletes_the_mark"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "madd"
+
+[[case]]
+name = "dd_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddu"
+
+[[case]]
+name = "dd_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddu<C-r>"
+
+[[case]]
+name = "dd_undo_redo_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddu<C-r>u"
+
+[[case]]
+name = "dd_column_kept"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 2]
+keys = "maddu"
+
+[[case]]
+name = "dd_above_the_mark_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [2, 1]
+keys = "makkddu"
+
+[[case]]
+name = "dd_undo_then_dd_again"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddudd"
+
+[[case]]
+name = "dd_undo_then_dd_above"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddukdd"
+
+[[case]]
+name = "dd_undo_then_dd_above_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddukddu"
+
+[[case]]
+name = "ex_d_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma:d<CR>u"
+
+[[case]]
+name = "ex_d_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma:d<CR>u<C-r>"
+
+[[case]]
+name = "ex_d_range_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "majmbgg:2,3d<CR>u"
+
+[[case]]
+name = "join_carries_then_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "majddkJu"
+
+[[case]]
+name = "join_carried_mark"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "jmakJ"
+
+[[case]]
+name = "join_carried_mark_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "jmakJu"
+
+[[case]]
+name = "join_carried_mark_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "jmakJu<C-r>"
+
+[[case]]
+name = "dG_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "mjmaggdGu"
+
+[[case]]
+name = "dG_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "mjmaggdGu<C-r>"
+
+[[case]]
+name = "visual_then_dG_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "Vj<Esc>ggdGu"
+
+[[case]]
+name = "visual_then_dG"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "Vj<Esc>ggdG"
+
+[[case]]
+name = "visual_then_dG_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "Vj<Esc>ggdGu<C-r>"
+
+[[case]]
+name = "charwise_visual_then_dG_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "vjl<Esc>ggdGu"
+
+[[case]]
+name = "visual_delete_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maVjdu"
+
+[[case]]
+name = "visual_delete_over_older_extent_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 0]
+keys = "v<Esc>jVjdu"
+
+[[case]]
+name = "visual_newer_than_the_change_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [3, 0]
+keys = "ddggVj<Esc>u"
+
+[[case]]
+name = "global_d_undo"
+buffer = "ax\nb\ncx\nd\nex"
+cursor = [0, 0]
+keys = "majjmb:g/x/d<CR>u"
+
+[[case]]
+name = "global_d_undo_redo"
+buffer = "ax\nb\ncx\nd\nex"
+cursor = [0, 0]
+keys = "majjmb:g/x/d<CR>u<C-r>"
+
+[[case]]
+name = "global_normal_undo"
+buffer = "ax\nb\ncx\nd\nex"
+cursor = [0, 0]
+keys = "ma:g/x/normal dd<CR>u"
+
+[[case]]
+name = "normal_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma:normal dd<CR>u"
+
+[[case]]
+name = "normal_two_edits_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma:normal ddmbdd<CR>u"
+
+[[case]]
+name = "sort_undo"
+buffer = "d\nc\nb\na"
+cursor = [1, 0]
+keys = "ma:sort<CR>u"
+
+[[case]]
+name = "substitute_rows_undo"
+buffer = "a,b\nc\nd"
+cursor = [1, 0]
+keys = "ma:%s/\\nc\\n/-/<CR>u"
+
+[[case]]
+name = "two_undos_over_two_changes"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddmbdd2u"
+
+[[case]]
+name = "two_undos_one_by_one"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddmbdduu"
+
+[[case]]
+name = "first_of_two_undos"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddmbddu"
+
+[[case]]
+name = "two_undos_then_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddmbdd2u<C-r>"
+
+[[case]]
+name = "two_undos_then_two_redos"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddmbdd2u2<C-r>"
+
+[[case]]
+name = "cc_on_the_marked_row"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "macc<Esc>"
+
+[[case]]
+name = "cc_on_the_marked_row_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "macc<Esc>u"
+
+[[case]]
+name = "cc_typed_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "maccnew<Esc>u"
+
+[[case]]
+name = "cc_typed_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "maccnew<Esc>u<C-r>"
+
+[[case]]
+name = "cc_typed_break_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 1]
+keys = "majmbkccx<CR>y<Esc>u"
+
+[[case]]
+name = "o_above_the_mark_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "makkonew<Esc>u"
+
+[[case]]
+name = "insert_nothing_keeps_the_last_record"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maddi<Esc>mbu"
+
+[[case]]
+name = "one_command_splits_the_session_first_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maix<C-o>:delmarks a<CR>y<Esc>u"
+
+[[case]]
+name = "one_command_splits_the_session_both_undos"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maix<C-o>:delmarks a<CR>y<Esc>uu"
+
+[[case]]
+name = "insert_after_marking_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ddjmaix<Esc>:delmarks a<CR>u"
+
+[[case]]
+name = "x_then_delmarks_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "max:delmarks a<CR>u"
+
+[[case]]
+name = "x_then_delmarks_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "max:delmarks a<CR>u<C-r>"
+
+[[case]]
+name = "mark_moved_after_the_change_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maxjmau"
+
+[[case]]
+name = "mark_moved_after_the_change_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "maxjmau<C-r>"
+
+[[case]]
+name = "mark_set_after_the_change_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "xjmbu"
+
+[[case]]
+name = "mark_set_after_the_change_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "xjmbu<C-r>"
+
+[[case]]
+name = "repeat_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 0]
+keys = "ddma.u"
+
+[[case]]
+name = "repeat_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 0]
+keys = "ddma.u<C-r>"
+
+[[case]]
+name = "macro_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "qqddqjma@qu"
+
+[[case]]
+name = "put_over_the_mark_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "yymaVpu"
+
+[[case]]
+name = "move_rows_ex_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma:m3<CR>u"
+
+[[case]]
+name = "bracket_e_up_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma[eu"
+oracle_keys = "ma:m0<CR>u"
+
+[[case]]
+name = "bracket_e_up_undo_redo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma[eu<C-r>"
+oracle_keys = "ma:m0<CR>u<C-r>"
+
+[[case]]
+name = "bracket_e_down_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [1, 0]
+keys = "ma]eu"
+oracle_keys = "ma:m3<CR>u"
+
+[[case]]
+name = "bracket_e_after_a_delete_undo"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 0]
+keys = "jmbkddma]eu"
+oracle_keys = "jmbkddma:m2<CR>u"

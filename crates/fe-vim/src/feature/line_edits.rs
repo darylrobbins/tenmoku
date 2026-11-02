@@ -30,7 +30,8 @@
 //! the first row changed. As nvim's undo header saves `a` to `z` and the
 //! last visual extent with a change, `u` puts back those from before the
 //! first move of the change and `<C-r>` those from before the `u`
-//! ([`Moves`]); the other marks and entries stay, as there. Rows of the
+//! ([`Moves`], which every change records); the other marks and entries
+//! stay, as there. Rows of the
 //! same text moving past each other change nothing, but are still an undo
 //! step. `.` repeats it from the caret,
 //! over as many rows as the selection had after a visual one.
@@ -38,23 +39,22 @@
 //! After an operator neither is a motion or an object: `d]e` and `d[<Space>`
 //! cancel.
 
-use std::collections::{BTreeMap, VecDeque};
-
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
-use fe_editor::{EditorModel, commands::origin};
+use fe_editor::commands::origin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Change, Mode, Pending, Step, VimCommands, VimKey, VimState, VimTarget,
+    Change, Mode, Pending, Step, VimCommands, VimKey, VimTarget,
     feature::Feature,
-    g_operators, history, insert,
-    marks::{self, Place},
+    g_operators, history, insert, marks,
     operator::{self, MAX_PUT, row_end},
     reducer::invocation,
-    visual::{self, LastVisual},
+    visual,
 };
+
+pub(crate) use crate::history::Moves;
 
 pub(crate) const FEATURE: Feature = Feature {
     bracket: Some(bracket),
@@ -87,45 +87,6 @@ pub struct MoveRowsArgs {
     pub rows: Option<u32>,
 }
 
-/// The marks from before each of the last moves, by transaction (at most
-/// [`history::KEPT`]): as nvim's undo header saves `a` to `z` and the last
-/// visual extent with a change, `u` puts them back and keeps those it
-/// replaced for `<C-r>`, which swaps them again.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Moves(VecDeque<(TransactionId, Saved)>);
-
-/// `a` to `z` and the last visual extent, as anchored as they were.
-#[derive(Clone, Debug)]
-pub(crate) struct Saved {
-    named: BTreeMap<char, Place>,
-    visual: Option<LastVisual>,
-}
-
-impl Saved {
-    /// As they are now; in a visual mode, `'<` and `'>` as leaving it would
-    /// set them, as unimpaired's `:` does before its `:move`.
-    fn of(state: &mut VimState, model: &EditorModel) -> Self {
-        Self {
-            named: state.marks.lowercase(),
-            visual: visual::extent_now(model, state),
-        }
-    }
-}
-
-impl Moves {
-    /// Keeps `saved` for `id`, unless it has some: those from before its
-    /// first move (a `:g` may make several).
-    fn record(&mut self, id: TransactionId, saved: Saved) {
-        if self.0.iter().any(|(at, _)| *at == id) {
-            return;
-        }
-        if self.0.len() == history::KEPT {
-            self.0.pop_front();
-        }
-        self.0.push_back((id, saved));
-    }
-}
-
 /// Where rows moving went: from `top`, the row each came from (`order`) and
 /// where each went (`to`).
 struct Places {
@@ -152,35 +113,6 @@ impl Places {
     /// Where row `row` went, if the move changed rows there.
     fn went(&self, row: u32) -> Option<u32> {
         self.to.get(row.checked_sub(self.top)? as usize).copied()
-    }
-}
-
-/// Before `u` or `<C-r>` takes a step: `a` to `z` and the last visual
-/// extent as they are, which [`reverted`] keeps for the step back if the
-/// step is a move's; `None` with no move recorded.
-pub(crate) fn outgoing(state: &mut VimState, model: &EditorModel) -> Option<Saved> {
-    (!state.moves.0.is_empty()).then(|| Saved::of(state, model))
-}
-
-/// `u` (or `<C-r>`) just took back (or made again) transaction `id`, the
-/// marks [`outgoing`] before it: if it moved rows, `a` to `z` and the last
-/// visual extent saved with it are put back (those it holds), and the
-/// outgoing ones kept in their place for the step back, as nvim's
-/// `u_undoredo` swaps them.
-pub(crate) fn reverted(state: &mut VimState, id: TransactionId, outgoing: Option<Saved>) {
-    let Some(mut now) = outgoing else {
-        return;
-    };
-    let Some(at) = state.moves.0.iter().position(|(saved, _)| *saved == id) else {
-        return;
-    };
-    if state.moves.0[at].1.visual.is_none() {
-        now.visual = None;
-    }
-    let saved = std::mem::replace(&mut state.moves.0[at].1, now);
-    state.marks.restore_lowercase(saved.named);
-    if saved.visual.is_some() {
-        state.last_visual = saved.visual;
     }
 }
 
@@ -369,7 +301,6 @@ pub(crate) fn move_rows(
     // Where each row goes: the moved ones `by` rows over, the rest of the
     // rows from the first changed filling in after each other.
     let places = Places::of(&rows, args.up, by);
-    let saved = Saved::of(target.state, target.model);
     let (top, order) = (places.top, &places.order);
     let moved = |row: u32| places.went(row);
     target.state.marks.moving(&snapshot, &moved);
@@ -408,7 +339,6 @@ pub(crate) fn move_rows(
             None => carets,
         };
         target.state.carets.record(id, before);
-        target.state.moves.record(id, saved);
     }
     let landed = |row| moved(row).unwrap_or(row);
     let ends = (landed(first), landed(last));

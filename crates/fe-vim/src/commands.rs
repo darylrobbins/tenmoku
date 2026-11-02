@@ -53,15 +53,30 @@ pub(crate) fn run_operate(
 /// `<C-o>` left insert mode for and it's done, back to insert mode
 /// ([`VimState::one_command`]), whether it worked or not. Going back
 /// changes the mode and may move the carets, so a command that did nothing
-/// itself (`h` at column 0) still has the view painted again.
+/// itself (`h` at column 0) still has the view painted again. The marks from
+/// before a command go with the transactions it made, for `u` and `<C-r>`
+/// ([`history::Moves`]).
 pub fn dispatch(
     registry: &Registry<VimCommands>,
     target: &mut VimTarget<'_>,
     invocation: &Invocation,
 ) -> Result<Dispatched<TransactionId>, DispatchError> {
+    let mutates = registry
+        .get(&invocation.command)
+        .is_some_and(|meta| meta.mutates_buffer);
+    let before = history::before(target, mutates);
     let mut dispatched = registry.dispatch(target, invocation);
+    let made = match &dispatched {
+        Ok(dispatched) => dispatched.transactions.as_slice(),
+        Err(_) => &[],
+    };
+    history::after(target, before, made);
     if target.state.one_command.is_some() {
+        // The session this goes back to is a change of its own, after the
+        // command's.
+        let before = history::before(target, false);
         insert::finish_one_command(target);
+        history::after(target, before, &[]);
         if target.state.one_command.is_none()
             && let Ok(dispatched) = &mut dispatched
             && dispatched.effect == Effect::Nothing

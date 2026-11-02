@@ -12,6 +12,10 @@
 //! row at the caret's column), and an insert session's where typing starts
 //! (`o` and `O`: where the caret was). The others' (`J r ~ p P`) begin at
 //! the caret.
+//!
+//! The marks come back too: see [`undo_marks`].
+
+mod undo_marks;
 
 use std::collections::VecDeque;
 
@@ -21,6 +25,8 @@ use fe_editor::{EditorModel, commands::origin};
 use fe_text::Text;
 
 use crate::{CountArgs, VimTarget, motion::Cursor};
+
+pub(crate) use undo_marks::{Moves, Saved, after, before};
 
 /// How many transactions [`Carets`] remembers.
 pub(crate) const KEPT: usize = 1000;
@@ -180,14 +186,14 @@ pub(crate) fn undo(
     crate::insert::adopt_closing(state);
     let mut reverted = Vec::new();
     for _ in 0..args.count.unwrap_or(1).max(1) {
-        let outgoing = crate::feature::line_edits::outgoing(state, model);
+        let outgoing = undo_marks::outgoing(state, model);
         let (step, _) = model.run_as(origin(actor), |model| match redo {
             true => model.redo(),
             false => model.undo(),
         });
         match step {
             Ok(Some(id)) => {
-                crate::feature::line_edits::reverted(state, id, outgoing);
+                undo_marks::reverted(state, id, outgoing);
                 reverted.push(id);
             }
             Ok(None) => break,

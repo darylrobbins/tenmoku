@@ -1,0 +1,2062 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "dd_deletes_the_mark",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "madd",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "dd_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddu<C-r>",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_undo_redo_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddu<C-r>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "dd_column_kept",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "maddu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "dd_above_the_mark_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "makkddu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "dd_undo_then_dd_again",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddudd",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_undo_then_dd_above",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddukdd",
+      "expect": {
+        "buffer": "two\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "dd_undo_then_dd_above_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddukddu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ex_d_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:d<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "ex_d_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:d<CR>u<C-r>",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ex_d_range_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "majmbgg:2,3d<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\nthree\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\nthree\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "join_carries_then_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "majddkJu",
+      "expect": {
+        "buffer": "one\ntwo\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "join_carried_mark",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jmakJ",
+      "expect": {
+        "buffer": "one\ntwo three\nfour",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "join_carried_mark_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jmakJu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "join_carried_mark_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "jmakJu<C-r>",
+      "expect": {
+        "buffer": "one\ntwo three\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "dG_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "mjmaggdGu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "j": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "dG_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "mjmaggdGu<C-r>",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_then_dG_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>ggdGu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_then_dG",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>ggdG",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_then_dG_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Vj<Esc>ggdGu<C-r>",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "charwise_visual_then_dG_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vjl<Esc>ggdGu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\ntwo\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_delete_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maVjdu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\nthree\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\nthree\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            4
+          ],
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_delete_over_older_extent_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v<Esc>jVjdu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\nthree\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\nthree\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_newer_than_the_change_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "ddggVj<Esc>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_d_undo",
+      "buffer": "ax\nb\ncx\nd\nex",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majjmb:g/x/d<CR>u",
+      "expect": {
+        "buffer": "ax\nb\ncx\nd\nex",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "cx\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "ax\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            0,
+            0
+          ],
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_d_undo_redo",
+      "buffer": "ax\nb\ncx\nd\nex",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "majjmb:g/x/d<CR>u<C-r>",
+      "expect": {
+        "buffer": "b\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "cx\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "ax\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_undo",
+      "buffer": "ax\nb\ncx\nd\nex",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ma:g/x/normal dd<CR>u",
+      "expect": {
+        "buffer": "ax\nb\ncx\nd\nex",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "ex\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "cx\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "ax\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "normal_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:normal dd<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "normal_two_edits_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:normal ddmbdd<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "sort_undo",
+      "buffer": "d\nc\nb\na",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:sort<CR>u",
+      "expect": {
+        "buffer": "d\nc\nb\na",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "substitute_rows_undo",
+      "buffer": "a,b\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:%s/\\nc\\n/-/<CR>u",
+      "expect": {
+        "buffer": "a,b\nc\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\nc\\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "two_undos_over_two_changes",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddmbdd2u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "two_undos_one_by_one",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddmbdduu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "first_of_two_undos",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddmbddu",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "two_undos_then_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddmbdd2u<C-r>",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "b": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "two_undos_then_two_redos",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddmbdd2u2<C-r>",
+      "expect": {
+        "buffer": "one\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "three\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cc_on_the_marked_row",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "macc<Esc>",
+      "expect": {
+        "buffer": "one\n\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cc_on_the_marked_row_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "macc<Esc>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cc_typed_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "maccnew<Esc>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cc_typed_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "maccnew<Esc>u<C-r>",
+      "expect": {
+        "buffer": "one\nnew\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cc_typed_break_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "majmbkccx<CR>y<Esc>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            1
+          ],
+          "b": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "o_above_the_mark_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "makkonew<Esc>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "insert_nothing_keeps_the_last_record",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maddi<Esc>mbu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "one_command_splits_the_session_first_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maix<C-o>:delmarks a<CR>y<Esc>u",
+      "expect": {
+        "buffer": "one\nxtwo\nthree\nfour",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "one_command_splits_the_session_both_undos",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maix<C-o>:delmarks a<CR>y<Esc>uu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "insert_after_marking_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ddjmaix<Esc>:delmarks a<CR>u",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "x_then_delmarks_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "max:delmarks a<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "x_then_delmarks_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "max:delmarks a<CR>u<C-r>",
+      "expect": {
+        "buffer": "one\nwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_moved_after_the_change_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maxjmau",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_moved_after_the_change_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "maxjmau<C-r>",
+      "expect": {
+        "buffer": "one\nwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_set_after_the_change_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjmbu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_set_after_the_change_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjmbu<C-r>",
+      "expect": {
+        "buffer": "one\nwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "t",
+            "linewise": false
+          },
+          "-": {
+            "text": "t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "b": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ddma.u",
+      "expect": {
+        "buffer": "two\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "one\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ddma.u<C-r>",
+      "expect": {
+        "buffer": "three\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "macro_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "qqddqjma@qu",
+      "expect": {
+        "buffer": "one\nthree\nfour",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "q": {
+            "text": "dd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "put_over_the_mark_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yymaVpu",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ],
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_rows_ex_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma:m3<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "bracket_e_up_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma[eu",
+      "oracle_keys": "ma:m0<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "bracket_e_up_undo_redo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma[eu<C-r>",
+      "oracle_keys": "ma:m0<CR>u<C-r>",
+      "expect": {
+        "buffer": "two\none\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "bracket_e_down_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ma]eu",
+      "oracle_keys": "ma:m3<CR>u",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "bracket_e_after_a_delete_undo",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jmbkddma]eu",
+      "oracle_keys": "jmbkddma:m2<CR>u",
+      "expect": {
+        "buffer": "two\nthree\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "a": [
+            0,
+            0
+          ],
+          "b": [
+            0,
+            0
+          ]
+        }
+      }
+    }
+  ]
+}

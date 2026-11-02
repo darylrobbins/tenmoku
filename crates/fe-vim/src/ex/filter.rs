@@ -283,6 +283,8 @@ impl VimState {
         insert::adopt_closing(self);
         model.sync_display();
         follow(self, model);
+        // Output arrives outside any command, so no dispatch records these.
+        let saved = history::Saved::of(self, model);
         let text = model.text().clone();
         let count = text.row_count();
         let first = rows.start.min(count - 1);
@@ -351,6 +353,7 @@ impl VimState {
         let (transaction, snapshot) = apply(self, model, steps);
         if let Some(id) = transaction {
             self.carets.record(id, vec![undone]);
+            self.moves.note(id, saved);
         }
         // nvim's `']` is on the last row put in, or with none on the row
         // above the range.
@@ -378,6 +381,7 @@ impl VimState {
         insert::adopt_closing(self);
         model.sync_display();
         follow(self, model);
+        let saved = history::Saved::of(self, model);
         let text = model.text().clone();
         let below = below.min(text.row_count());
         let lines = output_rows(output);
@@ -400,6 +404,7 @@ impl VimState {
         );
         if let Some(id) = transaction {
             self.carets.record(id, before);
+            self.moves.note(id, saved);
         }
         let put = u32::try_from(lines.len()).unwrap_or(u32::MAX);
         // nvim's `'[` and `']` are on the first and last rows put in; with
