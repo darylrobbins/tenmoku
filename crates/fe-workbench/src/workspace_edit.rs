@@ -654,6 +654,10 @@ fn merge_inserts(edits: Vec<(Range<usize>, String)>) -> Vec<(Range<usize>, Strin
     merged
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[path = "refactor_preview.rs"]
+pub(crate) mod refactor_preview;
+
 #[cfg(test)]
 #[path = "workspace_edit_tests.rs"]
 mod tests;
