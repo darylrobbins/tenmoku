@@ -65,6 +65,21 @@ impl EditorView {
         cx.notify();
     }
 
+    /// Has a read-only view still show its proposals' Accept buttons, and
+    /// take their presses and the accept commands: a copy of a file to
+    /// review, whose text only accepting a hunk changes. Off by default.
+    pub fn set_accepts_when_read_only(&mut self, accepts: bool, cx: &mut Context<Self>) {
+        if self.accepts_when_read_only != accepts {
+            self.accepts_when_read_only = accepts;
+            cx.notify();
+        }
+    }
+
+    /// Whether a read-only view still takes its proposals' Accepts.
+    pub fn accepts_when_read_only(&self) -> bool {
+        self.accepts_when_read_only
+    }
+
     /// The proposals shown.
     pub fn proposals(&self) -> &[Rc<RefCell<ProposedChange>>] {
         &self.proposals
@@ -81,7 +96,8 @@ impl EditorView {
     /// or no proposal shown holds it. Then nothing changes and nothing is
     /// emitted.
     ///
-    /// A read-only view shows no Accept button, but the host may still
+    /// A read-only view shows no Accept button (unless
+    /// [`EditorView::set_accepts_when_read_only`]), but the host may still
     /// accept through it.
     pub fn accept_hunk(
         &mut self,
@@ -164,7 +180,9 @@ impl EditorView {
         };
         let pressed = match button {
             // The last frame's button may predate read-only.
-            ProposalButton::Accept if self.read_only => return true,
+            ProposalButton::Accept if self.read_only && !self.accepts_when_read_only => {
+                return true;
+            }
             ProposalButton::Accept => self.accept_hunk(id, cx).map(drop),
             ProposalButton::Reject => self.reject_hunk(id, cx),
         };

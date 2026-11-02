@@ -8,9 +8,13 @@
 //!   holding the current name as if all selected: the first edit replaces
 //!   it. Its one row, `Rename to <name>`, shows while the name is new.
 //! - **Rename.** Confirming asks for the edits at the version the picker
-//!   opened on, then applies them ([`Workbench::apply_file_edits`]). A
-//!   buffer that changed since, a refused edit and a server's error are an
-//!   info prompt, with nothing changed. One rename runs at a time.
+//!   opened on, then applies them ([`Workbench::apply_file_edits`]), or,
+//!   if they reach past the file, previews them in the AI Changes panel
+//!   (`Rename <old> to <new>`) to apply once reviewed
+//!   ([`Workbench::preview_or_apply`]); the caret moves only once they're
+//!   applied. A buffer that changed since, a refused edit and a server's
+//!   error are an info prompt, with nothing changed. One rename runs at a
+//!   time.
 //!
 //! [`LspManager::prepare_rename`]: fe_lsp::LspManager::prepare_rename
 
@@ -27,6 +31,7 @@ use gpui::{
 
 use crate::{
     Workbench,
+    ai_changes_panel::OnApplied,
     lsp::{RenameAnswer, RenameEdits},
     picker::{Picker, PickerDelegate},
     workbench::Palette,
@@ -41,6 +46,8 @@ struct Request {
     version: Version,
     caret: usize,
     target: Range<usize>,
+    /// The symbol's name now.
+    name: String,
 }
 
 impl Workbench {
@@ -79,6 +86,7 @@ impl Workbench {
                         version,
                         caret,
                         target: target.range.clone(),
+                        name: target.placeholder.clone(),
                     };
                     workbench.prepared(answer, request, window, cx);
                 })
@@ -126,12 +134,13 @@ impl Workbench {
         ));
     }
 
-    /// The server's edits for the rename `request` asked for: applied, the
-    /// caret kept on the symbol, or said why not; the picker closes either
-    /// way.
+    /// The server's edits for the rename of `request` to `to`: applied (or
+    /// previewed, to apply once reviewed), the caret then kept on the
+    /// symbol, or said why not; the picker closes either way.
     fn renamed(
         &mut self,
         request: &Request,
+        to: &str,
         answer: RenameEdits,
         picker: &Entity<Picker<RenamePicker>>,
         window: &mut Window,
@@ -142,15 +151,8 @@ impl Workbench {
                 task.detach();
             }
         });
-        let caret = answer.as_ref().ok().and_then(|files| {
-            let edits = files.iter().find_map(|file| match &file.target {
-                fe_lsp::EditTarget::Open { buffer, edits, .. } if *buffer == request.buffer => {
-                    Some(edits)
-                }
-                _ => None,
-            })?;
-            caret_after(edits, &request.target, request.caret)
-        });
+        // First, so a preview shown keeps its focus.
+        picker.update(cx, |picker, cx| picker.dismiss(window, cx));
         // The server's edits were made for the version asked about: a
         // changed or closed source buffer discards all of them.
         let current = request
@@ -161,18 +163,28 @@ impl Workbench {
             if current != Some(request.version) {
                 return Err(STALE.to_owned());
             }
-            self.apply_user_file_edits(files, cx)
-        });
-        match applied {
-            Ok(_) => {
-                let editor = request.editor.upgrade();
-                if let (Some(editor), Some(caret)) = (editor, caret) {
+            let (editor, buffer) = (request.editor.clone(), request.buffer);
+            let (target, caret) = (request.target.clone(), request.caret);
+            // The caret kept on the symbol, past the edits that were made.
+            let on_applied: OnApplied = Box::new(move |_, applied, window, cx| {
+                let edits = applied.iter().find_map(|file| match &file.target {
+                    fe_lsp::EditTarget::Open {
+                        buffer: b, edits, ..
+                    } if *b == buffer => Some(edits),
+                    _ => None,
+                });
+                let caret = edits.and_then(|edits| caret_after(edits, &target, caret));
+                if let (Some(editor), Some(caret)) = (editor.upgrade(), caret) {
                     editor.update(cx, |editor, cx| editor.select_and_reveal(caret..caret, cx));
+                    window.focus(&editor.focus_handle(cx), cx);
                 }
-            }
-            Err(message) => self.say(&message, window, cx),
+            });
+            let title = format!("Rename {} to {to}", request.name);
+            self.preview_or_apply(title, request.buffer, files, on_applied, window, cx)
+        });
+        if let Err(message) = applied {
+            self.say(&message, window, cx);
         }
-        picker.update(cx, |picker, cx| picker.dismiss(window, cx));
     }
 }
 
@@ -332,6 +344,7 @@ impl PickerDelegate for RenamePicker {
             version: self.request.version,
             caret: self.request.caret,
             target: self.request.target.clone(),
+            name: self.request.name.clone(),
         };
         let task = cx.spawn_in(window, async move |picker, cx| {
             let answer = asked.await;
@@ -340,7 +353,7 @@ impl PickerDelegate for RenamePicker {
             };
             workbench
                 .update_in(cx, |workbench, window, cx| {
-                    workbench.renamed(&request, answer, &picker, window, cx)
+                    workbench.renamed(&request, &new_name, answer, &picker, window, cx)
                 })
                 .ok();
         });

@@ -775,7 +775,8 @@ impl EditorView {
 
     /// Runs `invocation`, one of the proposal commands: dispatched through
     /// `proposals`, then the view does the op. A read-only view refuses those
-    /// that accept.
+    /// that accept, unless it takes Accepts all the same
+    /// ([`EditorView::set_accepts_when_read_only`]).
     fn run_proposal_command(
         &mut self,
         proposals: &Registry<crate::view::ProposalCommands>,
@@ -788,7 +789,7 @@ impl EditorView {
                 let mutates = proposals
                     .get(&invocation.command)
                     .is_some_and(|meta| meta.mutates_buffer);
-                if self.read_only && mutates {
+                if self.read_only && mutates && !self.accepts_when_read_only {
                     self.refuse_edit(cx);
                     return false;
                 }

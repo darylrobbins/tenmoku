@@ -423,8 +423,8 @@ impl Layout {
 }
 
 /// The buttons a header row of a hunk with `status` has: Accept and Reject
-/// for a pending one, though a read-only view takes no edit, and Reject
-/// alone for a stale one.
+/// for a pending one, though a read-only view takes no edit (unless it
+/// takes Accepts all the same), and Reject alone for a stale one.
 fn buttons(status: HunkStatus, read_only: bool) -> &'static [ProposalButton] {
     match status {
         HunkStatus::Pending if !read_only => &[ProposalButton::Accept, ProposalButton::Reject],
@@ -528,7 +528,7 @@ pub(super) fn widest(
                 let text_width = shaper.shape(&hunk.header, &runs).width();
                 let (_, width) = header_buttons(
                     hunk.status,
-                    view.read_only,
+                    view.read_only && !view.accepts_when_read_only,
                     text_width,
                     frame.line_height,
                     shaper,
@@ -591,7 +591,7 @@ pub(super) fn layout(
                 let text_width = shaper.shape(&hunk.header, &runs).width();
                 let (shaped, _) = header_buttons(
                     hunk.status,
-                    view.read_only,
+                    view.read_only && !view.accepts_when_read_only,
                     text_width,
                     line_height,
                     shaper,

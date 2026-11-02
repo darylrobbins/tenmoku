@@ -21,7 +21,9 @@
 //! - **Then applied.** Each open buffer gets its edits as one transaction
 //!   of the user, who asked for the rename or the action, as when
 //!   accepting a completion, so undo in its editor takes it back;
-//!   selections stay anchored. It's a transaction of its own: one the user
+//!   selections stay anchored. Edits to it in later runs (past a file
+//!   operation) join that transaction, so one undo takes the whole edit
+//!   back. It's a transaction of its own: one the user
 //!   has open (a Vim insert) is set aside meanwhile, neither joined nor
 //!   closed. Then each closed file is written back in
 //!   its own encoding, BOM and line endings, atomically, as saving does
@@ -80,7 +82,7 @@ use std::{
     sync::Arc,
 };
 
-use fe_buffer::{BufferId, Origin, ProposedChange, Version};
+use fe_buffer::{BufferId, Origin, ProposedChange, TransactionId, Version};
 use fe_editor::EditorModel;
 use fe_lsp::{EditTarget, FileEdits, OperationId, decode_closed};
 use fe_project::fs_ops;
@@ -125,6 +127,8 @@ struct Edited {
     /// The edits made to it, run by run, each in the text it was made to:
     /// the range replaced, and the length of what replaced it.
     runs: Vec<Vec<(Range<usize>, usize)>>,
+    /// The transaction its first run made, which later runs join.
+    transaction: Option<TransactionId>,
 }
 
 /// What [`Workbench::apply_operation`] did.
@@ -232,7 +236,9 @@ impl Workbench {
         }
 
         for (editor, server, edits) in open {
-            let (buffer, now, made) = editor.update(cx, |view, cx| {
+            let id = editor.read(cx).model().buffer().id();
+            let earlier = edited.get(&id).and_then(|edited| edited.transaction);
+            let (buffer, now, made, transaction) = editor.update(cx, |view, cx| {
                 let model = view.model_mut();
                 model.sync_display();
                 let mut buffer = model.buffer_mut();
@@ -241,24 +247,40 @@ impl Workbench {
                 let mut change = ProposedChange::from_edits(base, edits, Origin::User);
                 // As made: clipped, line endings normalized, and no-ops
                 // left out.
-                let made: Vec<_> = (change.hunks(base).into_iter())
-                    .map(|hunk| (hunk.range, hunk.new_text.len()))
+                let hunks = change.hunks(base);
+                let made: Vec<_> = (hunks.iter())
+                    .map(|hunk| (hunk.range.clone(), hunk.new_text.len()))
                     .collect();
-                change.accept_all(&mut buffer);
+                // A later run joins the first's transaction: one undo step
+                // takes the whole edit back from the buffer.
+                let joined = earlier.and_then(|transaction| {
+                    let edits = (hunks.into_iter()).map(|hunk| (hunk.range, hunk.new_text));
+                    let joined = buffer.edit_in(transaction, edits).ok()?;
+                    Some(joined.unwrap_or(transaction))
+                });
+                let transaction = joined.or_else(|| change.accept_all(&mut buffer).0);
                 if by_user {
                     buffer.note_edits_since(version);
                 }
                 drop(buffer);
                 cx.notify();
-                (model.buffer().id(), model.buffer().version(), made)
+                let model = view.model();
+                (
+                    model.buffer().id(),
+                    model.buffer().version(),
+                    made,
+                    transaction,
+                )
             });
             let entry = edited.entry(buffer).or_insert(Edited {
                 server,
                 now,
                 runs: Vec::new(),
+                transaction: None,
             });
             entry.now = now;
             entry.runs.push(made);
+            entry.transaction = entry.transaction.or(transaction);
             // Its other editors, in any window, show it on the next frame.
             let editors: Vec<_> = (self.and_others(others, cx))
                 .flat_map(|workbench| workbench.editors_of(buffer, cx))
@@ -559,7 +581,7 @@ impl Workbench {
     /// Every file an editor shows, a pane is reading into one, or a Save As
     /// is to write ([`crate::open::reserve`]), resolved, with the paths they
     /// go by.
-    fn opened_files(&self, cx: &App) -> HashSet<PathBuf> {
+    pub(crate) fn opened_files(&self, cx: &App) -> HashSet<PathBuf> {
         let shown = (self.open_editors(cx).iter())
             .filter_map(|editor| editor.read(cx).model().path().map(Path::to_owned))
             .collect::<Vec<_>>();

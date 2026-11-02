@@ -166,6 +166,9 @@ pub mod status {
     }
 }
 
+/// Why an unsavable editor's save failed ([`EditorView::set_unsavable`]).
+pub const UNSAVABLE: &str = "this is a copy to review, not saved";
+
 /// A tab's label for a buffer at `path`: its file name, or `untitled`.
 pub fn file_name(path: Option<&Path>) -> String {
     path.and_then(Path::file_name).map_or_else(
@@ -331,6 +334,20 @@ pub trait SaveHook {
 }
 
 impl EditorView {
+    /// Has the editor never save its buffer, to its path or any other:
+    /// [`EditorView::save`], Save As ([`EditorView::save_as_with`]) and
+    /// [`EditorView::write_copy`] fail with [`UNSAVABLE`], and the save
+    /// command does nothing. For a copy of a file to review, not to keep.
+    /// Off by default; a split takes it.
+    pub fn set_unsavable(&mut self, unsavable: bool) {
+        self.unsavable = unsavable;
+    }
+
+    /// Whether the editor never saves ([`EditorView::set_unsavable`]).
+    pub fn is_unsavable(&self) -> bool {
+        self.unsavable
+    }
+
     /// Sets what runs before each save, or nothing.
     pub fn set_save_hook(&mut self, hook: Option<Rc<dyn SaveHook>>) {
         self.save_hook = hook;
@@ -477,6 +494,9 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
+        if self.unsavable {
+            return Task::ready(Err(io::Error::other(UNSAVABLE).into()));
+        }
         let (previous, guard) = self.queue_save();
         let edits = self.edits_allowed(reason);
         let ask = reason.asks();
@@ -565,6 +585,9 @@ impl EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
+        if self.unsavable {
+            return Task::ready(Err(io::Error::other(UNSAVABLE).into()));
+        }
         let (previous, guard) = self.queue_save();
         // With none running, the text as it is now; typing from here on is
         // unsaved.
@@ -625,6 +648,9 @@ impl EditorView {
         overwrite: bool,
         cx: &mut Context<Self>,
     ) -> Task<io::Result<()>> {
+        if self.unsavable {
+            return Task::ready(Err(io::Error::other(UNSAVABLE)));
+        }
         let (previous, guard) = self.queue_save();
         let job = self.model.prepare_save_to(path, overwrite);
         let gate = COPY_GATE.with_borrow_mut(Option::take);
@@ -713,6 +739,9 @@ impl EditorView {
     /// A host that shows the view's file another way, such as a preview in
     /// its place, runs it for `editor.save` there.
     pub fn save_from_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.unsavable {
+            return;
+        }
         if self.model.path().is_none() {
             let stack = crate::keymap::context_stack(&window.context_stack());
             let invocation = Invocation::of(SAVE_AS)
@@ -989,16 +1018,20 @@ impl PaneItem for EditorView {
     }
 
     /// An editor over the same buffer, with its own view of it, in this
-    /// one's theme: read-only if this one is, with its tab title and the
-    /// language chosen for it, if any.
+    /// one's theme: read-only if this one is (taking proposals' Accepts if
+    /// it does), unsavable if it is, with its tab title and the language
+    /// chosen for it, if any.
     fn split(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
         let model = self.model.split();
         let theme = self.theme.clone();
         let (read_only, title) = (self.read_only, self.tab_title.clone());
+        let (accepts, unsavable) = (self.accepts_when_read_only, self.unsavable);
         let language = self.language_chosen.then_some(self.chosen_language);
         Some(cx.new(|cx| {
             let mut view = EditorView::new(model, theme, cx);
             view.set_read_only(read_only, cx);
+            view.accepts_when_read_only = accepts;
+            view.unsavable = unsavable;
             view.tab_title = title;
             if let Some(language) = language {
                 view.set_language(language, cx);

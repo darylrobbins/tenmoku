@@ -17,7 +17,10 @@
 //!   if it has one: edits it sends meanwhile arrive as
 //!   [`fe_lsp::LspEvent::ApplyEdit`]. The picker stays up, refusing another
 //!   confirm, until that's done, and then closes with focus back in the
-//!   editor. A buffer changed since the list was asked for, a server error
+//!   editor. Edits that reach past the file are previewed instead, under
+//!   the action's title, in the AI Changes panel
+//!   ([`Workbench::preview_or_apply`]): the picker closes, and the command
+//!   runs once they're applied, never if they're cancelled. A buffer changed since the list was asked for, a server error
 //!   or a refused edit is an info prompt with the reason, and the edits
 //!   not applied stay unapplied.
 
@@ -36,10 +39,12 @@ use gpui::{
 
 use crate::{
     Workbench,
+    ai_changes_panel::OnApplied,
     lsp::CodeActioner,
     picker::{Picker, PickerDelegate},
     toolbar_picker::subsequence,
     workbench::Palette,
+    workspace_edit::refactor_preview::RefactorPreview,
 };
 
 const STALE: &str = "The file changed; ask again";
@@ -53,6 +58,21 @@ fn tell(message: &str, window: &mut Window, cx: &mut App) {
         &[PromptButton::ok("OK")],
         cx,
     ));
+}
+
+/// Has the server run `action`'s command, through `actioner`, once its
+/// previewed edits are applied, saying why if it fails.
+fn command_after(actioner: CodeActioner, action: CodeAction) -> OnApplied {
+    Box::new(move |_, _, window, cx| {
+        let run = actioner.run(&action);
+        cx.spawn_in(window, async move |_, cx| {
+            if let Err(error) = run.await {
+                cx.update(|window, cx| tell(&reason(&error), window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    })
 }
 
 /// What a server's error says.
@@ -217,15 +237,32 @@ impl Workbench {
                     let unchanged = at.editor.read(cx).model().buffer().version() == at.version;
                     let applied = match resolved {
                         Ok(_) if !unchanged => Err(STALE.to_owned()),
-                        Ok(action) => actioner
-                            .edits(&action)
+                        Ok(action) => (actioner.edits(&action))
                             .map_err(|error| reason(&error))
-                            .and_then(|edits| workbench.apply_user_file_edits(edits, cx))
-                            .map(|_| actioner.run(&action)),
+                            .and_then(|edits| {
+                                if RefactorPreview::needs_preview(&edits, at.buffer) {
+                                    let title = action.title.clone();
+                                    let after = command_after(actioner.clone(), action);
+                                    (workbench.preview_or_apply(
+                                        title, at.buffer, edits, after, window, cx,
+                                    ))
+                                    .map(|()| None)
+                                } else {
+                                    (workbench.apply_user_file_edits(edits, cx))
+                                        .map(|_| Some(actioner.run(&action)))
+                                }
+                            }),
                         Err(error) => Err(reason(&error)),
                     };
                     match applied {
-                        Ok(run) => Some(run),
+                        Ok(Some(run)) => Some(run),
+                        Ok(None) => {
+                            // Previewed: its command runs once it's applied.
+                            if let Some(task) = workbench.lsp.code_actioning.take() {
+                                task.detach();
+                            }
+                            None
+                        }
                         Err(message) => {
                             if let Some(task) = workbench.lsp.code_actioning.take() {
                                 task.detach();
@@ -326,28 +363,46 @@ impl CodeActionsPicker {
     }
 
     /// `action` resolved: its edits applied, and its command to run if
-    /// those were. Said, with `None`, if not.
+    /// those were. Said, with `None`, if not; `None` too if they're
+    /// previewed instead, once the picker has closed, the command to run
+    /// once they're applied.
     fn apply(
         &mut self,
         action: Result<CodeAction, LspError>,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<crate::lsp::Answer<()>> {
+        let source = self.buffer;
         let applied = match action {
             Ok(_) if !self.unchanged(cx) => Err(STALE.to_owned()),
             Ok(action) => match (self.actioner.edits(&action), self.workbench.upgrade()) {
                 (Err(error), _) => Err(reason(&error)),
                 (Ok(_), None) => Err("the window has closed".to_owned()),
+                (Ok(edits), Some(workbench)) if RefactorPreview::needs_preview(&edits, source) => {
+                    // After the picker closes, so the panel keeps focus.
+                    let title = action.title.clone();
+                    let after = command_after(self.actioner.clone(), action);
+                    window.defer(cx, move |window, cx| {
+                        workbench.update(cx, |workbench, cx| {
+                            let shown =
+                                workbench.preview_or_apply(title, source, edits, after, window, cx);
+                            if let Err(message) = shown {
+                                tell(&message, window, cx);
+                            }
+                        })
+                    });
+                    Ok(None)
+                }
                 (Ok(edits), Some(workbench)) => workbench
                     .update(cx, |workbench, cx| {
                         workbench.apply_user_file_edits(edits, cx)
                     })
-                    .map(|_| self.actioner.run(&action)),
+                    .map(|_| Some(self.actioner.run(&action))),
             },
             Err(error) => Err(reason(&error)),
         };
         match applied {
-            Ok(run) => Some(run),
+            Ok(run) => run,
             Err(message) => {
                 tell(&message, window, cx);
                 None

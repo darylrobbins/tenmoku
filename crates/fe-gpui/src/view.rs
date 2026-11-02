@@ -220,6 +220,12 @@ pub struct EditorView {
     pub(crate) find: find::Find,
     /// Edits are refused ([`host`]).
     pub(crate) read_only: bool,
+    /// Read-only, its proposals' hunks can still be accepted by their
+    /// buttons ([`EditorView::set_accepts_when_read_only`]).
+    pub(crate) accepts_when_read_only: bool,
+    /// Never saved, to its path or any other
+    /// ([`EditorView::set_unsavable`]).
+    pub(crate) unsavable: bool,
     /// The open command line is a search an operator other than a yank
     /// waits on ([`EditorView::note_command_line`]).
     pub(crate) line_operates: bool,
@@ -456,6 +462,8 @@ impl EditorView {
             ancestors: None,
             find: Default::default(),
             read_only: false,
+            accepts_when_read_only: false,
+            unsavable: false,
             line_operates: false,
             blocks: Vec::new(),
             reserved: Vec::new(),

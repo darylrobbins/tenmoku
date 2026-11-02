@@ -52,6 +52,10 @@ use crate::{
 };
 use fe_editor::Changeset;
 
+#[path = "refactor_preview_view.rs"]
+mod refactor_preview_view;
+pub(crate) use refactor_preview_view::OnApplied;
+
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "ai_changes";
 
@@ -93,6 +97,8 @@ pub(crate) struct ListedFile {
     /// Lines the hunks add and remove.
     pub(crate) added: usize,
     pub(crate) removed: usize,
+    /// What a preview's file operation does to it, if the row is one.
+    pub(crate) operation: Option<String>,
 }
 
 /// What the workbench lists into the panel.
@@ -100,6 +106,18 @@ pub(crate) struct ListedFile {
 pub(crate) struct Listing {
     pub(crate) files: Vec<ListedFile>,
     pub(crate) summary: Summary,
+    /// A language server's edit shown in place of a changeset.
+    pub(crate) preview: Option<PreviewHead>,
+}
+
+/// A preview's header: its title, and the files and edits Apply makes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PreviewHead {
+    pub(crate) title: String,
+    pub(crate) files: usize,
+    pub(crate) edits: usize,
+    /// Whether its files can be kept or left out one by one.
+    pub(crate) decidable: bool,
 }
 
 /// The workbench's active changeset and what it needs to reach buffers.
@@ -119,6 +137,9 @@ pub(crate) struct AiChanges {
     /// The buffers of tabs showing new files still pending, by file: made
     /// to review them, not to keep. A decision closes them.
     previews: Vec<(PathBuf, BufferId)>,
+    /// A language server's edit under review, shown in place of the
+    /// changeset, which is then empty.
+    refactor: Option<refactor_preview_view::Review>,
 }
 
 impl AiChanges {
@@ -133,6 +154,7 @@ impl AiChanges {
             told: 0,
             opening: None,
             previews: Vec::new(),
+            refactor: None,
         }
     }
 }
@@ -233,6 +255,11 @@ impl AiChangesPanel {
 
     /// What shows in place of the rows, if anything.
     fn message(&self) -> Option<&'static str> {
+        // A preview's rows stay, decided or not: Apply still makes what's
+        // kept, its file operations too.
+        if self.listing.preview.is_some() {
+            return None;
+        }
         let counts = &self.listing.summary.counts;
         (self.listing.files.is_empty()
             || (counts.pending == 0 && counts.accepted == 0 && counts.stale == 0))
@@ -240,6 +267,17 @@ impl AiChangesPanel {
     }
 
     fn header(&self) -> String {
+        if let Some(head) = &self.listing.preview {
+            let files = match head.files {
+                1 => "1 file".to_owned(),
+                n => format!("{n} files"),
+            };
+            let edits = match head.edits {
+                1 => "1 edit".to_owned(),
+                n => format!("{n} edits"),
+            };
+            return format!("{}: {files}, {edits}", head.title);
+        }
         let summary = &self.listing.summary;
         let files = match summary.files {
             1 => "1 file".to_owned(),
@@ -279,30 +317,45 @@ impl AiChangesPanel {
             )
         };
         let _ = cx;
-        div()
-            .flex_none()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_1()
-            .child(button(
-                "ai-changes-accept-all",
-                "Accept All",
-                "ai.changes_accept_all",
-                true,
-            ))
-            .child(button(
-                "ai-changes-reject-all",
-                "Reject All",
-                "ai.changes_reject_all",
-                true,
-            ))
-            .child(button(
-                "ai-changes-revert",
-                "Revert Turn",
-                "ai.changes_revert",
-                can_revert,
-            ))
+        let row = div().flex_none().flex().flex_wrap().items_center().gap_1();
+        if self.listing.preview.is_some() {
+            // Buttons, not commands: the preview's are its own.
+            let button = |id: &'static str, label: &'static str, apply: bool| {
+                let workbench = self.workbench.clone();
+                div().flex_none().debug_selector(move || id.into()).child(
+                    Button::new(id, label)
+                        .small()
+                        .on_click(move |_, window, cx| {
+                            (workbench.update(cx, |workbench, cx| match apply {
+                                true => workbench.apply_refactor_preview(window, cx),
+                                false => workbench.cancel_refactor_preview(window, cx),
+                            }))
+                            .ok();
+                        }),
+                )
+            };
+            return row
+                .child(button("ai-changes-apply", "Apply", true))
+                .child(button("ai-changes-cancel", "Cancel", false));
+        }
+        row.child(button(
+            "ai-changes-accept-all",
+            "Accept All",
+            "ai.changes_accept_all",
+            true,
+        ))
+        .child(button(
+            "ai-changes-reject-all",
+            "Reject All",
+            "ai.changes_reject_all",
+            true,
+        ))
+        .child(button(
+            "ai-changes-revert",
+            "Revert Turn",
+            "ai.changes_revert",
+            can_revert,
+        ))
     }
 
     fn render_rows(
@@ -331,6 +384,10 @@ impl AiChangesPanel {
                     .text_color(ui.icon);
                 let decided = |counts: &Counts| counts.pending == 0 && counts.stale == 0;
                 let can_decide = !decided(&file.counts);
+                // A whole-only preview's files, and its operations, are
+                // decided with it.
+                let whole = (self.listing.preview.as_ref()).is_some_and(|head| !head.decidable)
+                    || file.operation.is_some();
                 let buttons = [("accept", "Accept", true), ("reject", "Reject", false)]
                     .into_iter()
                     .map(|(what, label, accept)| {
@@ -350,14 +407,26 @@ impl AiChangesPanel {
                                     .ok();
                                 }),
                         )
-                    });
+                    })
+                    .filter(|_| !whole);
+                let detail = match &file.operation {
+                    Some(operation) => operation.clone(),
+                    None => format!(
+                        "+{} -{}  {}",
+                        file.added,
+                        file.removed,
+                        Self::row_counts(&file.counts)
+                    ),
+                };
+                // A path a preview both edits and renames has two rows.
+                let row = match file.operation {
+                    Some(_) => format!("ai-changes-operation-{ix}-{shown}"),
+                    None => format!("ai-changes-row-{shown}"),
+                };
                 Some(
                     div()
-                        .id(ElementId::Name(format!("ai-changes-row-{shown}").into()))
-                        .debug_selector({
-                            let selector = format!("ai-changes-row-{shown}");
-                            move || selector
-                        })
+                        .id(ElementId::Name(row.clone().into()))
+                        .debug_selector(move || row)
                         .h(ROW_HEIGHT * 2.)
                         .w_full()
                         .px_3()
@@ -393,12 +462,7 @@ impl AiChangesPanel {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .text_color(ui.muted_text)
-                                .child(format!(
-                                    "+{} -{}  {}",
-                                    file.added,
-                                    file.removed,
-                                    Self::row_counts(&file.counts)
-                                )),
+                                .child(detail),
                         )
                         .into_any_element(),
                 )
@@ -497,20 +561,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         // The turn it replaces leaves no review tabs behind.
-        let previews: Vec<BufferId> = (self.ai_changes.as_ref())
-            .map(|state| state.previews.iter().map(|(_, buffer)| *buffer).collect())
-            .unwrap_or_default();
-        if !previews.is_empty() {
-            for pane in self
-                .pane_group(cx)
-                .panes()
-                .into_iter()
-                .cloned()
-                .collect::<Vec<_>>()
-            {
-                pane.update(cx, |pane, cx| pane.discard_buffers(&previews, window, cx));
-            }
-        }
+        self.discard_ai_reviews(window, cx);
         self.ai_changes = Some(AiChanges::new(changeset));
         self.ai_changes_panel(cx);
         self.sync_ai_changes(cx);
@@ -558,6 +609,9 @@ impl Workbench {
     /// changeset gets its proposal, and a file reopened after its tab was
     /// closed is followed to its new buffer.
     pub(crate) fn sync_ai_changes(&mut self, cx: &mut Context<Self>) {
+        if self.reviewing() {
+            return self.sync_refactor_preview(cx);
+        }
         self.protect_ai_previews(cx);
         let panel = self.ai_changes_panel(cx);
         let root = self.root.clone();
@@ -649,10 +703,16 @@ impl Workbench {
                         counts: entry.counts,
                         added,
                         removed,
+                        operation: None,
                     }
                 })
                 .collect();
-            (Listing { files, summary }, conflicts)
+            let listing = Listing {
+                files,
+                summary,
+                preview: None,
+            };
+            (listing, conflicts)
         });
         let (listing, conflicts) = listing;
         let attach: Vec<(Entity<EditorView>, Rc<RefCell<ProposedChange>>)> = (editors.iter())
@@ -772,6 +832,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.reviewing() {
+            return self.decide_refactor_file(path, accept, cx);
+        }
         let editors = self.ai_editors(cx);
         let Some(state) = self.ai_changes.as_mut() else {
             return;
@@ -796,6 +859,9 @@ impl Workbench {
                 let forward = op == AiChangesOp::NextFile;
                 let panel = self.ai_changes_panel(cx);
                 panel.update(cx, |panel, cx| panel.move_selection(forward, cx));
+            }
+            AiChangesOp::AcceptAll | AiChangesOp::RejectAll if self.reviewing() => {
+                self.decide_refactor_all(op == AiChangesOp::AcceptAll, cx)
             }
             AiChangesOp::AcceptAll | AiChangesOp::RejectAll => {
                 let editors = self.ai_editors(cx);
@@ -925,6 +991,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.reviewing() {
+            return self.open_review_tab(path, window, cx);
+        }
         let Some(state) = self.ai_changes.as_mut() else {
             return;
         };
@@ -1121,6 +1190,13 @@ impl AiChangesPanel {
                     file.counts,
                 )
             })
+            .collect()
+    }
+
+    /// Each row's operation, if it's one.
+    pub(crate) fn listed_operations(&self) -> Vec<Option<String>> {
+        (self.listing.files.iter())
+            .map(|file| file.operation.clone())
             .collect()
     }
 

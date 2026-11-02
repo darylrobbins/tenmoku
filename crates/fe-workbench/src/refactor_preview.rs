@@ -335,6 +335,11 @@ impl RefactorPreview {
         self.decidable
     }
 
+    /// The edit as it came, in order.
+    pub(crate) fn edits(&self) -> &[FileEdits] {
+        &self.edits
+    }
+
     /// The changeset the preview's files are in.
     pub(crate) fn changeset(&self) -> &Changeset {
         &self.changeset
@@ -480,7 +485,7 @@ fn shown(target: &EditTarget) -> Option<EditTarget> {
 }
 
 /// `path` where it was before the edit's `renames`, in order, moved it.
-fn origin(path: &Path, renames: &[(PathBuf, PathBuf)]) -> PathBuf {
+pub(crate) fn origin(path: &Path, renames: &[(PathBuf, PathBuf)]) -> PathBuf {
     let mut path = path.to_path_buf();
     for (from, to) in renames.iter().rev() {
         if let Ok(rest) = path.strip_prefix(to) {

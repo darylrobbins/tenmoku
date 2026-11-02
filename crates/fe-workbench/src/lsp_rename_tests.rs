@@ -186,6 +186,12 @@ fn renames_across_files(cx: &mut TestAppContext) {
 
     s.cx.simulate_keystrokes("enter");
     s.until("the picker to close", |s| picker(s).is_none());
+    // Edits to another file wait in the AI Changes panel for Apply.
+    assert_eq!(text(&mut s, &editor), MAIN);
+    s.draw();
+    let apply = (s.cx.debug_bounds("ai-changes-apply")).expect("the preview shows");
+    s.cx.simulate_click(apply.center(), gpui::Modifiers::none());
+    s.draw();
 
     let renamed = "fn barista() {}\nfn main() {\n    barista();\n}\n";
     assert_eq!(text(&mut s, &editor), renamed);

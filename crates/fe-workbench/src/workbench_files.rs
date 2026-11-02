@@ -121,6 +121,10 @@ impl Workbench {
         let Some(editor) = self.active.read(cx).active_editor().cloned() else {
             return;
         };
+        // A copy to review isn't saved anywhere: no panel.
+        if editor.read(cx).is_unsavable() {
+            return;
+        }
         if self.prompting {
             return;
         }

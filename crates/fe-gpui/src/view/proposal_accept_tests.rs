@@ -216,6 +216,29 @@ fn accept_button_applies_hunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_read_only_review_copy_takes_accepts(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    let (proposal, ids) = shown(&view, cx);
+    view.update(cx, |view, cx| {
+        view.set_read_only(true, cx);
+        view.set_accepts_when_read_only(true, cx);
+    });
+    let shown: Vec<_> = buttons(&view, ids[0], cx).iter().map(|b| b.0).collect();
+    assert_eq!(shown, [ProposalButton::Accept, ProposalButton::Reject]);
+
+    press(&view, ids[0], ProposalButton::Accept, cx);
+    assert_eq!(text(&view, cx), FIRST_ACCEPTED);
+    assert_eq!(status(&proposal, ids[0], &view, cx), HunkStatus::Accepted);
+    // Still read-only to anything else.
+    assert!(view.read_with(cx, |view, _| view.is_read_only()));
+
+    // Off, Accept goes again.
+    view.update(cx, |view, cx| view.set_accepts_when_read_only(false, cx));
+    let shown: Vec<_> = buttons(&view, ids[1], cx).iter().map(|b| b.0).collect();
+    assert_eq!(shown, [ProposalButton::Reject]);
+}
+
+#[gpui::test]
 fn reject_button_keeps_text(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
     let (proposal, ids) = shown(&view, cx);
