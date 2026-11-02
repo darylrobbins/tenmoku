@@ -40,6 +40,9 @@ pub struct MarkdownView {
     /// The scroll offset as of the last [`MarkdownViewEvent::Scrolled`] or
     /// programmatic scroll.
     reported_y: f32,
+    /// Whether `reported_y` waits on the next frame, which applies a
+    /// heading scroll, to settle.
+    rebaseline: bool,
 }
 
 /// A block, list item or table row in the last frame: the source lines it
@@ -59,7 +62,7 @@ pub(crate) struct Tracked {
     /// give the origin.
     raw: Vec<(Range<u32>, Bounds<Pixels>)>,
     /// Innermost first, as they were recorded.
-    regions: Vec<Region>,
+    regions: Layout,
     /// Whether `regions` are of the document and style being shown.
     fresh: bool,
 }
@@ -101,6 +104,7 @@ impl MarkdownView {
             tracked: Rc::default(),
             pending_line: None,
             reported_y: 0.,
+            rebaseline: false,
         }
     }
 
@@ -171,7 +175,7 @@ impl MarkdownView {
         };
         self.scroll.scroll_to_top_of_item(ix);
         self.pending_line = None;
-        self.reported_y = f32::from(self.scroll.offset().y);
+        self.rebaseline = true;
         cx.notify();
         true
     }
@@ -184,7 +188,7 @@ impl MarkdownView {
         if !tracked.fresh || tracked.regions.is_empty() {
             return None;
         }
-        let y = -f32::from(self.scroll.offset().y) - f32::from(MarkdownStyle::PADDING);
+        let y = -self.settled_y() - f32::from(MarkdownStyle::PADDING);
         Some(line_at(&tracked.regions, y))
     }
 
@@ -216,15 +220,25 @@ impl MarkdownView {
 
     /// Applies a line asked for before a frame placed the blocks.
     fn apply_pending(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.rebaseline) {
+            self.reported_y = self.settled_y();
+        }
         if let Some(line) = self.pending_line.take() {
             self.scroll_to_source_line(line, cx);
         }
     }
 
+    /// The scroll offset as the next frame will clamp it: GPUI adds a
+    /// wheel delta at once and clamps it only when it next paints.
+    fn settled_y(&self) -> f32 {
+        let max = f32::from(self.scroll.max_offset().y).max(0.);
+        f32::from(self.scroll.offset().y).clamp(-max, 0.)
+    }
+
     /// After a wheel event, the internal handler having run: tells whoever
     /// follows the scroll if the offset moved.
     fn wheeled(&mut self, cx: &mut Context<Self>) {
-        let y = f32::from(self.scroll.offset().y);
+        let y = self.settled_y();
         if y != self.reported_y {
             self.reported_y = y;
             self.pending_line = None;
@@ -256,32 +270,129 @@ impl Focusable for MarkdownView {
     }
 }
 
-/// The source line at `y` pixels from the top of the first block.
-fn line_at(regions: &[Region], y: f32) -> f32 {
-    // The innermost region around `y`: the shortest, the first recorded.
-    let around = regions
-        .iter()
-        .filter(|region| region.top <= y && y < region.bottom)
-        .min_by(|a, b| (a.bottom - a.top).total_cmp(&(b.bottom - b.top)));
-    if let Some(region) = around {
-        let fraction = (y - region.top) / (region.bottom - region.top);
-        return region.lines.start as f32 + fraction * span(region) as f32;
-    }
-    let before = (regions.iter())
-        .filter(|region| region.bottom <= y)
-        .max_by(|a, b| a.bottom.total_cmp(&b.bottom));
-    let after = (regions.iter())
-        .filter(|region| region.top > y)
-        .min_by(|a, b| a.top.total_cmp(&b.top));
-    match (before, after) {
-        (Some(before), Some(after)) => {
-            let (from, to) = (before.lines.end as f32, after.lines.start as f32);
-            let fraction = (y - before.bottom) / (after.top - before.bottom);
-            from + fraction * (to - from).max(0.)
+/// The regions of a frame and how they nest.
+#[derive(Default)]
+pub(crate) struct Layout {
+    regions: Vec<Region>,
+    /// Each region's children in document order, then, last, the
+    /// top-level ones.
+    children: Vec<Vec<usize>>,
+}
+
+/// What the mappings walk: a region, or the whole document.
+struct Node<'a> {
+    lines: Range<u32>,
+    top: f32,
+    bottom: f32,
+    kids: &'a [usize],
+}
+
+impl Layout {
+    fn new(regions: Vec<Region>) -> Self {
+        let contains = |a: &Region, b: &Region| {
+            a.lines.start <= b.lines.start
+                && b.lines.end <= a.lines.end
+                && a.top - 0.5 <= b.top
+                && b.bottom <= a.bottom + 0.5
+        };
+        // Outer before inner; of identical regions, the later recorded
+        // is the outer.
+        let mut order: Vec<usize> = (0..regions.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (&regions[a], &regions[b]);
+            (a.lines.start.cmp(&b.lines.start))
+                .then(b.lines.end.cmp(&a.lines.end))
+                .then((b.bottom - b.top).total_cmp(&(a.bottom - a.top)))
+        });
+        // The stable sort keeps recorded order among identical regions,
+        // where the later is the outer: flip each run of them.
+        let mut ix = 0;
+        while ix < order.len() {
+            let mut end = ix + 1;
+            while end < order.len() && regions[order[end]] == regions[order[ix]] {
+                end += 1;
+            }
+            order[ix..end].reverse();
+            ix = end;
         }
-        (Some(before), None) => before.lines.end as f32,
-        (None, Some(after)) => after.lines.start as f32,
-        (None, None) => 0.,
+        let mut children = vec![Vec::new(); regions.len() + 1];
+        let mut stack: Vec<usize> = Vec::new();
+        for &ix in &order {
+            while let Some(&top) = stack.last() {
+                if contains(&regions[top], &regions[ix]) {
+                    break;
+                }
+                stack.pop();
+            }
+            children[stack.last().copied().unwrap_or(regions.len())].push(ix);
+            stack.push(ix);
+        }
+        Self { regions, children }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.regions.is_empty()
+    }
+
+    fn node(&self, ix: usize) -> Node<'_> {
+        let region = &self.regions[ix];
+        Node {
+            lines: region.lines.clone(),
+            top: region.top,
+            bottom: region.bottom,
+            kids: &self.children[ix],
+        }
+    }
+
+    fn root(&self) -> Node<'_> {
+        let kids = &self.children[self.regions.len()];
+        let all = || kids.iter().map(|&ix| &self.regions[ix]);
+        Node {
+            lines: all().map(|r| r.lines.start).min().unwrap_or(0)
+                ..all().map(|r| r.lines.end).max().unwrap_or(0),
+            top: all().map(|r| r.top).fold(f32::INFINITY, f32::min),
+            bottom: all().map(|r| r.bottom).fold(f32::NEG_INFINITY, f32::max),
+            kids,
+        }
+    }
+}
+
+/// Between `prev` and `next`, the neighbours inside `node` or the
+/// node's own edges: the lines and pixels the gap spans.
+fn gap(node: &Node, prev: Option<&Region>, next: Option<&Region>) -> (f32, f32, f32, f32) {
+    let end = node.lines.start + span(&node.lines);
+    (
+        prev.map_or(node.lines.start, |r| r.lines.end) as f32,
+        next.map_or(end, |r| r.lines.start) as f32,
+        prev.map_or(node.top, |r| r.bottom),
+        next.map_or(node.bottom, |r| r.top),
+    )
+}
+
+/// The source line at `y` pixels from the top of the first block. Nested
+/// regions win over their parents; what they leave uncovered, between
+/// neighbours or at a parent's edges, is interpolated.
+fn line_at(layout: &Layout, y: f32) -> f32 {
+    let mut node = layout.root();
+    if y < node.top {
+        return node.lines.start as f32;
+    }
+    if y >= node.bottom {
+        return node.lines.end as f32;
+    }
+    loop {
+        let kids = || node.kids.iter().map(|&ix| (ix, &layout.regions[ix]));
+        if let Some((ix, _)) = kids().find(|(_, r)| r.top <= y && y < r.bottom) {
+            node = layout.node(ix);
+            continue;
+        }
+        let prev = kids().rfind(|(_, r)| r.bottom <= y).map(|(_, r)| r);
+        let next = kids().find(|(_, r)| r.top > y).map(|(_, r)| r);
+        let (from, to, top, bottom) = gap(&node, prev, next);
+        if bottom <= top {
+            return from;
+        }
+        return from + (y - top) / (bottom - top) * (to - from).max(0.);
     }
 }
 
@@ -289,52 +400,42 @@ fn line_at(regions: &[Region], y: f32) -> f32 {
 /// the last block, and the outer `None` with no blocks. At or before the
 /// first block's line it is above the first block, where the view's own
 /// padding is.
-fn offset_of(regions: &[Region], line: f32) -> Option<Option<f32>> {
-    let first = regions.iter().map(|region| region.lines.start).min()?;
-    if line <= first as f32 {
+fn offset_of(layout: &Layout, line: f32) -> Option<Option<f32>> {
+    if layout.is_empty() {
+        return None;
+    }
+    let mut node = layout.root();
+    if line <= node.lines.start as f32 {
         return Some(Some(f32::NEG_INFINITY));
     }
-    // The innermost region spanning `line`: the fewest lines, then the
-    // shortest, the first recorded.
-    let around = (regions.iter())
-        .filter(|region| region.lines.start as f32 <= line && line < region.lines.end as f32)
-        .min_by(|a, b| {
-            (span(a).cmp(&span(b))).then((a.bottom - a.top).total_cmp(&(b.bottom - b.top)))
-        });
-    if let Some(region) = around {
-        let fraction = (line - region.lines.start as f32) / span(region) as f32;
-        return Some(Some(region.top + fraction * (region.bottom - region.top)));
-    }
-    let before = (regions.iter())
-        .filter(|region| region.lines.end as f32 <= line)
-        .max_by(|a, b| {
-            a.lines
-                .end
-                .cmp(&b.lines.end)
-                .then(a.bottom.total_cmp(&b.bottom))
-        });
-    let after = (regions.iter())
-        .filter(|region| region.lines.start as f32 > line)
-        .min_by(|a, b| {
-            a.lines
-                .start
-                .cmp(&b.lines.start)
-                .then(a.top.total_cmp(&b.top))
-        });
-    let (Some(before), Some(after)) = (before, after) else {
+    if line >= node.lines.end as f32 {
         return Some(None);
-    };
-    let (from, to) = (before.lines.end as f32, after.lines.start as f32);
-    let fraction = if to > from {
-        (line - from) / (to - from)
-    } else {
-        0.
-    };
-    Some(Some(before.bottom + fraction * (after.top - before.bottom)))
+    }
+    loop {
+        let kids = || node.kids.iter().map(|&ix| (ix, &layout.regions[ix]));
+        let spans = |r: &Region| r.lines.start as f32 <= line && line < r.lines.end as f32;
+        if let Some((ix, _)) = kids().find(|(_, r)| spans(r)) {
+            node = layout.node(ix);
+            continue;
+        }
+        let prev = kids()
+            .rfind(|(_, r)| r.lines.end as f32 <= line)
+            .map(|(_, r)| r);
+        let next = kids()
+            .find(|(_, r)| r.lines.start as f32 > line)
+            .map(|(_, r)| r);
+        let (from, to, top, bottom) = gap(&node, prev, next);
+        let fraction = if to > from {
+            (line - from) / (to - from)
+        } else {
+            0.
+        };
+        return Some(Some(top + fraction * (bottom - top)));
+    }
 }
 
-fn span(region: &Region) -> u32 {
-    region.lines.end.saturating_sub(region.lines.start).max(1)
+fn span(lines: &Range<u32>) -> u32 {
+    lines.end.saturating_sub(lines.start).max(1)
 }
 
 /// Where a rendered link's click and hover go: the view that draws the
@@ -542,7 +643,7 @@ impl Render for MarkdownView {
                             bottom,
                         });
                     }
-                    tracked.regions = regions;
+                    tracked.regions = Layout::new(regions);
                     tracked.fresh = true;
                 }
                 view.update(cx, |view, cx| view.apply_pending(cx)).ok();

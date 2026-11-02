@@ -137,3 +137,115 @@ fn source_lines_and_scroll_offsets_map_both_ways(cx: &mut TestAppContext) {
     assert_eq!(*events.borrow(), [MarkdownViewEvent::Scrolled]);
     assert!(line_at_top(&view, cx) > before);
 }
+
+fn wheel(cx: &mut VisualTestContext, dy: f32) {
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(100.), px(100.)),
+        delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    settle(cx);
+}
+
+fn log_events(
+    view: &Entity<MarkdownView>,
+    cx: &mut VisualTestContext,
+) -> Rc<RefCell<Vec<MarkdownViewEvent>>> {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let log = events.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(view, move |_, event: &MarkdownViewEvent, _| {
+            log.borrow_mut().push(event.clone())
+        })
+        .detach()
+    });
+    events
+}
+
+#[gpui::test]
+fn wheel_overscroll_reads_the_clamped_offset(cx: &mut TestAppContext) {
+    let markdown = source();
+    let (view, cx) = open(cx, &markdown);
+    let events = log_events(&view, cx);
+
+    // Far past the end: the top is where the clamped view has it, which
+    // the same line the end scroll reads.
+    wheel(cx, -1e6);
+    let (offset, max) = view.read_with(cx, |view, _| {
+        let handle = view.scroll_handle();
+        (handle.offset().y, handle.max_offset().y)
+    });
+    assert_eq!(-offset, max);
+    assert_eq!(*events.borrow(), [MarkdownViewEvent::Scrolled]);
+    let end = line_at_top(&view, cx);
+    let last = markdown.lines().count() as f32;
+    assert!(end < last - 1., "{end} of {last}");
+
+    // Still more is no movement.
+    wheel(cx, -1e6);
+    assert_eq!(events.borrow().len(), 1);
+    assert!((line_at_top(&view, cx) - end).abs() < 0.01);
+
+    // Back up past the start.
+    wheel(cx, 1e7);
+    assert_eq!(events.borrow().len(), 2);
+    assert!(line_at_top(&view, cx).abs() < 0.05);
+    wheel(cx, 1e7);
+    assert_eq!(events.borrow().len(), 2);
+}
+
+#[gpui::test]
+fn a_zero_wheel_after_heading_navigation_is_not_a_scroll(cx: &mut TestAppContext) {
+    let markdown = source();
+    let (view, cx) = open(cx, &markdown);
+    let events = log_events(&view, cx);
+    view.update(cx, |view, cx| {
+        view.scroll_to_heading("section-20", cx);
+    });
+    settle(cx);
+    wheel(cx, 0.);
+    assert_eq!(*events.borrow(), []);
+}
+
+/// A table, a quote with blank lines between its blocks, and a loose list.
+fn nested_source() -> String {
+    let mut text = String::new();
+    for n in 0..6 {
+        text += &format!("Intro {n}.\n\n");
+    }
+    text += "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n\n";
+    text += "> quoted one\n>\n> quoted two\n>\n> quoted three\n\n";
+    text += "- loose one\n\n- loose two\n\n- loose three\n\n";
+    for n in 0..60 {
+        text += &format!("Closing {n}.\n\n");
+    }
+    text
+}
+
+#[gpui::test]
+fn lines_in_gaps_between_nested_regions_are_monotonic(cx: &mut TestAppContext) {
+    let markdown = nested_source();
+    let (view, cx) = open(cx, &markdown);
+    let start = line_of(&markdown, "| a |");
+    let end = line_of(&markdown, "Closing 0");
+    let mut previous = f32::NEG_INFINITY;
+    let mut line = start;
+    while line < end {
+        view.update(cx, |view, cx| view.scroll_to_source_line(line, cx));
+        settle(cx);
+        let top = line_at_top(&view, cx);
+        assert!(top >= previous - 0.01, "{line}: {top} after {previous}");
+        assert!(top <= line + 1.01 && top >= line - 1.01, "{line}: {top}");
+        previous = top;
+        line += 0.1;
+    }
+    // Lines of a block's own, in a quote or list gap, read back close.
+    for needle in ["> quoted two", "- loose two", "| 3 | 4 |"] {
+        let line = line_of(&markdown, needle);
+        view.update(cx, |view, cx| view.scroll_to_source_line(line, cx));
+        settle(cx);
+        let top = line_at_top(&view, cx);
+        assert!((top - line).abs() < 0.05, "{needle}: {top} for {line}");
+    }
+}
