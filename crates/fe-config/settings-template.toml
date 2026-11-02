@@ -176,6 +176,11 @@
 # highlight_yank = true
 # How long, in milliseconds, the yank highlight stays.
 # highlight_yank_ms = 150
+# Underlines the first char of each word on the caret's row that f or F reaches
+# in one or two presses, as quick-scope does: "always" in normal and visual
+# mode; "on_keys" only while f, F, t or T waits for its char, in that direction;
+# "off" never.
+# quick_scope = "on_keys"
 # The key <leader> stands for in a remap, in vim notation. Left at "\\", a
 # preset's leader applies.
 # leader = "\\"

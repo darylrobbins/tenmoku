@@ -886,6 +886,26 @@
         }
       ]
     },
+    "VimQuickScope": {
+      "description": "`vim.quick_scope`.",
+      "oneOf": [
+        {
+          "const": "off",
+          "description": "No underlines.",
+          "type": "string"
+        },
+        {
+          "const": "on_keys",
+          "description": "While `f`, `F`, `t` or `T` waits for its char, that direction's.",
+          "type": "string"
+        },
+        {
+          "const": "always",
+          "description": "In normal and visual mode both directions', or the waiting one's.",
+          "type": "string"
+        }
+      ]
+    },
     "VimRemap": {
       "description": "One `[[vim.remap]]` entry.",
       "properties": {
@@ -1020,6 +1040,11 @@
           "$ref": "#/$defs/VimPreset",
           "default": "none",
           "description": "A bundled set of remaps loaded beneath the vimrc and `[[vim.remap]]`,\nwhich replace any of its maps for the same keys: `\"none\"`, plain vim,\nor `\"lazyvim\"`, LazyVim's, with `<Space>` as the leader unless\n`leader` is set."
+        },
+        "quick_scope": {
+          "$ref": "#/$defs/VimQuickScope",
+          "default": "on_keys",
+          "description": "Underlines the first char of each word on the caret's row that `f` or\n`F` reaches in one or two presses, as quick-scope does: `always` in\nnormal and visual mode; `on_keys` only while `f`, `F`, `t` or `T`\nwaits for its char, in that direction."
         },
         "regex_time_limit": {
           "default": 2000,
@@ -1241,6 +1266,7 @@
         "jump_on_s": false,
         "leader": "\\",
         "preset": "none",
+        "quick_scope": "on_keys",
         "regex_time_limit": 2000,
         "remap": [],
         "replace_with_register": false,

@@ -282,6 +282,11 @@ pub struct VimSettings {
     /// How long, in milliseconds, the yank highlight stays.
     #[schemars(range(min = 1, max = 5000))]
     pub highlight_yank_ms: u64,
+    /// Underlines the first char of each word on the caret's row that `f` or
+    /// `F` reaches in one or two presses, as quick-scope does: `always` in
+    /// normal and visual mode; `on_keys` only while `f`, `F`, `t` or `T`
+    /// waits for its char, in that direction.
+    pub quick_scope: VimQuickScope,
     /// The leader key `<leader>` stands for in a remap, in vim notation
     /// (`"<Space>"` works). Left at `"\\"`, a preset's leader applies.
     pub leader: String,
@@ -314,6 +319,7 @@ impl Default for VimSettings {
             which_key_delay_ms: 200,
             highlight_yank: true,
             highlight_yank_ms: 150,
+            quick_scope: VimQuickScope::default(),
             leader: "\\".to_string(),
             preset: VimPreset::default(),
             remap: Vec::new(),
@@ -388,6 +394,19 @@ pub enum VimClipboard {
     /// Yanks, deletes and puts that name no register use the system clipboard.
     #[serde(rename = "unnamedplus")]
     Unnamedplus,
+}
+
+/// `vim.quick_scope`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VimQuickScope {
+    /// No underlines.
+    Off,
+    /// While `f`, `F`, `t` or `T` waits for its char, that direction's.
+    #[default]
+    OnKeys,
+    /// In normal and visual mode both directions', or the waiting one's.
+    Always,
 }
 
 /// `vim.preset`.

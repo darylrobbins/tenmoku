@@ -132,6 +132,7 @@ use std::{
 use fe_buffer::{BufferEvent, Subscription as BufferSubscription, Text, TransactionId, Version};
 use fe_command::{CommandId, CommandMeta, Value};
 use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
+use fe_config::settings::VimQuickScope;
 use fe_editor::decorations::{Decoration, DecorationKind, DecorationSet, ProviderId, Tint};
 use fe_editor::{EditorModel, commands::EditorHost};
 use fe_keymap::{CatalogError, CommandCatalog};
@@ -163,6 +164,21 @@ const YANK_FLASH: Duration = Duration::from_millis(150);
 /// its timer.
 pub fn set_vim_highlight_yank(cx: &mut App, on: bool, duration: Duration) {
     cx.default_global::<Vim>().highlight_yank = Some((on, duration));
+}
+
+/// Sets when the caret row's `f` and `F` targets are underlined
+/// (`vim.quick_scope`), in every window at once.
+pub fn set_vim_quick_scope(cx: &mut App, mode: VimQuickScope) {
+    let vim = cx.default_global::<Vim>();
+    if std::mem::replace(&mut vim.quick_scope, mode) != mode {
+        cx.refresh_windows();
+    }
+}
+
+/// When the caret row's `f` and `F` targets are underlined.
+pub(crate) fn quick_scope_mode(cx: &App) -> VimQuickScope {
+    cx.try_global::<Vim>()
+        .map_or_else(VimQuickScope::default, |vim| vim.quick_scope)
 }
 
 /// A yank's text highlighted for [`YANK_FLASH`], or until the buffer next
@@ -364,6 +380,8 @@ struct Vim {
     which_key: which_key::WhichKeySettings,
     /// `vim.highlight_yank` and `vim.highlight_yank_ms`; unset, on for [`YANK_FLASH`].
     highlight_yank: Option<(bool, Duration)>,
+    /// `vim.quick_scope`.
+    quick_scope: VimQuickScope,
     /// The editor holding keys for a longer map: one at a time, as only the
     /// focused editor takes keys.
     remap_wait: Option<RemapWait>,

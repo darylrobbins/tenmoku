@@ -81,9 +81,9 @@ pub use view::{GlyphKind, GutterGlyph};
 pub use view::{HostBlock, HostBlockKind, ReservedBlock};
 pub use vim::{
     apply_vim_reload, set_host_catalog, set_host_commands, set_vim_clipboard, set_vim_enabled,
-    set_vim_highlight_yank, set_vim_incsearch, set_vim_jump_on_s, set_vim_remaps,
-    set_vim_replace_with_register, set_vim_search_case, set_vim_which_key, vim_enabled,
-    vim_registers,
+    set_vim_highlight_yank, set_vim_incsearch, set_vim_jump_on_s, set_vim_quick_scope,
+    set_vim_remaps, set_vim_replace_with_register, set_vim_search_case, set_vim_which_key,
+    vim_enabled, vim_registers,
 };
 
 /// Key context active while an editor is focused: the `fe-command`
@@ -146,6 +146,10 @@ pub struct EditorTheme {
     pub jump_label_foreground: Hsla,
     /// The flash over text a vim yank took.
     pub vim_yank_highlight: Hsla,
+    /// The underline under a char `f{c}` or `F{c}` reaches.
+    pub quick_scope_primary: Hsla,
+    /// The underline under a word's char only a count's `f` or `F` reaches.
+    pub quick_scope_secondary: Hsla,
     /// The git change bar of added rows.
     pub change_added: Hsla,
     /// The git change bar of modified rows.

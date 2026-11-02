@@ -63,6 +63,8 @@ jump_label = "#ff8fa3"
 jump_label_preview = "#7fd1c4"
 jump_label_foreground = "#1c1814"
 vim_yank_highlight = "#f0a05038"
+quick_scope_primary = "#a3b56f"
+quick_scope_secondary = "#7fa6b8"
 # The git change bar. These are muted on purpose, with low saturation so the
 # bar is noticeable but quiet; they are not derived from `information` or `error`.
 change_added = "#7fb889"

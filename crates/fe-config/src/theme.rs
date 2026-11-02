@@ -95,6 +95,12 @@ colors! {
         jump_label_foreground,
         /// The flash over text a vim yank took.
         vim_yank_highlight,
+        /// The underline under a char `f{c}` or `F{c}` reaches (quick-scope's
+        /// primary).
+        quick_scope_primary,
+        /// The underline under a word's char only `2f{c}` or `2F{c}` reaches
+        /// (quick-scope's secondary).
+        quick_scope_secondary,
         /// The gutter bar of rows added since the git base.
         change_added,
         /// The gutter bar of rows modified since the git base.
