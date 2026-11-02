@@ -9,7 +9,7 @@
 use fe_command::{Actor, Dispatched, Effect};
 
 use super::super::pick::printable;
-use super::super::{Address, ExError, Handled, HostCommand, Pick, PickRow, PickThen};
+use super::super::{Address, ExError, Handled, HostCommand, Pick, PickRow, PickThen, uncommented};
 use super::{Check, Entry};
 use crate::VimTarget;
 
@@ -28,7 +28,7 @@ fn parse(after: &str, _check: &mut Check<'_>) -> Result<String, ExError> {
     if after.starts_with('!') {
         return Err(ExError::NoBang);
     }
-    Ok(after.trim_matches([' ', '\t']).to_string())
+    Ok(uncommented(after).trim_matches([' ', '\t']).to_string())
 }
 
 fn run(

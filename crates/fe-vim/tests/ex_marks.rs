@@ -88,6 +88,15 @@ fn marks_list_as_neovim() {
 }
 
 #[test]
+fn an_ex_comment_is_not_a_mark_filter() {
+    let mut vim = vim();
+    let all = cells(&picked(&mut vim, "marks")).len();
+    assert_eq!(cells(&picked(&mut vim, "marks \"abc")).len(), all);
+    let rows = picked(&mut vim, "marks a \"cz");
+    assert_eq!(cells(&rows), [["a", "1", "6", "alpha one"]]);
+}
+
+#[test]
 fn picking_a_mark_jumps_as_backtick() {
     let mut vim = vim();
     let pick = picked(&mut vim, "marks");
