@@ -98,6 +98,9 @@ pub struct LastChange {
     /// deleted since: `.` keeps the indentation there too, as typing the
     /// keys again would.
     pub(crate) typed_first: bool,
+    /// What the `.` register takes: `inserted` without the indentation the
+    /// session made, which a repeat replays as typing but nvim leaves out.
+    pub(crate) register: Option<String>,
 }
 
 impl From<Change> for LastChange {
@@ -106,6 +109,7 @@ impl From<Change> for LastChange {
             change,
             inserted: None,
             typed_first: false,
+            register: None,
         }
     }
 }
@@ -197,6 +201,7 @@ fn replay(
         Change::MoveRows(args) => line_edits::move_rows(target, actor, args),
     };
     if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
+        target.state.replay_register = last.register.clone();
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
             let reads = insert::read_registers(
                 insert::registers_in(text),

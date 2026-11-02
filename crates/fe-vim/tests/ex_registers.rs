@@ -149,3 +149,16 @@ fn picking_a_register_puts_as_quote_p() {
         assert_eq!(vim.registers(), twin.registers(), "{name}");
     }
 }
+
+/// `.` replays a session's line break as typing, but the register nvim
+/// keeps for it holds no 'autoindent'.
+#[test]
+fn dot_repeat_keeps_indentation_out_of_the_last_insert_register() {
+    let mut vim = HeadlessVim::new("  abc\nz", (0, 0));
+    vim.feed("A<CR>x<Esc>").unwrap();
+    assert_eq!(vim.text(), "  abc\n  x\nz");
+    vim.feed("G.").unwrap();
+    assert_eq!(vim.text(), "  abc\n  x\nz\n  x");
+    vim.feed("\".p").unwrap();
+    assert_eq!(vim.text(), "  abc\n  x\nz\n  x\nx");
+}

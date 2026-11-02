@@ -130,6 +130,9 @@ pub struct VimState {
     /// The text the last insert session typed, until the registers take it
     /// for `.` ([`Registers::adopt_inserted`]).
     pub(crate) pending_inserted: Option<(u64, String)>,
+    /// The `.` register text of the change `.` is replaying, for the session
+    /// it ends to publish in place of what it reads back from the buffer.
+    pub(crate) replay_register: Option<String>,
     /// How many times `last_change` was set, to order it against a session
     /// a clone is still closing (see `insert::Closing`).
     pub(crate) changes: u64,

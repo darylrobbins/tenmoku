@@ -2368,6 +2368,9 @@ fn end(
             IndentKey::BACK,
         ),
     };
+    if replaying && let Some(text) = state.replay_register.take() {
+        register = Some(text);
+    }
     let ended = model.buffer_mut().end_transaction();
     // An empty transaction isn't kept, so neither are its carets; inside
     // `.`, the transaction is `.`'s, which closes it.
@@ -2392,7 +2395,7 @@ fn end(
     // A session a split resumed that edited nothing leaves `.` the change
     // before the split, as nvim does, whatever `Esc` typed on a block.
     let skipped = session.resumed && !edited;
-    let inserted = match register {
+    let inserted = match register.clone() {
         Some(text) if !skipped => Some((next_order(), text)),
         _ => None,
     };
@@ -2402,6 +2405,7 @@ fn end(
             change: session.change.clone(),
             inserted: Some(typed),
             typed_first,
+            register: register.clone(),
         },
     };
     if let Some((order, text)) = inserted.clone() {
