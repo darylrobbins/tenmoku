@@ -222,6 +222,8 @@ tree-sitter-toml-ng = "0.7"
 tree-sitter-typescript = "0.23"
 tree-sitter-xml = "0.7"
 tree-sitter-yaml = "0.7"
+# Vendored: crates.io has no upstream crate (vendor/tree-sitter-gitignore/README.md).
+tree-sitter-gitignore = { path = "vendor/tree-sitter-gitignore" }
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 # Line diffs for proposed changes (Apache-2.0).

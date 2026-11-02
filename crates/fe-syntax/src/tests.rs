@@ -158,6 +158,16 @@ fn each_language_highlights_a_snippet() {
             ],
         ),
         (
+            ".gitignore",
+            "# c\n!a/**/b?\n",
+            &[
+                ("# c", "comment"),
+                ("!", "operator"),
+                ("**", "operator"),
+                ("?", "operator"),
+            ],
+        ),
+        (
             "x.yaml",
             "key: 1 # c",
             &[("key", "property"), ("1", "number"), ("# c", "comment")],
@@ -686,4 +696,30 @@ proptest! {
         }
         prop_assert_eq!(painted, paint(&captures(&specs), clip));
     }
+}
+
+#[cfg(feature = "gitignore")]
+#[test]
+fn ignore_files_are_detected_as_gitignore() {
+    for name in [
+        ".gitignore",
+        ".dockerignore",
+        ".npmignore",
+        ".prettierignore",
+        ".eslintignore",
+        ".ignore",
+        ".rgignore",
+        ".fdignore",
+    ] {
+        assert_eq!(
+            crate::language_name_for_path(std::path::Path::new(name)),
+            Some("gitignore"),
+            "{name}"
+        );
+    }
+    // Mercurial's `.hgignore` is a different syntax.
+    assert_eq!(
+        crate::language_name_for_path(std::path::Path::new(".hgignore")),
+        None
+    );
 }

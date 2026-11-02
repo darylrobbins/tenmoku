@@ -18,6 +18,7 @@ fn expected(name: &str) -> Vec<(char, char)> {
         "markdown" => with_quotes(&[dq, bt]),
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
         | "json" => with_quotes(&[dq, sq, bt]),
+        "gitignore" => with_quotes(&[dq]),
         "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
         | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" => with_quotes(&[dq, sq]),
         other => panic!("no table entry for language {other}"),

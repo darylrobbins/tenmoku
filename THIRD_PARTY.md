@@ -116,6 +116,7 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | sql | tree-sitter-sequel | 0.3.11 | https://github.com/derekstride/tree-sitter-sql | MIT | `HIGHLIGHTS_QUERY`, then `queries/sql.scm`⁷ |
 | dockerfile | tree-sitter-containerfile | 0.9.2 | https://github.com/wharflab/tree-sitter-containerfile⁵ | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | make | tree-sitter-make | 1.1.1 | https://github.com/tree-sitter-grammars/tree-sitter-make | MIT | `HIGHLIGHTS_QUERY` |
+| gitignore | tree-sitter-gitignore, vendored¹² | commit `f4685bf` | https://github.com/shunsambongi/tree-sitter-gitignore | MIT | `queries/highlights.scm` (ours; upstream has none) |
 
 ¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -222,3 +223,9 @@ MPL-2.0 requires telling recipients where to get the source of these crates.
 
 Run `cargo deny list` for every crate and its license. Release builds must ship
 the license texts. Generating `THIRD_PARTY_LICENSES` is a release-checklist item.
+
+¹² Vendored in `vendor/tree-sitter-gitignore/` as a path dependency, because
+crates.io has no upstream crate (only a third-party republish, which we don't
+take). Upstream's `grammar.js` and generated `src/` are unchanged, at commit
+`f4685bf11ac466dd278449bcfe5fd014e94aa504`; the Rust binding and the highlight
+query are ours. The licence is upstream's. The vendored README says how to update it.

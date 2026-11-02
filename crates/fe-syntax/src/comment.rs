@@ -28,7 +28,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
     Some(match language {
         "rust" | "json" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java"
         | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
-        "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" => hash,
+        "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" | "gitignore" => hash,
         "python" => tokens(Some("#"), Some(("\"\"\"", "\"\"\""))),
         "lua" => tokens(Some("--"), Some(("--[[", "]]"))),
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),

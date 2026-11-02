@@ -35,6 +35,7 @@ default = [
     "sql",
     "dockerfile",
     "make",
+    "gitignore",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -64,6 +65,7 @@ kotlin = ["dep:tree-sitter-kotlin-sg"]
 sql = ["dep:tree-sitter-sequel"]
 dockerfile = ["dep:tree-sitter-containerfile"]
 make = ["dep:tree-sitter-make"]
+gitignore = ["dep:tree-sitter-gitignore"]
 # Highlight queries run to completion, as in this crate's tests, instead of
 # stopping after `QUERY_BUDGET`. For the fuzz targets in `fuzz/`, which compare
 # highlights and can't tell a cut-short result from a complete one.
@@ -80,6 +82,7 @@ tree-sitter-containerfile = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-gitignore = { workspace = true, optional = true }
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }

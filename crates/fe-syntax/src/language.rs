@@ -730,4 +730,28 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    #[cfg(feature = "gitignore")]
+    Def {
+        name: "gitignore",
+        extensions: &["gitignore"],
+        file_names: &[
+            ".gitignore",
+            ".dockerignore",
+            ".npmignore",
+            ".prettierignore",
+            ".eslintignore",
+            ".stylelintignore",
+            ".vscodeignore",
+            ".helmignore",
+            ".gcloudignore",
+            ".ignore",
+            ".rgignore",
+            ".fdignore",
+        ],
+        grammar: || tree_sitter_gitignore::LANGUAGE.into(),
+        highlights: || &[tree_sitter_gitignore::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
 ];
