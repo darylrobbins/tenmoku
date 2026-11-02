@@ -279,7 +279,7 @@ impl EditorView {
 
     /// Whether read-only refuses `invocation`, one of vim's: one that edits,
     /// or opens an insert or replace session. Of those that may edit or not,
-    /// an operator refuses all but a yank, and a command line's submission,
+    /// an operator refuses all but a yank or a fold, and a command line's submission,
     /// or a map's `<Cmd>` ex line (`vim.ex_line`), one that would edit
     /// ([`EditorView::line_edits`]).
     pub(crate) fn refuses_vim(&self, invocation: &Invocation) -> bool {
@@ -290,8 +290,10 @@ impl EditorView {
         match invocation.command.as_str() {
             // Ending a session, which read-only never opens.
             vim::NORMAL_MODE | vim::REPLACE_NORMAL_MODE => false,
-            "vim.operate" => !yanks(args),
-            "vim.jump" => args.get("operator").is_some_and(|op| !op.is_null()) && !yanks(args),
+            "vim.operate" => !spares_text(args),
+            "vim.jump" => {
+                args.get("operator").is_some_and(|op| !op.is_null()) && !spares_text(args)
+            }
             // A map's `<Cmd>…<CR>` line, by what it runs, as a typed one.
             "vim.ex_line" => ex_edits(args.get("text").and_then(Value::as_str).unwrap_or_default()),
             "vim.command_line_submit" => match self.vim.as_ref().map(VimState::mode) {
@@ -315,7 +317,7 @@ impl EditorView {
         if invocation.command.as_str() == "vim.command_line" {
             let operator = invocation.args.get("operator");
             self.line_operates =
-                operator.is_some_and(|op| !op.is_null()) && !yanks(&invocation.args);
+                operator.is_some_and(|op| !op.is_null()) && !spares_text(&invocation.args);
         }
     }
 
@@ -331,9 +333,13 @@ impl EditorView {
     }
 }
 
-/// Whether an operator's args name a yank.
-fn yanks(args: &Value) -> bool {
-    args.get("operator").and_then(Value::as_str) == Some("yank")
+/// Whether an operator's args name one that changes no text: a yank, or a
+/// fold (`zf`).
+fn spares_text(args: &Value) -> bool {
+    matches!(
+        args.get("operator").and_then(Value::as_str),
+        Some("yank" | "fold")
+    )
 }
 
 /// Whether the ex line `text` can edit: if any of the commands `|` separates
@@ -392,8 +398,8 @@ fn reads_only(invocation: &Invocation) -> bool {
         | "vim.jump_older"
         | "vim.jump_newer"
         | vim::NORMAL_MODE => true,
-        "vim.operate" => yanks(args),
-        "vim.jump" => args.get("operator").is_none_or(Value::is_null) || yanks(args),
+        "vim.operate" => spares_text(args),
+        "vim.jump" => args.get("operator").is_none_or(Value::is_null) || spares_text(args),
         _ => false,
     }
 }

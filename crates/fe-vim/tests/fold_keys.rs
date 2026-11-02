@@ -79,6 +79,9 @@ fn fold_keys_make_and_remove_folds() {
     // caret at its start.
     assert_eq!(folding((6, 4), "Vjjzf"), (vec![(6, 8)], (6, 0)));
     assert_eq!(folding((8, 8), "vkkzf"), (vec![(6, 8)], (6, 8)));
+    // An upper endpoint past a short row's last character: the caret lands
+    // on that character, not the newline.
+    assert_eq!(folding((6, 8), "vkzf"), (vec![(5, 6)], (5, 7)));
     // One row hides nothing, so makes no fold.
     assert_eq!(folding((6, 4), "zfl"), (vec![], (6, 4)));
     assert_eq!(folding((6, 4), "zF"), (vec![], (6, 4)));

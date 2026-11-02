@@ -402,7 +402,8 @@ pub(crate) fn fold_selection(
     let rows = first.0..=last.0;
     visual::exit(target)?;
     let model = &mut *target.model;
-    model.set_selections([operator::caret(area.start)]);
+    let start = Cursor::at(model.text(), area.start).offset();
+    model.set_selections([operator::caret(start)]);
     target.state.goals = None;
     close_rows(model, [rows]);
     Ok(Dispatched::new(Effect::Changed))
