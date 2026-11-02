@@ -182,7 +182,9 @@ pub(crate) fn handle_in<E: InteractiveElement, V: 'static>(
     }
     element
         .on_action(handler::<ShowFind, V>(FindOp::Show, cx, run))
-        .on_action(handler::<ShowReplace, V>(FindOp::ShowReplace, cx, run))
+        // The row has no replace: let it reach the workbench fallback
+        // ([`init`]), which opens Replace in the active pane.
+        .on_action(|_: &ShowReplace, _, cx| cx.propagate())
         .on_action(handler::<FindNext, V>(FindOp::Next, cx, run))
         .on_action(handler::<FindPrevious, V>(FindOp::Previous, cx, run))
         .on_action(handler::<CloseFind, V>(FindOp::Close, cx, run))

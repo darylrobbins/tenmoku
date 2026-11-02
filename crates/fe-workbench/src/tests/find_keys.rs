@@ -247,3 +247,69 @@ fn replace_opens_from_a_panel(cx: &mut TestAppContext) {
         keys("escape", cx);
     }
 }
+
+/// Replace, by its key and as the menu runs it, opens in the active pane
+/// from the terminal's find input too: the row has no replace of its own,
+/// so it lets the command through to the workbench's fallback.
+#[gpui::test]
+fn replace_opens_from_the_terminal_find_input(cx: &mut TestAppContext) {
+    use fe_buffer::Buffer;
+    use fe_command::Invocation;
+    use fe_gpui::commands::RunCommand;
+
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\n").unwrap();
+    let launch = Launch {
+        root: Some(dir.path().to_owned()),
+        file: Some((path, Some(Buffer::new("one\n").into()))),
+    };
+    let (workbench, cx, _) = super::open(cx, launch);
+    let panel = workbench.read_with(cx, |workbench, _| workbench.terminal().clone());
+    panel.update(cx, |panel, _| {
+        panel.set_shell("/bin/sh", &["-c", "read line"])
+    });
+    cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+    draw(cx);
+    let stack = |frames: &[&str]| -> ContextStack {
+        frames.iter().map(|name| ContextFrame::new(*name)).collect()
+    };
+    let run = RunCommand(
+        Invocation::of("terminal.toggle")
+            .unwrap()
+            .context(stack(&["workbench"])),
+    );
+    cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+    draw(cx);
+    let view = panel.read_with(cx, |panel, _| panel.view().unwrap().clone());
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    draw(cx);
+    keys("cmd-f", cx);
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+
+    for menu in [false, true] {
+        let input = panel.read_with(cx, |panel, _| panel.find().unwrap().input().clone());
+        cx.update(|window, cx| window.focus(&input.focus_handle(cx), cx));
+        draw(cx);
+        assert!(!open(&pane, cx), "menu {menu}");
+        if menu {
+            let run = RunCommand(
+                Invocation::of("find.show_replace")
+                    .unwrap()
+                    .context(stack(&["workbench", "find_bar", "text_input"])),
+            );
+            cx.update(|window, cx| window.dispatch_action(Box::new(run), cx));
+            draw(cx);
+        } else {
+            keys("alt-cmd-f", cx);
+        }
+        assert!(open(&pane, cx), "menu {menu}");
+        assert!(
+            pane.read_with(cx, |pane, _| pane.find_bar().unwrap().is_replacing()),
+            "menu {menu}"
+        );
+        keys("escape", cx);
+        assert!(!open(&pane, cx), "menu {menu}");
+    }
+}
