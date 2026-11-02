@@ -504,6 +504,132 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "r_within_indent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": " \n foo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_end_of_indent",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "   \n   foo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_whitespace_only_row",
+      "buffer": "      ",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "  \n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_whitespace_only_row_last",
+      "buffer": "      ",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "     \n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_suffix_exhausted",
+      "buffer": "    foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "    fo\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_suffix_exhausted_count",
+      "buffer": "    foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "5r<CR>",
+      "expect": {
+        "buffer": "    fo\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_tab_within_indent",
+      "buffer": "\t\tfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "r<CR>",
+      "expect": {
+        "buffer": "\t\n    foo",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

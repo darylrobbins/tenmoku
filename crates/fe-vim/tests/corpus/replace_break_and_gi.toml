@@ -168,3 +168,45 @@ name = "backspace_over_a_breaks_indent_dot"
 buffer = "        foo bar\n        baz qux"
 cursor = [0, 11]
 keys = "R<CR><BS>x<Esc>j0fz."
+
+[[case]]
+name = "r_within_indent"
+buffer = "    foo"
+cursor = [0, 1]
+keys = "r<CR>"
+
+[[case]]
+name = "r_end_of_indent"
+buffer = "    foo"
+cursor = [0, 3]
+keys = "r<CR>"
+
+[[case]]
+name = "r_whitespace_only_row"
+buffer = "      "
+cursor = [0, 2]
+keys = "r<CR>"
+
+[[case]]
+name = "r_whitespace_only_row_last"
+buffer = "      "
+cursor = [0, 5]
+keys = "r<CR>"
+
+[[case]]
+name = "r_suffix_exhausted"
+buffer = "    foo"
+cursor = [0, 6]
+keys = "r<CR>"
+
+[[case]]
+name = "r_suffix_exhausted_count"
+buffer = "    foo bar"
+cursor = [0, 6]
+keys = "5r<CR>"
+
+[[case]]
+name = "r_tab_within_indent"
+buffer = "\t\tfoo"
+cursor = [0, 1]
+keys = "r<CR>"

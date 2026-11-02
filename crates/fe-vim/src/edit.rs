@@ -254,8 +254,8 @@ pub(crate) fn join_rows(
 /// (a tab, spaces to as many tab stops), leaving the caret on the last;
 /// nothing happens if fewer remain on the row. For `\n` they become one
 /// line break, the new row indented with spaces as wide as this row's
-/// indentation (nvim's 'autoindent' with 'expandtab') and the blanks that
-/// follow the break dropped; the caret goes on the last indent character, or
+/// indentation before the break (nvim's 'autoindent' with 'expandtab'; none
+/// if only blanks follow it) and the blanks that follow the break dropped; the caret goes on the last indent character, or
 /// the new row's start.
 pub(crate) fn replace_char(
     target: &mut VimTarget<'_>,
@@ -273,23 +273,29 @@ pub(crate) fn replace_char(
         .map(|selection| {
             let cursor = Cursor::whole(&text, selection.head());
             let line = &cursor.line;
-            if line.len() < cursor.ix.saturating_add(count) {
+            // A carriage return would break fe-text's LF-only invariant.
+            if args.char == '\r' || line.len() < cursor.ix.saturating_add(count) {
                 return Acts::default();
             }
             let end = line.starts.get(cursor.ix + count).copied();
             let mut range = cursor.offset()..line.start + end.unwrap_or(line.text.len());
             if args.char == '\n' {
                 let blank = |byte: u8| matches!(byte, b' ' | b'\t');
-                let width =
-                    line.text
-                        .bytes()
-                        .take_while(|&byte| blank(byte))
-                        .fold(0, |column, byte| match byte {
-                            b'\t' => column + tab - column % tab,
-                            _ => column + 1,
-                        });
+                // The indent is the surviving prefix's own, and none is
+                // generated when only blanks follow the break.
+                let before = &line.text.as_bytes()[..range.start - line.start];
+                let mut width = before.iter().copied().take_while(|&byte| blank(byte)).fold(
+                    0,
+                    |column, byte| match byte {
+                        b'\t' => column + tab - column % tab,
+                        _ => column + 1,
+                    },
+                );
                 let after = &line.text.as_bytes()[range.end - line.start..];
                 range.end += after.iter().take_while(|&&byte| blank(byte)).count();
+                if range.end - line.start == line.text.len() {
+                    width = 0;
+                }
                 let replacement = format!("\n{}", " ".repeat(width));
                 let land = replacement.len() - usize::from(width > 0);
                 return Acts {
