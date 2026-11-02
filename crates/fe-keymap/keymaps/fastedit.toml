@@ -2659,3 +2659,24 @@ context = "inline_edit && text_input"
 keys = "escape"
 command = "inline_edit.cancel"
 context = "inline_edit"
+
+# Expand and shrink selection in vim's normal and visual modes.
+[[bindings]]
+keys = { macos = "ctrl-shift-cmd-right", default = "shift-alt-right" }
+command = "vim.expand_selection"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = { macos = "ctrl-shift-cmd-left", default = "shift-alt-left" }
+command = "vim.shrink_selection"
+context = "editor && vim.mode == normal && !vim.pending"
+
+[[bindings]]
+keys = { macos = "ctrl-shift-cmd-right", default = "shift-alt-right" }
+command = "vim.expand_selection"
+context = "editor && vim.visual && !vim.replace_with_register"
+
+[[bindings]]
+keys = { macos = "ctrl-shift-cmd-left", default = "shift-alt-left" }
+command = "vim.shrink_selection"
+context = "editor && vim.visual && !vim.replace_with_register"

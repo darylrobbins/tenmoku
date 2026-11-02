@@ -823,6 +823,7 @@ mod repeat;
 mod replace;
 pub mod scroll;
 pub mod search;
+mod smart_select;
 mod state;
 mod substitute;
 mod text_object;

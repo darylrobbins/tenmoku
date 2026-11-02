@@ -479,6 +479,46 @@ pub(crate) fn extent_now(model: &EditorModel, state: &VimState) -> Option<LastVi
     })
 }
 
+/// Adopts `selection`, which the model has just set, as vim's extent: a
+/// non-empty one is charwise visual from its start (its end if reversed) to
+/// its last grapheme; an empty one is the normal-mode caret there, leaving
+/// a visual mode if one was on. The model's selection ends up equal to
+/// `selection`, so the expand history stays live.
+pub(crate) fn adopt(model: &mut EditorModel, state: &mut VimState, selection: ResolvedSelection) {
+    let text = model.text();
+    let ResolvedSelection { range, reversed } = selection;
+    if range.is_empty() {
+        if let Some(ends) = ends(model, state) {
+            leave(model, state, ends);
+        }
+        let at = position(text, range.start);
+        to_normal(
+            model,
+            state,
+            Ends {
+                kind: VisualKind::Char,
+                anchor: at,
+                cursor: at,
+                goal: None,
+            },
+        );
+        return;
+    }
+    let last = position(text, text.clip_offset(range.end - 1, Bias::Left));
+    let first = position(text, range.start);
+    let (anchor, cursor) = match reversed && first != last {
+        true => (last, first),
+        false => (first, last),
+    };
+    let ends = Ends {
+        kind: VisualKind::Char,
+        anchor,
+        cursor,
+        goal: None,
+    };
+    select(model, state, ends);
+}
+
 /// A normal-mode caret at the vim cursor, keeping its goal column.
 fn to_normal(model: &mut EditorModel, state: &mut VimState, ends: Ends) {
     let caret = Cursor::at(model.text(), ends.cursor).offset();

@@ -13,7 +13,7 @@ use crate::{
     CancelArgs, CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs,
     PutArgs, RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState,
     VisualArgs, cmdline, edit, feature, history, insert, jump, line_motions, macros, marks, motion,
-    operator, remap, repeat, replace, substitute, visual,
+    operator, remap, repeat, replace, smart_select, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it,
@@ -595,7 +595,7 @@ pub fn registry() -> Registry<VimCommands> {
         .description(
             "Opens a command line of `kind` (`search_forward` for `/`, `search_backward` for `?`, `ex` for `:`): `vim.mode` becomes `cmdline` until the host submits or cancels the line it owns. A search line carries the pending count, register and operator to the submit. An ex line leaves a visual mode (setting `'<` and `'>`) and starts with `'<,'>` from one, or `.,.+{count-1}` after a count: `VimState::command_line_prefill`.",
         )
-        .context(normal_or_visual)
+        .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
@@ -660,6 +660,7 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(ContextPredicate::parse("editor").expect("vim's context predicate parses"))
         .mutates_buffer(true);
+    smart_select::register(&mut registry, normal_or_visual);
     feature::register(&mut registry);
     registry
 }

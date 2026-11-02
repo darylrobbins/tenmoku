@@ -74,18 +74,20 @@ fn expand_and_shrink_selection_keys_match_vs_code() {
                 Some(command),
                 "{os:?} {keys}"
             );
-            for mode in [
-                "normal",
-                "insert",
-                "replace",
-                "operator_pending",
-                "visual",
-                "visual_line",
-                "visual_block",
-            ] {
+            for mode in ["insert", "replace", "operator_pending"] {
                 assert_eq!(
                     resolves(&keymap, os, keys, &vim(mode)),
                     None,
+                    "{os:?} {keys} in vim {mode}"
+                );
+            }
+            // Normal and visual modes run vim's own (see
+            // vim_expand_selection_keys.rs).
+            for mode in ["normal", "visual", "visual_line", "visual_block"] {
+                let vim_command = command.replace("editor.", "vim.");
+                assert_eq!(
+                    resolves(&keymap, os, keys, &vim(mode)).as_deref(),
+                    Some(vim_command.as_str()),
                     "{os:?} {keys} in vim {mode}"
                 );
             }
