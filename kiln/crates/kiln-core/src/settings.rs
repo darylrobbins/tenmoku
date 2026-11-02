@@ -117,6 +117,7 @@ type SchemaFor = Arc<dyn Fn(&Table) -> Arc<Json> + Send + Sync>;
 pub struct SettingsOptions {
     schema: Option<SchemaFor>,
     project_filters: Vec<ProjectFilter>,
+    layer_filters: Vec<ProjectFilter>,
     section: Option<Section>,
 }
 
@@ -199,6 +200,15 @@ impl SettingsOptions {
     /// name first (`notes.lsp`).
     pub fn project_filter(mut self, filter: ProjectFilter) -> Self {
         self.project_filters.push(filter);
+        self
+    }
+
+    /// Drops what no file may set badly, as [`SettingsOptions::project_filter`]
+    /// does for a project's file, but for the user's file too, and before a
+    /// project's own filters: an entry it drops (with a warning) rejects
+    /// nothing, so the rest of the file still applies.
+    pub fn layer_filter(mut self, filter: ProjectFilter) -> Self {
+        self.layer_filters.push(filter);
         self
     }
 
@@ -378,12 +388,11 @@ impl<S: SettingsType> SettingsStore<S> {
 
 /// Re-reads `layer`'s file, keeping its last good table if it has errors.
 fn read<S: SettingsType>(layer: &mut LayerState, options: &SettingsOptions) {
-    let filters: &[ProjectFilter] = if layer.user {
-        &[]
-    } else {
-        &options.project_filters
-    };
-    let (accepted, diagnostics) = validate::<S>(&layer.path, filters, options);
+    let mut filters = options.layer_filters.clone();
+    if !layer.user {
+        filters.extend(options.project_filters.iter().cloned());
+    }
+    let (accepted, diagnostics) = validate::<S>(&layer.path, &filters, options);
     if let Some((table, source)) = accepted {
         layer.good = table;
         layer.good_source = source;

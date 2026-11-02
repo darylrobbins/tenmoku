@@ -306,6 +306,56 @@
       },
       "type": "object"
     },
+    "FormatterPrefer": {
+      "description": "`formatters.<language>.prefer`.",
+      "oneOf": [
+        {
+          "const": "external",
+          "description": "The external formatter runs first.",
+          "type": "string"
+        },
+        {
+          "const": "lsp",
+          "description": "The language server formats first.",
+          "type": "string"
+        }
+      ]
+    },
+    "FormatterSettings": {
+      "description": "`[formatters.<language>]`: an external program that formats a buffer of\nthat language.",
+      "properties": {
+        "command": {
+          "description": "The program and its arguments. `{file}` in any of them is replaced\nwith the buffer's absolute path, so a tool such as prettier finds its\nconfig. Not empty.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "prefer": {
+          "$ref": "#/$defs/FormatterPrefer",
+          "default": "external",
+          "description": "Which formatter runs first, this one or the language server's; the\nother is the fallback when the first has nothing to do or fails."
+        },
+        "stdin": {
+          "default": true,
+          "description": "true: the text goes to the program's stdin and the formatted text is\nread from its stdout. false: a temporary copy is passed as `{file}`\nand read back, for tools that only format files.",
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "default": 3000,
+          "description": "How long, in milliseconds, the program may run before it is killed\nand nothing changes.",
+          "format": "uint64",
+          "maximum": 60000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
     "InlineDiagnostics": {
       "description": "`editor.inline_diagnostics`.",
       "oneOf": [
@@ -1232,6 +1282,14 @@
         "disabled": []
       },
       "description": "Installed extensions. A project file can't set them."
+    },
+    "formatters": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FormatterSettings"
+      },
+      "default": {},
+      "description": "External formatters, by language name (`rust`, `python`,\n`typescript`, ...: the names `lsp.servers.<name>.languages` uses). A\nproject file can't set them: a cloned repo shouldn't choose a program\nto run on save.",
+      "type": "object"
     },
     "lsp": {
       "$ref": "#/$defs/LspSettings",

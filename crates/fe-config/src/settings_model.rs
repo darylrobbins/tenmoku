@@ -486,6 +486,9 @@ impl Walk {
                     count: 0,
                 });
                 self.table(&resolved, &key, &default);
+            } else if key.len() == 1 {
+                // A map of no table (`formatters`) is edited in settings.toml:
+                // the editor lists a top-level row before every heading.
             } else {
                 let kind = match choice_source(&key) {
                     Some(source) => SettingKind::Choice(source),

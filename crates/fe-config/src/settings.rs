@@ -56,6 +56,56 @@ pub struct Settings {
     /// Installed extensions. A project file can't set them.
     #[serde(default)]
     pub extensions: ExtensionsSettings,
+    /// External formatters, by language name (`rust`, `python`,
+    /// `typescript`, ...: the names `lsp.servers.<name>.languages` uses). A
+    /// project file can't set them: a cloned repo shouldn't choose a program
+    /// to run on save.
+    #[serde(default)]
+    pub formatters: BTreeMap<String, FormatterSettings>,
+}
+
+/// `[formatters.<language>]`: an external program that formats a buffer of
+/// that language.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FormatterSettings {
+    /// The program and its arguments. `{file}` in any of them is replaced
+    /// with the buffer's absolute path, so a tool such as prettier finds its
+    /// config. Not empty.
+    #[schemars(length(min = 1))]
+    pub command: Vec<String>,
+    /// true: the text goes to the program's stdin and the formatted text is
+    /// read from its stdout. false: a temporary copy is passed as `{file}`
+    /// and read back, for tools that only format files.
+    #[serde(default = "default_formatter_stdin")]
+    pub stdin: bool,
+    /// Which formatter runs first, this one or the language server's; the
+    /// other is the fallback when the first has nothing to do or fails.
+    #[serde(default)]
+    pub prefer: FormatterPrefer,
+    /// How long, in milliseconds, the program may run before it is killed
+    /// and nothing changes.
+    #[serde(default = "default_formatter_timeout_ms")]
+    #[schemars(range(min = 1, max = 60000))]
+    pub timeout_ms: u64,
+}
+
+fn default_formatter_stdin() -> bool {
+    true
+}
+
+fn default_formatter_timeout_ms() -> u64 {
+    3000
+}
+
+/// `formatters.<language>.prefer`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatterPrefer {
+    /// The external formatter runs first.
+    #[default]
+    External,
+    /// The language server formats first.
+    Lsp,
 }
 
 /// Settings for the installed extensions (extensions record §10). They're
@@ -1066,6 +1116,8 @@ impl SettingsStore {
 fn options() -> SettingsOptions {
     SettingsOptions::new()
         .schema_for(schema_for)
+        .layer_filter(ProjectFilter::new("formatters", drop_bad_formatters))
+        .project_filter(ProjectFilter::new("formatters", drop_formatters))
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
         .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
@@ -1333,6 +1385,94 @@ fn drop_table(layer: &mut Layer, name: &str, message: &str) {
             .collect::<Vec<_>>()
             .join(".");
         let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message.into());
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// The warning for each `formatters` entry a project file sets.
+pub const PROJECT_FORMATTERS: &str = "formatters in project files are ignored: a folder can't choose the program that formats its files";
+
+/// Drops a project layer's `formatters` table, with a [`PROJECT_FORMATTERS`]
+/// warning at each entry.
+fn drop_formatters(layer: &mut Layer) {
+    drop_table(layer, "formatters", PROJECT_FORMATTERS);
+}
+
+/// What is wrong with one `[formatters.<language>]` value, or `None`.
+fn formatter_problem(entry: &toml::Value) -> Option<(&'static str, String)> {
+    let toml::Value::Table(entry) = entry else {
+        return Some(("", "must be a table".into()));
+    };
+    match entry.get("command") {
+        Some(toml::Value::Array(words))
+            if !words.is_empty() && words.iter().all(toml::Value::is_str) => {}
+        Some(toml::Value::Array(words)) if words.is_empty() => {
+            return Some((".command", "must not be empty".into()));
+        }
+        Some(_) => {
+            return Some((
+                ".command",
+                "must be an array of strings: the program, then its arguments".into(),
+            ));
+        }
+        None => return Some((".command", "is required".into())),
+    }
+    if entry.get("stdin").is_some_and(|stdin| !stdin.is_bool()) {
+        return Some((".stdin", "must be true or false".into()));
+    }
+    if entry
+        .get("prefer")
+        .is_some_and(|prefer| !matches!(prefer.as_str(), Some("external" | "lsp")))
+    {
+        return Some((".prefer", "must be \"external\" or \"lsp\"".into()));
+    }
+    if entry.get("timeout_ms").is_some_and(|timeout| {
+        !timeout
+            .as_integer()
+            .is_some_and(|ms| (1..=60000).contains(&ms))
+    }) {
+        return Some((
+            ".timeout_ms",
+            "must be a whole number from 1 to 60000".into(),
+        ));
+    }
+    None
+}
+
+/// Drops each `[formatters.<language>]` entry that is invalid, with a
+/// warning naming its bad key, so the other languages' entries still apply.
+fn drop_bad_formatters(layer: &mut Layer) {
+    let mut problems: Vec<(Vec<String>, String)> = Vec::new();
+    match layer.table.get_mut("formatters") {
+        None => return,
+        Some(toml::Value::Table(formatters)) => {
+            formatters.retain(|language, entry| match formatter_problem(entry) {
+                None => true,
+                Some((field, message)) => {
+                    let mut path: Vec<String> = vec![language.to_string()];
+                    if !field.is_empty() {
+                        path.push(field[1..].to_owned());
+                    }
+                    problems.push((path, format!("{language}{field} {message}; entry ignored")));
+                    false
+                }
+            });
+        }
+        Some(_) => {
+            layer.table.remove("formatters");
+            problems.push((Vec::new(), "must be a table of languages; ignored".into()));
+        }
+    }
+    let document = DeTable::parse(&layer.source).ok();
+    for (path, message) in problems {
+        let offset = document.as_ref().map_or(0, |document| {
+            key_offset(document.get_ref(), "formatters", &path)
+        });
+        let key = std::iter::once("formatters")
+            .chain(path.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(".");
+        let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message);
         layer.diagnostics.push(warning);
     }
 }

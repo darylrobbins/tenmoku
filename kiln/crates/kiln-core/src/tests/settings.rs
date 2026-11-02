@@ -296,3 +296,26 @@ fn a_schema_can_follow_the_files_table() {
     assert_eq!(store.diagnostics(), []);
     assert_eq!(store.settings().view.font_size, 18.0);
 }
+
+#[test]
+fn a_layer_filter_narrows_the_users_file_too() {
+    let files = files(
+        "title = \"User\"\n[view]\nfont_size = 15\nwrap = false\n",
+        "[view]\nfont_size = 20\n",
+    );
+    let options = SettingsOptions::new().layer_filter(view_wrap_only());
+    let store: SettingsStore<Notes> = SettingsStore::load_with(
+        Some(files.user.clone()),
+        Some(files.project.clone()),
+        options,
+    );
+    let settings = store.settings();
+    assert_eq!(settings.title, "User");
+    assert_eq!(
+        settings.view.font_size, 20.0,
+        "the default: dropped from both files"
+    );
+    assert!(!settings.view.wrap);
+    let files_warned: Vec<_> = store.diagnostics().iter().map(|d| &d.file).collect();
+    assert_eq!(files_warned, [&files.user, &files.project]);
+}

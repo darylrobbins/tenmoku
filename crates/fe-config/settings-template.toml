@@ -279,3 +279,30 @@
 # stay installed but contribute nothing. An ID no extension has is ignored. A
 # project file can't set it.
 # disabled = []
+
+# External formatters, one table per language, named as the language is
+# (rust, python, typescript, go, ...). A project file can't set them. A table
+# needs a command; the rest are optional:
+#   command    the program, then its arguments. {file} is replaced with the
+#              buffer's absolute path, so prettier finds its config.
+#   stdin      true (default): the text goes to stdin, the result comes from
+#              stdout. false: a temporary copy is passed as {file} and read
+#              back, for tools that only format files.
+#   prefer     "external" (default) or "lsp": which runs first; the other is
+#              the fallback when the first has nothing to do or fails.
+#   timeout_ms how long the program may run, 1 to 60000 (default 3000).
+# An entry with a bad value is ignored, with a warning; the others apply.
+#
+# [formatters.typescript]
+# command = ["prettier", "--stdin-filepath", "{file}"]
+#
+# [formatters.rust]
+# command = ["rustfmt", "--emit", "stdout"]
+# prefer = "lsp"
+#
+# [formatters.python]
+# command = ["black", "-q", "-"]
+#
+# [formatters.go]
+# command = ["gofmt"]
+# timeout_ms = 5000

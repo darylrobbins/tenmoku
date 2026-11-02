@@ -33,6 +33,10 @@ fn schema_leaves(schema: &Value, defs: &Value, prefix: &str, leaves: &mut Vec<St
     let schema = resolve(schema);
     for (name, property) in schema["properties"].as_object().unwrap() {
         let key = format!("{prefix}{name}");
+        if key == "formatters" {
+            // A top-level map: edited in settings.toml, no row.
+            continue;
+        }
         let property = resolve(property);
         if property.get("properties").is_some() {
             schema_leaves(&property, defs, &format!("{key}."), leaves);
