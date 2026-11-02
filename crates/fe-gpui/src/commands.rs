@@ -446,6 +446,13 @@ fn keeps_nvim_view(invocation: &Invocation) -> bool {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`reparsed`] has seeded a copy from the view's tree on
+    /// this thread, for tests to tell a seeded copy from one parsed afresh.
+    pub(crate) static SEEDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// How long one dispatch's [`reparsed`] calls may take altogether.
 const INDENT_PARSE_BUDGET: Duration = Duration::from_millis(20);
 
@@ -470,6 +477,8 @@ fn reparsed(syntax: &Syntax, snapshot: &BufferSnapshot, deadline: Instant) -> Op
     let mut caught_up = Syntax::new(syntax.language(), snapshot);
     if syntax.tree().is_some() && !syntax.needs_parse() {
         caught_up.finish(syntax.parse_job().parse(out_of_time)?);
+        #[cfg(test)]
+        SEEDS.with(|n| n.set(n.get() + 1));
     }
     // Not `parse_until`: its budget on the last reparse's time would give up
     // after a slow seed, whatever the deadline.

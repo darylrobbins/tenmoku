@@ -6,7 +6,7 @@ use fe_command::{Invocation, Source};
 use fe_syntax::{Syntax, language_by_name};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 
-use super::reparsed;
+use super::{SEEDS, reparsed};
 use crate::EditorView;
 
 /// A view of `language` showing `marked`, once its tree is parsed. `marked`
@@ -185,8 +185,14 @@ fn a_slow_seed_still_catches_up_by_a_long_deadline() {
     // What the call did, not how long it took: how slow a seed is depends on
     // the machine, and a fast one made a lower bound on time fail.
     let snapshot = buffer.snapshot();
+    // The seed's preconditions: a tree parsed at its own version, behind
+    // the snapshot.
+    assert!(syntax.tree().is_some() && !syntax.needs_parse());
+    assert_ne!(syntax.version(), snapshot.version());
+    let seeds = SEEDS.with(|n| n.get());
     let caught_up = reparsed(&syntax, &snapshot, Instant::now() + Duration::from_secs(60))
         .expect("a long deadline gets the copy");
+    assert_eq!(SEEDS.with(|n| n.get()), seeds + 1, "the copy was seeded");
     assert_eq!(caught_up.version(), snapshot.version());
     assert!(caught_up.tree().is_some());
     assert!(!caught_up.needs_parse());
