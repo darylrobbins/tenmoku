@@ -4,10 +4,10 @@ use fe_project::fixture;
 use gpui::TestAppContext;
 
 use super::open;
-use crate::{WELCOME, resolve_launch};
+use crate::resolve_launch;
 
-#[gpui::test]
-fn resolve_launch_picks_root_and_file(cx: &mut TestAppContext) {
+#[test]
+fn resolve_launch_picks_root_and_file() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     fixture::generate(root, 1, 1).unwrap();
@@ -29,13 +29,17 @@ fn resolve_launch_picks_root_and_file(cx: &mut TestAppContext) {
     let launch = resolve_launch(None);
     assert!(launch.root.is_none());
     assert!(launch.file.is_none());
+}
+
+#[gpui::test]
+fn launch_with_no_argument_opens_no_tabs(cx: &mut TestAppContext) {
+    let launch = resolve_launch(None);
     let (workbench, cx, _) = open(cx, launch);
     workbench.read_with(cx, |workbench, cx| {
         assert!(workbench.panel().read(cx).tree().is_none(), "no folder");
         let pane = workbench.pane().read(cx);
-        assert_eq!(pane.tabs().len(), 1);
-        let editor = workbench.active_editor(cx).expect("the welcome tab");
-        assert_eq!(editor.read(cx).model().text().to_string(), WELCOME);
-        assert_eq!(editor.read(cx).model().path(), None);
+        assert!(pane.tabs().is_empty());
+        assert_eq!(pane.title(cx), fe_config::APP_NAME);
+        assert!(workbench.active_editor(cx).is_none());
     });
 }

@@ -53,7 +53,6 @@ fn no_shipped_text_names_fastedit(cx: &mut TestAppContext) {
             "settings schema",
             include_str!("../../fe-config/settings.schema.json"),
         ),
-        ("welcome", fe_workbench::WELCOME),
     ];
     for (what, text) in shipped {
         let lines: Vec<_> = text.lines().filter(|line| names_fastedit(line)).collect();

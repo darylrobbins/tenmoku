@@ -14,7 +14,7 @@ use fe_buffer::{BackupId, BackupMeta, BackupStore, Buffer};
 use fe_command::{ContextFrame, ContextStack, Invocation, Value};
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, commands::RunCommand};
 use fe_text::Text;
-use fe_workbench::{Launch, WELCOME, Workbench, window_layouts};
+use fe_workbench::{Launch, Workbench, window_layouts};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_shell::layout::{self, LayoutStore, WindowLayout};
 
@@ -244,10 +244,10 @@ fn crash_restores(first: &mut TestAppContext, second: &mut TestAppContext) {
     );
 }
 
-/// A launch with no argument after one that left nothing open shows the
-/// welcome text, as one with no saved window does.
+/// A launch with no argument after one that left nothing open opens no
+/// tabs, as one with no saved window does.
 #[gpui::test]
-fn nothing_saved_shows_the_welcome(first: &mut TestAppContext, second: &mut TestAppContext) {
+fn nothing_saved_opens_no_tabs(first: &mut TestAppContext, second: &mut TestAppContext) {
     let _serial = serially();
     let state = tempfile::tempdir().unwrap();
     init(first);
@@ -259,8 +259,37 @@ fn nothing_saved_shows_the_welcome(first: &mut TestAppContext, second: &mut Test
 
     init(second);
     let (workbench, mut cx) = launch(state.path(), None, second);
-    assert_eq!(
-        states(&workbench, &mut cx),
-        [(None, WELCOME.into(), false, 0)]
-    );
+    assert!(states(&workbench, &mut cx).is_empty());
+    assert!(editors(&workbench, &mut cx).is_empty());
+}
+
+/// A restore whose saved tabs all fail to reopen leaves the panes empty,
+/// with no tab added in their place.
+#[gpui::test]
+fn restore_leaving_panes_empty_adds_no_tab(
+    first: &mut TestAppContext,
+    second: &mut TestAppContext,
+) {
+    let _serial = serially();
+    let state = tempfile::tempdir().unwrap();
+    init(first);
+    let (workbench, mut cx) = launch(state.path(), None, first);
+    drop(workbench);
+    type_untitled("hello", &mut cx);
+    run("app.quit", &mut cx);
+    first.quit();
+    // The layout still names the tab, but its backup is gone.
+    std::fs::remove_dir_all(state.path().join("backups")).unwrap();
+
+    init(second);
+    let (workbench, cx) = launch(state.path(), None, second);
+    workbench.read_with(&cx, |workbench, cx| {
+        assert!(
+            workbench
+                .pane_group(cx)
+                .panes()
+                .iter()
+                .all(|pane| pane.read(cx).tabs().is_empty())
+        );
+    });
 }

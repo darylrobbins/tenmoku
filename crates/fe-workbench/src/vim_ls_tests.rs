@@ -147,14 +147,13 @@ fn without_a_root(cx: &mut TestAppContext) {
     assert_eq!(
         rows,
         [
-            row(["1", "h", "[No Name]", "line 1"]),
-            row(["2", "#h", &name("under_score.txt"), "line 1"]),
-            row(["3", "%a", &name("plain.txt"), "line 1"]),
+            row(["1", "#h", &name("under_score.txt"), "line 1"]),
+            row(["2", "%a", &name("plain.txt"), "line 1"]),
         ]
     );
     cx.simulate_input("_sc");
     let (rows, _) = shown(&workbench, cx).unwrap();
-    assert_eq!(rows, [row(["2", "#h", &name("under_score.txt"), "line 1"])]);
+    assert_eq!(rows, [row(["1", "#h", &name("under_score.txt"), "line 1"])]);
 }
 
 /// A large file open in a viewer is listed with its caret's line.

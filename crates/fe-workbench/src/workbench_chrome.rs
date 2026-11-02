@@ -7,14 +7,12 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::Buffer;
 use fe_config::TerminalSettings;
-use fe_editor::EditorModel;
 use gpui::{AnyView, App, AppContext as _, Context, Entity, Focusable, Subscription, Window, px};
 
 #[cfg(test)]
 use super::toast;
-use super::{Launch, LayoutKeys, TERMINAL_BUTTON, WELCOME, Workbench, active_diff_view};
+use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
 #[cfg(test)]
 use crate::title_bar;
 use crate::{
@@ -463,8 +461,7 @@ impl Workbench {
     /// or went, or another is active, by a click, a close or the workspace
     /// activating one itself. The workbench follows its active pane and its
     /// editors, and once a restored layout's files are in, takes up their
-    /// editors; a window with no root that's left with nothing open shows
-    /// the welcome text, as a launch with nothing to open does.
+    /// editors.
     pub(super) fn follow_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if *self.workspace.read(cx).active_pane() != self.active {
             // The workspace made it active itself (a click on it, a close,
@@ -482,11 +479,6 @@ impl Workbench {
             // A Git Log drawn meanwhile waited for the active file.
             if let Some(panel) = self.dock.read(cx).git_log().cloned() {
                 panel.update(cx, |_, cx| cx.notify());
-            }
-            let panes = self.pane_group(cx).panes();
-            if self.root.is_none() && panes.iter().all(|pane| pane.read(cx).tabs().is_empty()) {
-                let welcome = EditorModel::new(Buffer::new(WELCOME), None);
-                self.active.update(cx, |pane, cx| pane.add(welcome, cx));
             }
         }
         self.track_editors(cx);

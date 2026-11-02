@@ -1,5 +1,7 @@
 //! The pane toolbar's breadcrumbs, its pickers and the tab bar's buttons.
 
+use fe_buffer::Buffer;
+use fe_editor::EditorModel;
 use std::{fs, path::Path, time::Duration};
 
 use fe_command::{ContextFrame, ContextStack, Invocation, Source};
@@ -745,13 +747,16 @@ fn crumbs_per_pane_and_root(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_welcome_buffer_is_untitled(cx: &mut TestAppContext) {
+fn an_untitled_buffer_is_untitled(cx: &mut TestAppContext) {
     let launch = Launch {
         root: None,
         file: None,
     };
     let (workbench, cx, _) = open(cx, launch);
-    settle(cx);
     let pane = active(&workbench, cx);
+    pane.update(cx, |pane, cx| {
+        pane.add(EditorModel::new(Buffer::new(""), None), cx)
+    });
+    settle(cx);
     assert_eq!(all_crumbs(&pane, cx), ["untitled"]);
 }

@@ -9,7 +9,6 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_git::ChangeKind;
 use fe_gpui::{
@@ -59,17 +58,6 @@ use kiln_shell::{
     Workspace, layout::LayoutStore,
 };
 
-/// Shown in a tab when Tenmoku starts with nothing to open.
-pub const WELCOME: &str = "\
-Tenmoku
-
-Open a folder or a file with:  tenmoku <path>
-
-Keys: arrows, alt-arrows (words), cmd-arrows (line/document),
-shift to select, double/triple-click, cmd-c/x/v, cmd-z/shift-cmd-z, cmd-s.
-Tabs: cmd-shift-[ and cmd-shift-] to switch, cmd-w to close.
-";
-
 /// What the workbench opens with.
 pub struct Launch {
     /// The project panel's folder.
@@ -84,7 +72,7 @@ pub struct Launch {
 /// The launch for the command-line argument `arg`, made absolute: a
 /// directory is the root, with no file; a file, or a missing path (a new
 /// file, which saving creates), opens in a tab with its parent directory as
-/// the root. No argument is no root, and the welcome text in a tab.
+/// the root. No argument is no root and no tab.
 pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
     let Some(arg) = arg else {
         return Launch {
@@ -331,7 +319,6 @@ impl Workbench {
         let linked_editing = settings.linked_editing;
         let inline_blame = settings.inline_blame;
         let auto_save = AutoSave::new(&settings, window, cx);
-        let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
         let as_folder = launch.file.is_none();
@@ -361,7 +348,6 @@ impl Workbench {
             let mut pane = Pane::new(theme, settings, cx);
             pane.owned_by(owner);
             match launch.file {
-                None if welcome => pane.add(EditorModel::new(Buffer::new(WELCOME), None), cx),
                 None => {}
                 Some((path, Some(Opened::Text(buffer)))) => pane.add(
                     EditorModel::new(loader::buffer_or_new(buffer), Some(path)),
