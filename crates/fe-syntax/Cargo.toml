@@ -42,6 +42,8 @@ default = [
     "gitattributes",
     "ini",
     "just",
+    "diff",
+    "json5",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -78,6 +80,8 @@ gitconfig = ["dep:tree-sitter-git-config"]
 gitattributes = ["dep:tree-sitter-gitattributes"]
 ini = ["dep:tree-sitter-ini"]
 just = ["dep:tree-sitter-just"]
+diff = ["dep:tree-sitter-diff"]
+json5 = ["dep:tree-sitter-json5"]
 # Highlight queries run to completion, as in this crate's tests, instead of
 # stopping after `QUERY_BUDGET`. For the fuzz targets in `fuzz/`, which compare
 # highlights and can't tell a cut-short result from a complete one.
@@ -93,6 +97,7 @@ tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-containerfile = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-diff = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-git-commit = { workspace = true, optional = true }
 tree-sitter-git-config = { workspace = true, optional = true }
@@ -104,6 +109,7 @@ tree-sitter-ini = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }
 tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-json5 = { workspace = true, optional = true }
 tree-sitter-just = { workspace = true, optional = true }
 tree-sitter-kotlin-sg = { workspace = true, optional = true }
 tree-sitter-lua = { workspace = true, optional = true }

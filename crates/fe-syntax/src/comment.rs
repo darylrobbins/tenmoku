@@ -26,8 +26,8 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
     let hash = tokens(Some("#"), None);
     let html = tokens(None, Some(("<!--", "-->")));
     Some(match language {
-        "rust" | "json" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp" | "java"
-        | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
+        "rust" | "json" | "json5" | "javascript" | "typescript" | "tsx" | "go" | "c" | "cpp"
+        | "java" | "php" | "csharp" | "scala" | "swift" | "kotlin" => c_like,
         "toml" | "bash" | "yaml" | "ruby" | "dockerfile" | "make" | "gitignore" | "gitcommit"
         | "gitrebase" | "gitconfig" | "gitattributes" | "dotenv" | "just" => hash,
         "python" => tokens(Some("#"), Some(("\"\"\"", "\"\"\""))),
@@ -36,7 +36,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
-        "markdown_inline" | "rustdoc_inline" => tokens(None, None),
+        "markdown_inline" | "rustdoc_inline" | "diff" => tokens(None, None),
         _ => return None,
     })
 }
@@ -50,7 +50,7 @@ pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
         "markdown_inline" | "rustdoc_inline" => &[],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
-        | "json" | "just" => &[
+        | "json" | "json5" | "just" => &[
             ('(', ')'),
             ('[', ']'),
             ('{', '}'),

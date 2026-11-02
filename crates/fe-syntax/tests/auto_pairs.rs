@@ -17,8 +17,8 @@ fn expected(name: &str) -> Vec<(char, char)> {
         "rust" => with_quotes(&[dq]),
         "markdown" | "gitcommit" => with_quotes(&[dq, bt]),
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"
-        | "json" | "just" => with_quotes(&[dq, sq, bt]),
-        "gitignore" => with_quotes(&[dq]),
+        | "json" | "json5" | "just" => with_quotes(&[dq, sq, bt]),
+        "gitignore" | "diff" => with_quotes(&[dq]),
         "php" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml" | "dockerfile"
         | "make" | "scala" | "kotlin" | "csharp" | "java" | "c" | "cpp" | "gitrebase"
         | "gitconfig" | "gitattributes" | "ini" | "dotenv" => with_quotes(&[dq, sq]),

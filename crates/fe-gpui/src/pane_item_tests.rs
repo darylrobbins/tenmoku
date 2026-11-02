@@ -152,6 +152,24 @@ fn status_items_are_the_editors(cx: &mut TestAppContext) {
     assert_eq!(status::language_label("zig"), "zig");
 }
 
+#[test]
+fn newer_languages_have_labels() {
+    for (id, label) in [
+        ("gitcommit", "Git Commit Message"),
+        ("gitrebase", "Git Rebase Todo"),
+        ("gitconfig", "Git Config"),
+        ("gitattributes", "Git Attributes"),
+        ("gitignore", "Ignore"),
+        ("ini", "INI"),
+        ("dotenv", "Dotenv"),
+        ("just", "Just"),
+        ("diff", "Diff"),
+        ("json5", "JSON5"),
+    ] {
+        assert_eq!(status::language_label(id), label, "{id}");
+    }
+}
+
 #[gpui::test]
 fn a_restored_editor_refuses_a_file_changed_since(cx: &mut TestAppContext) {
     use kiln_shell::PaneItem as _;

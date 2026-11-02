@@ -520,6 +520,16 @@ const KINDS: &[Kinds] = &[
         nodes: &["recipe"],
         bodies: &[],
     },
+    Kinds {
+        language: "diff",
+        nodes: &["block", "hunk"],
+        bodies: &[],
+    },
+    Kinds {
+        language: "json5",
+        nodes: &["object", "array"],
+        bodies: &[],
+    },
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]

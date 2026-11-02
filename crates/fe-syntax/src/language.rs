@@ -267,7 +267,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("xsl", "xml"),
     ("xslt", "xml"),
     ("es6", "javascript"),
-    ("json5", "json"),
     ("py3", "python"),
     ("rpy", "python"),
     ("cpy", "python"),
@@ -449,6 +448,8 @@ const DEFS: &[Def] = &[
             "swcrc",
             "hintrc",
             "babelrc",
+            "code-workspace",
+            "code-snippets",
         ],
         file_names: &[
             ".bowerrc",
@@ -911,6 +912,38 @@ const DEFS: &[Def] = &[
         highlights: || &[tree_sitter_just::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
         injections: Some(tree_sitter_just::INJECTIONS_QUERY),
+        hidden: false,
+    },
+    #[cfg(feature = "diff")]
+    Def {
+        name: "diff",
+        extensions: &["diff", "patch"],
+        file_names: &[],
+        grammar: || tree_sitter_diff::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_diff::HIGHLIGHTS_QUERY,
+                include_str!("../queries/diff.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "json5")]
+    Def {
+        name: "json5",
+        extensions: &["json5"],
+        file_names: &[],
+        grammar: || tree_sitter_json5::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_json5::HIGHLIGHTS_QUERY,
+                include_str!("../queries/json5.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
         hidden: false,
     },
 ];

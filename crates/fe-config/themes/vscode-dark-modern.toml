@@ -24,9 +24,12 @@
 # the jump label colours and the vim mode segments have no Dark Modern value;
 # they are chosen to sit in its palette.
 #
+# markup.inserted and markup.deleted take change_added and change_deleted, so a
+# patch reads green and red.
+#
 # Scopes with no highlight name are left out: semantic-token rules
 # (`*.mutable` underline), font styles, markup.bold/italic/underline/
-# strikethrough, markup.inserted/deleted/changed, invalid, regexp scopes and
+# strikethrough, markup.changed, invalid, regexp scopes and
 # the CSS-only and language-specific scope variants. A highlight name that
 # several scopes colour differently takes the general scope's colour
 # (`keyword` is `keyword`'s #569CD6, not `keyword.control`'s #C586C0).
@@ -181,7 +184,9 @@ minimap_gutter_deleted = "#F85149"
 "function.macro" = "#DCDCAA"
 "keyword" = "#569CD6"
 "label" = "#C8C8C8"
+"markup.deleted" = "#F85149"
 "markup.heading" = "#569CD6"
+"markup.inserted" = "#2EA043"
 "markup.link" = "#4DAAFC"
 "markup.link.url" = "#4DAAFC"
 "markup.raw" = "#CE9178"

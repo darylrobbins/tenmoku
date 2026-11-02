@@ -1,0 +1,36 @@
+diff --git a/src/old_name.rs b/src/new_name.rs
+similarity index 92%
+rename from src/old_name.rs
+rename to src/new_name.rs
+index 83db48f..bf2a1c0 100644
+--- a/src/old_name.rs
++++ b/src/new_name.rs
+@@ -1,6 +1,6 @@
+ use std::fmt;
+ 
+-fn greet(name: &str) {
+-    println!("hello {name}");
++fn greet(name: &str, loud: bool) {
++    println!("hello {name} {loud}");
+ }
+ 
+@@ -20,3 +20,4 @@ fn main() {
+     greet("a");
+     greet("b");
+-}
+\ No newline at end of file
++    greet("c");
++}
+diff --git a/scripts/run.sh b/scripts/run.sh
+old mode 100644
+new mode 100755
+diff --git a/notes.txt b/notes.txt
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/notes.txt
+@@ -0,0 +1 @@
++first line
+diff --git a/logo.png b/logo.png
+index 83db48f..bf2a1c0 100644
+Binary files a/logo.png and b/logo.png differ

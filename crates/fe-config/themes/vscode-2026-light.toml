@@ -18,9 +18,12 @@
 # surface.panel. The jump label colours and the vim mode segments have no
 # Light 2026 value; they are chosen from its palette.
 #
+# markup.inserted and markup.deleted take change_added and change_deleted, so a
+# patch reads green and red.
+#
 # Scopes with no highlight name are left out: semantic-token rules
 # (`*.mutable` underline), font styles, markup.bold/italic/underline/
-# strikethrough, markup.inserted/deleted/changed, invalid, regexp scopes and
+# strikethrough, markup.changed, invalid, regexp scopes and
 # the CSS-only and language-specific scope variants. A highlight name that
 # several scopes colour differently takes the general scope's colour.
 # `keyword.control` (if, match, for, return, await) stays #AF00DB in VS Code,
@@ -171,7 +174,9 @@ minimap_gutter_deleted = "#AD0707"
 "function.macro" = "#8250DF"
 "keyword" = "#CF222E"
 "label" = "#000000"
+"markup.deleted" = "#AD0707"
 "markup.heading" = "#0550AE"
+"markup.inserted" = "#587C0C"
 "markup.link" = "#0A3069"
 "markup.link.url" = "#0A3069"
 "markup.raw" = "#0550AE"

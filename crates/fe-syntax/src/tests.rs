@@ -239,6 +239,29 @@ fn each_language_highlights_a_snippet() {
             ],
         ),
         (
+            "x.diff",
+            "diff --git a/f b/f\nindex 83db48f..bf2a1c0 100644\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n",
+            &[
+                ("83db48f", "constant"),
+                ("--- a/f", "markup.deleted"),
+                ("+++ b/f", "markup.inserted"),
+                ("@@ -1 +1 @@", "attribute"),
+                ("-old", "markup.deleted"),
+                ("+new", "markup.inserted"),
+            ],
+        ),
+        (
+            "x.json5",
+            "// c\n{a: 1, 'b': true}",
+            &[
+                ("// c", "comment"),
+                ("a", "string.special.key"),
+                ("1", "number"),
+                ("'b'", "string.special.key"),
+                ("true", "constant.builtin"),
+            ],
+        ),
+        (
             "x.yaml",
             "key: 1 # c",
             &[("key", "property"), ("1", "number"), ("# c", "comment")],
@@ -471,6 +494,26 @@ fn incremental_reparse_matches_a_full_parse() {
             "justfile",
             "x := \"1\"\n\nbuild target: dep\n    echo {{target}}\n\ndep:\n    #!/bin/sh\n    echo\n",
             &["\n", "    ", "{{", "}}", ":", "a:\n    b\n", "\"", "x", ""],
+        ),
+        (
+            "x.diff",
+            "diff --git a/f b/f\nindex 83db48f..bf2a1c0 100644\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n",
+            &[
+                "\n",
+                "+",
+                "-",
+                " ",
+                "@@ -1 +1 @@\n",
+                "--- a\n",
+                "diff --git a b\n",
+                "x",
+                "",
+            ],
+        ),
+        (
+            "x.json5",
+            "// c\n{a: 1, 'b': [true, .5,],}\n",
+            &["\n", "{", "}", "[", "]", ",", ":", "'", "/*", "*/", "x", ""],
         ),
     ];
     let mut rng = StdRng::seed_from_u64(7);

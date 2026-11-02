@@ -2429,6 +2429,7 @@ dependencies = [
  "tree-sitter-containerfile",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-diff",
  "tree-sitter-git-commit",
  "tree-sitter-git-config",
  "tree-sitter-git-rebase",
@@ -2440,6 +2441,7 @@ dependencies = [
  "tree-sitter-java",
  "tree-sitter-javascript",
  "tree-sitter-json",
+ "tree-sitter-json5",
  "tree-sitter-just",
  "tree-sitter-kotlin-sg",
  "tree-sitter-lua",
@@ -8399,6 +8401,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-diff"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfe1e5ca280a65dfe5ba4205c1bcc84edf486464fed315db53dee6da9a335889"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-git-commit"
 version = "0.1.0"
 dependencies = [
@@ -8493,6 +8505,14 @@ name = "tree-sitter-json"
 version = "0.24.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d727acca406c0020cffc6cf35516764f36c8e3dc4408e5ebe2cb35a947ec471"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-json5"
+version = "0.1.0"
 dependencies = [
  "cc",
  "tree-sitter-language",

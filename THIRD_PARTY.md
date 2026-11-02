@@ -124,6 +124,8 @@ The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
 | ini | tree-sitter-ini | 1.4.0 | https://github.com/justinmk/tree-sitter-ini | Apache-2.0 | `HIGHLIGHTS_QUERY`, then `queries/ini.scm` (ours) |
 | dotenv | tree-sitter-bash, as bash above | 0.25.1 | https://github.com/tree-sitter/tree-sitter-bash | MIT | bash's `HIGHLIGHT_QUERY`, then `queries/dotenv.scm` (ours) |
 | just | tree-sitter-just, vendored¹⁴ | commit `5685543` | https://github.com/casey/tree-sitter-just | Apache-2.0¹⁴ | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
+| diff | tree-sitter-diff | 0.1.0 | https://github.com/the-mikedavis/tree-sitter-diff | MIT | `HIGHLIGHTS_QUERY`, then `queries/diff.scm` (ours) |
+| json5 | tree-sitter-json5, vendored¹⁵ | commit `248b856` | https://github.com/Joakker/tree-sitter-json5 | MIT | `HIGHLIGHTS_QUERY`, then `queries/json5.scm` (ours) |
 
 ¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -253,3 +255,9 @@ link beside our 0.27. Upstream's `grammar.js`, generated `src/` and queries are
 unchanged, at commit `5685543a6e64f66335e25518c9ae8ffa1dae3d01`; the Rust binding is
 ours. Upstream's `LICENSE` is Apache-2.0 although its `Cargo.toml` says MIT; we go by
 the licence text and ship it. The vendored README says how to update it.
+
+¹⁵ Vendored in `vendor/tree-sitter-json5/` as a path dependency, because
+`tree-sitter-json5` 0.1.0 on crates.io needs `tree-sitter` ~0.20, which can't link
+beside our 0.27. Upstream's `grammar.js`, `utils.js`, generated `src/` and query are
+unchanged, at commit `248b8564567087d7866be76569b182f6dd7e14e9`; the Rust binding is
+ours. The licence is upstream's. The vendored README says how to update it.

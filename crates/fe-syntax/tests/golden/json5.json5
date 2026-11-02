@@ -1,0 +1,23 @@
+// A JSON5 file, as a config might be.
+{
+  /* Keys may be quoted or not. */
+  name: 'tenmoku',
+  "quoted": "double",
+  'single': 'single',
+  $dollar_1: null,
+  flags: [true, false,],
+  numbers: {
+    int: 42,
+    negative: -1,
+    plus: +7,
+    hex: 0xFF,
+    leading: .5,
+    trailing: 5.,
+    exp: 1e3,
+    inf: Infinity,
+    nan: -NaN,
+  },
+  multiline: 'one \
+two',
+  empty: {},
+}
