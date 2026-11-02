@@ -24,6 +24,9 @@ use fe_vim::{Registers, Step, VimCommands, VimState, VimTarget, context, parse_k
 struct Braces {
     suggests: bool,
     declines_from: u32,
+    /// Suggests by the row before's indentation as it is in the snapshot it
+    /// is asked about: none there, a level in; some, none at all (column 0).
+    follows_indent: bool,
     host: HeadlessHost,
 }
 
@@ -54,6 +57,16 @@ impl EditorHost for Braces {
         }
         let text = snapshot.text();
         let basis_row = row - 1;
+        if self.follows_indent {
+            let before = text.row_to_string(basis_row);
+            return Some(match before.starts_with([' ', '\t']) {
+                true => IndentSuggestion::Zero,
+                false => IndentSuggestion::Relative {
+                    basis_row,
+                    delta: 1,
+                },
+            });
+        }
         let delta = match () {
             _ if text.row_to_string(basis_row).trim_end().ends_with('{') => 1,
             _ if text.row_to_string(row).trim_start().starts_with('}') => -1,
@@ -84,6 +97,7 @@ impl Vim {
             host: Braces {
                 suggests,
                 declines_from: u32::MAX,
+                follows_indent: false,
                 host: HeadlessHost::new(),
             },
             state: VimState::new(),
@@ -265,4 +279,17 @@ fn reindent_without_suggestions_keeps_rows() {
     assert_eq!(vim.cursor(), (0, 0));
     vim.feed("u");
     assert_eq!(vim.text(), MISINDENTED);
+}
+
+#[test]
+fn reindent_asks_the_host_about_each_row_as_those_above_were_reindented() {
+    // Row 1 goes a level in, so row 2's suggestion, which follows row 1's
+    // indentation, is column 0 only in the text row 1 has just left.
+    let mut vim = Vim::new("x\ny\nz", (1, 0), true);
+    vim.host.follows_indent = true;
+    vim.feed("=G");
+    assert_eq!(vim.text(), "x\n    y\nz");
+    // One undo step.
+    vim.feed("u");
+    assert_eq!(vim.text(), "x\ny\nz");
 }

@@ -18,18 +18,15 @@
 //! fallback, as nvim has with no 'indentexpr' (a known difference). A row
 //! that's empty or holds only blanks is left empty, as in nvim.
 //!
-//! The host is asked about every row in the text as `=` found it, so the
-//! language parses it once, and a suggestion's basis row is read as it has
-//! just been re-indented: what asking after each row would give, as a
-//! suggestion is relative to its basis row's indentation.
+//! The host is asked about each row in the text as the rows above have just
+//! been re-indented (one transaction throughout), so a suggestion that
+//! depends on their new indentation sees it.
 //!
 //! One undo step, none when nothing changes; the caret goes to the first
 //! non-blank of the first row, as Vim's does with 'startofline' (nvim's,
 //! with its default 'nostartofline', keeps the goal column there: a known
 //! difference); `.` repeats it over as many rows; marks stay on their rows,
 //! and `'[` and `']` span them as after `>`.
-
-use std::collections::HashMap;
 
 use fe_buffer::{BufferSnapshot, Origin, TransactionId};
 use fe_editor::{EditorModel, IndentStyle, IndentSuggestion, commands::EditorHost};
@@ -74,28 +71,30 @@ pub(crate) fn rows(
     origin: Origin,
 ) -> (Option<TransactionId>, BufferSnapshot) {
     let levels = Levels::of(model);
-    operator::apply_plan(model, origin, |snapshot| {
+    let mut todo = rows.iter().copied();
+    operator::apply_each(model, origin, |snapshot| {
         let text = snapshot.text();
-        // Each row's indentation as re-indented so far.
-        let mut planned: HashMap<u32, String> = HashMap::new();
-        let mut edits = Vec::new();
-        for &row in rows.iter().filter(|&&row| row < text.row_count()) {
+        // Rows are edited one at a time, so the host sees each as the rows
+        // above have just been re-indented.
+        for row in todo.by_ref() {
+            if row >= text.row_count() {
+                continue;
+            }
             let line = text.row_to_string(row);
             let blanks = blank_len(&line);
             let indent = match blanks == line.len() {
                 true => String::new(),
                 false => match host.suggest_indent(snapshot, row) {
-                    Some(suggestion) => levels.indent(text, suggestion, &planned),
+                    Some(suggestion) => levels.indent(text, suggestion),
                     None => continue,
                 },
             };
             if line[..blanks] != indent {
                 let start = text.row_start(row);
-                edits.push((start..start + blanks, indent.clone()));
+                return Some(vec![(start..start + blanks, indent)]);
             }
-            planned.insert(row, indent);
         }
-        edits
+        None
     })
 }
 
@@ -125,24 +124,17 @@ impl Levels {
 
     /// The indentation `suggestion` gives in `text`: a level deeper is the
     /// basis row's indentation and the indent unit; a level out is that
-    /// many fewer columns. The basis row's indentation is as `planned`, if
-    /// there.
-    fn indent(
-        &self,
-        text: &Text,
-        suggestion: IndentSuggestion,
-        planned: &HashMap<u32, String>,
-    ) -> String {
+    /// many fewer columns.
+    fn indent(&self, text: &Text, suggestion: IndentSuggestion) -> String {
         let IndentSuggestion::Relative { basis_row, delta } = suggestion else {
             return String::new();
         };
-        let basis = match planned.get(&basis_row) {
-            Some(indent) => indent.clone(),
-            None if basis_row < text.row_count() => {
+        let basis = match basis_row < text.row_count() {
+            true => {
                 let line = text.row_to_string(basis_row);
                 line[..blank_len(&line)].to_owned()
             }
-            None => String::new(),
+            false => String::new(),
         };
         let count = delta.unsigned_abs() as usize;
         if delta >= 0 {

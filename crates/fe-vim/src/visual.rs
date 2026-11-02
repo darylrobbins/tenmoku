@@ -502,6 +502,13 @@ pub(crate) fn adopt(model: &mut EditorModel, state: &mut VimState, selection: Re
                 goal: None,
             },
         );
+        // The exact offset, which normal-mode clamping would pull in off a
+        // row's end: enabling vim keeps carets there.
+        if model.primary_selection().range != range {
+            let caret = range.start;
+            model.set_selections([operator::caret(caret)]);
+            state.goals = Some((model.snapshot().version(), vec![(caret, None)]));
+        }
         return;
     }
     let last = position(text, text.clip_offset(range.end - 1, Bias::Left));

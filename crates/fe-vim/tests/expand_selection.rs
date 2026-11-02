@@ -169,3 +169,19 @@ fn then_d_deletes_the_node() {
     assert_eq!(vim.text(), "abijkl");
     assert_eq!(vim.state.mode(), Mode::Normal);
 }
+
+#[test]
+fn shrinking_back_restores_a_caret_at_the_end_of_the_row() {
+    let mut vim = Vim::new();
+    vim.model.set_selections([ResolvedSelection {
+        range: 12..12,
+        reversed: false,
+    }]);
+    let nodes: Vec<Range<usize>> = std::iter::once(0..12).collect();
+    vim.host = Host(nodes);
+    assert_eq!(vim.expand(), Effect::Changed);
+    assert_eq!(vim.selected(), 0..12);
+    assert_eq!(vim.shrink(), Effect::Changed);
+    assert_eq!(vim.state.mode(), Mode::Normal);
+    assert_eq!(vim.selected(), 12..12);
+}

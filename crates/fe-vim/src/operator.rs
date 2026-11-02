@@ -112,6 +112,29 @@ pub(crate) fn apply_plan(
     applied
 }
 
+/// [`apply_steps`] where each step is planned from the text the ones before
+/// have left: `next` gets the current snapshot and returns the next step's
+/// edits, or `None` once done. One transaction.
+pub(crate) fn apply_each(
+    model: &mut EditorModel,
+    origin: Origin,
+    mut next: impl FnMut(&BufferSnapshot) -> Option<Vec<(Range<usize>, String)>>,
+) -> (Option<TransactionId>, BufferSnapshot) {
+    let applied = {
+        let mut buffer = model.buffer_mut();
+        buffer.start_transaction(origin.clone());
+        while let Some(edits) = next(&buffer.snapshot()) {
+            if !edits.is_empty() {
+                buffer.edit(edits, origin.clone());
+            }
+        }
+        (buffer.end_transaction(), buffer.snapshot())
+    };
+    #[cfg(test)]
+    measured(model, true);
+    applied
+}
+
 /// Catches the model up (`EditorModel::sync_display`), which measures text
 /// as [`apply`] does.
 pub(crate) fn sync(model: &mut EditorModel) {
