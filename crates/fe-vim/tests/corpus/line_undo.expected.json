@@ -1473,6 +1473,391 @@
           }
         }
       }
+    },
+    {
+      "name": "U_after_undo_other_row",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjxuuU",
+      "expect": {
+        "buffer": "zero\nabc\ndef\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_undo_same_row",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xxuU",
+      "expect": {
+        "buffer": "zero\nabc\ndef\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_redo_other_row",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjxuu<C-r><C-r>U",
+      "expect": {
+        "buffer": "zero\nbc\ndef\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_undo_then_edit_other_row",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjxukxU",
+      "expect": {
+        "buffer": "zero\nbc\ndef\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_blank_row",
+      "buffer": "zero\nabc\n\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjddU",
+      "expect": {
+        "buffer": "zero\nbc\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_yy_blank_put_below",
+      "buffer": "zero\nabc\n\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjyyGpU",
+      "expect": {
+        "buffer": "zero\nabc\n\nlast\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_yy_blank_put_above",
+      "buffer": "zero\nabc\n\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjyyggPU",
+      "expect": {
+        "buffer": "\nabc\nbc\n\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd_last_row",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xGddU",
+      "expect": {
+        "buffer": "zero\nbc\ndef",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "last\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "last\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_charwise_multiline_delete",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjvjdU",
+      "expect": {
+        "buffer": "zero\nabc\nast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\nl",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "def\nl",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "U_after_gJ_blank_row",
+      "buffer": "zero\nabc\n\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjgJU",
+      "expect": {
+        "buffer": "zero\nabc\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_J_blank_row",
+      "buffer": "zero\nabc\n\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjJU",
+      "expect": {
+        "buffer": "zero\nabc\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_open_below",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xo<Esc>U",
+      "expect": {
+        "buffer": "zero\nbc\n\ndef\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "U_after_dd",
+      "buffer": "zero\nabc\ndef\nlast",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xjddU",
+      "expect": {
+        "buffer": "zero\nbc\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        }
+      }
     }
   ]
 }

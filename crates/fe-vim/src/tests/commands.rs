@@ -174,3 +174,26 @@ fn a_command_after_ctrl_o_that_does_nothing_still_repaints() {
     let left = left.context(context(vim.state()));
     assert_eq!(vim.dispatch(&left).unwrap().effect, Effect::Nothing);
 }
+
+#[test]
+fn line_undo_alternates_between_cloned_states() {
+    let mut vim = HeadlessVim::new("zero\nabc\ndef", (1, 0));
+    vim.feed("x").unwrap();
+    assert_eq!(vim.text(), "zero\nbc\ndef");
+    // A clone shares the buffer, so what it does through `U` is the
+    // original's to see: its next `U` puts the deleted text back.
+    let clone = vim.state().clone();
+    let original = std::mem::replace(vim.state_mut(), clone);
+    vim.feed("U").unwrap();
+    assert_eq!(vim.text(), "zero\nabc\ndef");
+    *vim.state_mut() = original;
+    vim.feed("U").unwrap();
+    assert_eq!(vim.text(), "zero\nbc\ndef");
+    let clone = vim.state().clone();
+    let original = std::mem::replace(vim.state_mut(), clone);
+    vim.feed("U").unwrap();
+    assert_eq!(vim.text(), "zero\nabc\ndef");
+    *vim.state_mut() = original;
+    vim.feed("U").unwrap();
+    assert_eq!(vim.text(), "zero\nbc\ndef");
+}

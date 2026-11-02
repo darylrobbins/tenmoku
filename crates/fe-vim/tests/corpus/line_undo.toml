@@ -349,3 +349,81 @@ buffer = "zero\none two three\nfour five six\nseven eight\nnine ten"
 cursor = [2, 0]
 keys = "Sxyz<Esc>U"
 
+
+[[case]]
+name = "U_after_undo_other_row"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xjxuuU"
+
+[[case]]
+name = "U_after_undo_same_row"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xxuU"
+
+[[case]]
+name = "U_after_redo_other_row"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xjxuu<C-r><C-r>U"
+
+[[case]]
+name = "U_after_undo_then_edit_other_row"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xjxukxU"
+
+[[case]]
+name = "U_after_dd_blank_row"
+buffer = "zero\nabc\n\nlast"
+cursor = [1, 0]
+keys = "xjddU"
+
+[[case]]
+name = "U_after_yy_blank_put_below"
+buffer = "zero\nabc\n\nlast"
+cursor = [1, 0]
+keys = "xjyyGpU"
+
+[[case]]
+name = "U_after_yy_blank_put_above"
+buffer = "zero\nabc\n\nlast"
+cursor = [1, 0]
+keys = "xjyyggPU"
+
+[[case]]
+name = "U_after_dd_last_row"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xGddU"
+
+[[case]]
+name = "U_after_charwise_multiline_delete"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xjvjdU"
+
+[[case]]
+name = "U_after_gJ_blank_row"
+buffer = "zero\nabc\n\nlast"
+cursor = [1, 0]
+keys = "xjgJU"
+
+[[case]]
+name = "U_after_J_blank_row"
+buffer = "zero\nabc\n\nlast"
+cursor = [1, 0]
+keys = "xjJU"
+
+[[case]]
+name = "U_after_open_below"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xo<Esc>U"
+
+[[case]]
+name = "U_after_dd"
+buffer = "zero\nabc\ndef\nlast"
+cursor = [1, 0]
+keys = "xjddU"
