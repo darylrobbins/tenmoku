@@ -65,6 +65,7 @@ mod tree_keys;
 mod tree_style;
 mod vim_line;
 mod vim_ls_layout;
+mod vim_pick_layout;
 mod vim_recording;
 mod window_frame;
 mod window_restore;
