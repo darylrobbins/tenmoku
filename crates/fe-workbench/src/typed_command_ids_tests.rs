@@ -235,6 +235,7 @@ const MOVED: &[(&str, &str, &str)] = &[
         "Go to Implementations",
         "workbench",
     ),
+    ("nav.document_symbols", "Go to Symbol in File…", "workbench"),
     (
         "nav.workspace_symbols",
         "Go to Symbol in Workspace…",

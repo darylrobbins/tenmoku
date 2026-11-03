@@ -14,6 +14,9 @@
 //!
 //! A quick open made to pick a file for something else ([`QuickOpen::set_pick`])
 //! hands the file picked to it instead of opening it.
+//!
+//! A query starting with `@` goes to the symbol picker, the rest as its query
+//! ([`QuickOpen::hand_symbols_to`]), as VS Code's quick open does.
 
 use std::{
     fmt::Write as _,
@@ -28,12 +31,12 @@ use std::{
 use fe_project::{FinderIndex, FinderMatch, FsChange};
 use fe_ui::{HighlightedLabel, char_ranges};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, FocusHandle, IntoElement as _, SharedString, Task,
-    WeakEntity, Window,
+    AnyElement, AnyWindowHandle, App, AppContext as _, Context, FocusHandle, IntoElement as _,
+    SharedString, Task, WeakEntity, Window,
 };
 
 use crate::{
-    Pane,
+    Pane, Workbench,
     pane::Reveal,
     picker::{Picker, PickerDelegate},
 };
@@ -82,6 +85,8 @@ pub struct QuickOpen {
     cancel: Arc<AtomicBool>,
     /// Takes the file picked, if set, in place of opening it.
     pick: Option<Pick>,
+    /// Takes an `@` query, if set, and the window it's shown in.
+    symbols: Option<(WeakEntity<Workbench>, AnyWindowHandle)>,
     #[cfg(test)]
     pub(crate) walks: usize,
     #[cfg(test)]
@@ -107,6 +112,7 @@ impl QuickOpen {
             previous_focus: None,
             cancel: Arc::default(),
             pick: None,
+            symbols: None,
             #[cfg(test)]
             walks: 0,
             #[cfg(test)]
@@ -129,6 +135,15 @@ impl QuickOpen {
     /// Hands the next file picked to `pick` rather than opening it.
     pub(crate) fn set_pick(&mut self, pick: Pick) {
         self.pick = Some(pick);
+    }
+
+    /// Hands `@` queries to `workbench`'s symbol picker, in `window`.
+    pub(crate) fn hand_symbols_to(
+        &mut self,
+        workbench: WeakEntity<Workbench>,
+        window: AnyWindowHandle,
+    ) {
+        self.symbols = Some((workbench, window));
     }
 
     /// Opens paths in `pane` from now on: the active one, as it changes.
@@ -306,6 +321,24 @@ impl QuickOpen {
 
 impl PickerDelegate for QuickOpen {
     fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
+        // A file open with no folder has symbols too; picking a file for
+        // something else has no use for them.
+        if let Some(symbols) = query.strip_prefix('@')
+            && self.pick.is_none()
+            && let Some((workbench, window)) = self.symbols.clone()
+        {
+            let symbols = symbols.to_owned();
+            // The picker is being updated now.
+            cx.defer(move |cx| {
+                let shown = window.update(cx, |_, window, cx| {
+                    workbench.update(cx, |workbench, cx| {
+                        workbench.show_document_symbols(&symbols, window, cx)
+                    })
+                });
+                drop(shown);
+            });
+            return;
+        }
         if self.root.is_none() {
             return;
         }
@@ -427,3 +460,7 @@ fn lock(index: &Mutex<Option<FinderIndex>>) -> MutexGuard<'_, Option<FinderIndex
 #[cfg(test)]
 #[path = "quick_open_line_tests.rs"]
 mod line_tests;
+
+#[cfg(test)]
+#[path = "quick_open_at_prefix_tests.rs"]
+mod quick_open_at_prefix_tests;

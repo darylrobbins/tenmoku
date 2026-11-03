@@ -49,7 +49,7 @@ fn rows_carry_their_kinds_icon(cx: &mut TestAppContext) {
     fs::write(&path, "struct Point;\n\nfn main() {}\n").unwrap();
     let (workbench, cx) = open_root(cx, dir.path());
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path, window, cx)));
     cx.run_until_parked();

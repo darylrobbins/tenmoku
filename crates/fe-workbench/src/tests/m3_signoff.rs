@@ -190,7 +190,7 @@ fn a_100k_file_project_end_to_end(cx: &mut TestAppContext) {
     );
 
     // 4. Outline: three fns.
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     cx.run_until_parked();
     let outline: gpui::Entity<OutlinePanel> = workbench.read_with(cx, |workbench, cx| {
         workbench.dock().read(cx).outline().clone()

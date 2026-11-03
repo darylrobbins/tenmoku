@@ -829,6 +829,14 @@ impl EditorModel {
         self.move_folded_carets();
     }
 
+    /// Folds every one of `folds`, rows of [`EditorModel::text`], and touches
+    /// nothing else, so the selections, their primary and the goal columns
+    /// stand: for a host closing folds it opened, with no caret in them.
+    pub fn restore_folds(&mut self, folds: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        self.display.fold_many(folds);
+        self.sync_display();
+    }
+
     /// Folds `rows`, rows of [`EditorModel::text`], behind their first.
     /// Carets folded away move to it.
     pub fn fold_rows(&mut self, rows: RangeInclusive<u32>) {

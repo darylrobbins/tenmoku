@@ -64,6 +64,7 @@ mod search_panel;
 mod settings_editor;
 mod shortcuts_editor;
 mod status_bar;
+mod symbol_picker;
 mod tab_index_commands;
 mod tab_switcher;
 mod terminal_panel;

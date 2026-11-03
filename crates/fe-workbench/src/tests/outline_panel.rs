@@ -51,7 +51,7 @@ fn outlining<'a>(
 ) {
     let (workbench, cx) = open_root(cx, dir.path());
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     let outline = workbench.read_with(cx, |workbench, cx| {
         workbench.dock().read(cx).outline().clone()
     });
@@ -135,14 +135,14 @@ fn shows_the_active_tabs_outline(cx: &mut TestAppContext) {
     assert_eq!(shown, expected(&rust, cx));
     assert_eq!(message(&outline, cx), None);
 
-    // cmd-shift-o from the editor shows the outline, in the Explorer,
+    // cmd-alt-o from the editor shows the outline, in the Explorer,
     // focused for its keys.
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
         DockPanel::Search
     );
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     assert_eq!(
         dock.read_with(cx, |dock, _| dock.active()),
         DockPanel::Explorer

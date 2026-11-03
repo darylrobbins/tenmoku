@@ -1117,6 +1117,13 @@ impl Workbench {
         self.toggle_hierarchy_direction(cx.window, cx.cx);
     }
 
+    /// Go to Symbol in File…
+    #[command(id = "nav.document_symbols")]
+    fn document_symbols(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_document_symbols(cx.window, cx.cx);
+    }
+
     /// Go to Symbol in Workspace…
     #[command(id = "nav.workspace_symbols")]
     fn workspace_symbols(&mut self, cx: &mut Cx<Self>) {

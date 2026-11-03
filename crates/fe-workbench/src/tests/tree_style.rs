@@ -228,7 +228,7 @@ fn every_list_row_is_24px(cx: &mut TestAppContext) {
 
     // The outline of main.rs.
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     cx.run_until_parked();
     let outline = workbench.read_with(cx, |workbench, cx| {
         workbench.dock().read(cx).outline().clone()

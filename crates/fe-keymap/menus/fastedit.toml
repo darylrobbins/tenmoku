@@ -430,6 +430,10 @@ title = "Go to Bracket"
 command = "editor.go_to_bracket"
 
 [[menus.items]]
+title = "Go to Symbol in File…"
+command = "nav.document_symbols"
+
+[[menus.items]]
 title = "Go to Symbol in Workspace…"
 command = "nav.workspace_symbols"
 

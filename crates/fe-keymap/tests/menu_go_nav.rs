@@ -36,6 +36,7 @@ fn go_menu_lists_navigation_commands() {
             "quick_open.toggle",
             "go_to_line.toggle",
             "editor.go_to_bracket",
+            "nav.document_symbols",
             "nav.workspace_symbols",
             "-",
             "nav.goto_definition",
@@ -74,6 +75,7 @@ fn go_navigation_shortcuts_follow_the_default_keymap() {
     for (id, keys) in [
         ("nav.back", "ctrl--"),
         ("nav.forward", "ctrl-shift--"),
+        ("nav.document_symbols", "cmd-shift-o"),
         ("nav.workspace_symbols", "cmd-t"),
         ("nav.goto_definition", "f12"),
         ("editor.peek_references", "shift-f12"),

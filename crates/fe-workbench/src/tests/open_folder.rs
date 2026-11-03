@@ -284,7 +284,7 @@ fn the_old_root_is_released(cx: &mut TestAppContext) {
     assert!(old_picker.upgrade().is_none(), "the old quick-open index");
 
     // With the dock hidden on the outline, and the palette open mid-walk.
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
     cx.simulate_keystrokes("cmd-b");
     let hidden = state(cx);

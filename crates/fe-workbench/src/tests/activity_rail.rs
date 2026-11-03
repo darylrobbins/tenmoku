@@ -122,7 +122,7 @@ fn clicks_switch_and_collapse(cx: &mut TestAppContext) {
     assert_eq!(ops(&dock, cx), [ShowSearch, Toggle, ShowProject]);
 
     // The panels' keys run the same ops; the outline's shows the Explorer.
-    cx.simulate_keystrokes("cmd-shift-f cmd-shift-o cmd-shift-e");
+    cx.simulate_keystrokes("cmd-shift-f cmd-alt-o cmd-shift-e");
     assert_eq!(ops(&dock, cx)[3..], [ShowSearch, ShowOutline, ShowProject]);
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
     assert!(cx.update(|window, cx| panel.focus_handle(cx).is_focused(window)));
@@ -149,7 +149,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     assert_eq!(highlighted(cx), (Some(DockPanel::Search), "Search".into()));
     cx.simulate_keystrokes("cmd-b");
     assert_eq!(highlighted(cx).0, None);
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     assert_eq!(
         highlighted(cx),
         (Some(DockPanel::Explorer), "Explorer".into())
@@ -167,7 +167,7 @@ fn only_the_shown_panel_is_highlighted(cx: &mut TestAppContext) {
     let outline = dock.read_with(cx, |dock, cx| dock.outline().focus_handle(cx));
     assert!(
         cx.update(|window, _| outline.is_focused(window)),
-        "as cmd-shift-o left it"
+        "as cmd-alt-o left it"
     );
 
     // The header strip of tabs is gone.

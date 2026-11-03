@@ -73,7 +73,7 @@ fn a_job_for_a_language_switched_away_from_lands_unshown(cx: &mut TestAppContext
     fs::write(&path, RUST).unwrap();
     let (workbench, cx) = open_root(cx, dir.path());
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     let outline = workbench.read_with(cx, |workbench, cx| {
         workbench.dock().read(cx).outline().clone()
     });

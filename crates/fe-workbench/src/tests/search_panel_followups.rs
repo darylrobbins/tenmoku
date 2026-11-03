@@ -162,7 +162,7 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
             click_tab(DockPanel::Explorer, cx);
             assert!(panel_focused(cx));
         } else {
-            cx.simulate_keystrokes("cmd-shift-o");
+            cx.simulate_keystrokes("cmd-alt-o");
             let outline = workbench.read_with(cx, |workbench, cx| {
                 workbench.dock().read(cx).outline().focus_handle(cx)
             });

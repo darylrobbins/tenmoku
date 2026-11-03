@@ -81,7 +81,7 @@ fn editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<E
 
 /// `outline.show`, from its key.
 fn show(cx: &mut VisualTestContext) {
-    cx.simulate_keystrokes("cmd-shift-o");
+    cx.simulate_keystrokes("cmd-alt-o");
     draw(cx);
 }
 

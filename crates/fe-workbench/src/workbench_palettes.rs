@@ -72,7 +72,11 @@ impl Workbench {
         let previous = window.focused(cx);
         let picker = self.quick_open.clone();
         if show {
+            let workbench = cx.entity().downgrade();
             picker.update(cx, |picker, cx| {
+                picker
+                    .delegate
+                    .hand_symbols_to(workbench, window.window_handle());
                 picker.delegate.opened(previous, cx);
                 picker.show(window, cx);
             });
@@ -396,10 +400,12 @@ pub(crate) enum Palette {
     Theme,
     /// `workbench.show_extensions`' list.
     Extensions,
+    /// `nav.document_symbols`' list.
+    DocumentSymbols,
 }
 
 impl Palette {
-    const ALL: [Palette; 13] = [
+    const ALL: [Palette; 14] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -413,6 +419,7 @@ impl Palette {
         Palette::Branch,
         Palette::Theme,
         Palette::Extensions,
+        Palette::DocumentSymbols,
     ];
 
     /// Its id in the modal layer.
@@ -431,6 +438,7 @@ impl Palette {
             Palette::Branch => "git_branch",
             Palette::Theme => "theme",
             Palette::Extensions => "extensions",
+            Palette::DocumentSymbols => "document_symbols",
         })
     }
 

@@ -955,8 +955,14 @@ keys = "escape escape"
 command = "workbench.toggle_zen_mode"
 context = "zen_mode"
 
+# Go to Symbol in File, as VS Code binds it.
 [[bindings]]
 keys = "secondary-shift-o"
+command = "nav.document_symbols"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = "secondary-alt-o"
 command = "outline.show"
 context = "workbench"
 
