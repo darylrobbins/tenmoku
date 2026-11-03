@@ -480,6 +480,14 @@ title = "Previous Tab"
 command = "workbench.previous_tab"
 
 [[menus.items]]
+title = "Switch Tab"
+command = "workbench.tab_switcher_next"
+
+[[menus.items]]
+title = "Switch Tab Backward"
+command = "workbench.tab_switcher_previous"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]

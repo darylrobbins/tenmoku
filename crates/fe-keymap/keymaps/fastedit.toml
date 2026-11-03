@@ -630,6 +630,18 @@ keys = { macos = "cmd-shift-[", default = "ctrl-pageup" }
 command = "workbench.previous_tab"
 context = "workbench"
 
+# VS Code's most-recently-used tab switcher: hold ctrl to cycle, release to
+# commit. On every platform; a terminal keeps ctrl-tab for its programs.
+[[bindings]]
+keys = "ctrl-tab"
+command = "workbench.tab_switcher_next"
+context = "workbench && !terminal"
+
+[[bindings]]
+keys = "ctrl-shift-tab"
+command = "workbench.tab_switcher_previous"
+context = "workbench && !terminal"
+
 # VS Code's Open Editor at Index 1 to 9 (Last Editor in Group has no key). Not in the
 # terminal, whose shell and programs keep ctrl-digit and alt-digit.
 [[bindings]]

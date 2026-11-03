@@ -49,6 +49,8 @@ fn go_menu_lists_navigation_commands() {
             "-",
             "workbench.next_tab",
             "workbench.previous_tab",
+            "workbench.tab_switcher_next",
+            "workbench.tab_switcher_previous",
             "-",
             "pane.focus_left",
             "pane.focus_right",

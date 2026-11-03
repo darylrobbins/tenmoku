@@ -131,6 +131,20 @@ impl Workbench {
         self.on_active_pane(cx, |pane, window, cx| pane.cycle(true, window, cx));
     }
 
+    /// Switch Tab
+    #[command(id = "workbench.tab_switcher_next")]
+    fn tab_switcher_next(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.switch_tab(false, cx.window, cx.cx);
+    }
+
+    /// Switch Tab Backward
+    #[command(id = "workbench.tab_switcher_previous")]
+    fn tab_switcher_previous(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.switch_tab(true, cx.window, cx.cx);
+    }
+
     /// Open Editor at Index 1
     #[command(id = "workbench.open_editor_at_index1")]
     fn open_editor_at_index1(&mut self, cx: &mut Cx<Self>) {

@@ -46,6 +46,7 @@ use crate::{
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
+    tab_switcher::Mru,
     workbench::toast::{self, Toast},
     workbench_commands::markdown_preview::{
         self, MARKDOWN_PREVIEW_CONTEXT, MarkdownPreview, TOGGLE_PREVIEW, is_markdown,
@@ -190,6 +191,8 @@ pub struct Pane {
     viewer_events: HashMap<TabId, Subscription>,
     /// The item whose activation the vim buffer registry was last told of.
     logged_active: Option<TabId>,
+    /// The tabs' order of use: see [`crate::tab_switcher`].
+    mru: Mru,
     /// The workbench this pane was made for, which owns the transitions it
     /// notes for the vim buffer registry even after the pane is gone.
     owner: Option<EntityId>,
@@ -328,6 +331,7 @@ impl Pane {
             save_keys: Rc::default(),
             viewer_events: HashMap::new(),
             logged_active: None,
+            mru: Mru::default(),
             owner: None,
             conversions: HashMap::new(),
             svg_zooms: HashMap::new(),
@@ -444,6 +448,14 @@ impl Pane {
     /// The active tab's index; `None` with no tabs.
     pub fn active(&self) -> Option<usize> {
         self.state.active()
+    }
+
+    /// The tabs in order of use, the active one first: see
+    /// [`crate::tab_switcher`].
+    pub(crate) fn tabs_by_recency(&self) -> Vec<TabId> {
+        let open: Vec<TabId> = self.state.items().iter().map(|item| item.id()).collect();
+        let active = self.state.active_item().map(|item| item.id());
+        self.mru.order(&open, active)
     }
 
     /// The active tab, whatever shows in its place. By its item, which
@@ -582,6 +594,7 @@ impl Pane {
     fn note_activation(&mut self, ix: usize, cx: &mut App) {
         if let Some(item) = self.state.items().get(ix) {
             self.logged_active = Some(item.id());
+            self.mru.activated(item.id());
             vim_log::record(
                 &self.this,
                 self.owner,
@@ -631,6 +644,7 @@ impl Pane {
             editor.update(cx, |editor, cx| editor.set_minimap(minimap, cx));
         }
         let open: Vec<TabId> = self.tabs.iter().map(Tab::id).collect();
+        self.mru.retain_open(&open);
         self.viewer_events.retain(|id, _| open.contains(id));
         if !self.replacing {
             for tab in old.iter().filter(|tab| !open.contains(&tab.id())) {
@@ -974,6 +988,10 @@ impl Pane {
                 let shown = self.state.active();
                 self.add_item(Box::new(editor), cx);
                 if let Some(shown) = shown {
+                    // Never seen, so not a tab the user has used.
+                    if let Some(landed) = self.state.active_item() {
+                        self.mru.forget(landed.id());
+                    }
                     self.state.set_active(shown);
                     // The editor shown is the one the user chose.
                     self.note_shown(cx);

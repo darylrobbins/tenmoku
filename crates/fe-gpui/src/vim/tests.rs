@@ -546,6 +546,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         ctrl,
         [
             "ctrl-shift-r",
+            "ctrl-tab",
+            "ctrl-shift-tab",
             "ctrl-1",
             "ctrl-2",
             "ctrl-3",
