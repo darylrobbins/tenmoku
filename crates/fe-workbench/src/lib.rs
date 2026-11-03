@@ -68,6 +68,7 @@ mod setup_wizard_model;
 mod shortcuts_editor;
 pub mod spell;
 pub mod spell_ranges;
+mod spell_squiggles;
 mod status_bar;
 mod symbol_picker;
 mod tab_index_commands;
@@ -312,6 +313,8 @@ mod setup_wizard_model_tests;
 mod shortcuts_editor_tests;
 #[cfg(test)]
 mod spell_ranges_tests;
+#[cfg(test)]
+mod spell_squiggles_tests;
 #[cfg(test)]
 mod spell_tests;
 #[cfg(test)]

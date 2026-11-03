@@ -16,6 +16,29 @@ use fe_text::Text;
 /// The largest buffer that gets spell checked.
 pub const MAX_SPELLABLE_BYTES: usize = 2 * 1024 * 1024;
 
+/// What [`checked_spellable_ranges`] found.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Spellable {
+    pub ranges: Vec<Range<usize>>,
+    /// Whether the highlights asked for all finished, however far past the rows
+    /// that went for a whole token. If not, there are no `ranges`, and asking
+    /// again may find some.
+    pub complete: bool,
+}
+
+impl Spellable {
+    fn found(ranges: Vec<Range<usize>>) -> Self {
+        Self {
+            ranges,
+            complete: true,
+        }
+    }
+
+    fn unfinished() -> Self {
+        Self::default()
+    }
+}
+
 /// The bytes of `text` to spell check among `rows`, sorted and not overlapping.
 /// `syntax` must have been told of every edit to `text`; it's `None` for a
 /// buffer with no grammar, which is plain text.
@@ -40,24 +63,37 @@ pub fn spellable_ranges(
     scopes: &[SpellScope],
     rows: Range<u32>,
 ) -> Vec<Range<usize>> {
+    checked_spellable_ranges(syntax, text, scopes, rows).ranges
+}
+
+/// [`spellable_ranges`], saying whether its having none is because highlighting
+/// didn't finish: the highlights of the queries it made, which can reach past
+/// `rows`. Those it doesn't ask for at all, for a buffer too big or with no tree
+/// that's current, count as finished.
+pub fn checked_spellable_ranges(
+    syntax: Option<&Syntax>,
+    text: &Text,
+    scopes: &[SpellScope],
+    rows: Range<u32>,
+) -> Spellable {
     let window = row_bytes(text, rows);
     if window.is_empty() || text.len() > MAX_SPELLABLE_BYTES {
-        return Vec::new();
+        return Spellable::found(Vec::new());
     }
     let Some(syntax) = syntax else {
-        return match scopes.contains(&SpellScope::Text) {
+        return Spellable::found(match scopes.contains(&SpellScope::Text) {
             true => vec![window],
             false => Vec::new(),
-        };
+        });
     };
     // An edited tree's captures stretch over what was typed, which can be code.
     if syntax.failed() || syntax.tree().is_none() || syntax.needs_parse() {
-        return Vec::new();
+        return Spellable::found(Vec::new());
     }
     if syntax.language().name() == "markdown" {
         return match scopes.contains(&SpellScope::Text) {
             true => markdown_prose(syntax, text, window),
-            false => Vec::new(),
+            false => Spellable::found(Vec::new()),
         };
     }
     code_tokens(syntax, text, scopes, window)
@@ -101,14 +137,16 @@ fn code_tokens(
     text: &Text,
     scopes: &[SpellScope],
     window: Range<usize>,
-) -> Vec<Range<usize>> {
+) -> Spellable {
     let crossing = tokens_crossing(syntax, scopes, window.clone());
     let reach = (crossing.iter().map(|(_, token)| token)).fold(window.clone(), |reach, token| {
         reach.start.min(token.start)..reach.end.max(token.end)
     });
     match whole_token_spans(syntax, text, scopes, reach) {
-        Some(spans) => words_in_spans(syntax, text, scopes, &window, &crossing, &spans),
-        None => Vec::new(),
+        Some(spans) => Spellable::found(words_in_spans(
+            syntax, text, scopes, &window, &crossing, &spans,
+        )),
+        None => Spellable::unfinished(),
     }
 }
 
@@ -531,14 +569,14 @@ fn has_word(text: &str) -> bool {
 /// The inline grammar is an injected language with no tree to hand, but its
 /// highlights are there: what they paint is markup, but for heading and link
 /// text.
-fn markdown_prose(syntax: &Syntax, text: &Text, window: Range<usize>) -> Vec<Range<usize>> {
+fn markdown_prose(syntax: &Syntax, text: &Text, window: Range<usize>) -> Spellable {
     let inlines = inline_nodes(syntax, window);
     let (Some(first), Some(last)) = (inlines.first(), inlines.last()) else {
-        return Vec::new();
+        return Spellable::found(Vec::new());
     };
     let highlights = syntax.checked_highlights(first.start..last.end);
     if !highlights.complete {
-        return Vec::new();
+        return Spellable::unfinished();
     }
     let markup: Vec<_> = (highlights.spans.iter())
         .filter(|span| !is_prose(span.highlight, text.char_at(span.range.start)))
@@ -574,7 +612,7 @@ fn markdown_prose(syntax: &Syntax, text: &Text, window: Range<usize>) -> Vec<Ran
         let end = inline.end.max(from);
         push_prose(&source, inline.start, from..end, &mut ranges);
     }
-    ranges
+    Spellable::found(ranges)
 }
 
 /// The raw HTML in an inline node's `source`, tags and all that's inside

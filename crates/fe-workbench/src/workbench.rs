@@ -292,6 +292,8 @@ pub struct Workbench {
     /// [`WorkspaceEvent::ActiveChanged`]: what a link open captured in the
     /// same update as an activation compares.
     pub(crate) link_epoch: u64,
+    /// The spelling squiggles in its editors.
+    pub(crate) spelling: crate::spell_squiggles::Spelling,
     /// Zen Mode: see [`zen_mode`].
     pub(crate) zen: zen_mode::ZenMode,
 }
@@ -320,6 +322,7 @@ impl Workbench {
         let lightbulb = settings.lightbulb;
         let linked_editing = settings.linked_editing;
         let inline_blame = settings.inline_blame;
+        let spelling = crate::spell_squiggles::Spelling::new(&settings);
         let auto_save = AutoSave::new(&settings, window, cx);
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
@@ -623,6 +626,7 @@ impl Workbench {
             git_routed: Vec::new(),
             activations: 0,
             link_epoch: 0,
+            spelling,
             zen: zen_mode::ZenMode::new(cx),
         };
         // Under test, the chrome's window moves are recorded, not made.
@@ -794,6 +798,12 @@ impl Render for Workbench {
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
         self.land_problem(window, cx);
+        // Once the frame says what's in view.
+        if self.spelling.is_active() {
+            cx.defer_in(window, |workbench, _, cx| {
+                workbench.sync_spell_squiggles(cx)
+            });
+        }
         let name = title_bar::name(self.root.as_deref());
         self.shell.update(cx, |shell, cx| {
             // Not from its cache in a frame that gave it another editor: a

@@ -249,6 +249,7 @@ impl Workbench {
         self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
         self.reload_auto_save(&event.settings.editor, cx);
+        self.reload_spell_squiggles(&event.settings.editor, cx);
         let inline_blame = event.settings.editor.inline_blame;
         if inline_blame != event.previous.editor.inline_blame {
             git_blame::set_line_blame(self, inline_blame, cx);

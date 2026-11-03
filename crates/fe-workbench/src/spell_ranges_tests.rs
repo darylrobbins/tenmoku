@@ -12,7 +12,9 @@ use fe_syntax::{Highlight, HighlightSpan, Syntax, language_by_name, loaded_langu
 
 use crate::{
     spell::tokenize,
-    spell_ranges::{MAX_SPELLABLE_BYTES, raw_html, spellable_ranges, words_in_spans},
+    spell_ranges::{
+        MAX_SPELLABLE_BYTES, checked_spellable_ranges, raw_html, spellable_ranges, words_in_spans,
+    },
 };
 
 const ALL: [SpellScope; 3] = [SpellScope::Comments, SpellScope::Strings, SpellScope::Text];
@@ -621,6 +623,38 @@ fn markdown_asks_for_its_grammars_when_they_are_not_compiled() {
     assert!(syntax.take_missing_languages().contains(&"markdown_inline"));
     language_by_name("markdown_inline").unwrap();
     assert_eq!(found(&syntax, &buffer, &ALL, 0..9), ["Some words"]);
+}
+
+#[test]
+fn completeness_covers_what_was_asked_past_the_rows() {
+    // As below: a test run by nextest has its own process.
+    if loaded_language("rustdoc_inline").is_some() {
+        return;
+    }
+    let buffer = Buffer::new("/// call `frobnicate` today\nfn a() {}\nfn b() {}\n");
+    let language = language_by_name("rust").unwrap();
+    let mut syntax = Syntax::new(language, buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    let text = buffer.text();
+
+    // Row 1 alone finishes, but a row more is asked for, which holds the doc
+    // comment whose language is missing.
+    let row = text.row_start(1)..text.row_start(2);
+    assert!(syntax.checked_highlights(row).complete);
+    let row_one = checked_spellable_ranges(Some(&syntax), text, &ALL, 1..2);
+    assert!(!row_one.complete, "unfinished past the rows");
+    assert!(row_one.ranges.is_empty());
+
+    language_by_name("rustdoc_inline").unwrap();
+    syntax.take_missing_languages();
+    let row_one = checked_spellable_ranges(Some(&syntax), text, &ALL, 1..2);
+    assert!(row_one.complete);
+    assert!(row_one.ranges.is_empty(), "code is no words");
+    assert!(checked_spellable_ranges(Some(&syntax), text, &ALL, 0..1).complete);
+
+    // No highlights asked for is nothing unfinished.
+    let plain = checked_spellable_ranges(None, text, &[], 0..1);
+    assert!(plain.complete && plain.ranges.is_empty());
 }
 
 #[test]
