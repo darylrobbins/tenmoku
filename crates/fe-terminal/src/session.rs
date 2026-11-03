@@ -4,7 +4,7 @@
 //! into the shared `Term`, writes queued input, and applies resizes. [`Terminal`] is the handle the app holds.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +36,9 @@ pub struct TerminalOptions {
     pub shell: Option<(String, Vec<String>)>,
     /// Lines of scrollback kept above the screen.
     pub scrollback: usize,
+    /// What the child's environment adds to the one it inherits, over the
+    /// terminal's own variables (`TERM` and the rest).
+    pub env: BTreeMap<String, String>,
 }
 
 impl TerminalOptions {
@@ -47,6 +50,7 @@ impl TerminalOptions {
             cwd: cwd.into(),
             shell: None,
             scrollback: Self::DEFAULT_SCROLLBACK,
+            env: BTreeMap::new(),
         }
     }
 }
@@ -288,11 +292,12 @@ impl Terminal {
         // the OS without changing this process's cwd.
         rustix::fs::access(&options.cwd, rustix::fs::Access::EXEC_OK)
             .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
-        let env = HashMap::from([
+        let mut env = HashMap::from([
             ("TERM".to_owned(), "xterm-256color".to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
             ("TERM_PROGRAM".to_owned(), "tenmoku".to_owned()),
         ]);
+        env.extend(options.env);
         let tty_options = tty::Options {
             shell: options
                 .shell

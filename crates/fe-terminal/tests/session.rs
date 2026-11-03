@@ -22,6 +22,7 @@ impl Session {
                 vec!["-c".to_owned(), script.to_owned()],
             )),
             scrollback: TerminalOptions::DEFAULT_SCROLLBACK,
+            env: Default::default(),
         };
         let size = GridSize {
             cols,
@@ -95,12 +96,43 @@ fn refuses_a_cwd_that_is_not_a_directory() {
                 vec!["-c".to_owned(), "pwd".to_owned()],
             )),
             scrollback: TerminalOptions::DEFAULT_SCROLLBACK,
+            env: Default::default(),
         };
         let error = Terminal::spawn(options, size)
             .err()
             .expect("spawn should fail");
         assert_eq!(error.kind(), kind);
     }
+}
+
+#[test]
+fn env_reaches_the_child_over_the_terminals_own() {
+    let dir = temp_dir();
+    let script = "printf '%s/%s' \"$TASK_VAR\" \"$TERM\"";
+    let options = TerminalOptions {
+        shell: Some((
+            "/bin/sh".to_owned(),
+            vec!["-c".to_owned(), script.to_owned()],
+        )),
+        env: [("TASK_VAR", "from task"), ("TERM", "dumb")]
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .into(),
+        ..TerminalOptions::new(dir.path())
+    };
+    let size = GridSize {
+        cols: 80,
+        rows: 10,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let (terminal, events) = Terminal::spawn(options, size).unwrap();
+    let mut session = Session {
+        terminal,
+        events,
+        exited: None,
+    };
+    let snapshot = session.wait_for("Exited", |_, session| session.exited.is_some());
+    assert_eq!(snapshot.row_text(0), "from task/dumb");
 }
 
 #[test]
@@ -303,6 +335,7 @@ fn refuses_a_cwd_the_user_cannot_enter() {
             vec!["-c".to_owned(), "pwd".to_owned()],
         )),
         scrollback: TerminalOptions::DEFAULT_SCROLLBACK,
+        env: Default::default(),
     };
     let size = GridSize {
         cols: 80,

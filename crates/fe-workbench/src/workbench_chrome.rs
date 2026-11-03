@@ -142,6 +142,7 @@ impl Workbench {
                     TerminalPanelEvent::RenameRequested(id) => {
                         workbench.ask_terminal_name(Some(id), window, cx)
                     }
+                    TerminalPanelEvent::ShowRequested => workbench.show_terminal_dock(window, cx),
                 },
             );
         let hid = cx.subscribe_in(
@@ -268,7 +269,7 @@ impl Workbench {
     }
 
     /// Shows the bottom dock with the terminal.
-    fn show_terminal_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn show_terminal_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal_dock
             .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
     }

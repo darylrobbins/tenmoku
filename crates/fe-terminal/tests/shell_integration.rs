@@ -28,6 +28,7 @@ impl Session {
                 vec!["-c".to_owned(), script.to_owned()],
             )),
             scrollback,
+            env: Default::default(),
         };
         let (terminal, events) = Terminal::spawn(options, size(cols, rows)).expect("spawn");
         Session {

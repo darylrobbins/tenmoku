@@ -50,6 +50,7 @@ impl Session {
                 vec!["-c".to_owned(), script.to_owned()],
             )),
             scrollback,
+            env: Default::default(),
         };
         let size = GridSize {
             cols: 40,

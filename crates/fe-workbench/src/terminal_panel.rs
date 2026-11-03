@@ -16,8 +16,18 @@
 //! and the next show starts a new one. Closing the window drops the
 //! sessions, which hangs their shells up. `terminal.find` opens a find row
 //! above the active one ([`terminal_find`]).
+//!
+//! A project task runs in a tab of its own ([`TerminalPanel::add_task`]),
+//! named for it, always listed so the name shows. Unlike a shell's, its
+//! session stays when it exits, with its output: its name gains a check mark
+//! if it passed, and a toast says so if it didn't. Running its label again
+//! replaces a finished tab's session in place, or adds `label (2)` beside
+//! one that's still running. One that can't start leaves no tab.
 
-use std::path::PathBuf;
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use fe_command::Source;
 use fe_config::TerminalSettings;
@@ -36,6 +46,8 @@ use crate::{
     find_bar::FindOp,
     pane_toolbar,
     picker::{Picker, PickerDelegate},
+    task_defs::{Task, TaskCommand},
+    workbench::toast::{self, Toast},
 };
 use terminal_find::TerminalFind;
 
@@ -65,6 +77,9 @@ pub(crate) enum TerminalPanelEvent {
     /// The user double-clicked the list row of the session with this view
     /// id: the workbench asks for its new name.
     RenameRequested(EntityId),
+    /// A finished task's toast asked for its tab, now active: the workbench
+    /// shows the dock.
+    ShowRequested,
 }
 
 /// One terminal in the panel.
@@ -75,8 +90,43 @@ struct Session {
     /// The name the user gave it (`terminal.rename`), which its label shows
     /// in place of the shell's title until it closes.
     name: Option<SharedString>,
+    /// The task it runs, if it's a task's tab.
+    task: Option<TaskTab>,
     /// To its shell exiting.
     _exited: Subscription,
+}
+
+/// What makes a session a task's tab.
+struct TaskTab {
+    /// Unique among the tabs this panel ever had, and kept by a rerun: what a
+    /// toast's Show finds it by.
+    id: u64,
+    /// The task's label, which a rerun finds its tab by.
+    label: String,
+    /// Which of the label's tabs this is: 1 goes by the label alone, the
+    /// rest as `label (2)` and on.
+    ordinal: usize,
+    run: TaskRun,
+}
+
+impl TaskTab {
+    /// The tab's name, as its label and its toasts have it.
+    fn title(&self) -> String {
+        match self.ordinal {
+            1 => self.label.clone(),
+            ordinal => format!("{} ({ordinal})", self.label),
+        }
+    }
+}
+
+/// Where a task's session has got to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskRun {
+    Running,
+    /// It exited with 0.
+    Passed,
+    /// It exited with another code, or was killed.
+    Failed,
 }
 
 pub struct TerminalPanel {
@@ -110,12 +160,23 @@ pub struct TerminalPanel {
     pub(crate) from_sidebar: bool,
     /// To focus leaving the panel, which forgets `from_sidebar`.
     focus_out: Option<Subscription>,
+    /// The task last run here, for a rerun. A new root forgets it.
+    last_task: Option<Task>,
+    /// The id the last task tab got.
+    last_task_id: u64,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
     shell: Option<(String, Vec<String>)>,
     /// Sessions started.
     #[cfg(test)]
     pub(crate) started: usize,
+    /// What each session started was asked to run, in start order.
+    #[cfg(test)]
+    pub(crate) started_options: Vec<TerminalOptions>,
+    /// Whether sessions stay out of the frame, so no process ever starts:
+    /// a test emits their exits itself.
+    #[cfg(test)]
+    pub(crate) fake_sessions: bool,
     /// The tabs the last frame drew, none without a list: label and
     /// background.
     #[cfg(test)]
@@ -142,18 +203,33 @@ impl TerminalPanel {
             focus: cx.focus_handle(),
             from_sidebar: false,
             focus_out: None,
+            last_task: None,
+            last_task_id: 0,
             #[cfg(test)]
             shell: None,
             #[cfg(test)]
             started: 0,
             #[cfg(test)]
+            started_options: Vec::new(),
+            #[cfg(test)]
+            fake_sessions: false,
+            #[cfg(test)]
             drawn_tabs: Vec::new(),
         }
     }
 
-    /// Where the next session starts.
+    /// Where the next session starts: a new root, whose tasks these are, so
+    /// the last one run isn't its to rerun.
     pub(crate) fn set_cwd(&mut self, cwd: PathBuf) {
+        if self.cwd != cwd {
+            self.last_task = None;
+        }
         self.cwd = cwd;
+    }
+
+    /// The task last run here, unless the root has changed since.
+    pub(crate) fn last_task(&self) -> Option<&Task> {
+        self.last_task.as_ref()
     }
 
     /// Restyles the sessions, and the ones to come, from `theme`.
@@ -220,41 +296,230 @@ impl TerminalPanel {
             scrollback: self.settings.scrollback,
             ..TerminalOptions::new(reported.unwrap_or_else(|| start_dir(&self.cwd)))
         };
+        let view = self.new_view(options, false, window, cx);
+        let exited = self.follow_exit(&view, window, cx);
+        self.sessions.push(Session {
+            view,
+            number: self.next_number,
+            name: None,
+            task: None,
+            _exited: exited,
+        });
+        self.next_number += 1;
+        self.session_added(self.sessions.len() - 1, cx);
+    }
+
+    /// Runs `task` in a tab named for it and makes that active: in place of
+    /// the session of a finished tab with its label, else in a new one, named
+    /// `label (2)` and on while others with its label are open. Remembers it
+    /// as the last task. Whether it's starting: if not, a toast has said why
+    /// and no tab changed.
+    ///
+    /// It runs in its own directory or not at all, never in the home or root
+    /// directory a shell falls back to.
+    pub(crate) fn add_task(
+        &mut self,
+        task: &Task,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.last_task = Some(task.clone());
+        let options = match task_options(task, self.settings.scrollback) {
+            Ok(options) => options,
+            Err(error) => {
+                let toast = Toast::error(format!("Can't run {}", task.label));
+                toast::show(cx, toast.detail(error.to_string()));
+                return false;
+            }
+        };
+        let finished = self.sessions.iter().position(|session| {
+            (session.task.as_ref())
+                .is_some_and(|tab| tab.label == task.label && tab.run != TaskRun::Running)
+        });
+        let kept = finished
+            .and_then(|ix| self.sessions[ix].task.as_ref())
+            .map(|tab| (tab.id, tab.ordinal));
+        let (id, ordinal) = kept.unwrap_or_else(|| {
+            self.last_task_id += 1;
+            (self.last_task_id, self.free_ordinal(&task.label))
+        });
+        let view = self.new_view(options, true, window, cx);
+        let exited = self.follow_exit(&view, window, cx);
+        let tab = TaskTab {
+            id,
+            label: task.label.clone(),
+            ordinal,
+            run: TaskRun::Running,
+        };
+        let ix = match finished {
+            // Dropping the old view hangs up what's left of its session; its
+            // exit has been told already.
+            Some(ix) => {
+                let session = &mut self.sessions[ix];
+                session.view = view;
+                session.task = Some(tab);
+                session._exited = exited;
+                ix
+            }
+            // Tasks don't count towards `Terminal <n>`.
+            None => {
+                self.sessions.push(Session {
+                    view,
+                    number: 0,
+                    name: None,
+                    task: Some(tab),
+                    _exited: exited,
+                });
+                self.sessions.len() - 1
+            }
+        };
+        self.session_added(ix, cx);
+        true
+    }
+
+    /// The lowest ordinal no open tab with `label` has.
+    fn free_ordinal(&self, label: &str) -> usize {
+        let taken = |ordinal: usize| {
+            (self.sessions.iter())
+                .filter_map(|session| session.task.as_ref())
+                .any(|tab| tab.label == label && tab.ordinal == ordinal)
+        };
+        (1..).find(|&ordinal| !taken(ordinal)).unwrap_or(1)
+    }
+
+    /// A view that will run `options`. If its directory has gone since it was
+    /// looked at, a shell starts in the root; a `task` mustn't, so there a
+    /// failing command stands in for its own, which never runs.
+    fn new_view(
+        &mut self,
+        options: TerminalOptions,
+        task: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
         #[cfg(test)]
         {
             self.started += 1;
+            self.started_options.push(options.clone());
         }
         let style = self.style.clone();
-        let view = cx.new(|cx| {
+        cx.new(|cx| {
             let fallback = (options.clone(), style.clone());
             TerminalView::new(options, style, window, cx).unwrap_or_else(|err| {
                 // Removed since `start_dir` looked: the root always is one.
                 log::warn!("starting the terminal in /: {err}");
                 let (mut options, style) = fallback;
                 options.cwd = PathBuf::from("/");
+                if task {
+                    options.shell = Some(sh_c("exit 127"));
+                    options.env.clear();
+                }
                 TerminalView::new(options, style, window, cx).expect("/ is a directory")
             })
-        });
-        let exited = cx.subscribe_in(
-            &view,
+        })
+    }
+
+    /// Hears `view`'s session exit: a shell's tab goes, a task's stays.
+    fn follow_exit(
+        &self,
+        view: &Entity<TerminalView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            view,
             window,
-            |panel, view, TerminalViewEvent::Exited(_), window, cx| {
-                if let Some(ix) = panel.sessions.iter().position(|s| &s.view == view) {
+            |panel, view, TerminalViewEvent::Exited(code), window, cx| {
+                let Some(ix) = panel.sessions.iter().position(|s| &s.view == view) else {
+                    return;
+                };
+                if panel.sessions[ix].task.is_some() {
+                    panel.task_exited(ix, *code, window, cx);
+                } else {
                     panel.remove(ix, window, cx);
                 }
             },
-        );
-        self.sessions.push(Session {
-            view,
-            number: self.next_number,
-            name: None,
-            _exited: exited,
-        });
-        self.next_number += 1;
-        self.active = self.sessions.len() - 1;
+        )
+    }
+
+    /// Makes session `ix`, just started, active.
+    fn session_added(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.active = ix;
         self.reveal = true;
         self.follow_find(cx);
         cx.notify();
+    }
+
+    /// Records how task session `ix` ended, and says so unless it passed. One
+    /// whose process never started has nothing to show, so its tab goes.
+    fn task_exited(
+        &mut self,
+        ix: usize,
+        code: Option<i32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let started = self.session_started(ix, cx);
+        let Some(tab) = self.sessions[ix].task.as_mut() else {
+            return;
+        };
+        if tab.run != TaskRun::Running {
+            return;
+        }
+        let title = tab.title();
+        if !started {
+            toast::show(cx, Toast::error(format!("Couldn't start {title}")));
+            self.remove(ix, window, cx);
+            return;
+        }
+        tab.run = if code == Some(0) {
+            TaskRun::Passed
+        } else {
+            TaskRun::Failed
+        };
+        let id = tab.id;
+        cx.notify();
+        let message = match code {
+            Some(0) => return,
+            Some(code) => format!("{title} failed (exit {code})"),
+            None => format!("{title} was killed"),
+        };
+        let (answer, answered) = futures::channel::oneshot::channel();
+        let toast = Toast::error(message).choices(vec!["Show".to_owned()], move |choice| {
+            answer.send(choice).ok();
+        });
+        toast::show(cx, toast);
+        cx.spawn_in(window, async move |panel, cx| {
+            if answered.await != Ok(Some(0)) {
+                return;
+            }
+            panel
+                .update_in(cx, |panel, window, cx| panel.show_task(id, window, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Whether session `ix`'s process started.
+    fn session_started(&self, ix: usize, cx: &App) -> bool {
+        #[cfg(test)]
+        if self.fake_sessions {
+            return true;
+        }
+        self.sessions[ix].view.read(cx).terminal().is_some()
+    }
+
+    /// Brings this window forward with task tab `id` active and focused, and
+    /// asks for the dock: the toast asking may be in another window. Nothing
+    /// if the tab has closed.
+    fn show_task(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let ix = (self.sessions.iter())
+            .position(|session| session.task.as_ref().is_some_and(|tab| tab.id == id));
+        if let Some(ix) = ix {
+            window.activate_window();
+            self.activate(ix, window, cx);
+            cx.emit(TerminalPanelEvent::ShowRequested);
+        }
     }
 
     /// Drops the active session, as `terminal.close` does.
@@ -387,12 +652,13 @@ impl TerminalPanel {
     /// The active session's view id and label, if there is one.
     pub(crate) fn active_label(&self, cx: &App) -> Option<(EntityId, SharedString)> {
         let session = self.sessions.get(self.active)?;
-        Some((session.view.entity_id(), self.label(self.active, cx)))
+        Some((session.view.entity_id(), self.base_label(self.active, cx)))
     }
 
-    /// The label of the session with view id `id`, if it's still open.
+    /// The label of the session with view id `id`, if it's still open, as a
+    /// name to edit: without a task's check mark.
     pub(crate) fn label_of(&self, id: EntityId, cx: &App) -> Option<SharedString> {
-        Some(self.label(self.position(id)?, cx))
+        Some(self.base_label(self.position(id)?, cx))
     }
 
     /// Names session `id` `name`, trimmed; an empty name clears it, so the
@@ -412,12 +678,28 @@ impl TerminalPanel {
         }
     }
 
-    /// Session `ix`'s tab label: the name the user gave it, else the title
-    /// its shell set, else `Terminal <n>`.
+    /// Session `ix`'s tab label: its name, with a check mark if it's a task
+    /// that passed.
     fn label(&self, ix: usize, cx: &App) -> SharedString {
+        let label = self.base_label(ix, cx);
+        let passed =
+            (self.sessions[ix].task.as_ref()).is_some_and(|tab| tab.run == TaskRun::Passed);
+        if passed {
+            format!("{label} \u{2713}").into()
+        } else {
+            label
+        }
+    }
+
+    /// Session `ix`'s name: the one the user gave it, else its task's, else
+    /// the title its shell set, else `Terminal <n>`.
+    fn base_label(&self, ix: usize, cx: &App) -> SharedString {
         let session = &self.sessions[ix];
         if let Some(name) = &session.name {
             return name.clone();
+        }
+        if let Some(tab) = &session.task {
+            return tab.title().into();
         }
         match session.view.read(cx).title() {
             Some(title) => title.to_owned().into(),
@@ -583,6 +865,31 @@ impl TerminalPanel {
             )
     }
 
+    /// The task tabs behind the active one that haven't started, laid out
+    /// beneath it at its size for the one frame that starts them. A session
+    /// starts when it's laid out, and a task runs when it's asked to, not
+    /// when its tab is next looked at.
+    fn unstarted_tasks(&self, cx: &App) -> Vec<gpui::AnyElement> {
+        #[cfg(test)]
+        if self.fake_sessions {
+            return Vec::new();
+        }
+        (self.sessions.iter().enumerate())
+            .filter(|(ix, session)| {
+                *ix != self.active
+                    && session.task.is_some()
+                    && session.view.read(cx).terminal().is_none()
+            })
+            .map(|(_, session)| {
+                div()
+                    .absolute()
+                    .size_full()
+                    .child(session.view.clone())
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     /// The shell sessions run: `terminal.shell`, else the user's login
     /// shell. Tests may override it ([`TerminalPanel::set_shell`]).
     fn shell(&self) -> Option<(String, Vec<String>)> {
@@ -595,8 +902,45 @@ impl TerminalPanel {
     }
 }
 
+/// What runs `task`, which only ever runs where it says: a shell line in
+/// `/bin/sh`, not the user's login shell, so that it means the same for
+/// everyone sharing the project, and a program directly.
+///
+/// # Errors
+///
+/// When its directory isn't one, or it names no program.
+pub(crate) fn task_options(task: &Task, scrollback: usize) -> io::Result<TerminalOptions> {
+    if !std::fs::metadata(&task.cwd)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!("{} is not a directory", task.cwd.display()),
+        ));
+    }
+    let shell = match &task.command {
+        TaskCommand::Shell(line) => sh_c(line),
+        TaskCommand::Argv(argv) => {
+            let Some((program, args)) = argv.split_first() else {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "no command"));
+            };
+            (program.clone(), args.to_vec())
+        }
+    };
+    Ok(TerminalOptions {
+        shell: Some(shell),
+        scrollback,
+        env: task.env.clone(),
+        ..TerminalOptions::new(&task.cwd)
+    })
+}
+
+/// `/bin/sh -c line`.
+fn sh_c(line: &str) -> (String, Vec<String>) {
+    let args = vec!["-c".to_owned(), line.to_owned()];
+    ("/bin/sh".to_owned(), args)
+}
+
 /// `cwd` if it's a directory, else the home directory, else the root.
-fn start_dir(cwd: &std::path::Path) -> PathBuf {
+fn start_dir(cwd: &Path) -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     [Some(cwd.to_owned()), home]
         .into_iter()
@@ -639,8 +983,16 @@ impl DockItem for TerminalPanel {
         TERMINAL
     }
 
-    /// The title the active session's shell set, else "Terminal".
+    /// The active task tab's label, else the title the active session's
+    /// shell set, else "Terminal".
     fn title(&self, cx: &App) -> SharedString {
+        if self
+            .sessions
+            .get(self.active)
+            .is_some_and(|s| s.task.is_some())
+        {
+            return self.label(self.active, cx);
+        }
         let title = self.view().and_then(|view| view.read(cx).title());
         title.map_or_else(|| "Terminal".into(), |title| title.to_owned().into())
     }
@@ -683,9 +1035,20 @@ impl Render for TerminalPanel {
         self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
         self.drawn_tabs.clear();
-        let list = (self.sessions.len() > 1).then(|| self.tab_list(cx));
+        // A task's tab is listed even alone, or nothing would name it.
+        let listed = self.sessions.len() > 1 || self.sessions.iter().any(|s| s.task.is_some());
+        let list = listed.then(|| self.tab_list(cx));
         let actions = self.actions(cx);
         let view = self.view().cloned();
+        let session = view.clone().map(IntoElement::into_any_element);
+        #[cfg(test)]
+        let session = if self.fake_sessions {
+            let held = |view: &Entity<TerminalView>| div().track_focus(&view.focus_handle(cx));
+            view.as_ref().map(|view| held(view).into_any_element())
+        } else {
+            session
+        };
+        let unstarted = self.unstarted_tasks(cx);
         let ui = fe_ui::ui_theme(cx);
         let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
         let mut context = KeyContext::default();
@@ -714,7 +1077,9 @@ impl Render for TerminalPanel {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .children(self.view().cloned()),
+                            .relative()
+                            .children(unstarted)
+                            .children(session),
                     )
                     .children(list),
             )
