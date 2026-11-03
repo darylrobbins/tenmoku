@@ -39,6 +39,7 @@ objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSRe
 objc2-foundation = { version = "0.2", features = ["NSData", "NSThread"] }
 
 [dev-dependencies]
+fe-command.workspace = true
 # The tests' trashes go to a test trash, never the user's Trash.
 fe-project = { workspace = true, features = ["test-support"] }
 fe-lsp = { workspace = true, features = ["test-support"] }

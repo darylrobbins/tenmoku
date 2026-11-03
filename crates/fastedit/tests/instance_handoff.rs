@@ -28,6 +28,7 @@ fn how(temp_dir: &Path) -> How {
     How {
         no_ipc: false,
         foreground: true,
+        parent_carries: false,
         terminal: false,
         launch_services: false,
         temp_dir: temp_dir.to_owned(),

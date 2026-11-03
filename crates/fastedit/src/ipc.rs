@@ -2,10 +2,19 @@
 //! `<temp dir>/tenmoku-<uid>/ipc.sock`.
 //!
 //! One JSON line each way: a [`Request`] (`{targets:[{path,line,col}],
-//! new_window, wait, cwd}`) and a reply (`{ok}`). [`start`] decides what a
-//! launch is: a client that hands its request over and exits, a detached
-//! server's parent, a server, or, when none of those can be, a process on its
-//! own, so that no failure here loses a file.
+//! new_window, wait, cwd}`) and a reply (`{ok}`). A request with `wait` then
+//! has the server hold the connection, and a second line, `{closed}`, comes
+//! once its files have no tab left ([`crate::wait`]): `{ok}` still comes at
+//! once, for a client can tell a hung server only by its silence, and goes on
+//! by itself then. [`start`] decides what a launch is: a client that hands its
+//! request over and exits, a detached server's parent, a server, or, when none
+//! of those can be, a process on its own, so that no failure here loses a file.
+//!
+//! A waiting client is a plain blocking read with the system's handling of
+//! signals: SIGINT or SIGTERM ends it as they end any command, the kernel
+//! closes its connection, and the server, which reads that end for just this
+//! ([`Waiter::watch`]), forgets the wait. Nothing else holds the connection:
+//! the detached server started before it was made, and it's close-on-exec.
 //!
 //! The server holds `ipc.lock` for its whole life, so the kernel says whether
 //! one is alive: a socket file is stale exactly when the lock is free, however
@@ -13,11 +22,13 @@
 //!
 //! `TENMOKU_NO_IPC=1` skips all of it, for tests and `cargo run`.
 //! `TENMOKU_FOREGROUND=1` stays attached to the terminal, logging included.
+//! [`PARENT_CARRIES`] is the detached server's own, never for setting by hand.
 
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, TryLockError},
     io::{self, IsTerminal as _, Read as _, Write as _},
+    net::Shutdown,
     os::unix::{
         ffi::{OsStrExt as _, OsStringExt as _},
         fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
@@ -39,6 +50,9 @@ use crate::cli::{Cli, Target};
 const NO_IPC: &str = "TENMOKU_NO_IPC";
 /// Marks the re-executed server, which must not detach again.
 const FOREGROUND: &str = "TENMOKU_FOREGROUND";
+/// Marks a re-executed server whose parent stayed behind as the client of a
+/// `--wait` launch, and carries its request.
+const PARENT_CARRIES: &str = "TENMOKU_PARENT_CARRIES";
 
 /// What a Unix socket's path may be, with room for the terminating NUL, on the
 /// platform with the shorter limit (macOS's `sun_path`).
@@ -59,15 +73,18 @@ const QUEUED_MAX: usize = 64;
 /// Between tries at a server that's on its way up.
 const RETRY: Duration = Duration::from_millis(20);
 /// Between a server's looks at its files, which the system's temp cleaners can
-/// delete under a server that runs for days.
-const KEEP_EVERY: Duration = Duration::from_secs(30);
+/// delete under a server that runs for days. Well inside [`REPLY_WAIT`]: a
+/// launch that finds the socket gone keeps trying that long, so the server that
+/// still holds the lock has put it back before the launch gives up on it.
+const KEEP_EVERY: Duration = Duration::from_secs(5);
+const _: () = assert!(KEEP_EVERY.as_secs() * 2 < REPLY_WAIT.as_secs());
 
 /// One launch's request of the running instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Request {
     pub(crate) targets: Vec<Target>,
     pub(crate) new_window: bool,
-    /// Carried; the server answers at once until `--wait` is acted on.
+    /// Hold the connection until the files have no tab left.
     pub(crate) wait: bool,
     pub(crate) cwd: PathBuf,
 }
@@ -117,6 +134,12 @@ struct WireRequest {
 #[derive(Debug, Deserialize, Serialize)]
 struct Reply {
     ok: bool,
+}
+
+/// What a request with `wait` is finally told.
+#[derive(Debug, Deserialize)]
+struct Closed {
+    closed: bool,
 }
 
 impl Request {
@@ -378,24 +401,111 @@ impl Handoff {
         }
     }
 
-    /// Tells the client the request is taken.
-    pub(crate) fn answer(mut self) {
+    /// Tells the client the request is taken, and that's all it'll hear: with
+    /// `wait`, that there's nothing to wait for.
+    pub(crate) fn answer(self) {
+        let wait = self.request.wait;
+        let waiter = self.hold();
+        if wait {
+            waiter.closed();
+        }
+    }
+
+    /// Tells the client the request is taken, keeping the connection to say
+    /// when the wait is over.
+    pub(crate) fn hold(mut self) -> Waiter {
         // A client that's gone doesn't need telling.
         write_line(&mut self.stream, r#"{"ok":true}"#).ok();
+        Waiter {
+            stream: self.stream,
+        }
+    }
+}
+
+/// The connection of a client waiting for its files to close. Dropping it
+/// forgets the client, who'd take that for a server gone: it's for a client
+/// that has gone itself.
+#[derive(Debug)]
+pub(crate) struct Waiter {
+    stream: UnixStream,
+}
+
+impl Waiter {
+    /// Tells the client the wait is over.
+    pub(crate) fn closed(mut self) {
+        write_line(&mut self.stream, r#"{"closed":true}"#).ok();
+        // Ends the read of [`Waiter::watch`], which holds a copy of the stream.
+        self.stream.shutdown(Shutdown::Both).ok();
+    }
+
+    /// Runs `gone` on a thread of its own once the connection has closed: when
+    /// the client goes, however it does, or after [`Waiter::closed`].
+    pub(crate) fn watch(&self, gone: impl FnOnce() + Send + 'static) {
+        let spawned = self.stream.try_clone().and_then(|mut stream| {
+            std::thread::Builder::new()
+                .name("ipc wait".into())
+                .spawn(move || {
+                    // What reading the request set, which all copies share.
+                    allow_closed_peer(stream.set_read_timeout(None)).ok();
+                    let mut chunk = [0; 64];
+                    loop {
+                        match stream.read(&mut chunk) {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                            Err(_) => break,
+                        }
+                    }
+                    gone();
+                })
+        });
+        if let Err(error) = spawned {
+            log::warn!(target: "fastedit", "ipc: can't watch a waiting client: {error}");
+        }
+    }
+
+    /// A waiter, and the client's end of its connection.
+    #[cfg(test)]
+    pub(crate) fn pair() -> (Self, UnixStream) {
+        let (stream, client) = UnixStream::pair().unwrap();
+        (Self { stream }, client)
     }
 }
 
 /// Reads up to the first line break, until `deadline`. A connection closed
 /// before one comes is [`io::ErrorKind::UnexpectedEof`].
 fn read_line(stream: &mut UnixStream, deadline: Instant) -> io::Result<String> {
-    let mut line = Vec::new();
+    next_line(stream, &mut Vec::new(), Some(deadline))
+}
+
+/// [`read_line`], for a stream of several lines, or with no time limit at all.
+/// `pending` is what the last read took past its line: two lines sent at once
+/// arrive at once.
+fn next_line(
+    stream: &mut UnixStream,
+    pending: &mut Vec<u8>,
+    deadline: Option<Instant>,
+) -> io::Result<String> {
     let mut chunk = [0; 4096];
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        if let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+            let rest = pending.split_off(end + 1);
+            let mut line = std::mem::replace(pending, rest);
+            line.truncate(end);
+            return String::from_utf8(line)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        }
+        if pending.len() as u64 > LINE_MAX {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a line too long",
+            ));
+        }
+        let left = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        if left.is_some_and(|left| left.is_zero()) {
             return Err(io::ErrorKind::TimedOut.into());
         }
-        allow_closed_peer(stream.set_read_timeout(Some(left)))?;
+        allow_closed_peer(stream.set_read_timeout(left))?;
         let read = match stream.read(&mut chunk) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(read) => read,
@@ -405,18 +515,7 @@ fn read_line(stream: &mut UnixStream, deadline: Instant) -> io::Result<String> {
             }
             Err(error) => return Err(error),
         };
-        line.extend_from_slice(&chunk[..read]);
-        if let Some(end) = line.iter().position(|byte| *byte == b'\n') {
-            line.truncate(end);
-            return String::from_utf8(line)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
-        }
-        if line.len() as u64 > LINE_MAX {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "a line too long",
-            ));
-        }
+        pending.extend_from_slice(&chunk[..read]);
     }
 }
 
@@ -438,8 +537,10 @@ fn write_line(stream: &mut UnixStream, line: &str) -> io::Result<()> {
 
 /// How a try at handing a request over went.
 enum Handed {
-    /// The server took it.
+    /// The server took it, and with `wait`, the files have closed.
     Taken,
+    /// The server took it and went before the files closed: it crashed.
+    Lost,
     /// No server answered: no socket, a refused connection, or one that closed
     /// with no reply, the server having just gone.
     NoServer,
@@ -451,10 +552,13 @@ fn hand_over(socket: &Path, request: &Request) -> Handed {
     let Ok(mut stream) = UnixStream::connect(socket) else {
         return Handed::NoServer;
     };
+    let mut pending = Vec::new();
+    let deadline = Instant::now() + REPLY_WAIT;
     let reply = write_line(&mut stream, &request.to_line())
-        .and_then(|()| read_line(&mut stream, Instant::now() + REPLY_WAIT));
+        .and_then(|()| next_line(&mut stream, &mut pending, Some(deadline)));
     match reply {
         Ok(line) => match serde_json::from_str(&line) {
+            Ok(Reply { ok: true }) if request.wait => wait_for_close(&mut stream, &mut pending),
             Ok(Reply { ok: true }) => Handed::Taken,
             Ok(Reply { ok: false }) => Handed::Failed(io::Error::other("the server refused")),
             Err(error) => Handed::Failed(error.into()),
@@ -473,6 +577,27 @@ fn hand_over(socket: &Path, request: &Request) -> Handed {
     }
 }
 
+/// Blocks until the server says the request's files have closed, for as long
+/// as that takes.
+fn wait_for_close(stream: &mut UnixStream, pending: &mut Vec<u8>) -> Handed {
+    let reply = next_line(stream, pending, None);
+    match reply.map(|line| serde_json::from_str(&line)) {
+        Ok(Ok(Closed { closed: true })) => Handed::Taken,
+        Ok(Ok(Closed { closed: false })) => {
+            log::error!(target: "fastedit", "ipc: the editor refused to say the files closed");
+            Handed::Lost
+        }
+        Ok(Err(error)) => {
+            log::error!(target: "fastedit", "ipc: a bad reply from the editor: {error}");
+            Handed::Lost
+        }
+        Err(error) => {
+            log::error!(target: "fastedit", "ipc: the editor went before the files closed: {error}");
+            Handed::Lost
+        }
+    }
+}
+
 /// How this process was started, as far as the handoff cares.
 #[derive(Clone, Debug)]
 pub(crate) struct How {
@@ -480,6 +605,9 @@ pub(crate) struct How {
     pub(crate) no_ipc: bool,
     /// `TENMOKU_FOREGROUND=1`: stays attached, whatever else holds.
     pub(crate) foreground: bool,
+    /// [`PARENT_CARRIES`]: this is the detached server of a `--wait` launch,
+    /// whose parent stays and carries the request itself.
+    pub(crate) parent_carries: bool,
     /// Any of stdin, stdout or stderr is a terminal.
     pub(crate) terminal: bool,
     /// Started by macOS's LaunchServices (Finder, `open`).
@@ -489,11 +617,12 @@ pub(crate) struct How {
 }
 
 impl How {
-    /// Whether this is the detached server of a `wait` launch, whose parent
-    /// stays and carries the request itself. (By hand, `TENMOKU_FOREGROUND=1`
-    /// comes with a terminal, and has no such parent.)
-    pub(crate) fn parent_carries_request(&self, wait: bool) -> bool {
-        self.foreground && wait && !self.terminal
+    /// Whether a launch with `wait` that goes on to run the app has to end its
+    /// own wait, having no other process to do it. Not the detached server,
+    /// whose parent waits, nor a launch by LaunchServices: nothing's attached to
+    /// it, and the files it's to open may not have come yet.
+    pub(crate) fn waits_by_itself(&self, wait: bool) -> bool {
+        wait && !self.parent_carries && !self.launch_services
     }
 
     /// `how` from the environment variables `var` gives.
@@ -502,15 +631,16 @@ impl How {
         Self {
             no_ipc: set(NO_IPC),
             foreground: set(FOREGROUND),
+            parent_carries: set(PARENT_CARRIES),
             terminal: false,
             launch_services: false,
             temp_dir: std::env::temp_dir(),
         }
     }
 
-    /// This process's. Takes [`FOREGROUND`] out of the environment, for it's
-    /// meant for this process, not for what the editor's terminals run. Call
-    /// it before there are other threads.
+    /// This process's. Takes [`FOREGROUND`] and [`PARENT_CARRIES`] out of the
+    /// environment, for they're meant for this process, not for what the
+    /// editor's terminals run. Call it before there are other threads.
     pub(crate) fn current() -> Self {
         let mut how = Self::from_env(|name| std::env::var_os(name));
         how.terminal = std::io::stdin().is_terminal()
@@ -523,7 +653,10 @@ impl How {
                 std::os::unix::process::parent_id(),
             );
         // SAFETY: the caller is the process's only thread so far.
-        unsafe { std::env::remove_var(FOREGROUND) };
+        unsafe {
+            std::env::remove_var(FOREGROUND);
+            std::env::remove_var(PARENT_CARRIES);
+        }
         how
     }
 }
@@ -537,8 +670,12 @@ fn by_launch_services(terminal: bool, foreground: bool, parent: u32) -> bool {
 
 /// What a launch goes on to do.
 pub(crate) enum Start {
-    /// The launch is over, in the running instance or a detached server.
+    /// The launch is over, in the running instance or a detached server: with
+    /// `--wait`, the files have closed too.
     Exit,
+    /// A `--wait` launch's server went before the files closed: it crashed.
+    /// The launch fails.
+    ServerLost,
     /// Run the app and serve what later launches hand over.
     Serve(Server),
     /// Run the app, alone.
@@ -548,10 +685,10 @@ pub(crate) enum Start {
 /// Decides what this launch is: see the module's docs. `detach` starts the
 /// detached server ([`detach`], when it isn't a test).
 ///
-/// A launch by LaunchServices with no paths in its arguments is never a
-/// client, for what it's to open comes as open-document events only it
-/// receives; it serves if nothing else does, and otherwise runs as it always
-/// has.
+/// A launch by LaunchServices is never a client, whatever its arguments, for
+/// what it's to open may come as open-document events only it receives, and
+/// only once the app is running (`open -na Tenmoku a.txt --args b.txt` sends
+/// both); it serves if nothing else does, and otherwise runs as it always has.
 pub(crate) fn start(
     request: &Request,
     how: &How,
@@ -565,12 +702,13 @@ pub(crate) fn start(
         log::warn!(target: "fastedit", "ipc: running alone: {error}");
         return Start::Alone;
     }
-    let client = !how.launch_services || !request.targets.is_empty();
-    let parent_carries = how.parent_carries_request(request.wait);
+    let client = !how.launch_services;
+    let parent_carries = how.parent_carries;
     let deadline = Instant::now() + REPLY_WAIT;
     if client && !parent_carries {
         match hand_over(&socket, request) {
             Handed::Taken => return Start::Exit,
+            Handed::Lost => return Start::ServerLost,
             Handed::NoServer => {}
             Handed::Failed(error) => {
                 log::warn!(target: "fastedit", "ipc: running alone: {error}");
@@ -623,6 +761,7 @@ fn wait_for_server(socket: &Path, request: &Request, deadline: Instant) -> Start
 fn try_server(socket: &Path, request: &Request, deadline: Instant) -> Option<Start> {
     match hand_over(socket, request) {
         Handed::Taken => Some(Start::Exit),
+        Handed::Lost => Some(Start::ServerLost),
         Handed::NoServer if Instant::now() < deadline => {
             std::thread::sleep(RETRY);
             None
@@ -636,16 +775,24 @@ fn try_server(socket: &Path, request: &Request, deadline: Instant) -> Option<Sta
 }
 
 /// Starts the server this launch detaches from: itself again, with the same
-/// arguments, in its own process group, with no terminal.
-pub(crate) fn detach() -> io::Result<()> {
+/// arguments, in its own process group, with no terminal. With `parent_carries`,
+/// this process stays as the client of it, and has the request.
+pub(crate) fn detach(parent_carries: bool) -> io::Result<()> {
     let exe = std::env::current_exe()?;
-    detached_command(&exe, std::env::args_os().skip(1))
+    detached_command(&exe, std::env::args_os().skip(1), parent_carries)
         .spawn()
         .map(drop)
 }
 
-fn detached_command(exe: &Path, args: impl Iterator<Item = OsString>) -> Command {
+fn detached_command(
+    exe: &Path,
+    args: impl Iterator<Item = OsString>,
+    parent_carries: bool,
+) -> Command {
     let mut command = Command::new(exe);
+    if parent_carries {
+        command.env(PARENT_CARRIES, "1");
+    }
     command
         .args(args)
         .env(FOREGROUND, "1")
@@ -660,17 +807,26 @@ fn detached_command(exe: &Path, args: impl Iterator<Item = OsString>) -> Command
 /// (`--wait`): the first request, whose connection is the client's to wait on,
 /// instead of its own arguments; a window opened from those as well would show
 /// the request's files twice. A client that doesn't come leaves `cli` as is.
-pub(crate) fn launch_first_request(handoffs: &async_channel::Receiver<Handoff>, cli: &mut Cli) {
+/// Gives who's waiting on them, if that's what the request asks; another launch
+/// may have got in first, and the parent's request then comes like any other.
+pub(crate) fn launch_first_request(
+    handoffs: &async_channel::Receiver<Handoff>,
+    cli: &mut Cli,
+) -> Option<Waiter> {
     let deadline = Instant::now() + FIRST_REQUEST_WAIT;
     while Instant::now() < deadline {
         if let Ok(handoff) = handoffs.try_recv() {
             cli.targets.clone_from(&handoff.request.targets);
             cli.new_window = handoff.request.new_window;
+            if handoff.request.wait {
+                return Some(handoff.hold());
+            }
             handoff.answer();
-            return;
+            return None;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
+    None
 }
 
 /// Acts on `request`, one target at a time so the tabs keep their order
@@ -747,14 +903,40 @@ fn open_target(
             }
         }
     };
-    window
+    let landing = window
         .update(cx, |workbench, window, cx| {
             window.activate_window();
             let file = file?;
             Some(workbench.open_document_at(file, line, col, window, cx))
         })
         .ok()
-        .flatten()
+        .flatten()?;
+    Some(while_open(window, landing, cx))
+}
+
+/// `task`, given up on if `window` closes first: what's opening in a window
+/// waits on its panes, and hears nothing more from them once it has gone.
+pub(crate) fn while_open(
+    window: WindowHandle<Workbench>,
+    task: Task<()>,
+    cx: &mut App,
+) -> Task<()> {
+    let id = window.window_id();
+    let (done, over) = async_channel::bounded::<()>(2);
+    let closed = done.clone();
+    let closing = cx.on_window_closed(move |_, gone| {
+        if gone == id {
+            closed.try_send(()).ok();
+        }
+    });
+    let finishing = cx.spawn(async move |_| {
+        task.await;
+        done.try_send(()).ok();
+    });
+    cx.spawn(async move |_| {
+        over.recv().await.ok();
+        drop((closing, finishing));
+    })
 }
 
 #[cfg(test)]

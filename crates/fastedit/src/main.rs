@@ -8,6 +8,7 @@ mod ipc;
 mod perf;
 mod theme;
 mod vim_remaps;
+mod wait;
 mod workspace_extensions;
 
 use std::{
@@ -32,7 +33,7 @@ use fe_workbench::{
     loader::{self, Opened},
 };
 use gpui::{
-    App, AppContext as _, Entity, Focusable as _, Global, Window, WindowBounds, WindowHandle,
+    App, AppContext as _, Entity, Focusable as _, Global, Task, Window, WindowBounds, WindowHandle,
     WindowId, point, px,
 };
 use kiln::{
@@ -75,13 +76,13 @@ fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
 }
 
 /// Waits for `reading` off the main thread, then shows the file in the
-/// window.
+/// window: the task is done once it has.
 fn open_in_background(
     reading: loader::Reading,
     window: WindowHandle<Workbench>,
     started: Instant,
     cx: &mut App,
-) {
+) -> Task<()> {
     let path = reading.path().to_owned();
     let read = cx.background_spawn(async move { reading.finish() });
     cx.spawn(async move |cx| {
@@ -92,7 +93,6 @@ fn open_in_background(
             })
             .ok();
     })
-    .detach();
 }
 
 /// The settings store: the user's settings file and, with a folder open,
@@ -390,6 +390,12 @@ fn new_workbench(
     workbench
 }
 
+/// Quits as the Quit command does, asking about what it would ask about.
+fn quit(cx: &mut App) {
+    let quit = kiln::command::Invocation::of("app.quit").expect("a valid command id");
+    cx.dispatch_action(&fe_gpui::commands::RunCommand(quit));
+}
+
 /// Logs to stderr: warnings and errors, and fastedit's own info, under the
 /// binary's name too. `RUST_LOG` sets one level for everything instead
 /// (`debug`, `trace`, …).
@@ -446,8 +452,9 @@ fn files_left(mut files: Vec<Target>, launch_failed: bool) -> Vec<Target> {
 
 /// Opens `files` in `window`, each at its position, one at a time, so the
 /// tabs keep their order whichever read is quickest. A first file that's the
-/// launch file, in its tab or being read, isn't read again.
-fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App) {
+/// launch file, in its tab or being read, isn't read again. The task is done
+/// once they've all landed.
+fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App) -> Task<()> {
     let mut files = files.into_iter();
     let open = move |target: Target, cx: &mut App| {
         window.update(cx, |workbench, window, cx| {
@@ -457,7 +464,7 @@ fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App)
     };
     // At once: this is the launch file's read still being the host's.
     let Some(Ok(first)) = files.next().map(|first| open(first, cx)) else {
-        return;
+        return Task::ready(());
     };
     cx.spawn(async move |cx| {
         first.await;
@@ -468,7 +475,6 @@ fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App)
             }
         }
     })
-    .detach();
 }
 
 fn main() {
@@ -485,18 +491,20 @@ fn main() {
     // Over here if the running instance takes the launch, or a detached copy
     // of this process does.
     let request = ipc::Request::of(&cli, std::env::current_dir().unwrap_or_default());
-    let handoffs = match ipc::start(&request, &how, ipc::detach) {
+    let handoffs = match ipc::start(&request, &how, || ipc::detach(request.wait)) {
         ipc::Start::Exit => return,
+        ipc::Start::ServerLost => std::process::exit(1),
         ipc::Start::Serve(server) => Some(server.listen()),
         ipc::Start::Alone => None,
     };
-    let first_is_launch = how.parent_carries_request(cli.wait);
-    if let Some(handoffs) = handoffs.as_ref().filter(|_| first_is_launch) {
-        ipc::launch_first_request(handoffs, &mut cli);
-    }
-    if cli.wait {
-        log::info!(target: "fastedit", "--wait: not acted on yet");
-    }
+    // Who's waiting on this launch's own files: its client when it's the
+    // detached server of a `--wait` launch, or it itself when there's no other
+    // process to do the waiting.
+    let waits_by_itself = !perf && how.waits_by_itself(cli.wait);
+    let waiter = handoffs
+        .as_ref()
+        .filter(|_| how.parent_carries)
+        .and_then(|handoffs| ipc::launch_first_request(handoffs, &mut cli));
     let plan = cli.plan();
 
     let application = kiln::application();
@@ -528,6 +536,7 @@ fn main() {
             handed.extend(paths);
         }
         let files = plan.files;
+        let waited_on: Vec<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
         let mut launch = if plan.root.is_some() {
             Launch {
                 root: plan.root,
@@ -596,6 +605,9 @@ fn main() {
         // So may the launch root's own extensions load.
         workspace_extensions::follow(launch.root.clone(), cx);
         log_keymap_report(cx);
+        if handoffs.is_some() || waits_by_itself {
+            wait::init(cx);
+        }
         let capabilities = Capabilities::current();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
@@ -615,6 +627,7 @@ fn main() {
         let launch_root = launch.root.clone();
         let mut failed = None;
         let mut launch_failed = false;
+        let mut launch_read = None;
         // The launch file's read hadn't finished as the window opened.
         let mut loading = false;
         let mut options = window_options(
@@ -668,14 +681,28 @@ fn main() {
                         })
                         .ok();
                 }
-                None if loading => open_in_background(reading, window, started, cx),
+                None if loading => {
+                    launch_read = Some(open_in_background(reading, window, started, cx));
+                }
                 None => {}
             }
         }
         follow_settings(launch_root.clone(), cx);
         watch_window(window, settings.clone(), cx);
         fe_workbench::set_window_opener(cx, open_window_on);
-        open_files(window, files_left(files, launch_failed), cx);
+        let opened = open_files(window, files_left(files, launch_failed), cx);
+        let landed = cx.spawn(async move |_| {
+            if let Some(read) = launch_read {
+                read.await;
+            }
+            opened.await;
+        });
+        let landed = ipc::while_open(window, landed, cx);
+        match waiter {
+            Some(waiter) => wait::add(waiter, waited_on, landed, cx),
+            None if waits_by_itself => wait::add_own(quit, waited_on, landed, cx),
+            None => landed.detach(),
+        }
         // The root's other saved windows.
         for (layout, entry) in windows {
             let launch = Launch {
@@ -714,9 +741,7 @@ fn main() {
         if let Some(handoffs) = handoffs {
             cx.spawn(async move |cx| {
                 while let Ok(handoff) = handoffs.recv().await {
-                    let request = handoff.request.clone();
-                    cx.update(|cx| ipc::route(request, cx, open_window_at).detach());
-                    handoff.answer();
+                    cx.update(|cx| wait::serve(handoff, cx, open_window_at));
                 }
             })
             .detach();
@@ -780,7 +805,7 @@ mod tests {
             at(root.join("unreadable.txt").to_str().unwrap(), None),
             at(valid.to_str().unwrap(), None),
         ];
-        cx.update(|cx| open_files(window, files_left(files, true), cx));
+        cx.update(|cx| open_files(window, files_left(files, true), cx).detach());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let tabs = loop {
             cx.run_until_parked();

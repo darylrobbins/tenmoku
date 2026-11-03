@@ -19,7 +19,7 @@ from 1. A file really named a:1 opens as itself.
 
 Options:
       --new-window  Open in a new window on the path's folder
-      --wait        Wait for the files to close (accepted; not acted on yet)
+      --wait        Wait until the files' tabs have closed, then exit
       --perf        Measure startup and scrolling on the file, print, and quit
   -h, --help        Print this help
   -V, --version     Print the version

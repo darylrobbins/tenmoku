@@ -2065,6 +2065,7 @@ dependencies = [
  "fe-workbench",
  "gpui-pre",
  "kiln",
+ "kiln-command",
  "kiln-platform",
  "libc",
  "log",

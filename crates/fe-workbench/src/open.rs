@@ -226,7 +226,7 @@ mod save_as_tests;
 /// from two files: the target a save follows symlinks to
 /// ([`fe_editor::save_target`]), dangling ones too, resolved through `..`
 /// and its folder's symlinks. `None` if that can't be found.
-pub(crate) fn file_identity(path: &Path) -> Option<PathBuf> {
+pub fn file_identity(path: &Path) -> Option<PathBuf> {
     crate::lsp::resolve(&fe_editor::save_target(path).ok()?)
 }
 

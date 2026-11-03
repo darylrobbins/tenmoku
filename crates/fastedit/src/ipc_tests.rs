@@ -26,6 +26,7 @@ fn how(temp_dir: &Path) -> How {
     How {
         no_ipc: false,
         foreground: false,
+        parent_carries: false,
         terminal: false,
         launch_services: false,
         temp_dir: temp_dir.to_owned(),
@@ -41,6 +42,7 @@ fn served(start: Start) -> Server {
         Start::Serve(server) => server,
         Start::Exit => panic!("exited, not serving"),
         Start::Alone => panic!("alone, not serving"),
+        Start::ServerLost => panic!("the server went, not serving"),
     }
 }
 
@@ -170,10 +172,10 @@ fn a_held_lock_keeps_a_server_from_being_replaced() {
     assert_eq!(inode(&socket), before);
 }
 
-/// A launch by Finder or `open` with no paths has its files coming as
-/// open-document events, which a handoff would lose.
+/// A launch by Finder or `open` may have files coming as open-document events,
+/// whatever its arguments say, which a handoff would lose.
 #[test]
-fn launch_services_with_no_paths_is_never_a_client_nor_detaches() {
+fn launch_services_is_never_a_client_nor_detaches() {
     let launch_services = |dir: &Path| How {
         launch_services: true,
         terminal: false,
@@ -191,14 +193,23 @@ fn launch_services_with_no_paths_is_never_a_client_nor_detaches() {
         start(&request(vec![]), &launch_services(dir.path()), no_detach),
         Start::Alone
     ));
-    // With paths in its arguments (`open --args`), it hands them over.
-    let sent = request(vec![target("/a.rs", None, None)]);
+    // With paths in its arguments too (`open -na Tenmoku a.rs --args b.rs` is
+    // both at once): it stays for the events, its arguments with it.
+    let both = request(vec![target("/b.rs", None, None)]);
     assert!(matches!(
-        start(&sent, &launch_services(dir.path()), no_detach),
+        start(&both, &launch_services(dir.path()), no_detach),
+        Start::Alone
+    ));
+    // Serving, if there's no one else to.
+    let empty = tempfile::tempdir().unwrap();
+    let _server = served(start(&both, &launch_services(empty.path()), no_detach));
+    // Nothing reached the server, which still takes the next.
+    let next = request(vec![target("/c.rs", None, None)]);
+    assert!(matches!(
+        start(&next, &how(dir.path()), no_detach),
         Start::Exit
     ));
-    assert_eq!(requests.recv_blocking().unwrap(), sent);
-    assert!(requests.is_empty(), "only the launch with paths asked");
+    assert_eq!(requests.recv_blocking().unwrap(), next);
 }
 
 #[test]
@@ -311,11 +322,67 @@ fn a_bad_request_is_refused_and_the_next_is_taken() {
 #[test]
 fn the_detached_command_is_this_launch_again_in_its_own_group() {
     let args = ["--new-window", "a.rs:3"].map(OsString::from);
-    let command = detached_command(Path::new("/bin/tenmoku"), args.clone().into_iter());
+    let command = detached_command(Path::new("/bin/tenmoku"), args.clone().into_iter(), false);
     assert_eq!(command.get_program(), "/bin/tenmoku");
     assert_eq!(command.get_args().collect::<Vec<_>>(), args);
     let envs: Vec<_> = command.get_envs().collect();
     assert_eq!(envs, [(OsStr::new(FOREGROUND), Some(OsStr::new("1")))]);
+
+    // The server of a launch that stays as its client is told so.
+    let command = detached_command(Path::new("/bin/tenmoku"), args.into_iter(), true);
+    let envs: Vec<_> = command.get_envs().collect();
+    assert!(envs.contains(&(OsStr::new(PARENT_CARRIES), Some(OsStr::new("1")))));
+    assert!(envs.contains(&(OsStr::new(FOREGROUND), Some(OsStr::new("1")))));
+}
+
+/// `TENMOKU_FOREGROUND=1 tenmoku --wait file </dev/null >log 2>&1` isn't a
+/// detached server, and looks like one: only the marker says who's that.
+#[test]
+fn a_foreground_wait_with_redirected_stdio_hands_over_or_serves() {
+    let foreground = |dir: &Path| How {
+        foreground: true,
+        terminal: false,
+        ..how(dir)
+    };
+    let sent = Request {
+        wait: true,
+        ..request(vec![target("/a.rs", None, None)])
+    };
+
+    // A live server takes it.
+    let live = tempfile::tempdir().unwrap();
+    let requests = live_server(live.path());
+    assert!(matches!(
+        start(&sent, &foreground(live.path()), no_detach),
+        Start::Exit
+    ));
+    assert_eq!(requests.recv_blocking().unwrap(), sent);
+
+    // With none, it serves, and isn't marked to wait for a parent's request.
+    let absent = tempfile::tempdir().unwrap();
+    let how = foreground(absent.path());
+    let _server = served(start(&sent, &how, no_detach));
+    assert!(!how.parent_carries);
+    assert!(how.waits_by_itself(sent.wait), "no one else is there to");
+}
+
+#[test]
+fn only_a_launch_with_no_one_else_to_wait_waits_by_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = how(dir.path());
+    assert!(plain.waits_by_itself(true));
+    assert!(!plain.waits_by_itself(false), "it didn't ask to");
+    let detached_server = How {
+        foreground: true,
+        parent_carries: true,
+        ..how(dir.path())
+    };
+    assert!(!detached_server.waits_by_itself(true), "its parent does");
+    let launch_services = How {
+        launch_services: true,
+        ..how(dir.path())
+    };
+    assert!(!launch_services.waits_by_itself(true), "nothing's attached");
 }
 
 #[test]
@@ -324,6 +391,8 @@ fn only_a_value_of_1_sets_the_environment_flags() {
     assert!(how.foreground && !how.no_ipc);
     let how = How::from_env(|name| (name == NO_IPC).then(|| "0".into()));
     assert!(!how.no_ipc);
+    let how = How::from_env(|name| (name == PARENT_CARRIES).then(|| "1".into()));
+    assert!(how.parent_carries && !how.foreground);
 }
 
 /// `--wait`'s detached server launches what its client asks for, and answers.
@@ -347,10 +416,68 @@ fn the_first_request_is_the_launch_of_a_wait_server() {
         wait: true,
         targets: vec![],
     };
-    launch_first_request(&handoffs, &mut cli);
+    let waiter = launch_first_request(&handoffs, &mut cli).expect("it asked to wait");
     assert_eq!(cli.targets, sent.targets);
     assert!(cli.new_window);
-    assert!(client.join().unwrap(), "answered, and the client exits");
+    assert!(!client.is_finished(), "it's waiting for the files to close");
+    waiter.closed();
+    assert!(client.join().unwrap(), "told, and the client exits");
+}
+
+/// Another launch got to the new server first: it's only answered, and the
+/// parent's wait comes later, like any other request.
+#[test]
+fn a_first_request_with_no_wait_leaves_no_one_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let handoffs = served(start(&request(vec![]), &how(dir.path()), no_detach)).listen();
+    let sent = request(vec![target("/a.rs", None, None)]);
+    let client = {
+        let (sent, how) = (sent.clone(), how(dir.path()));
+        thread::spawn(move || matches!(start(&sent, &how, no_detach), Start::Exit))
+    };
+    let mut cli = Cli {
+        perf: false,
+        new_window: false,
+        wait: true,
+        targets: vec![],
+    };
+    assert!(launch_first_request(&handoffs, &mut cli).is_none());
+    assert_eq!(cli.targets, sent.targets);
+    assert!(client.join().unwrap());
+}
+
+/// `{ok}` and `{closed}` sent together arrive together, and neither is lost.
+#[test]
+fn a_wait_answered_at_once_is_read_in_one_go() {
+    let (mut server, mut client) = UnixStream::pair().unwrap();
+    write_line(&mut server, r#"{"ok":true}"#).unwrap();
+    write_line(&mut server, r#"{"closed":true}"#).unwrap();
+    let mut pending = Vec::new();
+    let first = next_line(&mut client, &mut pending, Some(Instant::now() + REPLY_WAIT)).unwrap();
+    assert_eq!(first, r#"{"ok":true}"#);
+    assert!(matches!(
+        wait_for_close(&mut client, &mut pending),
+        Handed::Taken
+    ));
+    assert!(pending.is_empty());
+}
+
+/// The server's taken the request, and goes: nothing else can tell the client
+/// the files closed, and no other server knows of them.
+#[test]
+fn a_server_gone_mid_wait_fails_the_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let handoffs = served(start(&request(vec![]), &how(dir.path()), no_detach)).listen();
+    let sent = Request {
+        wait: true,
+        ..request(vec![target("/a.rs", None, None)])
+    };
+    let client = {
+        let how = how(dir.path());
+        thread::spawn(move || matches!(start(&sent, &how, no_detach), Start::ServerLost))
+    };
+    drop(handoffs.recv_blocking().unwrap().hold());
+    assert!(client.join().unwrap());
 }
 
 /// A `--wait` launch's detached server that finds another server has nothing
@@ -362,6 +489,7 @@ fn a_wait_server_that_loses_the_race_exits_without_handing_over() {
     let requests = live_server(dir.path());
     let detached_server = How {
         foreground: true,
+        parent_carries: true,
         ..how(dir.path())
     };
     let sent = Request {
@@ -451,6 +579,23 @@ fn a_server_restores_its_files_when_a_cleaner_takes_them() {
     let other = Server::claim(&socket).unwrap().unwrap();
     assert!(!keeper.keep());
     drop(other);
+}
+
+/// The socket goes just after the server's look at it, with the lock still
+/// held. The launch that finds it gone keeps trying, and reaches the same
+/// server once its next look, on its schedule, has put the socket back.
+#[test]
+fn a_launch_outlasts_a_lost_socket_until_the_scheduled_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    let requests = taking(served(start(&request(vec![]), &how(dir.path()), no_detach)));
+    fs::remove_file(socket_path(dir.path())).unwrap();
+
+    let sent = request(vec![target("/a.rs", None, None)]);
+    assert!(matches!(
+        start(&sent, &how(dir.path()), no_detach),
+        Start::Exit
+    ));
+    assert_eq!(requests.recv_blocking().unwrap(), sent);
 }
 
 /// A quick server has answered and closed before its client looks, and the
