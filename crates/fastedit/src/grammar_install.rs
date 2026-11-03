@@ -18,10 +18,13 @@ use std::{
     future::Future,
     io::{self, Read as _, Write as _},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
-use fe_net::{Client, GrammarFetchError, grammar_fetch, sha256_hex};
+use fe_net::{Client, GrammarFetchError, NetError, grammar_fetch, sha256_hex};
 use fe_syntax::MAX_GRAMMAR_BYTES;
+use fe_workbench::{GrammarInstallError, GrammarOffer, GrammarOffers};
+use gpui::AppContext as _;
 use kiln::command::{Capability, Grants};
 use serde::Deserialize;
 
@@ -73,8 +76,40 @@ impl Pack {
     }
 
     /// The languages the manifest lists, by name.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "only the manifest's tests list them")
+    )]
     pub(crate) fn languages(&self) -> impl Iterator<Item = &str> {
         self.languages.keys().map(String::as_str)
+    }
+
+    /// Each language with its size, hash, name and extensions. One whose
+    /// extension manifest doesn't say is left out, which a test rules out.
+    pub(crate) fn catalog(&self) -> Vec<GrammarOffer> {
+        (self.languages.iter())
+            .filter_map(|(language, entry)| {
+                let files = first_party_files(language)?;
+                let manifest = match toml::from_str::<OfferManifest>(files.extension_toml) {
+                    Ok(manifest) => manifest,
+                    Err(error) => {
+                        log::error!("{language}'s extension manifest: {error}");
+                        return None;
+                    }
+                };
+                let grammar = (manifest.contributes.grammars.into_iter())
+                    .find(|grammar| grammar.language == *language)?;
+                Some(GrammarOffer {
+                    language: language.clone(),
+                    name: (manifest.name.strip_suffix(" syntax"))
+                        .unwrap_or(&manifest.name)
+                        .to_owned(),
+                    extensions: grammar.extensions,
+                    size: entry.size,
+                    sha256: entry.sha256.clone(),
+                })
+            })
+            .collect()
     }
 
     /// What installing `language` takes: its manifest entry and its files.
@@ -91,6 +126,25 @@ impl Pack {
             files,
         })
     }
+}
+
+/// What the catalog takes from an extension's manifest.
+#[derive(Deserialize)]
+struct OfferManifest {
+    name: String,
+    contributes: OfferContributes,
+}
+
+#[derive(Deserialize)]
+struct OfferContributes {
+    grammars: Vec<OfferGrammar>,
+}
+
+#[derive(Deserialize)]
+struct OfferGrammar {
+    language: String,
+    #[serde(default)]
+    extensions: Vec<String>,
 }
 
 /// A plain file name, so that it stays in the extension's directory, and not
@@ -217,6 +271,76 @@ fn io_error(path: &Path) -> impl FnOnce(io::Error) -> InstallError {
     move |source| InstallError::Io { path, source }
 }
 
+/// What the workbench may offer to install: the manifest's languages, with the
+/// names and extensions of their extension manifests. An install goes under
+/// `extensions`, and Never is kept in `never_file`.
+pub(crate) fn offers(extensions: PathBuf, never_file: Option<PathBuf>) -> GrammarOffers {
+    let catalog = Pack::embedded()
+        .map(|pack| pack.catalog())
+        .unwrap_or_else(|error| {
+            log::error!("{error}");
+            Vec::new()
+        });
+    let installed = {
+        let extensions = extensions.clone();
+        Rc::new(move |language: &str| is_installed(language, &extensions))
+    };
+    let fetch = Rc::new(|offer: &GrammarOffer, cx: &mut gpui::App| {
+        let language = offer.language.clone();
+        cx.background_spawn(async move {
+            (fetch_first_party(&language).await).map_err(|error| install_failure(&error))
+        })
+    });
+    let install = Rc::new(
+        move |offer: &GrammarOffer, wasm: Vec<u8>, cx: &mut gpui::App| {
+            let (language, extensions) = (offer.language.clone(), extensions.clone());
+            cx.background_spawn(async move {
+                (write_first_party(&language, wasm, &extensions).await)
+                    .map(drop)
+                    .map_err(|error| install_failure(&error))
+            })
+        },
+    );
+    GrammarOffers {
+        catalog,
+        installed,
+        fetch,
+        install,
+        never_file,
+    }
+}
+
+/// Whether `language` is built in or registered, or its extension is under
+/// `extensions`: at launch it may not have registered yet, and it may be
+/// disabled, neither of which downloading it again would help.
+pub(crate) fn is_installed(language: &str, extensions: &Path) -> bool {
+    fe_syntax::language_names().any(|name| name == language)
+        || extensions
+            .join(format!("tenmoku.grammar_{language}"))
+            .exists()
+}
+
+/// `error` as the toast tells it.
+pub(crate) fn install_failure(error: &InstallError) -> GrammarInstallError {
+    let offline = |reason: &str| GrammarInstallError {
+        reason: reason.to_owned(),
+        offline: true,
+    };
+    let reason = match error {
+        InstallError::Fetch(GrammarFetchError::Net(
+            NetError::Connect(_) | NetError::Timeout | NetError::Io(_),
+        )) => return offline("no connection to the download"),
+        InstallError::Fetch(GrammarFetchError::HashMismatch { .. }) => {
+            "the download didn't match its recorded hash".to_owned()
+        }
+        error => error.to_string(),
+    };
+    GrammarInstallError {
+        reason,
+        offline: false,
+    }
+}
+
 /// The capabilities a download needs: [`GRANTED_HOSTS`].
 pub(crate) fn grants() -> Grants {
     GRANTED_HOSTS
@@ -233,18 +357,40 @@ pub(crate) async fn fetch_from_release(
     grammar_fetch(client, &grammar.url, &grammar.sha256, grammar.max_bytes()).await
 }
 
+/// Downloads the first-party grammar for `language` from its release. Dropping
+/// the future stops it, with nothing written.
+pub(crate) async fn fetch_first_party(language: &str) -> Result<Vec<u8>, InstallError> {
+    let grammar = Pack::embedded()?.grammar(language)?;
+    if grammar.sha256.is_empty() {
+        return Err(GrammarFetchError::NotReleased.into());
+    }
+    let client = Client::new(&grants());
+    Ok(fetch_from_release(&client, &grammar).await?)
+}
+
+/// Installs the first-party grammar for `language` under `extensions`, with its
+/// downloaded `wasm`. The directory it wrote.
+pub(crate) async fn write_first_party(
+    language: &str,
+    wasm: Vec<u8>,
+    extensions: &Path,
+) -> Result<PathBuf, InstallError> {
+    let grammar = Pack::embedded()?.grammar(language)?;
+    install_fetched(&grammar, extensions, |_| std::future::ready(Ok(wasm))).await
+}
+
 /// Installs the first-party grammar for `language` under `extensions`, from its
 /// release. The directory it wrote.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the app runs its two steps apart")
+)]
 pub(crate) async fn install_first_party(
     language: &str,
     extensions: &Path,
 ) -> Result<PathBuf, InstallError> {
-    let grammar = Pack::embedded()?.grammar(language)?;
-    let client = Client::new(&grants());
-    install_fetched(&grammar, extensions, |grammar| {
-        fetch_from_release(&client, grammar)
-    })
-    .await
+    let wasm = fetch_first_party(language).await?;
+    write_first_party(language, wasm, extensions).await
 }
 
 /// Installs `grammar` under `extensions`, its wasm from `fetch`, replacing the
@@ -275,6 +421,10 @@ where
 /// unpacked at `pack`, which has a `tenmoku.grammar_<language>/` for each
 /// language, without any network. The wasm is checked as [`install_fetched`]
 /// checks it. The directory it wrote.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the language pack's card calls it")
+)]
 pub(crate) fn install_from_pack_dir(
     grammar: &Grammar,
     pack: &Path,
@@ -385,4 +535,94 @@ fn write_synced(path: &Path, contents: &[u8]) -> Result<(), InstallError> {
             file.sync_all()
         })
         .map_err(io_error(path))
+}
+
+#[cfg(test)]
+mod offers_tests {
+    use fe_net::{GrammarFetchError, NetError};
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[test]
+    fn the_catalog_lists_each_language_with_its_extensions() {
+        let catalog = Pack::embedded().unwrap().catalog();
+        let languages: Vec<&str> = catalog
+            .iter()
+            .map(|offer| offer.language.as_str())
+            .collect();
+        assert_eq!(
+            languages,
+            [
+                "cpp", "csharp", "kotlin", "php", "ruby", "scala", "sql", "swift"
+            ]
+        );
+        let of = |language: &str| catalog.iter().find(|o| o.language == language).unwrap();
+        assert_eq!(of("kotlin").name, "Kotlin");
+        assert_eq!(of("kotlin").extensions, ["kt", "kts"]);
+        assert_eq!(of("csharp").name, "C#");
+        assert_eq!(of("cpp").name, "C++");
+        assert_eq!(of("sql").name, "SQL");
+        assert!(catalog.iter().all(|offer| !offer.extensions.is_empty()));
+    }
+
+    #[test]
+    fn a_language_counts_as_installed_built_in_or_on_disk() {
+        let extensions = tempfile::tempdir().unwrap();
+        assert!(!is_installed("not-a-language", extensions.path()));
+        assert!(is_installed("rust", extensions.path()));
+        fs::create_dir(extensions.path().join("tenmoku.grammar_not-a-language")).unwrap();
+        assert!(is_installed("not-a-language", extensions.path()));
+    }
+
+    #[test]
+    fn only_a_lost_connection_counts_as_offline() {
+        for error in [
+            NetError::Connect("refused".into()),
+            NetError::Timeout,
+            NetError::Io("reset".into()),
+        ] {
+            let failure = install_failure(&GrammarFetchError::Net(error).into());
+            assert!(failure.offline, "{failure:?}");
+            assert!(!failure.reason.contains('\n'));
+        }
+        let mismatch = install_failure(
+            &GrammarFetchError::HashMismatch {
+                expected: "a".repeat(64),
+                actual: "b".repeat(64),
+            }
+            .into(),
+        );
+        assert!(!mismatch.offline);
+        assert_eq!(
+            mismatch.reason,
+            "the download didn't match its recorded hash"
+        );
+        let status = install_failure(&GrammarFetchError::Status(404).into());
+        assert!(!status.offline);
+        assert!(status.reason.contains("404"), "{status:?}");
+    }
+
+    #[gpui::test]
+    fn the_apps_fetch_refuses_an_unreleased_grammar(cx: &mut TestAppContext) {
+        let extensions = tempfile::tempdir().unwrap();
+        let offers = offers(extensions.path().to_owned(), None);
+        let kotlin = (offers.catalog.iter())
+            .find(|offer| offer.language == "kotlin")
+            .unwrap();
+        assert!(
+            kotlin.sha256.is_empty(),
+            "this test is for a grammar with no hash"
+        );
+
+        let fetching = cx.update(|cx| (offers.fetch)(kotlin, cx));
+        let failure = cx.foreground_executor().block_test(fetching).unwrap_err();
+        assert!(!failure.offline, "{failure:?}");
+        assert!(failure.reason.contains("isn't released"), "{failure:?}");
+
+        let writing = cx.update(|cx| (offers.install)(kotlin, b"wasm".to_vec(), cx));
+        let failure = cx.foreground_executor().block_test(writing).unwrap_err();
+        assert!(failure.reason.contains("isn't released"), "{failure:?}");
+        assert_eq!(fs::read_dir(extensions.path()).unwrap().count(), 0);
+    }
 }

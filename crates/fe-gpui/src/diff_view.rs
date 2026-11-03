@@ -154,6 +154,37 @@ pub struct DiffSide {
     pub read_only: bool,
 }
 
+/// Sets the language of each of `views` with no path to go by, going by the
+/// file's name, `named`, and failing that the right side's, over what its first
+/// lines alone said when the view was made. It's detected, so not chosen. One
+/// chosen by hand, or told where to look
+/// ([`EditorView::detect_language_from`]), is left alone, and one that has the
+/// language already, or has it loading, isn't reset.
+fn detect_side_languages<T>(views: &[Entity<EditorView>; 2], named: &Path, cx: &mut Context<T>) {
+    let language = |view: &Entity<EditorView>, cx: &App| {
+        let view = view.read(cx);
+        let text = view.model().text();
+        let start = text
+            .slice_to_string(0..text.clip_offset(crate::view::DETECT_BYTES, fe_buffer::Bias::Left));
+        fe_syntax::detect_language_name(Some(view.language_path().unwrap_or(named)), &start)
+    };
+    let right_language = language(&views[1], cx);
+    for side in views {
+        let view = side.read(cx);
+        if view.language_path().is_some() || view.is_language_chosen() {
+            continue;
+        }
+        let found = language(side, cx).or(right_language);
+        if view.chosen_language == found {
+            continue;
+        }
+        side.update(cx, |view, cx| {
+            view.set_language(found, cx);
+            view.language_chosen = false;
+        });
+    }
+}
+
 impl DiffSide {
     /// An editable side.
     pub fn new(title: impl Into<SharedString>, model: EditorModel) -> Self {
@@ -281,24 +312,7 @@ impl DiffView {
         // A git side has no path, and its text lands after the view opens, so
         // `EditorView::new` found it no language; the file's name does.
         let file_name = file_name.into();
-        let language = |view: &Entity<EditorView>, name: &Path, cx: &App| {
-            let model = view.read(cx).model();
-            let text = model.text();
-            let start = text.slice_to_string(
-                0..text.clip_offset(crate::view::DETECT_BYTES, fe_buffer::Bias::Left),
-            );
-            let path = model.path().map_or(name, |path| path);
-            fe_syntax::detect_language_name(Some(path), &start)
-        };
-        let named = Path::new(file_name.as_ref());
-        let right_language = language(&views[1], named, cx);
-        for view in &views {
-            if view.read(cx).model().path().is_some() {
-                continue;
-            }
-            let found = language(view, named, cx).or(right_language);
-            view.update(cx, |view, cx| view.set_language(found, cx));
-        }
+        detect_side_languages(&views, Path::new(file_name.as_ref()), cx);
         let mut subscriptions = Vec::new();
         for (from, to) in [(0, 1), (1, 0)] {
             // A side's edits, carets and scrolls may change the diff.
@@ -371,6 +385,14 @@ impl DiffView {
     pub fn with_compared_path(mut self, path: PathBuf) -> Self {
         self.compared_path = Some(path);
         self
+    }
+
+    /// Detects again the language of each side with no path to detect it from,
+    /// unless one was picked for it: for when a language has become known since
+    /// the view opened.
+    pub fn detect_languages_again(&mut self, cx: &mut Context<Self>) {
+        let views = self.views.clone();
+        detect_side_languages(&views, Path::new(self.file_name.as_ref()), cx);
     }
 
     pub fn left(&self) -> &Entity<EditorView> {

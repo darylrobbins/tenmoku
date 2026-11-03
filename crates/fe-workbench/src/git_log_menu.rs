@@ -25,7 +25,7 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use fe_buffer::{Bias, Buffer};
+use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_git::{CommitInfo, Repo};
 use fe_gpui::EditorView;
@@ -446,16 +446,13 @@ impl Workbench {
         let name = file_name(&path);
         let title = format!("{name} @ {}", commit.short);
         let buffer = Buffer::from_file_contents(&text);
-        let start = buffer.text();
-        let start = start.slice_to_string(0..start.clip_offset(512, Bias::Left));
-        let language = fe_syntax::detect_language_name(Some(&path), &start);
         let model = EditorModel::new(buffer, None);
         let (editor, ix) = pane.update(cx, |pane, cx| {
             let editor = pane.new_editor(model, cx);
             editor.update(cx, |editor, cx| {
                 editor.set_read_only(true, cx);
                 editor.set_tab_title(title, name, cx);
-                editor.set_language(language, cx);
+                editor.detect_language_from(path.clone(), cx);
             });
             let ix = pane.pane_mut().push(Box::new(editor.clone()), cx);
             pane.items_changed(cx);

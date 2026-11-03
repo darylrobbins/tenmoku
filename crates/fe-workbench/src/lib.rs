@@ -32,6 +32,7 @@ mod find_commands;
 mod git;
 mod git_panel;
 mod go_to_line;
+mod grammar_prompt;
 mod hierarchy_panel;
 mod inline_edit;
 mod language_picker;
@@ -99,6 +100,10 @@ pub use extension_snippets::{
     ExtensionSnippet, extension_snippets, set_extension_snippets, snippet_body_error,
 };
 pub use git_panel::{GitPanel, GitPanelEvent};
+pub use grammar_prompt::{
+    FetchGrammar, GrammarInstallError, GrammarInstalled, GrammarOffer, GrammarOffers,
+    InstallGrammar, PROMPT_FILE, set_grammar_offers,
+};
 pub use kiln_shell::MenuBarView;
 pub use lsp::{extension_servers, set_lsp_settings, set_server_launcher};
 pub use lsp_consent::{
@@ -154,6 +159,7 @@ pub fn init(cx: &mut App) {
     path_commands::init(cx);
     save_commands::init(cx);
     lsp::init(cx);
+    grammar_prompt::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
@@ -290,6 +296,8 @@ mod extension_snippets_tests;
 mod external_format_tests;
 #[cfg(test)]
 mod external_format_wiring_tests;
+#[cfg(test)]
+mod grammar_prompt_tests;
 #[cfg(test)]
 mod list_vim_keys_tests;
 #[cfg(test)]

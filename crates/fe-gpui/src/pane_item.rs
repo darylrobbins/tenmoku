@@ -673,7 +673,7 @@ impl EditorView {
         let text = self.model.text();
         let start =
             text.slice_to_string(0..text.clip_offset(crate::view::DETECT_BYTES, Bias::Left));
-        let language = fe_syntax::detect_language_name(self.model.path(), &start);
+        let language = fe_syntax::detect_language_name(self.language_path(), &start);
         let current = match self.syntax() {
             Some(syntax) => Some(syntax.language().name()),
             None if self.is_loading_language() => None,
@@ -684,6 +684,14 @@ impl EditorView {
         }
         self.language_chosen = false;
         cx.notify();
+    }
+
+    /// Highlights the buffer in the language `source` and its first lines say,
+    /// for a model with no path, as a file's text at a revision has. It's
+    /// detected, not chosen, so it can be detected again.
+    pub fn detect_language_from(&mut self, source: PathBuf, cx: &mut Context<Self>) {
+        self.language_source = Some(source);
+        self.detect_language(cx);
     }
 
     /// Queues a save of the buffer: the save running or waiting before it,
@@ -1027,12 +1035,16 @@ impl PaneItem for EditorView {
         let (read_only, title) = (self.read_only, self.tab_title.clone());
         let (accepts, unsavable) = (self.accepts_when_read_only, self.unsavable);
         let language = self.language_chosen.then_some(self.chosen_language);
+        let source = self.language_source.clone();
         Some(cx.new(|cx| {
             let mut view = EditorView::new(model, theme, cx);
             view.set_read_only(read_only, cx);
             view.accepts_when_read_only = accepts;
             view.unsavable = unsavable;
             view.tab_title = title;
+            if let Some(source) = source {
+                view.detect_language_from(source, cx);
+            }
             if let Some(language) = language {
                 view.set_language(language, cx);
             }

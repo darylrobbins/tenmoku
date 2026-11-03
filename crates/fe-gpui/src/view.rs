@@ -1,4 +1,8 @@
-use std::{ops::Range, time::Duration};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use fe_buffer::{Bias, BufferSnapshot, Version};
 use fe_command::{ContextFrame, ContextStack, Invocation, Source};
@@ -131,6 +135,9 @@ pub struct EditorView {
     /// The language [`EditorView::set_language`] last set, `None` for
     /// plain text: what a split of the view is set to while it's chosen.
     pub(crate) chosen_language: Option<&'static str>,
+    /// The path a model with none takes its language from, as a file at a
+    /// revision does ([`EditorView::detect_language_from`]).
+    pub(crate) language_source: Option<PathBuf>,
     /// Injected languages loading in the background.
     injected_task: Option<Task<()>>,
     /// Runs just before the view takes the injected languages a frame
@@ -427,6 +434,7 @@ impl EditorView {
             language_task: None,
             language_chosen: false,
             chosen_language: None,
+            language_source: None,
             injected_task: None,
             #[cfg(test)]
             before_taking_missing: None,
@@ -746,6 +754,12 @@ impl EditorView {
     /// opened, or after a Save As): a language picked by hand.
     pub fn is_language_chosen(&self) -> bool {
         self.language_chosen
+    }
+
+    /// The path its language is detected from: its model's, else the one it
+    /// was told ([`EditorView::detect_language_from`]).
+    pub fn language_path(&self) -> Option<&Path> {
+        self.model.path().or(self.language_source.as_deref())
     }
 
     pub fn model(&self) -> &EditorModel {

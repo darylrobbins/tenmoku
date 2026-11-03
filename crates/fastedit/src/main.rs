@@ -4,8 +4,6 @@
 mod app_icon;
 mod cli;
 mod config;
-// Its only caller is the grammar prompt's Install action, the next card.
-#[allow(dead_code)]
 mod grammar_install;
 #[cfg(test)]
 mod grammar_install_tests;
@@ -579,6 +577,13 @@ fn main() {
                 })
                 .detach();
             fe_gpui::pane_item::set_local_history(cx, Some(history));
+        }
+        // Syntax highlighting to offer for files with none, kept where the
+        // extensions the loader reads are.
+        if let Some(extensions) = fe_config::paths::app_paths().extensions_dir() {
+            let never_file =
+                fe_config::paths::state_dir().map(|dir| dir.join(fe_workbench::PROMPT_FILE));
+            fe_workbench::set_grammar_offers(cx, grammar_install::offers(extensions, never_file));
         }
         kiln::init(cx, config(store).source(remaps));
         // The editor's colours, from kiln's theme from now on.
