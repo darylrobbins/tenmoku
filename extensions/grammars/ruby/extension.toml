@@ -1,0 +1,16 @@
+id = "tenmoku.grammar_ruby"
+name = "Ruby syntax"
+version = "0.23.1"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "ruby"
+wasm = "tree-sitter-ruby.wasm"
+extensions = ["rb", "gemspec", "rake", "ru", "podspec"]
+file_names = ["Gemfile", "Rakefile", "Podfile", "Vagrantfile", "Brewfile", "Guardfile", "Capfile", "Fastfile"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

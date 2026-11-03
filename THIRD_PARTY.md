@@ -205,6 +205,10 @@ licence. No module is committed.
 | csharp | `tree-sitter-c-sharp.wasm` | tree-sitter-c-sharp 0.23.5 | MIT |
 | scala | `tree-sitter-scala.wasm` | tree-sitter-scala 0.26.2 | MIT |
 | swift | `tree-sitter-swift.wasm` | tree-sitter-swift 0.7.3 | MIT |
+| cpp | `tree-sitter-cpp.wasm` | tree-sitter-cpp 0.23.4 | MIT; `highlights.scm` starts with tree-sitter-c 0.24.2's query, whose licence is the same text and holder |
+| sql | `tree-sitter-sql.wasm` | tree-sitter-sequel 0.3.11 | MIT |
+| php | `tree-sitter-php.wasm` | tree-sitter-php 0.24.2 (grammar `php`, not `php_only`) | MIT |
+| ruby | `tree-sitter-ruby.wasm` | tree-sitter-ruby 0.23.1 | MIT |
 
 ## Icons
 

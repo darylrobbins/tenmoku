@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_cpp"
+name = "C++ syntax"
+version = "0.23.4"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "cpp"
+wasm = "tree-sitter-cpp.wasm"
+extensions = ["cc", "cpp", "cxx", "c++", "hh", "hpp", "hxx", "h++"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

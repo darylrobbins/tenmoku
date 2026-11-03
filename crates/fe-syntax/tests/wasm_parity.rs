@@ -160,6 +160,30 @@ fn swift() {
 }
 
 #[test]
+#[ignore = "needs scripts/build-grammar-wasm.sh"]
+fn cpp() {
+    assert_parity("cpp", "cpp.cpp");
+}
+
+#[test]
+#[ignore = "needs scripts/build-grammar-wasm.sh"]
+fn sql() {
+    assert_parity("sql", "sql.sql");
+}
+
+#[test]
+#[ignore = "needs scripts/build-grammar-wasm.sh"]
+fn php() {
+    assert_parity("php", "php.php");
+}
+
+#[test]
+#[ignore = "needs scripts/build-grammar-wasm.sh"]
+fn ruby() {
+    assert_parity("ruby", "ruby.rb");
+}
+
+#[test]
 #[should_panic(expected = "scripts/build-grammar-wasm.sh kotlin")]
 fn a_missing_module_fails_naming_the_script() {
     load(
@@ -176,7 +200,23 @@ const LANGUAGES: &[(&str, &[&str])] = &[
     ("csharp", &[]),
     ("scala", &[]),
     ("swift", &[]),
+    ("cpp", &[]),
+    ("sql", &[]),
+    ("php", &[]),
+    ("ruby", &[]),
 ];
+
+#[test]
+fn every_extension_is_listed() {
+    let mut found: Vec<String> = fs::read_dir(repository().join("extensions/grammars"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    let mut listed: Vec<&str> = LANGUAGES.iter().map(|(language, _)| *language).collect();
+    listed.sort();
+    assert_eq!(found, listed);
+}
 
 #[test]
 fn each_extension_holds_its_files_and_no_module() {
@@ -239,6 +279,21 @@ fn has_no_patterns(query: &str) -> bool {
     })
 }
 
+/// The strings of the one-line list `key = [...]` in a manifest, if it has it.
+#[allow(dead_code)] // With every grammar's feature off.
+fn list<'a>(manifest: &'a str, key: &str) -> Vec<&'a str> {
+    let prefix = format!("{key} = ");
+    manifest
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix.as_str()))
+        .map_or(Vec::new(), |list| {
+            list.trim_matches(['[', ']'])
+                .split(", ")
+                .map(|item| item.trim_matches('"'))
+                .collect()
+        })
+}
+
 /// The extension is for the files the built-in language is, and its queries
 /// are the built-in's, the parts concatenated as `language.rs` does.
 /// `injections` is `None` where the built-in has no such query.
@@ -246,12 +301,16 @@ fn has_no_patterns(query: &str) -> bool {
 fn assert_as_built_in(language: &str, highlights: &[&str], injections: Option<&str>) {
     let dir = extension(language);
     let manifest = read(&dir.join("extension.toml"));
-    let extensions = manifest
-        .lines()
-        .find_map(|line| line.strip_prefix("extensions = "))
-        .expect("extension.toml lists its extensions");
-    for extension in extensions.trim_matches(['[', ']']).split(", ") {
-        let path = format!("file.{}", extension.trim_matches('"'));
+    let extensions = list(&manifest, "extensions");
+    assert!(
+        !extensions.is_empty(),
+        "extension.toml lists its extensions"
+    );
+    let paths = extensions
+        .iter()
+        .map(|extension| format!("file.{extension}"))
+        .chain(list(&manifest, "file_names").into_iter().map(str::to_owned));
+    for path in paths {
         assert_eq!(
             fe_syntax::language_name_for_path(Path::new(&path)),
             Some(language),
@@ -304,4 +363,223 @@ fn scala_extension_is_as_built_in() {
 #[test]
 fn swift_extension_is_as_built_in() {
     assert_as_built_in("swift", &[tree_sitter_swift::HIGHLIGHTS_QUERY], None);
+}
+
+#[cfg(feature = "cpp")]
+#[test]
+fn cpp_extension_is_as_built_in() {
+    assert_as_built_in(
+        "cpp",
+        &[
+            tree_sitter_c::HIGHLIGHT_QUERY,
+            tree_sitter_cpp::HIGHLIGHT_QUERY,
+        ],
+        None,
+    );
+}
+
+#[cfg(feature = "sql")]
+#[test]
+fn sql_extension_is_as_built_in() {
+    assert_as_built_in(
+        "sql",
+        &[
+            tree_sitter_sequel::HIGHLIGHTS_QUERY,
+            include_str!("../queries/sql.scm"),
+        ],
+        None,
+    );
+}
+
+#[cfg(feature = "php")]
+#[test]
+fn php_extension_is_as_built_in() {
+    assert_as_built_in(
+        "php",
+        &[tree_sitter_php::HIGHLIGHTS_QUERY],
+        Some(include_str!("../queries/php-injections.scm")),
+    );
+}
+
+#[cfg(feature = "ruby")]
+#[test]
+fn ruby_extension_is_as_built_in() {
+    assert_as_built_in(
+        "ruby",
+        &[
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            include_str!("../queries/ruby.scm"),
+        ],
+        None,
+    );
+}
+
+/// `release.yml` and `grammars.yml` publish to one release from the same tag.
+/// These run both workflows' real publishing scripts against a fake `gh`, whose
+/// `release create` fails if the release exists, as GitHub's does.
+#[cfg(unix)]
+mod publishing {
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    use super::*;
+
+    const APP: &str = "Publish the GitHub Release";
+    const GRAMMARS: &str = "Attach them to the GitHub Release";
+
+    const FAKE_GH: &str = r#"#!/bin/sh
+echo "$PUBLISHER $2" >>log
+case $2 in
+view)
+  [ -e release ] && exit 0
+  # WINDOW: the grammars publisher runs after the app's view, before its create.
+  if [ "$PUBLISHER" = app ] && [ -n "$WINDOW" ]; then
+    PUBLISHER=grammars WINDOW= AT_SLEEP=stop bash -e grammars.sh
+  fi
+  exit 1
+  ;;
+create) [ ! -e release ] && touch release ;;
+upload) [ -e release ] ;;
+esac
+"#;
+
+    /// What the grammars publisher's wait lets happen: the app publisher runs,
+    /// or the wait is cut short.
+    const FAKE_SLEEP: &str = r#"#!/bin/sh
+echo "$PUBLISHER sleep" >>log
+case $AT_SLEEP in
+app) PUBLISHER=app bash -e app.sh ;;
+stop) exit 1 ;;
+esac
+"#;
+
+    /// The `run: |` script of the step `name` in a workflow.
+    fn step_script(workflow: &str, name: &str) -> String {
+        let text = read(&repository().join(".github/workflows").join(workflow));
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        let mut lines = text
+            .lines()
+            .skip_while(|line| line.trim() != format!("- name: {name}"))
+            .skip_while(|line| line.trim() != "run: |");
+        let run = lines
+            .next()
+            .unwrap_or_else(|| panic!("{workflow} has no step {name} with a run: | script"));
+        lines
+            .take_while(|line| line.trim().is_empty() || indent(line) > indent(run))
+            .map(|line| line.get(indent(run) + 2..).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A directory holding both publishers' scripts and the fake commands.
+    struct Stage(PathBuf);
+
+    impl Stage {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("publishing-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(dir.join("bin")).unwrap();
+            for (command, script) in [("gh", FAKE_GH), ("sleep", FAKE_SLEEP)] {
+                let file = dir.join("bin").join(command);
+                fs::write(&file, script).unwrap();
+                fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            fs::write(dir.join("app.sh"), step_script("release.yml", APP)).unwrap();
+            fs::write(
+                dir.join("grammars.sh"),
+                step_script("grammars.yml", GRAMMARS),
+            )
+            .unwrap();
+            fs::write(dir.join("log"), "").unwrap();
+            Self(dir)
+        }
+
+        /// Runs a publisher as Actions does, with `env` added; true if it succeeds.
+        fn publish(&self, who: &str, env: &[(&str, &str)]) -> bool {
+            let path = format!(
+                "{}:{}",
+                self.0.join("bin").display(),
+                std::env::var("PATH").unwrap()
+            );
+            Command::new("bash")
+                .args(["-e", &format!("{who}.sh")])
+                .current_dir(&self.0)
+                .env("PATH", path)
+                .env("PUBLISHER", who)
+                .env("GITHUB_REF_NAME", "v1.0.0")
+                .env("GITHUB_EVENT_NAME", "push")
+                .envs(env.iter().copied())
+                .status()
+                .unwrap()
+                .success()
+        }
+
+        fn log(&self) -> String {
+            read(&self.0.join("log"))
+        }
+
+        fn count(&self, entry: &str) -> usize {
+            self.log().lines().filter(|line| *line == entry).count()
+        }
+
+        /// The app created the release, the only creator, and the grammars
+        /// were uploaded to it.
+        fn assert_both_published(&self) {
+            let log = self.log();
+            assert_eq!(self.count("app create"), 1, "{log}");
+            assert_eq!(self.count("grammars create"), 0, "{log}");
+            assert_eq!(self.count("grammars upload"), 1, "{log}");
+        }
+    }
+
+    impl Drop for Stage {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn the_app_publishes_first() {
+        let stage = Stage::new("app-first");
+        assert!(stage.publish("app", &[]));
+        assert!(stage.publish("grammars", &[]));
+        stage.assert_both_published();
+    }
+
+    #[test]
+    fn the_grammars_wait_for_the_app_to_publish() {
+        let stage = Stage::new("grammars-first");
+        assert!(stage.publish("grammars", &[("AT_SLEEP", "app")]));
+        stage.assert_both_published();
+    }
+
+    #[test]
+    fn the_grammars_run_between_the_apps_view_and_create() {
+        let stage = Stage::new("window");
+        assert!(stage.publish("app", &[("WINDOW", "1")]));
+        assert_eq!(stage.count("grammars view"), 1, "{}", stage.log());
+        assert!(stage.publish("grammars", &[]));
+        stage.assert_both_published();
+    }
+
+    #[test]
+    fn a_release_that_never_comes_fails_the_grammars_without_creating_it() {
+        let stage = Stage::new("never");
+        assert!(!stage.publish("grammars", &[]));
+        let log = stage.log();
+        assert!(
+            stage.count("grammars sleep") > 100,
+            "waits on a tag push: {log}"
+        );
+        assert_eq!(stage.count("grammars create"), 0, "{log}");
+        assert_eq!(stage.count("grammars upload"), 0, "{log}");
+    }
+
+    #[test]
+    fn a_manual_run_does_not_wait_for_a_release() {
+        // release.yml's manual run publishes nothing, so nothing is coming.
+        let stage = Stage::new("manual");
+        assert!(!stage.publish("grammars", &[("GITHUB_EVENT_NAME", "workflow_dispatch")]));
+        assert_eq!(stage.log(), "grammars view\n");
+    }
 }

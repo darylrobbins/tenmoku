@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_sql"
+name = "SQL syntax"
+version = "0.3.11"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "sql"
+wasm = "tree-sitter-sql.wasm"
+extensions = ["sql"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false

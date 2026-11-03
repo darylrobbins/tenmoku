@@ -1,0 +1,15 @@
+id = "tenmoku.grammar_php"
+name = "PHP syntax"
+version = "0.24.2"
+license = "MIT"
+
+[engine]
+tenmoku = "1.0"
+
+[[contributes.grammars]]
+language = "php"
+wasm = "tree-sitter-php.wasm"
+extensions = ["php"]
+highlights = "highlights.scm"
+injections = "injections.scm"
+earlier_patterns_win = false
