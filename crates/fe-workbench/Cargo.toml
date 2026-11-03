@@ -53,6 +53,7 @@ log.workspace = true
 # A call hierarchy item's call sites are LSP ranges.
 lsp-types.workspace = true
 serde.workspace = true
+# A project's npm scripts, from its package.json.
 # Reading GitHub's reply to Check for Updates; the tests' expected values too.
 serde_json.workspace = true
 # The hash of a script an extension's language server runs.
