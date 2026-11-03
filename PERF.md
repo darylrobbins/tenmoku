@@ -1509,3 +1509,50 @@ rounded up, and never below 20 (HTML measured 18.5×), so that no limit passes
 - **XML repeated whole, prolog and all, measured 72×** against 46× clean:
   error recovery inflates a tree, so the bench measures only corpora that
   parse without errors and reports any that don't.
+
+## WebAssembly grammars (`cargo bench -p fe-syntax --bench wasm`)
+
+Kotlin, built in against the same grammar as
+`target/grammar-wasm/tree-sitter-kotlin.wasm` (from
+`scripts/build-grammar-wasm.sh kotlin`), loaded as a user grammar is with the
+queries of `extensions/grammars/kotlin/`. Two sources: the golden sample
+(`tests/golden/kotlin.kt`, 70 lines, 1,954 B) and the sample repeated to 4,966
+lines (139,474 B), generated in the bench. Full parse, full highlight (a fresh
+parsed `Syntax` per run, since highlights are cached by range), one
+incremental reparse after a one-character edit in the middle of the large
+corpus, and the wasm load. Criterion's quick settings, medians. This
+states the ratios; it picks no threshold.
+
+**Measured under load.** Other lanes were building: the Mac's load average
+was 19 → 28 over run A and 27 → 29 over run B (`uptime`, 1-minute figure at
+start and end). Native and wasm cases run one after the other, so a load swing
+between them lands in the ratio; read the ratios as rough, and the two runs
+as the spread. Absolute times are secondary. M3 Max MacBook Pro, release build.
+Both runs used `crates/fe-syntax/benches/wasm.rs` as committed in the commit
+that adds this section ("Record Kotlin wasm against native parse, highlight,
+reparse and load in PERF.md, and time highlights uncached (T1306)", 19f2b0a16),
+which gives each highlight run a fresh parsed `Syntax` (uncached highlight).
+The first version of the bench, dd1afad67, highlighted the same `Syntax` every
+run and so measured cached highlights (about 190 ns); its numbers are not
+recorded here.
+
+| Measurement | Native A | Wasm A | wasm/native A | Native B | Wasm B | wasm/native B |
+| --- | --- | --- | --- | --- | --- | --- |
+| Parse, golden sample | 616 µs | 993 µs | 1.61× | 602 µs | 1.10 ms | 1.83× |
+| Highlight, golden sample | 504 µs | 779 µs | 1.55× | 623 µs | 751 µs | 1.21× |
+| Parse, 5k lines | 49.6 ms | 79.6 ms | 1.60× | 42.2 ms | 115 ms | 2.74× |
+| Highlight, 5k lines | 50.5 ms | 48.7 ms | 0.96× | 85.3 ms | 78.1 ms | 0.92× |
+| Reparse one character, 5k lines | 599 µs | 696 µs | 1.16× | 1.07 ms | 841 µs | 0.79× |
+
+Wasm load (compile and instantiate the module, read the files, compile the
+queries; not a ratio, native has none): 340 ms in run A, 457 ms in run B.
+
+Highlight is the query run over the tree, which is native Rust in both; only
+the tree's node access differs, so a ratio near 1 there is expected. The
+parse ratio is the larger and steadier signal, and the reparse is a
+sub-millisecond case that load noise swamps (it came out both above and below
+1).
+
+To rerun: `scripts/build-grammar-wasm.sh kotlin`, then
+`cargo bench -p fe-syntax --bench wasm`, on a quiet machine if possible; the
+bench exits naming the script if the module is missing.

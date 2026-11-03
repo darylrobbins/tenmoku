@@ -154,5 +154,9 @@ harness = false
 name = "driver"
 harness = false
 
+[[bench]]
+name = "wasm"
+harness = false
+
 [lints]
 workspace = true
