@@ -105,6 +105,14 @@
 # "off", "error", "warning" (errors and warnings) or "all" (information and
 # hints too).
 # inline_diagnostics = "warning"
+# Underline misspelled words.
+# spell_check = true
+# Where words are checked: "comments" and "strings" in code, and "text" for
+# plain text and Markdown prose.
+# spell_check_scopes = ["comments", "strings", "text"]
+# The language to check words in: "auto" for the system's languages, or a
+# BCP-47 tag such as "en-GB".
+# spell_check_language = "auto"
 
 [editor.minimap]
 # Show the minimap: the whole file drawn small beside the text.

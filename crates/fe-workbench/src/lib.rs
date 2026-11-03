@@ -64,6 +64,7 @@ mod save_commands;
 mod search_panel;
 mod settings_editor;
 mod shortcuts_editor;
+pub mod spell;
 mod status_bar;
 mod symbol_picker;
 mod tab_index_commands;
@@ -304,6 +305,8 @@ mod settings_editor_controls_tests;
 mod settings_editor_tests;
 #[cfg(test)]
 mod shortcuts_editor_tests;
+#[cfg(test)]
+mod spell_tests;
 #[cfg(test)]
 mod tab_index_commands_tests;
 #[cfg(test)]

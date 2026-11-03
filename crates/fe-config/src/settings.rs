@@ -636,6 +636,28 @@ pub struct EditorSettings {
     /// `"warning"` (errors and warnings) or `"all"` (information and hints
     /// too).
     pub inline_diagnostics: InlineDiagnostics,
+    /// Underline misspelled words.
+    pub spell_check: bool,
+    /// Where words are checked: `"comments"` and `"strings"` in code, and
+    /// `"text"` for plain text and Markdown prose. Anything else is ignored,
+    /// with a warning.
+    pub spell_check_scopes: Vec<SpellScope>,
+    /// The language to check words in: `"auto"` for the system's languages,
+    /// or a BCP-47 tag such as `"en-GB"`.
+    #[schemars(length(min = 1))]
+    pub spell_check_language: String,
+}
+
+/// One of `editor.spell_check_scopes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpellScope {
+    /// Comments in code.
+    Comments,
+    /// String literals in code.
+    Strings,
+    /// Plain text and Markdown prose.
+    Text,
 }
 
 /// `editor.inline_diagnostics`.
@@ -858,6 +880,9 @@ impl Default for EditorSettings {
             cursor_surrounding_lines: 3,
             cursor_line: true,
             inline_diagnostics: InlineDiagnostics::default(),
+            spell_check: true,
+            spell_check_scopes: vec![SpellScope::Comments, SpellScope::Strings, SpellScope::Text],
+            spell_check_language: "auto".into(),
         }
     }
 }
@@ -1112,11 +1137,14 @@ impl SettingsStore {
 /// How Tenmoku's settings files are checked: against [`SCHEMA`] with each
 /// server listed ([`schema_for`]), a project's `lsp` keys narrowed
 /// ([`narrow_lsp`]) and its `theme` and `extensions` dropped
-/// ([`drop_theme`], [`drop_extensions`]).
+/// ([`drop_theme`], [`drop_extensions`]); any file's bad formatters and spell
+/// check scopes are dropped too ([`drop_bad_formatters`],
+/// [`drop_bad_spell_scopes`]).
 fn options() -> SettingsOptions {
     SettingsOptions::new()
         .schema_for(schema_for)
         .layer_filter(ProjectFilter::new("formatters", drop_bad_formatters))
+        .layer_filter(ProjectFilter::new(SPELL_SCOPES_KEY, drop_bad_spell_scopes))
         .project_filter(ProjectFilter::new("formatters", drop_formatters))
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
@@ -1222,6 +1250,8 @@ impl LspLayer {
         if self.project {
             layer.table.remove("theme");
         }
+        // Only a warning to the store, so it can't reject the file here.
+        drop_bad_spell_scopes(&mut layer);
         if toml::Value::Table(layer.table.clone())
             .try_into::<Settings>()
             .is_err()
@@ -1474,6 +1504,85 @@ fn drop_bad_formatters(layer: &mut Layer) {
             .join(".");
         let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message);
         layer.diagnostics.push(warning);
+    }
+}
+
+/// `editor.spell_check_scopes`, as a diagnostic names it.
+const SPELL_SCOPES_KEY: &str = "editor.spell_check_scopes";
+
+/// What's wrong with a `spell_check_scopes` entry, or `None` for a scope.
+fn spell_scope_problem(scope: &toml::Value) -> Option<String> {
+    if matches!(scope.as_str(), Some("comments" | "strings" | "text")) {
+        return None;
+    }
+    Some(format!(
+        "{scope} isn't a spell check scope: use \"comments\", \"strings\" or \"text\"; ignored"
+    ))
+}
+
+/// Drops each `editor.spell_check_scopes` entry that isn't a scope, with a
+/// warning at it, so the valid ones still apply; a value that isn't a list
+/// goes the same way, leaving the default.
+fn drop_bad_spell_scopes(layer: &mut Layer) {
+    let Some(toml::Value::Table(editor)) = layer.table.get_mut("editor") else {
+        return;
+    };
+    // Each problem, with the entry it's about: `None` for the whole value.
+    let mut problems: Vec<(Option<usize>, String)> = Vec::new();
+    match editor.get_mut("spell_check_scopes") {
+        None => return,
+        Some(toml::Value::Array(scopes)) => {
+            let mut index = 0;
+            scopes.retain(|scope| {
+                let problem = spell_scope_problem(scope);
+                let keep = problem.is_none();
+                problems.extend(problem.map(|problem| (Some(index), problem)));
+                index += 1;
+                keep
+            });
+        }
+        Some(_) => {
+            editor.remove("spell_check_scopes");
+            problems.push((
+                None,
+                "must be a list of \"comments\", \"strings\" and \"text\"; ignored".into(),
+            ));
+        }
+    }
+    let document = DeTable::parse(&layer.source).ok();
+    for (index, message) in problems {
+        let offset = document
+            .as_ref()
+            .map_or(0, |document| spell_scope_offset(document.get_ref(), index));
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(SPELL_SCOPES_KEY.into()),
+            offset,
+            message,
+        );
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// Where `spell_check_scopes` entry `index` is in the source, or the key if
+/// `index` is `None`.
+fn spell_scope_offset(document: &DeTable<'_>, index: Option<usize>) -> usize {
+    let key = ["spell_check_scopes".to_owned()];
+    let at_key = key_offset(document, "editor", &key);
+    let scopes = document
+        .iter()
+        .find(|(name, _)| name.get_ref() == "editor")
+        .and_then(|(_, editor)| match editor.get_ref() {
+            DeValue::Table(editor) => editor
+                .iter()
+                .find(|(name, _)| name.get_ref() == key[0].as_str()),
+            _ => None,
+        });
+    match (scopes.map(|(_, value)| value.get_ref()), index) {
+        (Some(DeValue::Array(scopes)), Some(index)) => {
+            scopes.get(index).map_or(at_key, |scope| scope.span().start)
+        }
+        _ => at_key,
     }
 }
 

@@ -271,6 +271,29 @@
           "description": "Whether long lines wrap at the window's edge. `alt-z` toggles it per\neditor.",
           "type": "boolean"
         },
+        "spell_check": {
+          "default": true,
+          "description": "Underline misspelled words.",
+          "type": "boolean"
+        },
+        "spell_check_language": {
+          "default": "auto",
+          "description": "The language to check words in: `\"auto\"` for the system's languages,\nor a BCP-47 tag such as `\"en-GB\"`.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "spell_check_scopes": {
+          "default": [
+            "comments",
+            "strings",
+            "text"
+          ],
+          "description": "Where words are checked: `\"comments\"` and `\"strings\"` in code, and\n`\"text\"` for plain text and Markdown prose. Anything else is ignored,\nwith a warning.",
+          "items": {
+            "$ref": "#/$defs/SpellScope"
+          },
+          "type": "array"
+        },
         "sticky_scroll": {
           "$ref": "#/$defs/StickyScrollSettings",
           "default": {
@@ -738,6 +761,26 @@
         {
           "const": "all",
           "description": "Every space and tab.",
+          "type": "string"
+        }
+      ]
+    },
+    "SpellScope": {
+      "description": "One of `editor.spell_check_scopes`.",
+      "oneOf": [
+        {
+          "const": "comments",
+          "description": "Comments in code.",
+          "type": "string"
+        },
+        {
+          "const": "strings",
+          "description": "String literals in code.",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "Plain text and Markdown prose.",
           "type": "string"
         }
       ]
@@ -1266,6 +1309,13 @@
         "rulers": [],
         "semantic_highlighting": true,
         "soft_wrap": false,
+        "spell_check": true,
+        "spell_check_language": "auto",
+        "spell_check_scopes": [
+          "comments",
+          "strings",
+          "text"
+        ],
         "sticky_scroll": {
           "default_model": "outline",
           "enabled": true,
