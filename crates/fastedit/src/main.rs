@@ -4,6 +4,7 @@
 mod app_icon;
 mod cli;
 mod config;
+mod ipc;
 mod perf;
 mod theme;
 mod vim_remaps;
@@ -428,14 +429,25 @@ fn init_logging() {
     }
 }
 
-/// Opens the launch's `files` in `window`, the first being the launch file
-/// that's in its tab or being read: each at its position, one at a time, so
-/// the tabs keep their order whichever read is quickest. With a lone file
-/// and no position, the launch has done it all.
-fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App) {
-    if let [Target { line: None, .. }] = files[..] {
-        return;
+/// What's left of the launch's `files` for [`open_files`], the first being
+/// the launch file. One whose read failed is over, its error shown, and the
+/// rest are all still to open. Otherwise, with that one alone and no position,
+/// the launch has done it all.
+fn files_left(mut files: Vec<Target>, launch_failed: bool) -> Vec<Target> {
+    if launch_failed {
+        if !files.is_empty() {
+            files.remove(0);
+        }
+    } else if let [Target { line: None, .. }] = files[..] {
+        files.clear();
     }
+    files
+}
+
+/// Opens `files` in `window`, each at its position, one at a time, so the
+/// tabs keep their order whichever read is quickest. A first file that's the
+/// launch file, in its tab or being read, isn't read again.
+fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App) {
     let mut files = files.into_iter();
     let open = move |target: Target, cx: &mut App| {
         window.update(cx, |workbench, window, cx| {
@@ -463,13 +475,24 @@ fn main() {
     let mut startup = Startup::new();
     let started = Instant::now();
     init_logging();
-    let cli = cli::parse(std::env::args_os().skip(1).collect()).unwrap_or_else(|error| {
+    let mut how = ipc::How::current();
+    let mut cli = cli::parse(std::env::args_os().skip(1).collect()).unwrap_or_else(|error| {
         error.print();
         std::process::exit(error.exit_code())
     });
     let perf = cli.perf;
-    if cli.new_window {
-        log::info!(target: "fastedit", "--new-window: not acted on yet");
+    how.no_ipc |= perf;
+    // Over here if the running instance takes the launch, or a detached copy
+    // of this process does.
+    let request = ipc::Request::of(&cli, std::env::current_dir().unwrap_or_default());
+    let handoffs = match ipc::start(&request, &how, ipc::detach) {
+        ipc::Start::Exit => return,
+        ipc::Start::Serve(server) => Some(server.listen()),
+        ipc::Start::Alone => None,
+    };
+    let first_is_launch = how.parent_carries_request(cli.wait);
+    if let Some(handoffs) = handoffs.as_ref().filter(|_| first_is_launch) {
+        ipc::launch_first_request(handoffs, &mut cli);
     }
     if cli.wait {
         log::info!(target: "fastedit", "--wait: not acted on yet");
@@ -504,7 +527,7 @@ fn main() {
         while let Ok(paths) = opened_rx.try_recv() {
             handed.extend(paths);
         }
-        let mut files = plan.files;
+        let files = plan.files;
         let mut launch = if plan.root.is_some() {
             Launch {
                 root: plan.root,
@@ -591,6 +614,7 @@ fn main() {
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
         let mut failed = None;
+        let mut launch_failed = false;
         // The launch file's read hadn't finished as the window opened.
         let mut loading = false;
         let mut options = window_options(
@@ -636,9 +660,7 @@ fn main() {
             match failed {
                 Some(error) => {
                     // Its error is shown: nothing to put a caret in.
-                    if !files.is_empty() {
-                        files.remove(0);
-                    }
+                    launch_failed = true;
                     let path = reading.path().to_owned();
                     window
                         .update(cx, |workbench, window, cx| {
@@ -653,7 +675,7 @@ fn main() {
         follow_settings(launch_root.clone(), cx);
         watch_window(window, settings.clone(), cx);
         fe_workbench::set_window_opener(cx, open_window_on);
-        open_files(window, files, cx);
+        open_files(window, files_left(files, launch_failed), cx);
         // The root's other saved windows.
         for (layout, entry) in windows {
             let launch = Launch {
@@ -688,15 +710,95 @@ fn main() {
             }
         })
         .detach();
+        // What later launches hand over.
+        if let Some(handoffs) = handoffs {
+            cx.spawn(async move |cx| {
+                while let Ok(handoff) = handoffs.recv().await {
+                    let request = handoff.request.clone();
+                    cx.update(|cx| ipc::route(request, cx, open_window_at).detach());
+                    handoff.answer();
+                }
+            })
+            .detach();
+        }
         cx.activate(true);
     });
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use fe_gpui::EditorSettings;
+    use gpui::TestAppContext;
     use log::{Level, Log as _, Metadata};
 
-    use super::StderrLogger;
+    use super::{EditorTheme, Launch, StderrLogger, Target, Workbench, files_left, open_files};
+
+    fn at(path: &str, line: Option<u32>) -> Target {
+        Target {
+            path: path.into(),
+            line,
+            col: None,
+        }
+    }
+
+    #[test]
+    fn a_lone_launch_file_is_done_unless_it_has_a_place_or_failed() {
+        assert_eq!(files_left(vec![at("/a", None)], false), []);
+        let placed = vec![at("/a", Some(3))];
+        assert_eq!(files_left(placed.clone(), false), placed);
+        let two = vec![at("/a", None), at("/b", None)];
+        assert_eq!(files_left(two.clone(), false), two);
+        assert_eq!(files_left(vec![at("/a", None)], true), []);
+        assert_eq!(files_left(vec![], true), []);
+    }
+
+    /// `tenmoku unreadable.txt valid.txt`: the launch file's read fails before
+    /// the window has it, and what's left, a lone file with no position, is no
+    /// launch file: it still has to open (T1310 F1).
+    #[gpui::test]
+    fn a_failed_launch_file_leaves_the_next_to_open(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let valid = root.join("valid.txt");
+        fs::write(&valid, "valid\n").unwrap();
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+        });
+        let launch = Launch {
+            root: Some(root.clone()),
+            file: None,
+        };
+        let window = cx.add_window(move |window, cx| {
+            let theme = EditorTheme::default_dark(cx);
+            Workbench::new(launch, theme, EditorSettings::default(), window, cx)
+        });
+        let files = vec![
+            at(root.join("unreadable.txt").to_str().unwrap(), None),
+            at(valid.to_str().unwrap(), None),
+        ];
+        cx.update(|cx| open_files(window, files_left(files, true), cx));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let tabs = loop {
+            cx.run_until_parked();
+            let tabs: Vec<_> = window
+                .read_with(cx, |workbench, cx| {
+                    let pane = workbench.pane().read(cx);
+                    (pane.tabs().iter())
+                        .filter_map(|tab| tab.path.clone())
+                        .collect()
+                })
+                .unwrap();
+            if !tabs.is_empty() || std::time::Instant::now() > deadline {
+                break tabs;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        assert_eq!(tabs, [valid]);
+    }
 
     fn enabled(level: Level, target: &str) -> bool {
         let logger = StderrLogger { level: None };

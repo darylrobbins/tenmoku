@@ -18,7 +18,7 @@ root, or with no folder, the first file's folder. Lines and columns count
 from 1. A file really named a:1 opens as itself.
 
 Options:
-      --new-window  Open in a new window (accepted; not acted on yet)
+      --new-window  Open in a new window on the path's folder
       --wait        Wait for the files to close (accepted; not acted on yet)
       --perf        Measure startup and scrolling on the file, print, and quit
   -h, --help        Print this help
