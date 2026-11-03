@@ -28,6 +28,10 @@ command = "app.show_all"
 separator = true
 
 [[menus.items]]
+title = "Check for Updates…"
+command = "app.check_for_updates"
+
+[[menus.items]]
 title = "Settings…"
 command = "workbench.open_settings_ui"
 

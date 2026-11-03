@@ -111,13 +111,19 @@ expected for local builds.
 ## Releasing
 
 `.github/workflows/release.yml` does the steps above on a GitHub macOS arm64 runner. To cut a
-release, tag the commit `vX.Y.Z` (dotted numbers only: the tag minus its `v` becomes the app's
-version, and `scripts/bundle-macos.sh` refuses anything else) and push the tag:
+release, set `version` under `[workspace.package]` in `Cargo.toml` to `X.Y.Z`, refresh
+`Cargo.lock` with `cargo check --workspace`, commit both, tag that commit `vX.Y.Z` and push the
+tag:
 
 ```zsh
 git tag v0.2.0
 git push origin v0.2.0
 ```
+
+The tag minus its `v` becomes the app's version in `Info.plist`, while the binary has
+`Cargo.toml`'s built in, which Check for Updates compares with the latest release. So the
+workflow starts with `scripts/check-release-version.sh`, which refuses a tag that isn't exactly
+`v` plus `Cargo.toml`'s version: a release that got past it would offer itself as its own update.
 
 The workflow builds `cargo build --release -p fastedit --locked`, bundles `Tenmoku.app`, runs
 `scripts/sign-notarize-macos.sh`, zips the app as `Tenmoku-X.Y.Z-macos-arm64.zip` with a

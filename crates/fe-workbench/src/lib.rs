@@ -69,6 +69,7 @@ mod theme_picker;
 mod title_bar;
 mod toolbar_picker;
 mod trust;
+mod update_check;
 mod workbench;
 mod workbench_commands;
 mod workspace_edit;
@@ -297,6 +298,8 @@ mod tests;
 mod theme_tests;
 #[cfg(test)]
 mod typed_command_ids_tests;
+#[cfg(test)]
+mod update_check_tests;
 #[cfg(test)]
 mod workbench_commands_tests;
 #[cfg(test)]

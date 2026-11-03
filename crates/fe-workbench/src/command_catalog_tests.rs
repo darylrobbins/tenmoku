@@ -228,6 +228,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "ai.changes_reject_all",
     "ai.changes_revert",
     "ai.show_changes",
+    "app.check_for_updates",
     "app.hide",
     "app.hide_others",
     "app.quit",

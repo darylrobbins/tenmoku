@@ -24,6 +24,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Check for Updates compares releases with the version built in from Cargo.toml.
+      - name: Check the tag is Cargo.toml's version
+        if: github.ref_type == 'tag'
+        run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2

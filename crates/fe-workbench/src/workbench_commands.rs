@@ -21,7 +21,7 @@ use crate::{
     git::git_conflicts::{Side, Which},
     nav::NavOp,
     open::OpenOp,
-    persist, references_panel,
+    persist, references_panel, update_check,
     workbench::git_commands::GitCommand,
     workbench::recent_picker::RecentOp,
 };
@@ -560,6 +560,13 @@ impl Workbench {
     #[command(id = "git.push_force_with_lease")]
     fn git_push_force_with_lease(&mut self, cx: &mut Cx<Self>) {
         self.run_typed_git(GitCommand::PushForceWithLease, cx);
+    }
+
+    /// Check for Updates…
+    #[command(id = "app.check_for_updates")]
+    fn check_for_updates(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        update_check::run(&self.toasts, cx.cx);
     }
 
     /// Grow Pane Width

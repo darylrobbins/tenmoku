@@ -1,6 +1,6 @@
 #!/bin/sh
 # Checks for the release workflow (.github/workflows/release.yml) and its signing script:
-# actionlint, the workflow's trigger, runner, build and publish steps, where its secrets and
+# actionlint, the workflow's trigger, runner, tag check, build and publish steps, where its secrets and
 # write permission appear, the signing script's hygiene, and a run of the signing script with
 # no secrets against a fixture bundle (a copy of /usr/bin/true, as test-bundle-macos.sh does).
 # Prints one line per check and exits non-zero on the first failure. macOS only; needs
@@ -36,6 +36,27 @@ has "run: scripts/sign-notarize-macos.sh " "signing"
 has "gh release create " "release creation"
 has "gh release upload " "upload to an existing release"
 ok "trigger, runner, build, bundle, sign and gh release steps"
+
+# A tag must name the version the binary is built with: Check for Updates compares that one.
+check="$here/check-release-version.sh"
+has 'run: scripts/check-release-version.sh "\$GITHUB_REF_NAME"$' "tag and Cargo version check"
+awk '
+	/check-release-version.sh/ && !checked { checked = NR }
+	/cargo build --release/ && !built { built = NR }
+	END { exit !(checked && built && checked < built) }
+' "$wf" || fail "the tag is not checked before the build"
+version=$(awk '
+	/^\[/ { in_pkg = ($0 == "[workspace.package]") }
+	in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
+' "$root/Cargo.toml")
+[ -n "$version" ] || fail "no [workspace.package] version in Cargo.toml"
+"$check" "v$version" >/dev/null || fail "the tag v$version was refused at Cargo.toml's version"
+for tag in "v$version.1" "v9$version" "$version" "v$version-rc1" v "" v1.2; do
+	if "$check" "$tag" >/dev/null 2>&1; then
+		fail "check-release-version.sh took the tag '$tag' at Cargo.toml's version $version"
+	fi
+done
+ok "a tag must be v plus Cargo.toml's version, checked before the build"
 
 # contents: write once, in the release job's own permissions (job keys sit at 4 spaces).
 [ "$(grep -c 'contents: write' "$wf")" -eq 1 ] || fail "contents: write appears other than once"
