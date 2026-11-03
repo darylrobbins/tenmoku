@@ -18,6 +18,7 @@ fe-buffer.workspace = true
 fe-config.workspace = true
 fe-gpui.workspace = true
 fe-lsp.workspace = true
+fe-net.workspace = true
 fe-syntax.workspace = true
 fe-vim.workspace = true
 fe-workbench.workspace = true
@@ -30,6 +31,8 @@ pico-args.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 
 # The Dock icon: unbundled, macOS shows the launching terminal's icon.
@@ -45,7 +48,7 @@ fe-project = { workspace = true, features = ["test-support"] }
 fe-lsp = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
 kiln = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true
+futures.workspace = true
 
 [lints]
 workspace = true

@@ -2059,10 +2059,12 @@ dependencies = [
  "fe-config",
  "fe-gpui",
  "fe-lsp",
+ "fe-net",
  "fe-project",
  "fe-syntax",
  "fe-vim",
  "fe-workbench",
+ "futures",
  "gpui-pre",
  "kiln",
  "kiln-command",
@@ -2077,6 +2079,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -2383,6 +2386,7 @@ dependencies = [
  "log",
  "rustls",
  "rustls-platform-verifier",
+ "sha2 0.10.9",
  "smol-hyper",
  "thiserror 2.0.21",
 ]

@@ -1,0 +1,53 @@
+# The first-party WebAssembly grammars the app can fetch: where they are, and
+# what each must hash to. crates/fastedit/src/grammar_install.rs compiles this
+# in, so a download is checked against what the app was built with.
+#
+# base_url names a release tagged for the grammars, not the app's version (see
+# docs/decisions/c1pt00h80c-grammar-fetch.md). Each entry's file is the wasm in
+# that language's extension.toml.
+#
+# An empty sha256 means not released yet: every fetch of it is refused, and its
+# size is 0. After a grammar release, scripts/record-grammar-hashes.sh fills
+# both in; don't edit them by hand.
+
+base_url = "https://github.com/darylrobbins/fastedit/releases/download/grammars-1"
+
+[languages.kotlin]
+file = "tree-sitter-kotlin.wasm"
+size = 0
+sha256 = ""
+
+[languages.csharp]
+file = "tree-sitter-c-sharp.wasm"
+size = 0
+sha256 = ""
+
+[languages.scala]
+file = "tree-sitter-scala.wasm"
+size = 0
+sha256 = ""
+
+[languages.swift]
+file = "tree-sitter-swift.wasm"
+size = 0
+sha256 = ""
+
+[languages.cpp]
+file = "tree-sitter-cpp.wasm"
+size = 0
+sha256 = ""
+
+[languages.sql]
+file = "tree-sitter-sql.wasm"
+size = 0
+sha256 = ""
+
+[languages.php]
+file = "tree-sitter-php.wasm"
+size = 0
+sha256 = ""
+
+[languages.ruby]
+file = "tree-sitter-ruby.wasm"
+size = 0
+sha256 = ""

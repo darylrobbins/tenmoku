@@ -19,7 +19,9 @@
 //! - each request opens a connection of its own and closes it when the
 //!   body ends or is dropped: there is no pool;
 //! - redirects aren't followed (a 3xx is returned as it is), cookies aren't
-//!   kept, no proxy is used and no compression is asked for;
+//!   kept, no proxy is used and no compression is asked for ([`grammar_fetch`]
+//!   follows a few for itself, each checked against the grants as any request
+//!   is);
 //! - connecting (DNS, TCP and TLS) times out after 10 s, and a read after
 //!   120 s without a byte; nothing bounds the whole reply, which may stream
 //!   for minutes.
@@ -28,6 +30,7 @@
 
 mod body;
 mod error;
+pub mod grammar_fetch;
 mod stream;
 mod target;
 
@@ -49,9 +52,10 @@ use smol_hyper::rt::FuturesIo;
 
 pub use body::Body;
 pub use error::NetError;
+pub use grammar_fetch::{GrammarFetchError, grammar_fetch, sha256_hex};
 
 use body::Driver;
-use stream::Stream;
+use stream::{ReadLimit, Stream};
 use target::{Allowlist, Target};
 
 /// How long connecting may take: resolving, TCP and the TLS handshake.
@@ -125,6 +129,18 @@ impl Client {
         headers: HeaderMap,
         body: Vec<u8>,
     ) -> impl Future<Output = Result<Response, NetError>> + Send + 'static {
+        self.send(method, url, headers, body, None)
+    }
+
+    /// [`Client::request`], with the connection's reads capped by `limit`.
+    fn send(
+        &self,
+        method: Method,
+        url: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        limit: Option<ReadLimit>,
+    ) -> impl Future<Output = Result<Response, NetError>> + Send + 'static {
         let target = Target::parse(url, &self.inner.allowlist);
         let inner = Arc::clone(&self.inner);
         let idle_timeout = self.idle_timeout;
@@ -139,7 +155,9 @@ impl Client {
                 target.path
             );
             let (mut sender, conn) = timeout(CONNECT_TIMEOUT, async {
-                let stream = Stream::connect(&target, idle_timeout, || inner.tls_config()).await?;
+                let stream = Stream::connect(&target, idle_timeout, || inner.tls_config())
+                    .await?
+                    .limited(limit);
                 hyper::client::conn::http1::handshake(FuturesIo::new(stream))
                     .await
                     .map_err(NetError::from_hyper)

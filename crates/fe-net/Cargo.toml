@@ -19,6 +19,7 @@ kiln-command.workspace = true
 log.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
+sha2.workspace = true
 smol-hyper.workspace = true
 thiserror.workspace = true
 

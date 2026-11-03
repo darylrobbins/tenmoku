@@ -4,6 +4,11 @@
 mod app_icon;
 mod cli;
 mod config;
+// Its only caller is the grammar prompt's Install action, the next card.
+#[allow(dead_code)]
+mod grammar_install;
+#[cfg(test)]
+mod grammar_install_tests;
 mod ipc;
 mod perf;
 mod theme;

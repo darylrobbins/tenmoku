@@ -211,6 +211,8 @@ fn every_extension_is_listed() {
     let mut found: Vec<String> = fs::read_dir(repository().join("extensions/grammars"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        // The release manifest beside the languages: grammar_pack_manifest's.
+        .filter(|name| name != "pack.toml")
         .collect();
     found.sort();
     let mut listed: Vec<&str> = LANGUAGES.iter().map(|(language, _)| *language).collect();
