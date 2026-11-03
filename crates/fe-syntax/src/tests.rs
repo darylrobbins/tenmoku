@@ -1,6 +1,7 @@
 use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
 mod golden;
+mod highlights_complete;
 pub(crate) mod imports_recovery;
 mod injected_clears;
 mod kotlin_sql_overrides;

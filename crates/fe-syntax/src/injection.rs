@@ -283,22 +283,24 @@ pub(crate) struct Host<'a> {
 /// `layers` or parsed and added to it, and languages whose queries aren't
 /// compiled yet are added to its missing ones.
 ///
-/// Also returns whether every injection overlapping `range` was highlighted.
-/// One isn't if finding or parsing it ran out of time before `deadline`, or
-/// its language is missing.
+/// Also returns whether every injection overlapping `range` was highlighted,
+/// or may be next time: one isn't if finding or parsing it ran out of time
+/// before `deadline`, or its language is missing. And whether any was skipped
+/// for good, as another try wouldn't highlight it either, by a limit on how
+/// many there are or how deep they nest, or a grammar that can't be set up.
 pub(crate) fn paint(
     host: Host,
     range: Range<usize>,
     deadline: Option<Instant>,
     layers: &mut Layers,
     spans: Vec<Painted>,
-) -> (Vec<Painted>, bool) {
+) -> (Vec<Painted>, bool, bool) {
     layers.pass += 1;
     if range.is_empty() {
         // Nothing to paint, but the layers edited at it are as unused as
         // if it weren't empty: those left when the whole text is deleted.
         layers.highlighted(range, true, host.parsed);
-        return (spans, true);
+        return (spans, true, false);
     }
     let mut painter = Painter {
         text: host.text,
@@ -308,11 +310,12 @@ pub(crate) fn paint(
         layers,
         parser: None,
         complete: true,
+        skipped: false,
     };
     let spans = painter.paint(host.language, host.tree, None, 1, spans);
-    let complete = painter.complete;
+    let (complete, skipped) = (painter.complete, painter.skipped);
     layers.highlighted(range, complete, host.parsed);
-    (spans, complete)
+    (spans, complete, skipped)
 }
 
 /// An injection found in a tree: the language of its content, and the
@@ -331,6 +334,10 @@ struct Painter<'a> {
     /// Shared by the layers parsed in one call.
     parser: Option<ThreadParser>,
     complete: bool,
+    /// Set when an injection was left out for good. Unlike `complete`, this
+    /// doesn't keep the result from being cached: querying again each frame
+    /// wouldn't find it, and would cost that for as long as it's on screen.
+    skipped: bool,
 }
 
 impl Painter<'_> {
@@ -346,6 +353,8 @@ impl Painter<'_> {
         mut spans: Vec<Painted>,
     ) -> Vec<Painted> {
         if depth > MAX_DEPTH {
+            // What this layer would inject stays plain, if it injects anything.
+            self.skipped |= language.injections.is_some();
             return spans;
         }
         for injection in self.find(language, tree, parent) {
@@ -432,6 +441,7 @@ impl Painter<'_> {
         });
 
         if matches.len() == MAX_INJECTIONS {
+            self.skipped = true;
             log::debug!(
                 "{}: found {MAX_INJECTIONS} injections in {:?}; any more stay plain",
                 language.name(),
@@ -480,6 +490,7 @@ impl Painter<'_> {
                 Collected::All => {}
                 Collected::TooMany => {
                     too_many(language);
+                    self.skipped = true;
                     continue;
                 }
                 Collected::OutOfTime => {
@@ -498,6 +509,7 @@ impl Painter<'_> {
                 // Cutting adds at most a part per range of the parent's.
                 if parts.len() > MAX_LAYER_RANGES {
                     too_many(language);
+                    self.skipped = true;
                     continue;
                 }
                 ranges = parts;
@@ -581,9 +593,15 @@ impl Painter<'_> {
         let parser = self.parser.get_or_insert_with(ThreadParser::take);
         // Only a WebAssembly grammar's store can fail, which leaves the
         // layer plain.
-        parser.set_language(language).ok()?;
+        if parser.set_language(language).is_err() {
+            self.skipped = true;
+            return None;
+        }
         // Sorted, disjoint and non-empty, as tree-sitter requires.
-        parser.set_included_ranges(&ranges).ok()?;
+        if parser.set_included_ranges(&ranges).is_err() {
+            self.skipped = true;
+            return None;
+        }
         let old = kept.map(|ix| &layers.kept[ix].tree);
         let Some(tree) = parse_text(parser, text, old, || out_of_time(deadline)) else {
             // Start the next parse afresh instead of resuming this one.

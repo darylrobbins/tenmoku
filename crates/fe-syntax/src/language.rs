@@ -615,7 +615,13 @@ const DEFS: &[Def] = &[
         extensions: &[],
         file_names: &[],
         grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
-        highlights: || &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        // The crate's query colours a URL autolink but not an email one.
+        highlights: || {
+            &[
+                tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+                "\n(email_autolink) @text.uri\n",
+            ]
+        },
         earlier_patterns_win: false,
         injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
         hidden: true,

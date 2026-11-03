@@ -621,8 +621,11 @@ fn injections_out_of_time_stay_plain() {
                 host_spans.clone(),
             )
         };
-        assert_eq!(paint(Some(Instant::now())), (host_spans.clone(), false));
-        let (spans, complete) = paint(None);
+        assert_eq!(
+            paint(Some(Instant::now())),
+            (host_spans.clone(), false, false)
+        );
+        let (spans, complete, _) = paint(None);
         assert!(complete && spans != host_spans, "{injected}");
         assert_eq!(layers.keys().len(), 1);
     }
@@ -719,6 +722,7 @@ fn combined_templates_stop_at_the_deadline() {
     let mut layers = Layers::default();
     let mut find = || {
         let mut painter = super::Painter {
+            skipped: false,
             text: buffer.text(),
             range: 0..text.len(),
             deadline,

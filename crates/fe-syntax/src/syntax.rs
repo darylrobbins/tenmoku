@@ -15,7 +15,7 @@ use tree_sitter::{
 use crate::{
     HighlightSpan, Language,
     brackets::Paired,
-    highlight::{Capture, Painted, flatten, highlighted},
+    highlight::{Capture, Highlights, Painted, flatten, highlighted},
     injection::{self, Layers},
     outline::ScopeIndex,
     runtime::ThreadParser,
@@ -85,8 +85,9 @@ const CUT_SHORT_RANGES: usize = 1024;
 #[derive(Default)]
 struct Cache {
     /// Recent results for the current tree, newest last, so frames that
-    /// neither scroll nor edit don't query again.
-    ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>)>,
+    /// neither scroll nor edit don't query again, with whether each is
+    /// complete: one that ran out of [`QUERY_BUDGET_MAX`] is kept all the same.
+    ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>, bool)>,
     /// Recent ranges whose query ran out of time on the current tree, newest
     /// last, with how many times it did: the next query of one gets
     /// [`QUERY_BUDGET`] doubled that many times. A range that ran out of
@@ -424,8 +425,23 @@ impl Syntax {
     /// Without a full tree, the window's highlights are used, those in
     /// `range` ∩ [`Syntax::window`].
     pub fn highlights(&self, range: Range<usize>) -> Vec<HighlightSpan> {
+        self.checked_highlights(range).spans
+    }
+
+    /// [`Syntax::highlights`], saying whether they're all there are: for a
+    /// caller that reads text with no span as meaning something, which isn't
+    /// safe when a query was cut short. They're [`Highlights::complete`] only
+    /// from a full tree parsed at the current version, so not from a window, a
+    /// tree edited since its parse, or none. A result that isn't may be
+    /// complete next time: a query cut short gets more time, up to its cap, and
+    /// a missing language gets compiled.
+    pub fn checked_highlights(&self, range: Range<usize>) -> Highlights {
+        let incomplete = || Highlights {
+            spans: Vec::new(),
+            complete: false,
+        };
         if self.failed.get() {
-            return Vec::new();
+            return incomplete();
         }
         let text = self.snapshot.text();
         let range = range.start.min(text.len())..range.end.min(text.len());
@@ -435,21 +451,28 @@ impl Syntax {
                 let start = range.start.max(window.start);
                 let end = range.end.min(window.end);
                 if start >= end {
-                    return Vec::new();
+                    return incomplete();
                 }
                 (tree, self.window_parsed, start..end)
             }
-            (None, None) => return Vec::new(),
+            (None, None) => return incomplete(),
         };
+        let whole_tree = self.tree.is_some();
         let mut cache = self.cache.borrow_mut();
         let cache = &mut *cache;
-        if let Some((_, spans)) = cache.ranges.iter().find(|(cached, _)| *cached == range) {
+        if let Some((_, spans, complete)) =
+            cache.ranges.iter().find(|(cached, ..)| *cached == range)
+        {
             // Shown again, so its layers are as recent as a query's.
             cache.layers.visited(range);
-            return spans.clone();
+            return Highlights {
+                spans: spans.clone(),
+                complete: *complete,
+            };
         }
 
         let parsed = parsed == Some(self.version());
+        let parsed_whole = parsed && whole_tree;
         let attempt = cache.cut_short.iter().position(|(cut, _)| *cut == range);
         let attempts = attempt.map_or(0, |attempt| cache.cut_short[attempt].1);
         let budget = QUERY_BUDGET.saturating_mul(1 << attempts);
@@ -472,16 +495,17 @@ impl Syntax {
                 tree,
                 parsed,
             };
-            let (spans, complete) = injection::paint(host, range.clone(), deadline, layers, spans);
-            (spans, finished, complete)
+            let (spans, complete, skipped) =
+                injection::paint(host, range.clone(), deadline, layers, spans);
+            (spans, finished, complete, skipped)
         };
-        let Ok((spans, finished, complete)) = catch_unwind(AssertUnwindSafe(query)) else {
+        let Ok((spans, finished, complete, skipped)) = catch_unwind(AssertUnwindSafe(query)) else {
             log::error!(
                 "{}: highlighting panicked; showing plain text",
                 self.language.name()
             );
             self.failed.set(true);
-            return Vec::new();
+            return incomplete();
         };
         let spans = highlighted(spans);
         if let Some(attempt) = attempt {
@@ -508,9 +532,14 @@ impl Syntax {
             if cache.ranges.len() == CACHED_RANGES {
                 cache.ranges.pop_front();
             }
-            cache.ranges.push_back((range, spans.clone()));
+            cache
+                .ranges
+                .push_back((range, spans.clone(), parsed_whole && finished && !skipped));
         }
-        spans
+        Highlights {
+            spans,
+            complete: parsed_whole && finished && complete && !skipped,
+        }
     }
 
     /// Takes the injected languages that [`Syntax::highlights`] has found

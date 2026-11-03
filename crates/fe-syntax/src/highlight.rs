@@ -142,6 +142,18 @@ pub struct HighlightSpan<H = Highlight> {
     pub highlight: H,
 }
 
+/// What [`crate::Syntax::checked_highlights`] found in a range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Highlights {
+    pub spans: Vec<HighlightSpan>,
+    /// Whether `spans` are all the range's, from a tree parsed at the current
+    /// version: no query or injection ran out of time, no injected language
+    /// was missing, no injection was left out by a limit or a grammar that
+    /// can't be set up, and nothing panicked. Without it, text with no span may
+    /// still be something a span would have said.
+    pub complete: bool,
+}
+
 /// A run of text with one highlight, or with none where `@none` cleared it.
 /// Injected layers keep their cleared runs until painted over the host, so
 /// that they clear its highlights too, unlike bytes no capture covers.

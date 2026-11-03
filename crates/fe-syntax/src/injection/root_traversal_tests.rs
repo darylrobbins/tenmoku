@@ -23,6 +23,7 @@ fn find(text: &str, deadline: Option<Instant>) -> (usize, bool, usize) {
     syntax.finish(syntax.parse_job().run_until(|_| || false));
     let mut layers = Layers::default();
     let mut painter = Painter {
+        skipped: false,
         text: buffer.text(),
         range: 0..text.len(),
         deadline,
