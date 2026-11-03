@@ -1520,10 +1520,10 @@ queries of `extensions/grammars/kotlin/`. Two sources: the golden sample
 lines (139,474 B), generated in the bench. Full parse, full highlight (a fresh
 parsed `Syntax` per run, since highlights are cached by range), one
 incremental reparse after a one-character edit in the middle of the large
-corpus, and the wasm load. Criterion's quick settings, medians. This
-states the ratios; it picks no threshold.
+corpus, and the wasm load. Criterion's quick settings, medians. The
+Thresholds subsection below picks the policy from the quiet runs C and D.
 
-**Measured under load.** Other lanes were building: the Mac's load average
+**Measured under load (runs A and B).** Other lanes were building: the Mac's load average
 was 19 → 28 over run A and 27 → 29 over run B (`uptime`, 1-minute figure at
 start and end). Native and wasm cases run one after the other, so a load swing
 between them lands in the ratio; read the ratios as rough, and the two runs
@@ -1552,6 +1552,42 @@ the tree's node access differs, so a ratio near 1 there is expected. The
 parse ratio is the larger and steadier signal, and the reparse is a
 sub-millisecond case that load noise swamps (it came out both above and below
 1).
+
+**Measured on a quiet Mac (runs C and D, T1338).** The Mac's other lane was
+held. The 1-minute load (`uptime`) was 3.69 at the start of run C and 5.39 at
+its end, and 3.62 at the start of run D and 4.18 at its end (the rise is the
+bench itself). Same bench as A and B, unchanged; the module rebuilt with
+`scripts/build-grammar-wasm.sh kotlin`. The A and B figures above stay as the
+under-load figures.
+
+| Measurement | Native C | Wasm C | wasm/native C | Native D | Wasm D | wasm/native D |
+| --- | --- | --- | --- | --- | --- | --- |
+| Parse, golden sample | 201 µs | 313 µs | 1.56× | 202 µs | 317 µs | 1.57× |
+| Highlight, golden sample | 195 µs | 234 µs | 1.20× | 177 µs | 236 µs | 1.33× |
+| Parse, 5k lines | 14.5 ms | 21.4 ms | 1.48× | 14.5 ms | 24.5 ms | 1.69× |
+| Highlight, 5k lines | 13.1 ms | 16.9 ms | 1.29× | 13.8 ms | 18.2 ms | 1.32× |
+| Reparse one character, 5k lines | 171 µs | 191 µs | 1.12× | 181 µs | 200 µs | 1.10× |
+
+Wasm load: 120 ms in run C, 120 ms in run D.
+
+### Thresholds
+
+Set from the quiet runs C and D (the under-load runs A and B are too noisy to
+set them from):
+
+- **Parse:** wasm/native at most 2× is acceptable; 2× to 3× is a warning (note
+  it, don't block on it); above 3× is a regression. Kotlin meets this: 1.48× to
+  1.69× on the 5k-line corpus and 1.56× to 1.57× on the golden sample across C
+  and D. (Under load, run B's 5k parse reached 2.74×, which would only have been
+  a warning.)
+- **Load:** the one-off wasm load (compile and instantiate the module, read the
+  files, compile the queries) under 500 ms. Kotlin meets this: 120 ms in both C
+  and D (under load, 340 and 457 ms).
+- **Highlight and the one-character reparse:** recorded, no threshold (see the
+  explanation above: highlight is native in both, reparse is noise-bound).
+
+These are a documented policy for choosing which grammars ship as wasm, read by
+people; no CI check enforces them.
 
 To rerun: `scripts/build-grammar-wasm.sh kotlin`, then
 `cargo bench -p fe-syntax --bench wasm`, on a quiet machine if possible; the
