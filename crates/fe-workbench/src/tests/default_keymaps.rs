@@ -72,6 +72,14 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
         "editor.column_select_right",
         "editor.column_select_up",
         "editor.column_select_down",
+        // ctrl-alt-left and right move tabs off macOS, and ctrl-alt-backspace
+        // is a desktop chord.
+        "editor.move_subword_left",
+        "editor.move_subword_right",
+        "editor.select_subword_left",
+        "editor.select_subword_right",
+        "editor.delete_subword_left",
+        "editor.delete_subword_right",
         // VS Code's Linux keymap has no key for either.
         "workbench.save_all",
         "workbench.save_without_formatting",

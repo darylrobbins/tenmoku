@@ -219,8 +219,9 @@ impl ViewerModel {
             Movement::Left => text.clip_offset(offset - 1, Bias::Left),
             Movement::Right if offset >= text.len() => text.len(),
             Movement::Right => text.clip_offset(offset + 1, Bias::Right),
-            Movement::WordLeft => self.prev_word(offset),
-            Movement::WordRight => self.next_word(offset),
+            // A viewer moves by whole words, not their parts.
+            Movement::WordLeft | Movement::SubwordLeft => self.prev_word(offset),
+            Movement::WordRight | Movement::SubwordRight => self.next_word(offset),
             Movement::LineStart => {
                 let row = text.offset_to_point(offset).row;
                 let start = text.row_start(row);
@@ -401,6 +402,8 @@ fn movement_command(id: &str, page_rows: u32) -> Option<(Movement, bool)> {
         "down" => Movement::Down,
         "word_left" => Movement::WordLeft,
         "word_right" => Movement::WordRight,
+        "subword_left" => Movement::SubwordLeft,
+        "subword_right" => Movement::SubwordRight,
         "line_start" => Movement::LineStart,
         "line_end" => Movement::LineEnd,
         "document_start" => Movement::DocumentStart,

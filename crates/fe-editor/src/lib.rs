@@ -56,6 +56,7 @@ mod rows;
 pub mod scripted_ai;
 mod smart_select;
 pub mod snippet;
+mod subword;
 pub mod text_diff;
 mod transpose;
 mod trim_whitespace;
@@ -89,6 +90,9 @@ pub enum Movement {
     Down,
     WordLeft,
     WordRight,
+    /// To the next part of a name: `foo|Bar`, `HTTP|Server`, `snake|_case`.
+    SubwordLeft,
+    SubwordRight,
     /// First non-blank character, or column 0 if already there.
     LineStart,
     LineEnd,
@@ -113,6 +117,7 @@ impl Movement {
             self,
             Movement::Right
                 | Movement::WordRight
+                | Movement::SubwordRight
                 | Movement::Down
                 | Movement::PageDown(_)
                 | Movement::DocumentEnd
@@ -1082,6 +1087,8 @@ impl EditorModel {
             Movement::Right => self.next_grapheme(offset),
             Movement::WordLeft => self.prev_word(offset),
             Movement::WordRight => self.next_word(offset),
+            Movement::SubwordLeft => self.prev_subword(offset),
+            Movement::SubwordRight => self.next_subword(offset),
             Movement::LineStart => {
                 let row = self.row_span(offset);
                 let indent = row.start + self.indent_len(&row);

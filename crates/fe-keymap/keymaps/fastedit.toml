@@ -2637,6 +2637,46 @@ command = "editor.column_select_down"
 context = "editor && !vim.enabled"
 platform = "macos"
 
+# Moving, selecting and deleting by the parts of a name. Elsewhere ctrl-alt-left
+# and right are pane.move_tab_left and right, and ctrl-alt-backspace is a
+# desktop chord, so none; the commands are there to bind.
+
+[[bindings]]
+keys = "ctrl-alt-left"
+command = "editor.move_subword_left"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-right"
+command = "editor.move_subword_right"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-shift-left"
+command = "editor.select_subword_left"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-shift-right"
+command = "editor.select_subword_right"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-backspace"
+command = "editor.delete_subword_left"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-delete"
+command = "editor.delete_subword_right"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
 # The image viewer's zoom (VS Code's Image Preview has none of these keys;
 # these are the browser's). Only in its own key context: the editor's keys
 # are untouched.

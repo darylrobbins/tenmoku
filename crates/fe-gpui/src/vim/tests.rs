@@ -564,7 +564,12 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
             "ctrl-space",
             "ctrl-g",
             "ctrl-shift-g",
-            "ctrl-]"
+            "ctrl-]",
+            // The subword moves, which vim has no key for.
+            "ctrl-alt-left",
+            "ctrl-alt-right",
+            "ctrl-alt-shift-left",
+            "ctrl-alt-shift-right",
         ]
     );
 }

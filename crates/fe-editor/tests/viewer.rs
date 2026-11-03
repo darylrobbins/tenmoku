@@ -276,9 +276,19 @@ fn refuses_edits() {
         if mutating.iter().any(|m| m == id) || id == "editor.save" || unsupported.contains(&id) {
             continue;
         }
+        // The subword moves run too, by whole words, so they aren't in MOVES,
+        // which move as the editor does (subword_tests.rs has them).
+        let others = [
+            "editor.move",
+            "editor.select_all",
+            "editor.copy",
+            "editor.move_subword_left",
+            "editor.move_subword_right",
+            "editor.select_subword_left",
+            "editor.select_subword_right",
+        ];
         assert!(
-            MOVES.contains(&id)
-                || ["editor.move", "editor.select_all", "editor.copy"].contains(&id),
+            MOVES.contains(&id) || others.contains(&id),
             "{id} is neither refused, run nor unsupported"
         );
     }

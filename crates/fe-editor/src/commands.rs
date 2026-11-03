@@ -234,6 +234,8 @@ pub enum Motion {
     Down,
     WordLeft,
     WordRight,
+    SubwordLeft,
+    SubwordRight,
     LineStart,
     LineEnd,
     DocumentStart,
@@ -249,6 +251,8 @@ impl From<Motion> for Movement {
             Motion::Down => Movement::Down,
             Motion::WordLeft => Movement::WordLeft,
             Motion::WordRight => Movement::WordRight,
+            Motion::SubwordLeft => Movement::SubwordLeft,
+            Motion::SubwordRight => Movement::SubwordRight,
             Motion::LineStart => Movement::LineStart,
             Motion::LineEnd => Movement::LineEnd,
             Motion::DocumentStart => Movement::DocumentStart,
@@ -311,7 +315,7 @@ type MovementCommands = (
 /// The editor's registry, with every editor command.
 pub fn registry() -> Registry<Editor> {
     let mut registry = Registry::new();
-    let movements: [MovementCommands; 12] = [
+    let movements: [MovementCommands; 14] = [
         (
             "move_left",
             "Move Left",
@@ -349,6 +353,20 @@ pub fn registry() -> Registry<Editor> {
             "select_word_right",
             "Select Word Right",
             |_| Movement::WordRight,
+        ),
+        (
+            "move_subword_left",
+            "Move Subword Left",
+            "select_subword_left",
+            "Select Subword Left",
+            |_| Movement::SubwordLeft,
+        ),
+        (
+            "move_subword_right",
+            "Move Subword Right",
+            "select_subword_right",
+            "Select Subword Right",
+            |_| Movement::SubwordRight,
         ),
         (
             "move_line_start",
@@ -443,6 +461,26 @@ pub fn registry() -> Registry<Editor> {
         true,
         |model, _| {
             model.delete_word_left();
+            Ok(Effect::Changed)
+        },
+    );
+    add(
+        &mut registry,
+        "delete_subword_left",
+        "Delete Subword Left",
+        true,
+        |model, _| {
+            model.delete_subword_left();
+            Ok(Effect::Changed)
+        },
+    );
+    add(
+        &mut registry,
+        "delete_subword_right",
+        "Delete Subword Right",
+        true,
+        |model, _| {
+            model.delete_subword_right();
             Ok(Effect::Changed)
         },
     );

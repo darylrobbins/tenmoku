@@ -93,7 +93,7 @@ impl EditorModel {
     /// `range` widened to grapheme boundaries: a caret can sit inside a
     /// cluster (word movement stops at a combining mark), and a deletion
     /// must not leave half of one.
-    fn whole_graphemes(&self, range: Range<usize>) -> Range<usize> {
+    pub(crate) fn whole_graphemes(&self, range: Range<usize>) -> Range<usize> {
         if range.is_empty() {
             return range;
         }
