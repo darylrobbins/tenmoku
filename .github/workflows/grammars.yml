@@ -3,7 +3,7 @@ name: Grammars
 # Builds the first-party WebAssembly grammars (extensions/grammars/) from the
 # Cargo.lock-pinned crate sources, checks each highlights as the built-in
 # language does (scripts/build-grammar-wasm.sh), and attaches the modules to
-# the tag's GitHub Release, which release.yml creates. A manual run from a tag
+# the tag's GitHub Release with the language pack (scripts/package-language-pack.sh), which release.yml creates. A manual run from a tag
 # does the same; from a branch, which has no release, it uploads them as a
 # workflow artifact. See docs/decisions/jd5c0dwjt7-grammar-wasm.md and
 # docs/decisions/vkgx7c7far-grammar-wasm.md.
@@ -48,6 +48,8 @@ jobs:
           echo "WASI_SDK=$RUNNER_TEMP/$name" >>"$GITHUB_ENV"
       - name: Build the grammars and check them against the golden files
         run: scripts/build-grammar-wasm.sh
+      - name: Package the language pack
+        run: scripts/package-language-pack.sh
       - name: Attach them to the GitHub Release
         if: github.ref_type == 'tag'
         env:
@@ -68,11 +70,15 @@ jobs:
             fi
             sleep 30
           done
-          gh release upload "$GITHUB_REF_NAME" target/grammar-wasm/*.wasm --clobber
+          gh release upload "$GITHUB_REF_NAME" target/grammar-wasm/*.wasm \
+            dist/Tenmoku-language-pack.tar.gz dist/Tenmoku-language-pack.tar.gz.sha256 --clobber
       - name: Upload them as a workflow artifact
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v7
         with:
           name: grammar-wasm
-          path: target/grammar-wasm/*.wasm
+          path: |
+            target/grammar-wasm/*.wasm
+            dist/Tenmoku-language-pack.tar.gz
+            dist/Tenmoku-language-pack.tar.gz.sha256
           if-no-files-found: error
