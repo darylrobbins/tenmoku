@@ -176,6 +176,10 @@
 # language-server gr keys (grr references, grn rename, gra code action, gri,
 # grt).
 # replace_with_register = false
+# true: w, b, e and ge stop at each part of a camelCase, PascalCase, snake_case
+# or digit-joined name, as vim-wordmotion does; W B E gE still move by WORDs.
+# iS and aS select a subword either way.
+# subword_motions = false
 # How long, in milliseconds, a vim search or :s may run before it stops and
 # changes nothing.
 # regex_time_limit = 2000

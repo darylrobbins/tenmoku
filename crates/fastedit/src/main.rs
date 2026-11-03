@@ -150,6 +150,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
             (now.vim.ignorecase, now.vim.smartcase, now.vim.incsearch);
         let inccommand = now.vim.inccommand;
         let replace_with_register = now.vim.replace_with_register;
+        let subword_motions = now.vim.subword_motions;
         let now_limit = now.vim.regex_time_limit;
         let which_key = (now.vim.which_key, now.vim.which_key_delay_ms);
         let yank = (now.vim.highlight_yank, now.vim.highlight_yank_ms);
@@ -171,6 +172,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         fe_gpui::set_vim_incsearch(cx, incsearch);
         fe_gpui::set_vim_inccommand(cx, inccommand);
         fe_gpui::set_vim_replace_with_register(cx, replace_with_register);
+        fe_gpui::set_vim_subword_motions(cx, subword_motions);
         fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         fe_gpui::set_vim_which_key(cx, which_key.0, Duration::from_millis(which_key.1));
         fe_gpui::set_vim_highlight_yank(cx, yank.0, Duration::from_millis(yank.1));
@@ -589,6 +591,7 @@ fn main() {
         fe_gpui::set_vim_incsearch(cx, settings.vim.incsearch);
         fe_gpui::set_vim_inccommand(cx, settings.vim.inccommand);
         fe_gpui::set_vim_replace_with_register(cx, settings.vim.replace_with_register);
+        fe_gpui::set_vim_subword_motions(cx, settings.vim.subword_motions);
         fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_gpui::set_vim_which_key(
             cx,

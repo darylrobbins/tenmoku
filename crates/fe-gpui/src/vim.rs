@@ -382,6 +382,8 @@ struct Vim {
     jump_style: JumpStyle,
     /// `vim.replace_with_register`: whether `gr` is ReplaceWithRegister's.
     replace_with_register: bool,
+    /// `vim.subword_motions`: whether `w b e ge` step by subwords.
+    subword_motions: bool,
     /// `vim.remap` and `vim.leader`, built.
     remaps: Arc<RemapSet>,
     /// `vim.which_key` and `vim.which_key_delay_ms`.
@@ -637,6 +639,24 @@ pub fn set_vim_replace_with_register(cx: &mut App, on: bool) {
             .update(cx, |view, _| {
                 if let Some(state) = &mut view.vim {
                     state.set_replace_with_register(on);
+                }
+            })
+            .ok();
+    }
+}
+
+/// Makes `w`, `b`, `e` and `ge` step by the parts of camelCase and
+/// snake_case names in every editor, and in any opened or switched on later
+/// (`vim.subword_motions`).
+pub fn set_vim_subword_motions(cx: &mut App, on: bool) {
+    let vim = cx.default_global::<Vim>();
+    vim.subword_motions = on;
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, _| {
+                if let Some(state) = &mut view.vim {
+                    state.set_subword_motions(on);
                 }
             })
             .ok();
@@ -1314,6 +1334,7 @@ impl EditorView {
                 state.set_jump_on_s(vim.jump_on_s);
                 state.set_jump_style(vim.jump_style);
                 state.set_replace_with_register(vim.replace_with_register);
+                state.set_subword_motions(vim.subword_motions);
                 state.set_remaps(Arc::clone(&vim.remaps));
             }
             state
@@ -3575,6 +3596,9 @@ mod viewport_resize_tests;
 
 #[cfg(test)]
 mod jump_setting_tests;
+
+#[cfg(test)]
+mod subword_setting_tests;
 
 #[cfg(test)]
 mod jump_flash_tests;

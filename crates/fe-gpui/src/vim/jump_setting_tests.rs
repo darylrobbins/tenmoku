@@ -11,7 +11,7 @@ mod search_setting_tests;
 use super::*;
 use crate::{EditorTheme, EditorView, init};
 
-fn open<'a>(
+pub(super) fn open<'a>(
     cx: &'a mut TestAppContext,
     text: &str,
 ) -> (Entity<EditorView>, &'a mut VisualTestContext) {
@@ -64,7 +64,7 @@ fn assert_changes(view: &Entity<EditorView>, cx: &mut VisualTestContext, text: &
     assert_eq!(text_of(view, cx), text, "undone");
 }
 
-fn text_of(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
+pub(super) fn text_of(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
     view.read_with(cx, |view, _| view.model().text().to_string())
 }
 

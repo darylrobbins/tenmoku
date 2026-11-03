@@ -315,6 +315,11 @@ pub struct VimSettings {
     /// of running nvim 0.12's language-server `gr` keys (`grr` references,
     /// `grn` rename, `gra` code action, `gri`, `grt`).
     pub replace_with_register: bool,
+    /// true: `w`, `b`, `e` and `ge` stop at each part of a camelCase,
+    /// PascalCase, snake_case or digit-joined name, as vim-wordmotion does;
+    /// `W B E gE` still move by WORDs. `iS` and `aS` select a subword either
+    /// way.
+    pub subword_motions: bool,
     /// How long, in milliseconds, a vim search or :s may run on one command
     /// before it stops with Interrupted and changes nothing (nvim's
     /// 'redrawtime' is the same default).
@@ -373,6 +378,7 @@ impl Default for VimSettings {
             incsearch: true,
             inccommand: true,
             replace_with_register: false,
+            subword_motions: false,
             // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
             regex_time_limit: 2000,
             shell: String::new(),

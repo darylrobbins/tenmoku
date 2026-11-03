@@ -1224,6 +1224,11 @@
           "description": "true: with `ignorecase` on, a typed search pattern with an uppercase\nletter matches case (`*` and `#` still ignore it), as nvim's\n'smartcase' does.",
           "type": "boolean"
         },
+        "subword_motions": {
+          "default": false,
+          "description": "true: `w`, `b`, `e` and `ge` stop at each part of a camelCase,\nPascalCase, snake_case or digit-joined name, as vim-wordmotion does;\n`W B E gE` still move by WORDs. `iS` and `aS` select a subword either\nway.",
+          "type": "boolean"
+        },
         "which_key": {
           "default": true,
           "description": "true: a popup lists the keys that go on from a pending prefix (`g`,\n`z`, `<leader>`, a remap's first keys) with what each does, as\nwhich-key.nvim's does, once `which_key_delay_ms` passes with no key.",
@@ -1438,6 +1443,7 @@
         "replace_with_register": false,
         "shell": "",
         "smartcase": false,
+        "subword_motions": false,
         "which_key": true,
         "which_key_delay_ms": 200
       },
