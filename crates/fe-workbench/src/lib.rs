@@ -26,6 +26,7 @@ mod dock_layout;
 mod encoding_picker;
 mod extension_snippets;
 mod extensions_picker;
+pub mod external_format;
 mod find_bar;
 mod find_commands;
 mod git;
@@ -276,6 +277,8 @@ mod closed_editors_tests;
 mod command_catalog_tests;
 #[cfg(test)]
 mod extension_snippets_tests;
+#[cfg(test)]
+mod external_format_tests;
 #[cfg(test)]
 mod list_vim_keys_tests;
 #[cfg(test)]
