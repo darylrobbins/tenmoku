@@ -282,6 +282,8 @@ mod extension_snippets_tests;
 #[cfg(test)]
 mod external_format_tests;
 #[cfg(test)]
+mod external_format_wiring_tests;
+#[cfg(test)]
 mod list_vim_keys_tests;
 #[cfg(test)]
 mod lsp_consent_relaunch_tests;

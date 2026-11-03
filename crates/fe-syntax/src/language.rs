@@ -36,6 +36,14 @@ impl Language {
         self.name
     }
 
+    /// Its usual file extension, without the dot: the first a language compiled
+    /// into this build lists. `None` for a [registered](crate::register_language)
+    /// one, and for one known only by its file names.
+    pub fn first_extension(&self) -> Option<&'static str> {
+        let def = DEFS.iter().find(|def| def.name == self.name)?;
+        def.extensions.first().copied()
+    }
+
     fn compile(def: &Def) -> Self {
         let source = (def.highlights)().concat();
         Self::new(

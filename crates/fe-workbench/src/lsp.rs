@@ -641,7 +641,7 @@ fn server_name(manager: &LspManager, language: Option<&str>) -> Option<String> {
 /// `None` while its language loads, and for plain text otherwise: a file
 /// fe-syntax has a language for but shown as plain text isn't routed, nor
 /// is one set to plain text by hand.
-fn routed_language(view: &fe_gpui::EditorView) -> Option<Cow<'static, str>> {
+pub(crate) fn routed_language(view: &fe_gpui::EditorView) -> Option<Cow<'static, str>> {
     if let Some(syntax) = view.syntax() {
         return Some(Cow::Borrowed(syntax.language().name()));
     }

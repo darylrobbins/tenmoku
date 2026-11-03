@@ -205,6 +205,8 @@ pub struct Workbench {
     pub(crate) trust: kiln_shell::trust::RootTrust,
     /// The root's language servers.
     pub(crate) lsp: Lsp,
+    /// What runs the external formatters ([`crate::external_format`]).
+    pub(crate) format_runner: Rc<dyn crate::external_format::Runner>,
     /// To the project panel's events: replaced with it on a new root.
     root_subscription: Subscription,
     /// To the Changes panel's events: replaced with it on a new root.
@@ -578,6 +580,7 @@ impl Workbench {
             _consent_prompt: crate::lsp_consent_prompt::ConsentPrompt::new(window, cx),
             trust: kiln_shell::trust::RootTrust::new(trust::prompt()),
             lsp: Lsp::new(),
+            format_runner: Rc::new(crate::external_format::ProcessRunner),
             root_subscription,
             changes_subscription,
             root_settings: Self::watch_root_settings(launch_root.as_deref(), cx),
