@@ -467,6 +467,17 @@ impl Terminal {
         snapshot::take(&self.term.lock())
     }
 
+    /// All the output kept, scrollback and screen, top to bottom, wherever
+    /// the view is scrolled: a line the grid wrapped is one line, and trailing
+    /// blanks are trimmed.
+    pub fn output_text(&self) -> String {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let start = Point::new(grid.topmost_line(), Column(0));
+        let end = Point::new(grid.bottommost_line(), grid.last_column());
+        term.bounds_to_string(start, end)
+    }
+
     /// Starts a selection at viewport cell (`row`, `col`), replacing any other.
     pub fn select(&self, kind: SelectionKind, row: usize, col: usize, side: Side) {
         let mut term = self.term.lock();

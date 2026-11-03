@@ -311,6 +311,8 @@ mod task_commands_tests;
 #[cfg(test)]
 mod task_defs_tests;
 #[cfg(test)]
+mod task_problems_panel_tests;
+#[cfg(test)]
 mod task_problems_tests;
 #[cfg(test)]
 mod task_run_tests;

@@ -163,6 +163,7 @@ syn = { version = "2", features = ["full"] }
 icu_collator = "2"
 icu_properties = "2"
 unicode-segmentation = "1"
+unicode-width = "0.2"
 
 # The platform keychain behind kiln-core's KeychainStore (src/secrets.rs):
 # keyring-core and its per-platform stores, all MIT OR Apache-2.0. On Linux

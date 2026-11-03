@@ -405,3 +405,28 @@ fn a_long_unfinished_synchronized_update_survives_exit() {
         events_of("printf '\\033[?2026h'; head -c 300000 /dev/zero | tr '\\0' x; printf '\\nend'");
     assert!(snapshot.text().contains("end"), "{}", snapshot.text());
 }
+
+#[test]
+fn output_text_has_the_scrollback_and_whole_lines() {
+    let dir = temp_dir();
+    let long = "x".repeat(100);
+    let script = format!(
+        "echo first; printf '{long}\\n'; \
+         i=0; while [ $i -lt 200 ]; do echo line$i; i=$((i+1)); done; read -r x"
+    );
+    let mut session = Session::sh(&script, dir.path(), 40, 10);
+    let snapshot = session.wait_for_text("line199");
+    assert!(
+        !snapshot.text().contains("first"),
+        "scrolled off the screen"
+    );
+    assert!(!snapshot.text().contains(&long), "wrapped, if it's shown");
+
+    // From anywhere the view is scrolled.
+    session.terminal.scroll(-5);
+    let text = session.terminal.output_text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[..3], ["first", long.as_str(), "line0"], "{text}");
+    assert!(lines.contains(&"line199"), "{text}");
+    assert_eq!(session.terminal.snapshot().display_offset, 5);
+}

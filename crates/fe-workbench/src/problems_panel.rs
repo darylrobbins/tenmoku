@@ -42,6 +42,14 @@
 //! quick open does, and selects the problem's range decoded against the
 //! opened buffer's text.
 //!
+//! A finished task's problems are listed too ([`crate::task_run`]): a source
+//! per task tab, each replaced by the tab's next run and gone with the tab
+//! ([`ProblemsPanel::set_source`]). They're panel rows alone, merged by
+//! position with the file's other problems, labelled with the task's name and
+//! counted in the status items; no editor marks them. They show the row and
+//! column the tool printed, and sort and open by where that is in the file's
+//! text, in the unit the tool counts columns in ([`ColumnUnit`]).
+//!
 //! The commands are the workbench's typed commands
 //! (`workbench_commands.rs`), which do a [`ProblemsOp`]: `problems.show`,
 //! `diagnostics.next` and `diagnostics.previous` in the workbench's
@@ -69,7 +77,7 @@ use gpui::{
     uniform_list,
 };
 
-use crate::{Pane, Workbench, loader, pane::Reveal};
+use crate::{Pane, Workbench, loader, pane::Reveal, task_run::TaskTabs};
 use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
 
 /// The key context the panel's element sets.
@@ -142,15 +150,77 @@ enum Target {
     Row(PathBuf, u32),
     /// A diagnostic as a server sent it, in a file no editor showed.
     Sent(PathBuf, FileDiagnostic, PositionEncoding),
+    /// A row and column a task's output named, in a file that may not be open.
+    Position(PathBuf, u32, u32, ColumnUnit),
 }
 
-/// The diagnostics of a file listed though no editor shows it, as the
-/// servers sent them, in its problems' order; whether its text is still
-/// being read, so its problems' columns aren't known.
+/// What a tool's columns count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColumnUnit {
+    Bytes,
+    Utf16,
+    /// Unicode scalar values.
+    Chars,
+    /// Terminal cells: wide characters take two, a tab runs to the next
+    /// multiple of [`TAB_STOP`].
+    Display,
+}
+
+/// Where a tool counting [`ColumnUnit::Display`] puts its tab stops.
+const TAB_STOP: u32 = 8;
+
+/// The offset in `text` of zero-based `column`, counted in `unit`, on `row`:
+/// the text's end for a row past it, the row's end for a column past that.
+pub(crate) fn column_offset(text: &Text, row: u32, column: u32, unit: ColumnUnit) -> usize {
+    if row >= text.row_count() {
+        return text.len();
+    }
+    let start = text.row_start(row);
+    let line = text.row_to_string(row);
+    let mut counted = 0;
+    for (ix, ch) in line.char_indices() {
+        let width = match unit {
+            ColumnUnit::Bytes => ch.len_utf8() as u32,
+            ColumnUnit::Utf16 => ch.len_utf16() as u32,
+            ColumnUnit::Chars => 1,
+            ColumnUnit::Display if ch == '\t' => TAB_STOP - counted % TAB_STOP,
+            ColumnUnit::Display => unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1) as u32,
+        };
+        // A mark of no width belongs to the character before it.
+        if counted >= column && width > 0 {
+            return start + ix;
+        }
+        counted += width;
+    }
+    start + line.len()
+}
+
+/// Where the problems of a file go that aren't all its buffer's own: one no
+/// editor shows, whose diagnostics are as the servers sent them, or one a
+/// task's problems are listed in. In its problems' order; whether its text is
+/// still being read, so its problems' columns aren't known.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Sent {
-    items: Vec<(FileDiagnostic, PositionEncoding)>,
+    targets: Vec<Target>,
     reading: bool,
+}
+
+/// A problem a task's output named, at the row and column the tool printed,
+/// zero-based, the column counted in `unit`. `file_column` is that column in
+/// bytes of the file's text as the task's output was read, the printed one if
+/// the file couldn't be: what it sorts by while no editor has the file's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceProblem {
+    pub(crate) path: PathBuf,
+    pub(crate) problem: Problem,
+    pub(crate) unit: ColumnUnit,
+    pub(crate) file_column: u32,
+}
+
+/// Zero-based `column` of `row`, counted in `unit`, in bytes of `text`.
+pub(crate) fn byte_column(text: &Text, row: u32, column: u32, unit: ColumnUnit) -> u32 {
+    let offset = column_offset(text, row, column, unit);
+    (offset - text.row_start(row).min(offset)) as u32
 }
 
 /// The files the servers have diagnostics for that no editor shows, by
@@ -183,7 +253,7 @@ impl Unopened {
 
 /// `path`'s text, as an editor would load it, unless it's gone, can't be
 /// read, is larger than a server takes or is binary (has a NUL). Blocking.
-fn read_text(path: PathBuf) -> Option<Text> {
+pub(crate) fn read_text(path: PathBuf) -> Option<Text> {
     let len = std::fs::metadata(&path).ok()?.len();
     if len > fe_lsp::DEFAULT_MAX_FILE_BYTES as u64 {
         return None;
@@ -194,15 +264,16 @@ fn read_text(path: PathBuf) -> Option<Text> {
     (!binary).then_some(text)
 }
 
-/// `items` as problems, decoded against `text`; without it, at each
-/// position as sent, the line and character as the row and column. By
-/// position, as an open file's.
+/// `items` as problems of the file listed as `path`, decoded against `text`;
+/// without it, at each position as sent, the line and character as the row and
+/// column. By position, as an open file's.
 fn sent_problems(
+    path: &Path,
     text: Option<&Text>,
     items: Vec<(FileDiagnostic, PositionEncoding)>,
     reading: bool,
 ) -> (Vec<Problem>, Sent) {
-    let mut problems: Vec<(Problem, (FileDiagnostic, PositionEncoding))> = (items.into_iter())
+    let mut problems: Vec<(Problem, Target)> = (items.into_iter())
         .map(|(item, encoding)| {
             let problem = match text {
                 Some(text) => {
@@ -217,12 +288,66 @@ fn sent_problems(
                     sent_problem(&item, 0..0, start.line, start.character)
                 }
             };
-            (problem, (item, encoding))
+            (problem, Target::Sent(path.to_owned(), item, encoding))
         })
         .collect();
+    sort_by_position(&mut problems);
+    let (problems, targets) = problems.into_iter().unzip();
+    (problems, Sent { targets, reading })
+}
+
+/// In a file's listing order, the worst first at one position.
+fn sort_by_position(problems: &mut [(Problem, Target)]) {
     problems.sort_by_key(|(p, _)| (p.row, p.column, std::cmp::Reverse(p.severity)));
-    let (problems, items) = problems.into_iter().unzip();
-    (problems, Sent { items, reading })
+}
+
+/// Adds `sources`' problems to the `files` listed, among their rows by
+/// position, or as files of their own. Other files stay as they were. Rows
+/// count columns in bytes, so a task's sorts by where its column is in the
+/// file's text: of `texts`, if it's there, else as it was read with the output.
+fn merge_sources(
+    files: &mut BTreeMap<PathBuf, (FileProblems, Option<Sent>)>,
+    sources: &BTreeMap<u64, Vec<SourceProblem>>,
+    texts: &HashMap<PathBuf, Text>,
+) {
+    let mut by_path: BTreeMap<&Path, Vec<&SourceProblem>> = BTreeMap::new();
+    for problem in sources.values().flatten() {
+        by_path.entry(&problem.path).or_default().push(problem);
+    }
+    for (path, listed) in by_path {
+        let (file, sent) = files.entry(path.to_owned()).or_insert_with(|| {
+            let path = path.to_owned();
+            let problems = Vec::new();
+            (FileProblems { path, problems }, None)
+        });
+        let sent = sent.get_or_insert_with(|| Sent {
+            targets: (file.problems.iter())
+                .map(|problem| Target::Range(path.to_owned(), problem.range.clone()))
+                .collect(),
+            reading: false,
+        });
+        let text = texts.get(path);
+        let added = listed.into_iter().map(|source| {
+            let problem = &source.problem;
+            let (row, column) = (problem.row, problem.column);
+            let target = Target::Position(path.to_owned(), row, column, source.unit);
+            let bytes = text.map_or(source.file_column, |text| {
+                byte_column(text, row, column, source.unit)
+            });
+            (bytes, problem.clone(), target)
+        });
+        let mut rows: Vec<_> = (std::mem::take(&mut file.problems).into_iter())
+            .zip(std::mem::take(&mut sent.targets))
+            .map(|(problem, target)| (problem.column, problem, target))
+            .chain(added)
+            .collect();
+        rows.sort_by_key(|(bytes, problem, _)| {
+            (problem.row, *bytes, std::cmp::Reverse(problem.severity))
+        });
+        (file.problems, sent.targets) = (rows.into_iter())
+            .map(|(_, problem, target)| (problem, target))
+            .unzip();
+    }
 }
 
 /// `item` as a problem at `range`, starting at `row` and `column`: one with
@@ -265,6 +390,10 @@ pub struct ProblemsPanel {
     scroll: UniformListScrollHandle,
     /// Each severity's colour, as the editor marks it.
     colors: [Hsla; 4],
+    /// Each task tab's problems, by the key [`TaskTabs`] gave it.
+    sources: BTreeMap<u64, Vec<SourceProblem>>,
+    /// The task tabs those belong to.
+    pub(crate) task_tabs: TaskTabs,
 }
 
 impl ProblemsPanel {
@@ -290,7 +419,21 @@ impl ProblemsPanel {
             item: None,
             scroll: UniformListScrollHandle::new(),
             colors,
+            sources: BTreeMap::new(),
+            task_tabs: TaskTabs::default(),
         }
+    }
+
+    /// Replaces source `key`'s problems with `problems`, for the next
+    /// [`Workbench::sync_problems`].
+    pub(crate) fn set_source(&mut self, key: u64, problems: Vec<SourceProblem>) {
+        self.sources.insert(key, problems);
+    }
+
+    /// Drops source `key`'s problems, for the next
+    /// [`Workbench::sync_problems`].
+    pub(crate) fn clear_source(&mut self, key: u64) {
+        self.sources.remove(&key);
     }
 
     /// Lists `files`, with paths relative to `root`, each with its
@@ -433,16 +576,16 @@ impl ProblemsPanel {
     }
 
     /// Where the selected row goes: a problem's range in its file (as
-    /// sent, in one no editor showed), a related location's in the same
-    /// file, or another file's row. None for a location in no file.
+    /// sent, in one no editor showed), a task's problem's position, a related
+    /// location's in the same file, or another file's row. None for a location
+    /// in no file.
     fn selected_target(&self) -> Option<Target> {
         let (path, problem) = self.selected_problem()?;
         let row = *self.rows.get(self.selected?)?;
         if let Row::Problem(file, problem) = row
             && let Some(sent) = &self.sent[file]
         {
-            let (item, encoding) = sent.items[problem].clone();
-            return Some(Target::Sent(path.to_owned(), item, encoding));
+            return Some(sent.targets[problem].clone());
         }
         let Row::Related(_, _, related) = row else {
             return Some(Target::Range(path.to_owned(), problem.range.clone()));
@@ -749,12 +892,15 @@ impl Render for ProblemsPanel {
 
 impl Workbench {
     /// Lists the open buffers' diagnostics in the Problems panel, once per
-    /// file, with the servers' diagnostics for files no editor shows, and
-    /// shows their errors and warnings on the status bar.
+    /// file, with the servers' diagnostics for files no editor shows and the
+    /// finished tasks' problems, and shows their errors and warnings on the
+    /// status bar.
     pub(crate) fn sync_problems(&mut self, cx: &mut Context<Self>) {
         let mut listed = HashSet::new();
         // The open files' paths, as opened and as resolved.
         let mut shown = HashSet::new();
+        // The text of each file listed that's known, for a task's columns.
+        let mut texts = HashMap::new();
         let files = (self.open_editors(cx).into_iter())
             .filter_map(|editor| {
                 let model = editor.read(cx).model();
@@ -762,25 +908,30 @@ impl Workbench {
                 let resolved = self.lsp.resolved.get(&model.buffer().id());
                 shown.extend(resolved.cloned().flatten());
                 shown.insert(path.clone());
-                listed
-                    .insert(path.clone())
-                    .then(|| (path, model.problems()))
+                listed.insert(path.clone()).then(|| {
+                    texts.insert(path.clone(), model.buffer().text().clone());
+                    (path, model.problems())
+                })
             })
             .collect();
         let files = group_problems(files);
         let mut files: BTreeMap<PathBuf, (FileProblems, Option<Sent>)> = (files.into_iter())
             .map(|file| (file.path.clone(), (file, None)))
             .collect();
-        for (path, problems, sent) in self.unopened_problems(&shown, cx) {
+        for (path, problems, sent, text) in self.unopened_problems(&shown, cx) {
+            if let Some(text) = text {
+                texts.entry(path.clone()).or_insert(text);
+            }
             let file = FileProblems {
                 path: path.clone(),
                 problems,
             };
             files.entry(path).or_insert((file, Some(sent)));
         }
+        let panel = self.dock().read(cx).problems().clone();
+        merge_sources(&mut files, &panel.read(cx).sources, &texts);
         let files = files.into_values().collect();
         let root = self.root().map(Path::to_owned);
-        let panel = self.dock().read(cx).problems().clone();
         let counts = panel.update(cx, |panel, cx| panel.set_files(root, files, cx));
         if let Some(counts) = counts {
             self.show_problem_counts(counts, cx);
@@ -789,13 +940,14 @@ impl Workbench {
 
     /// The problems of each file the servers have diagnostics for that
     /// isn't `shown`, by the path it's listed and opened by: under the
-    /// workbench's root as the root has it, as quick open opens it. Starts
-    /// reading the files not read yet, and forgets the rest.
+    /// workbench's root as the root has it, as quick open opens it, with its
+    /// text once it's read. Starts reading the files not read yet, and forgets
+    /// the rest.
     fn unopened_problems(
         &mut self,
         shown: &HashSet<PathBuf>,
         cx: &mut Context<Self>,
-    ) -> Vec<(PathBuf, Vec<Problem>, Sent)> {
+    ) -> Vec<(PathBuf, Vec<Problem>, Sent, Option<Text>)> {
         let root = self.root().map(Path::to_owned);
         let lsp = &mut self.lsp;
         let listed_path = |resolved: &Path| {
@@ -841,6 +993,7 @@ impl Workbench {
                     rows: None,
                 }
             });
+            let path = listed_path(resolved).unwrap_or_else(|| resolved.to_owned());
             let (rows, sent) = file.rows.get_or_insert_with(|| {
                 servers.sort_by_key(|(server, ..)| *server);
                 let items = (servers.into_iter())
@@ -849,10 +1002,10 @@ impl Workbench {
                     })
                     .collect();
                 let text = file.text.as_ref();
-                sent_problems(text.and_then(Option::as_ref), items, text.is_none())
+                sent_problems(&path, text.and_then(Option::as_ref), items, text.is_none())
             });
-            let path = listed_path(resolved).unwrap_or_else(|| resolved.to_owned());
-            problems.push((path, rows.clone(), sent.clone()));
+            let (rows, sent) = (rows.clone(), sent.clone());
+            problems.push((path, rows, sent, file.text.clone().flatten()));
         }
         problems
     }
@@ -920,14 +1073,26 @@ impl Workbench {
     /// the active pane, which focuses it once it's read. With vim on, the
     /// caret goes to the range's start, in normal mode: an editor left in
     /// insert or replace mode leaves it once it's drawn
-    /// ([`Workbench::land_problem`]). A diagnostic as sent opens as
-    /// [`Workbench::open_sent_problem`] opens it.
+    /// ([`Workbench::land_problem`]). A diagnostic as sent, or a task's
+    /// problem, opens as [`Workbench::open_decoded_problem`] opens it.
     fn open_problem(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
         self.lsp.unopened.opening = None;
         let vim = fe_gpui::vim_enabled(cx);
         let (path, reveal) = match target {
             Target::Sent(path, item, encoding) => {
-                return self.open_sent_problem(path, item, encoding, window, cx);
+                let decode = move |text: &Text| {
+                    let decoded =
+                        decode_file_diagnostics(text, std::slice::from_ref(&item), encoding);
+                    decoded.into_iter().next().map(|d| d.range)
+                };
+                return self.open_decoded_problem(path, decode, window, cx);
+            }
+            Target::Position(path, row, column, unit) => {
+                let decode = move |text: &Text| {
+                    let offset = column_offset(text, row, column, unit);
+                    Some(offset..offset)
+                };
+                return self.open_decoded_problem(path, decode, window, cx);
             }
             Target::Range(path, range) => {
                 let range = if vim { range.start..range.start } else { range };
@@ -988,23 +1153,27 @@ impl Workbench {
         }
     }
 
-    /// Opens `path`, a file no editor showed when its problems were listed,
-    /// in the pane showing it by now, else the active pane, as quick open
-    /// does, and once its editor is shown selects `item`'s range (its
-    /// start, with vim on) decoded against its text, focused. Not if
-    /// another file is opened in the pane first.
-    fn open_sent_problem(
+    /// Opens `path`, a file whose problem's offsets aren't known until it's
+    /// read, in the active pane if it shows it, else the first showing it by
+    /// now, else the active pane, as quick open does, and once its editor is
+    /// shown selects the range `decode`
+    /// finds in its text (its start, with vim on), focused. Not if another
+    /// file is opened in the pane first.
+    fn open_decoded_problem(
         &mut self,
         path: PathBuf,
-        item: FileDiagnostic,
-        encoding: PositionEncoding,
+        decode: impl Fn(&Text) -> Option<Range<usize>> + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let shows = |pane: &Entity<Pane>, cx: &App| pane.read(cx).position(&path).is_some();
-        let pane = (self.pane_group(cx).panes().into_iter())
-            .find(|pane| shows(pane, cx))
-            .cloned()
+        let pane = Some(self.pane().clone())
+            .filter(|pane| shows(pane, cx))
+            .or_else(|| {
+                (self.pane_group(cx).panes().into_iter())
+                    .find(|pane| shows(pane, cx))
+                    .cloned()
+            })
             .unwrap_or_else(|| self.pane().clone());
         if pane != *self.pane() {
             self.activate(pane.clone(), window, cx);
@@ -1012,7 +1181,7 @@ impl Workbench {
         pane.update(cx, |pane, cx| pane.open_at(path.clone(), None, window, cx));
         let serial = pane.read(cx).open_serial();
         if !pane.read(cx).is_opening(&path) {
-            return self.land_sent_problem(&pane, &path, &item, encoding, window, cx);
+            return self.land_decoded_problem(&pane, &path, &decode, window, cx);
         }
         let opening = cx.observe_in(&pane, window, move |workbench, pane, window, cx| {
             let read = pane.read(cx);
@@ -1021,20 +1190,19 @@ impl Workbench {
             }
             workbench.lsp.unopened.opening = None;
             if read.open_serial() == serial {
-                workbench.land_sent_problem(&pane, &path, &item, encoding, window, cx);
+                workbench.land_decoded_problem(&pane, &path, &decode, window, cx);
             }
         });
         self.lsp.unopened.opening = Some(opening);
     }
 
-    /// Selects `item`'s range in `pane`'s active editor, if it shows
-    /// `path`, decoded against its text, and focuses it.
-    fn land_sent_problem(
+    /// Selects the range `decode` finds in the text of `pane`'s active editor,
+    /// if it shows `path`, and focuses it.
+    fn land_decoded_problem(
         &mut self,
         pane: &Entity<Pane>,
         path: &Path,
-        item: &FileDiagnostic,
-        encoding: PositionEncoding,
+        decode: &dyn Fn(&Text) -> Option<Range<usize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1044,9 +1212,7 @@ impl Workbench {
         if editor.read(cx).model().path() != Some(path) {
             return;
         }
-        let text = editor.read(cx).model().text();
-        let decoded = decode_file_diagnostics(text, std::slice::from_ref(item), encoding);
-        let Some(mut range) = decoded.into_iter().next().map(|d| d.range) else {
+        let Some(mut range) = decode(editor.read(cx).model().buffer().text()) else {
             return;
         };
         if fe_gpui::vim_enabled(cx) {
