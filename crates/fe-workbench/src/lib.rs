@@ -69,6 +69,7 @@ mod symbol_picker;
 mod tab_index_commands;
 mod tab_switcher;
 pub mod task_defs;
+pub mod task_problems;
 mod task_run;
 mod terminal_panel;
 mod theme_picker;
@@ -304,6 +305,8 @@ mod shortcuts_editor_tests;
 mod tab_index_commands_tests;
 #[cfg(test)]
 mod task_defs_tests;
+#[cfg(test)]
+mod task_problems_tests;
 #[cfg(test)]
 mod task_run_tests;
 #[cfg(test)]
