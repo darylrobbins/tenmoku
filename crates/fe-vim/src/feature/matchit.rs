@@ -10,6 +10,9 @@
 //! bracket. With no language, or one without a table, `%` is nvim's
 //! built-in one and `g%` fails.
 //!
+//! In html, xml and markdown `%` and `g%` go through tags instead, `<` and
+//! `>`, and `<!--` and `-->` ([`tags`]).
+//!
 //! The tables are nvim 0.12.4's `b:match_words` for `lua`, `sh` (and
 //! `bash`) and `make`, written out as words, not Vim patterns. Probed in
 //! nvim 0.12.4 (`nvim --clean --cmd 'packadd matchit' --cmd 'filetype
@@ -58,6 +61,10 @@ use crate::{
     motion::{self, PAIRS},
 };
 
+pub(crate) mod tags;
+
+use tags::Dialect;
+
 pub(crate) const FEATURE: Feature = Feature { g, ..Feature::NONE };
 
 /// `%` after `g`; `{count}g%` is `{count}%`, as matchit runs it.
@@ -95,9 +102,10 @@ struct Group {
     close: &'static [&'static str],
 }
 
-/// A language's keyword groups.
+/// A language's keyword groups, or its tags.
 pub(crate) struct Table {
     groups: &'static [Group],
+    tags: Option<Dialect>,
 }
 
 /// Lua's: `\<\%(do\|function\|if\)\>:\<\%(return\|else\|elseif\)\>:\<end\>`
@@ -117,6 +125,7 @@ const LUA: Table = Table {
             close: &["until"],
         },
     ],
+    tags: None,
 };
 
 /// sh's (and bash's): `if:elif:else:fi`, `for` or `while` to `done`, and
@@ -142,6 +151,7 @@ const SH: Table = Table {
             close: &["esac"],
         },
     ],
+    tags: None,
 };
 
 /// make's: `^ *ifn\=\(eq\|def\)\>:^ *else\(\s\+ifn\=\(eq\|def\)\)\=\>:^ *endif\>`,
@@ -174,6 +184,19 @@ const MAKE: Table = Table {
             close: &["endif"],
         },
     ],
+    tags: None,
+};
+
+/// html's and markdown's tags (markdown's ftplugin sources html's).
+const HTML: Table = Table {
+    groups: &[],
+    tags: Some(Dialect::Html),
+};
+
+/// xml's tags.
+const XML: Table = Table {
+    groups: &[],
+    tags: Some(Dialect::Xml),
 };
 
 /// The keyword table of the language fe-syntax calls `language`, if it
@@ -183,6 +206,8 @@ pub(crate) fn table(language: &str) -> Option<&'static Table> {
         "lua" => Some(&LUA),
         "bash" => Some(&SH),
         "make" => Some(&MAKE),
+        "html" | "markdown" => Some(&HTML),
+        "xml" => Some(&XML),
         _ => None,
     }
 }
@@ -218,6 +243,9 @@ pub(crate) enum Keyword {
 /// Where `%` (or `g%`, `backward`) goes from `offset` through `table`'s
 /// groups.
 pub(crate) fn find(text: &Text, offset: usize, table: &Table, backward: bool) -> Keyword {
+    if let Some(dialect) = table.tags {
+        return tags::find(text, offset, dialect);
+    }
     let row = text.offset_to_point(offset).row;
     let line = text.row_to_string(row);
     let col = offset - text.row_start(row);
@@ -304,9 +332,10 @@ fn hits(table: &Table, line: &str) -> Vec<Hit> {
 
 /// [`hits`], as they're found.
 fn hits_in<'a>(table: &'a Table, line: &'a str) -> impl Iterator<Item = Hit> + 'a {
+    let lead = Lead::of(line);
     words(line).filter_map(move |word| {
         (table.groups.iter().enumerate()).find_map(|(group, rules)| {
-            let (end, part) = matched(rules, line, word.clone())?;
+            let (end, part) = matched(rules, line, &lead, word.clone())?;
             let start = match rules.place {
                 Place::RowStart | Place::Bang => 0,
                 Place::Word | Place::Command => word.start,
@@ -320,21 +349,59 @@ fn hits_in<'a>(table: &'a Table, line: &'a str) -> impl Iterator<Item = Hit> + '
     })
 }
 
-/// Where the word of `group` at `word` on `line` ends, and which part it
-/// is, if the word starts one of the group's where its place allows.
-fn matched(group: &Group, line: &str, word: Range<usize>) -> Option<(usize, Part)> {
-    let before = &line[..word.start];
+#[cfg(test)]
+thread_local! {
+    /// The bytes placement checks have looked at on this thread.
+    static PLACED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Notes (for a test) that a placement check looked at `bytes` bytes.
+fn looked(bytes: usize) {
+    #[cfg(test)]
+    PLACED.set(PLACED.get() + bytes);
+    let _ = bytes;
+}
+
+/// Where a row's leading blanks end, looked for once a row, not once a
+/// word.
+struct Lead {
+    /// The first byte that isn't a space.
+    spaces: usize,
+    /// After a `!` in the first column, the first byte past it that isn't
+    /// a blank.
+    bang: Option<usize>,
+}
+
+impl Lead {
+    fn of(line: &str) -> Self {
+        let blank = |ch: char| ch == ' ' || ch == '\t';
+        let spaces = line.len() - line.trim_start_matches(' ').len();
+        let bang = line.strip_prefix('!').map(|rest| {
+            let after = rest.trim_start_matches(blank);
+            looked(rest.len() - after.len());
+            line.len() - after.len()
+        });
+        looked(spaces);
+        Self { spaces, bang }
+    }
+}
+
+/// Where the word of `group` at `word` on `line` (whose leading blanks are
+/// `lead`) ends, and which part it is, if the word starts one of the
+/// group's where its place allows.
+fn matched(group: &Group, line: &str, lead: &Lead, word: Range<usize>) -> Option<(usize, Part)> {
     let blank = |ch: char| ch == ' ' || ch == '\t';
     let placed = match group.place {
         Place::Word => true,
-        Place::Command => matches!(
-            before.trim_end_matches(blank).chars().last(),
-            None | Some(';')
-        ),
-        Place::RowStart => before.chars().all(|ch| ch == ' '),
-        Place::Bang => before
-            .strip_prefix('!')
-            .is_some_and(|rest| rest.chars().all(blank)),
+        // Only the blanks since the last word: each run once a row.
+        Place::Command => {
+            let before = &line[..word.start];
+            let trimmed = before.trim_end_matches(blank);
+            looked(before.len() - trimmed.len());
+            matches!(trimmed.chars().last(), None | Some(';'))
+        }
+        Place::RowStart => word.start <= lead.spaces,
+        Place::Bang => lead.bang.is_some_and(|end| word.start <= end),
     };
     if !placed {
         return None;
@@ -413,6 +480,27 @@ mod tests {
     fn words_are_whole_keyword_runs() {
         let words: Vec<_> = words("a.if_x = (é1) end").collect();
         assert_eq!(words, [0..1, 2..6, 10..13, 15..18]);
+    }
+
+    #[test]
+    fn placement_reads_leading_blanks_once_a_row() {
+        // 100,000 leading blanks, then 100,000 short words: each place
+        // check is O(1) or reads only the blanks since the last word.
+        let words = "x ".repeat(100_000);
+        for row in [
+            format!("{}ifeq {words}", " ".repeat(100_000)),
+            format!("!{}if {words}", " ".repeat(100_000)),
+            format!("{}if {words}", "\t".repeat(100_000)),
+        ] {
+            PLACED.set(0);
+            for table in [&MAKE, &SH, &LUA] {
+                let _ = hits(table, &row);
+            }
+            assert!(PLACED.get() <= 4 * row.len(), "{}", PLACED.get());
+        }
+        assert_eq!(spans(&MAKE, &format!("{}ifeq x", " ".repeat(9))), [(0, 13)]);
+        assert_eq!(spans(&MAKE, "!\t else"), [(0, 7)]);
+        assert!(spans(&MAKE, "! x else").is_empty());
     }
 
     #[test]

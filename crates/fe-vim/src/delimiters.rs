@@ -2450,7 +2450,7 @@ fn lt_len(written: &str) -> Option<usize> {
 /// The char `ch` matches case-blind, as nvim's `\c` folds case: its
 /// uppercase's lowercase, if each is one char, but for the dotless `ı` and
 /// capital sharp `ẞ`, which match only themselves.
-fn fold(ch: char) -> char {
+pub(crate) fn fold(ch: char) -> char {
     fn single(mut chars: impl Iterator<Item = char>) -> Option<char> {
         match (chars.next(), chars.next()) {
             (Some(ch), None) => Some(ch),

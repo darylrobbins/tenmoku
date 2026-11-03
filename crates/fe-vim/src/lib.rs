@@ -854,6 +854,8 @@ pub use ex::{
     TabCommand, WindowCommand,
 };
 pub use feature::filter::FilterArgs;
+#[doc(hidden)]
+pub use feature::matchit::tags::{TAG_BUDGET, set_tag_budget, take_tag_work};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::{KeywordCompletion, Splits};
 pub use key::{KeyError, VimKey, parse_keys};
