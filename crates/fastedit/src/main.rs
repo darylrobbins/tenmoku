@@ -1,7 +1,8 @@
-//! Tenmoku, the standalone host: `tenmoku [--perf] [folder or file]`, a
-//! [`Workbench`] in a window.
+//! Tenmoku, the standalone host: `tenmoku [options] [path[:line[:column]] ...]`
+//! ([`cli`]), a [`Workbench`] in a window.
 
 mod app_icon;
+mod cli;
 mod config;
 mod perf;
 mod theme;
@@ -16,6 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use cli::Target;
 use config::{config, log_keymap_report};
 use perf::Startup;
 use vim_remaps::VimRemaps;
@@ -50,6 +52,7 @@ fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
         Opened::Text(buffer) => {
             let buffer = buffer.unwrap_or_else(|| Buffer::new(""));
             log::info!(
+                target: "fastedit",
                 "loaded {} bytes, {} rows in {:.1?}",
                 buffer.len(),
                 buffer.text().row_count(),
@@ -59,6 +62,7 @@ fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
         }
         Opened::Large { view, index } => {
             log::info!(
+                target: "fastedit",
                 "viewing {} bytes read-only, opened in {:.1?}",
                 view.len(),
                 started.elapsed()
@@ -291,7 +295,7 @@ fn open_window_at(root: Option<PathBuf>, cx: &mut App) -> Option<WindowHandle<Wo
             Some(window)
         }
         Err(error) => {
-            log::error!("can't open a window: {error}");
+            log::error!(target: "fastedit", "can't open a window: {error}");
             None
         }
     }
@@ -385,8 +389,9 @@ fn new_workbench(
     workbench
 }
 
-/// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
-/// sets one level for everything instead (`debug`, `trace`, …).
+/// Logs to stderr: warnings and errors, and fastedit's own info, under the
+/// binary's name too. `RUST_LOG` sets one level for everything instead
+/// (`debug`, `trace`, …).
 struct StderrLogger {
     level: Option<log::LevelFilter>,
 }
@@ -394,7 +399,9 @@ struct StderrLogger {
 impl log::Log for StderrLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         let target = metadata.target();
-        let ours = target.starts_with("fastedit") || target.starts_with("fe_");
+        let ours = target.starts_with("fastedit")
+            || target.starts_with("tenmoku")
+            || target.starts_with("fe_");
         let level = self.level.unwrap_or(if ours {
             log::LevelFilter::Info
         } else {
@@ -421,16 +428,53 @@ fn init_logging() {
     }
 }
 
+/// Opens the launch's `files` in `window`, the first being the launch file
+/// that's in its tab or being read: each at its position, one at a time, so
+/// the tabs keep their order whichever read is quickest. With a lone file
+/// and no position, the launch has done it all.
+fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App) {
+    if let [Target { line: None, .. }] = files[..] {
+        return;
+    }
+    let mut files = files.into_iter();
+    let open = move |target: Target, cx: &mut App| {
+        window.update(cx, |workbench, window, cx| {
+            let Target { path, line, col } = target;
+            workbench.open_document_at(path, line, col, window, cx)
+        })
+    };
+    // At once: this is the launch file's read still being the host's.
+    let Some(Ok(first)) = files.next().map(|first| open(first, cx)) else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        first.await;
+        for target in files {
+            match cx.update(|cx| open(target, cx)) {
+                Ok(landed) => landed.await,
+                Err(_) => return,
+            }
+        }
+    })
+    .detach();
+}
+
 fn main() {
     let mut startup = Startup::new();
     let started = Instant::now();
     init_logging();
-    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
-    let perf = args.first().is_some_and(|arg| arg == "--perf");
-    if perf {
-        args.remove(0);
+    let cli = cli::parse(std::env::args_os().skip(1).collect()).unwrap_or_else(|error| {
+        error.print();
+        std::process::exit(error.exit_code())
+    });
+    let perf = cli.perf;
+    if cli.new_window {
+        log::info!(target: "fastedit", "--new-window: not acted on yet");
     }
-    let argv_path = args.into_iter().next().map(PathBuf::from);
+    if cli.wait {
+        log::info!(target: "fastedit", "--wait: not acted on yet");
+    }
+    let plan = cli.plan();
 
     let application = kiln::application();
     // What macOS hands the app as open-document events (Finder's Open With,
@@ -443,7 +487,7 @@ fn main() {
             .filter_map(|url| {
                 let path = fe_workbench::path_of_url(url);
                 if path.is_none() {
-                    log::warn!("not opening {url}: not a file URL");
+                    log::warn!(target: "fastedit", "not opening {url}: not a file URL");
                 }
                 path
             })
@@ -460,8 +504,16 @@ fn main() {
         while let Ok(paths) = opened_rx.try_recv() {
             handed.extend(paths);
         }
-        let argv_path = argv_path.or_else(|| (!handed.is_empty()).then(|| handed.remove(0)));
-        let mut launch = fe_workbench::resolve_launch(argv_path);
+        let mut files = plan.files;
+        let mut launch = if plan.root.is_some() {
+            Launch {
+                root: plan.root,
+                file: files.first().map(|first| (first.path.clone(), None)),
+            }
+        } else {
+            let path = (!handed.is_empty()).then(|| handed.remove(0));
+            fe_workbench::resolve_launch(path)
+        };
         let reading = launch.file.take().map(|(path, _)| loader::start(path));
         let store = load_settings(launch.root.as_deref());
         let settings: Arc<Settings> = store.settings().clone();
@@ -480,7 +532,7 @@ fn main() {
             cx.background_executor()
                 .spawn(async move {
                     if let Err(error) = pruned.prune(std::time::SystemTime::now()) {
-                        log::debug!("local history: pruning: {error}");
+                        log::debug!(target: "fastedit", "local history: pruning: {error}");
                     }
                 })
                 .detach();
@@ -583,6 +635,10 @@ fn main() {
         if let Some(reading) = reading {
             match failed {
                 Some(error) => {
+                    // Its error is shown: nothing to put a caret in.
+                    if !files.is_empty() {
+                        files.remove(0);
+                    }
                     let path = reading.path().to_owned();
                     window
                         .update(cx, |workbench, window, cx| {
@@ -597,6 +653,7 @@ fn main() {
         follow_settings(launch_root.clone(), cx);
         watch_window(window, settings.clone(), cx);
         fe_workbench::set_window_opener(cx, open_window_on);
+        open_files(window, files, cx);
         // The root's other saved windows.
         for (layout, entry) in windows {
             let launch = Launch {
@@ -617,7 +674,7 @@ fn main() {
             });
             match opened {
                 Ok(window) => watch_window(window, settings.clone(), cx),
-                Err(error) => log::error!("can't open a saved window: {error}"),
+                Err(error) => log::error!(target: "fastedit", "can't open a saved window: {error}"),
             }
         }
         // The rest of what was handed at launch, and what comes later.
@@ -633,4 +690,31 @@ fn main() {
         .detach();
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use log::{Level, Log as _, Metadata};
+
+    use super::StderrLogger;
+
+    fn enabled(level: Level, target: &str) -> bool {
+        let logger = StderrLogger { level: None };
+        logger.enabled(&Metadata::builder().level(level).target(target).build())
+    }
+
+    /// With no `RUST_LOG`: the binary was renamed from fastedit to tenmoku,
+    /// and the host's modules log under the new name unless told otherwise.
+    #[test]
+    fn application_info_logs_stay_on_without_rust_log() {
+        for target in ["fastedit", "fastedit::config", "fe_lsp", module_path!()] {
+            assert!(enabled(Level::Info, target), "{target} is the app's");
+            assert!(
+                !enabled(Level::Debug, target),
+                "{target} logs info, not debug"
+            );
+        }
+        assert!(!enabled(Level::Info, "gpui"));
+        assert!(enabled(Level::Warn, "gpui"));
+    }
 }

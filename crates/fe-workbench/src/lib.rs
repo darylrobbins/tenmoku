@@ -44,6 +44,7 @@ mod lsp_rename;
 mod nav;
 mod nav_picker;
 mod open;
+mod open_at;
 mod outline_panel;
 mod pane;
 mod pane_drag;
