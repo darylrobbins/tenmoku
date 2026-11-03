@@ -299,6 +299,9 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("workbench.new_file", "New File", "workbench"),
     ("workbench.save_as", "Save As…", "workbench"),
     ("workbench.trust_folder", "Trust This Folder", "workbench"),
+    ("tasks.run", "Tasks: Run Task…", "workbench"),
+    ("tasks.rerun_last", "Tasks: Rerun Last Task", "workbench"),
+    ("tasks.run_build", "Tasks: Run Build Task", "workbench"),
     (
         "workbench.untrust_folder",
         "Untrust This Folder",

@@ -68,6 +68,7 @@ mod status_bar;
 mod symbol_picker;
 mod tab_index_commands;
 mod tab_switcher;
+mod task_commands;
 pub mod task_defs;
 pub mod task_problems;
 mod task_run;
@@ -305,6 +306,8 @@ mod settings_editor_tests;
 mod shortcuts_editor_tests;
 #[cfg(test)]
 mod tab_index_commands_tests;
+#[cfg(test)]
+mod task_commands_tests;
 #[cfg(test)]
 mod task_defs_tests;
 #[cfg(test)]

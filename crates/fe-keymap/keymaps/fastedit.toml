@@ -613,6 +613,13 @@ keys = "secondary-w"
 command = "workbench.close_tab"
 context = "workbench"
 
+# VS Code's Run Build Task. Run Task and Rerun Last Task have no key, in VS
+# Code or here.
+[[bindings]]
+keys = "secondary-shift-b"
+command = "tasks.run_build"
+context = "workbench"
+
 # VS Code's Reopen Closed Editor. Not in the terminal, whose shell keeps
 # ctrl-shift-t off macOS.
 [[bindings]]

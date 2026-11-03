@@ -1160,6 +1160,24 @@ impl Workbench {
         self.recent_command(RecentOp::OpenInNewWindow, cx);
     }
 
+    /// Tasks: Run Task…
+    #[command(id = "tasks.run")]
+    fn run_task_command(&mut self, cx: &mut Cx<Self>) {
+        self.pick_task(cx.window, cx.cx);
+    }
+
+    /// Tasks: Rerun Last Task
+    #[command(id = "tasks.rerun_last")]
+    fn rerun_last_task_command(&mut self, cx: &mut Cx<Self>) {
+        self.rerun_last_task(cx.window, cx.cx);
+    }
+
+    /// Tasks: Run Build Task
+    #[command(id = "tasks.run_build")]
+    fn run_build_task_command(&mut self, cx: &mut Cx<Self>) {
+        self.run_build_task(cx.window, cx.cx);
+    }
+
     /// Restart Language Server
     #[command(id = "lsp.restart")]
     fn restart_language_server(&mut self, cx: &mut Cx<Self>) {

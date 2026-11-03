@@ -1,6 +1,7 @@
 //! Running a project's task ([`crate::task_defs`]): in a tab of its own on the
 //! terminal panel, whose output, rerun and exit report are the panel's
-//! (`TerminalPanel::add_task`). Nothing here is a command yet.
+//! (`TerminalPanel::add_task`). The commands that get here are
+//! [`crate::task_commands`]'s.
 
 use gpui::{App, Context, Window};
 
