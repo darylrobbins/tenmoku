@@ -277,6 +277,34 @@ command = "lsp.format_selection"
 [[menus.items]]
 separator = true
 
+# Menus have no submenus to put these in.
+[[menus.items]]
+title = "Spelling: Suggest Corrections…"
+command = "spell.suggest"
+
+[[menus.items]]
+title = "Spelling: Next Misspelling"
+command = "spell.next"
+
+[[menus.items]]
+title = "Spelling: Previous Misspelling"
+command = "spell.previous"
+
+[[menus.items]]
+title = "Spelling: Add Word to Dictionary"
+command = "spell.add_word"
+
+[[menus.items]]
+title = "Spelling: Ignore Word"
+command = "spell.ignore_word"
+
+[[menus.items]]
+title = "Spelling: Toggle Spell Check"
+command = "spell.toggle"
+
+[[menus.items]]
+separator = true
+
 [[menus.items]]
 title = "Find"
 command = "find.show"

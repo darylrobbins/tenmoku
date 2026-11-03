@@ -1,7 +1,7 @@
-//! Saving View > Toggle Vim Mode and View > Toggle Status Bar to the user's
-//! `settings.toml`, as `vim.enabled` and `status_bar.visible`, so they
-//! outlast a restart. The settings watcher then sees the write, as it
-//! would a hand edit.
+//! Saving View > Toggle Vim Mode, View > Toggle Status Bar and Spelling: Toggle
+//! Spell Check to the user's `settings.toml`, as `vim.enabled`,
+//! `status_bar.visible` and `editor.spell_check`, so they outlast a restart.
+//! The settings watcher then sees the write, as it would a hand edit.
 //!
 //! Nothing is saved until the host calls [`save_toggles_to`]. Each toggle
 //! queues the value it left, taken in the dispatch that ran it, so a reload
@@ -25,6 +25,8 @@ use kiln_shell::persist::{SettingKey, SettingsPath, Writer, setting_writer};
 const VIM: SettingKey = &["vim", "enabled"];
 /// The setting View > Toggle Status Bar saves.
 const STATUS_BAR: SettingKey = &["status_bar", "visible"];
+/// The setting `spell.toggle` saves.
+const SPELL_CHECK: SettingKey = &["editor", "spell_check"];
 
 /// The command whose successful runs save [`VIM`].
 const VIM_TOGGLE: &str = "vim.toggle";
@@ -142,6 +144,13 @@ impl VimToggle {
 pub(crate) fn save_status_bar(visible: bool, cx: &App) {
     if let Some(Saver(writes)) = cx.try_global::<Saver>() {
         writes.save(STATUS_BAR, visible);
+    }
+}
+
+/// Saves whether spell check is on, if [`save_toggles_to`] was called.
+pub(crate) fn save_spell_check(on: bool, cx: &App) {
+    if let Some(Saver(writes)) = cx.try_global::<Saver>() {
+        writes.save(SPELL_CHECK, on);
     }
 }
 

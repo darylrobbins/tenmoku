@@ -1178,6 +1178,47 @@ impl Workbench {
         self.run_build_task(cx.window, cx.cx);
     }
 
+    /// Spelling: Suggest Corrections…
+    #[command(id = "spell.suggest", context = "editor")]
+    fn spell_suggest_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, window, cx| {
+            this.suggest_spelling(window, cx)
+        });
+    }
+
+    /// Spelling: Add Word to Dictionary
+    #[command(id = "spell.add_word", context = "editor")]
+    fn spell_add_word_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, _, cx| this.add_word_at_caret(cx));
+    }
+
+    /// Spelling: Ignore Word
+    #[command(id = "spell.ignore_word", context = "editor")]
+    fn spell_ignore_word_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, _, cx| this.ignore_word_at_caret(cx));
+    }
+
+    /// Spelling: Toggle Spell Check
+    #[command(id = "spell.toggle")]
+    fn spell_toggle_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.toggle_spell_check(cx.cx);
+    }
+
+    /// Spelling: Next Misspelling
+    #[command(id = "spell.next", context = "editor")]
+    fn spell_next_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, _, cx| this.go_to_misspelling(true, cx));
+    }
+
+    /// Spelling: Previous Misspelling
+    #[command(id = "spell.previous", context = "editor")]
+    fn spell_previous_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context("editor", cx, |this, _, cx| {
+            this.go_to_misspelling(false, cx)
+        });
+    }
+
     /// Restart Language Server
     #[command(id = "lsp.restart")]
     fn restart_language_server(&mut self, cx: &mut Cx<Self>) {

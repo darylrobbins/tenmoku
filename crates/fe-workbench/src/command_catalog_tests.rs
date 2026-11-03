@@ -330,6 +330,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "search.replace_all",
     "search.show",
     "search.show_replace",
+    "spell.toggle",
     "tasks.rerun_last",
     "tasks.run",
     "tasks.run_build",
@@ -522,6 +523,11 @@ const LISTED_IN_THE_EDITOR: &[&str] = &[
     "markdown.show_preview",
     "markdown.show_preview_to_side",
     "markdown.toggle_preview",
+    "spell.add_word",
+    "spell.ignore_word",
+    "spell.next",
+    "spell.previous",
+    "spell.suggest",
     "vim.normal_resume",
 ];
 

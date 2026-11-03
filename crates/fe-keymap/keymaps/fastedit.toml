@@ -490,6 +490,13 @@ keys = { macos = "cmd-.", default = "ctrl-." }
 command = "lsp.code_actions"
 context = "editor"
 
+# Spelling's own quick fix, as code actions are the language server's. The other
+# spelling commands have no key.
+[[bindings]]
+keys = { macos = "alt-cmd-.", default = "ctrl-alt-." }
+command = "spell.suggest"
+context = "editor"
+
 [[bindings]]
 keys = "shift-alt-o"
 command = "lsp.organize_imports"

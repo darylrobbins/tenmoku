@@ -248,6 +248,8 @@ const DEDICATED: &[&str] = &[
     "cmd-k cmd-i",
     // diff.compare_saved: fe-keymap's compare_saved_key.
     "cmd-k d",
+    // spell.suggest: fe-keymap's spell_bindings, and fe-workbench's spell_commands_tests.
+    "cmd-alt-.",
     "ctrl-space",
     "cmd-]",
     "cmd-[",

@@ -223,6 +223,7 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
     ("f2", "lsp.rename", Some("editor")),
     ("cmd-.", "lsp.code_actions", Some("editor")),
+    ("cmd-alt-.", "spell.suggest", Some("editor")),
     ("shift-alt-o", "lsp.organize_imports", Some("editor")),
     ("ctrl-shift-r", "lsp.refactor", Some("editor")),
     (
@@ -427,7 +428,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                 )
             )
     };
-    // `find.show`, the `lsp.`, `git.` and `markdown.` commands are the
+    // `find.show`, the `lsp.`, `git.`, `markdown.` and `spell.` commands are the
     // workbench's too, though bound in `editor` (or the Changes panel); so
     // are the chat's, bound in the composer, and Peek Definition, Peek
     // References and the peek's, bound in `editor` and its widget.
@@ -444,6 +445,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
             || command.starts_with("ai.changes_")
             || command == "ai.inline_edit"
             || command.starts_with("markdown.")
+            || command.starts_with("spell.")
     };
     for binding in bindings
         .iter()

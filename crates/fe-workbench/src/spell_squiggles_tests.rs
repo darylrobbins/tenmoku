@@ -721,12 +721,33 @@ fn dictionary_changes_recheck(cx: &mut TestAppContext) {
     assert_eq!(fs::read_to_string(&file).unwrap(), "teh\n");
     assert_eq!(squiggled(&shown, cx), Vec::<String>::new());
 
-    // A dictionary without them brings them back where they're shown.
+    // Accepted for this session, they outlast a dictionary without them.
     workbench.update(cx, |workbench, cx| {
         workbench.set_spell_dictionary(Dictionary::default(), cx)
     });
     settle(cx);
-    assert_eq!(squiggled(&shown, cx), ["teh", "qux"]);
+    assert_eq!(squiggled(&shown, cx), Vec::<String>::new());
+}
+
+#[gpui::test]
+fn a_dictionary_without_a_files_word_brings_it_back(cx: &mut TestAppContext) {
+    let files = Files::new();
+    let a = files.write("a.txt", "teh one\n");
+    let file = files.write("dictionary.txt", "teh\n");
+    let (workbench, cx) = workbench(cx);
+    give_speller(&workbench, &["teh"], cx);
+    workbench.update(cx, |workbench, cx| {
+        workbench.set_spell_dictionary(Dictionary::load(file.clone()), cx)
+    });
+    let editor = open(&workbench, &a, cx);
+    settle(cx);
+    assert_eq!(squiggled(&editor, cx), Vec::<String>::new());
+
+    workbench.update(cx, |workbench, cx| {
+        workbench.set_spell_dictionary(Dictionary::default(), cx)
+    });
+    settle(cx);
+    assert_eq!(squiggled(&editor, cx), ["teh"]);
 }
 
 #[gpui::test]

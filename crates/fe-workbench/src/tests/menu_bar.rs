@@ -122,7 +122,7 @@ fn f10_and_the_arrows_choose_an_item(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("up");
     assert_eq!(
         open_menu(&workbench, cx),
-        Some((1, Some(29))),
+        Some((1, Some(36))),
         "wraps to Replace in Files"
     );
 

@@ -370,6 +370,13 @@ fn hosts_extend_and_replace() {
             "lsp.format_document",
             "lsp.format_selection",
             "-",
+            "spell.suggest",
+            "spell.next",
+            "spell.previous",
+            "spell.add_word",
+            "spell.ignore_word",
+            "spell.toggle",
+            "-",
             "find.show",
             "find.show_replace"
         ]

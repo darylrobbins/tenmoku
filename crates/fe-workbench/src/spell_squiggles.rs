@@ -20,6 +20,7 @@ use std::{
     any::TypeId,
     cell::RefCell,
     collections::{HashMap, HashSet},
+    io,
     ops::Range,
     rc::Rc,
     sync::Arc,
@@ -33,7 +34,7 @@ use fe_editor::decorations::{
 };
 use fe_gpui::{EditorSettings, EditorView};
 use fe_text::Text;
-use gpui::{App, AppContext as _, Context, Entity, EntityId, Task};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, Global, Task};
 
 use crate::{
     Workbench,
@@ -111,11 +112,21 @@ struct Slot {
     retries: u32,
 }
 
+/// The words accepted since the app started, in any window, each once and only
+/// ever added to. A window can open at any time, with a dictionary of its own that
+/// hasn't heard of them, and replacing a dictionary mustn't lose them either.
+#[derive(Default)]
+struct SessionWords(Vec<String>);
+
+impl Global for SessionWords {}
+
 /// The workbench's spell checking.
 pub(crate) struct Spelling {
     /// `None` for [`NoSpeller`].
     speller: Option<Arc<dyn Speller>>,
     dictionary: Arc<Dictionary>,
+    /// How many of [`SessionWords`] `dictionary` has.
+    session_words: usize,
     wanted: Wanted,
     slots: HashMap<EntityId, Slot>,
     /// Every provider given out since they last all went. A split copies its
@@ -132,6 +143,7 @@ impl Spelling {
         Self {
             speller: None,
             dictionary: Arc::default(),
+            session_words: 0,
             wanted: Wanted::new(settings),
             slots: HashMap::new(),
             issued: Vec::new(),
@@ -208,11 +220,14 @@ impl Workbench {
         &self.spelling.dictionary
     }
 
-    /// Replaces the words the user has accepted, and checks again. The
+    /// Replaces the words in the user's file, and checks again. Those accepted
+    /// this session stay, as they do until the app quits. The
     /// workbench starts with an empty one that writes nothing, since reading the
     /// user's blocks on its file: the app reads it and hands it over here.
     pub fn set_spell_dictionary(&mut self, dictionary: Dictionary, cx: &mut Context<Self>) {
         self.spelling.dictionary = Arc::new(dictionary);
+        self.spelling.session_words = 0;
+        self.catch_up_session_words(cx);
         self.spell_dictionary_changed(cx);
     }
 
@@ -220,23 +235,58 @@ impl Workbench {
     /// written in the background, as that blocks on the file and its lock. It
     /// counts for this session even if the write fails.
     pub fn add_spell_word(&mut self, word: &str, cx: &mut Context<Self>) {
-        // The session's own copy doesn't need what the write reads from the
-        // file: only another window can have added that, and it's kept there.
-        let mut writer = (*self.spelling.dictionary).clone();
         let line = word.to_owned();
+        let writing = self.write_spell_word(word, cx);
         cx.background_spawn(async move {
-            if let Err(error) = writer.add_word(&line) {
+            if let Err(error) = writing.await {
                 log::warn!("can't add {line} to the dictionary: {error}");
             }
         })
         .detach();
+    }
+
+    /// [`Workbench::add_spell_word`], leaving what becomes of the write to the
+    /// caller.
+    pub(crate) fn write_spell_word(
+        &mut self,
+        word: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<io::Result<()>> {
+        // The session's own copy doesn't need what the write reads from the
+        // file: only another window can have added that, and it's kept there.
+        let mut writer = (*self.spelling.dictionary).clone();
+        let line = word.to_owned();
+        let writing = cx.background_spawn(async move { writer.add_word(&line) });
         self.ignore_spell_word(word, cx);
+        writing
     }
 
     /// Accepts `word` until the app quits, writing nothing. Its squiggles go now.
     pub fn ignore_spell_word(&mut self, word: &str, cx: &mut Context<Self>) {
+        let words = &mut cx.default_global::<SessionWords>().0;
+        if !words.iter().any(|known| known == word) {
+            words.push(word.to_owned());
+        }
         Arc::make_mut(&mut self.spelling.dictionary).ignore_word(word);
         self.spell_dictionary_changed(cx);
+    }
+
+    /// Gives the dictionary the words accepted that it hasn't got yet: whether it
+    /// had any to get.
+    fn catch_up_session_words(&mut self, cx: &App) -> bool {
+        let Some(SessionWords(words)) = cx.try_global::<SessionWords>() else {
+            return false;
+        };
+        let new = &words[self.spelling.session_words..];
+        if new.is_empty() {
+            return false;
+        }
+        let dictionary = Arc::make_mut(&mut self.spelling.dictionary);
+        for word in new {
+            dictionary.ignore_word(word);
+        }
+        self.spelling.session_words = words.len();
+        true
     }
 
     /// The bytes of `editor`'s misspelled words, in its model's text, in order.
@@ -251,6 +301,32 @@ impl Workbench {
             .collect()
     }
 
+    /// Takes the squiggles over `range` of `editor`'s buffer from every open
+    /// editor of that buffer, shown or not, ahead of the check the edit brings.
+    pub(crate) fn forget_spell_squiggles_in(
+        &mut self,
+        editor: &Entity<EditorView>,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        for slot in self.spelling.slots.values() {
+            let shares = (slot.editor.read(cx).model()).shares_buffer_with(editor.read(cx).model());
+            if !shares {
+                continue;
+            }
+            slot.editor.update(cx, |view, cx| {
+                view.model_mut().sync_display();
+                let snapshot = view.model().snapshot();
+                let mut squiggles = slot.squiggles.borrow_mut();
+                let kept = (all_squiggles(&squiggles, snapshot).into_iter())
+                    .filter(|it| it.range.end <= range.start || it.range.start >= range.end)
+                    .collect();
+                squiggles.0.apply(snapshot, snapshot.version(), kept);
+                cx.notify();
+            });
+        }
+    }
+
     /// Follows reloaded settings: if what's checked changed, every squiggle goes
     /// and the next draw starts again.
     pub(crate) fn reload_spell_squiggles(
@@ -258,7 +334,24 @@ impl Workbench {
         settings: &EditorSettings,
         cx: &mut Context<Self>,
     ) {
-        let wanted = Wanted::new(settings);
+        self.want_spelling(Wanted::new(settings), cx);
+    }
+
+    /// `editor.spell_check`, as last reloaded or set.
+    pub(crate) fn spell_check_on(&self) -> bool {
+        self.spelling.wanted.on
+    }
+
+    /// Follows `editor.spell_check` set to `on`, ahead of the reload to come.
+    pub(crate) fn set_spell_check_on(&mut self, on: bool, cx: &mut Context<Self>) {
+        let wanted = Wanted {
+            on,
+            ..self.spelling.wanted.clone()
+        };
+        self.want_spelling(wanted, cx);
+    }
+
+    fn want_spelling(&mut self, wanted: Wanted, cx: &mut Context<Self>) {
         if wanted != self.spelling.wanted {
             self.spelling.wanted = wanted;
             self.drop_spell_squiggles(cx);
@@ -306,6 +399,10 @@ impl Workbench {
     pub(crate) fn sync_spell_squiggles(&mut self, cx: &mut Context<Self>) {
         if !self.spelling.is_active() {
             return;
+        }
+        // Before anything's checked in a window opened since they were accepted.
+        if self.catch_up_session_words(cx) {
+            self.spell_dictionary_changed(cx);
         }
         let open: HashSet<EntityId> = (self.open_editors(cx).iter())
             .map(Entity::entity_id)
