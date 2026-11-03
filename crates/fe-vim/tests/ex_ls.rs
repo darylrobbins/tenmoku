@@ -71,7 +71,7 @@ fn the_pick_has_the_columns() {
         row(4, false, false, true, false, "[No Name]", 12),
     ]);
     assert_eq!(pick.title, "Buffers");
-    assert_eq!(pick.header, "Buffers");
+    assert_eq!(pick.header, "nr  flags name  line");
     let cells: Vec<Vec<&str>> = pick
         .rows
         .iter()

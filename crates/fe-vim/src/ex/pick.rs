@@ -123,7 +123,7 @@ impl Pick {
         });
         Self {
             title: "Buffers",
-            header: "Buffers",
+            header: "nr  flags name  line",
             rows: rows.collect(),
         }
     }

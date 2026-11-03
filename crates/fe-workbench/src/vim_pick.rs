@@ -88,7 +88,11 @@ impl PickerDelegate for VimPicker {
         let cells = row.cells.iter().enumerate().map(|(column, cell)| {
             let cell = div().child(cell.clone());
             match column == last {
-                true => cell.flex_1().overflow_hidden().whitespace_nowrap(),
+                true => cell
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap(),
                 false => cell
                     .flex_none()
                     .w(px(CHAR_WIDTH * self.widths[column] as f32)),
@@ -97,6 +101,7 @@ impl PickerDelegate for VimPicker {
         div()
             .flex()
             .flex_1()
+            .min_w_0()
             .gap_2()
             .text_color(fe_ui::ui_theme(cx).text)
             .children(cells)
@@ -116,6 +121,10 @@ impl PickerDelegate for VimPicker {
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.focus_editor(window, cx);
+    }
+
+    fn rows_fill_width(&self) -> bool {
+        true
     }
 
     fn status(&self) -> Option<SharedString> {

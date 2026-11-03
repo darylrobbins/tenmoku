@@ -40,7 +40,7 @@
 //! While the switch is on, the picker's key context also sets `vim_mode` to
 //! `insert` or `normal`, so a host keymap can bind more keys in either.
 
-use std::{ops::Range, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use gpui::Bounds;
 use gpui::{
@@ -86,6 +86,12 @@ pub trait PickerDelegate: Sized + 'static {
 
     /// The picker was dismissed without a pick.
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>);
+
+    /// Whether each row's highlight and click area span the list, rather
+    /// than hugging the row's content. Off by default.
+    fn rows_fill_width(&self) -> bool {
+        false
+    }
 
     /// The status line under the input.
     fn status(&self) -> Option<SharedString> {
@@ -140,6 +146,8 @@ pub struct Picker<D: PickerDelegate> {
     /// Normal mode's `g` waits for a second.
     pending_g: bool,
     scroll: UniformListScrollHandle,
+    /// Where each row was painted in the last frame it was, for tests.
+    painted: Rc<RefCell<HashMap<usize, Bounds<gpui::Pixels>>>>,
     _input: Subscription,
 }
 
@@ -165,6 +173,7 @@ impl<D: PickerDelegate> Picker<D> {
             mode: Mode::Insert,
             pending_g: false,
             scroll: UniformListScrollHandle::new(),
+            painted: Rc::default(),
             _input: changed,
         }
     }
@@ -327,13 +336,18 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let ui = ui_theme(cx);
+        let painted = self.painted.clone();
+        let fill = self.delegate.rows_fill_width();
         range
             .map(|ix| {
                 let selected = ix == self.selected;
+                let painted = painted.clone();
                 let id = self.delegate.match_id(ix);
                 div()
                     .id(ElementId::Name(id.clone()))
                     .h(ROW_HEIGHT)
+                    .relative()
+                    .when(fill, |row| row.w_full())
                     .px_3()
                     .flex()
                     .items_center()
@@ -346,6 +360,16 @@ impl<D: PickerDelegate> Picker<D> {
                         }),
                     )
                     .child(self.delegate.render_match(ix, selected, cx))
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| {
+                                painted.borrow_mut().insert(ix, bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
                     .into_any_element()
             })
             .collect()
@@ -356,18 +380,9 @@ impl<D: PickerDelegate> Picker<D> {
         self.scroll.0.borrow().base_handle.bounds()
     }
 
-    /// Where row `ix` was laid out in the last frame, from the list's
-    /// bounds, scroll offset and measured row height, for tests.
+    /// Where row `ix` was painted in the last frame it was, for tests.
     pub fn row_bounds(&self, ix: usize) -> Option<Bounds<gpui::Pixels>> {
-        let count = self.delegate.match_count();
-        let state = self.scroll.0.borrow();
-        let list = state.base_handle.bounds();
-        let height = state.last_item_size?.contents.height / count as f32;
-        let top = list.origin.y + state.base_handle.offset().y + height * ix as f32;
-        Some(Bounds::new(
-            gpui::point(list.origin.x, top),
-            gpui::size(list.size.width, height),
-        ))
+        self.painted.borrow().get(&ix).copied()
     }
 }
 

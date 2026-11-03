@@ -62,7 +62,7 @@ fn rows(cx: &mut TestAppContext) {
     for line in ["ls", "buffers", "files", "ls!"] {
         ex(line, cx);
         let (rows, status) = shown(&workbench, cx).unwrap_or_else(|| panic!(":{line}"));
-        assert_eq!(status.as_deref(), Some("Buffers"), ":{line}");
+        assert_eq!(status.as_deref(), Some("nr  flags name  line"), ":{line}");
         assert_eq!(
             rows,
             [
