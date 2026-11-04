@@ -45,8 +45,11 @@ mod tempdir {
 
     impl Dir {
         pub(crate) fn new() -> Self {
+            Self::new_named("dir")
+        }
+        pub(crate) fn new_named(name: &str) -> Self {
             let path = std::env::temp_dir().join(format!(
-                "kiln-plugin-manifest-{}-{:?}",
+                "kiln-plugin-manifest-{name}-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -108,6 +111,39 @@ fn the_wasm_path_must_be_a_file_inside_the_extension() {
             "{path}: {error}"
         );
         assert!(error.to_string().contains(path), "{error}");
+    }
+}
+
+#[test]
+fn internal_parent_traversal_is_allowed() {
+    let dir = dir_with("[contributes.plugin]\nwasm = \"components/../p.wasm\"\n");
+    fs::create_dir(dir.path().join("components")).unwrap();
+    let manifest = load(dir.path());
+    let plugin = PluginManifest::from_extension(&manifest, ExtensionOrigin::User)
+        .unwrap()
+        .unwrap();
+    assert!(plugin.wasm.ends_with("p.wasm"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_leading_outside_is_rejected() {
+    let outside = tempdir::Dir::new_named("outside");
+    fs::write(outside.path().join("o.wasm"), b"\0asm").unwrap();
+    for (link, wasm) in [("evil.wasm", "evil.wasm"), ("dir", "dir/o.wasm")] {
+        let target = if link == "dir" {
+            outside.path().to_path_buf()
+        } else {
+            outside.path().join("o.wasm")
+        };
+        let dir = dir_with(&format!("[contributes.plugin]\nwasm = {wasm:?}\n"));
+        std::os::unix::fs::symlink(&target, dir.path().join(link)).unwrap();
+        let manifest = load(dir.path());
+        let error = PluginManifest::from_extension(&manifest, ExtensionOrigin::User).unwrap_err();
+        assert!(
+            matches!(error, PluginManifestError::WasmPath { .. }),
+            "{wasm}: {error}"
+        );
     }
 }
 

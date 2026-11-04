@@ -165,11 +165,15 @@ fn wasm_file(dir: &Path, entry: &str) -> Result<PathBuf, &'static str> {
     if relative.has_root() || relative.is_absolute() {
         return Err("must be relative to the extension's directory");
     }
-    if relative
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
-    {
-        return Err("is outside the extension's directory");
+    // Written to climb out, whatever the links inside lead to.
+    let mut depth = 0usize;
+    for component in relative.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir if depth > 0 => depth -= 1,
+            _ => return Err("is outside the extension's directory"),
+        }
     }
     let canonical_dir = dir
         .canonicalize()
