@@ -325,6 +325,11 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "plugins_preview": {
+          "default": false,
+          "description": "Run code plugins (WebAssembly) from installed extensions. A preview:\ntheir API can change in any release. Each plugin still asks for what\nit may do before it runs.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1370,7 +1375,8 @@
     "extensions": {
       "$ref": "#/$defs/ExtensionsSettings",
       "default": {
-        "disabled": []
+        "disabled": [],
+        "plugins_preview": false
       },
       "description": "Installed extensions. A project file can't set them."
     },

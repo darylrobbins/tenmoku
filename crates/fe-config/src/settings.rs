@@ -120,6 +120,10 @@ pub struct ExtensionsSettings {
     /// "acme.solarized": they stay installed and listed. An ID no
     /// extension has is ignored.
     pub disabled: Vec<String>,
+    /// Run code plugins (WebAssembly) from installed extensions. A preview:
+    /// their API can change in any release. Each plugin still asks for what
+    /// it may do before it runs.
+    pub plugins_preview: bool,
 }
 
 /// Settings for the project tree.

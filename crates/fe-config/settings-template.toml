@@ -302,6 +302,10 @@
 # stay installed but contribute nothing. An ID no extension has is ignored. A
 # project file can't set it.
 # disabled = []
+#
+# Run code plugins (WebAssembly) from installed extensions. A preview, off by
+# default: their API can change in any release. A project file can't set it.
+# plugins_preview = false
 
 # External formatters, one table per language, named as the language is
 # (rust, python, typescript, go, ...). A project file can't set them. A table
