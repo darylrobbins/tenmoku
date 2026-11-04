@@ -163,3 +163,73 @@ cursor = [0, 0]
 keys = ":s/foo/y/e<CR>n"
 set = "ic"
 
+
+[[case]]
+name = "sort_pattern_scs_ignores_smartcase"
+buffer = "c XC\na xB\nb XA"
+cursor = [0, 0]
+keys = ":sort /X/<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_s_empty_pattern"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = "g*:s//x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "hash_s_empty_pattern"
+buffer = "Foo foo FOO"
+cursor = [0, 8]
+keys = "#:s//x/g<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_g_empty_pattern"
+buffer = "Foo\nfoo\nFOO"
+cursor = [0, 0]
+keys = "g*gg:g//d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_v_empty_pattern"
+buffer = "Foo\nfoo\nFOO\nbar"
+cursor = [0, 0]
+keys = "g*gg:v//d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_address_empty_search"
+buffer = "Foo\nfoo\nFOO"
+cursor = [0, 0]
+keys = "g*gg://d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_address_repeat"
+buffer = "Foo\nx\nfoo\nFOO"
+cursor = [0, 0]
+keys = "g*gg:/\\/d<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_amp_repeat"
+buffer = "Foo foo FOO\nFoo foo FOO"
+cursor = [0, 0]
+keys = "g*:s//x/<CR>j:&&<CR>"
+set = "ic scs"
+
+[[case]]
+name = "star_s_then_amp"
+buffer = "Foo foo FOO\nFoo foo FOO"
+cursor = [0, 0]
+keys = "g*:s//x/g<CR>j&"
+set = "ic scs"
+
+[[case]]
+name = "star_s_then_explicit_pattern"
+buffer = "Foo foo FOO"
+cursor = [0, 0]
+keys = "g*:s/Foo/x/g<CR>"
+set = "ic scs"

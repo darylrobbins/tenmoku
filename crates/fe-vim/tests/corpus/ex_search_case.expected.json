@@ -566,6 +566,273 @@
           }
         }
       }
+    },
+    {
+      "name": "sort_pattern_scs_ignores_smartcase",
+      "buffer": "c XC\na xB\nb XA",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":sort /X/<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "b XA\na xB\nc XC",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "star_s_empty_pattern",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*:s//x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_s_empty_pattern",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "#:s//x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x x x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<FOO\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_g_empty_pattern",
+      "buffer": "Foo\nfoo\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*gg:g//d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "FOO\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "FOO\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "foo\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "Foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "star_v_empty_pattern",
+      "buffer": "Foo\nfoo\nFOO\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*gg:v//d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo\nfoo\nFOO",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "bar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "star_address_empty_search",
+      "buffer": "Foo\nfoo\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*gg://d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo\nFOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "star_address_repeat",
+      "buffer": "Foo\nx\nfoo\nFOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*gg:/\\/d<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "Foo\nx\nfoo\nFOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\/d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_amp_repeat",
+      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*:s//x/<CR>j:&&<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO\nx foo FOO",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_s_then_amp",
+      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*:s//x/g<CR>j&",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x x x\nx x x",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_s_then_explicit_pattern",
+      "buffer": "Foo foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g*:s/Foo/x/g<CR>",
+      "set": "ic scs",
+      "expect": {
+        "buffer": "x foo FOO",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "Foo",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }
