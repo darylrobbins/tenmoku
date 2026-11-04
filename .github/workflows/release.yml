@@ -1,9 +1,10 @@
 name: Release
 
-# A vX.Y.Z tag builds Tenmoku.app on macOS arm64 and attaches a zip and its SHA-256 to a
-# GitHub Release. Signing and notarization run only when the repository has the secrets;
-# without them the app ships ad-hoc signed. A manual run builds the same zip as a workflow
-# artifact and publishes nothing. See docs/release/macos-signing.md, "Releasing".
+# A vX.Y.Z tag builds Tenmoku.app on macOS arm64 and attaches a zip, its SHA-256 and Sparkle's
+# appcast.xml to a GitHub Release. Signing, notarization and the appcast run only when the
+# repository has the secrets; without them the app ships ad-hoc signed and with no appcast. A
+# manual run builds the same files as a workflow artifact and publishes nothing. See
+# docs/release/macos-signing.md, "Releasing".
 
 on:
   push:
@@ -33,8 +34,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build the release binary
         run: cargo build --release -p fastedit --locked
+      - name: Fetch Sparkle
+        id: sparkle
+        run: |
+          framework=$(scripts/fetch-sparkle.sh)
+          echo "framework=$framework" >>"$GITHUB_OUTPUT"
+          echo "tools=$(dirname "$framework")/bin" >>"$GITHUB_OUTPUT"
       - name: Bundle Tenmoku.app
         id: bundle
+        env:
+          SPARKLE_FRAMEWORK: ${{ steps.sparkle.outputs.framework }}
+          TENMOKU_FEED_URL: ${{ vars.TENMOKU_FEED_URL || format('https://github.com/{0}/releases/latest/download/appcast.xml', github.repository) }}
+          TENMOKU_ED_PUBLIC_KEY: ${{ vars.SPARKLE_ED_PUBLIC_KEY }}
         run: |
           # A tag names the version; a manual run takes Cargo.toml's.
           if [ "$GITHUB_REF_TYPE" = tag ]; then
@@ -63,12 +74,37 @@ jobs:
           ditto -c -k --keepParent target/bundle/Tenmoku.app "dist/$name"
           (cd dist && shasum -a 256 "$name" >"$name.sha256")
           cat "dist/$name.sha256"
+      - name: Sign the zip for Sparkle and write appcast.xml (skipped when the secret is absent)
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_TOOLS: ${{ steps.sparkle.outputs.tools }}
+          VERSION: ${{ steps.bundle.outputs.version }}
+          DOWNLOAD_URL_PREFIX: ${{ vars.DOWNLOAD_URL_PREFIX || format('https://github.com/{0}/releases/download/v{1}', github.repository, steps.bundle.outputs.version) }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "skipping Sparkle signing: no SPARKLE_ED_PRIVATE_KEY secret, so no appcast.xml"
+            exit 0
+          fi
+          name="Tenmoku-$VERSION-macos-arm64.zip"
+          # On stdin only: an argument would show in the process list.
+          signature=$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_TOOLS/sign_update" --ed-key-file - -p "dist/$name") ||
+            { echo "::error::Sparkle could not sign the zip: is the secret an exported private key?"; exit 1; }
+          scripts/make-appcast.sh --zip "dist/$name" --version "$VERSION" \
+            --download-url "${DOWNLOAD_URL_PREFIX%/}/$name" --signature "$signature" \
+            --out dist/appcast.xml
       - name: Publish the GitHub Release
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # --clobber replaces only what it is given. A rebuilt zip under the old appcast.xml
+            # would fail Sparkle's signature check on every installed copy, so leave both alone.
+            assets=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+            if [ ! -e dist/appcast.xml ] && printf '%s\n' "$assets" | grep -qx appcast.xml; then
+              echo "::error::$GITHUB_REF_NAME has an appcast.xml and this run made none: set SPARKLE_ED_PRIVATE_KEY, or delete that asset first"
+              exit 1
+            fi
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \

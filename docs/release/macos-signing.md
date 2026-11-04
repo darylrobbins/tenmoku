@@ -125,11 +125,12 @@ The tag minus its `v` becomes the app's version in `Info.plist`, while the binar
 workflow starts with `scripts/check-release-version.sh`, which refuses a tag that isn't exactly
 `v` plus `Cargo.toml`'s version: a release that got past it would offer itself as its own update.
 
-The workflow builds `cargo build --release -p fastedit --locked`, bundles `Tenmoku.app`, runs
-`scripts/sign-notarize-macos.sh`, zips the app as `Tenmoku-X.Y.Z-macos-arm64.zip` with a
-`.sha256` beside it, and attaches both to the GitHub Release for the tag (creating it with
+The workflow builds `cargo build --release -p fastedit --locked`, fetches Sparkle, bundles
+`Tenmoku.app` with it, runs `scripts/sign-notarize-macos.sh`, zips the app as
+`Tenmoku-X.Y.Z-macos-arm64.zip` with a `.sha256` beside it, signs the zip for Sparkle and writes
+`appcast.xml`, and attaches them all to the GitHub Release for the tag (creating it with
 generated notes, or replacing the files on a release that already exists). Running the
-workflow by hand (Actions > Release > Run workflow) builds the same zip as a workflow
+workflow by hand (Actions > Release > Run workflow) builds the same files as a workflow
 artifact and publishes nothing.
 
 Signing and notarization use six repository secrets (Settings > Secrets and variables >
@@ -155,6 +156,45 @@ Actions). Each stage runs only when its secrets are all set; otherwise the log s
 The certificate lives in a temporary keychain for the job only. To check the signing script
 locally without any secrets, `scripts/test-release-workflow.sh` runs it against a fixture
 bundle along with `actionlint` and checks on the workflow.
+
+### Sparkle updates
+
+Installed copies find updates through `appcast.xml`, a feed with one item, the release's zip and
+its EdDSA signature; `scripts/make-appcast.sh` writes it (`scripts/test-appcast.sh` tests it). One
+item is enough, since Sparkle updates any older version straight to the latest. By default it is
+at `https://github.com/<owner>/<repo>/releases/latest/download/appcast.xml`, which always follows
+the newest release, and the zip is next to it under that release's tag. GitHub answers 404 to
+anyone outside a private repository, so while the repository is private, or to use another host,
+set the two variables below.
+
+The key pair is made once, on a Mac, with the tools `scripts/fetch-sparkle.sh` leaves in
+`target/sparkle/<version>/bin`. `generate_keys` keeps the private key in the login keychain and
+prints the public one; `generate_keys -x <file>` exports the private key for the secret. Delete
+that file afterwards.
+
+| Setting | Kind | Value |
+| --- | --- | --- |
+| `SPARKLE_ED_PRIVATE_KEY` | secret | the exported private key. It reaches `sign_update` on stdin only. |
+| `SPARKLE_ED_PUBLIC_KEY` | variable | the public key, built into the app as `SUPublicEDKey` |
+| `TENMOKU_FEED_URL` | variable | optional: the feed built into the app as `SUFeedURL`, instead of the URL above |
+| `DOWNLOAD_URL_PREFIX` | variable | optional: the https directory the zip is published under, instead of the release's own download URL; the appcast's enclosure is this plus the zip's name |
+
+Variables are on the same settings page, under the Variables tab. The workflow only publishes to
+the GitHub Release: with either optional variable, copying `appcast.xml` and the zip to that host
+is up to you.
+
+- No `SPARKLE_ED_PRIVATE_KEY`: the log says `skipping Sparkle signing`, and the release has no
+  `appcast.xml`. It is still `latest`, so the default feed answers 404 and installed copies find
+  no update until a signed release follows. Rerunning a release that already has an `appcast.xml`
+  is refused, and changes nothing: it would replace the zip under an appcast describing the old
+  one, and Sparkle would reject the update. Restore the secret, or delete that asset first.
+- No `SPARKLE_ED_PUBLIC_KEY`: the app has no SU\* keys and never polls, so that build and everyone
+  who stays on it get no updates.
+
+**The key is not rotated.** Installed copies check updates against the public key they were built
+with, and this release process has no way to move them to another. Keep the private key safe: if
+it is lost or replaced, those copies stop updating and users must reinstall by hand from a new
+download.
 
 ## Sparkle
 
