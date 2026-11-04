@@ -1375,6 +1375,11 @@ impl Workbench {
         }
     }
 
+    /// The file tree changed: what ignore-file patterns matched may have.
+    pub(crate) fn forget_ignore_matches(&self) {
+        self.lsp.hover.ignore.forget_matches();
+    }
+
     /// The frame hook, run after each draw: opens buffers newly shown,
     /// closes those no longer shown, nudges those that moved, and updates
     /// the status item.
@@ -1392,6 +1397,7 @@ impl Workbench {
         self.sync_folds(cx);
         self.sync_semantic_tokens(cx);
         self.sync_markdown_renderers(cx);
+        self.lsp.hover.ignore.sync(&editors, cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
         let signature_help: Rc<dyn fe_gpui::SignatureHelpProvider> = self.lsp.hover.clone();
@@ -2179,7 +2185,9 @@ impl CodeActioner {
 /// server its buffer is open on, through whichever manager the workbench has
 /// now: none (no root, or a closed window) answers nothing. Completions
 /// add extensions' snippets ([`crate::extension_snippets`]), server or
-/// none, unless a punctuation trigger character asked.
+/// none, unless a punctuation trigger character asked. In an ignore file,
+/// completions add paths and hovers add a pattern's matches, server or none
+/// ([`crate::ignore_assist`]).
 #[derive(Default)]
 struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
@@ -2187,36 +2195,59 @@ struct LspHover {
     workbench: RefCell<Option<(WeakEntity<Workbench>, gpui::AsyncApp)>>,
     /// Runs the commands accepted completions have.
     executor: RefCell<Option<gpui::BackgroundExecutor>>,
+    ignore: Rc<crate::ignore_assist::IgnoreAssist>,
+}
+
+impl LspHover {
+    /// The workbench, if `buffer` is an ignore file to help with.
+    fn ignore_host(&self, buffer: BufferId) -> Option<(WeakEntity<Workbench>, gpui::AsyncApp)> {
+        (self.ignore.covers(buffer))
+            .then(|| self.workbench.borrow().clone())
+            .flatten()
+    }
 }
 
 impl fe_gpui::HoverProvider for LspHover {
     fn hover(&self, buffer: BufferId, version: Version, offset: usize) -> fe_gpui::HoverFuture {
-        let Some(manager) = self.manager.borrow().upgrade() else {
-            return Box::pin(async { None });
-        };
+        let ignore = self.ignore_host(buffer);
+        let assist = self.ignore.clone();
         // Sent under the lock; awaited without it.
-        let reply = lock(&manager).hover(buffer, version, offset);
+        let reply = (self.manager.borrow().upgrade())
+            .map(|manager| lock(&manager).hover(buffer, version, offset));
         Box::pin(async move {
-            match reply.await {
-                Ok(hover) => hover.map(|hover| fe_gpui::HoverContent {
-                    text: hover.text,
-                    range: hover.range,
-                }),
-                Err(error) => {
-                    log::debug!("no hover: {error}");
-                    None
-                }
-            }
+            let matches = match ignore {
+                Some((workbench, cx)) => assist.hover(workbench, cx, buffer, version, offset).await,
+                None => None,
+            };
+            let server = match reply {
+                Some(reply) => match reply.await {
+                    Ok(hover) => hover.map(|hover| fe_gpui::HoverContent {
+                        text: hover.text,
+                        range: hover.range,
+                    }),
+                    Err(error) => {
+                        log::debug!("no hover: {error}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            crate::ignore_assist::merged_hover(server, matches)
         })
     }
 }
 
 impl fe_gpui::CompletionProvider for LspHover {
     fn trigger_characters(&self, buffer: BufferId) -> Vec<String> {
-        match self.manager.borrow().upgrade() {
+        let mut triggers = match self.manager.borrow().upgrade() {
             Some(manager) => lock(&manager).trigger_characters(buffer),
             None => Vec::new(),
+        };
+        let path = crate::ignore_assist::TRIGGER;
+        if self.ignore.covers(buffer) && !triggers.iter().any(|trigger| trigger == path) {
+            triggers.push(path.to_owned());
         }
+        triggers
     }
 
     fn completions(
@@ -2229,6 +2260,7 @@ impl fe_gpui::CompletionProvider for LspHover {
         let host = crate::extension_snippets::offers_snippets(&trigger)
             .then(|| self.workbench.borrow().clone())
             .flatten();
+        let ignore = self.ignore_host(buffer);
         let trigger = match trigger {
             CompletionTrigger::Invoked => fe_lsp::CompletionTrigger::Invoked,
             CompletionTrigger::Character(c) => fe_lsp::CompletionTrigger::Character(c),
@@ -2246,6 +2278,13 @@ impl fe_gpui::CompletionProvider for LspHover {
                     )
                 })
             });
+            let paths = match ignore {
+                Some((workbench, cx)) => {
+                    crate::ignore_assist::path_completions(workbench, cx, buffer, version, offset)
+                        .await
+                }
+                None => None,
+            };
             let list = match reply {
                 Some(reply) => match reply.await {
                     Ok(completions) => completions.map(|completions| CompletionList {
@@ -2259,11 +2298,15 @@ impl fe_gpui::CompletionProvider for LspHover {
                 },
                 None => None,
             };
-            if snippets.is_empty() {
+            if snippets.is_empty() && paths.is_none() {
                 return list;
             }
             let mut list = list.unwrap_or_default();
             list.items.extend(snippets);
+            if let Some(paths) = paths {
+                list.items.extend(paths.items);
+                list.is_incomplete |= paths.is_incomplete;
+            }
             Some(list)
         })
     }

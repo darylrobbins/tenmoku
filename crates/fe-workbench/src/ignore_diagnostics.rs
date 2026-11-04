@@ -170,6 +170,7 @@ impl Workbench {
 
     /// The file tree changed: every open ignore file is checked again.
     fn recheck_ignore_files(&mut self, cx: &mut Context<Self>) {
+        self.forget_ignore_matches();
         let ids: Vec<BufferId> = self.ignore_diagnostics.slots.keys().copied().collect();
         for id in ids {
             self.schedule_ignore_check(id, cx);
@@ -268,6 +269,11 @@ impl Workbench {
         }
     }
 
+    /// What checks an ignore file.
+    pub(crate) fn ignore_check(&self) -> Arc<Check> {
+        self.ignore_diagnostics.check.clone()
+    }
+
     /// Checks with `check` from now on.
     #[cfg(test)]
     pub(crate) fn set_ignore_check(&mut self, check: Arc<Check>) {
@@ -314,7 +320,7 @@ fn in_git_dir(path: &Path) -> bool {
 /// Whether `view` shows a file the check applies to: one in the ignore-file
 /// language, as picked by hand or else by its path, which is known without its
 /// grammar loading, and which Docker or Podman don't read by other rules.
-fn is_ignore_file(view: &EditorView) -> bool {
+pub(crate) fn is_ignore_file(view: &EditorView) -> bool {
     let Some(path) = view.model().path() else {
         return false;
     };
