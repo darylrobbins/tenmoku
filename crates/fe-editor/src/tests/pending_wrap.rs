@@ -39,11 +39,13 @@ fn toggle_wraps_the_cursor_rows_first() {
 
     // Further slices finish, and match wrapping everything in one go.
     while model.wrap_pending(100_000) {}
-    assert_wrapped_as_in_one_go(&model, WIDTH);
+    assert_wrapped_as_in_one_go(&model, WIDTH, model.display().row_for_buffer_row(LINES / 2));
 }
 
 /// The model's rows are those of a display map wrapped at `width` in one go.
-fn assert_wrapped_as_in_one_go(model: &EditorModel, width: f32) {
+/// Samples every 11th row, plus 200 rows around the cursor, around `top`
+/// (the viewport top) and at the tail.
+fn assert_wrapped_as_in_one_go(model: &EditorModel, width: f32, top: u32) {
     let mut reference = DisplayMap::new(model.snapshot(), model.tab_size());
     reference.set_wrap_width(Some(width), &mut Monospace);
     assert!(!reference.wrap_pending(0, usize::MAX, &mut Monospace));
@@ -54,7 +56,7 @@ fn assert_wrapped_as_in_one_go(model: &EditorModel, width: f32) {
     let rows = (0..count)
         .step_by(11)
         .chain(around(cursor))
-        .chain(around(model.display().row_for_buffer_row(LINES / 2)))
+        .chain(around(top))
         .chain(count.saturating_sub(200)..count);
     for row in rows {
         assert_eq!(model.display().row(row), reference.row(row), "row {row}");
@@ -88,8 +90,8 @@ fn narrowing_keeps_the_top_row_in_place() {
     // Halfway into the top row, the cursor far above.
     let top = model.display().row_for_offset(anchor) as f32 + 0.5;
     assert!(model.fit_wrap_width(WIDTH));
-    wrap_keeping(&mut model, top, anchor);
-    assert_wrapped_as_in_one_go(&model, WIDTH);
+    let top = wrap_keeping(&mut model, top, anchor);
+    assert_wrapped_as_in_one_go(&model, WIDTH, top as u32);
 }
 
 #[test]
@@ -115,7 +117,7 @@ fn widening_from_a_continuation_row_keeps_its_text_in_place() {
     let wide = 600.;
     assert!(model.fit_wrap_width(wide));
     let top = wrap_keeping(&mut model, top_row as f32 + 0.25, anchor);
-    assert_wrapped_as_in_one_go(&model, wide);
+    assert_wrapped_as_in_one_go(&model, wide, top as u32);
     let first_now = model.display().row_for_offset(long_start);
     assert!(
         model.display().row(first_now + 1).last,
