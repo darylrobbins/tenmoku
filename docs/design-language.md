@@ -357,8 +357,20 @@ By use, the literal sizes are 12 (24 times), 11 (8), 13 (4), 10 (2), 14 (1) and 
 - **Licence:** ISC, with Feather's MIT for the icons derived from it:
   `kiln/crates/kiln-ui/assets/icons/LICENSE`, `THIRD_PARTY.md`, `NOTICE`.
 - **Drawing:** monochrome strokes, which GPUI's `svg()` draws as an alpha mask in the
-  element's text colour (`kiln/crates/kiln-ui/src/file_icons.rs`). So an icon's colour
-  is always a `text_color` call, and an icon has no colours of its own.
+  element's text colour (`kiln/crates/kiln-ui/src/file_icons.rs`). So a Lucide icon's
+  colour is always a `text_color` call, and it has no colours of its own.
+- **Second set, for files and folders:** a curated subset of Material Icon Theme, MIT,
+  unmodified, 142 SVGs in `kiln/crates/kiln-ui/assets/file-icons/`
+  (`kiln/crates/kiln-ui/src/file_icons_coloured.rs:ColouredIcons`): an icon per
+  highlighted language, per well-known file (`Makefile`, `justfile`, `Cargo.toml`,
+  `.editorconfig`, lockfiles, manifests, `README`, `LICENSE`) and per well-known folder
+  (`src`, `tests`, `docs`, `.git`, `node_modules`, `target`, …), each folder open and
+  closed (`IconSet::folder_named`). Multi-colour, mid-tone fills that read on dark and
+  light backgrounds; the few that wouldn't have a `_light` variant, drawn while the
+  active theme is light. They're drawn as images (`IconRef::Coloured`), rasterised at
+  the device size and never tinted; an ignored row fades them instead. Lucide stays
+  for UI chrome. Not installed by default yet: an app installs it with `set_icon_set`.
+  Licence: `kiln/crates/kiln-ui/assets/file-icons/LICENSE`, `THIRD_PARTY.md`, `NOTICE`.
 
 ### Sizes and tints
 

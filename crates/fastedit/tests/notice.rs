@@ -18,6 +18,8 @@ struct Pair<'a> {
 
 /// Lucide's license, beside the icons, for the Icons table's rows.
 const ISC_TEXT: &str = "kiln/crates/kiln-ui/assets/icons/LICENSE";
+/// Material Icon Theme's license, beside its icons.
+const MATERIAL_TEXT: &str = "kiln/crates/kiln-ui/assets/file-icons/LICENSE";
 
 fn repo_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -130,7 +132,8 @@ fn check_pair(files: &Files, pair: &Pair) -> Vec<String> {
             ));
         }
         for id in license_ids(&row.license) {
-            // The icons' LICENSE carries Lucide's ISC and Feather's MIT notices.
+            // An icon set's LICENSE beside it carries its notices: Lucide's
+            // ISC and Feather's MIT, Material Icon Theme's MIT.
             let text = if row.table == "Icons" && id != "Apache-2.0" {
                 format!("{}{}LICENSE", pair.prefix, row.path)
             } else {
@@ -167,6 +170,7 @@ fn repo_files() -> Files {
         "LICENSES/MIT.txt",
         "kiln/LICENSES/Apache-2.0.txt",
         ISC_TEXT,
+        MATERIAL_TEXT,
     ] {
         match std::fs::read_to_string(root.join(p)) {
             Ok(text) => {

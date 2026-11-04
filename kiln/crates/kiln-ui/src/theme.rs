@@ -7,6 +7,7 @@
 //! a way to set one ([`set_ui_theme`]).
 
 use std::{
+    cell::Cell,
     collections::HashMap,
     sync::{Arc, LazyLock},
 };
@@ -113,8 +114,10 @@ impl Global for ActiveUiTheme {}
 /// (over the base whose appearance the background suggests), so widgets
 /// that read `cx.theme()` match.
 pub fn set_ui_theme(cx: &mut App, theme: UiTheme) {
+    let active = Theme::from_ui_theme(&theme);
+    APPEARANCE.set(active.appearance);
     cx.set_global(GlobalTheme {
-        active: Theme::from_ui_theme(&theme),
+        active,
         choice: None,
     });
     cx.set_global(ActiveUiTheme(theme));
@@ -439,7 +442,21 @@ fn pick<'a>(
     }
 }
 
+thread_local! {
+    /// The active theme's appearance, for what answers without an `App`,
+    /// as an icon set does. Per thread, as the icon set is
+    /// (`file_icons::ICON_SET`).
+    static APPEARANCE: Cell<Appearance> = const { Cell::new(Appearance::Dark) };
+}
+
+/// The active theme's appearance: the bundled dark base's until a theme is
+/// set. A theme change redraws every window, so what's drawn by it follows.
+pub(crate) fn active_appearance() -> Appearance {
+    APPEARANCE.get()
+}
+
 fn activate(cx: &mut App, active: Theme, choice: Option<(ThemeMode, Theme, Theme)>) {
+    APPEARANCE.set(active.appearance);
     cx.set_global(ActiveUiTheme(active.ui_theme()));
     cx.set_global(GlobalTheme { active, choice });
     cx.refresh_windows();

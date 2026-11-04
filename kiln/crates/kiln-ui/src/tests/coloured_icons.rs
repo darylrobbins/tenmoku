@@ -128,11 +128,24 @@ struct Painted {
     images: Vec<Image>,
 }
 
-/// An atlas that hands out a tile per key and keeps what each was given.
+/// An atlas that hands out a tile per key, as GPUI's do, until the key is
+/// removed, and keeps what each tile was given.
 #[derive(Default)]
 struct Tiles {
     next: AtomicU32,
     given: Mutex<HashMap<u32, Given>>,
+    /// The tiles not removed, by key.
+    live: Mutex<HashMap<AtlasKey, AtlasTile>>,
+}
+
+impl Tiles {
+    /// How many images' tiles aren't removed.
+    fn live_images(&self) -> usize {
+        let live = self.live.lock().expect("tiles");
+        (live.keys())
+            .filter(|key| matches!(key, AtlasKey::Image(_)))
+            .count()
+    }
 }
 
 /// A tile's size and pixels.
@@ -141,9 +154,12 @@ type Given = (Size<DevicePixels>, Vec<u8>);
 impl PlatformAtlas for Tiles {
     fn get_or_insert_with<'a>(
         &self,
-        _: AtlasKey,
+        key: AtlasKey,
         build: &mut dyn FnMut() -> gpui::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> gpui::Result<Option<AtlasTile>> {
+        if let Some(tile) = self.live.lock().expect("tiles").get(&key) {
+            return Ok(Some(*tile));
+        }
         let Some((size, bytes)) = build()? else {
             return Ok(None);
         };
@@ -152,7 +168,7 @@ impl PlatformAtlas for Tiles {
             .lock()
             .expect("tiles")
             .insert(id, (size, bytes.into_owned()));
-        Ok(Some(AtlasTile {
+        let tile = AtlasTile {
             texture_id: AtlasTextureId {
                 index: 0,
                 kind: AtlasTextureKind::Polychrome,
@@ -163,10 +179,14 @@ impl PlatformAtlas for Tiles {
                 origin: Default::default(),
                 size,
             },
-        }))
+        };
+        self.live.lock().expect("tiles").insert(key, tile);
+        Ok(Some(tile))
     }
 
-    fn remove(&self, _: &AtlasKey) {}
+    fn remove(&self, key: &AtlasKey) {
+        self.live.lock().expect("tiles").remove(key);
+    }
 }
 
 /// A renderer that draws nothing and keeps the sprites of each scene.
@@ -224,6 +244,7 @@ struct Painter {
     cx: HeadlessAppContext,
     window: AnyWindowHandle,
     painted: Rc<RefCell<Painted>>,
+    tiles: Arc<Tiles>,
 }
 
 impl Painter {
@@ -231,9 +252,11 @@ impl Painter {
     fn new(icon: IconRef, surface: Surface) -> Self {
         let painted = Rc::new(RefCell::new(Painted::default()));
         let recorder = painted.clone();
+        let tiles = Arc::new(Tiles::default());
+        let atlas = tiles.clone();
         let text_system = Arc::new(NoopTextSystem::new());
         let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(Assets), move || {
-            let renderer = Recorder(recorder.clone(), Arc::default());
+            let renderer = Recorder(recorder.clone(), atlas.clone());
             Ok(Some(Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>))
         });
         cx.update(|cx| set_icon_set(Arc::new(Stub(icon)), cx));
@@ -245,6 +268,7 @@ impl Painter {
             cx,
             window,
             painted,
+            tiles,
         }
     }
 
@@ -433,5 +457,28 @@ fn assets_serve_registered_and_lucide() {
     for icon in Icon::ALL {
         let bytes = Assets.load(icon.path()).expect("load").expect("bundled");
         assert_eq!(*bytes, *icon.svg(), "{icon:?}");
+    }
+}
+
+/// A registration that changes the file drops the old image's tile, so
+/// changing it back and forth doesn't fill the atlas.
+#[test]
+fn registering_again_drops_the_old_tile() {
+    const PATH: &str = "kiln-ui-test/coloured/retired.svg";
+    Assets::register_coloured(&[(PATH, RED_BLUE)]);
+    let mut painter = Painter::new(IconRef::Coloured(PATH.into()), Surface::Row);
+    let side = painter.device(16.);
+    one_image(&painter.paint(), side, "first");
+    assert_eq!(painter.tiles.live_images(), 1);
+    for (round, svg) in [GREEN, RED_BLUE, GREEN, RED_BLUE].into_iter().enumerate() {
+        Assets::register_coloured(&[(PATH, svg)]);
+        let image = one_image(&painter.paint(), side, &format!("round {round}"));
+        let colours_right = if svg == GREEN {
+            all_green(&image.bgra)
+        } else {
+            red_and_blue(&image.bgra)
+        };
+        assert!(colours_right, "round {round}: the new file is drawn");
+        assert_eq!(painter.tiles.live_images(), 1, "round {round}");
     }
 }

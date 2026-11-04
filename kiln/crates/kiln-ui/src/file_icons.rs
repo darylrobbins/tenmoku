@@ -15,6 +15,8 @@
 //! [`IconSet`] through [`file_icon_ref`], [`folder_icon_ref`] or their `_path`
 //! forms, so installing another set with [`set_icon_set`] changes them all
 //! together. With none installed the set is [`LucideIcons`], the mapping here.
+//! [`ColouredIcons`](crate::ColouredIcons) is the other bundled set, in
+//! colour.
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc, sync::LazyLock};
 
@@ -294,7 +296,7 @@ pub(crate) const EXTENSIONS: &[(&str, Icon)] = &[
 
 /// Longest name or extension that is lowercased and looked up; longer ones
 /// can't be in the tables.
-const MAX_KEY: usize = 64;
+pub(crate) const MAX_KEY: usize = 64;
 
 static NAME_MAP: LazyLock<HashMap<&'static str, Icon>> =
     LazyLock::new(|| FILE_NAMES.iter().copied().collect());
@@ -358,7 +360,7 @@ impl IconRef {
             IconRef::Coloured(path) => {
                 let path = path.clone();
                 let load = move |window: &mut Window, cx: &mut App| {
-                    Some(coloured_image(&path, size, window.scale_factor(), cx))
+                    Some(coloured_image(&path, size, window, cx))
                 };
                 img(load).size(size).flex_none().into_any_element()
             }
@@ -385,16 +387,16 @@ pub(crate) struct ColouredImages {
 
 impl Global for ColouredImages {}
 
-/// `path`'s coloured icon at `size` on a window at `scale`, from the cache or
+/// `path`'s coloured icon at `size` on `window`, from the cache or
 /// rasterised into it. The same `Arc` each frame, so the window's atlas
 /// keeps one texture for it.
 pub(crate) fn coloured_image(
     path: &SharedString,
     size: Pixels,
-    scale: f32,
+    window: &mut Window,
     cx: &mut App,
 ) -> Result<Arc<RenderImage>, ImageCacheError> {
-    let side = (f32::from(size) * scale).round().max(1.) as u32;
+    let side = (f32::from(size) * window.scale_factor()).round().max(1.) as u32;
     let key = (path.clone(), side);
     let revision = Assets::coloured_revision();
     match cx.try_global::<ColouredImages>() {
@@ -406,8 +408,17 @@ pub(crate) fn coloured_image(
         // A registration since: any image, or failure, may be stale.
         Some(_) => {
             let cache = cx.global_mut::<ColouredImages>();
-            cache.images.clear();
             cache.revision = revision;
+            let stale: Vec<_> = (cache.images.drain())
+                .filter_map(|(_, image)| image.ok())
+                .collect();
+            // An atlas keeps an image's tile until it's dropped, from every
+            // window: this one is out of the app's list while it draws.
+            for image in stale {
+                cx.drop_image(image, Some(window));
+            }
+            // So no window shows a dropped tile.
+            cx.refresh_windows();
         }
         None => cx.set_global(ColouredImages {
             images: HashMap::new(),
@@ -460,6 +471,12 @@ pub trait IconSet: 'static {
 
     /// The icon for a folder row, open or closed.
     fn folder(&self, expanded: bool) -> IconRef;
+
+    /// The icon for a folder row called `name` (a folder name, not a path),
+    /// open or closed. By default [`IconSet::folder`]'s, whatever the name.
+    fn folder_named(&self, _name: &str, expanded: bool) -> IconRef {
+        self.folder(expanded)
+    }
 }
 
 /// The default set: Lucide's icons through [`FILE_NAMES`] and [`EXTENSIONS`].
@@ -515,6 +532,12 @@ pub fn folder_icon_ref(expanded: bool) -> IconRef {
     icon_set().folder(expanded)
 }
 
+/// The installed set's icon for a folder row called `name`, which a set may
+/// pick by the name ([`IconSet::folder_named`]).
+pub fn folder_icon_ref_named(name: &str, expanded: bool) -> IconRef {
+    icon_set().folder_named(name, expanded)
+}
+
 /// The asset path of the installed set's icon for a file called `name`, for a
 /// surface that draws it itself; [`IconRef::element`] draws a coloured one
 /// as it needs drawing.
@@ -544,16 +567,29 @@ pub fn folder_icon(expanded: bool) -> Icon {
         .unwrap_or_else(|| lucide_folder(expanded))
 }
 
-/// Lucide's icon for a file called `name` (a file name, not a path).
-///
-/// In order: the exact name, ASCII case-insensitively; a name starting with
-/// `.env`; the last two extensions (`tar.gz`); the last extension; else
-/// [`Icon::File`]. A leading dot doesn't start an extension, so `.gitignore`
-/// is a name. At most three hash probes, and no allocation: names and
-/// extensions longer than 64 bytes skip their lookup.
+/// Lucide's icon for a file called `name` (a file name, not a path), by
+/// [`by_name`].
 fn lucide_file(name: &str) -> Icon {
+    by_name(&NAME_MAP, &EXTENSION_MAP, Icon::FileKey, Icon::File, name)
+}
+
+/// What `names` and `extensions` give a file called `name` (a file name, not
+/// a path).
+///
+/// In order: the exact name, ASCII case-insensitively; `env` for a name
+/// starting with `.env`; the last two extensions (`tar.gz`); the last
+/// extension; else `default`. A leading dot doesn't start an extension, so
+/// `.gitignore` is a name. At most three hash probes, and no allocation:
+/// names and extensions longer than 64 bytes skip their lookup.
+pub(crate) fn by_name<V: Copy>(
+    names: &HashMap<&'static str, V>,
+    extensions: &HashMap<&'static str, V>,
+    env: V,
+    default: V,
+    name: &str,
+) -> V {
     let mut buf = [0u8; MAX_KEY];
-    if let Some(icon) = lookup(&NAME_MAP, name, &mut buf) {
+    if let Some(icon) = lookup(names, name, &mut buf) {
         return icon;
     }
     if name
@@ -561,21 +597,21 @@ fn lucide_file(name: &str) -> Icon {
         .get(..4)
         .is_some_and(|start| start.eq_ignore_ascii_case(b".env"))
     {
-        return Icon::FileKey;
+        return env;
     }
     // Skip a leading dot, so it can't start an extension.
     let stem_start = usize::from(name.starts_with('.'));
     let Some(last_dot) = name[stem_start..].rfind('.').map(|i| i + stem_start) else {
-        return Icon::File;
+        return default;
     };
     if let Some(prev_dot) = name[stem_start..last_dot]
         .rfind('.')
         .map(|i| i + stem_start)
-        && let Some(icon) = lookup(&EXTENSION_MAP, &name[prev_dot + 1..], &mut buf)
+        && let Some(icon) = lookup(extensions, &name[prev_dot + 1..], &mut buf)
     {
         return icon;
     }
-    lookup(&EXTENSION_MAP, &name[last_dot + 1..], &mut buf).unwrap_or(Icon::File)
+    lookup(extensions, &name[last_dot + 1..], &mut buf).unwrap_or(default)
 }
 
 /// Lucide's icon for a folder row.
@@ -589,7 +625,11 @@ fn lucide_folder(expanded: bool) -> Icon {
 
 /// Looks `key` up ASCII-lowercased through `buf`; `None` if it's empty, too
 /// long, or absent.
-fn lookup(map: &HashMap<&'static str, Icon>, key: &str, buf: &mut [u8; MAX_KEY]) -> Option<Icon> {
+pub(crate) fn lookup<V: Copy>(
+    map: &HashMap<&'static str, V>,
+    key: &str,
+    buf: &mut [u8; MAX_KEY],
+) -> Option<V> {
     if key.is_empty() || key.len() > MAX_KEY {
         return None;
     }

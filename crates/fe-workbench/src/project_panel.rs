@@ -32,7 +32,7 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
-use fe_ui::{Icon, ROW_HEIGHT, TreeRow, file_icon_ref, folder_icon_ref};
+use fe_ui::{Icon, ROW_HEIGHT, TreeRow, file_icon_ref, folder_icon_ref_named};
 use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
@@ -887,7 +887,7 @@ impl ProjectPanel {
                 }
                 let name = row.name.to_string_lossy();
                 let icon = match row.kind {
-                    EntryKind::Dir => folder_icon_ref(row.expanded),
+                    EntryKind::Dir => folder_icon_ref_named(&name, row.expanded),
                     EntryKind::Symlink => Icon::FileSymlink.into(),
                     EntryKind::File => file_icon_ref(&name),
                 };
@@ -928,8 +928,8 @@ impl ProjectPanel {
             .collect();
         if let Some((at, depth)) = field.filter(|(at, _)| range.contains(at)) {
             let icon = match self.edit.as_ref().map(|edit| edit.kind) {
-                Some(EditKind::NewFolder) => folder_icon_ref(false),
-                // A file with no name yet.
+                // A folder or file with no name yet.
+                Some(EditKind::NewFolder) => folder_icon_ref_named("", false),
                 _ => file_icon_ref(""),
             };
             rows.insert(at - range.start, self.render_field(depth, icon, cx));
