@@ -53,9 +53,14 @@ enum Reread {
 }
 
 /// Reads `source`, an HTML block after [`LEAD`], as a paragraph. A
-/// backslash was put in at each of `inserted` to keep a row from starting
-/// a block; `definitions` are the document's link references.
-fn reread(source: &str, inserted: &[usize], definitions: &RefDefs<'_>, depth: usize) -> Reread {
+/// backslash or an indent was put in at each of `inserted`, in order, to
+/// keep a row from starting a block; `definitions` are the document's link references.
+fn reread(
+    source: &str,
+    inserted: &[Range<usize>],
+    definitions: &RefDefs<'_>,
+    depth: usize,
+) -> Reread {
     let callback = |link: BrokenLink<'_>| {
         let definition = definitions.get(&link.reference)?;
         let title = definition.title.as_deref().unwrap_or_default();
@@ -109,10 +114,10 @@ fn reread(source: &str, inserted: &[usize], definitions: &RefDefs<'_>, depth: us
         };
     }
     tokens.drain(..2);
-    // A code span shows a backslash as written.
+    // A code span shows what was put in as written.
     for tok in &mut tokens {
         if let Token::Code(code) = &mut tok.token
-            && inserted.iter().any(|at| tok.range.contains(at))
+            && !inserted_in(inserted, &tok.range).is_empty()
         {
             *code = unescaped_code(source, tok.range.clone(), inserted).into();
         }
@@ -124,31 +129,108 @@ fn reread(source: &str, inserted: &[usize], definitions: &RefDefs<'_>, depth: us
     Reread::Paragraph(inline::build(tokens, MAX_NESTING.saturating_sub(depth)))
 }
 
-/// Where a backslash keeps `line` from starting a block: before its first
-/// punctuation mark, or before the `.` or `)` after a list item's number.
-fn block_marker(line: &str) -> Option<usize> {
+/// How a row is kept from starting a block.
+#[derive(Clone, Copy)]
+enum Hold {
+    /// A backslash at this byte of the row, which escapes what is there.
+    Escape(usize),
+    /// An indent, for a row whose punctuation is inline markup too: a
+    /// backslash would end a run of backticks.
+    Indent,
+}
+
+/// What an indent put in front of a row is.
+const INDENT: &str = "    ";
+
+/// How many extra reads a row starting a block no guess caught may take.
+const MAX_REREADS: usize = 8;
+
+/// How `line` is kept from starting a block, if it looks as if it would:
+/// before its first punctuation mark, or before the `.` or `)` after a
+/// list item's number. Rows indented four columns can't start one.
+fn hold(line: &str) -> Option<Hold> {
+    let rest = line.trim_start_matches([' ', '\t']);
+    if line.len() - rest.len() >= INDENT.len() || line.starts_with('\t') {
+        return None;
+    }
+    let at = line.len() - rest.len();
+    let body = rest.trim_end_matches([' ', '\t', '\r', '\n']);
+    if rest.starts_with("```") || rest.starts_with("~~~") {
+        return Some(Hold::Indent);
+    }
+    let after = |n: usize| {
+        matches!(
+            rest.as_bytes().get(n),
+            None | Some(b' ' | b'\t' | b'\r' | b'\n')
+        )
+    };
+    let head = rest.bytes().next()?;
+    let starts = match head {
+        b'#' => {
+            let hashes = rest.bytes().take_while(|&b| b == b'#').count();
+            hashes <= 6 && after(hashes)
+        }
+        b'>' => true,
+        b'-' | b'+' | b'*' | b'=' | b'|' | b':' | b'_' => {
+            // A bullet, a rule, a setext underline or a table's delimiter row.
+            after(1)
+                || body
+                    .bytes()
+                    .all(|b| matches!(b, b'-' | b'=' | b'|' | b':' | b' ' | b'\t'))
+                    && body.contains(['-', '='])
+                || {
+                    let marks = body.bytes().filter(|b| !matches!(b, b' ' | b'\t'));
+                    marks.clone().count() >= 3 && marks.clone().all(|b| b == head)
+                }
+        }
+        b'0'..=b'9' => {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            matches!(rest.as_bytes().get(digits), Some(b'.' | b')')) && after(digits + 1)
+        }
+        _ => false,
+    };
+    starts.then(|| {
+        Hold::Escape(
+            at + usize::from(head.is_ascii_digit())
+                * rest.bytes().take_while(u8::is_ascii_digit).count(),
+        )
+    })
+}
+
+/// The row of `line` a fallback hold may go on: like [`hold`], but whatever
+/// the row starts with.
+fn fallback_hold(line: &str) -> Option<Hold> {
     let rest = line.trim_start_matches([' ', '\t']);
     let at = line.len() - rest.len();
+    if rest.starts_with(['`', '~']) {
+        return Some(Hold::Indent);
+    }
     if rest.starts_with(|c: char| c.is_ascii_punctuation()) {
-        return Some(at);
+        return Some(Hold::Escape(at));
     }
     let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
     match rest[digits..].chars().next() {
-        Some('.' | ')') if digits > 0 => Some(at + digits),
+        Some('.' | ')') if digits > 0 => Some(Hold::Escape(at + digits)),
         _ => None,
     }
 }
 
-/// The text of the code span at `span` in `source`, without the
-/// backslashes put in at `inserted`, read as pulldown-cmark reads a code
-/// span's: each line ending a space, and a space stripped from each end
-/// when both have one.
-fn unescaped_code(source: &str, span: Range<usize>, inserted: &[usize]) -> String {
+/// The ones of `inserted`, ordered, that overlap `span`.
+fn inserted_in<'a>(inserted: &'a [Range<usize>], span: &Range<usize>) -> &'a [Range<usize>] {
+    let from = inserted.partition_point(|put| put.end <= span.start);
+    let to = inserted.partition_point(|put| put.start < span.end);
+    &inserted[from..to.max(from)]
+}
+
+/// The text of the code span at `span` in `source`, without what was put
+/// in at `inserted`, read as pulldown-cmark reads a code span's: each line
+/// ending a space, and a space stripped from each end when both have one.
+fn unescaped_code(source: &str, span: Range<usize>, inserted: &[Range<usize>]) -> String {
     let mut text = String::new();
     let mut from = span.start;
-    for &at in inserted.iter().filter(|at| span.contains(at)) {
-        text.push_str(&source[from..at]);
-        from = at + 1;
+    for put in inserted_in(inserted, &span) {
+        text.push_str(&source[from..put.start.max(from)]);
+        from = put.end.max(from);
     }
     text.push_str(&source[from..span.end]);
     let ticks = text.len() - text.trim_start_matches('`').len();
@@ -348,33 +430,43 @@ impl<'a, F: BrokenLinkCallback<'a>> Parser<'a, F> {
             .get_or_insert_with(|| pulldown_cmark::Parser::new_ext(text, OPTIONS))
             .reference_definitions();
         let lines: Vec<&str> = html.split_inclusive('\n').collect();
-        // Where a backslash keeps each row from starting a block, once one
-        // has: as a paragraph's, the rest read as written.
-        let mut escapes: Vec<Option<usize>> = vec![None; lines.len()];
-        loop {
+        // How each row is kept from starting a block, as a paragraph's: the
+        // rows that look as if they would are held at once, so one read
+        // usually does; a few more catch the rest, one row each.
+        let mut holds: Vec<Option<Hold>> = lines.iter().map(|line| hold(line)).collect();
+        for _ in 0..=MAX_REREADS {
             let mut source = LEAD.to_owned();
             let mut inserted = Vec::new();
-            for (line, escape) in lines.iter().zip(&escapes) {
-                let (before, after) = line.split_at(escape.unwrap_or(0));
-                source.push_str(before);
-                if escape.is_some() {
-                    inserted.push(source.len());
-                    source.push('\\');
+            for (line, held) in lines.iter().zip(&holds) {
+                match held {
+                    Some(Hold::Escape(at)) => {
+                        let (before, after) = line.split_at(*at);
+                        source.push_str(before);
+                        inserted.push(source.len()..source.len() + 1);
+                        source.push('\\');
+                        source.push_str(after);
+                    }
+                    Some(Hold::Indent) => {
+                        inserted.push(source.len()..source.len() + INDENT.len());
+                        source.push_str(INDENT);
+                        source.push_str(line);
+                    }
+                    None => source.push_str(line),
                 }
-                source.push_str(after);
             }
             match reread(&source, &inserted, definitions, self.depth) {
                 Reread::Paragraph(content) => return Some(content),
                 Reread::Block(0) | Reread::Not => return None,
                 Reread::Block(row) => {
-                    let escape = escapes.get_mut(row - 1)?;
-                    if escape.is_some() {
+                    let held = holds.get_mut(row - 1)?;
+                    if held.is_some() {
                         return None;
                     }
-                    *escape = Some(block_marker(lines[row - 1])?);
+                    *held = Some(fallback_hold(lines[row - 1])?);
                 }
             }
         }
+        None
     }
 
     /// A list, through its end, and the row after its last item.

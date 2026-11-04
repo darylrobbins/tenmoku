@@ -430,7 +430,7 @@ fn html_block_inlines_read_as_a_paragraph_reads_them() {
 
 #[test]
 fn html_block_rows_that_start_blocks_keep_their_text() {
-    // A row that would start a block is kept from it by an escape, which a
+    // A row that would start a block is kept from it by an indent, which a
     // code span, a title or a destination doesn't show.
     assert_eq!(
         inlines("<b>\n`a\n# b`</b>"),
@@ -475,4 +475,36 @@ fn html_block_rows_that_start_blocks_keep_their_text() {
             content: vec![text("a")],
         }])])
     );
+}
+
+#[test]
+fn html_block_backtick_runs_starting_rows_still_pair() {
+    // A fence-like row keeps its backticks, so they open and close a span.
+    assert_eq!(
+        inlines("<b>\n```\nx\n```</b>"),
+        [Inline::Strong(vec![code("x")])]
+    );
+    assert_eq!(
+        inlines("<b>\n`a\n`</b>"),
+        [Inline::Strong(vec![code("a ")])]
+    );
+    assert_eq!(
+        inlines("<b>\n``\n`\n``</b>"),
+        [Inline::Strong(vec![code("`")])]
+    );
+}
+
+#[test]
+fn html_block_with_many_block_rows_is_read_in_one_pass() {
+    let rows = "# x\n".repeat(20_000);
+    let start = std::time::Instant::now();
+    let document = parse(&format!("<b>\n{rows}</b>"));
+    assert!(matches!(
+        &document.blocks[..],
+        [Block {
+            kind: BlockKind::Paragraph(_),
+            ..
+        }]
+    ));
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
 }
