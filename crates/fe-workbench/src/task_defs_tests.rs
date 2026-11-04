@@ -522,6 +522,10 @@ endef
 all: more
 $(addprefix out/,one two) listed:
 lib.a(one.o two.o):
+lib.a(one.o):
+(wrapped) mid(dle)x:
+(foo(bar baz):
+lib.a(one).o two.o):
 spaced\\ name real:
 export override define MULTI
 phantom: not a rule
@@ -552,6 +556,10 @@ clean:
                 "make linux-only",
                 "make other",
                 "make listed",
+                "make (wrapped)",
+                "make mid(dle)x",
+                "make (foo(bar",
+                "make baz)",
                 "make real",
                 "make grouped",
                 "make outputs",

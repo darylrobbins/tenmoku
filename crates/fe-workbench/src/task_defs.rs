@@ -44,8 +44,7 @@
 //! never reaches a shell. A build file that doesn't parse just yields nothing:
 //! it isn't this file's to report on.
 //!
-//! Detection is best-effort, with these known limits (T429 holds their fixes,
-//! T424 the parentheses'):
+//! Detection is best-effort, with these known limits (T429 holds their fixes):
 //!
 //! - A script or make target name starting with `-` reaches its runner as an
 //!   option: `make -n` dry-runs the default target.
@@ -54,8 +53,6 @@
 //!   a `[private]` one shown.
 //! - A make variable named `define` (`define := value`) reads as the directive,
 //!   and can hide every target after it.
-//! - A make target name with literal parentheses isn't detected; see
-//!   [`nameable`].
 //!
 //! # Order and defaults
 //!
@@ -667,19 +664,33 @@ fn rule_head(line: &str) -> Option<&str> {
 
 /// A rule head's whitespace-separated words, keeping as one word each
 /// reference (`$(addprefix out/,one two)`), archive member list
-/// (`lib.a(one.o two.o)`) and escaped space. A `(` with no `)` after it, like
-/// a brace outside a reference, is just part of a name.
+/// (`lib.a(one.o two.o)`) and escaped space. Only a `(` after a name and closed
+/// by a `)` that ends the word is archive syntax; any other, like a brace
+/// outside a reference, is just part of a name.
 fn make_words(head: &str) -> Vec<&str> {
     let mut words = Vec::new();
     let mut rest = head.trim_start();
     while !rest.is_empty() {
         let mut end = 0;
+        let mut first_paren = true;
         while let Some(at) = find_unnested(&rest[end..], |c| c.is_whitespace() || c == '(') {
             end += at;
             if !rest[end..].starts_with('(') {
                 break;
             }
-            end += rest[end..].find(')').unwrap_or(0) + 1;
+            // Only a word's first `(`, after a name, can open an archive
+            // member list, and the list ends at the first `)` that ends a
+            // word: an inner `)` is part of a member.
+            let close = if first_paren && end > 0 {
+                rest[end..]
+                    .match_indices(')')
+                    .map(|(at, _)| end + at + 1)
+                    .find(|&close| rest[close..].chars().next().is_none_or(char::is_whitespace))
+            } else {
+                None
+            };
+            first_paren = false;
+            end = close.unwrap_or(end + 1);
         }
         let word_end = if rest[end..].starts_with(char::is_whitespace) {
             end
@@ -719,14 +730,12 @@ fn find_unnested(text: &str, wanted: impl Fn(char) -> bool) -> Option<usize> {
 
 /// Whether a rule's target is one `make <target>` can ask for.
 ///
-/// Known limit: a target name with literal parentheses isn't detected, because
-/// archive members (`lib.a(one.o)`) share them. [`make_words`] also joins the
-/// words from an unmatched `(` to a later `)`, so those go too. T424 holds the
-/// fix.
+/// Archive members (`lib.a(one.o)`) aren't: a word of a name, then `(`, then
+/// members up to a final `)`. Literal parentheses (`(x)`, `a(b)c`) are part of
+/// a plain name.
 fn nameable(target: &str) -> bool {
-    !target.starts_with('.')
-        && !target.contains(['%', '$', '\\', '*', '?', '['])
-        && !(target.contains('(') && target.contains(')'))
+    let archive_member = target.ends_with(')') && target.find('(').is_some_and(|at| at > 0);
+    !target.starts_with('.') && !target.contains(['%', '$', '\\', '*', '?', '[']) && !archive_member
 }
 
 /// A justfile's public recipes, in its order. Recipe bodies are indented, so
