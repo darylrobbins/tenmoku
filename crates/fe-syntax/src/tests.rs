@@ -163,8 +163,8 @@ fn each_language_highlights_a_snippet() {
             "# c\n!a/**/b?\n",
             &[
                 ("# c", "comment"),
-                ("!", "operator"),
-                ("**", "operator"),
+                ("!a", "variable"),
+                ("**", "keyword"),
                 ("?", "operator"),
             ],
         ),

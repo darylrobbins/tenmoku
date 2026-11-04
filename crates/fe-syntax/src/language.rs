@@ -825,7 +825,7 @@ const DEFS: &[Def] = &[
             ".fdignore",
         ],
         grammar: || tree_sitter_gitignore::LANGUAGE.into(),
-        highlights: || &[tree_sitter_gitignore::HIGHLIGHTS_QUERY],
+        highlights: || &[include_str!("../queries/gitignore.scm")],
         earlier_patterns_win: false,
         injections: None,
         hidden: false,
