@@ -136,6 +136,19 @@ fn panel(s: &mut Lsp) -> Entity<AiChangesPanel> {
     })
 }
 
+/// Whether the panel shows a preview titled `title`: false before the
+/// server's answer has made the panel, so a wait can poll it.
+fn previewing(s: &mut Lsp, title: &str) -> bool {
+    let panel = s.workbench.read_with(&s.cx, |workbench, cx| {
+        workbench.dock().read(cx).ai_changes().cloned()
+    });
+    panel.is_some_and(|panel| {
+        panel
+            .read_with(&s.cx, |panel, _| panel.header_text())
+            .starts_with(title)
+    })
+}
+
 fn header(s: &mut Lsp) -> String {
     let panel = panel(s);
     panel.read_with(&s.cx, |panel, _| panel.header_text())
@@ -483,7 +496,7 @@ fn an_edit_renaming_a_file_is_decided_whole(cx: &mut TestAppContext) {
     s.cx.simulate_input("bar");
     s.draw();
     s.cx.simulate_keystrokes("enter");
-    s.until("the preview", |s| header(s).starts_with("Rename"));
+    s.until("the preview", |s| previewing(s, "Rename"));
 
     assert_eq!(header(&mut s), "Rename foo to bar: 2 files, 3 edits");
     let panel = panel(&mut s);
@@ -535,7 +548,7 @@ fn code_action(s: &mut Lsp) {
             .read_with(&s.cx, |w, _| w.palette == Some(Palette::CodeActions))
     });
     s.cx.simulate_keystrokes("enter");
-    s.until("the preview", |s| header(s).starts_with("Fix"));
+    s.until("the preview", |s| previewing(s, "Fix"));
 }
 
 #[gpui::test]
@@ -584,7 +597,7 @@ fn rename_changes(s: &mut Lsp, changes: Value) {
     s.cx.simulate_input("bar");
     s.draw();
     s.cx.simulate_keystrokes("enter");
-    s.until("the preview", |s| header(s).starts_with("Rename"));
+    s.until("the preview", |s| previewing(s, "Rename"));
 }
 
 /// `name`'s text edits, against the server's open document.
@@ -806,7 +819,7 @@ fn a_code_action_whose_source_closed_says_why_its_command_failed(cx: &mut TestAp
             .read_with(&s.cx, |w, _| w.palette == Some(Palette::CodeActions))
     });
     s.cx.simulate_keystrokes("enter");
-    s.until("the preview", |s| header(s).starts_with("Fix"));
+    s.until("the preview", |s| previewing(s, "Fix"));
     // The file it was asked in closes meanwhile.
     let main = editor.read_with(&s.cx, |view, _| view.model().buffer().id());
     let pane = s.workbench.read_with(&s.cx, |w, _| w.pane().clone());
