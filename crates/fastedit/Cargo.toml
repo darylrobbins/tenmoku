@@ -12,6 +12,12 @@ publish.workspace = true
 name = "tenmoku"
 path = "src/main.rs"
 
+# The system spell checker's tests run on the process's main thread, which
+# libtest's harness never does.
+[[test]]
+name = "mac_speller"
+harness = false
+
 [dependencies]
 async-channel.workspace = true
 fe-buffer.workspace = true
@@ -38,8 +44,8 @@ toml.workspace = true
 # The Dock icon: unbundled, macOS shows the launching terminal's icon.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSResponder"] }
-objc2-foundation = { version = "0.2", features = ["NSData", "NSThread"] }
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSResponder", "NSSpellChecker", "NSTextCheckingClient"] }
+objc2-foundation = { version = "0.2", features = ["NSArray", "NSData", "NSRange", "NSOrthography", "NSString", "NSTextCheckingResult", "NSThread"] }
 
 [dev-dependencies]
 fe-command.workspace = true

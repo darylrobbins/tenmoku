@@ -8,6 +8,8 @@ mod grammar_install;
 #[cfg(test)]
 mod grammar_install_tests;
 mod ipc;
+#[cfg(target_os = "macos")]
+mod mac_speller;
 mod perf;
 #[cfg(unix)]
 mod shell_command;
@@ -385,6 +387,8 @@ fn new_workbench(
         workbench.set_window_frame(!capabilities.unified_title_bar, cx);
         workbench.set_status_bar_visible(status_bar, cx);
         workbench.set_terminal_settings(&settings.terminal, cx);
+        #[cfg(target_os = "macos")]
+        workbench.set_speller(mac_speller::MacSpeller::new(), cx);
         if let Some(entry) = &entry {
             workbench.restore_layout(entry, window, cx);
         }
