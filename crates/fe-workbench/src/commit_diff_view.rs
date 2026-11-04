@@ -50,7 +50,7 @@ use std::{
 
 use fe_git::{ChangeKind, LogCommit, Repo};
 use fe_gpui::EditorTheme;
-use fe_ui::{Icon, IconButton, ROW_HEIGHT, Tooltip, file_icon_path};
+use fe_ui::{Icon, IconButton, IconRef, ROW_HEIGHT, Tooltip, file_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Div, ElementId, Entity, FocusHandle, Focusable,
     FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyContext,
@@ -1100,7 +1100,7 @@ impl Cell {
 /// What a section's header shows.
 struct HeaderParts {
     collapsed: bool,
-    icon: SharedString,
+    icon: IconRef,
     name: String,
     dir: String,
     note: Option<&'static str>,
@@ -1130,7 +1130,7 @@ fn header_parts(diff: &CommitDiff, ix: usize, section: &Section) -> HeaderParts 
     };
     HeaderParts {
         collapsed: diff.is_collapsed(ix),
-        icon: file_icon_path(&name),
+        icon: file_icon_ref(&name),
         name,
         dir,
         note: match section.texts {
@@ -1159,7 +1159,7 @@ impl HeaderParts {
     fn seen(&self, colors: &FileColors) -> HeaderSeen {
         HeaderSeen {
             collapsed: self.collapsed,
-            icon: self.icon.clone(),
+            icon: self.icon.path(),
             name: self.name.clone(),
             dir: self.dir.clone(),
             dir_color: colors.muted,
@@ -1183,11 +1183,10 @@ impl HeaderParts {
             .debug_selector(move || format!("commit-diff-chevron:{ix}"))
             .flex_none()
             .child(svg().path(chevron.path()).size(px(14.)).text_color(ui.icon));
-        let icon = svg()
-            .path(self.icon.clone())
+        let icon = div()
             .size(px(14.))
             .flex_none()
-            .text_color(colors.icon);
+            .child(self.icon.element(px(14.), colors.icon));
         let name = (div().flex_none().max_w_1_2().overflow_hidden())
             .text_ellipsis()
             .font_weight(FontWeight::MEDIUM)

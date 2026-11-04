@@ -36,13 +36,13 @@ use fe_buffer::{BufferId, HunkId, HunkStatus, ProposedChange, TransactionId, Ver
 use fe_command::Source;
 use fe_editor::{ChangesetError, Counts, FileEntry, RevertOutcome, Summary};
 use fe_gpui::{EditorView, ProposalEvent};
-use fe_ui::{Button, Icon, ROW_HEIGHT, file_icon_path};
+use fe_ui::{Button, Icon, ROW_HEIGHT, file_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EntityId, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, PromptButton,
     PromptLevel, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px, svg, uniform_list,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
 
 use crate::{
@@ -375,13 +375,13 @@ impl AiChangesPanel {
                 let file = self.listing.files.get(ix)?;
                 let shown = self.display_path(&file.path);
                 let name = file.path.file_name().unwrap_or_default().to_string_lossy();
-                let path = file_icon_path(&name);
-                let icon = svg()
-                    .debug_selector(|| format!("ai-changes-icon:{name}:{path}"))
-                    .path(path.clone())
+                let icon = file_icon_ref(&name);
+                let path = icon.path();
+                let icon = div()
                     .size(px(14.))
                     .flex_none()
-                    .text_color(ui.icon);
+                    .debug_selector(|| format!("ai-changes-icon:{name}:{path}"))
+                    .child(icon.element(px(14.), ui.icon));
                 let decided = |counts: &Counts| counts.pending == 0 && counts.stale == 0;
                 let can_decide = !decided(&file.counts);
                 // A whole-only preview's files, and its operations, are

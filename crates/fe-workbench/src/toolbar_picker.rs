@@ -23,11 +23,11 @@ use std::{
 use fe_command::Source;
 use fe_gpui::EditorView;
 use fe_syntax::Outline;
-use fe_ui::{HighlightedLabel, char_ranges, file_icon_path, folder_icon_path};
+use fe_ui::{HighlightedLabel, char_ranges, file_icon_ref, folder_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, Focusable as _,
     InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString, Styled as _, Task,
-    WeakEntity, Window, div, px, svg,
+    WeakEntity, Window, div, px,
 };
 
 use crate::{
@@ -565,8 +565,8 @@ impl PickerDelegate for ToolbarPicker {
                 entries: Some(Ok(entries)),
                 ..
             } => Some(match &entries[*row] {
-                entry if entry.dir => (&entry.label, folder_icon_path(false)),
-                entry => (&entry.label, file_icon_path(&entry.label)),
+                entry if entry.dir => (&entry.label, folder_icon_ref(false)),
+                entry => (&entry.label, file_icon_ref(&entry.label)),
             }),
             _ => None,
         };
@@ -574,13 +574,13 @@ impl PickerDelegate for ToolbarPicker {
             List::Commands(rows) => rows[*row].2.clone(),
             _ => None,
         };
-        let icon = icon.map(|(name, path)| {
-            svg()
-                .debug_selector(|| format!("toolbar-picker-icon:{name}:{path}"))
-                .path(path)
+        let icon = icon.map(|(name, icon)| {
+            let path = icon.path();
+            div()
                 .size(px(14.))
                 .flex_none()
-                .text_color(ui.icon)
+                .debug_selector(|| format!("toolbar-picker-icon:{name}:{path}"))
+                .child(icon.element(px(14.), ui.icon))
         });
         let shortcut =
             shortcut.map(|shortcut| div().ml_auto().text_color(ui.muted_text).child(shortcut));

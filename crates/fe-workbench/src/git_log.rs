@@ -89,7 +89,7 @@ use fe_git::{
     graph::{GraphLayout, GraphRow},
 };
 use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, file_icon_path};
+use fe_ui::{Icon, IconButton, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, file_icon_ref};
 use gpui::{
     AnyElement, App, AppContext as _, BorderStyle, Bounds, ClickEvent, ClipboardItem, Context, Div,
     ElementId, Entity, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement as _,
@@ -1994,16 +1994,11 @@ fn file_cell(
     ix: usize,
     probe: RowsProbe,
 ) -> impl IntoElement {
-    let icon = file_icon_path(&parts.name);
+    let icon = file_icon_ref(&parts.name);
     let icon_cell = (div().flex_shrink(LAST).min_w_0().overflow_hidden())
         .flex()
         .items_center()
-        .child(
-            svg()
-                .path(icon.clone())
-                .size(px(14.))
-                .text_color(colors.icon),
-        );
+        .child(icon.element(px(14.), colors.icon));
     let name = (div().flex_shrink(LAST * 100.).min_w_0().overflow_hidden()).text_ellipsis();
     let dir = (div()
         .flex_1()
@@ -2026,7 +2021,7 @@ fn file_cell(
         (div().flex_none().w(LETTER_WIDTH).text_right()).text_color(colors.letter(parts.kind));
     // The icon's cell is noted by its icon's path, and shows no text.
     let mut cells: Vec<_> = [
-        (icon.to_string(), icon_cell),
+        (icon.path().to_string(), icon_cell),
         (parts.name, name),
         (parts.dir, dir),
     ]
