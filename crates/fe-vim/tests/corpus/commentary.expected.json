@@ -1289,6 +1289,198 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "gc_search_forward_end_mark",
+      "buffer": "a\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gc/foo<CR>`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "# a\n# b\nfoo\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gc_search_forward_start_mark",
+      "buffer": "a\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gc/foo<CR>`[",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "# a\n# b\nfoo\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gc_search_backward_end_mark",
+      "buffer": "a\nfoo\nb\nc",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "gc?foo<CR>`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "a\n# foo\n# b\nc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gc_search_backward_start_mark",
+      "buffer": "a\nfoo\nb\nc",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "gc?foo<CR>`[",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "a\n# foo\n# b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gc_empty_object_start_mark",
+      "buffer": "x \"\" y\nz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gci\"`[",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "x \"\" y\nz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gc_empty_object_end_mark",
+      "buffer": "x \"\" y\nz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gci\"`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "x \"\" y\nz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gcgc_end_mark_keeps_column",
+      "buffer": "x\n# aaaa\n# bbbb\ny",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "gcgc`]",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "x\naaaa\nbbbb\ny",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "gcgc_start_mark_keeps_column",
+      "buffer": "x\n# aaaa\n# bbbb\ny",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "gcgc`[",
+      "set": "commentstring=#\\ %s",
+      "expect": {
+        "buffer": "x\naaaa\nbbbb\ny",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
     }
   ]
 }

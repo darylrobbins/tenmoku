@@ -393,3 +393,61 @@ buffer = "aaa\n\nccc"
 cursor = [0, 1]
 keys = "gc}`]"
 set = "commentstring=#\\ %s"
+
+# `'[` and `']` where an operator's range ended exclusively at a row's
+# column 0 (a search), after an empty object, and with a goal column.
+[[case]]
+name = "gc_search_forward_end_mark"
+buffer = "a\nb\nfoo\nc"
+cursor = [0, 0]
+keys = "gc/foo<CR>`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_search_forward_start_mark"
+buffer = "a\nb\nfoo\nc"
+cursor = [0, 0]
+keys = "gc/foo<CR>`["
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_search_backward_end_mark"
+buffer = "a\nfoo\nb\nc"
+cursor = [3, 0]
+keys = "gc?foo<CR>`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_search_backward_start_mark"
+buffer = "a\nfoo\nb\nc"
+cursor = [3, 0]
+keys = "gc?foo<CR>`["
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_empty_object_start_mark"
+buffer = "x \"\" y\nz"
+cursor = [0, 3]
+keys = "gci\"`["
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gc_empty_object_end_mark"
+buffer = "x \"\" y\nz"
+cursor = [0, 3]
+keys = "gci\"`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcgc_end_mark_keeps_column"
+buffer = "x\n# aaaa\n# bbbb\ny"
+cursor = [1, 2]
+keys = "gcgc`]"
+set = "commentstring=#\\ %s"
+
+[[case]]
+name = "gcgc_start_mark_keeps_column"
+buffer = "x\n# aaaa\n# bbbb\ny"
+cursor = [1, 2]
+keys = "gcgc`["
+set = "commentstring=#\\ %s"

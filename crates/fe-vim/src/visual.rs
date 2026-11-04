@@ -693,9 +693,12 @@ pub(crate) fn select_rows(model: &mut EditorModel, state: &mut VimState, first: 
     let goal = held_goal(model, state);
     let text = model.text();
     let tab = model.tab_size().max(1);
+    // With no goal held, each end keeps the caret's own display column.
+    let caret = Cursor::at(text, model.primary_selection().head());
+    let aimed = goal.or_else(|| Some(caret.line.goal_column(caret.ix, tab)));
     let on_row = |row: u32| {
         let mut cursor = Cursor::at(text, text.row_start(row));
-        cursor.vertical(row, goal, tab);
+        cursor.vertical(row, aimed, tab);
         cursor.offset()
     };
     let ends = Ends {

@@ -1044,6 +1044,18 @@ fn operate_unless_failing(
             })
             .collect();
         if rows.iter().all(Option::is_none) {
+            // `gc` over an empty object (`i"` in `""`) changes nothing but
+            // sets nvim's reversed ends: `'[` where the object is, `']` on
+            // the character before it.
+            let empty = spans.iter().find_map(|span| match span {
+                Span::Chars(range) if empty_object(range) => Some(range.start),
+                _ => None,
+            });
+            if let Some(start) = empty {
+                let ends = history::pair(&text, start);
+                let before_it = (ends.0, ends.1.saturating_sub(1));
+                marks::recased(state, model, None, ends, before_it);
+            }
             return Ok(move_only(
                 model, state, &text, &before, &spans, &kept, reset,
             ));
