@@ -19,7 +19,7 @@ use fe_ui::ROW_HEIGHT;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, WeakEntity, Window, WindowBounds, div, px,
+    Subscription, WeakEntity, WeakFocusHandle, Window, WindowBounds, div, px,
 };
 
 use self::recent_picker::RecentPicker;
@@ -45,6 +45,7 @@ use crate::{
     open,
     pane_toolbar::NavButtons,
     project_panel,
+    setup_wizard::SetupWizard,
     terminal_panel::TerminalPanel,
     theme_picker::ThemePicker,
     title_bar,
@@ -298,6 +299,8 @@ pub struct Workbench {
     pub(crate) ignore_diagnostics: crate::ignore_diagnostics::IgnoreDiagnostics,
     /// Zen Mode: see [`zen_mode`].
     pub(crate) zen: zen_mode::ZenMode,
+    /// The setup wizard's sheet over the window, while it shows.
+    setup: Option<Entity<SetupWizard>>,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -665,6 +668,7 @@ impl Workbench {
             spelling,
             ignore_diagnostics: Default::default(),
             zen: zen_mode::ZenMode::new(cx),
+            setup: None,
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -804,10 +808,54 @@ impl Workbench {
         })
     }
 
+    /// Puts the setup wizard's sheet over the window, on its first page, with
+    /// focus in it. Showing already, it stays as it is.
+    pub fn show_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.setup.is_some() {
+            return;
+        }
+        let workbench = cx.weak_entity();
+        let setup = cx.new(|cx| SetupWizard::new(workbench, window, cx));
+        window.focus(&setup.read(cx).focus_handle(), cx);
+        self.setup = Some(setup);
+        cx.notify();
+    }
+
+    /// Whether the setup wizard's sheet shows.
+    pub fn is_setup_showing(&self) -> bool {
+        self.setup.is_some()
+    }
+
+    /// The sheet that shows, if it does.
+    #[cfg(test)]
+    pub(crate) fn setup(&self) -> Option<&Entity<SetupWizard>> {
+        self.setup.as_ref()
+    }
+
+    /// Takes the sheet away, giving focus back to `previous`, what had it, or
+    /// if that's gone to the active item.
+    pub(crate) fn close_setup(
+        &mut self,
+        previous: Option<WeakFocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.setup = None;
+        let focus =
+            (previous.and_then(|focus| focus.upgrade())).unwrap_or_else(|| self.focus_handle(cx));
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     /// Runs a typed command (the `workbench.*` tab commands, the `pane.*`
     /// commands, the dock's and the panels') as its action, or a git
     /// command; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        // Under the sheet, only the app's and the window's own.
+        let command = run.0.command.as_str();
+        if self.setup.is_some() && !command.starts_with("app.") && !command.starts_with("window.") {
+            return;
+        }
         // A typed command, as its action, whose handler notes it ran: the
         // tab and pane commands.
         if kiln::commands::dispatch_typed(run, window, cx) {
@@ -824,6 +872,9 @@ impl Focusable for Workbench {
     /// preview shown in its place, or else the active viewer's, or else the
     /// pane's, so the workbench's commands apply.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(setup) = &self.setup {
+            return setup.read(cx).focus_handle();
+        }
         let pane = self.active.read(cx);
         match (pane.shown_preview(), self.active_editor(cx)) {
             (Some(preview), _) => preview.focus_handle(cx),
@@ -865,9 +916,14 @@ impl Render for Workbench {
         let drop_border = fe_ui::ui_theme(cx).accent;
         let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
-        // The typed commands' handlers, in the workbench's key context.
-        Self::attach(div(), cx)
-            .on_action(cx.listener(Self::on_run_command))
+        // The typed commands' handlers, in the workbench's key context. Not
+        // under the sheet: a menu pick of one comes straight here as its
+        // action, not by `on_run_command`.
+        let root = match self.setup {
+            Some(_) => div().key_context(KEY_CONTEXT),
+            None => Self::attach(div(), cx),
+        };
+        root.on_action(cx.listener(Self::on_run_command))
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)
@@ -907,6 +963,7 @@ impl Render for Workbench {
                     .items_end()
                     .child(self.toasts.clone()),
             )
+            .children(self.setup.clone())
     }
 }
 

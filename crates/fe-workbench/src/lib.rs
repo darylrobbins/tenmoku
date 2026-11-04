@@ -66,7 +66,7 @@ mod references_panel;
 mod save_commands;
 mod search_panel;
 mod settings_editor;
-#[cfg_attr(not(test), allow(dead_code, reason = "the setup sheet uses it"))]
+mod setup_wizard;
 mod setup_wizard_model;
 mod shortcuts_editor;
 pub mod spell;
@@ -320,6 +320,8 @@ mod settings_editor_controls_tests;
 mod settings_editor_tests;
 #[cfg(test)]
 mod setup_wizard_model_tests;
+#[cfg(test)]
+mod setup_wizard_tests;
 #[cfg(test)]
 mod shortcuts_editor_tests;
 #[cfg(test)]

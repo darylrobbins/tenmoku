@@ -84,6 +84,17 @@ impl Step {
         }
     }
 
+    /// The line under the heading.
+    pub(crate) fn subtitle(self) -> &'static str {
+        match self {
+            Step::Appearance => "Choose the colors Tenmoku shows.",
+            Step::Font => "Choose how text looks in the editor.",
+            Step::Keyboard => "Choose the keys you edit with.",
+            Step::Editing => "Choose what the editor does for you.",
+            Step::Ready => "That's everything Tenmoku needs to start.",
+        }
+    }
+
     /// What the page asks, given the choices so far: another choice can hide
     /// a control.
     pub(crate) fn controls(self, choices: &Choices) -> Vec<Control> {
@@ -571,20 +582,33 @@ impl Choices {
         changes.retain(|(key, value)| self.value(key) != value);
         let keys: Vec<Key> = changes.iter().map(|(key, _)| *key).collect();
         self.now.extend(changes);
+        self.writes_of(&keys)
+    }
 
+    /// The writes that put `keys` in the file as they are here: a value equal
+    /// to the default's removes its key. On a clone, it's what a write made
+    /// off the main thread takes, as [`Write`] borrows its text.
+    pub(crate) fn writes_of(&self, keys: &[Key]) -> Vec<Write<'_>> {
         let defaults = values(&Settings::default());
-        let now = &self.now;
-        (keys.into_iter())
+        (keys.iter())
             .map(|key| {
-                let value = now.get(key).unwrap_or(&Value::Unset);
+                let value = self.value(key);
                 let value = if defaults.get(key) == Some(value) {
                     None
                 } else {
                     value.setting()
                 };
-                (key, value)
+                (*key, value)
             })
             .collect()
+    }
+
+    /// Takes what `keys` hold in `other`: a write that failed, back to what
+    /// the file has.
+    pub(crate) fn adopt(&mut self, other: &Choices, keys: &[Key]) {
+        for key in keys {
+            self.now.insert(*key, other.value(key).clone());
+        }
     }
 
     /// How many keys hold something other than what the run started with.
@@ -594,7 +618,9 @@ impl Choices {
             .count()
     }
 
-    /// The Ready page's text: what the run changed, and where to change it.
+    /// What the run changed, and where to change it, in a sentence. The Ready
+    /// page has its own copy, with the shortcut.
+    #[cfg(test)]
     pub(crate) fn summary(&self) -> String {
         let changed = match self.changed_count() {
             0 => "No settings changed.".to_owned(),
