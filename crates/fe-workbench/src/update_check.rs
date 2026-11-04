@@ -11,6 +11,12 @@
 //! `fe-net`, and anything on the test scheduler reaches only the fake it set,
 //! so no test can touch the network. One check runs at a time in the app;
 //! another asked for meanwhile answers [`ALREADY_CHECKING`].
+//!
+//! The app binary can take the check over with an [`UpdaterHook`] (set by
+//! [`set_updater_hook`]), as it owns a platform updater this crate can't
+//! reach. A check asks the hook first: if it returns true, it has started its
+//! own check and nothing else happens, with no toast and no GitHub request. If
+//! there's no hook, or it returns false, the GitHub check runs as above.
 
 use std::{sync::Arc, time::Duration};
 
@@ -94,6 +100,19 @@ impl UpdateSource {
     }
 }
 
+/// The app binary's own updater: called with the app, it starts the platform's
+/// user-driven check and returns true, or returns false to leave the check to
+/// GitHub.
+#[derive(Clone)]
+pub struct UpdaterHook(pub Arc<dyn Fn(&mut App) -> bool + Send + Sync>);
+
+impl Global for UpdaterHook {}
+
+/// Sets the hook that `app.check_for_updates` asks first.
+pub fn set_updater_hook(cx: &mut App, hook: UpdaterHook) {
+    cx.set_global(hook);
+}
+
 /// Whether a check is running.
 #[derive(Default)]
 struct Checking(bool);
@@ -122,6 +141,11 @@ enum Outcome {
 
 /// Runs a check, unless one's running, saying it's going in `layer`.
 pub(crate) fn run(layer: &Entity<ToastLayer>, cx: &mut App) {
+    if let Some(hook) = cx.try_global::<UpdaterHook>().cloned()
+        && (hook.0)(cx)
+    {
+        return;
+    }
     if cx.default_global::<Checking>().0 {
         return toast::show(cx, Toast::info(ALREADY_CHECKING));
     }
