@@ -44,15 +44,9 @@
 //! never reaches a shell. A build file that doesn't parse just yields nothing:
 //! it isn't this file's to report on.
 //!
-//! Detection is best-effort, with these known limits (T429 holds their fixes):
-//!
-//! - A script or make target name starting with `-` reaches its runner as an
-//!   option: `make -n` dry-runs the default target.
-//! - A just recipe header or attribute continued over lines, by an escaped
-//!   newline or an open delimiter, isn't followed: the recipe may be lost, or
-//!   a `[private]` one shown.
-//! - A make variable named `define` (`define := value`) reads as the directive,
-//!   and can hide every target after it.
+//! Detection is best-effort: a makefile is scanned by its lines, not run.
+//! A name starting with `-` is passed after `--`, so it's a task, not an
+//! option, and its label stays the command as written.
 //!
 //! # Order and defaults
 //!
@@ -462,9 +456,25 @@ fn detected_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
 
 /// A detected task, labelled with its command.
 fn detected(source: Source, group: Option<Group>, argv: &[&str], root: &Path) -> Task {
+    detected_as(argv.join(" "), source, group, argv, root)
+}
+
+/// A detected task with its own label. A last word starting with `-` is a
+/// name, so the command puts `--` before it and no runner reads it as an option.
+fn detected_as(
+    label: String,
+    source: Source,
+    group: Option<Group>,
+    argv: &[&str],
+    root: &Path,
+) -> Task {
+    let mut words: Vec<String> = argv.iter().map(|&word| word.to_owned()).collect();
+    if words.len() > 1 && words.last().is_some_and(|name| name.starts_with('-')) {
+        words.insert(words.len() - 1, "--".to_owned());
+    }
     Task {
-        label: argv.join(" "),
-        command: TaskCommand::Argv(argv.iter().map(|&word| word.to_owned()).collect()),
+        label,
+        command: TaskCommand::Argv(words),
         cwd: root.to_path_buf(),
         env: BTreeMap::new(),
         group,
@@ -530,7 +540,13 @@ fn npm_tasks(files: &dyn ProjectFiles, root: &Path) -> Vec<Task> {
                 _ => None,
             };
             let argv: Vec<&str> = runner.iter().copied().chain([script.as_str()]).collect();
-            detected(Source::Npm, group, &argv, root)
+            let label = argv.join(" ");
+            // `yarn -x` has no `run` to put `--` after.
+            let mut argv = argv;
+            if script.starts_with('-') && argv.len() == 2 && argv[0] == "yarn" {
+                argv.insert(1, "run");
+            }
+            detected_as(label, Source::Npm, group, &argv, root)
         })
         .collect()
 }
@@ -595,10 +611,13 @@ fn make_targets(text: &str) -> Vec<String> {
         let Some(first) = line.split_whitespace().next() else {
             continue;
         };
-        let keyword = line
+        let mut words = line
             .split_whitespace()
-            .find(|word| !matches!(*word, "export" | "override" | "private"));
-        if keyword == Some("define") {
+            .skip_while(|word| matches!(*word, "export" | "override" | "private"));
+        let keyword = words.next();
+        // `define := value` assigns a variable that's called `define`.
+        let assigns = words.next().is_some_and(is_assignment_operator);
+        if keyword == Some("define") && !assigns {
             defines += 1;
         } else if first == "endef" {
             defines = defines.saturating_sub(1);
@@ -610,6 +629,13 @@ fn make_targets(text: &str) -> Vec<String> {
         }
     }
     targets
+}
+
+/// Whether a word is a make assignment operator: `=`, `:=`, `::=`, `:::=`,
+/// `?=`, `+=` or `!=`, with or without a value stuck to it.
+fn is_assignment_operator(word: &str) -> bool {
+    let rest = word.trim_start_matches([':', '?', '+', '!']);
+    word.len() - rest.len() <= 3 && rest.starts_with('=')
 }
 
 /// The text's lines with each `\`-continued run joined, as make reads them.
@@ -745,6 +771,7 @@ fn just_recipes(text: &str) -> Vec<String> {
     let mut recipes = Vec::new();
     let mut private = false;
     let mut open_string = None;
+    let mut continuing = false;
     let mut bare = String::new();
     for line in text.lines() {
         let rest = match open_string {
@@ -754,11 +781,24 @@ fn just_recipes(text: &str) -> Vec<String> {
                 };
                 &line[end + quote.len()..]
             }
-            None if line.is_empty() || line.starts_with(char::is_whitespace) => continue,
+            None if !continuing && (line.is_empty() || line.starts_with(char::is_whitespace)) => {
+                continue;
+            }
             None => line,
         };
         open_string = scan_just_line(rest, &mut bare);
         if open_string.is_some() {
+            continue;
+        }
+        // A header or attribute goes on over an escaped newline or while a
+        // bracket is open, whatever the next line's indent.
+        let escaped = bare.ends_with('\\');
+        if escaped {
+            bare.pop();
+        }
+        continuing = escaped || open_delimiters(&bare) > 0;
+        if continuing {
+            bare.push(' ');
             continue;
         }
         if bare.starts_with('[') {
@@ -775,6 +815,15 @@ fn just_recipes(text: &str) -> Vec<String> {
         bare.clear();
     }
     recipes
+}
+
+/// How many of a justfile header's `(`, `[` and `{` are still open.
+fn open_delimiters(bare: &str) -> isize {
+    bare.chars().fold(0, |depth, c| match c {
+        '(' | '[' | '{' => depth + 1,
+        ')' | ']' | '}' => (depth - 1).max(0),
+        _ => depth,
+    })
 }
 
 /// Whether an attribute line (`[private]`, `[no-cd, private]`), its strings

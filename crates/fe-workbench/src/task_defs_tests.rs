@@ -863,3 +863,73 @@ fn each_group_has_at_most_one_default() {
     let (tasks, _) = FakeFiles::with(&[("Makefile", "build:\ntest:\n")]).load();
     assert!(tasks.iter().all(|task| !task.default));
 }
+
+#[test]
+fn just_headers_and_attributes_continued_over_lines() {
+    let justfile = "\
+deploy env='prod' \\
+    region='eu':
+    echo hi
+[
+private
+]
+hidden:
+    echo no
+[no-cd, \\
+private]
+hidden2:
+    echo no
+shown:
+    echo yes
+";
+    let files = FakeFiles::with(&[("justfile", justfile)]);
+    assert_eq!(files.labels(), ["just deploy", "just shown"]);
+}
+
+#[test]
+fn a_make_variable_named_define_does_not_hide_targets() {
+    for assignment in [
+        "define := value",
+        "define = value",
+        "define ?= v",
+        "export define += v",
+    ] {
+        let makefile = format!("{assignment}\nafter:\n\techo hi\n");
+        let files = FakeFiles::with(&[("Makefile", &makefile)]);
+        assert_eq!(files.labels(), ["make after"], "{assignment}");
+    }
+    let makefile = "define HELP\nin: x\nendef\nafter:\n";
+    let files = FakeFiles::with(&[("Makefile", makefile)]);
+    assert_eq!(files.labels(), ["make after"]);
+}
+
+#[test]
+fn names_starting_with_a_dash_are_tasks_not_options() {
+    let (tasks, _) = FakeFiles::with(&[
+        (
+            "package.json",
+            r#"{ "scripts": { "-x": "echo", "ok": "echo" } }"#,
+        ),
+        ("Makefile", "-n:\n\techo hi\n"),
+    ])
+    .load();
+    assert_eq!(
+        task(&tasks, "npm run -x").command,
+        argv(&["npm", "run", "--", "-x"])
+    );
+    assert_eq!(
+        task(&tasks, "npm run ok").command,
+        argv(&["npm", "run", "ok"])
+    );
+    assert_eq!(task(&tasks, "make -n").command, argv(&["make", "--", "-n"]));
+
+    let (tasks, _) = FakeFiles::with(&[
+        ("package.json", r#"{ "scripts": { "-x": "echo" } }"#),
+        ("yarn.lock", ""),
+    ])
+    .load();
+    assert_eq!(
+        task(&tasks, "yarn -x").command,
+        argv(&["yarn", "run", "--", "-x"])
+    );
+}
