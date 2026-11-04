@@ -10,6 +10,8 @@ use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, UiTheme};
 
 /// The height of a pane's toolbar, which holds the breadcrumbs.
 pub const TOOLBAR_HEIGHT: Pixels = px(24.);
+/// A crumb's icon, square.
+const CRUMB_ICON_SIZE: Pixels = px(14.);
 
 /// What a crumb stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,12 +117,11 @@ impl RenderOnce for Breadcrumbs {
                 .when_some(crumb.icon, |element, icon| {
                     let selector = format!("crumb-icon:{}:{}", crumb.label, icon.name());
                     element.child(
-                        svg()
-                            .path(icon.path())
-                            .size(px(14.))
+                        div()
+                            .size(CRUMB_ICON_SIZE)
                             .flex_none()
-                            .text_color(icon_color)
-                            .debug_selector(|| selector),
+                            .debug_selector(|| selector)
+                            .child(icon.element(CRUMB_ICON_SIZE, icon_color)),
                     )
                 })
                 .child(

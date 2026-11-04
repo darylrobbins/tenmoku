@@ -4,7 +4,9 @@
 //!
 //! Icons are Lucide's, unmodified (see `assets/icons/LICENSE` and
 //! THIRD_PARTY.md). They're monochrome strokes, so GPUI's `svg()` draws them as
-//! an alpha mask tinted with the element's text colour.
+//! an alpha mask tinted with the element's text colour. A set may answer a
+//! multi-colour SVG instead ([`IconRef::Coloured`]), which
+//! [`IconRef::element`] draws as an image in its own colours.
 //!
 //! The mapping is data: [`FILE_NAMES`] and [`EXTENSIONS`], built once into hash
 //! maps.
@@ -16,7 +18,12 @@
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc, sync::LazyLock};
 
-use gpui::{App, SharedString};
+use gpui::{
+    AnyElement, App, AssetSource as _, DevicePixels, Global, Hsla, ImageCacheError, IntoElement,
+    Pixels, RenderImage, SharedString, Styled as _, SvgSize, Window, img, size, svg,
+};
+
+use crate::Assets;
 
 macro_rules! icons {
     ($($variant:ident => $name:literal,)*) => {
@@ -295,22 +302,27 @@ static EXTENSION_MAP: LazyLock<HashMap<&'static str, Icon>> =
     LazyLock::new(|| EXTENSIONS.iter().copied().collect());
 
 /// A file or folder icon as an icon set answers it: one bundled with kiln-ui,
-/// or an SVG served by the app's asset source. Tree rows, crumbs and tabs
-/// take either.
+/// or an SVG served by the app's asset source, masked or in its own colours.
+/// Tree rows, crumbs and tabs take any of them; [`IconRef::element`] draws
+/// one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum IconRef {
     Bundled(Icon),
     /// An asset path, e.g. `"my-icons/rust.svg"`; drawn as a bundled icon is,
     /// as an alpha mask tinted with the text colour.
     Asset(SharedString),
+    /// An asset path to a multi-colour SVG, e.g. `"my-icons/rust.svg"`; drawn
+    /// as an image in its own colours, never tinted.
+    Coloured(SharedString),
 }
 
 impl IconRef {
-    /// The asset path to draw with `svg().path(..)`.
+    /// The asset path: what `svg().path(..)` draws for a bundled or masked
+    /// icon, and the coloured SVG's for a coloured one.
     pub fn path(&self) -> SharedString {
         match self {
             IconRef::Bundled(icon) => icon.path().into(),
-            IconRef::Asset(path) => path.clone(),
+            IconRef::Asset(path) | IconRef::Coloured(path) => path.clone(),
         }
     }
 
@@ -318,8 +330,13 @@ impl IconRef {
     pub fn bundled(&self) -> Option<Icon> {
         match self {
             IconRef::Bundled(icon) => Some(*icon),
-            IconRef::Asset(_) => None,
+            IconRef::Asset(_) | IconRef::Coloured(_) => None,
         }
+    }
+
+    /// Whether it draws in its own colours, so a tint can't mute it.
+    pub fn is_coloured(&self) -> bool {
+        matches!(self, IconRef::Coloured(_))
     }
 
     /// What debug selectors name it by: a bundled icon's name
@@ -327,9 +344,101 @@ impl IconRef {
     pub fn name(&self) -> SharedString {
         match self {
             IconRef::Bundled(icon) => icon.name().into(),
-            IconRef::Asset(path) => path.clone(),
+            IconRef::Asset(path) | IconRef::Coloured(path) => path.clone(),
         }
     }
+
+    /// The icon, `size` square. A bundled or masked icon is `svg()` tinted
+    /// with `tint`. A coloured one is an image, `tint` ignored, its SVG
+    /// rasterised once per window scale at exactly `size` in device pixels,
+    /// so it's as sharp at 2x as at 1x; it's read from the app's asset
+    /// source, else from [`Assets`].
+    pub fn element(&self, size: Pixels, tint: Hsla) -> AnyElement {
+        match self {
+            IconRef::Coloured(path) => {
+                let path = path.clone();
+                let load = move |window: &mut Window, cx: &mut App| {
+                    Some(coloured_image(&path, size, window.scale_factor(), cx))
+                };
+                img(load).size(size).flex_none().into_any_element()
+            }
+            IconRef::Bundled(_) | IconRef::Asset(_) => svg()
+                .path(self.path())
+                .size(size)
+                .flex_none()
+                .text_color(tint)
+                .into_any_element(),
+        }
+    }
+}
+
+/// The coloured icons an app has rasterised, by asset path and side in
+/// device pixels, failures included so a missing file isn't read each frame.
+/// Kept for the app's life, a handful of icons at one or two scales, until
+/// [`Assets::register_coloured`] changes what's registered.
+#[derive(Default)]
+pub(crate) struct ColouredImages {
+    pub(crate) images: HashMap<(SharedString, u32), Result<Arc<RenderImage>, ImageCacheError>>,
+    /// [`Assets::coloured_revision`] when `images` was emptied last.
+    revision: u64,
+}
+
+impl Global for ColouredImages {}
+
+/// `path`'s coloured icon at `size` on a window at `scale`, from the cache or
+/// rasterised into it. The same `Arc` each frame, so the window's atlas
+/// keeps one texture for it.
+pub(crate) fn coloured_image(
+    path: &SharedString,
+    size: Pixels,
+    scale: f32,
+    cx: &mut App,
+) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let side = (f32::from(size) * scale).round().max(1.) as u32;
+    let key = (path.clone(), side);
+    let revision = Assets::coloured_revision();
+    match cx.try_global::<ColouredImages>() {
+        Some(cache) if cache.revision == revision => {
+            if let Some(image) = cache.images.get(&key) {
+                return image.clone();
+            }
+        }
+        // A registration since: any image, or failure, may be stale.
+        Some(_) => {
+            let cache = cx.global_mut::<ColouredImages>();
+            cache.images.clear();
+            cache.revision = revision;
+        }
+        None => cx.set_global(ColouredImages {
+            images: HashMap::new(),
+            revision,
+        }),
+    }
+    let image = rasterize_coloured(path, side, cx);
+    cx.global_mut::<ColouredImages>()
+        .images
+        .insert(key, image.clone());
+    image
+}
+
+/// `path`'s SVG rasterised `side` device pixels square. Read from the app's
+/// asset source, else from [`Assets`], so kiln-ui's own coloured icons draw
+/// even under a host source that doesn't delegate to it.
+pub(crate) fn rasterize_coloured(
+    path: &str,
+    side: u32,
+    cx: &App,
+) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let bytes = match cx.asset_source().load(path) {
+        Ok(Some(bytes)) => bytes,
+        _ => Assets.load(path).ok().flatten().ok_or_else(|| {
+            ImageCacheError::Asset(format!("coloured icon not found: {path}").into())
+        })?,
+    };
+    let renderer = cx.svg_renderer();
+    let svg = renderer.parse_svg(&bytes)?;
+    let side = DevicePixels(side as i32);
+    Ok(renderer.render_parsed(&svg, SvgSize::ExactSize(size(side, side)))?)
 }
 
 impl From<Icon> for IconRef {
@@ -407,7 +516,8 @@ pub fn folder_icon_ref(expanded: bool) -> IconRef {
 }
 
 /// The asset path of the installed set's icon for a file called `name`, for a
-/// surface that draws `svg().path(..)` itself.
+/// surface that draws it itself; [`IconRef::element`] draws a coloured one
+/// as it needs drawing.
 pub fn file_icon_path(name: &str) -> SharedString {
     file_icon_ref(name).path()
 }

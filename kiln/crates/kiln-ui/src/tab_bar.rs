@@ -4,12 +4,14 @@ use gpui::{
     App, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px, svg,
+    prelude::FluentBuilder as _, px,
 };
 
 use crate::{ActiveTheme as _, ClickHandler, Icon, IconRef, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
+/// A tab's icon, square.
+const TAB_ICON_SIZE: Pixels = px(14.);
 
 /// A row of [`Tab`]s that scrolls sideways when they don't fit.
 #[derive(IntoElement)]
@@ -133,9 +135,9 @@ impl Tab {
         }
     }
 
-    /// Drawn before the label, in the theme's file icon colour: a file
-    /// tab's file-type icon, say: a bundled [`Icon`] or an icon set's
-    /// answer.
+    /// Drawn before the label, in the theme's file icon colour unless it's
+    /// coloured: a file tab's file-type icon, say: a bundled [`Icon`] or an
+    /// icon set's answer.
     pub fn icon(mut self, icon: Option<impl Into<IconRef>>) -> Self {
         self.icon = icon.map(Into::into);
         self
@@ -343,12 +345,11 @@ impl RenderOnce for Tab {
             })
             .when_some(self.icon.clone(), |tab, icon| {
                 tab.child(
-                    svg()
-                        .path(icon.path())
-                        .size(px(14.))
+                    div()
+                        .size(TAB_ICON_SIZE)
                         .flex_none()
-                        .text_color(colors.list.icon)
-                        .debug_selector(|| format!("tab-icon:{}:{}", self.label, icon.name())),
+                        .debug_selector(|| format!("tab-icon:{}:{}", self.label, icon.name()))
+                        .child(icon.element(TAB_ICON_SIZE, colors.list.icon)),
                 )
             })
             .child(

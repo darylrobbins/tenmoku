@@ -3,6 +3,7 @@
 mod active_theme;
 mod assets;
 mod button_command;
+mod coloured_icons;
 mod controls;
 mod file_icon_set;
 mod file_icons;

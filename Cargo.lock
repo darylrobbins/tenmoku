@@ -5281,6 +5281,7 @@ name = "kiln-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+ "image",
  "kiln-command",
  "kiln-core",
  "kiln-platform",

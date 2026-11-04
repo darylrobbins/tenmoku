@@ -21,6 +21,8 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support", "leak-detection"] }
+# The scene recorder's image type, in the coloured icon tests.
+image.workspace = true
 
 [lints]
 workspace = true

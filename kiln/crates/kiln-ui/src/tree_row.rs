@@ -26,13 +26,17 @@ const CHEVRON_GAP: Pixels = px(2.);
 const ICON_GAP: Pixels = px(6.);
 const BADGE_GAP: Pixels = px(6.);
 const DETAIL_GAP: Pixels = px(6.);
+/// A coloured icon's opacity on an ignored row, as its colours can't be
+/// muted.
+pub(crate) const DIMMED_ICON_OPACITY: f32 = 0.5;
 
 /// One row of a file tree: indented by depth, with indent guides for its
 /// ancestors, a chevron for a directory, an optional icon, its name, and
 /// an optional dimmed detail right after the name, and an optional badge at
 /// its right end. The name is muted when ignored and
 /// in the error colour when it couldn't be read, else in its label colour
-/// if it has one.
+/// if it has one. A masked icon is muted or in the error colour with it; a
+/// coloured icon keeps its colours, faded when ignored.
 #[derive(IntoElement)]
 pub struct TreeRow {
     id: ElementId,
@@ -59,7 +63,10 @@ pub(crate) struct RowColors {
     pub background: Option<Hsla>,
     pub border: Option<Hsla>,
     pub label: Hsla,
+    /// A masked icon's tint; a coloured icon ignores it.
     pub icon: Hsla,
+    /// The icon's opacity: below 1 for a coloured icon on an ignored row.
+    pub icon_opacity: f32,
     pub chevron: Hsla,
     pub badge: Option<Hsla>,
 }
@@ -189,11 +196,18 @@ impl TreeRow {
             let label = self.label_color.unwrap_or(text.primary);
             (label, list.icon, list.chevron)
         };
+        let coloured = self.icon.as_ref().is_some_and(IconRef::is_coloured);
+        let icon_opacity = if coloured && self.ignored && !self.error {
+            DIMMED_ICON_OPACITY
+        } else {
+            1.
+        };
         RowColors {
             background,
             border,
             label,
             icon,
+            icon_opacity,
             chevron,
             badge: self.badge.as_ref().map(|(_, color)| *color),
         }
@@ -251,13 +265,13 @@ impl RenderOnce for TreeRow {
             None => div().into_any_element(),
         };
         let icon = self.icon.map(|icon| {
-            svg()
-                .path(icon.path())
+            div()
                 .size(ICON_SIZE)
                 .flex_none()
                 .mr(ICON_GAP)
-                .text_color(colors.icon)
+                .opacity(colors.icon_opacity)
                 .debug_selector(|| format!("tree-icon:{label}:{}", icon.name()))
+                .child(icon.element(ICON_SIZE, colors.icon))
         });
         // With a detail, the label takes its text's width and shrinks
         // only when that's wider than the row; the detail, from no width,
