@@ -42,8 +42,14 @@ fe-ui.workspace = true
 # The workbench's typed commands: `#[kiln::command]` expands to `::kiln::..` paths.
 kiln.workspace = true
 kiln-platform.workspace = true
-# A plugin install prompt's plain-words warnings and its grant decisions.
+# A plugin install prompt's plain-words warnings and its grant decisions,
+# and the plugin host: its engine, cache, grants and kiln slices.
 kiln-plugin.workspace = true
+# The editor's plugin world, which the plugin host links plugins against.
+fe-plugin.workspace = true
+# The plugin host's runner: each plugin's store, with WASI, on its thread.
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
 # The window's chrome: the title bar, the frame and the menu bar.
 kiln-shell.workspace = true
 gpui.workspace = true
@@ -76,6 +82,8 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 # The screenshots example's harness: settling, comparison and goldens.
 kiln-platform = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+# The plugin host's tests build kiln-plugin's WAT fixtures.
+wasmtime = { workspace = true, features = ["wat"] }
 
 [lints]
 workspace = true

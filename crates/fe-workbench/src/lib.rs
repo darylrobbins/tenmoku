@@ -58,6 +58,7 @@ mod path_commands;
 mod peek;
 mod persist;
 mod picker;
+mod plugin_host;
 mod plugin_prompt;
 mod preserve_case;
 mod project_panel;
@@ -107,6 +108,8 @@ pub use grammar_prompt::{
     FetchGrammar, GrammarInstallError, GrammarInstalled, GrammarOffer, GrammarOffers,
     InstallGrammar, PROMPT_FILE, set_grammar_offers,
 };
+/// The plugins' grant records, for a host to read and write.
+pub use kiln_plugin::grants::GrantStore;
 pub use kiln_shell::MenuBarView;
 pub use lsp::{extension_servers, set_lsp_settings, set_server_launcher};
 pub use lsp_consent::{
@@ -122,6 +125,11 @@ pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};
 pub use persist::save_toggles_to;
 pub use picker::{Picker, PickerDelegate};
+pub use plugin_host::{
+    CACHE_DIR, GRANTS_FILE, PluginDiagnostic, PluginInfo, PluginState, REBUILD, SECRETS_INDEX_FILE,
+    StopReason, pending_plugin_grants, plugin_kind, plugin_states, reevaluate, set_plugin_dirs,
+    set_plugin_extensions, unload_plugin,
+};
 pub use plugin_prompt::{
     PendingPluginGrant, PluginAnswer, PluginAsk, plugin_prompt_text, show_plugin_prompt,
 };

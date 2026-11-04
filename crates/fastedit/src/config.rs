@@ -91,29 +91,39 @@ pub(crate) fn config(settings: SettingsStore) -> Config {
 /// [`WORKSPACE_KINDS`] only: their servers' consent is keyed by their own
 /// directories, so a grant to a user's server doesn't cover them. Those
 /// the settings' `extensions.disabled` names contribute none of these
-/// ([`DisabledExtensions`]).
+/// ([`DisabledExtensions`]). Their code plugins, `[contributes.plugin]`
+/// ([`fe_workbench::plugin_kind`]), go to the plugin host
+/// ([`fe_workbench::set_plugin_extensions`]), which runs them only while
+/// the settings' `extensions.plugins_preview` is on; the kind is checked
+/// whatever the setting, so a plugin's manifest loads quietly while it's
+/// off. It's the user's only: a workspace's plugin is dropped with a
+/// warning. A change to a plugin's component reloads it.
 pub(crate) fn with_extensions(config: Config, dir: PathBuf) -> Config {
     // 1.1 added snippets.
     let api = ApiVersion { major: 1, minor: 1 };
     let lsp = schemars::schema_for!(BTreeMap<String, LspServerSettings>).to_value();
     let grammars = schemars::schema_for!(Vec<ExtensionGrammar>).to_value();
     let snippets = schemars::schema_for!(Vec<ExtensionSnippet>).to_value();
+    let plugin = fe_workbench::plugin_kind();
     let mut last_good = LastGoodServers::new();
     config
         .extensions(dir, &fe_config::paths::app_id().short, api)
         .extension_kind("lsp", lsp)
         .extension_kind("grammars", grammars)
         .extension_kind("snippets", snippets)
+        .extension_kind(plugin.name, plugin.schema)
         .workspace_extensions(WORKSPACE_KINDS)
         .extension_files(|manifest| {
             let mut files = grammar_files(manifest);
             files.extend(server_files(manifest));
+            files.extend(plugin_files(manifest));
             files
         })
         .on_extensions(move |set, cx| {
             let servers = extension_servers(set.extensions(), &mut last_good);
             fe_workbench::set_extension_servers(cx, servers);
             fe_workbench::set_extension_snippets(cx, extension_snippets(set.extensions()));
+            fe_workbench::set_plugin_extensions(cx, set);
             let grammars = extension_grammars(set.extensions());
             // Newer than any batch still registering, which then stops. An
             // empty one still withdraws what extensions registered before.
@@ -344,6 +354,17 @@ fn grammar_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
         .flat_map(|grammar| [Some(grammar.wasm), grammar.highlights, grammar.injections])
         .flatten()
         .map(PathBuf::from)
+        .collect()
+}
+
+/// The component `manifest`'s plugin names, so that a rebuilt one alone
+/// reloads it.
+fn plugin_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
+    (manifest.app.get("plugin"))
+        .and_then(|plugin| plugin.get("wasm"))
+        .and_then(|wasm| wasm.as_str())
+        .map(PathBuf::from)
+        .into_iter()
         .collect()
 }
 

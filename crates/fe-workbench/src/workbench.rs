@@ -202,6 +202,8 @@ pub struct Workbench {
     /// The follow of the extension language servers waiting on consent,
     /// which asks about them.
     _consent_prompt: crate::lsp_consent_prompt::ConsentPrompt,
+    /// The follow of the plugins waiting on a grant, which asks about them.
+    _plugin_prompt: crate::plugin_host::PluginPrompt,
     /// The root's workspace trust.
     pub(crate) trust: kiln_shell::trust::RootTrust,
     /// The root's language servers.
@@ -620,6 +622,7 @@ impl Workbench {
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
             _consent_prompt: crate::lsp_consent_prompt::ConsentPrompt::new(window, cx),
+            _plugin_prompt: crate::plugin_host::PluginPrompt::new(window, cx),
             trust: kiln_shell::trust::RootTrust::new(trust::prompt()),
             lsp: Lsp::new(),
             format_runner: Rc::new(crate::external_format::ProcessRunner),
@@ -848,8 +851,8 @@ impl Workbench {
     }
 
     /// Runs a typed command (the `workbench.*` tab commands, the `pane.*`
-    /// commands, the dock's and the panels') as its action, or a git
-    /// command; others go on to the app.
+    /// commands, the dock's and the panels') as its action, a git command,
+    /// or a plugin's command, off the main thread; others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         // Under the sheet, only the app's and the window's own.
         let command = run.0.command.as_str();
@@ -859,6 +862,9 @@ impl Workbench {
         // A typed command, as its action, whose handler notes it ran: the
         // tab and pane commands.
         if kiln::commands::dispatch_typed(run, window, cx) {
+            return;
+        }
+        if crate::plugin_host::dispatch(run, cx) {
             return;
         }
         #[cfg(test)]
@@ -916,12 +922,17 @@ impl Render for Workbench {
         let drop_border = fe_ui::ui_theme(cx).accent;
         let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
-        // The typed commands' handlers, in the workbench's key context. Not
-        // under the sheet: a menu pick of one comes straight here as its
-        // action, not by `on_run_command`.
+        // The typed commands' handlers, in the workbench's key context, flagged
+        // with the plugin loads whose commands the palette lists. Not under
+        // the sheet: a menu pick of one comes straight here as its action, not
+        // by `on_run_command`.
         let root = match self.setup {
             Some(_) => div().key_context(KEY_CONTEXT),
             None => Self::attach(div(), cx),
+        };
+        let root = match crate::plugin_host::key_context(cx) {
+            Some(context) if self.setup.is_none() => root.key_context(context),
+            _ => root,
         };
         root.on_action(cx.listener(Self::on_run_command))
             // So a modifier pressed while a panel has focus reaches the
