@@ -13,6 +13,9 @@ mod mac_speller;
 mod perf;
 #[cfg(unix)]
 mod shell_command;
+mod sparkle;
+#[cfg(test)]
+mod sparkle_tests;
 mod theme;
 mod vim_remaps;
 mod wait;
@@ -515,6 +518,8 @@ fn main() {
     // detached server of a `--wait` launch, or it itself when there's no other
     // process to do the waiting.
     let waits_by_itself = !perf && how.waits_by_itself(cli.wait);
+    // A launch something's waiting on: it, or the detached server of one.
+    let wait_launch = cli.wait || how.parent_carries;
     let waiter = handoffs
         .as_ref()
         .filter(|_| how.parent_carries)
@@ -564,6 +569,13 @@ fn main() {
         let store = load_settings(launch.root.as_deref());
         let settings: Arc<Settings> = store.settings().clone();
         app_icon::set();
+        // The one start of the updater: off for all three of these, as its
+        // policy decides.
+        let (under_test, automatic_checks) = (
+            cx.background_executor().is_test(),
+            settings.update.automatic_checks,
+        );
+        sparkle::start(perf, wait_launch, under_test, automatic_checks, cx);
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on: the
         // vimrc and `vim.remap` too, which give every editor its remaps.
