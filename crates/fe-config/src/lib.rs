@@ -18,6 +18,7 @@
 
 pub mod chat_models;
 pub mod editorconfig;
+pub mod first_run;
 pub mod paths;
 pub mod recent;
 pub mod settings;
