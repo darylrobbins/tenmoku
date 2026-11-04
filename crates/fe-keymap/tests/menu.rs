@@ -496,6 +496,8 @@ fn linux_menus_are_the_macos_menus_without_the_app_menu() {
         "workbench.open_settings_ui",
         "workbench.open_keyboard_shortcuts",
         "workbench.open_keyboard_shortcuts_json",
+        "app.install_shell_command",
+        "app.uninstall_shell_command",
     ];
     file.splice(close_tab..close_tab, preferences.map(str::to_owned));
     file.push("app.quit".to_owned());

@@ -301,7 +301,41 @@ pub struct Workbench {
 impl EventEmitter<RootChanged> for Workbench {}
 impl EventEmitter<TrustChanged> for Workbench {}
 
+/// What runs Install/Uninstall 'tenmoku' Command in PATH: the app sets it
+/// ([`Workbench::set_shell_command_handler`]), as the work is the binary's.
+/// The argument is whether to install.
+#[derive(Clone, Copy)]
+struct ShellCommandHandler(fn(bool, &mut App));
+
+impl gpui::Global for ShellCommandHandler {}
+
+pub(crate) fn run_shell_command(install: bool, cx: &mut App) {
+    if let Some(handler) = cx.try_global::<ShellCommandHandler>().copied() {
+        (handler.0)(install, cx);
+    }
+}
+
 impl Workbench {
+    /// Sets what the Install and Uninstall 'tenmoku' Command in PATH
+    /// commands run: `handler(install, cx)`.
+    pub fn set_shell_command_handler(cx: &mut App, handler: fn(bool, &mut App)) {
+        cx.set_global(ShellCommandHandler(handler));
+    }
+
+    /// Shows a toast in the active window, else the first open, from
+    /// anywhere: `level` picks info, warning or error (`Debug` and `Trace`
+    /// show as info); `detail` is a second, quieter line.
+    pub fn notify(cx: &mut App, level: log::Level, message: String, detail: Option<String>) {
+        let level = match level {
+            log::Level::Error => toast::Level::Error,
+            log::Level::Warn => toast::Level::Warning,
+            _ => toast::Level::Info,
+        };
+        let mut toast = toast::Toast::new(level, message);
+        toast.detail = detail;
+        toast::show(cx, toast);
+    }
+
     /// Opens `launch`. `settings` configure the editors it opens (tab size,
     /// soft wrap); `window` is where file rows open their tabs. Nothing
     /// touches the file system on this thread: the project panel lists

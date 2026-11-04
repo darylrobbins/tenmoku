@@ -9,6 +9,8 @@ mod grammar_install;
 mod grammar_install_tests;
 mod ipc;
 mod perf;
+#[cfg(unix)]
+mod shell_command;
 mod theme;
 mod vim_remaps;
 mod wait;
@@ -623,6 +625,8 @@ fn main() {
         // So may the launch root's own extensions load.
         workspace_extensions::follow(launch.root.clone(), cx);
         log_keymap_report(cx);
+        #[cfg(unix)]
+        shell_command::init(cx);
         if handoffs.is_some() || waits_by_itself {
             wait::init(cx);
         }

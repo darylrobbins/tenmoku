@@ -583,6 +583,18 @@ impl Workbench {
         update_check::run(&self.toasts, cx.cx);
     }
 
+    /// Install 'tenmoku' Command in PATH
+    #[command(id = "app.install_shell_command")]
+    fn install_shell_command(&mut self, cx: &mut Cx<Self>) {
+        crate::workbench::run_shell_command(true, cx.cx);
+    }
+
+    /// Uninstall 'tenmoku' Command from PATH
+    #[command(id = "app.uninstall_shell_command")]
+    fn uninstall_shell_command(&mut self, cx: &mut Cx<Self>) {
+        crate::workbench::run_shell_command(false, cx.cx);
+    }
+
     /// Grow Pane Width
     #[command(id = "pane.grow_width")]
     fn grow_pane_width(&mut self, cx: &mut Cx<Self>) {

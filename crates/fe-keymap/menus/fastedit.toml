@@ -44,6 +44,14 @@ title = "Keyboard Shortcuts (JSON)"
 command = "workbench.open_keyboard_shortcuts_json"
 
 [[menus.items]]
+title = "Install 'tenmoku' Command in PATH"
+command = "app.install_shell_command"
+
+[[menus.items]]
+title = "Uninstall 'tenmoku' Command from PATH"
+command = "app.uninstall_shell_command"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]
@@ -140,6 +148,16 @@ platform = "!macos"
 [[menus.items]]
 title = "Keyboard Shortcuts (JSON)"
 command = "workbench.open_keyboard_shortcuts_json"
+platform = "!macos"
+
+[[menus.items]]
+title = "Install 'tenmoku' Command in PATH"
+command = "app.install_shell_command"
+platform = "!macos"
+
+[[menus.items]]
+title = "Uninstall 'tenmoku' Command from PATH"
+command = "app.uninstall_shell_command"
 platform = "!macos"
 
 [[menus.items]]
