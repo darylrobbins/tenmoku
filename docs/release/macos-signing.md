@@ -155,3 +155,32 @@ Actions). Each stage runs only when its secrets are all set; otherwise the log s
 The certificate lives in a temporary keychain for the job only. To check the signing script
 locally without any secrets, `scripts/test-release-workflow.sh` runs it against a fixture
 bundle along with `actionlint` and checks on the workflow.
+
+## Sparkle
+
+Tenmoku.app can embed Sparkle 2 for auto-updates. It is loaded at run time, so nothing links
+against it, and a plain `scripts/bundle-macos.sh` builds a bundle without it.
+
+**Fetching.** `scripts/fetch-sparkle.sh` downloads the release pinned at its top into
+`target/sparkle/<version>/` and refuses it unless the SHA-256 matches. `bundle-macos.sh --sparkle`
+runs it; `SPARKLE_FRAMEWORK=<path>` uses that framework instead and downloads nothing, with its
+licence beside it as `LICENSE`. The framework lands in `Contents/Frameworks/Sparkle.framework`
+without `Versions/B/XPCServices`, which only sandboxed apps need, and its licence in
+`Contents/Resources/Sparkle-LICENSE.txt`. The generate_keys and sign_update tools stay in the
+fetch directory, under `bin/`.
+
+**Signing order.** Inside out: `Versions/B/Autoupdate`, `Versions/B/Updater.app`, the framework,
+then the app. All use the hardened runtime and the same identity. The first three get no
+entitlements, and nothing uses `--deep`. `--sign-only` follows the same order, so
+`scripts/sign-notarize-macos.sh` needs nothing extra.
+
+**The SU\* keys.** `--feed-url` or `TENMOKU_FEED_URL` (https only) and `--ed-public-key` or
+`TENMOKU_ED_PUBLIC_KEY` fill in `SUFeedURL` and `SUPublicEDKey`, beside `SUEnableAutomaticChecks`
+(true), `SUScheduledCheckInterval` (86400) and `SUAutomaticallyUpdate` (false: Tenmoku asks before
+installing). If either is empty, all five are deleted, so that build never polls.
+
+**Library validation.** The hardened runtime only loads a framework signed by the app's own team,
+which a Developer ID build satisfies with the committed entitlements. An ad-hoc signature has no
+team, so an ad-hoc bundle holding Sparkle is signed with a temporary copy of the entitlements plus
+`com.apple.security.cs.disable-library-validation`. That entitlement must never reach a Developer ID
+build, and `Tenmoku.entitlements` does not have it.

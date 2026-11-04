@@ -65,5 +65,17 @@
 	<string>Copyright 2026 Daryl Robbins</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Sparkle. bundle-macos.sh fills in the feed and key, or deletes all five when either
+	     is empty, so a build without a feed never polls. Tenmoku asks before installing. -->
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>@FEED_URL@</string>
+	<key>SUPublicEDKey</key>
+	<string>@ED_PUBLIC_KEY@</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

@@ -247,6 +247,19 @@ MPL-2.0 requires telling recipients where to get the source of these crates.
 
 `cbindgen` (MPL-2.0) is a build-time tool only and is not distributed.
 
+## Binary frameworks in Tenmoku.app
+
+Not committed and not a crate: `scripts/fetch-sparkle.sh` downloads the release, refuses
+it unless its SHA-256 is the pinned one, and `scripts/bundle-macos.sh --sparkle` embeds
+it. Its `LICENSE`, which also carries the licences of the code Sparkle includes, ships
+beside it unmodified.
+
+| Framework | Version | Source | SHA-256 | License | Licence text in the bundle |
+|---|---|---|---|---|---|
+| Sparkle | 2.10.1 | [sparkle-project/Sparkle](https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-2.10.1.tar.xz) | `1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27` | MIT | `Contents/Resources/Sparkle-LICENSE.txt` |
+
+We delete `Versions/B/XPCServices` from our copy (Tenmoku is not sandboxed) and re-sign the rest.
+
 ## Dependencies
 
 Run `cargo deny list` for every crate and its license. Release builds must ship
