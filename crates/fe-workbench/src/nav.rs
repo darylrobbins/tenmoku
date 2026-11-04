@@ -354,6 +354,7 @@ impl Nav {
     /// builds. Before the index exists it's dropped, since the build will
     /// see the disk as it is.
     pub(crate) fn fs_changed(&mut self, changes: &[FsChange], cx: &mut Context<Workbench>) {
+        crate::ignore_diagnostics::tree_changed(changes, cx);
         if self.index.is_none() {
             return;
         }

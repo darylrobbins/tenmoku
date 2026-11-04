@@ -908,10 +908,18 @@ impl Workbench {
                 let resolved = self.lsp.resolved.get(&model.buffer().id());
                 shown.extend(resolved.cloned().flatten());
                 shown.insert(path.clone());
-                listed.insert(path.clone()).then(|| {
-                    texts.insert(path.clone(), model.buffer().text().clone());
-                    (path, model.problems())
-                })
+                (texts.entry(path.clone())).or_insert_with(|| model.buffer().text().clone());
+                if listed.contains(&path) {
+                    return None;
+                }
+                // A buffer's editors hold the same problems, unless a language
+                // picked in one split took them from it: the first with any.
+                let problems = model.problems();
+                if problems.is_empty() {
+                    return None;
+                }
+                listed.insert(path.clone());
+                Some((path, problems))
             })
             .collect();
         let files = group_problems(files);

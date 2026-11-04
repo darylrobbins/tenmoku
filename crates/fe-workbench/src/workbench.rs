@@ -294,6 +294,8 @@ pub struct Workbench {
     pub(crate) link_epoch: u64,
     /// The spelling squiggles in its editors.
     pub(crate) spelling: crate::spell_squiggles::Spelling,
+    /// The checks of the open ignore files.
+    pub(crate) ignore_diagnostics: crate::ignore_diagnostics::IgnoreDiagnostics,
     /// Zen Mode: see [`zen_mode`].
     pub(crate) zen: zen_mode::ZenMode,
 }
@@ -661,6 +663,7 @@ impl Workbench {
             activations: 0,
             link_epoch: 0,
             spelling,
+            ignore_diagnostics: Default::default(),
             zen: zen_mode::ZenMode::new(cx),
         };
         // Under test, the chrome's window moves are recorded, not made.
@@ -717,6 +720,7 @@ impl Workbench {
         self.git.update(cx, |git, cx| git.track(&editors, cx));
         self.protect_ai_previews(cx);
         self.tint_tabs(cx);
+        self.sync_ignore_files(cx);
         self.sync_problems(cx);
         self.sync_backups(cx);
         self.sync_auto_save(cx);
@@ -755,6 +759,8 @@ impl Workbench {
     /// `editor`'s buffer, so an edit in one pane shows in the others on the
     /// next frame. Each keeps its own selections, scroll and folds.
     fn editor_changed(&mut self, editor: Entity<EditorView>, cx: &mut Context<Self>) {
+        // A save, a rename or another language notifies too.
+        self.sync_ignore_editor(&editor, cx);
         // A diagnostic arriving or clearing notifies, as an edit does.
         self.sync_problems(cx);
         self.sync_backups(cx);
