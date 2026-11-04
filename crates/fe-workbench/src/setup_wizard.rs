@@ -14,6 +14,9 @@
 //!   keymap, and [`SetupWizard::on_key`] reads them. Tab stops are
 //!   [`Stop`]s, of which the one current shows a ring and, for VoiceOver, is
 //!   the active descendant.
+//! - The Appearance and Font pages draw their choices with
+//!   [`crate::setup_wizard_preview`]: tiles in each theme's own colours, and a
+//!   code sample that follows the theme and font as the choices reload.
 
 use std::{collections::HashMap, io, path::PathBuf};
 
@@ -27,6 +30,7 @@ use gpui::{
     WeakFocusHandle, Window, div, point, prelude::FluentBuilder as _, px,
 };
 use kiln::{
+    core::theme::Appearance,
     platform::{
         command_actions::dispatch_invocation,
         keys::{self, HOLDS_ALL_KEYS},
@@ -37,6 +41,10 @@ use kiln::{
 use crate::{
     KEY_CONTEXT as WORKBENCH_CONTEXT, Workbench,
     setup_wizard_model::{Choices, Control, ControlId, Key, Step, steps},
+    setup_wizard_preview::{
+        Sample, Swatch, Swatches, TILE_WIDTH, TILES_WIDTH, TileArt, installed_font_families,
+        label_family,
+    },
     workbench::toast::{self, Toast},
 };
 
@@ -50,7 +58,7 @@ const CARD_HEIGHT: Pixels = px(560.);
 /// What's left of the window around a card too big for it.
 const CARD_MARGIN: Pixels = px(48.);
 
-/// How tall a list of themes or fonts is.
+/// How tall the list of fonts is.
 const LIST_HEIGHT: Pixels = px(104.);
 
 const SKIP: &str = "Skip setup";
@@ -58,6 +66,22 @@ const SKIP_TOOLTIP: &str = "Keeps what you've chosen so far";
 const BACK: &str = "Back";
 const CONTINUE: &str = "Continue";
 const FINISH: &str = "Start Editing";
+
+/// What's around a tile's art across its width: the focus ring's padding and
+/// border and the 2 px chosen ring, on both sides.
+const TILE_FRAME: Pixels = px(8.);
+
+/// What VoiceOver calls the code sample.
+const SAMPLE_LABEL: &str = "Code sample";
+
+/// The least the sample shows, in a window too small for the rest.
+const SAMPLE_MIN_HEIGHT: Pixels = px(120.);
+
+/// The Mode control's options that show one theme, in the model's order, and
+/// then Match System's.
+const MODE_DARK: usize = 0;
+const MODE_LIGHT: usize = 1;
+const MODE_SYSTEM: usize = 2;
 
 /// The Ready page's hints: what to call a command, and which it is.
 const SETTINGS: (&str, &str) = ("Settings", "workbench.open_settings_ui");
@@ -103,19 +127,20 @@ pub(crate) enum Stop {
 enum Shape {
     Segmented,
     List,
+    Tiles,
     Switch,
     Stepper,
 }
 
 fn shape(id: ControlId) -> Shape {
     match id {
-        ControlId::ThemeMode
-        | ControlId::Keyboard
+        ControlId::ThemeMode | ControlId::DarkTheme | ControlId::LightTheme => Shape::Tiles,
+        ControlId::Keyboard
         | ControlId::VimPreset
         | ControlId::LineNumbers
         | ControlId::AutoSave
         | ControlId::InlineDiagnostics => Shape::Segmented,
-        ControlId::DarkTheme | ControlId::LightTheme | ControlId::FontFamily => Shape::List,
+        ControlId::FontFamily => Shape::List,
         ControlId::FontSize => Shape::Stepper,
         ControlId::FontLigatures
         | ControlId::FormatOnSave
@@ -147,14 +172,22 @@ pub(crate) struct SetupWizard {
     /// undo a later one to its key.
     latest: HashMap<Key, u64>,
     next_write: u64,
+    /// The number of the last write that's over: they end in order.
+    finished: u64,
     /// The last of the writes, which the next one waits for.
     writes: Option<Task<()>>,
+    /// The page's body, or on Appearance the column of tiles beside the sample.
     body_scroll: ScrollHandle,
-    /// Per list: its rows' scroll. A page has few enough to look through.
-    list_scrolls: [(ControlId, ScrollHandle); 3],
+    font_scroll: ScrollHandle,
+    swatches: Swatches,
+    /// Once the workbench that's opening the sheet can be read for its pane.
+    sample: Option<Sample>,
     /// Every (role, label) passed in the last render.
     #[cfg(test)]
     nodes: std::cell::RefCell<Vec<(Role, String)>>,
+    /// Every tile passed in the last render, by its label.
+    #[cfg(test)]
+    tiles: std::cell::RefCell<Vec<(String, TileArt)>>,
     /// Holds focus here: anything else that takes it, an open from another
     /// process, say, would have keys typed under the sheet.
     _focus_out: gpui::Subscription,
@@ -166,8 +199,7 @@ impl SetupWizard {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let fonts = cx.text_system().all_font_names();
-        let fonts: Vec<&str> = fonts.iter().map(String::as_str).collect();
+        let fonts = installed_font_families(cx);
         let settings = cx.settings::<fe_config::Settings>();
         let choices = Choices::from_settings(&settings, &fonts);
         let focus = cx.focus_handle();
@@ -176,6 +208,20 @@ impl SetupWizard {
             if !window.has_active_prompt() {
                 window.focus(&this.focus, cx);
             }
+        });
+        // A window closed under the sheet takes no choice with it: dropped,
+        // the task would cancel the writes still waiting.
+        cx.on_release(|this: &mut Self, _| {
+            if let Some(writes) = this.writes.take() {
+                writes.detach();
+            }
+        })
+        .detach();
+        // The workbench is opening the sheet, so it can't be read yet.
+        cx.defer_in(window, |this, _, cx| {
+            let pane = (this.workbench.upgrade()).map(|bench| bench.read(cx).pane().clone());
+            this.sample = pane.map(|pane| Sample::new(&pane, cx));
+            cx.notify();
         });
         let mut this = Self {
             workbench,
@@ -187,15 +233,16 @@ impl SetupWizard {
             choices,
             latest: HashMap::new(),
             next_write: 0,
+            finished: 0,
             writes: None,
             body_scroll: ScrollHandle::new(),
-            list_scrolls: [
-                (ControlId::DarkTheme, ScrollHandle::new()),
-                (ControlId::LightTheme, ScrollHandle::new()),
-                (ControlId::FontFamily, ScrollHandle::new()),
-            ],
+            font_scroll: ScrollHandle::new(),
+            swatches: Swatches::load(),
+            sample: None,
             #[cfg(test)]
             nodes: Default::default(),
+            #[cfg(test)]
+            tiles: Default::default(),
             _focus_out: focus_out,
         };
         this.enter_page(0);
@@ -237,17 +284,19 @@ impl SetupWizard {
         let controls = self.controls();
         self.stop = (controls.first()).map_or(Stop::Primary, |control| Stop::Control(control.id));
         self.body_scroll.set_offset(point(px(0.), px(0.)));
-        for control in &controls {
-            if let Some(scroll) = self.list_scroll(control.id) {
-                scroll.scroll_to_item(control.selected);
-            }
+        if let Some(font) = controls.iter().find(|c| shape(c.id) == Shape::List) {
+            self.font_scroll.scroll_to_item(font.selected);
         }
     }
 
-    fn list_scroll(&self, id: ControlId) -> Option<&ScrollHandle> {
-        (self.list_scrolls.iter())
-            .find(|(list, _)| *list == id)
-            .map(|(_, scroll)| scroll)
+    /// Scrolls `id`'s control into view. On Font the body's first child holds
+    /// all three.
+    fn reveal(&self, id: ControlId) {
+        let row = (self.controls().iter()).position(|control| control.id == id);
+        if let Some(row) = row {
+            let row = if self.step() == Step::Font { 0 } else { row };
+            self.body_scroll.scroll_to_item(row);
+        }
     }
 
     /// Moves `by` tab stops, around the ends, and into view.
@@ -259,10 +308,8 @@ impl SetupWizard {
             .unwrap_or(0);
         let count = stops.len() as isize;
         self.stop = stops[(at as isize + by).rem_euclid(count) as usize];
-        if let Stop::Control(id) = self.stop
-            && let Some(row) = (self.controls().iter()).position(|control| control.id == id)
-        {
-            self.body_scroll.scroll_to_item(row);
+        if let Stop::Control(id) = self.stop {
+            self.reveal(id);
         }
         cx.notify();
     }
@@ -281,11 +328,15 @@ impl SetupWizard {
         let option = match shape(id) {
             Shape::Switch => return,
             Shape::Stepper if !(0..count).contains(&next) => return,
-            Shape::Stepper | Shape::Segmented | Shape::List => next.rem_euclid(count) as usize,
+            Shape::Stepper | Shape::Segmented | Shape::List | Shape::Tiles => {
+                next.rem_euclid(count) as usize
+            }
         };
         self.choose(&control, option, cx);
-        if let Some(scroll) = self.list_scroll(id) {
-            scroll.scroll_to_item(option);
+        match shape(id) {
+            Shape::List => self.font_scroll.scroll_to_item(option),
+            Shape::Tiles => self.reveal(id),
+            _ => {}
         }
     }
 
@@ -293,14 +344,24 @@ impl SetupWizard {
     /// writes before it. If that fails a toast says why, sheet or no sheet,
     /// and the control goes back to what the file has, unless a later write
     /// of it is waiting.
+    ///
+    /// A write takes with it every key still on its way to the file, as each
+    /// choice is made against what the ones before it should have left there:
+    /// if the write that retires `theme.name` fails, the next one still has to.
     fn choose(&mut self, control: &Control, option: usize, cx: &mut Context<Self>) {
-        let keys: Vec<Key> = (self.choices.choose(control.id, option).iter())
+        let mut keys: Vec<Key> = (self.choices.choose(control.id, option).iter())
             .map(|(key, _)| *key)
             .collect();
         cx.notify();
         if keys.is_empty() {
             return;
         }
+        let mut waiting: Vec<Key> = (self.latest.iter())
+            .filter(|(key, write)| **write > self.finished && !keys.contains(*key))
+            .map(|(key, _)| *key)
+            .collect();
+        waiting.sort_unstable();
+        keys.extend(waiting);
         self.next_write += 1;
         let write = self.next_write;
         self.latest.extend(keys.iter().map(|key| (*key, write)));
@@ -342,6 +403,7 @@ impl SetupWizard {
         ok: bool,
         cx: &mut Context<Self>,
     ) {
+        self.finished = write;
         if ok {
             self.saved.adopt(chosen, keys);
             return;
@@ -552,6 +614,108 @@ impl SetupWizard {
         self.node(button, Role::RadioButton, label)
     }
 
+    /// The swatch of the theme chosen for each of the dark and the light slot,
+    /// shown or not: the model lists them both for Match System.
+    fn chosen_swatches(&self, cx: &App) -> (Swatch, Swatch) {
+        let mut both = self.choices.clone();
+        let _ = both.choose(ControlId::ThemeMode, MODE_SYSTEM);
+        let swatch = |id: ControlId, appearance| {
+            let controls = Step::Appearance.controls(&both);
+            let control = controls.iter().find(|control| control.id == id);
+            let label = control.map_or("", |c| c.options[c.selected].label.as_str());
+            self.swatches.of_option(label, appearance, cx)
+        };
+        (
+            swatch(ControlId::DarkTheme, Appearance::Dark),
+            swatch(ControlId::LightTheme, Appearance::Light),
+        )
+    }
+
+    /// What the `option`th tile of `control` draws.
+    fn tile_art(&self, control: &Control, option: usize, cx: &App) -> TileArt {
+        let label = control.options[option].label.as_str();
+        match control.id {
+            ControlId::DarkTheme => {
+                TileArt::Window(self.swatches.of_option(label, Appearance::Dark, cx))
+            }
+            ControlId::LightTheme => {
+                TileArt::Window(self.swatches.of_option(label, Appearance::Light, cx))
+            }
+            _ => {
+                let (dark, light) = self.chosen_swatches(cx);
+                match option {
+                    MODE_DARK => TileArt::Window(dark),
+                    MODE_LIGHT => TileArt::Window(light),
+                    _ => TileArt::Split { dark, light },
+                }
+            }
+        }
+    }
+
+    /// One option of a group of tiles: its art in the card's frame, its title
+    /// under it. A 2 px ring is on the chosen one and, around that, the focus
+    /// ring while the group has the keyboard; the frames are the card's colour
+    /// otherwise, so nothing moves.
+    fn tile(
+        &self,
+        control: &Control,
+        option: usize,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = cx.theme().colors;
+        let id = control.id;
+        let selected = option == control.selected;
+        let label = control.options[option].label.clone();
+        let art = self.tile_art(control, option, cx);
+        #[cfg(test)]
+        self.tiles.borrow_mut().push((label.clone(), art));
+        // A hairline around the others, in the same room, for a light tile on
+        // a light card.
+        let chosen = div()
+            .rounded_md()
+            .overflow_hidden()
+            .when(selected, |frame| {
+                frame.border_2().border_color(colors.border.focused)
+            })
+            .when(!selected, |frame| {
+                frame
+                    .m(px(1.))
+                    .border_1()
+                    .border_color(colors.border.default)
+            })
+            .child(art.render(TILE_WIDTH - TILE_FRAME));
+        let element_id =
+            gpui::ElementId::NamedInteger(format!("setup-tile-{id:?}").into(), option as u64);
+        let tile = div()
+            .id(element_id)
+            .debug_selector(move || format!("setup-radio-{id:?}-{option}"))
+            .flex()
+            .flex_col()
+            .w(TILE_WIDTH)
+            .gap(px(2.))
+            .cursor_pointer()
+            .when(selected && focused, |tile| tile.aria_active_descendant())
+            .aria_selected(selected)
+            .aria_position_in_set(option + 1)
+            .aria_size_of_set(control.options.len())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.click_stop(Stop::Control(id), cx);
+                if let Some(control) = this.controls().into_iter().find(|c| c.id == id) {
+                    this.choose(&control, option, cx);
+                }
+            }))
+            .child(self.ring(focused && selected, chosen, cx))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_center()
+                    .truncate()
+                    .child(label.clone()),
+            );
+        self.node(tile, Role::RadioButton, label).into_any_element()
+    }
+
     fn render_group(&self, control: &Control, focused: bool, cx: &mut Context<Self>) -> AnyElement {
         let options = 0..control.options.len();
         let group = self.node(
@@ -560,18 +724,32 @@ impl SetupWizard {
             control.title,
         );
         let group = group.aria_description(control.description);
+        if shape(control.id) == Shape::Tiles {
+            let tiles: Vec<AnyElement> = options
+                .map(|option| self.tile(control, option, focused, cx))
+                .collect();
+            return div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap_1()
+                .child(self.heading(control, cx))
+                .child(group.flex().flex_wrap().gap_x_2().gap_y_1().children(tiles))
+                .into_any_element();
+        }
         let body = match shape(control.id) {
             Shape::List => {
-                let scroll = self.list_scroll(control.id).cloned().unwrap_or_default();
                 let rows = options.map(|option| {
+                    let family = label_family(&control.options[option].label);
                     let radio = self.radio(control, option, focused, cx);
-                    radio.ghost().w_full().justify_start().into_any_element()
+                    let radio = radio.ghost().w_full().justify_start();
+                    radio.font_family(family).into_any_element()
                 });
                 let rows: Vec<AnyElement> = rows.collect();
                 group
                     .h(LIST_HEIGHT)
                     .overflow_y_scroll()
-                    .track_scroll(&scroll)
+                    .track_scroll(&self.font_scroll)
                     .flex()
                     .flex_col()
                     .children(rows)
@@ -685,6 +863,105 @@ impl SetupWizard {
         self.ring(focused, row, cx).into_any_element()
     }
 
+    /// The code sample, for VoiceOver a picture: it can't be focused or read
+    /// a line at a time.
+    fn render_sample(&self, cx: &App) -> gpui::Stateful<gpui::Div> {
+        let node = self.node(div().id("setup-sample"), Role::Figure, SAMPLE_LABEL);
+        node.debug_selector(|| "setup-sample".into())
+            .children(self.sample.as_ref().map(|sample| sample.render(cx)))
+    }
+
+    fn render_control(&self, control: &Control, cx: &mut Context<Self>) -> AnyElement {
+        let focused = self.stop == Stop::Control(control.id);
+        match shape(control.id) {
+            Shape::Segmented | Shape::List | Shape::Tiles => {
+                self.render_group(control, focused, cx)
+            }
+            Shape::Switch => self.render_switch(control, focused, cx),
+            Shape::Stepper => self.render_stepper(control, focused, cx),
+        }
+    }
+
+    /// The Appearance page: the tiles, which scroll if they must, beside the
+    /// sample, which doesn't.
+    fn render_appearance(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let groups: Vec<AnyElement> = (self.controls().iter())
+            .map(|control| self.render_control(control, cx))
+            .collect();
+        div()
+            .id("setup-body")
+            .flex()
+            .flex_1()
+            .min_h_0()
+            .gap_4()
+            .child(
+                div()
+                    .id("setup-tiles")
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .w(TILES_WIDTH)
+                    .gap_3()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.body_scroll)
+                    .children(groups),
+            )
+            .child(self.render_sample(cx).flex_1().min_w_0())
+    }
+
+    /// The Font page: the family beside the size and ligatures, and the sample
+    /// under them with what's left.
+    fn render_font(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let mut family = Vec::new();
+        let mut rest = Vec::new();
+        for control in self.controls() {
+            let element = self.render_control(&control, cx);
+            match shape(control.id) {
+                Shape::List => family.push(element),
+                _ => rest.push(element),
+            }
+        }
+        let column = || div().flex().flex_col().flex_1().min_w_0().gap_3();
+        div()
+            .id("setup-body")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .gap_3()
+            .overflow_y_scroll()
+            .track_scroll(&self.body_scroll)
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .gap_4()
+                    .child(column().children(family))
+                    .child(column().children(rest)),
+            )
+            .child(self.render_sample(cx).flex_1().min_h(SAMPLE_MIN_HEIGHT))
+    }
+
+    /// Every other page: its controls, one under the other.
+    fn render_plain(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let body: Vec<AnyElement> = match self.step() {
+            Step::Ready => self.render_ready(cx),
+            _ => (self.controls().iter())
+                .map(|control| self.render_control(control, cx))
+                .collect(),
+        };
+        div()
+            .id("setup-body")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .gap_3()
+            .overflow_y_scroll()
+            .track_scroll(&self.body_scroll)
+            .children(body)
+    }
+
     /// The Ready page: what the run changed, where to change it, and three
     /// hints with the keymap's keys.
     fn render_ready(&self, cx: &App) -> Vec<AnyElement> {
@@ -793,6 +1070,32 @@ impl SetupWizard {
         self.nodes.borrow().clone()
     }
 
+    /// Every tile the last render passed, with its label.
+    #[cfg(test)]
+    pub(crate) fn tiles(&self) -> Vec<(String, TileArt)> {
+        self.tiles.borrow().clone()
+    }
+
+    /// The code sample's editor, once it's there.
+    #[cfg(test)]
+    pub(crate) fn sample_editor(&self) -> Option<&gpui::Entity<fe_gpui::EditorView>> {
+        self.sample.as_ref().map(Sample::editor)
+    }
+
+    /// `id`'s control as it's listed now.
+    #[cfg(test)]
+    pub(crate) fn control(&self, id: ControlId) -> Option<Control> {
+        self.controls().into_iter().find(|control| control.id == id)
+    }
+
+    /// Takes the option labelled `label` of `id`, as a click on it does.
+    #[cfg(test)]
+    pub(crate) fn pick(&mut self, id: ControlId, label: &str, cx: &mut Context<Self>) {
+        let control = self.control(id).expect("the control is listed");
+        let option = (control.options.iter()).position(|option| option.label == label);
+        self.choose(&control, option.expect("the option is listed"), cx);
+    }
+
     #[cfg(test)]
     pub(crate) fn current_step(&self) -> Step {
         self.step()
@@ -833,24 +1136,18 @@ impl Render for SetupWizard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.nodes.borrow_mut().clear();
+        #[cfg(test)]
+        self.tiles.borrow_mut().clear();
         let colors = cx.theme().colors;
         let viewport = window.viewport_size();
         let mut context = KeyContext::default();
         context.add(KEY_CONTEXT);
         context.add(HOLDS_ALL_KEYS);
         let step = self.step();
-        let body: Vec<AnyElement> = match step {
-            Step::Ready => self.render_ready(cx),
-            _ => (self.controls().iter())
-                .map(|control| {
-                    let focused = self.stop == Stop::Control(control.id);
-                    match shape(control.id) {
-                        Shape::Segmented | Shape::List => self.render_group(control, focused, cx),
-                        Shape::Switch => self.render_switch(control, focused, cx),
-                        Shape::Stepper => self.render_stepper(control, focused, cx),
-                    }
-                })
-                .collect(),
+        let body = match step {
+            Step::Appearance => self.render_appearance(cx),
+            Step::Font => self.render_font(cx),
+            _ => self.render_plain(cx),
         };
         let header = div()
             .flex()
@@ -888,18 +1185,7 @@ impl Render for SetupWizard {
             .shadow_lg()
             .text_color(colors.text.primary)
             .child(header)
-            .child(
-                div()
-                    .id("setup-body")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .gap_3()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.body_scroll)
-                    .children(body),
-            )
+            .child(body)
             .child(footer);
         div()
             .id("setup-scrim")

@@ -11,7 +11,8 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
 use fe_workbench::{Launch, Workbench};
 use gpui::{
-    AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, WindowHandle, px, size,
+    AppContext as _, Context, Focusable as _, Pixels, Size, VisualTestAppContext, Window,
+    WindowHandle, px, size,
 };
 use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
@@ -71,6 +72,19 @@ pub(crate) fn capture(
     open_demo: bool,
     palette: &EditorPalette,
 ) -> Result<RgbaImage> {
+    capture_with(cx, root, size, open_demo, palette, |_, _, _| {})
+}
+
+/// [`capture`], with `before` run in the workbench once it's open, before the
+/// first frame: to put something over it.
+pub(crate) fn capture_with(
+    cx: &mut VisualTestAppContext,
+    root: &Path,
+    size: Size<Pixels>,
+    open_demo: bool,
+    palette: &EditorPalette,
+    before: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>),
+) -> Result<RgbaImage> {
     let launch = Launch {
         root: Some(root.to_owned()),
         file: None,
@@ -95,6 +109,9 @@ pub(crate) fn capture(
     if open_demo {
         open_files(cx, window, &workbench, root)?;
     }
+    cx.update_window(window.into(), |_, window, cx| {
+        workbench.update(cx, |workbench, cx| before(workbench, window, cx));
+    })?;
     // Views notify themselves when background work lands. Draw until a frame
     // and everything it started leave the workbench, its panel and its
     // editors quiet: that frame shows the result.
@@ -142,11 +159,16 @@ fn open_files(
     Ok(())
 }
 
+/// This example's goldens.
+pub(crate) fn goldens() -> Goldens {
+    Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden")
+}
+
 /// Renders the scene and compares it with its golden, or rewrites the golden.
 /// Returns whether it matched. Failures go to the output directory fe-gpui's
 /// scenes share, as `workbench.actual.png` and `workbench.diff.png`.
 fn check_scene(cx: &mut VisualTestAppContext) -> Result<bool> {
-    let goldens = Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden");
+    let goldens = goldens();
     let parent = tempfile::tempdir()?;
     let root = write_project(parent.path())?;
     let image = capture(cx, &root, SCENE_SIZE, true, EditorPalette::fastedit_dark())?;
@@ -176,8 +198,10 @@ pub(crate) fn main() -> ExitCode {
     });
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
+        // The setup scenes last: they leave their settings and theme in use.
         None => check_scene(&mut cx)
-            .and_then(|matched| Ok(crate::token_probe::check(&mut cx)? && matched)),
+            .and_then(|matched| Ok(crate::token_probe::check(&mut cx)? && matched))
+            .and_then(|matched| Ok(crate::setup_scene::check(&mut cx)? && matched)),
         Some(_) => Err("usage: screenshots [render <out.png> <dir> [--size WxH]]".into()),
     })
 }

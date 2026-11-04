@@ -17,9 +17,14 @@
 //! themes and fails when more of its pixels than `token_probe` allows are
 //! the same in both: a colour that bypasses the theme. It writes
 //! `target/screenshots/workbench_tokens.diff.png`, those pixels in magenta.
+//!
+//! Then the setup wizard's sheet over the same workbench, dark and light
+//! (`setup_scene`), against goldens of their own.
 
 #[cfg(target_os = "macos")]
 mod scenes;
+#[cfg(target_os = "macos")]
+mod setup_scene;
 #[cfg(target_os = "macos")]
 mod token_probe;
 

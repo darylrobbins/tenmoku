@@ -68,6 +68,7 @@ mod search_panel;
 mod settings_editor;
 mod setup_wizard;
 mod setup_wizard_model;
+mod setup_wizard_preview;
 mod shortcuts_editor;
 pub mod spell;
 mod spell_commands;
@@ -320,6 +321,8 @@ mod settings_editor_controls_tests;
 mod settings_editor_tests;
 #[cfg(test)]
 mod setup_wizard_model_tests;
+#[cfg(test)]
+mod setup_wizard_preview_tests;
 #[cfg(test)]
 mod setup_wizard_tests;
 #[cfg(test)]
