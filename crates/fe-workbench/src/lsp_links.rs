@@ -563,6 +563,13 @@ impl Workbench {
         // looked for off the main thread first.
         let handle = window.window_handle();
         let pane = self.pane().clone();
+        // The ticket is taken now, in the order opens start: whichever
+        // check finishes last must not claim the landing from a later open.
+        let ticket = {
+            let ticket = self.lsp.links.tickets.entry(pane.entity_id()).or_default();
+            *ticket += 1;
+            *ticket
+        };
         cx.spawn(async move |workbench, cx| {
             let (is_file, path) =
                 (cx.background_spawn(async move { (path.is_file(), path) })).await;
@@ -571,7 +578,12 @@ impl Workbench {
                     origin.is_none_or(|origin| workbench.link_open_current(origin, cx))
                 }))
                 .unwrap_or(false);
-                if !current {
+                // A later open of the pane took a later ticket.
+                let latest = (workbench.update(cx, |workbench, _| {
+                    workbench.lsp.links.tickets.get(&pane.entity_id()) == Some(&ticket)
+                }))
+                .unwrap_or(false);
+                if !current || !latest {
                     return;
                 }
                 if !is_file {
@@ -585,19 +597,11 @@ impl Workbench {
                     columns: 0..0,
                     within_row: true,
                 });
-                let ticket = (workbench.update(cx, |workbench, _| {
-                    workbench.lsp.links.landings.remove(&pane.entity_id());
-                    // Any open of the pane supersedes the last link's.
-                    let ticket = workbench
-                        .lsp
-                        .links
-                        .tickets
-                        .entry(pane.entity_id())
-                        .or_default();
-                    *ticket += 1;
-                    *ticket
-                }))
-                .unwrap_or(0);
+                workbench
+                    .update(cx, |workbench, _| {
+                        workbench.lsp.links.landings.remove(&pane.entity_id());
+                    })
+                    .ok();
                 // A Save As holding the file has the open wait for it:
                 // continued here, not by the pane, so what is the
                 // continuation is known, and an open of the pane's own

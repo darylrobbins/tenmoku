@@ -331,8 +331,14 @@ pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
             .as_ref()
             .map(|dir| dir.join(fe_config::paths::SETTINGS_FILE));
     }
-    let _ = cx;
-    fe_config::user_settings_path()
+    // A test with no override has no user config, not the developer's.
+    #[cfg(test)]
+    return None;
+    #[cfg(not(test))]
+    {
+        let _ = cx;
+        fe_config::user_settings_path()
+    }
 }
 
 /// What overlapping requests for one path share: the outcome of the

@@ -1566,8 +1566,14 @@ pub(crate) fn keymap_path(cx: &App) -> Option<PathBuf> {
     if let Some(over) = cx.try_global::<crate::open::ConfigDirOverride>() {
         return over.0.as_ref().map(|dir| dir.join(fe_keymap::KEYMAP_FILE));
     }
-    let _ = cx;
-    fe_keymap::user_keymap_path()
+    // A test with no override has no user config, not the developer's.
+    #[cfg(test)]
+    return None;
+    #[cfg(not(test))]
+    {
+        let _ = cx;
+        fe_keymap::user_keymap_path()
+    }
 }
 
 /// Writes [`KEYMAP_HEADER`] to `path`, with its directory, unless the file
