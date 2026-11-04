@@ -47,6 +47,11 @@ fn a_user_settings_file_in_the_environment_starts_no_server(cx: &mut TestAppCont
     let root = project.path().canonicalize().unwrap();
     fs::write(root.join("go.mod"), "module m\n").unwrap();
     fs::write(root.join("main.go"), "package main\n").unwrap();
+    // gopls is built in for Go: the project turns it off, so any launch
+    // could only come from the user file.
+    let settings = fe_config::project_settings_path(&root);
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(settings, "[lsp.servers.gopls]\nenabled = false\n").unwrap();
 
     let recorded = Arc::new(Mutex::new(Vec::new()));
     let state = tempfile::tempdir().unwrap();
