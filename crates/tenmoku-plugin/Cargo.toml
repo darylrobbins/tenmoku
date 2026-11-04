@@ -1,0 +1,23 @@
+[package]
+name = "tenmoku-plugin"
+description = "The SDK a Tenmoku plugin builds on: bindings for its world, a small Plugin trait and logging macros."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Written here, as the guest crates write it: the root manifest has no entry for the guest side.
+wit-bindgen = "0.57"
+
+[dev-dependencies]
+fe-buffer.workspace = true
+fe-plugin.workspace = true
+kiln-command.workspace = true
+kiln-core.workspace = true
+kiln-plugin.workspace = true
+wasmtime.workspace = true
+
+[lints]
+workspace = true

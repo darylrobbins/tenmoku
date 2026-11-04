@@ -1,0 +1,11 @@
+id = "example.word_count"
+name = "Word Count"
+version = "0.1.0"
+license = "MIT"
+
+[engine]
+tenmoku = "1.1"
+
+[contributes.plugin]
+wasm = "word_count.wasm"
+capabilities = ["buffer.read", "status", "commands"]
