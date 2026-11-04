@@ -1053,7 +1053,17 @@ fn operate_unless_failing(
             });
             if let Some(start) = empty {
                 let ends = history::pair(&text, start);
-                let before_it = (ends.0, ends.1.saturating_sub(1));
+                let before_it = match (ends.0, ends.1) {
+                    // At a row's start, the character before is the
+                    // preceding row's last (its start, if it has none).
+                    (row, 0) if row > 0 => {
+                        let above = text.row_start(row - 1);
+                        let len = text.row_len(row - 1) as usize;
+                        let last = text.clip_offset(above + len.saturating_sub(1), Bias::Left);
+                        (row - 1, last - above)
+                    }
+                    (row, column) => (row, column.saturating_sub(1)),
+                };
                 marks::recased(state, model, None, ends, before_it);
             }
             return Ok(move_only(

@@ -183,6 +183,17 @@ fn marked_empty_rows_keep_their_place() {
 }
 
 #[test]
+fn marked_rows_survive_their_boundaries() {
+    // Deleting the first row of a region with interior rows, the last, or
+    // both leaves the rows between.
+    check("a\nb\nc\nd", (0, 0), "3cxxddGcxx", "d\nb\nc", (1, 0));
+    check("a\nb\nc\nd", (0, 0), "3cxxjjddGcxx", "d\na\nb", (1, 0));
+    check("a\nb\nc\nd\ne", (0, 0), "3cxxddjddGcxx", "e\nd\nb", (2, 0));
+    // A line break typed inside the last row leaves the split-off text in.
+    check("ab\nc", (0, 0), "cxxli<CR><Esc>Gcxx", "c\na\nb", (1, 0));
+}
+
+#[test]
 fn a_failed_exchange_leaves_dot() {
     // The overlapping `cx` fails, and `.` still repeats `rO`.
     let mut vim = after("one two three", (0, 0), "cx2erOwcx2e");
@@ -223,4 +234,22 @@ fn exchange_takes_the_comment_object() {
     let vim = commented("# a\nx\n# b\ny", (0, 0), "cxgcjj.");
     assert_eq!(vim.text(), "# b\nx\n# a\ny");
     assert_eq!((vim.cursor(), vim.mode()), ((2, 0), "normal"));
+}
+
+#[test]
+fn comment_over_an_empty_object_ends_on_the_row_above() {
+    // `']` goes on the last character of the row above an empty object
+    // starting a row, `'[` on the object.
+    for (text, cursor, keys, start, end) in [
+        ("abc (\n)", (0, 4), "gci(", (1, 0), (0, 4)),
+        ("x {\n}", (0, 2), "gci{", (1, 0), (0, 2)),
+        ("é (\n)", (0, 3), "gci(", (1, 0), (0, 3)),
+    ] {
+        let vim = commented(text, cursor, keys);
+        assert_eq!(
+            (vim.mark('['), vim.mark(']')),
+            (Some(start), Some(end)),
+            "{keys} on {text:?}"
+        );
+    }
 }

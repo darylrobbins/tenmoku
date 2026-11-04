@@ -10,8 +10,11 @@
 //! anchored on the [`VimState`](crate::VimState), text typed at either edge
 //! staying out of them. Rows are kept as their first and last row's marks,
 //! which follow edits as `a` to `z` do (a row opened above an empty one, as
-//! `O` opens it, moves it down; one opened below doesn't); deleting either
-//! leaves the other, and deleting both clears the mark. The second swaps the two
+//! `O` opens it, moves it down; one opened below doesn't), and as anchors
+//! over their text: deleting a boundary row leaves the rows that survive
+//! (up to the other boundary), a line break typed in the last row leaves
+//! the text split off it in the region, and deleting everything clears the
+//! mark. The second swaps the two
 //! regions' text in one undo step, leaving the registers alone, clears the
 //! mark and puts the caret at the start of what now fills its own region
 //! (on its first non-blank, for rows).
@@ -73,12 +76,13 @@ const OPERATOR: Operator = Operator::Exchange;
 const OVERLAPPING: &str = "Exchange aborted: overlapping text";
 
 /// What the first `cx` marked, in its buffer: characters, anchored, or
-/// rows, whose first and last the marks keep as places (`Marks::exchange`),
-/// so they follow edits as `a` to `z` do.
+/// rows, anchored too, with their first and last kept as places
+/// (`Marks::exchange`) that follow edits as `a` to `z` do. The anchors
+/// give what survives once a boundary row is deleted, or a row is split.
 #[derive(Clone, Debug)]
 pub(crate) struct Marked {
     buffer: BufferId,
-    chars: Option<Anchored>,
+    anchored: Anchored,
 }
 
 /// A region anchored in its text: text put in at either edge stays out of
@@ -117,9 +121,9 @@ impl Region {
 }
 
 impl Anchored {
-    /// Where it is in `snapshot`, if it can be resolved there: text put in
-    /// where it was empty leaves it empty, at its end.
-    fn region(&self, snapshot: &BufferSnapshot) -> Option<Region> {
+    /// Its anchors' offsets in `snapshot`, if they can be resolved there:
+    /// text put in where it was empty leaves it empty, at its end.
+    fn offsets(&self, snapshot: &BufferSnapshot) -> Option<(usize, usize)> {
         let resolvable = |anchor: &Anchor| {
             anchor.version() <= snapshot.version() && anchor.version() >= snapshot.oldest_version()
         };
@@ -127,7 +131,12 @@ impl Anchored {
             return None;
         }
         let end = snapshot.resolve(&self.end);
-        let start = snapshot.resolve(&self.start).min(end);
+        Some((snapshot.resolve(&self.start).min(end), end))
+    }
+
+    /// Where it is in `snapshot`, if it can be resolved there.
+    fn region(&self, snapshot: &BufferSnapshot) -> Option<Region> {
+        let (start, end) = self.offsets(snapshot)?;
         let text = snapshot.text();
         let row = |offset| text.offset_to_point(offset).row;
         Some(Region {
@@ -151,8 +160,8 @@ fn take_marked(state: &mut VimState, model: &mut EditorModel) -> Option<Region> 
         state.marks.exchange = None;
         return None;
     };
-    if let Some(chars) = marked.chars {
-        return chars.region(&snapshot);
+    if !marked.anchored.linewise {
+        return marked.anchored.region(&snapshot);
     }
     marks::catch_up(state);
     let [first, last] = state
@@ -160,12 +169,25 @@ fn take_marked(state: &mut VimState, model: &mut EditorModel) -> Option<Region> 
         .exchange
         .take()?
         .map(|place| Some(place?.position(&snapshot)?.0));
-    let (first, last) = match (first, last) {
-        (Some(first), Some(last)) => (first, last.max(first)),
-        (Some(row), None) | (None, Some(row)) => (row, row),
-        (None, None) => return None,
-    };
+    let (start, end) = marked.anchored.offsets(&snapshot)?;
     let text = snapshot.text();
+    let row = |offset| text.offset_to_point(offset).row;
+    // A boundary row that lives is where its place says (the anchor
+    // reaching further for the last, when a row was split); a deleted one
+    // leaves the rows its anchor fell back to: the next row's start, or
+    // for the last, the line break after the row before.
+    if first.is_none() && last.is_none() && start == end {
+        return None;
+    }
+    let first = first.unwrap_or_else(|| row(start));
+    let last = match last {
+        Some(last) => last.max(row(end)),
+        None if end > start && end == text.row_start(row(end)) => row(end) - 1,
+        None => row(end),
+    };
+    if last < first {
+        return None;
+    }
     Some(Region {
         range: text.row_start(first)..operator::row_end(text, last),
         linewise: true,
@@ -176,7 +198,7 @@ fn take_marked(state: &mut VimState, model: &mut EditorModel) -> Option<Region> 
 fn keep(state: &mut VimState, model: &mut EditorModel, snapshot: &BufferSnapshot, region: &Region) {
     state.exchange = Some(Marked {
         buffer: snapshot.id(),
-        chars: (!region.linewise).then(|| region.anchored(snapshot)),
+        anchored: region.anchored(snapshot),
     });
     state.marks.exchange = None;
     if region.linewise {
