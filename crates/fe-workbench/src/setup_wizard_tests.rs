@@ -387,7 +387,7 @@ fn workbench_commands_wait(cx: &mut TestAppContext) {
     };
 
     // By key.
-    s.press("secondary-p secondary-shift-p secondary-w");
+    s.press("cmd-p cmd-shift-p cmd-w");
     assert!(!s.palette_shows());
     assert_eq!(s.tab_count(), tabs);
     assert_eq!(s.step(), page);
@@ -427,7 +427,7 @@ fn workbench_commands_wait(cx: &mut TestAppContext) {
 
     // With the sheet gone, the commands are back.
     s.press("escape");
-    s.press("secondary-p");
+    s.press("cmd-p");
     assert!(s.palette_shows());
 }
 
@@ -559,7 +559,8 @@ fn labels_and_roles(cx: &mut TestAppContext) {
     }
 }
 
-/// The label a key sequence shows as, written as a default keymap's.
+/// The label a key sequence shows as, written as the default keymap's. The tests' keymap is
+/// `fe_keymap::DEFAULT_MACOS` on every host, so write `cmd-` keys, not the platform-relative ones.
 fn label(keys: &str) -> String {
     fe_keymap::shortcut_label(&fe_keymap::KeySequence::parse(keys).unwrap())
 }
@@ -575,12 +576,12 @@ fn ready_counts_and_shortcuts(cx: &mut TestAppContext) {
     assert_eq!(s.step(), Step::Ready);
     let nodes = s.nodes();
     assert!(has(&nodes, "Tenmoku's defaults are set"), "{nodes:?}");
-    let settings_hint = format!("Change any of them in Settings ({})", label("secondary-,"));
+    let settings_hint = format!("Change any of them in Settings ({})", label("cmd-,"));
     assert!(has(&nodes, &settings_hint), "{nodes:?}");
     let hints = [
-        format!("Command Palette ({})", label("secondary-shift-p")),
-        format!("Go to File ({})", label("secondary-p")),
-        format!("Open Folder ({})", label("secondary-o")),
+        format!("Command Palette ({})", label("cmd-shift-p")),
+        format!("Go to File ({})", label("cmd-p")),
+        format!("Open Folder ({})", label("cmd-o")),
     ];
     for hint in &hints {
         assert!(has(&nodes, hint), "{hint}: {nodes:?}");
