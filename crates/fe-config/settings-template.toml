@@ -292,6 +292,11 @@
 # recommended fallback model.
 # fallbacks = true
 
+[update]
+# Check for a newer Tenmoku in the background once a day and offer to install
+# it. Check for Updates… always works.
+# automatic_checks = true
+
 [extensions]
 # The IDs of installed extensions to turn off, as in ["acme.solarized"]: they
 # stay installed but contribute nothing. An ID no extension has is ignored. A

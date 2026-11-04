@@ -979,6 +979,17 @@
         }
       ]
     },
+    "UpdateSettings": {
+      "description": "`[update]`: how Tenmoku looks for a newer version of itself.",
+      "properties": {
+        "automatic_checks": {
+          "default": true,
+          "description": "Check for a newer Tenmoku in the background once a day and offer to\ninstall it. Check for Updates… always works.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "VimClipboard": {
       "description": "`vim.clipboard`.",
       "oneOf": [
@@ -1421,6 +1432,13 @@
         "show_ignored": true
       },
       "description": "The project tree."
+    },
+    "update": {
+      "$ref": "#/$defs/UpdateSettings",
+      "default": {
+        "automatic_checks": true
+      },
+      "description": "Updates to Tenmoku itself."
     },
     "vim": {
       "$ref": "#/$defs/VimSettings",

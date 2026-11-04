@@ -56,6 +56,9 @@ pub struct Settings {
     /// Installed extensions. A project file can't set them.
     #[serde(default)]
     pub extensions: ExtensionsSettings,
+    /// Updates to Tenmoku itself.
+    #[serde(default)]
+    pub update: UpdateSettings,
     /// External formatters, by language name (`rust`, `python`,
     /// `typescript`, ...: the names `lsp.servers.<name>.languages` uses). A
     /// project file can't set them: a cloned repo shouldn't choose a program
@@ -513,6 +516,23 @@ pub struct StatusBarSettings {
 impl Default for StatusBarSettings {
     fn default() -> Self {
         Self { visible: true }
+    }
+}
+
+/// `[update]`: how Tenmoku looks for a newer version of itself.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Check for a newer Tenmoku in the background once a day and offer to
+    /// install it. Check for Updates… always works.
+    pub automatic_checks: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            automatic_checks: true,
+        }
     }
 }
 
