@@ -229,13 +229,43 @@ pub fn outline_scopes(
         });
         return Ok(index.overlapping(rows));
     }
+    Ok(scopes_in(job, rows).0)
+}
+
+/// [`outline_scopes`] for a language without headings, with the matches
+/// the queries gave, whether they were kept or not.
+///
+/// The patterns that capture an item below a container run item-rooted
+/// ([`Rooted::contained`]), so a row range in a big impl doesn't enumerate
+/// its other members; the rest run whole over the bytes.
+fn scopes_in(job: OutlineJob, rows: Range<u32>) -> (Vec<RangeInclusive<u32>>, usize) {
+    let text = &job.text;
     let end = match rows.end < text.row_count() {
         true => text.row_start(rows.end),
         false => text.len(),
     };
-    let bytes = Find::Overlapping(text.row_start(rows.start)..end);
-    let (found, _) = find(job.language, compiled, &job.tree, text, bytes);
-    Ok(scopes_of(text, &found, rows))
+    let bytes = text.row_start(rows.start)..end;
+    let rooted = job.query.rooted(job.language);
+    let mut found = Vec::new();
+    let mut matches = 0;
+    for compiled in [Some(&rooted.query), rooted.contained.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        let what = Find::Overlapping(bytes.clone());
+        let (more, _, raw) = find_counted(job.language, compiled, &job.tree, text, what);
+        found.extend(more);
+        matches += raw;
+    }
+    (scopes_of(text, &found, rows), matches)
+}
+
+/// How many matches [`outline_scopes`] enumerates for `rows`, for tests of
+/// its work.
+#[cfg(test)]
+pub(crate) fn scope_matches(syntax: &Syntax, rows: Range<u32>) -> usize {
+    let job = outline_job(syntax).unwrap();
+    scopes_in(job, rows).1
 }
 
 /// What `each` makes of the [`outline`] items whose node contains `offset`,
@@ -502,7 +532,8 @@ fn find<'tree>(
 /// [`find`], with a bound on its work when it's [`Find::At`] a node: the
 /// query's operations rounded up to the next hundred, up to
 /// [`MAX_OPERATIONS_AT`] hundred and one, plus the parents a
-/// [`Contained`] item's path looked at; 0 otherwise.
+/// [`Contained`] item's path looked at; for [`Find::Overlapping`], the
+/// matches enumerated; 0 otherwise.
 fn find_counted<'tree>(
     language: &Language,
     compiled: &Compiled,
@@ -556,7 +587,9 @@ fn find_counted<'tree>(
     // Once truncated, the sections still open: headings past the cap
     // aren't listed, but they end those sections.
     let mut open: Option<OpenSections> = None;
+    let mut raw = 0;
     while let Some(found_match) = matches.next() {
+        raw += 1;
         let captures = found_match.captures();
         // A pattern rooted at an enclosing node, such as an impl's methods,
         // matches its other children too.
@@ -682,9 +715,10 @@ fn find_counted<'tree>(
     if !truncated {
         extend_to_sections(&mut found);
     }
-    let work = match counted {
-        true => 100 * (hundreds + 1) + parents,
-        false => 0,
+    let work = match (counted, overlapping.is_some()) {
+        (true, _) => 100 * (hundreds + 1) + parents,
+        (_, true) => raw,
+        _ => 0,
     };
     (found, truncated, work)
 }

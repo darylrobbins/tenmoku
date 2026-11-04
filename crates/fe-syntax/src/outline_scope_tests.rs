@@ -90,3 +90,44 @@ fn markdown_scopes_are_found_once_a_parse() {
         &syntax.section_scopes(|| panic!("found again"))
     ));
 }
+
+/// `scope_matches` for the last row of a container holding `count`
+/// unrelated members before its one multi-row member, which `before` and
+/// `after` wrap.
+fn matches_past(language: &str, before: &str, member: &str, after: &str, count: usize) -> usize {
+    let mut text = String::from(before);
+    for i in 0..count {
+        text.push_str(&member.replace('N', &i.to_string()));
+    }
+    text.push_str(&member.replace('N', "last"));
+    text.push_str(after);
+    let buffer = Buffer::new(&text);
+    let syntax = parsed(language, &buffer);
+    let last = syntax.text().row_count() - 2;
+    scope_matches(&syntax, last..last + 1)
+}
+
+#[test]
+fn matches_enumerated_do_not_grow_with_unrelated_siblings() {
+    for (language, before, member, after) in [
+        (
+            "rust",
+            "impl S {\n",
+            "    fn mN() {\n        x();\n    }\n",
+            "}\n",
+        ),
+        (
+            "python",
+            "class C:\n",
+            "    def mN(self):\n        x()\n",
+            "\n",
+        ),
+    ] {
+        let few = matches_past(language, before, member, after, 20);
+        let many = matches_past(language, before, member, after, 2_000);
+        assert_eq!(
+            few, many,
+            "{language}: {few} matches for 20 siblings, {many} for 2000"
+        );
+    }
+}
