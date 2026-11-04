@@ -389,6 +389,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.reopen_closed_editor",
     "workbench.reopen_with_encoding",
     "workbench.reveal_active_file_in_os",
+    "workbench.revoke_plugin_grants",
     "workbench.save_all",
     "workbench.save_as",
     "workbench.save_without_formatting",
@@ -397,6 +398,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.show_extensions",
     "workbench.toggle_zen_mode",
     "workbench.trust_folder",
+    "workbench.uninstall_plugin",
     "workbench.untrust_folder",
 ];
 

@@ -8,15 +8,21 @@
 //! such. The rows follow the extensions and the consents while it shows.
 //! Enter on one waiting on the user's consent, or that they declined, asks
 //! about each of its servers in turn, those waiting first, through the
-//! consent prompt ([`crate::lsp_consent_prompt::ask_in`]); on any other, it shows all the row has to
-//! say. An extension that failed to load isn't listed: its diagnostics are
-//! in the config problems list.
+//! consent prompt ([`crate::lsp_consent_prompt::ask_in`]). A code plugin's
+//! row has its capabilities and state ([`crate::plugin_manage`]); Enter on
+//! one waiting for its grant asks for it. On any other, Enter shows all the
+//! row has to say. An extension that failed to load isn't listed: its
+//! diagnostics are in the config problems list.
+//!
+//! Extensions: Revoke Plugin Grants and Extensions: Uninstall Plugin open
+//! it over the user's plugins only ([`open_next_for`]), Enter revoking or
+//! uninstalling the plugin picked.
 
 use std::{collections::VecDeque, path::PathBuf};
 
 use gpui::{
-    AnyElement, App, Context, FocusHandle, IntoElement as _, ParentElement as _, PromptLevel,
-    SharedString, Styled as _, Subscription, Window, div, px,
+    AnyElement, App, Context, FocusHandle, Global, IntoElement as _, ParentElement as _,
+    PromptLevel, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
     core::{LicenseClass, Manifest, extension::ExtensionSource as Installed},
@@ -29,6 +35,9 @@ use crate::{
     lsp_consent_prompt::{Ask, ask_about, next_to_ask, server_key},
     pending_extension_consents,
     picker::{Picker, PickerDelegate},
+    plugin_host::{PluginHost, ask_for_grant, grant_to_ask},
+    plugin_kind,
+    plugin_manage::{self, PluginRow},
 };
 
 /// Where an extension is installed from.
@@ -63,16 +72,34 @@ pub(crate) enum ExtensionState {
     Disabled,
     /// A workspace folder's, which isn't trusted: it isn't loaded.
     SkippedUntrusted,
+    /// Its plugin runs.
+    Running,
+    /// Its plugin waits for the user to grant what it asks for.
+    WaitingForGrant,
+    /// The user declined what its plugin asks for.
+    PluginDeclined,
+    /// Its plugin failed, or was unloaded: the row's reason says why.
+    Stopped,
+    /// `extensions.plugins_preview` is off: its plugin doesn't load.
+    NeedsPluginsPreview,
+    /// Its plugin isn't decided yet: it's starting.
+    PluginStarting,
 }
 
 impl ExtensionState {
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Self::Active => "Active",
             Self::NeedsConsent { .. } => "Needs consent",
             Self::Declined { .. } => "Declined",
             Self::Disabled => "Disabled",
             Self::SkippedUntrusted => "Skipped (untrusted)",
+            Self::Running => "Running",
+            Self::WaitingForGrant => "Waiting for grant",
+            Self::PluginDeclined => "Declined",
+            Self::Stopped => "Stopped",
+            Self::NeedsPluginsPreview => "Needs plugins preview",
+            Self::PluginStarting => "Starting",
         }
     }
 }
@@ -95,19 +122,23 @@ pub(crate) struct Row {
     pub(crate) servers: Vec<String>,
     /// Why it isn't loaded, if it isn't.
     pub(crate) reason: Option<String>,
+    /// Its code plugin, if it has one.
+    pub(crate) plugin: Option<PluginRow>,
     /// The servers waiting or declined, for the prompt.
     pending: Vec<PendingConsent>,
 }
 
 impl Row {
     /// `manifest`'s row: disabled if `disabled`, else as its servers'
-    /// consents are, matched by its directory and their names.
+    /// consents are, matched by its directory and their names, then as its
+    /// `plugin` is.
     fn of(
         manifest: &Manifest,
         source: ExtensionSource,
         disabled: bool,
         pending: &[PendingConsent],
         granted: &[GrantedServer],
+        plugin: Option<PluginRow>,
     ) -> Self {
         let (major, minor, patch) = manifest.version;
         // The consents' directories are canonical.
@@ -132,6 +163,8 @@ impl Row {
             ExtensionState::Declined {
                 servers: names(true),
             }
+        } else if let Some(plugin) = &plugin {
+            plugin.state.clone()
         } else {
             ExtensionState::Active
         };
@@ -179,6 +212,7 @@ impl Row {
             state,
             servers,
             reason: None,
+            plugin,
             pending: own,
         }
     }
@@ -195,8 +229,25 @@ impl Row {
                 false,
                 &[],
                 &[],
+                None,
             )
         }
+    }
+
+    /// Its state, and Full access if its plugin was granted that.
+    /// Its state, its plugin's too where that's not the row's, and Full
+    /// access if its plugin was granted that.
+    pub(crate) fn label(&self) -> String {
+        let mut label = self.state.label().to_owned();
+        if let Some(plugin) = &self.plugin {
+            if plugin.state != self.state {
+                label.push_str(&format!(" · Plugin: {}", plugin.state.label()));
+            }
+            if plugin.full_access {
+                label.push_str(" · Full access");
+            }
+        }
+        label
     }
 
     /// The licence expression and its class.
@@ -225,6 +276,7 @@ impl Row {
             self.source_text().to_owned(),
         ];
         parts.extend(self.servers.iter().cloned());
+        parts.extend(self.plugin.iter().flat_map(PluginRow::detail));
         parts.extend(self.reason.clone());
         parts.join(" · ")
     }
@@ -235,7 +287,7 @@ impl Row {
         let mut lines = vec![
             format!("ID: {}", self.id),
             format!("Version: {}", self.version),
-            format!("State: {}", self.state.label()),
+            format!("State: {}", self.label()),
             format!("Contributes: {}", self.kinds),
             format!("Licence: {}", self.license_text()),
             format!("Source: {}", self.source_text()),
@@ -244,6 +296,10 @@ impl Row {
         if !self.servers.is_empty() {
             lines.push("Language servers:".to_owned());
             lines.extend(self.servers.iter().map(|server| format!("  {server}")));
+        }
+        if let Some(plugin) = &self.plugin {
+            lines.push("Plugin:".to_owned());
+            lines.extend(plugin.full_detail().iter().map(|line| format!("  {line}")));
         }
         lines.extend(self.reason.clone());
         lines.join("\n")
@@ -310,7 +366,32 @@ fn kinds(manifest: &Manifest) -> String {
     }
 }
 
+/// What the picker is open for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Purpose {
+    /// Extensions: Show Installed.
+    #[default]
+    Show,
+    /// Extensions: Revoke Plugin Grants, over the user's plugins.
+    RevokeGrants,
+    /// Extensions: Uninstall Plugin, over the user's plugins.
+    Uninstall,
+}
+
+/// What the picker opens for next, once.
+#[derive(Default)]
+struct NextPurpose(Option<Purpose>);
+
+impl Global for NextPurpose {}
+
+/// Has the extensions picker open next for `purpose`, rather than to show
+/// the extensions: the workbench opens it.
+pub(crate) fn open_next_for(purpose: Purpose, cx: &mut App) {
+    cx.default_global::<NextPurpose>().0 = Some(purpose);
+}
+
 pub(crate) struct ExtensionsPicker {
+    purpose: Purpose,
     /// By name, A–Z.
     rows: Vec<Row>,
     /// The rows matching the query, as indices into `rows`.
@@ -319,13 +400,15 @@ pub(crate) struct ExtensionsPicker {
     query: String,
     /// What was focused before it opened, focused again once it closes.
     previous_focus: Option<FocusHandle>,
-    /// The follow of the extensions and the consents while it shows.
-    following: Option<[Subscription; 2]>,
+    /// The follow of the extensions, the consents and the plugins while
+    /// it shows.
+    following: Option<[Subscription; 3]>,
 }
 
 impl ExtensionsPicker {
     pub(crate) fn new() -> Self {
         Self {
+            purpose: Purpose::Show,
             rows: Vec::new(),
             matches: Vec::new(),
             query: String::new(),
@@ -335,14 +418,16 @@ impl ExtensionsPicker {
     }
 
     /// The picker is opening, with `previous_focus` focused until now, or
-    /// opening afresh, keeping what was focused before, if that's `None`.
-    /// From now until it closes, a change to the extensions or the
-    /// consents shows in the rows.
+    /// opening afresh, keeping what was focused before, if that's `None`,
+    /// for what [`open_next_for`] said, else to show the extensions. From
+    /// now until it closes, a change to the extensions, the consents or the
+    /// plugins shows in the rows.
     pub(crate) fn opened(
         &mut self,
         previous_focus: Option<FocusHandle>,
         cx: &mut Context<Picker<Self>>,
     ) {
+        self.purpose = (cx.default_global::<NextPurpose>().0.take()).unwrap_or_default();
         self.previous_focus = previous_focus.or(self.previous_focus.take());
         self.query.clear();
         self.load(cx);
@@ -352,27 +437,22 @@ impl ExtensionsPicker {
                 picker.update(cx, refresh_rows).ok();
             });
             let consents = cx.observe_global::<ExtensionConsent>(refresh_rows);
-            self.following = Some([extensions, consents]);
+            let plugins = cx.observe_global::<PluginHost>(refresh_rows);
+            self.following = Some([extensions, consents, plugins]);
         }
     }
 
-    /// Reads the rows again, the query's matches among them.
+    /// Reads the rows again, the query's matches among them: only the
+    /// user's plugins, to revoke or uninstall one.
     fn load(&mut self, cx: &App) {
-        let pending = pending_extension_consents(cx);
-        let granted = granted_extension_servers(cx);
-        let disabled = kiln::extensions::disabled(cx);
-        self.rows = (kiln::extensions::loaded_from(cx).iter())
-            .map(|(source, manifest)| {
-                let off = disabled.contains(&manifest.id);
-                Row::of(manifest, (*source).into(), off, &pending, &granted)
-            })
-            .collect();
-        self.rows.sort_by_key(|row| row.name.to_lowercase());
-        let mut skipped: Vec<Row> = (kiln::extensions::skipped(cx).iter())
-            .map(Row::skipped)
-            .collect();
-        skipped.sort_by_key(|row| row.name.to_lowercase());
-        self.rows.extend(skipped);
+        self.rows = rows_for(self.purpose, cx);
+        if self.purpose == Purpose::Show {
+            let mut skipped: Vec<Row> = (kiln::extensions::skipped(cx).iter())
+                .map(Row::skipped)
+                .collect();
+            skipped.sort_by_key(|row| row.name.to_lowercase());
+            self.rows.extend(skipped);
+        }
         self.filter();
     }
 
@@ -398,6 +478,61 @@ impl ExtensionsPicker {
             window.focus(&focus, cx);
         }
     }
+}
+
+/// The loaded extensions' rows, by name: only the user's plugins, the
+/// disabled ones included, to revoke or uninstall one.
+fn rows_for(purpose: Purpose, cx: &App) -> Vec<Row> {
+    let pending = pending_extension_consents(cx);
+    let granted = granted_extension_servers(cx);
+    let disabled = kiln::extensions::disabled(cx);
+    let plugins = plugin_manage::plugin_rows(cx);
+    let preview = plugin_manage::preview_on(cx);
+    let mut rows: Vec<Row> = (kiln::extensions::loaded_from(cx).iter())
+        .map(|(source, manifest)| {
+            let off = disabled.contains(&manifest.id);
+            let source = ExtensionSource::from(*source);
+            let plugin = (source == ExtensionSource::User)
+                .then(|| plugin_of(manifest, &plugins, preview, off))
+                .flatten();
+            Row::of(manifest, source, off, &pending, &granted, plugin)
+        })
+        .filter(|row| purpose == Purpose::Show || row.plugin.is_some())
+        .collect();
+    rows.sort_by_key(|row| row.name.to_lowercase());
+    rows
+}
+
+/// Whether the user has a plugin to revoke or uninstall.
+pub(crate) fn has_user_plugins(cx: &App) -> bool {
+    !rows_for(Purpose::Uninstall, cx).is_empty()
+}
+
+/// The plugin of `manifest`, a user's extension, among `plugins`, by its
+/// directory. One the host hasn't decided is as its manifest says:
+/// disabled if `disabled`, else needing the preview if it's off, else
+/// starting.
+fn plugin_of(
+    manifest: &Manifest,
+    plugins: &[PluginRow],
+    preview: bool,
+    disabled: bool,
+) -> Option<PluginRow> {
+    let found = plugins.iter().find(|plugin| plugin.dir == manifest.dir);
+    if let Some(plugin) = found {
+        return Some(plugin.clone());
+    }
+    if !manifest.app.contains_key(plugin_kind().name) {
+        return None;
+    }
+    let state = if disabled {
+        ExtensionState::Disabled
+    } else if !preview {
+        ExtensionState::NeedsPluginsPreview
+    } else {
+        ExtensionState::PluginStarting
+    };
+    Some(PluginRow::undecided(manifest, state))
 }
 
 /// Reads `picker`'s rows again, keeping the query and the selected row, if
@@ -455,7 +590,7 @@ impl PickerDelegate for ExtensionsPicker {
                 row.name,
                 row.id,
                 row.version,
-                row.state.label()
+                row.label()
             )))
             .child(
                 div()
@@ -469,11 +604,37 @@ impl PickerDelegate for ExtensionsPicker {
 
     /// On a row waiting or declined, asks about each of its servers that
     /// waits now, those undecided first, through the consent prompt; if
-    /// one's being asked about already, or none waits now, nothing. On any
-    /// other row, shows all it has to say. Focus goes back to where it was
-    /// before the list opened first, so the prompt takes it from there and
-    /// gives it back there.
+    /// one's being asked about already, or none waits now, nothing. On a
+    /// plugin waiting for its grant, asks for it. On any other row, shows
+    /// all it has to say. To revoke or uninstall, does that to the row's
+    /// plugin, uninstalling once the user confirms. Focus goes back to
+    /// where it was before the list opened first, so the prompt takes it
+    /// from there and gives it back there.
     fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
+        let row = self.row(ix);
+        let plugin = row.plugin.clone();
+        match (self.purpose, plugin) {
+            (Purpose::RevokeGrants, Some(plugin)) => {
+                self.closed(window, cx);
+                plugin_manage::revoke(&plugin.id, &plugin.name, cx);
+                return true;
+            }
+            (Purpose::Uninstall, Some(plugin)) => {
+                self.closed(window, cx);
+                plugin_manage::confirm_uninstall(&plugin, window, cx);
+                return true;
+            }
+            // Its plugin waits, whatever its servers do: that's asked
+            // first, and its servers next time.
+            (Purpose::Show, Some(plugin)) if plugin.state == ExtensionState::WaitingForGrant => {
+                if let Some(pending) = grant_to_ask(&plugin.id, window, cx) {
+                    self.closed(window, cx);
+                    ask_for_grant(window, pending, cx);
+                    return true;
+                }
+            }
+            _ => {}
+        }
         let row = self.row(ix);
         let waiting = matches!(
             row.state,

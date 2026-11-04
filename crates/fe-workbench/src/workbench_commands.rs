@@ -18,6 +18,7 @@ use crate::{
     dock::{DockOp, ProblemsOp, problems_panel},
     dock_layout,
     encoding_picker::EncodingAction,
+    extensions_picker::{self, Purpose},
     git::git_conflicts::{Side, Which},
     nav::NavOp,
     open::OpenOp,
@@ -1045,6 +1046,20 @@ impl Workbench {
         self.show_extensions(cx.window, cx.cx);
     }
 
+    /// Extensions: Revoke Plugin Grants
+    #[command(id = "workbench.revoke_plugin_grants")]
+    fn revoke_plugin_grants(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_plugin(Purpose::RevokeGrants, cx.window, cx.cx);
+    }
+
+    /// Extensions: Uninstall Plugin
+    #[command(id = "workbench.uninstall_plugin")]
+    fn uninstall_plugin(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_plugin(Purpose::Uninstall, cx.window, cx.cx);
+    }
+
     /// Go to Definition
     #[command(id = "nav.goto_definition")]
     fn go_to_definition(&mut self, cx: &mut Cx<Self>) {
@@ -1650,6 +1665,17 @@ impl Workbench {
     fn trust_command(&mut self, trusted: bool, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.set_root_trust(trusted, cx.cx);
+    }
+
+    /// Opens the extensions picker over the user's plugins, for `purpose`;
+    /// with none, says so.
+    fn pick_plugin(&mut self, purpose: Purpose, window: &mut Window, cx: &mut Context<Self>) {
+        if !extensions_picker::has_user_plugins(cx) {
+            let message = "No plugins are installed".to_owned();
+            return Workbench::notify(cx, log::Level::Info, message, None);
+        }
+        extensions_picker::open_next_for(purpose, cx);
+        self.show_extensions(window, cx);
     }
 
     /// Runs the git or diff `command` for the active editor, as

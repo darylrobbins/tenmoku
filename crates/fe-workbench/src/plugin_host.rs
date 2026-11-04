@@ -34,7 +34,11 @@
 //!   ([`dispatch`]) off the main thread. Unloading withdraws them.
 //!
 //! The extensions list reads [`plugin_states`] and calls [`unload_plugin`]
-//! and [`reevaluate`].
+//! and [`reevaluate`]; Enter on a plugin waiting asks through the host's
+//! prompt ([`grant_to_ask`], [`ask_for_grant`]). Revoking or uninstalling
+//! one holds it ([`hold_plugin`]): it's unloaded, asked about no more and
+//! its answers not recorded, until [`plugin_settled`] says nothing of it
+//! runs or is being recorded, and [`release_plugin`] lets it go.
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -306,6 +310,96 @@ pub fn unload_plugin(id: &str, cx: &mut App) {
     slot.stopped = identity.map(|identity| (identity, diagnostic.clone()));
     slot.set_want(Want::Unload(PluginState::Stopped(diagnostic)));
     drive(id, cx);
+}
+
+/// Holds plugin `id` to revoke or uninstall it: it unloads as
+/// [`unload_plugin`] does, its request is no longer pending and a prompt
+/// showing it decides nothing, and until [`release_plugin`] it isn't loaded
+/// or asked about, nor an answer to it recorded; an evaluation that started
+/// before the release decides nothing of it. `None` if it's held already:
+/// one operation at a time.
+pub(crate) fn hold_plugin(id: &str, cx: &mut App) -> Option<HoldToken> {
+    static TOKENS: AtomicU64 = AtomicU64::new(0);
+    let host = host_mut(cx);
+    if host.held.contains_key(id) {
+        return None;
+    }
+    let token = TOKENS.fetch_add(1, Ordering::Relaxed);
+    let stopped = (host.slots.get(id)).and_then(|slot| slot.stopped.clone());
+    host.held.insert(id.to_owned(), Hold { token, stopped });
+    *host.generations.entry(id.to_owned()).or_default() += 1;
+    // One not decided yet has a slot now, so it shows stopped.
+    let slot = host.slots.entry(id.to_owned()).or_insert_with(Slot::new);
+    slot.pending = None;
+    invalidate_prompts(cx);
+    unload_plugin(id, cx);
+    cx.refresh_windows();
+    Some(HoldToken(token))
+}
+
+/// A hold on a plugin, which only [`release_plugin`] lets go.
+#[must_use]
+pub(crate) struct HoldToken(u64);
+
+/// What a released plugin comes back as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Release {
+    /// Its grants were forgotten: none shows, and it stays stopped until
+    /// it's decided again.
+    Forgotten,
+    /// The operation failed: it's as it was before the hold, running again
+    /// if it ran, stopped if it was.
+    Restored,
+}
+
+/// A plugin held, and whether it was stopped before.
+struct Hold {
+    token: u64,
+    stopped: Option<(Identity, PluginDiagnostic)>,
+}
+
+/// Whether nothing of plugin `id` runs, loads, unloads or has an answer
+/// being recorded.
+pub(crate) fn plugin_settled(id: &str, cx: &App) -> bool {
+    let Some(host) = cx.try_global::<PluginHost>() else {
+        return true;
+    };
+    let idle = (host.slots.get(id))
+        .is_none_or(|slot| !slot.busy && slot.loaded.is_none() && slot.loading.is_none());
+    idle && !host.answering.contains(id)
+}
+
+/// Lets plugin `id` go after the [`hold_plugin`] that gave `token`, as
+/// `release` says. Restored, only it is decided again.
+pub(crate) fn release_plugin(id: &str, token: HoldToken, release: Release, cx: &mut App) {
+    let host = host_mut(cx);
+    let ours = (host.held.get(id)).is_some_and(|hold| hold.token == token.0);
+    if !ours {
+        return;
+    }
+    let hold = host.held.remove(id).expect("held");
+    *host.generations.entry(id.to_owned()).or_default() += 1;
+    if let Some(slot) = host.slots.get_mut(id) {
+        match release {
+            Release::Forgotten => slot.granted = fe_command::Grants::new(),
+            Release::Restored => slot.stopped = hold.stopped,
+        }
+    }
+    if release == Release::Restored {
+        // Not forced: what else stopped stays stopped.
+        evaluate(cx, false);
+    }
+    cx.refresh_windows();
+}
+
+/// Whether the plugins run: the host's preview, else the settings'.
+pub(crate) fn preview_on(cx: &App) -> bool {
+    match cx.try_global::<PluginHost>() {
+        Some(host) => host.preview,
+        None => cx
+            .try_global::<kiln::GlobalSettings<fe_config::Settings>>()
+            .is_some_and(|global| global.settings().extensions.plugins_preview),
+    }
 }
 
 /// Decides every plugin again from its manifest, its component and its
@@ -580,12 +674,22 @@ pub(crate) struct PluginHost {
     /// The plugins whose answer is being recorded: an evaluation that
     /// started before doesn't make them pending again.
     answering: HashSet<String>,
+    /// The plugins held for revoking or uninstalling: none is loaded, asked
+    /// about or has an answer recorded.
+    held: HashMap<String, Hold>,
+    /// Each plugin's generation, which a hold and its release move on: an
+    /// evaluation that started in another decides nothing of it.
+    generations: HashMap<String, u64>,
     /// What the plugins did, for the tests.
     #[cfg(test)]
     pub(crate) record: Arc<Mutex<Vec<String>>>,
     /// Under test, each load waits for a message here before it starts.
     #[cfg(test)]
     pub(crate) load_gate: Option<async_channel::Receiver<()>>,
+    /// Under test, each evaluation waits for a message here once it has
+    /// decided, before it applies that.
+    #[cfg(test)]
+    pub(crate) evaluation_gate: Option<async_channel::Receiver<()>>,
 }
 
 impl Global for PluginHost {}
@@ -741,10 +845,14 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
             evaluating: None,
             listed: HashSet::new(),
             answering: HashSet::new(),
+            held: HashMap::new(),
+            generations: HashMap::new(),
             #[cfg(test)]
             record: Arc::default(),
             #[cfg(test)]
             load_gate: None,
+            #[cfg(test)]
+            evaluation_gate: None,
         });
         cx.observe_global::<kiln::GlobalSettings<fe_config::Settings>>(|cx| {
             let on = cx
@@ -858,11 +966,18 @@ fn evaluate(cx: &mut App, force: bool) {
         .dirs
         .as_ref()
         .map(|dirs| GrantStore::new(dirs.state.join(GRANTS_FILE)));
+    let generations = host.generations.clone();
+    #[cfg(test)]
+    let gate = host.evaluation_gate.clone();
     let task = cx.spawn(async move |cx| {
         let outcomes = cx
             .background_spawn(async move { decide(preview, &found, store.as_ref()) })
             .await;
-        cx.update(|cx| apply(outcomes, cx));
+        #[cfg(test)]
+        if let Some(gate) = gate {
+            gate.recv().await.ok();
+        }
+        cx.update(|cx| apply(outcomes, &generations, cx));
     });
     cx.global_mut::<PluginHost>().evaluating = Some(task);
 }
@@ -953,7 +1068,11 @@ fn read_component(path: &Path) -> Result<Vec<u8>, String> {
 /// version kept running (or loading) while its update waits, or was
 /// declined, stays wanted, reloading on new roots with its own grants if it
 /// reaches the workspace's files.
-fn apply(outcomes: Vec<(String, fe_command::Grants, Outcome)>, cx: &mut App) {
+fn apply(
+    outcomes: Vec<(String, fe_command::Grants, Outcome)>,
+    generations: &HashMap<String, u64>,
+    cx: &mut App,
+) {
     let host = cx.global_mut::<PluginHost>();
     let workspace = host.workspace.clone();
     let mut ids = Vec::new();
@@ -1018,9 +1137,16 @@ fn apply(outcomes: Vec<(String, fe_command::Grants, Outcome)>, cx: &mut App) {
         wants.push((id, granted, want, pending));
     }
     for (id, granted, want, pending) in wants {
+        // Held, or decided before a hold or a release since, it's left as
+        // it is: unloaded, asking nothing, showing no grants read before.
+        let stale =
+            host.held.contains_key(&id) || host.generations.get(&id) != generations.get(&id);
         let slot = host.slots.entry(id).or_insert_with(Slot::new);
-        slot.granted = granted;
         slot.gone = false;
+        if stale {
+            continue;
+        }
+        slot.granted = granted;
         // Kept: the version it wanted, else the one it runs or is loading,
         // stays wanted, on the roots now if it reaches files.
         let want = match want {
@@ -1574,6 +1700,41 @@ fn ask_in(window: &mut Window, cx: &mut App) {
     }) else {
         return;
     };
+    show_in(window, pending, cx);
+}
+
+/// Plugin `id`'s request, if it waits for a grant and `window` can ask
+/// about it now: no window asks about it, and `window` asks about no other.
+pub(crate) fn grant_to_ask(id: &str, window: &Window, cx: &App) -> Option<PendingPluginGrant> {
+    let me = window.window_handle().window_id();
+    if let Some(asking) = cx.try_global::<Asking>() {
+        let busy =
+            (asking.prompts.iter()).any(|(asked, prompting)| asked == id || prompting.window == me);
+        if busy {
+            return None;
+        }
+    }
+    pending_plugin_grants(cx)
+        .into_iter()
+        .find(|pending| pending.id == id)
+}
+
+/// Asks in `window` about `pending`, from [`grant_to_ask`], as the host's
+/// prompt asks: even if it was dismissed in `window`.
+pub(crate) fn ask_for_grant(window: &mut Window, pending: PendingPluginGrant, cx: &mut App) {
+    let me = window.window_handle().window_id();
+    let asking = cx.default_global::<Asking>();
+    asking.dismissed.remove(&(pending.id.clone(), me));
+    if asking.prompts.contains_key(&pending.id) {
+        return;
+    }
+    show_in(window, pending, cx);
+}
+
+/// Shows the prompt about `pending` in `window`, recording its answer.
+fn show_in(window: &mut Window, pending: PendingPluginGrant, cx: &mut App) {
+    let me = window.window_handle().window_id();
+    let asking = cx.default_global::<Asking>();
     let (cancel, cancelled) = oneshot::channel();
     asking.prompts.insert(
         pending.id.clone(),
@@ -1600,7 +1761,7 @@ fn ask_in(window: &mut Window, cx: &mut App) {
 /// the window asks about the next. Closed without an answer, it stays
 /// pending, and that window doesn't ask about it again until it's next
 /// activated.
-fn prompt_finished(
+pub(crate) fn prompt_finished(
     handle: AnyWindowHandle,
     pending: PendingPluginGrant,
     answer: PluginAnswer,
@@ -1654,6 +1815,7 @@ fn answered(pending: PendingPluginGrant, answer: PluginAnswer, cx: &mut App) {
             && (found.plugin.as_ref()).is_ok_and(|plugin| plugin.capabilities == pending.requested)
     };
     let current = host.preview
+        && !host.held.contains_key(&pending.id)
         && host.found.iter().any(asks)
         && host
             .slots

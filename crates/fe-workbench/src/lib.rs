@@ -59,6 +59,7 @@ mod peek;
 mod persist;
 mod picker;
 mod plugin_host;
+mod plugin_manage;
 mod plugin_prompt;
 mod preserve_case;
 mod project_panel;
