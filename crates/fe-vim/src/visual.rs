@@ -156,6 +156,32 @@ pub(crate) fn opening_below(state: &mut VimState, snapshot: &BufferSnapshot, row
     }
 }
 
+/// Before text goes in at each of `offsets` that's at a row's start
+/// (a register inserted in replace mode): `'<` and `'>` on the row stay
+/// before it, as nvim's do, so a line break in it doesn't move them down.
+pub(crate) fn typing(
+    state: &mut VimState,
+    snapshot: &BufferSnapshot,
+    offsets: impl IntoIterator<Item = usize>,
+) {
+    let Some(last) = state.last_visual.as_mut() else {
+        return;
+    };
+    let text = snapshot.text();
+    let rows: Vec<u32> = offsets
+        .into_iter()
+        .map(|offset| text.offset_to_point(offset))
+        .filter(|point| point.column == 0)
+        .map(|point| point.row)
+        .collect();
+    for pos in [&mut last.start, &mut last.end] {
+        if !pos.past_end && rows.contains(&pos.position(snapshot).0) {
+            let row = pos.position(snapshot).0;
+            pos.row = snapshot.anchor_before(text.row_start(row));
+        }
+    }
+}
+
 /// `'<` and `'>` anchored afresh at their rows' starts in `snapshot`, as
 /// [`Pos::at`] anchors them, after [`opening_below`].
 pub(crate) fn reanchored(state: &mut VimState, snapshot: &BufferSnapshot) {

@@ -618,13 +618,37 @@ pub(crate) fn retype(
             Piece::Key(Key::Delete(key)) => state.delete_key(model, key),
             // Noted as typing it does, for the dots and counts after.
             Piece::Key(Key::Register(how, name)) => {
-                let (Some(value), Some(session)) = (reads.get(&name), state.session.as_mut())
+                let Some(value) = reads.get(&name) else {
+                    continue;
+                };
+                let Some(before) = state
+                    .session
+                    .as_ref()
+                    .map(|session| typed_so_far(state, model, session))
                 else {
                     continue;
                 };
-                let before = primary_typed(model, session);
-                insert_literal(model, value, how);
-                note_register(model, session, how, name, before, whole_lines(value));
+                if state.mode == Mode::Replace {
+                    state.marks.typing(model.snapshot(), heads(model));
+                    crate::visual::typing(state, model.snapshot(), heads(model));
+                }
+                state.insert_stackless(model, |model| insert_literal(model, value, how));
+                let after = state
+                    .session
+                    .as_ref()
+                    .map(|session| typed_so_far(state, model, session))
+                    .unwrap_or_default();
+                let Some(session) = state.session.as_mut() else {
+                    continue;
+                };
+                note_register(
+                    model,
+                    session,
+                    how,
+                    name,
+                    (before, after),
+                    whole_lines(value),
+                );
             }
         }
     }
@@ -916,18 +940,19 @@ impl VimState {
         // which is what they replay.
         let recorded = how
             .filter(|&how| how != LiteralInsert::Plain)
-            .filter(|_| self.mode == Mode::Insert);
-        let before = recorded.and_then(|_| Some(primary_typed(model, self.session.as_ref()?)));
+            .filter(|_| self.mode == Mode::Insert || !self.is_virtual_replace());
+        let before = recorded.and_then(|_| Some(typed_so_far(self, model, self.session.as_ref()?)));
         let whole = whole_lines(&value) && !value.text.is_empty();
         let failed = self.failed;
         self.insert_value(model, host, value, how);
         let (Some(how), Some(before), false) = (recorded, before, self.failed && !failed) else {
             return;
         };
+        let after = typed_so_far(self, model, self.session.as_ref().expect("session"));
         let Some(session) = self.session.as_mut() else {
             return;
         };
-        note_register(model, session, how, name, before, whole);
+        note_register(model, session, how, name, (before, after), whole);
     }
 
     /// `<C-a>` in insert mode (`:help i_CTRL-A`): the text the last insert
@@ -978,8 +1003,31 @@ impl VimState {
         // break among it breaking the row; whole lines above the row (and
         // `<C-r><C-o>`, `<C-r><C-p>` with them) go in as in insert mode.
         let above = matches!(how, Some(LiteralInsert::Above | LiteralInsert::FixIndent));
-        let replacing = self.mode == Mode::Replace && !(above && whole_lines(&value));
+        // Replace mode inserts, without overwriting, what nvim does: the
+        // forms that put text in as it is, and characterwise text with a line
+        // break in it. The replace stack knows nothing of that text.
+        let stackless = self.mode == Mode::Replace
+            && !self.is_virtual_replace()
+            && (above || (!value.linewise && text.contains('\n')));
+        let replacing = self.mode == Mode::Replace && !stackless && !(above && whole_lines(&value));
+        if stackless {
+            self.marks.typing(model.snapshot(), heads(model));
+            crate::visual::typing(self, model.snapshot(), heads(model));
+        }
         match how {
+            _ if stackless => self.insert_stackless(model, |model| match how {
+                None => {
+                    for (ix, part) in text.split('\n').enumerate() {
+                        if ix > 0 {
+                            self.line_break_with(model, |model| model.newline_in(host));
+                        }
+                        if !part.is_empty() {
+                            model.insert(part);
+                        }
+                    }
+                }
+                Some(how) => put_literal(model, text.clone(), whole_lines(&value), how),
+            }),
             _ if replacing => self.replace_text(model, &text),
             None => {
                 for (ix, part) in text.split('\n').enumerate() {
@@ -1007,7 +1055,7 @@ fn note_register(
     session: &mut Session,
     how: LiteralInsert,
     name: char,
-    before: String,
+    (before, after): (String, String),
     whole: bool,
 ) {
     if whole && matches!(how, LiteralInsert::Above | LiteralInsert::FixIndent) {
@@ -1019,7 +1067,6 @@ fn note_register(
             })
             .collect();
     }
-    let after = primary_typed(model, session);
     let key = Key::Register(how, name);
     session.ledger().keys.push(Noted { key, before, after });
 }
@@ -1071,6 +1118,14 @@ fn put_literal(model: &mut EditorModel, mut text: String, whole_lines: bool, how
                     format!("{first}\n{}", reindent_lines(rest, target, tab, &unit))
                 }
                 None => text.clone(),
+            };
+            // A last row of blanks only merges with what follows the caret,
+            // whose own indentation nvim then sets, so it adds none.
+            let fixed = match fixed.rfind('\n') {
+                Some(at) if fixed[at + 1..].chars().all(|ch| matches!(ch, ' ' | '\t')) => {
+                    fixed[..=at].to_string()
+                }
+                _ => fixed,
             };
             model.insert(&fixed);
         }
@@ -1152,6 +1207,18 @@ fn step_back(text: &fe_text::Text, head: usize) -> usize {
     let column = head - line.start;
     let ix = line.starts.partition_point(|&at| at < column);
     line.start + line.starts[ix.saturating_sub(1)]
+}
+
+/// [`primary_typed`] for the session `state` has open: in replace mode, the
+/// keys the primary caret typed.
+fn typed_so_far(state: &VimState, model: &mut EditorModel, session: &Session) -> String {
+    match (&state.replace, state.mode) {
+        (Some(replace), Mode::Replace) => {
+            sync(model);
+            replace.keys(model, model.primary_selection().head()).1
+        }
+        _ => primary_typed(model, session),
+    }
 }
 
 /// What the primary caret has typed in `session`: from where its typing
@@ -1365,6 +1432,7 @@ pub(crate) fn repeat_replace(
     session: &Session,
     keys: &[(usize, String)],
     history: &str,
+    reads: &Reads,
 ) {
     let more = session.count as usize - 1;
     sync(model);
@@ -1372,7 +1440,7 @@ pub(crate) fn repeat_replace(
     // A `<C-w>` or `<C-u>` that only moved leaves no keys typed.
     let moves = pieces
         .iter()
-        .any(|piece| matches!(piece, Piece::Key(Key::Delete(_))));
+        .any(|piece| matches!(piece, Piece::Key(Key::Delete(_) | Key::Register(..))));
     let mut ranks: Vec<usize> = {
         let first = heads(model);
         let mut ranks: Vec<usize> = keys
@@ -1440,8 +1508,15 @@ pub(crate) fn repeat_replace(
                 // own `<BS>`, in the text, as it does for `<C-w>` and
                 // `<C-u>` where they took something; a mark is one that
                 // went back past it.
-                // Replace mode notes no register keys.
-                Piece::Back(_) | Piece::Key(Key::Register(..)) => {}
+                Piece::Back(_) => {}
+                // What the register holds now goes in at each caret, the
+                // characters before it no longer to be taken back.
+                Piece::Key(Key::Register(how, name)) => {
+                    if let Some(value) = reads.get(name) {
+                        insert_literal(model, value, *how);
+                    }
+                    overwrote.iter_mut().for_each(Vec::clear);
+                }
                 Piece::Key(Key::Delete(key)) => {
                     back_in_copy(model, session, &mut ranks, &mut overwrote, *key);
                 }

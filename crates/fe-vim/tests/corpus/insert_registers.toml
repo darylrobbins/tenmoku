@@ -356,3 +356,138 @@ name = "charwise_ctrl_r_ctrl_p_consecutive_dots"
 buffer = "abc\ndef\nghi"
 cursor = [0, 0]
 keys = "\"ayiwA <C-r><C-p>a<Esc>j\"ayiwj.j."
+
+# T445: replace mode's <C-r><C-o> and <C-r><C-p> with characterwise text insert
+# (F1), whole lines go in above and replay (F2), a multiline characterwise
+# register keeps its break's tail (F3), and <BS> after whole lines (F4).
+[[case]]
+name = "replace_ctrl_r_ctrl_o_characterwise_inserts"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r><C-o>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_characterwise_inserts"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r><C-p>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_characterwise_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r><C-o>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_characterwise_backspace"
+buffer = "abc\nxyz uvw"
+cursor = [0, 0]
+keys = "yiwjRQ<C-r><C-p>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_characterwise_indent"
+buffer = "ab\n  cd\n    xyz tail"
+cursor = [0, 0]
+keys = "vjyGR<C-r><C-p>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_dot_repeat"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0W<Esc>j."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_dot_repeat"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0W<Esc>j."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_counted"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-o>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_counted"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyj2RQ<C-r><C-p>0W<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_consecutive_dots"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0W<Esc>j.j."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_consecutive_dots"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0W<Esc>j.j."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_counted_dot"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0W<Esc>j3."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_counted_dot"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0W<Esc>j3."
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_linewise_backspace"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_o_linewise_backspace_twice"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-o>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_linewise_backspace"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_p_linewise_backspace_twice"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "yyjRQ<C-r><C-p>0<BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_characterwise"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_characterwise"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r><C-r>0<Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_characterwise_backspace"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_multiline_characterwise_backspace_across"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r>0<BS><BS><BS><Esc>"
+
+[[case]]
+name = "replace_ctrl_r_ctrl_r_multiline_characterwise_backspace_across"
+buffer = "ab\ncd\nxyz tail"
+cursor = [0, 0]
+keys = "vjyj0R<C-r><C-r>0<BS><BS><BS><Esc>"

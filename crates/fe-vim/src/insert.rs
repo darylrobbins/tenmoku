@@ -2246,7 +2246,7 @@ fn end(
                     &indent_keys,
                     crate::replace::BACKSPACE,
                 );
-                keys::repeat_replace(model, &session, keys, &history);
+                keys::repeat_replace(model, &session, keys, &history, reads);
                 None
             }
             Some((keys, _)) => {

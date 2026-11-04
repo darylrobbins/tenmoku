@@ -113,6 +113,14 @@ struct Entry {
     /// session (spaces), or one of the rest of them.
     tab: usize,
     tab_rest: bool,
+    /// Text a register went in as (`<C-r><C-o>`, `<C-r><C-p>`, or text with
+    /// a line break), which nvim's replace stack knows nothing of: `made` is
+    /// where it went (followed by the caret as `<BS>` steps back through
+    /// it), and `then` holds the `<BS>`s that took the stack's entries.
+    stackless: bool,
+    /// The stack's entry for this key was taken by a `<BS>` that went past
+    /// stackless text.
+    popped: bool,
 }
 
 impl Entry {
@@ -127,6 +135,8 @@ impl Entry {
             indent_was: String::new(),
             tab: 0,
             tab_rest: false,
+            stackless: false,
+            popped: false,
         }
     }
 
@@ -136,6 +146,9 @@ impl Entry {
 
     /// Whether what it put in is still there, as it put it.
     fn live(&self, text: &Text) -> bool {
+        if self.stackless {
+            return !self.touched && self.made.end <= text.len();
+        }
         !self.touched
             && self.made.end <= text.len()
             && text.slice_to_string(self.made.clone()) == self.put
@@ -848,6 +861,11 @@ impl VimState {
                     let typed = &record.typed[ix];
                     let last = typed.len() - 1;
                     let entry = &typed[last];
+                    if entry.stackless {
+                        let (act, undo) = stack_back(&text, typed, head);
+                        undone.push(undo.map(|undo| (ix, undo)));
+                        return act;
+                    }
                     let made = entry.made.clone();
                     let (range, put, undo) = match (entry.is_break(), entry.put.len()) {
                         // Keys alone: none of their text is left to take.
@@ -979,6 +997,102 @@ impl VimState {
     }
 }
 
+/// A `<BS>` just after text that went in without the stack (see
+/// [`Entry::stackless`]), as nvim's replace stack has it: it knows nothing of
+/// the text, so the stack's top entry is taken whatever is before the caret.
+/// Mid-row it puts what that key overwrote over the character before the
+/// caret (or takes the character out if the key overwrote nothing), the
+/// caret stepping back; with the stack empty it only steps back. At a row's
+/// start it joins the row to the one above and puts back what the stack
+/// holds, down to the last line break typed, at the caret.
+fn stack_back(text: &Text, typed: &[Entry], head: usize) -> (Act, Option<Undo>) {
+    let row = text.offset_to_point(head).row;
+    let line = Line::new(text, row);
+    let top = typed
+        .iter()
+        .rposition(|entry| !entry.stackless && !entry.popped);
+    if head > line.start {
+        let (_, at) = rest_of_row(text, head);
+        let grapheme = past(&line, at.saturating_sub(1), 0);
+        let (put, pop) = match top {
+            Some(ix) if typed[ix].is_break() => (String::new(), vec![ix]),
+            Some(ix) => (typed[ix].was.clone(), vec![ix]),
+            None => (String::new(), Vec::new()),
+        };
+        let range = match top {
+            Some(_) => grapheme..head,
+            None => grapheme..grapheme,
+        };
+        let act = Act {
+            range,
+            text: put,
+            land: 0,
+        };
+        return (act, Some(Undo::Stack { pop, to: grapheme }));
+    }
+    if row == 0 {
+        return (Act::stay(head), None);
+    }
+    let (mut pop, mut was) = (Vec::new(), Vec::new());
+    for (ix, entry) in typed.iter().enumerate().rev() {
+        if entry.stackless || entry.popped {
+            continue;
+        }
+        pop.push(ix);
+        if entry.is_break() || entry.was.is_empty() {
+            break;
+        }
+        was.push(entry.was.as_str());
+    }
+    was.reverse();
+    let act = Act {
+        range: head - 1..head,
+        text: was.concat(),
+        land: 0,
+    };
+    (act, Some(Undo::Stack { pop, to: head - 1 }))
+}
+
+impl VimState {
+    /// Runs `insert`, which puts text in at every caret, as nvim's replace
+    /// mode does the register inserts it doesn't type over: in replace mode
+    /// the text is noted as one stackless entry at each caret ([`stack_back`]).
+    /// Anywhere else (and in a virtual session) it's just `insert`.
+    pub(crate) fn insert_stackless(
+        &self,
+        model: &mut EditorModel,
+        insert: impl FnOnce(&mut EditorModel),
+    ) {
+        let replace = match (&self.replace, self.mode) {
+            (Some(replace), Mode::Replace) if !replace.virtual_ => replace,
+            _ => return insert(model),
+        };
+        sync(model);
+        let text = model.text().clone();
+        let heads = sorted_heads(model);
+        let records = replace.at_carets(&text, &heads);
+        let before = model.text().len();
+        insert(model);
+        sync(model);
+        let grew = model.text().len().saturating_sub(before);
+        let ends = sorted_heads(model);
+        if grew == 0 || ends.len() != heads.len() || !grew.is_multiple_of(heads.len()) {
+            return;
+        }
+        let each = grew / heads.len();
+        let mut record = replace.record();
+        record.follow(None);
+        for (end, ix) in ends.into_iter().zip(records) {
+            let mut entry = Entry::new(end.saturating_sub(each)..end, String::new(), String::new());
+            entry.stackless = true;
+            match ix.and_then(|ix| record.typed.get_mut(ix)) {
+                Some(typed) => typed.push(entry),
+                None => record.typed.push(vec![entry]),
+            }
+        }
+    }
+}
+
 /// What a `<BS>` does to the entries of the record it takes back from, in
 /// the text before its edit.
 enum Undo {
@@ -987,11 +1101,27 @@ enum Undo {
     /// The entries from `first` on go. With `keep`, the line break before
     /// them keeps that many bytes and their keys.
     Take { first: usize, keep: Option<usize> },
+    /// A `<BS>` after stackless text: the stack's entries at these indices
+    /// are taken, and the caret, now at this offset, ends the stackless
+    /// text.
+    Stack { pop: Vec<usize>, to: usize },
 }
 
 impl Undo {
     fn apply(self, typed: &mut Vec<Entry>) {
         let (first, keep) = match self {
+            Undo::Stack { pop, to } => {
+                for ix in pop {
+                    if let Some(entry) = typed.get_mut(ix) {
+                        entry.popped = true;
+                    }
+                }
+                if let Some(entry) = typed.last_mut() {
+                    entry.made = entry.made.start.min(to)..to;
+                    entry.then.push(BACKSPACE);
+                }
+                return;
+            }
             Undo::Trim(left) => {
                 if let Some(entry) = typed.last_mut() {
                     entry.put.truncate(1);
@@ -1035,6 +1165,8 @@ impl Undo {
                 indent_was: String::new(),
                 tab: 0,
                 tab_rest: false,
+                stackless: false,
+                popped: false,
             }),
         }
     }

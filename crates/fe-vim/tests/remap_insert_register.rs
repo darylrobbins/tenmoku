@@ -42,13 +42,19 @@ fn insert_register_name_is_read_unmapped() {
 
 #[test]
 fn replace_register_name_is_read_unmapped() {
-    for modifier in ["", "<C-r>", "<C-o>", "<C-p>"] {
+    // `<C-r><C-o>` and `<C-r><C-p>` insert the text as it is, even here.
+    for (modifier, start, end) in [
+        ("", "one two", "one one"),
+        ("<C-r>", "one two", "one one"),
+        ("<C-o>", "oneone two", "one onetwo"),
+        ("<C-p>", "oneone two", "one onetwo"),
+    ] {
         let mut vim = vim();
         vim.feed(&format!("R<C-r>{modifier}a<Esc>")).unwrap();
-        assert_eq!(vim.text(), "one two", "R<C-r>{modifier}a");
+        assert_eq!(vim.text(), start, "R<C-r>{modifier}a");
         let mut vim = self::vim();
         vim.feed(&format!("wR<C-r>{modifier}a<Esc>")).unwrap();
-        assert_eq!(vim.text(), "one one", "wR<C-r>{modifier}a");
+        assert_eq!(vim.text(), end, "wR<C-r>{modifier}a");
     }
 }
 
