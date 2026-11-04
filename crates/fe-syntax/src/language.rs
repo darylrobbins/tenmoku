@@ -551,7 +551,18 @@ const DEFS: &[Def] = &[
             "APKBUILD",
         ],
         grammar: || tree_sitter_bash::LANGUAGE.into(),
-        highlights: || &[tree_sitter_bash::HIGHLIGHT_QUERY],
+        // The upstream query leaves `||` and a trailing `&` plain. A run of
+        // words (bash's `concatenation`) that is exactly `{NAME}` or `{NAME:-x}` is what a Makefile recipe's
+        // double-dollar `{NAME:-x}` leaves for bash once make takes the
+        // double dollar out.
+        highlights: || {
+            &[
+                tree_sitter_bash::HIGHLIGHT_QUERY,
+                "[\"||\" \"&\"] @operator\n\
+                 ((concatenation) @variable\n\
+                 (#match? @variable \"^[{][A-Za-z_][A-Za-z0-9_]*([:]?[-=+?][^{}]*)?[}]$\"))",
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,
@@ -790,9 +801,9 @@ const DEFS: &[Def] = &[
         extensions: &["mk", "mak"],
         file_names: &["Makefile", "GNUmakefile"],
         grammar: || tree_sitter_make::LANGUAGE.into(),
-        highlights: || &[tree_sitter_make::HIGHLIGHTS_QUERY],
+        highlights: || &[include_str!("../queries/make.scm")],
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/make-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "gitignore")]

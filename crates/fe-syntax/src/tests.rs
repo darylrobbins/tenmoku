@@ -407,10 +407,10 @@ fn each_language_highlights_a_snippet() {
             "GNUmakefile",
             "# c\nCC ?= cc\nall: $(SRC)\n\techo hi",
             &[
-                ("CC", "constant.builtin"),
+                ("CC", "variable"),
                 ("?=", "operator"),
                 ("# c", "comment"),
-                ("SRC", "constant"),
+                ("SRC", "variable"),
             ],
         ),
     ];
