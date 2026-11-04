@@ -126,6 +126,7 @@ fn each_language_highlights_a_snippet() {
                 ("main", "function"),
             ],
         ),
+        #[cfg(feature = "cpp")]
         (
             "x.cpp",
             "namespace n { class C {}; }",
@@ -291,6 +292,7 @@ fn each_language_highlights_a_snippet() {
                 ("f", "function.method"),
             ],
         ),
+        #[cfg(feature = "ruby")]
         (
             "Gemfile",
             "def f(x) = x\nv = f(:sym) # c",
@@ -312,6 +314,7 @@ fn each_language_highlights_a_snippet() {
                 ("-- c", "comment"),
             ],
         ),
+        #[cfg(feature = "php")]
         (
             "x.php",
             "<?php function f($x) { return null; } // c",
@@ -324,6 +327,7 @@ fn each_language_highlights_a_snippet() {
                 ("// c", "comment"),
             ],
         ),
+        #[cfg(feature = "csharp")]
         (
             "x.cs",
             "class C { int F() => 1; } // c",
@@ -335,6 +339,7 @@ fn each_language_highlights_a_snippet() {
                 ("// c", "comment"),
             ],
         ),
+        #[cfg(feature = "scala")]
         (
             "x.scala",
             "object O { def f(x: Int) = \"s\" } // c",
@@ -356,6 +361,7 @@ fn each_language_highlights_a_snippet() {
                 ("<!-- c -->", "comment"),
             ],
         ),
+        #[cfg(feature = "swift")]
         (
             "x.swift",
             "func f(x: Int) -> String { return \"s\" } // c",
@@ -367,6 +373,7 @@ fn each_language_highlights_a_snippet() {
                 ("// c", "comment"),
             ],
         ),
+        #[cfg(feature = "kotlin")]
         (
             "x.kt",
             "private fun f(x: Int) = null // c",
@@ -379,6 +386,7 @@ fn each_language_highlights_a_snippet() {
                 ("// c", "comment"),
             ],
         ),
+        #[cfg(feature = "sql")]
         (
             "x.sql",
             "SELECT name, 1 FROM t WHERE x = 'a'; -- c",
@@ -624,6 +632,7 @@ fn an_edited_tree_highlights_before_it_is_reparsed() {
 /// `@none` clears the highlight around it: Scala's interpolated code isn't
 /// coloured as the string it's in, whether `$x` or `${…}`.
 #[test]
+#[cfg(feature = "scala")]
 fn none_captures_clear_the_enclosing_highlight() {
     let text = "val m = s\"a $x b ${y.size} c\"\n";
     let syntax = parsed(language_by_name("scala").unwrap(), &Buffer::new(text));
@@ -683,6 +692,7 @@ fn flat_nodes_highlight_as_one_query_would() {
         ("toml", "", "[t]\nname = \"x\" # c\n", ""),
         ("go", "package main\n", "func f() int { return 1 }\n", ""),
         ("c", "", "int f(void) { return 0; }\n", ""),
+        #[cfg(feature = "cpp")]
         ("cpp", "", "namespace n { class C {}; }\n", ""),
         ("bash", "", "echo \"$HOME\" # c\n", ""),
         ("html", "", "<p class=\"a\">hi</p>\n", ""),

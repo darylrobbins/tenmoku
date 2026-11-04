@@ -352,7 +352,8 @@ fn unsupported_languages_have_no_symbols() {
         assert_eq!(symbols_job(&syntax).err(), Some(NoOutline::Unsupported));
     }
     assert!(outline_supported("markdown") && outline_supported("toml"));
-    let code = [
+    #[allow(unused_mut)]
+    let mut code = vec![
         "rust",
         "python",
         "javascript",
@@ -361,28 +362,35 @@ fn unsupported_languages_have_no_symbols() {
         "go",
         "java",
         "c",
-        // Added by T113.
-        "cpp",
-        "csharp",
-        "ruby",
-        "php",
-        "swift",
-        "kotlin",
-        "scala",
         "lua",
         // Added by T40.
         "bash",
         "make",
-        "sql",
     ];
-    for language in code {
+    // The languages that are extensions by default (T427) count only built in.
+    #[cfg(feature = "cpp")]
+    code.push("cpp");
+    #[cfg(feature = "csharp")]
+    code.push("csharp");
+    #[cfg(feature = "ruby")]
+    code.push("ruby");
+    #[cfg(feature = "php")]
+    code.push("php");
+    #[cfg(feature = "swift")]
+    code.push("swift");
+    #[cfg(feature = "kotlin")]
+    code.push("kotlin");
+    #[cfg(feature = "scala")]
+    code.push("scala");
+    #[cfg(feature = "sql")]
+    code.push("sql");
+    for &language in &code {
         assert!(symbols_supported(language), "{language}");
     }
     let mut supported: Vec<_> = language_names()
         .filter(|name| symbols_supported(name))
         .collect();
     supported.sort_unstable();
-    let mut code = code.to_vec();
     code.sort_unstable();
     assert_eq!(supported, code);
 

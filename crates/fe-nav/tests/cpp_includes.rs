@@ -1,5 +1,7 @@
 //! A C++ file's `#include` lines rank their headers `Imported`, as a C file's do.
 
+#![cfg(feature = "cpp")]
+
 use std::{
     fs,
     path::{Path, PathBuf},

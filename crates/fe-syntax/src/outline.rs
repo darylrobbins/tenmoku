@@ -2915,15 +2915,20 @@ mod contained_tests {
             let count = (rooted.contained.as_ref()).map_or(0, |c| c.query.pattern_count());
             contained.push((query.language, count));
         }
+        #[allow(unused_variables)]
         let count = |language: &str| contained.iter().find(|(l, _)| *l == language).unwrap().1;
         // Class and enum bodies.
+        #[cfg(feature = "kotlin")]
         assert_eq!(count("kotlin"), 2);
         // Class and enum bodies, and a protocol's.
+        #[cfg(feature = "swift")]
         assert_eq!(count("swift"), 3);
         // Class, module and class << self bodies, directly or in private.
+        #[cfg(feature = "ruby")]
         assert_eq!(count("ruby"), 6);
         assert_eq!(count("rust"), 2);
         // Not a C# constant, a field declaration's sibling deciding it.
+        #[cfg(feature = "csharp")]
         assert_eq!(count("csharp"), 0);
 
         // Lua's module tables have anchors in their item, which stays whole,

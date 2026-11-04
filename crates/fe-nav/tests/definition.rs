@@ -164,6 +164,7 @@ fn kind_hint_orders_candidates() {
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn sql_tables_and_views_are_definitions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -194,6 +195,7 @@ CREATE MATERIALIZED VIEW totals AS SELECT COUNT(*) AS n FROM mailing;
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn quoted_sql_names_are_found_without_their_quotes() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -576,6 +578,7 @@ all: build/main.o libutil.a(util.o) $(OUT)/stamp
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn quoted_sql_identifiers_with_spaces_are_found_whole() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -619,6 +622,7 @@ SELECT \"when\" FROM \"audit log\";
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn punctuated_names_are_found_by_the_fallback_before_the_index_is_built() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -690,6 +694,7 @@ all: $(BUILD-DIR) ${BUILD-DIR} /tmp/main.o build+
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn quoted_sql_text_in_strings_and_comments_is_not_a_name() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

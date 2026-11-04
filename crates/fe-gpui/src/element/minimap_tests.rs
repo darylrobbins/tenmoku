@@ -405,17 +405,17 @@ fn re_entering_the_window_over_the_minimap_shows_the_slider(cx: &mut TestAppCont
 #[gpui::test]
 fn a_cold_fence_seen_only_in_the_minimap_gets_its_colours(cx: &mut TestAppContext) {
     let mut text: String = (0..100).map(|n| format!("Paragraph {n}.\n")).collect();
-    text.push_str("```ruby\ndef greet(name)\n  name\nend\n```\n");
+    text.push_str("```go\npackage greet\n\nfunc name() {}\n```\n");
     // Markdown is warm, so no load of its own draws again: the minimap's
-    // query is the last to find Ruby missing. No other test of this crate loads
-    // Ruby, so the cache is cold however many tests share the process.
+    // query is the last to find Go missing. No other test of this crate loads
+    // Go, so the cache is cold however many tests share the process.
     for name in ["markdown", "markdown_inline"] {
         fe_syntax::language_by_name(name).expect("compiled in");
     }
-    assert!(fe_syntax::loaded_language("ruby").is_none(), "cold");
+    assert!(fe_syntax::loaded_language("go").is_none(), "cold");
     let (view, cx) = editor_on(&text, "notes.md", cx);
     assert!(
-        fe_syntax::loaded_language("ruby").is_none(),
+        fe_syntax::loaded_language("go").is_none(),
         "the text alone lacks it"
     );
     // The minimap's first frame is drawn as the test app draws a window
@@ -424,7 +424,7 @@ fn a_cold_fence_seen_only_in_the_minimap_gets_its_colours(cx: &mut TestAppContex
         view.set_minimap(Some(MinimapOptions::default()), cx)
     });
     cx.run_until_parked();
-    assert!(fe_syntax::loaded_language("ruby").is_some(), "loaded");
+    assert!(fe_syntax::loaded_language("go").is_some(), "loaded");
     let (def, plain) = view.read_with(cx, |view, _| {
         let layout = view.layout.as_ref().expect("drawn");
         let minimap = layout.minimap.as_ref().expect("shown");
@@ -440,5 +440,5 @@ fn a_cold_fence_seen_only_in_the_minimap_gets_its_colours(cx: &mut TestAppContex
             view.theme.foreground.opacity(RUN_ALPHA),
         )
     });
-    assert_ne!(def, plain, "`def` is coloured");
+    assert_ne!(def, plain, "`package` is coloured");
 }

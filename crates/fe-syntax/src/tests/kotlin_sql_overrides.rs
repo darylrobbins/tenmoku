@@ -1,8 +1,10 @@
 //! Regression checks on the Kotlin and SQL query overrides.
 
+#[cfg(any(feature = "kotlin", feature = "sql"))]
 use super::query_overrides::{has, highlighted};
 
 #[test]
+#[cfg(feature = "kotlin")]
 fn kotlin_calls_keep_function_highlights() {
     let text = "fun f() {\n    TODO()\n    FOO()\n    Foo.BAR()\n    val x = MAX_SIZE\n    val y = Foo.LIMIT\n}\n";
     let spans = highlighted("kotlin", text);
@@ -21,6 +23,7 @@ fn kotlin_calls_keep_function_highlights() {
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn sql_numeric_forms() {
     let text = "SELECT 1e3, 1.5e-2, 0xFF, 0b101, 0o17, 1_000, 1_0.2_5, 7, 'x', '1e3';";
     let spans = highlighted("sql", text);
@@ -41,6 +44,7 @@ fn sql_numeric_forms() {
 }
 
 #[test]
+#[cfg(feature = "sql")]
 fn sql_signed_numbers_with_extras() {
     let text = "SELECT - 1e3, + 1.5e-2, - /* c */ 0xFF, -\n 7, - 'x', -1;";
     let spans = highlighted("sql", text);

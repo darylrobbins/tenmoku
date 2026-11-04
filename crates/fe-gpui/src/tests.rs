@@ -950,9 +950,9 @@ fn injected_languages_load_without_input(cx: &mut TestAppContext) {
 fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
     cx.update(init);
     fe_syntax::language_by_name("markdown");
-    // No other test here loads Swift, whether tests share a process or not.
-    assert!(fe_syntax::loaded_language("swift").is_none());
-    let text = "```swift\nlet x = 1\n```\n";
+    // No other test here loads Java, whether tests share a process or not.
+    assert!(fe_syntax::loaded_language("java").is_none());
+    let text = "```java\nclass A {}\n```\n";
     let raced = Rc::new(Cell::new(false));
     let (view, cx) = cx.add_window_view({
         let raced = raced.clone();
@@ -961,8 +961,8 @@ fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
             let mut view = EditorView::new(model, EditorTheme::default_dark(cx), cx);
             view.before_taking_missing = Some(Box::new(move |syntax| {
                 // Once a frame has highlighted the parsed tree without Lua.
-                if !syntax.needs_parse() && fe_syntax::loaded_language("swift").is_none() {
-                    fe_syntax::language_by_name("swift");
+                if !syntax.needs_parse() && fe_syntax::loaded_language("java").is_none() {
+                    fe_syntax::language_by_name("java");
                     raced.set(true);
                 }
             }));
@@ -971,6 +971,6 @@ fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(raced.get());
-    let (let_, keyword) = drawn_color(&view, cx, text.find("let").unwrap());
-    assert_eq!(let_, keyword);
+    let (class_, keyword) = drawn_color(&view, cx, text.find("class").unwrap());
+    assert_eq!(class_, keyword);
 }

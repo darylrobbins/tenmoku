@@ -514,6 +514,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `cpp` feature.
     #[cfg(feature = "cpp")]
     Def {
         name: "cpp",
@@ -660,6 +661,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `ruby` feature.
     #[cfg(feature = "ruby")]
     Def {
         name: "ruby",
@@ -697,6 +699,7 @@ const DEFS: &[Def] = &[
         hidden: false,
     },
     // PHP in an HTML page; the HTML around the `<?php` tags stays plain.
+    // An extension by default (T427): built in only with the `php` feature.
     #[cfg(feature = "php")]
     Def {
         name: "php",
@@ -708,6 +711,7 @@ const DEFS: &[Def] = &[
         injections: Some(include_str!("../queries/php-injections.scm")),
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `csharp` feature.
     #[cfg(feature = "csharp")]
     Def {
         name: "csharp",
@@ -719,6 +723,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `scala` feature.
     #[cfg(feature = "scala")]
     Def {
         name: "scala",
@@ -741,6 +746,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `swift` feature.
     #[cfg(feature = "swift")]
     Def {
         name: "swift",
@@ -752,6 +758,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `kotlin` feature.
     #[cfg(feature = "kotlin")]
     Def {
         name: "kotlin",
@@ -768,6 +775,7 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    // An extension by default (T427): built in only with the `sql` feature.
     #[cfg(feature = "sql")]
     Def {
         name: "sql",

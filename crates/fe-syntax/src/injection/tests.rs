@@ -73,6 +73,7 @@ fn markdown_inline_and_fenced_code_are_highlighted() {
     for (fence, keyword) in [
         ("JS", "const"),
         ("py", "def"),
+        #[cfg(feature = "cpp")]
         ("c++", "class"),
         ("shell", "if"),
         ("rust,ignore", "fn"),
@@ -132,6 +133,7 @@ fn tagged_templates_combine_their_pieces() {
 /// PHP heredocs and nowdocs are parsed in the language their label names. A
 /// heredoc's pieces form one layer around its interpolations, which stay PHP.
 #[test]
+#[cfg(all(feature = "php", feature = "sql"))]
 fn php_heredocs_and_nowdocs_inject_their_text() {
     let text = "<?php\n\
                 $q = <<<SQL\n  SELECT a FROM t WHERE id = {$id} AND b = 1\n  SQL;\n\
@@ -175,6 +177,7 @@ fn php_heredocs_and_nowdocs_inject_their_text() {
 /// injected with its text: an SQL `--` comment ends at the end of its line,
 /// as it does in a nowdoc.
 #[test]
+#[cfg(all(feature = "php", feature = "sql"))]
 fn php_heredoc_line_breaks_end_sql_comments() {
     let text = "<?php\n\
                 $q = <<<SQL\n  SELECT a -- by {$id}\n  FROM t\n\n  WHERE b = 1\n  SQL;\n\
@@ -199,6 +202,7 @@ fn php_heredoc_line_breaks_end_sql_comments() {
 /// A heredoc in a language where line breaks matter, YAML, parses its lines
 /// as lines, around an interpolation.
 #[test]
+#[cfg(feature = "php")]
 fn php_heredocs_keep_lines_for_yaml() {
     let text = "<?php\n$y = <<<YAML\n  a: 1\n  b: {$x}\n  c: true\n  YAML;\n";
     let found = spans("php", text);

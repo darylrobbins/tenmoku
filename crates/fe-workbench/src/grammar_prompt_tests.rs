@@ -1,7 +1,7 @@
 //! The offer to install syntax highlighting, through a real workbench with a
 //! fake catalog and installer.
 //!
-//! Kotlin is built into test builds, so `a.kt` only ever stands for what's
+//! Kotlin is not built into test builds, so `a.kt` only ever stands for what's
 //! asked and answered. What must start plain and then highlight uses
 //! [`FIXTURE_EXTENSION`], which nothing else knows, with the JSON fixture
 //! grammar registered under it.
@@ -85,6 +85,8 @@ enum Fake {
     NeverRegisters,
     /// The fetch runs until the test sends, or the task's dropped.
     FetchWaits(Hold),
+    /// As `FetchWaits`, and the install registers the fixture grammar.
+    FetchWaitsThenRegisters(Hold),
     /// The write runs until the test sends, whatever else happens.
     WriteWaits(Hold),
 }
@@ -97,7 +99,7 @@ fn installer(calls: &Calls, fake: Fake) -> (FetchGrammar, InstallGrammar) {
             calls.borrow_mut().push(format!("fetch {}", offer.language));
             match fake.clone() {
                 Fake::Fails(error) => Task::ready(Err(error)),
-                Fake::FetchWaits(waiting) => {
+                Fake::FetchWaits(waiting) | Fake::FetchWaitsThenRegisters(waiting) => {
                     let waiting = waiting.borrow_mut().take().expect("one fetch");
                     cx.background_spawn(async move {
                         waiting.await.ok();
@@ -115,7 +117,7 @@ fn installer(calls: &Calls, fake: Fake) -> (FetchGrammar, InstallGrammar) {
                 .borrow_mut()
                 .push(format!("install {}", offer.language));
             match fake.clone() {
-                Fake::Registers => {
+                Fake::Registers | Fake::FetchWaitsThenRegisters(_) => {
                     let spec = fixture_spec();
                     cx.background_spawn(async move {
                         fe_syntax::register_language(&spec).expect("the fixture registers");
@@ -573,24 +575,24 @@ fn no_offer_when_it_would_not_help(cx: &mut TestAppContext) {
         language: "unreleased".into(),
         extensions: vec!["unrel".into()],
         sha256: String::new(),
-        ..kotlin()
+        ..fixture()
     };
     // Its extension is Rust's: another language has the file.
     let claimed = GrammarOffer {
         language: "other-rust".into(),
         extensions: vec!["rs".into()],
-        ..kotlin()
+        ..fixture()
     };
     let there = GrammarOffer {
         language: "there".into(),
         extensions: vec!["there".into()],
-        ..kotlin()
+        ..fixture()
     };
     let (send, waiting) = hold();
     setup.give(
-        vec![kotlin(), unreleased, claimed, there],
+        vec![fixture(), unreleased, claimed, there],
         |language| language == "there",
-        Fake::FetchWaits(waiting),
+        Fake::FetchWaitsThenRegisters(waiting),
         cx,
     );
     let (workbench, cx) = workbench(cx);
@@ -601,30 +603,41 @@ fn no_offer_when_it_would_not_help(cx: &mut TestAppContext) {
     }
 
     // One toast and one fetch, whatever opens while it installs.
-    open(&workbench, &setup.file("a.kt"), cx);
-    open(&workbench, &setup.file("b.kt"), cx);
+    open(&workbench, &setup.file("a.ktfix"), cx);
+    open(&workbench, &setup.file("b.ktfix"), cx);
     answer(&workbench, INSTALL, cx);
-    assert_eq!(*setup.calls.borrow(), ["fetch kotlin"]);
+    assert_eq!(*setup.calls.borrow(), [format!("fetch {FIXTURE_LANGUAGE}")]);
     let before = messages(&workbench, cx);
     assert_eq!(before, ["Installing Kotlin syntax…"]);
-    open(&workbench, &setup.file("c.kt"), cx);
+    open(&workbench, &setup.file("c.ktfix"), cx);
     assert_eq!(messages(&workbench, cx), before);
-    assert_eq!(*setup.calls.borrow(), ["fetch kotlin"]);
+    assert_eq!(*setup.calls.borrow(), [format!("fetch {FIXTURE_LANGUAGE}")]);
     send.send(()).unwrap();
     settle(cx);
-    assert_eq!(*setup.calls.borrow(), ["fetch kotlin", "install kotlin"]);
-    // Kotlin's built in here, so it's there at once.
+    assert_eq!(
+        *setup.calls.borrow(),
+        [
+            format!("fetch {FIXTURE_LANGUAGE}"),
+            format!("install {FIXTURE_LANGUAGE}")
+        ]
+    );
+    // The install registers the grammar, so it's there at once.
     assert_eq!(messages(&workbench, cx), ["Installed Kotlin syntax"]);
 }
 
 #[gpui::test]
 fn a_registered_or_built_in_language_is_not_offered(cx: &mut TestAppContext) {
     let setup = setup();
-    // Asked as the app asks, Kotlin's built in here.
-    setup.give(vec![kotlin()], registered, Fake::NeverRegisters, cx);
+    // Asked as the app asks, Go's built in here.
+    let go = GrammarOffer {
+        language: "go".into(),
+        extensions: vec!["go".into()],
+        ..kotlin()
+    };
+    setup.give(vec![go], registered, Fake::NeverRegisters, cx);
     let (workbench, cx) = workbench(cx);
 
-    open(&workbench, &setup.file("a.kt"), cx);
+    open(&workbench, &setup.file("a.go"), cx);
     assert_eq!(messages(&workbench, cx), Vec::<String>::new());
 }
 

@@ -53,6 +53,7 @@ fn an_impls_methods_outside_the_rows_are_dropped_before_they_are_kept() {
 }
 
 #[test]
+#[cfg(feature = "cpp")]
 fn scopes_do_not_build_the_cpp_namespace_index() {
     let text = "namespace N {\nint f();\n}\nint N::f() {\n    return 1;\n}\n";
     let buffer = Buffer::new(text);

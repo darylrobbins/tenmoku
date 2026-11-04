@@ -20,6 +20,11 @@ scip.workspace = true
 # (already in the lock through fe-project).
 libc.workspace = true
 
+# Languages that are extensions by default (T427); their tests run with these.
+[features]
+cpp = ["fe-syntax/cpp"]
+sql = ["fe-syntax/sql"]
+
 [dev-dependencies]
 criterion.workspace = true
 tempfile.workspace = true

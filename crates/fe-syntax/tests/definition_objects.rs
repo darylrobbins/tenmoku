@@ -401,11 +401,25 @@ fn samples_match_the_whole_outline() {
         assert!(mismatches.is_empty(), "{}:\n{mismatches}", path.display());
         checked += 1;
     }
-    assert!(checked >= 15, "{checked} samples checked");
+    // Each moved language with a sample is one fewer when it is not built in.
+    let off = [
+        cfg!(feature = "cpp"),
+        cfg!(feature = "csharp"),
+        cfg!(feature = "kotlin"),
+        cfg!(feature = "php"),
+        cfg!(feature = "ruby"),
+        cfg!(feature = "scala"),
+        cfg!(feature = "swift"),
+    ]
+    .iter()
+    .filter(|on| !**on)
+    .count();
+    assert!(checked >= 15 - off, "{checked} samples checked");
 }
 
 /// The kinds and the start of the outer text of the objects around the
 /// first `at` after `after` in `text`, and the work finding them.
+#[cfg(all(feature = "kotlin", feature = "swift", feature = "ruby"))]
 fn kinds_at<'a>(
     syntax: &Syntax,
     text: &'a str,

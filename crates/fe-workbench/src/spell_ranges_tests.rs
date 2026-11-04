@@ -148,8 +148,11 @@ fn string_literals_keep_only_their_text() {
     for (language, source) in [
         ("c", "char *a = \"hello words\";\n"),
         ("c", "wchar_t *a = L\"hello words\";\n"),
+        #[cfg(feature = "cpp")]
         ("cpp", "auto a = R\"(hello words)\";\n"),
+        #[cfg(feature = "cpp")]
         ("cpp", "auto a = R\"tag(hello words)tag\";\n"),
+        #[cfg(feature = "cpp")]
         ("cpp", "auto a = u8R\"tag(hello words)tag\";\n"),
         ("lua", "a = \"hello words\"\n"),
         ("lua", "a = 'hello words'\n"),
@@ -166,10 +169,15 @@ fn string_literals_keep_only_their_text() {
         ("javascript", "const a = `hello words`;\n"),
         ("typescript", "const a: string = \"hello words\";\n"),
         ("java", "class A { String b = \"hello words\"; }\n"),
+        #[cfg(feature = "csharp")]
         ("csharp", "class A { string b = @\"hello words\"; }\n"),
+        #[cfg(feature = "kotlin")]
         ("kotlin", "val a = \"hello words\"\n"),
+        #[cfg(feature = "swift")]
         ("swift", "let a = \"hello words\"\n"),
+        #[cfg(feature = "ruby")]
         ("ruby", "a = \"hello words\"\n"),
+        #[cfg(feature = "php")]
         ("php", "<?php $a = \"hello words\";\n"),
         ("bash", "a=\"hello words\"\n"),
         ("toml", "a = \"hello words\"\n"),
@@ -193,7 +201,9 @@ fn strings_in_interpolations_have_no_text() {
         ),
         ("javascript", "const s = `hello ${`world`} today`;\n"),
         ("python", "a = f\"hello {lookup('world')} today\"\n"),
+        #[cfg(feature = "ruby")]
         ("ruby", "a = \"hello #{lookup(\"world\")} today\"\n"),
+        #[cfg(feature = "kotlin")]
         ("kotlin", "val a = \"hello ${lookup(\"world\")} today\"\n"),
     ] {
         assert_eq!(strings(language, source), words, "{language}: {source}");
@@ -319,11 +329,14 @@ fn string_escapes_and_format_holes_are_excluded() {
     // However many digits the language gives its escape, they're not words.
     let c = "wchar_t *a = L\"one\\x00beeword\";\n";
     assert_eq!(found_all("c", c, &[SpellScope::Strings]), ["one", "word"],);
-    let cpp = "auto a = \"one\\x00beeword\";\n";
-    assert_eq!(
-        found_all("cpp", cpp, &[SpellScope::Strings]),
-        ["one", "word"]
-    );
+    #[cfg(feature = "cpp")]
+    {
+        let cpp = "auto a = \"one\\x00beeword\";\n";
+        assert_eq!(
+            found_all("cpp", cpp, &[SpellScope::Strings]),
+            ["one", "word"]
+        );
+    }
     let rust = "fn a() { let b = \"one\\x41bad\"; }\n";
     assert_eq!(
         found_all("rust", rust, &[SpellScope::Strings]),
@@ -373,10 +386,13 @@ fn what_is_in_a_string_but_no_words_is_excluded() {
         found_all("javascript", "const a = /regex/;\n", &ALL),
         Vec::<String>::new()
     );
-    assert_eq!(
-        found_all("ruby", "a = :symbol\n", &ALL),
-        Vec::<String>::new()
-    );
+    #[cfg(feature = "ruby")]
+    {
+        assert_eq!(
+            found_all("ruby", "a = :symbol\n", &ALL),
+            Vec::<String>::new()
+        );
+    }
 }
 
 const MARKDOWN: &str = "\

@@ -70,6 +70,15 @@ unicode-width.workspace = true
 # Reads inline edit's stream of updates.
 futures.workspace = true
 
+# Languages that are extensions by default (T427); their tests run with these.
+[features]
+cpp = ["fe-syntax/cpp"]
+csharp = ["fe-syntax/csharp"]
+kotlin = ["fe-syntax/kotlin"]
+swift = ["fe-syntax/swift"]
+ruby = ["fe-syntax/ruby"]
+php = ["fe-syntax/php"]
+
 [dev-dependencies]
 # The tests' trashes go to a test trash, never the user's Trash.
 fe-project = { workspace = true, features = ["test-support"] }

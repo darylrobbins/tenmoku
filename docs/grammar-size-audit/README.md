@@ -211,6 +211,19 @@ Not built in today (no grammar): which to add, and how.
 
 Sizes of these are not measured here; the grammars are not in the build.
 
+## Result of card 4 (T427)
+
+`fe-syntax`'s `default` list is now the day-one set: Rust, Python,
+JavaScript, TypeScript, JSON, TOML, Go, C, Bash, HTML, CSS, YAML, Markdown,
+Java, Lua, XML, Dockerfile, Make, and the small git/ini/just/diff/json5/csv
+formats. Kotlin, C#, Scala, Swift, C++, SQL, PHP and Ruby are no longer in it,
+so they load as the first-party wasm extensions; the eight feature definitions
+stay, so `--features` and `scripts/check-syntax-features.sh` still build each.
+Their outline, definition and indent queries stay compiled in (unused until the
+language registers). Tests naming them are gated on their feature, and
+`tests/default_built_in_set.rs` pins the list. Binary size was not measured
+(the release builds are card 2).
+
 ## Proposed follow-up cards
 
 Ordered; all paths are repository-relative.
