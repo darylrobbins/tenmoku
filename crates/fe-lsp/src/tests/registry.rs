@@ -31,6 +31,7 @@ use crate::{
     ReadinessMode, ServerId, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
 };
 
+mod gopls;
 mod language_ids;
 mod outside_root;
 mod root_markers;
@@ -144,6 +145,14 @@ fn builtin_specs() {
                 ReadinessMode::Progress,
                 vec![],
             ),
+            (
+                "gopls",
+                "gopls",
+                vec![],
+                strings(&["go"]),
+                ReadinessMode::Progress,
+                vec![],
+            ),
         ]
     );
 
@@ -156,7 +165,7 @@ fn builtin_specs() {
             .iter()
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>(),
-        ["rust-analyzer", "pyright", "typescript-go"]
+        ["rust-analyzer", "pyright", "typescript-go", "gopls"]
     );
     let chosen =
         |specs: &[ServerSpec], language| server_for(specs, language).map(|s| s.name.clone());

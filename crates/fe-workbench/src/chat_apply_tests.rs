@@ -66,8 +66,8 @@ fn reply(text: &str) -> Vec<ChatEvent> {
     ]
 }
 
-/// A folder holding `src/main.go` and `src/lib.go`: Go, which no
-/// language server starts for by default. Under the real temp folder: on
+/// A folder holding `src/main.go` and `src/lib.go`: Go, whose
+/// project file turns the built-in language server (gopls) off for. Under the real temp folder: on
 /// macOS `/var` is a link to `/private/var`, and the workbench opens
 /// files by their real paths.
 fn project() -> tempfile::TempDir {
@@ -76,6 +76,9 @@ fn project() -> tempfile::TempDir {
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();
     fs::write(dir.path().join("src/lib.go"), LIB).unwrap();
+    let settings = fe_config::project_settings_path(dir.path());
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(settings, "[lsp.servers.gopls]\nenabled = false\n").unwrap();
     dir
 }
 

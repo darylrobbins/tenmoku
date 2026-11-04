@@ -47,13 +47,16 @@ fn reply() -> Vec<ChatEvent> {
     ]
 }
 
-/// A folder holding `src/main.go` and `src/lib.go`: Go, which no
-/// language server starts for by default.
+/// A folder holding `src/main.go` and `src/lib.go`: Go, whose
+/// project file turns the built-in language server (gopls) off for.
 fn project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();
     fs::write(dir.path().join("src/lib.go"), LIB).unwrap();
+    let settings = fe_config::project_settings_path(dir.path());
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(settings, "[lsp.servers.gopls]\nenabled = false\n").unwrap();
     dir
 }
 
@@ -557,17 +560,19 @@ fn automatic_context_is_vetted_again_as_its_file_changes(cx: &mut TestAppContext
 
     // The root changed while a file was being vetted: vetted again under
     // the new root, which it's outside of.
-    let main = open_file(&workbench, &root.join("src/main.go"), cx);
-    assert!(chips(&panel, cx).contains(&"src/main.go · ~9".to_owned()));
+    // Not Go: the new root below has gopls on, and would start it.
+    fs::write(root.join("main.txt"), MAIN).unwrap();
+    let main = open_file(&workbench, &root.join("main.txt"), cx);
+    assert!(chips(&panel, cx).contains(&"main.txt · ~9".to_owned()));
     // A file that's fine: withheld while its new text is vetted, then back.
     reload(&main, "// fine\n", cx);
     let held = chips(&panel, cx);
     assert!(
-        !held.iter().any(|chip| chip.starts_with("src/main.go")),
+        !held.iter().any(|chip| chip.starts_with("main.txt")),
         "{held:?}"
     );
     draw(cx);
-    assert!(chips(&panel, cx).contains(&"src/main.go · ~3".to_owned()));
+    assert!(chips(&panel, cx).contains(&"main.txt · ~3".to_owned()));
     let other = tempfile::tempdir().unwrap();
     insert(&main, 0, "// edited\n", cx);
     reload(&main, "// changed\n", cx);
@@ -579,7 +584,7 @@ fn automatic_context_is_vetted_again_as_its_file_changes(cx: &mut TestAppContext
     draw(cx);
     let shown = chips(&panel, cx);
     assert!(
-        !shown.iter().any(|chip| chip.starts_with("src/main.go")),
+        !shown.iter().any(|chip| chip.starts_with("main.txt")),
         "{shown:?}"
     );
     let context = panel.read_with(cx, |panel, cx| panel.view().read(cx).context().to_vec());

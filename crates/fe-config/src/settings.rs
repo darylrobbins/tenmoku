@@ -938,8 +938,8 @@ pub struct LspSettings {
     /// How long requests may take, in milliseconds, by method.
     pub timeouts: LspTimeouts,
     /// Servers by name: changes to the built-in rust-analyzer, pyright,
-    /// typescript-language-server and typescript-go, or servers of your
-    /// own, which need a `command`.
+    /// typescript-language-server, typescript-go and gopls, or servers of
+    /// your own, which need a `command`.
     pub servers: BTreeMap<String, LspServerSettings>,
 }
 

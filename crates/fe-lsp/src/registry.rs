@@ -57,6 +57,12 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: markers(&ts_markers),
             ..spec("typescript-go", "tsc", &["--lsp", "--stdio"], &typescript)
         },
+        // Speaks LSP on stdio by default. A go.work workspace beats a
+        // member module's go.mod.
+        ServerSpec {
+            root_markers: markers(&["go.work", "go.mod"]),
+            ..spec("gopls", "gopls", &[], &["go"])
+        },
     ]
 }
 
@@ -269,9 +275,16 @@ fn lexically_normal(path: &Path) -> PathBuf {
     for component in path.components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
+            // Only a normal component can be popped; a `..` with nothing
+            // to cancel (or after another) stays, and one at the root is
+            // dropped.
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => out.push(".."),
+            },
             other => out.push(other),
         }
     }

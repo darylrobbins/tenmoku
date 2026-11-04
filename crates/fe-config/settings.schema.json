@@ -554,7 +554,7 @@
             "$ref": "#/$defs/LspServerSettings"
           },
           "default": {},
-          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server and typescript-go, or servers of your\nown, which need a `command`.",
+          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server, typescript-go and gopls, or servers of\nyour own, which need a `command`.",
           "type": "object"
         },
         "timeouts": {

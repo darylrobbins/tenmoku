@@ -97,3 +97,25 @@ fn root_markers_come_from_builtins_and_settings() {
         markers(&["x.toml"])
     );
 }
+
+#[test]
+fn unresolved_parent_components_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let proj = dir.path().join("project");
+    touch(&proj.join("Cargo.toml"));
+    let cargo = markers(&["Cargo.toml"]);
+    assert_eq!(
+        server_root(Path::new("../project/src/file.rs"), None, &[]),
+        Path::new("../project/src")
+    );
+    assert_eq!(
+        server_root(Path::new("../../a/file.rs"), None, &[]),
+        Path::new("../../a")
+    );
+    assert_eq!(
+        server_root(Path::new("a/../../b/file.rs"), None, &[]),
+        Path::new("../b")
+    );
+    let up = proj.join("src/../../project/src/f.rs");
+    assert_eq!(server_root(&up, None, &cargo), proj);
+}

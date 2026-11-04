@@ -5,6 +5,9 @@
 
 use std::fs;
 
+use std::sync::Arc;
+
+use fe_config::{Settings, SettingsEvent, settings::LspServerSettings};
 use fe_editor::completion::{CompletionItem, CompletionSession, CompletionTrigger};
 use fe_gpui::EditorView;
 use fe_lsp::fake::{InitializeReply, Record, Reply, Script, Scripted, initialize_result};
@@ -250,7 +253,24 @@ fn they_work_without_a_language_server(cx: &mut TestAppContext) {
     let asked_rust = asked(&s);
     assert_eq!(asked_rust, 1);
 
-    // Go has no server.
+    // Go has no server: gopls, built in, is turned off.
+    s.write_user_settings("[lsp.servers.gopls]\nenabled = false\n");
+    let mut settings = Settings::default();
+    settings.lsp.servers.insert(
+        "gopls".to_owned(),
+        LspServerSettings {
+            enabled: false,
+            ..LspServerSettings::default()
+        },
+    );
+    let event = SettingsEvent {
+        settings: Arc::new(settings),
+        previous: Arc::new(Settings::default()),
+        diagnostics: Vec::new(),
+    };
+    let workbench = s.workbench.clone();
+    workbench.update(&mut s.cx, |w, cx| w.reload_settings(&event, cx));
+    s.draw();
     let text = "package main\n\nfu";
     let editor = open_at(&mut s, "main.go", text, text.len());
     assert_eq!(
