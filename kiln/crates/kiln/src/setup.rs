@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Setting up an app: [`application`] for GPUI's platform with kiln's
 //! assets, then [`init`] with a [`Config`] before the first window opens.

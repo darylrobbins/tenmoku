@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Running a plugin: each in its own `Store`, owned by its own OS thread, so guest code never
 //! runs on the caller's thread.

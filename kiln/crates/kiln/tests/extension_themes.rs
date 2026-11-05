@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Extensions' themes through `kiln::init`, headless: listed by ID,
 //! chosen for a slot of the dark and light pair with the user's theme file

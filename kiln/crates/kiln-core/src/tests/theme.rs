@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Theme files: colours, tokens, derivation from a base, the alias table,
 //! mistakes reported per key, and app tables kept as written.

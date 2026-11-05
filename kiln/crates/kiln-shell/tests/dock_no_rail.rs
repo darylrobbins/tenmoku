@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock built without a rail draws no rail buttons or actions, at the
 //! bottom or a side: shown, only its panel's title and body; hidden,

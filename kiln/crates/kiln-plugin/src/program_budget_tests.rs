@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A call's program runs share one budget: the second of two, past what the first left, is
 //! killed; and a run's time moves the call's deadline back rather than being charged to it.

@@ -20,7 +20,7 @@ views, layout and forms).
   (`git filter-repo --subdirectory-filter kiln`) and published. So no kiln
   crate may depend on an app's crate, kiln code is its own or permissively
   licensed (`CLEAN_ROOM.md`), and every crate sets its licence itself, so
-  that publishing changes one line per crate.
+  that it doesn't depend on a host's workspace for it.
 - **Platforms.** macOS and Linux (X11 and Wayland) now. Windows is an
   addition: only `kiln-core/src/platform/` and `kiln-platform/src/` branch
   on the operating system (see §4), and the GPUI-free crates are checked
@@ -190,9 +190,9 @@ repository's boundary check, so kiln can leave it as it is:
   may use `cfg!(target_os = ..)`, `cfg(unix)`, `cfg(windows)` or the like.
   Everything else asks `kiln_core::Os`, so it can be tested as each
   platform on any host.
-- **Licences.** Every `.rs` file starts with an `SPDX-License-Identifier`
-  line, and every crate sets its own `license` field (not inherited from a
-  workspace); they all agree.
+- **Licences.** Every `.rs` file starts with an
+  `SPDX-License-Identifier: Apache-2.0` line, and every crate sets its own
+  `license` field (not inherited from a workspace) to `Apache-2.0`.
 - **GPUI-free core.** `kiln-command` and `kiln-core` don't depend on GPUI.
 - **Builds alone.** kiln, copied out into a workspace of its own with only
   the workspace entries its crates reference, builds and passes its tests

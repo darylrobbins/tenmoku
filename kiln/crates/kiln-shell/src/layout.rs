@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Saved layouts: what a window shows, saved as it changes and restored
 //! when the app opens again, through kiln-core's [`LayoutStore`] (a file

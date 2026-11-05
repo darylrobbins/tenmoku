@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A file an app lists with [`kiln::Config::extension_files`] is noticed to
 //! change by its contents, not only its size and modification time.

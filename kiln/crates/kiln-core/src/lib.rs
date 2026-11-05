@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln's headless core: config layers and settings, app paths, platform
 //! conventions, keymaps and menu tables resolved per platform, theme data

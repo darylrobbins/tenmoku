@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln's app shell: the root view that draws the window's chrome
 //! ([`Root`]), and the chrome's pieces for a host that lays out its own

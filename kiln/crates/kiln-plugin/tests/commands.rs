@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plugin's commands: it registers them in its own namespace during `init`, the host runs
 //! them on the plugin's thread under its deadline, and what the plugin invokes reaches the

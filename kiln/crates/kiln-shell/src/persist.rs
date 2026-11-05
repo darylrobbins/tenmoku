@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Saving state as it changes, off the main thread: a [`Writer`] queues
 //! keyed writes and runs them on the background executor, one at a time.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`SettingsSection`]: a settings type that is one table of the app's
 //! `settings.toml`, as `#[kiln::settings(section = "..")]` makes one.

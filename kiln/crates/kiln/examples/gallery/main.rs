@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The kiln gallery: every kiln-ui widget on a page of its own, a theme
 //! switcher, and kiln's commands, keymap, menus and prompts working

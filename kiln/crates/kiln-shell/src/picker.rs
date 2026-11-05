@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A palette that picks one of a list of matches: a [`TextInput`] whose
 //! text a [`PickerDelegate`] matches, the matches below it, one selected,

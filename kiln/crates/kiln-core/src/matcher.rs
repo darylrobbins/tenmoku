@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Matching keystrokes as they're pressed against a keymap, including
 //! chords such as `cmd-k cmd-0`.

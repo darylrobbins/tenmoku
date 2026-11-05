@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The background writer: each key's last value wins, writes run one at a
 //! time off the main thread, quitting waits for them, and boolean settings

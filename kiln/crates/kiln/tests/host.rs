@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The host example, Kiln Chat, headless through `kiln::testing`: it sets
 //! up cleanly on every platform; a message typed and sent shows in its

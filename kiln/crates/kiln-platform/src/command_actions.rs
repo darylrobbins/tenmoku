@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Typed commands: each is a real [`gpui::Action`], handled the GPUI way
 //! (`.on_action(cx.listener(Self::save))`), with the metadata a command

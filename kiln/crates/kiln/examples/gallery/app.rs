@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The gallery's window: a header with the theme switcher, a sidebar of
 //! pages beside the page shown, split by a SplitPane, and a status bar.

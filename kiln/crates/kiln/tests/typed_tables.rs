@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::keymap!` and `kiln::menus!`: typed tables that name commands by
 //! type. `.keys(..)` binds its keys, per platform and in a context too, in

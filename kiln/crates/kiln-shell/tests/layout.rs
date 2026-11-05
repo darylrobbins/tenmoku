@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Saved layouts: a window with one document in two split panes, each
 //! view with its own caret, and a dock, saved and restored into another

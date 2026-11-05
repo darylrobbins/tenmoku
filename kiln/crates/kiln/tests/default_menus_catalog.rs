@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The bundled menus when the catalog drops the App menu: View and Window
 //! keep their names, whatever the app is called.

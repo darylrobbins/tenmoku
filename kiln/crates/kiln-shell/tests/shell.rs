@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The shell around a host's centre: docks either side of it, the status
 //! bar below, hidden and cached, the app's root key context its commands

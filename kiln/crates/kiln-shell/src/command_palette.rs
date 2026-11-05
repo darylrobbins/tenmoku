@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The command palette: every command that applies where focus was when
 //! it opened, by title, with its key, run on a pick as if from there.

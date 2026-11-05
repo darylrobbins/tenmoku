@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Hostile plugins cannot hang, exhaust or abort the host. Each case is a fixture under
 //! `tests/fixtures/hostile/`; every test runs under [`bounded`], so a broken limit fails it

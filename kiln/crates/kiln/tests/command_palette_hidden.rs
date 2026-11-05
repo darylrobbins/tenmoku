@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::command(palette = false)]` keeps a command out of the command
 //! palette, and nothing else: it's registered, and runs by ID and by key,

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Discovering the extensions in a directory, rescanning it, and the
 //! licence notices, on temporary directories.

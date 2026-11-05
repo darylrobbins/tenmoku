@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`ScrollArea`]: a vertically scrolling container with a scrollbar thumb
 //! drawn in the theme's colours, which can be dragged.

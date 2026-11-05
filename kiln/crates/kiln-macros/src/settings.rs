@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::settings(section = "..")]` on a struct of named fields: the
 //! struct gets serde's `Serialize` and `Deserialize` (every key optional),

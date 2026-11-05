@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::item]`: a struct implementing `kiln::Item` and `kiln::View`
 //! is a pane item with no other wiring. `open` shows the item of a state,

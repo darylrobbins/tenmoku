@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Coloured icons as they're painted: a window drawn with [`Assets`] as its
 //! asset source hands each frame's scene to a renderer that keeps its

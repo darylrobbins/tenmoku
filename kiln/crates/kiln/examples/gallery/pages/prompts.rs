@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `window.prompt(..)`, plain GPUI: native alerts on macOS, kiln-ui's
 //! in-window prompt elsewhere (`kiln::shell::init` installs it).

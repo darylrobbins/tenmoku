@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Item`]: a pane item as a function of its typed state, which both
 //! opens it and restores it from a saved layout; `#[kiln::item]`

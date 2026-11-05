@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane of items: items shown, cycled, taken, inserted and reordered, the
 //! close that keeps unsaved changes, the tab strip's clicks, drop zones and

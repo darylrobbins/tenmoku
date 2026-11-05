@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a platform does natively, as data: which of an app's chrome GPUI
 //! draws with the system's own widgets there, and which the app draws.

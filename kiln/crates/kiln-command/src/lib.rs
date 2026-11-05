@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Commands: stable namespaced IDs, typed args, the contexts they apply in,
 //! serializable invocation records, and a registry that dispatches them

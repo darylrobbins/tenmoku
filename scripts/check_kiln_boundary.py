@@ -2,7 +2,7 @@
 """Checks that kiln/ (docs/decisions/app-framework.md) could leave this
 repository as it is: nothing in it names, includes or depends on fastedit,
 only its platform directories branch on the operating system, and every
-file and crate carries the same licence.
+file and crate says Apache-2.0.
 
     check_kiln_boundary.py [ROOT]          # the checks; ROOT defaults to the repo
     check_kiln_boundary.py --self-test     # the checks against fixtures
@@ -22,7 +22,8 @@ from pathlib import Path
 KILN = "kiln"
 # The only places that may branch on the operating system.
 OS_DIRS = ("kiln/crates/kiln-core/src/platform", "kiln/crates/kiln-platform/src")
-SPDX = re.compile(r"^// SPDX-License-Identifier: \S+")
+SPDX_HEADER = "// SPDX-License-Identifier: Apache-2.0"
+CRATE_LICENCE = "Apache-2.0"
 OS_CFG = re.compile(r"cfg!?\([^)]*\b(?:target_os|target_family|unix|windows)\b")
 INCLUDE = re.compile(r'(?:#\[path\s*=\s*|include_(?:str|bytes)!\(\s*)"([^"]+)"')
 FASTEDIT = re.compile(r"fastedit|\bfe[-_][a-z]", re.IGNORECASE)
@@ -43,8 +44,8 @@ def check_files(root: Path) -> list[str]:
     for path in rust_files(root):
         rel = path.relative_to(root).as_posix()
         text = path.read_text(encoding="utf-8")
-        if not SPDX.match(text):
-            errors.append(f"{rel}: doesn't start with an SPDX-License-Identifier line")
+        if text.split("\n", 1)[0] != SPDX_HEADER:
+            errors.append(f"{rel}: doesn't start with `{SPDX_HEADER}`")
         for number, line in enumerate(text.splitlines(), 1):
             if FASTEDIT.search(line):
                 errors.append(f"{rel}:{number}: names fastedit: {line.strip()}")
@@ -67,8 +68,8 @@ def check_files(root: Path) -> list[str]:
 
 
 def check_licences(root: Path) -> list[str]:
-    """Each kiln crate sets its licence itself, and they all agree."""
-    errors, seen = [], {}
+    """Each kiln crate sets its licence itself, to kiln's licence."""
+    errors = []
     for manifest in sorted((root / KILN).rglob("Cargo.toml")):
         text = manifest.read_text(encoding="utf-8")
         if "[package]" not in text:
@@ -77,10 +78,8 @@ def check_licences(root: Path) -> list[str]:
         found = LICENSE.search(text)
         if not found:
             errors.append(f"{rel}: sets no `license = \"…\"` of its own")
-        else:
-            seen[rel] = found.group(1)
-    if len(set(seen.values())) > 1:
-        errors.append(f"kiln crates disagree on their licence: {seen}")
+        elif found.group(1) != CRATE_LICENCE:
+            errors.append(f"{rel}: its licence is {found.group(1)}, not {CRATE_LICENCE}")
     return errors
 
 
@@ -116,15 +115,16 @@ def self_test() -> int:
         root = Path(tmp)
         src = root / KILN / "crates" / "kiln-x" / "src"
         src.mkdir(parents=True)
-        header = "// SPDX-License-Identifier: LicenseRef-Proprietary\n"
+        header = SPDX_HEADER + "\n"
         manifest = root / KILN / "crates" / "kiln-x" / "Cargo.toml"
-        manifest.write_text('[package]\nname = "kiln-x"\nlicense = "MIT"\n')
+        manifest.write_text('[package]\nname = "kiln-x"\nlicense = "Apache-2.0"\n')
         good = src / "lib.rs"
         good.write_text(header + "pub fn f() {}\n")
         assert check_files(root) == [] and check_licences(root) == [], "a clean tree passes"
 
         cases = {
             "no header": ("pub fn f() {}\n", "SPDX"),
+            "another licence's header": ("// SPDX-License-Identifier: MIT\npub fn f() {}\n", "SPDX"),
             "names it": (header + "// see fastedit\n", "names fastedit"),
             "names a crate": (header + "use fe_gpui::x;\n", "names fastedit"),
             "names its frame": (header + 'const F: &str = "workbench";\n', "key context"),
@@ -154,12 +154,9 @@ def self_test() -> int:
         if not any("sets no" in error for error in check_licences(root)):
             print("self-test FAILED: an inherited licence isn't caught")
             failed = 1
-        other = root / KILN / "crates" / "kiln-y" / "Cargo.toml"
-        other.parent.mkdir(parents=True)
-        other.write_text('[package]\nname = "kiln-y"\nlicense = "Apache-2.0"\n')
         manifest.write_text('[package]\nname = "kiln-x"\nlicense = "MIT"\n')
-        if not any("disagree" in error for error in check_licences(root)):
-            print("self-test FAILED: differing licences aren't caught")
+        if not any("not Apache-2.0" in error for error in check_licences(root)):
+            print("self-test FAILED: another licence isn't caught")
             failed = 1
     print("self-test ok" if not failed else "self-test failed")
     return failed

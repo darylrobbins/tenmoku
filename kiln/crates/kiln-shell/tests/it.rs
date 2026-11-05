@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! kiln-shell's integration tests, one binary: each tests/*.rs is a module,
 //! listed by build.rs (kiln/scripts/it_mods.rs), so a test's ID is

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Shell`]: a window's shell. Around the host's centre view it draws the
 //! chrome ([`Root`](crate::Root)'s pieces: the unified title bar, the

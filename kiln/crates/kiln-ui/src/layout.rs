@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Shorthands for the two flex layouts most views are built from. Each is
 //! a plain `div`, so everything GPUI's `div` takes still applies.

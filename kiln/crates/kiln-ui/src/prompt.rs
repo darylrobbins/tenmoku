@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,

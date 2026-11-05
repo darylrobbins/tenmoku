@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The conversations themselves, apart from the views that show them: the
 //! app's list of [`Thread`]s, [`Threads`], a model kept in the state

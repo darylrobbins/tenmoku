@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Themes as data: semantic colour [`Tokens`] read from a TOML file
 //! ([`ThemeFile`]) and laid over a bundled dark or light base

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The modal layer: one modal view at a time over the window, such as a
 //! go-to-file picker or a command palette, named by a [`ModalId`].

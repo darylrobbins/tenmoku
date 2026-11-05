@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! An extension's keymap as kept for every platform with the keymap store
 //! (`SharedKeymap::platform_defaults`), through `kiln::init` and the

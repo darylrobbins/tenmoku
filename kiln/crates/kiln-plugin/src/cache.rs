@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The cache of compiled components: wasmtime can serialize a compiled component and load it
 //! back, which skips compiling it on every launch.

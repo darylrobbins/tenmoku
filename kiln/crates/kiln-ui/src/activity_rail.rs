@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
     AnyView, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,

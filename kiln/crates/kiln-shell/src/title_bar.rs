@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The unified title bar an app draws itself on macOS, where the window's
 //! content runs under a transparent title bar (see

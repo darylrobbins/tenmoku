@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Loading one TOML file as a config layer, checking it against a JSON
 //! schema, and merging layers. Nothing here knows about settings, so the

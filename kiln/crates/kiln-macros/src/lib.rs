@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln's attribute macros. Use them through the kiln crate, which
 //! documents each: `#[kiln::command]`, on a fn or a view's impl, is

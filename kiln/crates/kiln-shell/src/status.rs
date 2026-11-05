@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The status bar's items: data a host and the active pane item contribute
 //! ([`StatusItem`]), the host's set of them over the item's

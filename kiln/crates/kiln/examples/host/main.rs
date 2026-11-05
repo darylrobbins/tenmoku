@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln Chat: a small chat-like app built from kiln alone, to show
 //! `kiln::app` and its macros end to end. Its window is a kiln workspace

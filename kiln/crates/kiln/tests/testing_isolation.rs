@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::testing`'s isolation: settings a `.config(..)` hook names in the
 //! user's own config directory are never read, and the app is Linux's from

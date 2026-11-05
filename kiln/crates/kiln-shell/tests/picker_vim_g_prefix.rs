@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The picker's pending `g` prefix: anything but a second `g` drops it,
 //! whether a keystroke with no character, a modified one, or a command that

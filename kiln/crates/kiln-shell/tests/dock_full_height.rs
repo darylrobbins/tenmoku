@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The side docks run the main area's full height, to the status bar; the
 //! bottom dock lies between them, under the centre only.

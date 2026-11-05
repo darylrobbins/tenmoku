@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The gallery example's own logic, headless: its keymap and menus load
 //! cleanly on every platform, and its typed commands, from an invocation,

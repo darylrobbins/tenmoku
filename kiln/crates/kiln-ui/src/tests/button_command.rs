@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `Button::command`: clicking dispatches the button's action from the
 //! focused element, a typed command as an invocation from the mouse.

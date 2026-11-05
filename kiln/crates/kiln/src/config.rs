@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The dark and light pair as layers, and the user's theme file, as a
 //! source for kiln-platform's config service: the facade's, as only it

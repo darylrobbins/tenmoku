@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::recorded_catalog`: a crate's `#[kiln::command]`s, fns and view
 //! methods, as `inventory` recorded them, checked with no app: their IDs

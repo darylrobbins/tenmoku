@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plugins run on their own threads under their limits, and a trap or an overrun unloads them.
 //! Every call into a hostile fixture runs under [`bounded`], so a broken limit fails the test

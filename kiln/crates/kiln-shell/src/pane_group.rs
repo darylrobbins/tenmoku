@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A group of panes: a tree of them, split side by side or one above
 //! another. Members of an axis share its space by ratio, with a 1 px border

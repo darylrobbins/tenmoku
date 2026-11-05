@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from gpui-pre 0.3.7 examples/input.rs (zed@1a28cff); Apache-2.0
 
 //! [`TextField`]: a single-line text field with a caret, a selection, IME

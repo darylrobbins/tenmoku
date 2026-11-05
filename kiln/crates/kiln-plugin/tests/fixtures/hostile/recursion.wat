@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; empty.wat whose `run-command` calls itself without end, for the stack to run out.
 (component $C

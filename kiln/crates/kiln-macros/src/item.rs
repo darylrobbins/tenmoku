@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::item]` on a struct that implements `kiln::Item` and
 //! `kiln::View`: the struct stays as it is, and gets `Render` (through

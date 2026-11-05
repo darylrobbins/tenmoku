@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Font fallback: the first installed of a list, by family, for a font the
 //! app prefers but can't count on.

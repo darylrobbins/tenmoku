@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The menu bar as data: a table of menus and items, read from TOML, whose
 //! shortcuts come from the active [`Keymap`]. GPUI-free, so an app's menus,

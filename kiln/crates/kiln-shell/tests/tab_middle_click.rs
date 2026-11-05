@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A middle click on a tab closes it, as the × does: the same neighbour
 //! activation, and the same `may_close` veto for a dirty item. Driven

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The watcher's own tests. Multi-step symlink changes feed a [`Tracker`]
 //! events directly, with a hook standing in for changes made while a

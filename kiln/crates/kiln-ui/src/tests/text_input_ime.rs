@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! TextInput takes IME composition: it stays out of `text()` and raises no
 //! event until it commits, and its bounds follow the committed text.

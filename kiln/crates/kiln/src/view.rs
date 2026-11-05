@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`View`]: the `Render` of a view kiln hosts, which `#[kiln::panel]`
 //! puts in a dock; and [`ViewCommands`]: a view's own commands, which run

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::app`: the conventions it applies over `kiln::init`, and the
 //! override of each, headless.

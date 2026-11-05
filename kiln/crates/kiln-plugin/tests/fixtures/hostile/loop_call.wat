@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; grow_memory.wat whose `run-command` logs `looping` and then loops forever, so a host that
 ;; hears the log knows the loop is running.

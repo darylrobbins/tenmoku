@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! TextField (caret, selection, IME, undo) and the older TextInput, which
 //! appends only and leaves its editing keys to the app: the gallery binds

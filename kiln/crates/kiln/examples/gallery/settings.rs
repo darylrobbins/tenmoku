@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The gallery's own settings, from the user's `settings.toml`, which kiln
 //! reloads when it changes.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Context predicates, such as `editor && !read_only` or
 //! `vim.mode == normal`, and the context stacks they are evaluated against.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Tree`]: a [`TreeModel`]'s nodes as [`TreeRow`]s, expanded and
 //! collapsed by the tree, which keeps the selection as [`crate::List`]

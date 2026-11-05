@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A model kept in the state directory: [`persist`] loads `M` from
 //! `<state dir>/<file>.json` when it registers, and saves it after each

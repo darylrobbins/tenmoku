@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A view stack: views sharing a column, top to bottom, each under a
 //! header naming it, as a dock's panel holds a project tree over an

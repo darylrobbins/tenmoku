@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Passes strings both ways across the kiln:extension@1.0.0 boundary, the pattern later
 ;; fixtures copy. A `$libc` core module owns the memory and a bump `realloc`; it is

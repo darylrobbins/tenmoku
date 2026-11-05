@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Declarative extensions: a directory of data files (themes, keymaps,
 //! menus, and kinds the app defines) described by an `extension.toml`

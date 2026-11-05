@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plugin-contributed commands on the kiln command registry, and the commands plugins invoke.
 //!

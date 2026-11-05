@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The workspace's panes: splits showing a copy of the active item, panes
 //! closing once emptied, tabs dropped on a pane or its edge, the titles

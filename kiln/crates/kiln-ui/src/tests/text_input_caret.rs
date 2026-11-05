@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! TextInput's caret: it moves, it's drawn where text goes in, and edits
 //! and an IME composition happen at it.

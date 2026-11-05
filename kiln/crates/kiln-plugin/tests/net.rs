@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The `fetch` import's policy, over a fake backend: which hosts a plugin's `net:` grants reach,
 //! on the first request and on every redirect.

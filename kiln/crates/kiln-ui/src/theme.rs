@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The active theme: semantic colour tokens (kiln-core's [`ThemeData`])
 //! resolved to GPUI's colours once per change, read by widgets while they

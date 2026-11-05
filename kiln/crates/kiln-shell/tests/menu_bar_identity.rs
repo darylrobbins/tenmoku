@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The open menu and its highlight follow their menu and command when the
 //! installed menus change, rather than staying at their positions.

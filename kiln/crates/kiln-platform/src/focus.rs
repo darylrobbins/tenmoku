@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Focus on an element that's no longer drawn, such as one in a page that
 //! was hidden. GPUI keeps it focused, but its keys and actions then reach

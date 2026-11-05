@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plugin grants: the load, prompt or escalation decision, program
 //! identities, and the store, kept in temporary directories.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A workspace folder's own extensions, `<root>/.notes/extensions`, load
 //! beside the user's only while the root is trusted, headless: untrusted,

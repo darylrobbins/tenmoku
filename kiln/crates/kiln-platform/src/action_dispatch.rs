@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Dispatching an action the app already holds, such as a button's, as the
 //! command it is: a typed command goes through [`dispatch_invocation`], so

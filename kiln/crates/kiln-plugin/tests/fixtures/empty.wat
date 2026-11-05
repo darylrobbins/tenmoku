@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; The least a kiln:extension@1.0.0 component can be: it imports only the types its exports
 ;; name, and exports `init`, `shutdown` and handlers that do nothing. The handlers are there

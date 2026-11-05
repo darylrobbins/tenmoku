@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln's widgets: GPUI elements styled by the active [`Theme`], which a
 //! host makes active with [`set_theme`] and widgets read with `cx.theme()`

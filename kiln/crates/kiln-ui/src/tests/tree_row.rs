@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use super::ui_theme_compat::distinct;
 use crate::{Theme, TreeRow, UiTheme};

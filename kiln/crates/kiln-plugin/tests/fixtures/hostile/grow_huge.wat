@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; empty.wat whose `run-command` asks for 4 GiB more memory and traps unless the grow is refused
 ;; with -1.

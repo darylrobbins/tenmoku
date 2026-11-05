@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Trees`], the tree watcher's bookkeeping, re-stated without events, as
 //! when FSEvents drops them: a tree too big to read whole, and links to

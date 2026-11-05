@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a plugin's capabilities let it do, in plain words, for the prompt
 //! that grants them (`docs/decisions/vmtnmkay62-extensions-and-plugins.md`

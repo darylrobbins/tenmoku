@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The workspace's chrome: docks added by position, their rail tooltips
 //! finding the show key, focus leaving a hidden panel, and the built-in

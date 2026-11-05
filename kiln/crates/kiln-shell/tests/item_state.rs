@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane item with a typed serde state: saved and restored through
 //! `layout::save_panes` and `restore_panes`, with a split copy getting its

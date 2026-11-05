@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The app's own themes through `kiln::init`, headless: installed as
 //! `builtin/<id>`, listed beside the extensions' and chosen like them, and

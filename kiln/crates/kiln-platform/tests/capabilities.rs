@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What each platform does natively, and the window options, fonts and
 //! dialog messages that follow from it, checked for every platform on any

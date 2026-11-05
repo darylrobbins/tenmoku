@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A host's root folder's trust: untrusted until resolved, the host's
 //! prompt the first time a folder is opened as one, the answer written and

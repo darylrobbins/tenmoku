@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The window's frame where the platform asks the app to draw it: under
 //! client-side decorations (GNOME on Wayland, which has no server-side

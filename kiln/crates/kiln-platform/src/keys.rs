@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Key input through kiln's own keymap. GPUI's keymap is unused: a
 //! keystroke interceptor feeds every keystroke, with the focused element's

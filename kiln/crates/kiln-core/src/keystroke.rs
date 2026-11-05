@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Keystrokes such as `cmd-shift-left`, and sequences of them such as
 //! `cmd-k cmd-0`.

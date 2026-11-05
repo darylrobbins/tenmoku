@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The keymap store of the config service that started, reachable from
 //! the app with its default layers: what an app that edits the user's

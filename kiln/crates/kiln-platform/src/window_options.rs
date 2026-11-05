@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A window's options, right for the platform: on macOS the unified title
 //! bar with the traffic lights inline and the app owning the title row's

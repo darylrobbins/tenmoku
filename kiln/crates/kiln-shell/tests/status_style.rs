@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A status item's icon, tone, fill and tooltip: carried by its builders
 //! through the host's set, picked into colours by the entry, and drawn, the

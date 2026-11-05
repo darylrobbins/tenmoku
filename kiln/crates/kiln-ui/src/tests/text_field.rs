@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! TextField in a window: typed text through the platform input handler,
 //! the editing keys through its actions, the mouse, the clipboard, IME

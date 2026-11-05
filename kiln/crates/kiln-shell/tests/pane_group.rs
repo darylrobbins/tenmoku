@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The group panes split into: splits that nest and collapse, neighbours
 //! by layout, tabs moved between panes by key and by drag, a pane showing

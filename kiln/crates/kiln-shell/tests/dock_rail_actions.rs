@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock's rail actions: buttons that run a command, pinned to the bottom
 //! of a side rail below the panels' buttons, highlighted by the host, with

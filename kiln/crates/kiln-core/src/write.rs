@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Writing one setting into a `settings.toml`, keeping everything else in
 //! it as it was: comments, blank lines, key order and formatting.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::command]` on a fn: the command's type, its GPUI action (through
 //! `kiln::__command!`, which writes it as `kiln::commands!` does), and an

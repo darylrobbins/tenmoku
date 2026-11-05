@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A view container: a dock panel whose views an app registers by id,
 //! each under a collapsible header in the panel's [`ViewStack`], as an

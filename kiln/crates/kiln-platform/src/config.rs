@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The config service: watches an app's config files with one
 //! [`ConfigWatcher`], and its directories, such as the extensions

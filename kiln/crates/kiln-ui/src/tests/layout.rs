@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! ScrollArea, SplitPane and the flex shorthands: a scroll area's thumb
 //! follows and drives its scrolling, and dragging a split pane's border

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`SplitPane`]: two views side by side or one above the other, sharing
 //! the space by a ratio, or one side a fixed size and the other the rest,

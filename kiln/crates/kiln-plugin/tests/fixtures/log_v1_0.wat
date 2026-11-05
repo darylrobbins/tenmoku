@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; A plugin built against kiln:extension@1.0.0 that imports only `log` and exports `run`, which
 ;; logs "hi" at `info`. Compat tests link it on a host at 1.1 through an adapter.

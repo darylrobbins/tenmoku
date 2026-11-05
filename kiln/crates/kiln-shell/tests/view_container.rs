@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A view container: views go by their order, one with an id that's there
 //! replacing it; the views' collapse is saved with the workspace's layout

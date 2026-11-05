@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::model::persist`: a model kept in the state directory, loaded at
 //! start, written debounced off the main thread and at quit.

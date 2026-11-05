@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The notes example headless: a note is added by its key, the File menu
 //! and the palette, opening its tab, and the status counts them; the

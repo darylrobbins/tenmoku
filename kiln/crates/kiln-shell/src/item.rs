@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a pane shows in a tab: any view implementing [`PaneItem`], held
 //! through the object-safe [`ItemHandle`], which every `Entity<T:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Cx`]: a view's window and context together, with kiln's reads of
 //! models, settings, the workspace and services, so a view keeps no

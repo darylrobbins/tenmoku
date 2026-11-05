@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Extension traits that put kiln's calls on GPUI's own `App` and `Window`:
 //! `use kiln::prelude::*;`, then `cx.settings::<S>()`,

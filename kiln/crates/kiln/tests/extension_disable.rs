@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::extensions::set_disabled`, headless: a disabled extension stays
 //! loaded but contributes nothing (extensions record §10), and enabled

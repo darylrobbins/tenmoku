@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::status]` on a `fn(&App) -> T`, `T` a `String`, an
 //! `Option<String>` or a `StatusItem`: the fn stays as it is, and an

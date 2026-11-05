@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Changes no event reports are picked up by re-statting the files. FSEvents'
 //! silent losses can't be made on demand, so these tests make a change that

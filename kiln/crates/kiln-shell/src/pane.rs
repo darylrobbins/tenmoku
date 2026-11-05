@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane: a tab per [`PaneItem`](crate::PaneItem), held through its
 //! [`ItemHandle`], the active one's view below the tab strip.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::testing`: an app opened headless with no user files, driven by
 //! keys, commands and menus, its workspace and active item reached typed;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A tab's title colour: an item's `tab_title_color` replaces the theme's
 //! tab text colour, active or not, with the dirty dot unchanged, and the

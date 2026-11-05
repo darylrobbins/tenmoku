@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A workspace's extensions: [`ExtensionApi::only_kinds`] keeps the kinds
 //! a workspace may contribute and drops the rest with a warning, and a set

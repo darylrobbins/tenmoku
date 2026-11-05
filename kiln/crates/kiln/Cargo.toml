@@ -4,9 +4,8 @@ description = "Kiln: a GPUI-idiomatic app framework that hides per-platform diff
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-# Set here, not inherited: kiln is to be open-sourced, and its licence
-# changes in one line per crate (docs/framework.md).
-license = "LicenseRef-Proprietary"
+# Set here, not inherited: kiln stands alone (docs/framework.md).
+license = "Apache-2.0"
 publish = false
 
 [dependencies]

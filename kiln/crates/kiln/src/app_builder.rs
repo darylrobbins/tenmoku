@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`app`]: kiln's conventions for an app's files, settings, quitting and
 //! first window, composed over [`init`] and [`Config`], each with a

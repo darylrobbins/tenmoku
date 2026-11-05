@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Typed keymap and menu tables: [`keymap!`](crate::keymap!) and
 //! [`menus!`](crate::menus!) name commands by type, so a typo is a compile

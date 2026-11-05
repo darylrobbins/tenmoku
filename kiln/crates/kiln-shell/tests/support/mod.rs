@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A small app for the shell's tests: a `Pad` view in a [`Root`], with
 //! commands, a keymap and menus, and what the chrome asked of the window.

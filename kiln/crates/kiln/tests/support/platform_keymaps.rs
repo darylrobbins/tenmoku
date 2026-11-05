@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A check, shared by the tests that load a whole app's keymap on every
 //! platform, that holds however many keys the app and kiln bind.

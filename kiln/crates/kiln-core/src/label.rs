@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Key sequences as menus and tooltips print them: in macOS symbols, such
 //! as `⇧⌘F`, or spelled out elsewhere, such as `Ctrl+Shift+F`.

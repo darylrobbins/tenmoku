@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Key input through kiln's keymap: bindings and chords dispatched to the
 //! focused element, failed chords replayed, the chord timer on the test

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! List: a delegate's rows, selected by click and keys, confirmed by a
 //! double click or `enter`, its events read with `cx.subscribe_in`.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The config service in headless GPUI, fed batches of changed files as
 //! the watcher would send them, and once from a real watcher.

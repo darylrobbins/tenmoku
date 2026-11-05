@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A click as a bindable key: `cmd-click` parses and prints, binds only as
 //! one modified keystroke, and [`crate::Keymap::lookup`] finds what it runs.

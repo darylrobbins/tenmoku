@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Extensions' keymaps and menus through `kiln::init`, headless: laid
 //! between the app's and the user's keymap, added to the app's menus but

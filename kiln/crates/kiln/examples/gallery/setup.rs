@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The gallery's kiln config: its typed commands, its keymap and menus
 //! (one TOML file each, for every platform), the theme to start in and the

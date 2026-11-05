@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A divider drag over huge weights: when the requested split can't fit an
 //! f32 weight, the stack's weights are scaled down alike, so the drag still

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`TreeWatcher`] on real directories: a change under a root is reported
 //! by an event, or by the re-stat every 3 s if no event comes.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::init` with the user's files: settings, keymap and theme, each
 //! reloaded as the config service hears of a change, headless. The batches

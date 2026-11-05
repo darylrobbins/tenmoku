@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Saved window layouts: a stable key per root, writes that merge each
 //! window's entry, files of another version or gone bad read as empty,

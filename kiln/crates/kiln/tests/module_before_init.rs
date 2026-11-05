@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A library crate's `kiln::module!` in an app that sets up kiln-platform's
 //! commands but never runs `kiln::init`, as an app's test harness may: its

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The workspace's own saved layout: split panes, their items and the
 //! docks, restored into a new window as they were; each change of shape

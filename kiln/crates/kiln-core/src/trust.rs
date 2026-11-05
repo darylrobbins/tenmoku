@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Workspace trust: which folders the user trusts with something that can
 //! run a project's code, such as a language server or a build. Kept in user

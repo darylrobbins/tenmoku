@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Resizing a pane by a size, evening out every axis, and stepping through
 //! the panes in order.

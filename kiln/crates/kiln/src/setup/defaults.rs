@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! kiln's bundled keymap and menus, under an app's own, and the check that
 //! makes a mistake in the app's own fail fast: [`Config::default_keys`],

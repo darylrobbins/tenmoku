@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a plugin reaches on disk through WASI: the guest in `tests/guests/fs/` reads, writes and
 //! looks at its environment under the context [`wasi_context`] builds from its grants.

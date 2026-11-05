@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The unified title bar: the title centred clear of the traffic lights,
 //! the content below it, and the window dragged and zoomed from it.

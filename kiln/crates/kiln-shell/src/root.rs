@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Root`]: the view a window opens with, around the app's own. It draws
 //! the window's chrome as the platform wants it, and sets up what every

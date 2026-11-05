@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Golden screenshots of the gallery: its Controls, Lists and Theme pages,
 //! dark and light, each in a window wrapped in `kiln::Root` as the gallery

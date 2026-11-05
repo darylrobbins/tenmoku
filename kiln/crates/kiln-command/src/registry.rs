@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 

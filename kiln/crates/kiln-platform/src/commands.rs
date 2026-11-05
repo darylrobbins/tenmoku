@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! GPUI's side of `kiln-command`. Every key binding, menu item and status
 //! item dispatches one GPUI action, [`RunCommand`], carrying an

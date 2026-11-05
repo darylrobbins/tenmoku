@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The platform keychain behind [`KeychainStore`](crate::KeychainStore):
 //! which keyring-core store each OS uses, and which of its errors mean the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Close vetoes: an item that refuses, or asks and is told no, keeps a
 //! tab, a pane, a window (by command and by its close button) and a quit

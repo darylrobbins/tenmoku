@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The keys [`crate::List`] and [`crate::Tree`] share: moving a selection
 //! through rows, a page at a time, and confirming it.

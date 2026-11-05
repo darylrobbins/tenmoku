@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; A plugin with commands, loaded as `acme.tool`. Its `init` registers three, stopping at the
 ;; first error and returning it:

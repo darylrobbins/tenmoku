@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Saved window layouts, one file per root folder: `<state>/layouts/<key>.json`
 //! (see [`AppPaths::layouts_dir`](crate::AppPaths::layouts_dir)), where

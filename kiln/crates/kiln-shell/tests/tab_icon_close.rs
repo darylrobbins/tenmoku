@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A tab's icon and close button: a file item's tab draws its file-type
 //! icon before its title, and only the active tab, or the one the pointer

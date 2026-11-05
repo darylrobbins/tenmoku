@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use kiln_core::{KeychainStore, MemoryStore, Secret, SecretStore};
 

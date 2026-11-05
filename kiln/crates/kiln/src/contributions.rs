@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What an app, its modules and later its plugins add to it, as plain data:
 //! the [`Contributions`] registry. Commands come with their default keys

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A typed saved state for a pane item, beside the [`Value`] form of
 //! [`PaneItem::serialize`], [`PaneItem::restore`] and

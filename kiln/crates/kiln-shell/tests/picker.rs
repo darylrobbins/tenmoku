@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The picker over a delegate: the input's text matched as it changes, a
 //! selection the picker's commands move, confirm and dismiss, a click

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Hot reload. The only wait is for the watcher's first batch, which is sent
 //! from its thread before any event and so doesn't wait on FSEvents delivery.

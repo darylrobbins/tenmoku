@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
     Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window, div,

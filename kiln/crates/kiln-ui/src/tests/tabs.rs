@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tabs: a click shows a tab's view, a close button asks the owner, who
 //! removes the tab.

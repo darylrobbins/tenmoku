@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A conversation view: the pane item the chat's tabs show. Its messages
 //! above, a field to write the next one below. While the field holds

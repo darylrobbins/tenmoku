@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`Workspace`]: a window's [`Shell`] whose centre is a [`PaneGroup`] of
 //! panes, and the glue every app with panes would otherwise write itself.

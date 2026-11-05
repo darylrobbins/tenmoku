@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The active theme's tokens: `cx.theme()`, setting a theme or a dark and
 //! light pair, the flat chrome colours as a view of it, and controls drawn

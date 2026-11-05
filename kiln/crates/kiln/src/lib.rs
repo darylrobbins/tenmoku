@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln: an app framework on GPUI that hides the differences between
 //! platforms and provides high-level widgets, in GPUI's own idioms. This

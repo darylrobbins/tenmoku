@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What differs between operating systems, as data. This directory and
 //! `kiln-platform`'s sources are the only places in kiln that branch on the

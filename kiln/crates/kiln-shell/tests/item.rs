@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane item held through its handle: what it says forwarded, its type
 //! got back, a split sharing its document, the default close veto for

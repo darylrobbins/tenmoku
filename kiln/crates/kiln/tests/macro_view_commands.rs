@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::command(context = "..")]` on a view's impl: each marked
 //! method is a command, its ID `<crate>.<method>` unless `id`, its context

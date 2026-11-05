@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Never returns from `run-command`: empty.wat with that handler looping forever, for the
 ;; host's deadline to interrupt.

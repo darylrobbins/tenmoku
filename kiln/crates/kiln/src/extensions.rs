@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Extensions the user installed, a directory each under the extensions
 //! directory ([`crate::Config::extensions`]), loaded by [`crate::init`]

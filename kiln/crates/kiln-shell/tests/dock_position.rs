@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock moved to another edge: at a side it draws a vertical rail on the
 //! window's edge with its column towards the centre, at the bottom its

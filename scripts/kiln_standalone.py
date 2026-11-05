@@ -260,11 +260,8 @@ REPO_PATH = re.compile(r"(?<![\w./-])((?:docs|crates|scripts|vendor|tools|\.gith
 THIRD_PARTY_ROW = re.compile(r"^\|\s*`(kiln/[^`]*)`\s*\|\s*([^|]*)\|", re.MULTILINE)
 # The files kiln/ keeps for itself (card K6.3), as a split-out repository
 # would have them.
-OWN_FILES = ("README.md", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "deny.toml",
+OWN_FILES = ("README.md", "LICENSE", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "deny.toml",
              ".config/nextest.toml", "docs")
-# Licence texts, which come with the licence flip: until then every crate
-# is LicenseRef-Proprietary and there's no licence to ship.
-LICENCE_FILES = ("LICENSE", "LICENSE-APACHE", "LICENSE-MIT")
 
 
 def report(repo: Path) -> int:
@@ -338,9 +335,7 @@ def report(repo: Path) -> int:
     if missing:
         print(f"  files kiln/ lacks: {', '.join(missing)}")
     licences = sorted({m["package"].get("license", "?") for m in manifests.values()})
-    texts = [n for n in LICENCE_FILES if (kiln / n).exists()]
-    print(f"  crate licence: {', '.join(licences)}; licence texts: "
-          f"{', '.join(texts) or 'none yet (they come with the licence flip)'}")
+    print(f"  crate licence: {', '.join(licences)}")
     return 0
 
 

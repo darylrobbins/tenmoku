@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! File operations whose safe form differs by operating system: opening an
 //! untrusted file without blocking on a FIFO, and creating private

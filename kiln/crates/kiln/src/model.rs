@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Models: app-wide state keyed by its type, each an [`Entity`] kiln holds,
 //! made from `Default` the first time it's read or [`register`]ed. A view

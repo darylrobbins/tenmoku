@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A theme change reaches every part of the shell at once: the shell's
 //! own background and text, a dock's panel and rail, the panes and the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock's inner edge drags its size, showing the resize cursor, between
 //! the dock's minimum and what leaves the centre its own, beside the other

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `commands::dispatch_typed`: a raw `RunCommand` naming a typed command,
 //! as a test dispatches with `Window::dispatch_action`, reaches the typed

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The chat as a kiln app: [`chat`] sets it up by kiln's conventions (its
 //! files, its window a workspace, its layout saved and restored, kiln's

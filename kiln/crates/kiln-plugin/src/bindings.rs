@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The `kiln:extension@1.0.0` world the host and plugins share, and its generated bindings.
 //!

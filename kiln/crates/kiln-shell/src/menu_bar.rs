@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The menu bar drawn in the window, where the platform has no native one
 //! (Linux): the menus [`kiln_platform::menus::install`] set, as a row of

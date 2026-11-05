@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane's breadcrumbs for its active item: the item's file as path
 //! crumbs ([`path_crumbs`], from [`PaneItem::path`](crate::PaneItem::path)),

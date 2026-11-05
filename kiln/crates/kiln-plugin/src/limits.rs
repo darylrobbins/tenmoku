@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! How far a plugin may go: how long a call into it runs, how much memory it holds, how many
 //! events wait for it and how much the host reads for it; and the limiter that holds its store

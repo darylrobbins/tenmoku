@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The in-window prompt: Enter answers with the default button, Escape with
 //! the cancel button.

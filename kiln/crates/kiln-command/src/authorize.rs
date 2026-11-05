@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Authorizing plugin-origin dispatches. `Actor::Host("<extension id>")` is
 //! attribution: before a plugin's invocation runs, the registry checks it

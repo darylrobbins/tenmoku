@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Blocks in a WASI host import, where no epoch check reaches it: it subscribes to an hour on
 ;; the monotonic clock and calls `pollable.block` on that. `$blocks-in` says which export

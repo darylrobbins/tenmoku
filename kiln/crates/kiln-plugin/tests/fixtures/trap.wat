@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Traps on every `run-command`, after logging `trapping` so the host sees guest code ran.
 ;; strings.wat's `$libc`/`$main` layout.

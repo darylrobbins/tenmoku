@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The status bar's items: the host's over the active item's, sorted by
 //! side and priority, a host item replacing one with its id until it's

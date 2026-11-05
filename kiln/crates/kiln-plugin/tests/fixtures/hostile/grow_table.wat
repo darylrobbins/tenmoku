@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; empty.wat whose `run-command` grows a table by 524288 elements, past the host's limit, and traps
 ;; unless the grow is refused with -1.

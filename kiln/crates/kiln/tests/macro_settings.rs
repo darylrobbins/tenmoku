@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::settings(section = "..")]`: one struct is a section of the
 //! app's `settings.toml`, its `Default` from each field's `default = ..`,

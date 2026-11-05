@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::model]` and `#[kiln::model(persist)]` on a struct or enum: the
 //! type stays as it is, and gets an `inventory` record that `kiln::app` or

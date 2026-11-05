@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 // The build script of a kiln crate whose integration tests are one binary,
 // tests/it.rs (TESTING.md, "Integration tests"), include!d by the crate's

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plugin's event queue coalesces what waits, holds at its capacity by dropping the oldest for
 //! a `lagged`, never waits on the plugin or on other senders, and delivers nothing once the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Button, Checkbox and Switch, used the GPUI way: styled and identified
 //! with GPUI's own methods, handled with `cx.listener`, values kept by the

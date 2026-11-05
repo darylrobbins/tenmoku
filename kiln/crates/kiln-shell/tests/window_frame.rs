@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The window's frame under client-side decorations: the title, the
 //! buttons, the drag area and the resize edges, and nothing of them under

@@ -1,5 +1,5 @@
 # kiln's dependency policy, for `cargo deny check` in kiln's own workspace.
-# kiln is to be published under a permissive licence: every dependency
+# kiln is licensed under Apache-2.0: every dependency
 # must be permissively licensed (CLEAN_ROOM.md). While kiln lives inside a
 # host repository, that repository's deny.toml applies to it as well; this
 # file keeps only what kiln's own dependency graph needs.
@@ -37,7 +37,7 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "option-ext" },
 ]
 
-# kiln's own crates are unpublished until the licence flip.
+# kiln's own crates aren't published to a registry yet.
 [licenses.private]
 ignore = true
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The one `wasmtime::Engine` every plugin runs on, with epoch interruption, and the ticker
 //! thread advancing its epoch while any call into a plugin is running.

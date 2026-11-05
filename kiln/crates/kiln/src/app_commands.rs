@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The app commands as typed actions: `app.quit` is [`crate::app::Quit`],
 //! `window.close` is [`crate::window::Close`], and so on, so an app can

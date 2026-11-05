@@ -322,17 +322,16 @@ repository it's developed in:
 - No kiln crate depends on an app's crate, names one, or includes a file
   from outside this directory. An app's own names (its key contexts, its
   command namespaces) come in as parameters.
-- Every `.rs` file starts with an `SPDX-License-Identifier` line, and every
-  crate sets its own `license` field; they all agree.
+- Every `.rs` file starts with an `SPDX-License-Identifier: Apache-2.0` line,
+  and every crate sets its own `license` field to `Apache-2.0`.
 - `kiln-command` and `kiln-core` don't depend on GPUI.
 
 ## Licence
 
-kiln is not yet open source. Every crate's licence is
-`LicenseRef-Proprietary`, set in each crate's own `Cargo.toml` rather than
-inherited, and each source file has a matching SPDX header. Publishing it
-is a later change: one `license` line per crate, the SPDX headers, and the
-licence texts added beside this file.
+kiln is licensed under the Apache License, Version 2.0; see
+[`LICENSE`](LICENSE). Every crate says `license = "Apache-2.0"` in its own
+`Cargo.toml` rather than inheriting it, and each source file has a matching
+SPDX header.
 
 Third-party code and assets in kiln are listed in
 [`THIRD_PARTY.md`](THIRD_PARTY.md), with the notices in [`NOTICE`](NOTICE).

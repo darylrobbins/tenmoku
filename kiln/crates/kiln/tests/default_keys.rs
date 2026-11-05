@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! kiln's bundled keymap and menus, which `Config::default_keys` and
 //! `Config::default_menus` turn on: the keys an app on kiln-shell needs,

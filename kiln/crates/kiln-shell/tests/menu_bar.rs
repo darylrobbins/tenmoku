@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The menu bar drawn in the window: the installed menus, opened by a
 //! click or `menu_bar.open` (F10), chosen with the arrows and Enter, run

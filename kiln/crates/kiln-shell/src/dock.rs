@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock: panels beside the centre, one shown at a time under a title row
 //! naming it, picked from an activity rail on the window's edge, which

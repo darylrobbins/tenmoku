@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Writing a string setting, and several changes at once, into a
 //! `settings.toml`, keeping the rest of it.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::Module`s and `.contributions(..)`: a library crate's panels, item
 //! kinds, status sources and commands, in each workspace window `kiln::app`

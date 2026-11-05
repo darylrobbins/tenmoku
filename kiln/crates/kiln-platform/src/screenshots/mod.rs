@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Golden screenshots, for an app's examples: a view drawn in a window off
 //! screen by the platform's real renderer, captured once it settles and

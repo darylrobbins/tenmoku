@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Asks for more memory on every `run-command`: grows its memory by 64 pages (4 MiB) and logs
 ;; `refused` when the grow returns -1, `grown` when it succeeds. It never traps on a refusal,

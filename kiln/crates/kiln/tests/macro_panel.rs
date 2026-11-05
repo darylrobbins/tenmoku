@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::panel]` and `#[kiln::status]`: a struct implementing
 //! `kiln::View` is a panel in its dock of every workspace window

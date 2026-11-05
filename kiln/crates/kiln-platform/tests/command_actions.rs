@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Typed commands: GPUI actions with command metadata, dispatched from an
 //! Invocation.

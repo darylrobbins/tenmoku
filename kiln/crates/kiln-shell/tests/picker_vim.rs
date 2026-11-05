@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The picker's vim keys, telescope's model: with the host's switch on,
 //! escape goes from insert mode to a normal mode where `j`/`k` move,

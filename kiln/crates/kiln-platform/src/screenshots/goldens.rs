@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A crate's golden screenshots: where they live, checking a capture
 //! against one, and rewriting them.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Secrets an app keeps out of its settings files, such as an API key: a
 //! [`SecretStore`] over the platform keychain ([`KeychainStore`]: the macOS

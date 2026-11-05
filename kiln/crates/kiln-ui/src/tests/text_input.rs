@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! TextInput: a click focuses it, and a bordered one's border takes the
 //! accent while it has focus.

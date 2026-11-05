@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Where an app keeps its files, keyed by its [`AppId`]: its config
 //! (settings, keymap, themes), its state (what it records about this

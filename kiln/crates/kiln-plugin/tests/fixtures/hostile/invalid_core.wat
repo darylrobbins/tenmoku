@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; empty.wat whose core module does not validate: `init` promises a result and leaves none.
 (component $C

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The gallery's commands: typed GPUI actions with a title, whose kiln IDs
 //! are `gallery.next_page` and so on (`NextPage::id()`). `keymap.toml` and

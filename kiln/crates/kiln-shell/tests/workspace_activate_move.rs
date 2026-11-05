@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The workspace's own calls for a host's keys: `activate` makes a pane in
 //! the group the active one, focused, and tells the host; `move_tab` moves

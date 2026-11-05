@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The native menu bar, from a [`MenuBar`] table: [`install`] sets GPUI's
 //! menus, and choosing an item dispatches its command as a key would

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A masked TextField: bullets drawn for the text, the clipboard left
 //! alone, everything else as in a plain field.

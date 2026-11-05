@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Setting an app up with `kiln::init` and a `Config`, and the extension
 //! traits in `kiln::prelude`, headless.

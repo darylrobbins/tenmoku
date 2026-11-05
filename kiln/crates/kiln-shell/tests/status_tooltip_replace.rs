@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A status item replaced under the same id while its tooltip is pending or
 //! shown: the new tooltip text is the one shown.

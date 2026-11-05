@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A pane's preview item: its tab is drawn in italics, and the next
 //! preview takes its place; an edit, a double-click on its tab or pinning

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::model]` and `#[kiln::model(persist)]`: a model of the app made
 //! at start with no register call, and one kept in the state directory,

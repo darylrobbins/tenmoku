@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A chord prefix with a binding of its own in a deeper context runs at
 //! once and keeps listening; a prefix with none is pending as ever.

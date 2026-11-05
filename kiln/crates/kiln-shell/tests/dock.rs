@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A dock of registered panels: the first added shows, `show` and `toggle`
 //! switch and hide it, a panel not always on the rail joins it once shown,

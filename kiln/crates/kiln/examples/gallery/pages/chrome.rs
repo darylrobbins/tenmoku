@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The app chrome kiln-ui grew from: TabBar, Breadcrumbs, StatusBarFrame,
 //! ActivityRail, Tooltip, IconButton and ToggleButton. These take the flat

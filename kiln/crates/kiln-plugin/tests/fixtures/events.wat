@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; Receives events slowly. Each `handle-events` logs one `e` per event it was handed (up to
 ;; 16), and each `run-command` logs `r`; then each waits `$busy-ns` nanoseconds on the monotonic

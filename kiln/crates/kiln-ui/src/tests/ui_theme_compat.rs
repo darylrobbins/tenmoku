@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The chrome looks the same after its widgets moved from the flat
 //! `UiTheme` to `cx.theme()`'s tokens: for any `UiTheme` an app sets, each

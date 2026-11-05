@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A view stack's dividers: dragging one moves weight between the two
 //! views either side down to a minimum body height, a double-click gives

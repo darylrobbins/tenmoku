@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::Cx`: a view's reads of models, settings, its workspace and
 //! services. A view that watches a model or the settings redraws when they

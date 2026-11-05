@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`ColouredIcons`]: a curated subset of Material Icon Theme's icons, in
 //! their own colours, for files and folders.

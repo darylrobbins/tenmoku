@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `Config::fail_fast`: `init` panics on any diagnostic in the keymap and
 //! menus the app ships, listing each, and never on the user's files; off,

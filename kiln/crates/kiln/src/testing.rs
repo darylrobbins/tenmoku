@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Test support for an app on kiln, behind the `test-support` feature: a
 //! [`TestApp`] opens a [`kiln::app`](crate::app()) headless, as on Linux,

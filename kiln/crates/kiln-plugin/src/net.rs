@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The host's network imports for plugins: `fetch`, which reaches only the hosts the plugin's
 //! `net:<host>` grants name (or any, with `net:*`).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! An app's settings, typed: its own struct, layered from its defaults, the
 //! user's settings file and a project's, kept at its last good version

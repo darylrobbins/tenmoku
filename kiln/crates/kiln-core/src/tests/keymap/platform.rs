@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! One keymap and one menu table for every platform: `secondary`, keys by
 //! platform, and `platform` filters, each checked as on every platform.

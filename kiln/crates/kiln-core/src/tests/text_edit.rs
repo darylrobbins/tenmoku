@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The single-line text-edit model: motions, edits, undo, IME composition
 //! and UTF-16 offsets, and random edit sequences that must keep the

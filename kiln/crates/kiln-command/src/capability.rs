@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Capabilities a plugin holds, in the strings of the plugin record
 //! (`docs/decisions/vmtnmkay62-extensions-and-plugins.md` §7): "Nothing

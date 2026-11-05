@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The app's commands: what reaches the app registry, what a host adds to
 //! it, what observers see, and a view's propagation in its own context.

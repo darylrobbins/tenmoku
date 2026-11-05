@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 use kiln_command::capability::Target;
 use kiln_command::{Capability, Grants};

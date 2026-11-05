@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A plugin's secrets over a `MemoryStore` and an index file in a temporary directory, never the
 //! real keychain.

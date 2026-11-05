@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Notes: a sidebar, a keyed menu command, a status item, a setting and
 //! persistence, in about a hundred lines and no TOML.

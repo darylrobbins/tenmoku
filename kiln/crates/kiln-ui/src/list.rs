@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! [`List`]: a virtualised list of rows a [`ListDelegate`] supplies, with a
 //! selection the list keeps and moves.

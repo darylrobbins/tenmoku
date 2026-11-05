@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The tab strip scrolls to show the active tab whenever it changes, and
 //! otherwise stays where a hand left it.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A view stack: a click on a header, or Enter or Space pressed and
 //! released on a focused one, collapses its view to the header and expands

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! What a window gets from [`Root`] as it's made: focus that moves off an
 //! element that stops being drawn, and the theme following the system's

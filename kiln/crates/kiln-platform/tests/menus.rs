@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The native menu bar in headless GPUI: `get_menus()` and `key_bindings()`
 //! show what would reach AppKit, and dispatching a `MenuCommand` is what

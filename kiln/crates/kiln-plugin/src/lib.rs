@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Plugin host: runs plugins as WebAssembly components on the workspace's single wasmtime.
 //! Headless; must not depend on GPUI or any application crate.

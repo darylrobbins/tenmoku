@@ -1,6 +1,6 @@
 # Clean-room and licensing policy for kiln
 
-kiln is to be published under a permissive licence. Everything in it must be
+kiln is licensed under Apache-2.0. Everything in it must be
 written for it or permissively licensed, and nothing may derive from
 copyleft code. While kiln lives inside a host repository, that
 repository's own policy applies as well; this file restates what concerns

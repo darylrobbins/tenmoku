@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A guest that does through `std` what a plugin would, and reports what happened: `tests/fs.rs`
 //! runs it under the WASI context `kiln_plugin::fs::configure` builds.

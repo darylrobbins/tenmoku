@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Writing integers, floats and string lists into a `settings.toml`, and
 //! resetting a setting by removing its key, keeping the rest of the file.

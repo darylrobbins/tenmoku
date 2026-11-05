@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tree: a model's nodes flattened to rows, expanded by the chevron or
 //! `right`, collapsed by the chevron or `left`, selected like a list's.

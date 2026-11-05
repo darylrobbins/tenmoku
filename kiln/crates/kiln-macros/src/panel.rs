@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::panel]` on a struct that implements `kiln::View`: the struct
 //! gets a hidden `__kiln: kiln::__private::ViewState` field, and `Render`

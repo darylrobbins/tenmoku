@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `#[kiln::command]` on a fn: one declaration gives a command its type,
 //! ID, title, default key, menu item and handler, which `kiln::app` adds

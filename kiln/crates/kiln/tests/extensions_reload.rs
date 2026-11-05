@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::init` with an extensions directory: extensions load, and reload
 //! as the config service hears of a change under the directory, headless.

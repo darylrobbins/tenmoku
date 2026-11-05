@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Basic controls: [`Button`], [`Checkbox`] and [`Switch`]. Each is a GPUI
 //! element built like a `div`: it takes GPUI's styling and interaction

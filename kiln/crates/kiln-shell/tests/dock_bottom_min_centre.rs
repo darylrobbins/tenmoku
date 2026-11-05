@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A window shorter than the bottom dock's size shrinks the dock before the
 //! centre, which keeps `MIN_PANE_HEIGHT`.

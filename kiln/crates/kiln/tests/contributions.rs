@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::Contributions`: commands added with their default keys and menu
 //! items, before `init` or after it, which resolves the keymap and menus

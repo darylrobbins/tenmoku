@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! An app's own tables in the user's theme file (`Config::theme_extensions`):
 //! kept as written for the app to read, and reloaded with the rest of the

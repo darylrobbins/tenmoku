@@ -1,4 +1,4 @@
-;; SPDX-License-Identifier: LicenseRef-Proprietary
+;; SPDX-License-Identifier: Apache-2.0
 ;;
 ;; empty.wat whose core module has a start function that loops forever, so instantiating it
 ;; never finishes.

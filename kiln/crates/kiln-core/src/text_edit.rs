@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A headless single-line text-editing model: the state behind a text
 //! field, without GPUI, so its editing rules are tested without a window.

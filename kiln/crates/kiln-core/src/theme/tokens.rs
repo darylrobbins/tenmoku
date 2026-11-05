@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The semantic colour tokens, in groups, and how a token a theme leaves
 //! out is derived from the ones it sets.

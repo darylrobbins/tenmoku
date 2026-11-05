@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Kiln's platform layer: what differs between macOS, Linux and (later)
 //! Windows, behind one API. The only GPUI crate in kiln that may branch on

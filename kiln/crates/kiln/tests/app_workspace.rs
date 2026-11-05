@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! `kiln::app`'s default window, headless: a `Workspace` with the app's
 //! panels, status sources and item kinds, under kiln's default keys and

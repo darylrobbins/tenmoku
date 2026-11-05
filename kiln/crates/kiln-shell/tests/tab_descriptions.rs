@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! A tab's description: tabs that share a title are told apart by the
 //! fewest trailing folders of their paths that differ, as VS Code does,

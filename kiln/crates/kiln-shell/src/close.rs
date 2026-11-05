@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Closing items: every path that removes items asks them first, through
 //! [`confirm`]. Kiln's own paths do: a tab's close

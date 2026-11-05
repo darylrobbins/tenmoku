@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The capabilities the user granted each plugin, and whether a plugin may
 //! load with what its manifest asks for.

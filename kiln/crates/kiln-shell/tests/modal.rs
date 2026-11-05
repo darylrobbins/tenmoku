@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! The modal layer: a modal shown focused, hidden on its `DismissEvent`
 //! with focus going to the fallback, one modal at a time, a modal left for

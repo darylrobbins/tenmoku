@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Workspace trust: whether a window's root folder may run its project's
 //! code, such as through language servers that run build scripts.

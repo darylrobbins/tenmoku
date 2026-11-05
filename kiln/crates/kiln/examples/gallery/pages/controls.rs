@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: Apache-2.0
 
 //! Buttons in every variant and size, disabled ones, checkboxes and
 //! switches. The values are the page's: controls show what they're given
