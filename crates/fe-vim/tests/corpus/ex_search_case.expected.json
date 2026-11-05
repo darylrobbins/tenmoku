@@ -745,26 +745,34 @@
         0,
         0
       ],
-      "keys": "g*gg:/\\/d<CR>",
+      "keys": "g*gg:\\/d<CR>",
       "set": "ic scs",
       "expect": {
-        "buffer": "Foo\nx\nfoo\nFOO",
+        "buffer": "Foo\nx\nFOO",
         "cursor": [
-          0,
+          2,
           0
         ],
         "mode": "n",
         "registers": {
+          "\"": {
+            "text": "foo\n",
+            "linewise": true
+          },
           "/": {
-            "text": "\\/d",
+            "text": "Foo",
             "linewise": false
+          },
+          "1": {
+            "text": "foo\n",
+            "linewise": true
           }
         }
       }
     },
     {
       "name": "star_amp_repeat",
-      "buffer": "Foo foo FOO\nFoo foo FOO",
+      "buffer": "Foo foo FOO\nfoo Foo FOO",
       "cursor": [
         0,
         0
@@ -772,7 +780,7 @@
       "keys": "g*:s//x/<CR>j:&&<CR>",
       "set": "ic scs",
       "expect": {
-        "buffer": "x foo FOO\nx foo FOO",
+        "buffer": "x foo FOO\nx Foo FOO",
         "cursor": [
           1,
           0
