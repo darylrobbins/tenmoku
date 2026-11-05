@@ -115,8 +115,10 @@ impl PluginSecrets {
         let names = index.plugins.entry(self.plugin_id.clone()).or_default();
         if names.iter().all(|known| known != name) {
             names.push(name.to_owned());
-            self.write_index(&index)?;
         }
+        // Written even when the name is already there: a name visible in the index file is no
+        // proof the write that put it there was synced, if that write failed after its rename.
+        self.write_index(&index)?;
         self.store
             .set(&self.service, &self.account(name), secret.expose())
             .map_err(store_error)
@@ -234,6 +236,10 @@ fn write_atomically(path: &Path, contents: &[u8]) -> io::Result<()> {
 
 /// Flushes `dir`'s entries, so a rename or a new file in it survives a crash.
 fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if tests::take_fault(dir) {
+        return Err(io::Error::other("injected sync failure"));
+    }
     let dir = if dir.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -242,20 +248,23 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
-/// Creates `dir` and its missing ancestors, flushing each new entry into its parent.
+/// Creates `dir` and its missing ancestors, flushing each entry into its parent. Every ancestor
+/// is flushed on every call, existing or not: a directory that is visible may be one whose
+/// earlier flush failed.
 fn create_dir_durably(dir: &Path) -> io::Result<()> {
-    if dir.as_os_str().is_empty() || dir.is_dir() {
+    if dir.as_os_str().is_empty() {
         return Ok(());
     }
-    if let Some(parent) = dir.parent() {
-        create_dir_durably(parent)?;
-    }
+    let Some(parent) = dir.parent() else {
+        return Ok(());
+    };
+    create_dir_durably(parent)?;
     match fs::create_dir(dir) {
         Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && dir.is_dir() => {}
         Err(error) => return Err(error),
     }
-    sync_dir(dir.parent().unwrap_or(Path::new(".")))
+    sync_dir(parent)
 }
 
 fn check_name(name: &str) -> Result<(), Error> {
@@ -311,5 +320,85 @@ impl Host for HostState {
         self.secrets
             .secrets("kiln:extension/secrets.delete")?
             .delete(&name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use kiln_core::secrets::MemoryStore;
+
+    use super::*;
+
+    thread_local! {
+        static FAULT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    }
+
+    /// Whether the armed fault is for `dir`; it fires once.
+    pub(super) fn take_fault(dir: &Path) -> bool {
+        FAULT.with_borrow_mut(|fault| {
+            if fault.as_deref() == Some(dir) {
+                *fault = None;
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    fn fail_next_sync_of(dir: &Path) {
+        FAULT.with_borrow_mut(|fault| *fault = Some(dir.to_owned()));
+    }
+
+    fn root(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("kiln-secrets-unit-{}-{name}", std::process::id()));
+        fs::remove_dir_all(&root).ok();
+        root
+    }
+
+    #[test]
+    fn a_retry_after_a_failed_sync_of_the_renamed_index_syncs_again() {
+        let root = root("rename");
+        fs::create_dir_all(&root).unwrap();
+        let store = Arc::new(MemoryStore::default());
+        let secrets = PluginSecrets::new(store.clone(), "svc", "p", root.join("index.toml"));
+        fail_next_sync_of(&root);
+        assert!(secrets.set("key", "v").is_err());
+        assert_eq!(
+            secrets.get("key").unwrap(),
+            None,
+            "no entry before the index is durable"
+        );
+        // The name is visible now; the retry must still write and sync the index.
+        fail_next_sync_of(&root);
+        assert!(
+            secrets.set("key", "v").is_err(),
+            "the retry synced the index again"
+        );
+        assert_eq!(secrets.get("key").unwrap(), None);
+        secrets.set("key", "v").unwrap();
+        assert_eq!(secrets.get("key").unwrap().as_deref(), Some("v"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_retry_after_a_failed_sync_of_a_new_directory_syncs_its_parent_again() {
+        let root = root("dir");
+        fs::create_dir_all(&root).unwrap();
+        let store = Arc::new(MemoryStore::default());
+        let secrets = PluginSecrets::new(store, "svc", "p", root.join("sub/index.toml"));
+        fail_next_sync_of(&root);
+        assert!(secrets.set("key", "v").is_err());
+        assert!(root.join("sub").is_dir(), "the directory is visible");
+        fail_next_sync_of(&root);
+        assert!(
+            secrets.set("key", "v").is_err(),
+            "the retry synced the parent again"
+        );
+        assert_eq!(secrets.get("key").unwrap(), None);
+        secrets.set("key", "v").unwrap();
+        fs::remove_dir_all(&root).ok();
     }
 }
