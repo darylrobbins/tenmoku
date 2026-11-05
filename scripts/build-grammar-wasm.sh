@@ -89,6 +89,14 @@ for language in "${languages[@]}"; do
     die "no language $language: expected extensions/grammars/$language/grammar-source.toml"
 done
 
+# php's heredoc injection needs the sql module (wasm_parity.rs registers it).
+built=("${languages[@]}")
+for language in "${languages[@]}"; do
+  if [ "$language" = php ] && [[ " ${languages[*]} " != *" sql "* ]]; then
+    built+=(sql)
+  fi
+done
+
 # A whole build starts clean, so a cached target/ can't publish a stale module.
 [ $# -gt 0 ] || rm -rf "$out"
 mkdir -p "$out"
@@ -96,7 +104,7 @@ cargo fetch --locked
 
 # In parallel: each is one slow clang process.
 pids=()
-for language in "${languages[@]}"; do
+for language in "${built[@]}"; do
   build "$language" &
   pids+=($!)
 done
@@ -116,4 +124,4 @@ if [ $# -gt 0 ]; then
   filter=(-E "$expression")
 fi
 scripts/ci-env.sh cargo nextest run --locked -p fe-syntax --test wasm_parity \
-  --run-ignored only ${filter[@]+"${filter[@]}"}
+  --run-ignored only --no-fail-fast ${filter[@]+"${filter[@]}"}

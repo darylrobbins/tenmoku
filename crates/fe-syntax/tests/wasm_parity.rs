@@ -8,6 +8,11 @@
 //! The script runs them; the gate has no wasi-sdk and the modules aren't
 //! committed.
 //!
+//! A language whose injections name another wasm-only language (php's heredoc
+//! tag `<<<SQL` asks for "sql") must register that one too, under its real
+//! name, or the injection stays unresolved and the golden file differs; see
+//! `load_injected`. A built-in language is found by name without that.
+//!
 //! The others need no module: they keep what the extensions hold from drifting
 //! from what the built-in languages use, so a grammar bump in `Cargo.lock` or a
 //! query change fails here too, on every run.
@@ -51,6 +56,11 @@ fn field(file: &Path, key: &str) -> String {
 /// precedence, under a name of its own: a built-in language refuses its name
 /// and file extensions to a registered one.
 fn load(modules: &Path, language: &str) -> &'static Language {
+    load_as(modules, language, &format!("{language}_wasm"))
+}
+
+/// `language`'s module registered as `name`.
+fn load_as(modules: &Path, language: &str, name: &str) -> &'static Language {
     let dir = extension(language);
     let manifest = dir.join("extension.toml");
     let wasm = modules.join(field(&manifest, "wasm"));
@@ -60,7 +70,7 @@ fn load(modules: &Path, language: &str) -> &'static Language {
         wasm.display()
     );
     register_language(&GrammarSpec {
-        language: format!("{language}_wasm"),
+        language: name.to_owned(),
         wasm,
         highlights: Some(dir.join(field(&manifest, "highlights"))),
         injections: Some(dir.join(field(&manifest, "injections"))),
@@ -68,6 +78,15 @@ fn load(modules: &Path, language: &str) -> &'static Language {
         ..GrammarSpec::default()
     })
     .unwrap_or_else(|error| panic!("{language}: {error}"))
+}
+
+/// `language`'s module under its real name, for a language injected by name
+/// into another (the injection asks for "sql", not "sql_wasm"). Nothing is
+/// registered if a built-in language has the name.
+fn load_injected(modules: &Path, language: &str) {
+    if fe_syntax::language_by_name(language).is_none() {
+        load_as(modules, language, language);
+    }
 }
 
 /// One line per highlight span, as `src/tests/golden.rs` writes them.
@@ -113,6 +132,10 @@ fn render(language: &'static Language, text: &str) -> String {
 /// `language`'s module highlights `sample` as its `.golden` file says.
 fn assert_parity(language: &str, sample: &str) {
     let modules = repository().join("target/grammar-wasm");
+    if language == "php" {
+        // Its heredoc `<<<SQL` injects sql.
+        load_injected(&modules, "sql");
+    }
     let loaded = load(&modules, language);
     let golden_dir = repository().join("crates/fe-syntax/tests/golden");
     let actual = render(loaded, &read(&golden_dir.join(sample)));
