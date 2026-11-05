@@ -409,7 +409,8 @@ with capabilities granted by the app.
   plugins by default.
 - Defaults, as named constants that settings may override later: 100 ms epoch
   deadline per call, 64 MB of memory per plugin, 256 queued events per plugin,
-  16 MB for one buffer read.
+  16 MB for one buffer read, and 10 s for a call's program runs
+  (`process.spawn`), which the call's 100 ms deadline doesn't count.
 - Guest fixtures are prebuilt `.wasm` files checked in beside their Rust or
   WAT source and a build script. CI never builds guests, and `.wat` fixtures
   (compiled by wasmtime's `wat` feature in tests) are preferred wherever they

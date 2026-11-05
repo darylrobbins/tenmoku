@@ -31,6 +31,9 @@ pub struct HostState {
     /// When the call into the plugin running now must end, as the runner sets it: none outside
     /// a call, or with no deadline. An import that waits stops waiting then.
     pub deadline: Option<Instant>,
+    /// What the call's program runs have taken of their share, which the call's deadline doesn't
+    /// count: the runner arms it at each call's start, and `process.spawn` charges it.
+    pub program_runs: process::ProgramBudget,
     pub commands: commands::State,
     pub events: events::State,
     pub fs: fs::State,
@@ -45,6 +48,7 @@ impl HostState {
         Self {
             log,
             deadline: None,
+            program_runs: process::ProgramBudget::default(),
             commands: commands::State::default(),
             events: events::State,
             fs: fs::State,

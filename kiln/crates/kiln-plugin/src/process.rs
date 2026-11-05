@@ -8,7 +8,9 @@
 //! before each spawn, and a program that changed or went has its grant suspended, so the user
 //! is asked again. The program gets its arguments as they are, never through a shell, the stdin
 //! the plugin passes, and a minimal environment; its output is capped, and a run past its
-//! deadline is killed.
+//! deadline is killed. A run has its own limit, [`PROGRAM_DEADLINE`] (10 s), not the 100 ms call
+//! deadline: the time a call waits on a run isn't charged to the call, and the runs of one call
+//! share that limit.
 
 use std::ffi::OsString;
 use std::io::{self, Read as _, Write as _};
@@ -16,6 +18,8 @@ use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,11 +27,88 @@ use kiln_command::capability::{Capability, Target};
 
 use crate::bindings::kiln::extension::process::{Host, Output};
 use crate::bindings::{Error, HostState};
-use crate::grants::{self, GrantRecord, GrantStore, ProgramIdentity, Suspended};
-use crate::limits::Limits;
+use crate::grants::{self, GrantRecord, GrantStore, GrantStoreError, ProgramIdentity, Suspended};
+use crate::limits::{Limits, PROGRAM_DEADLINE};
 
-/// How long a spawned program may run before it is killed.
-pub const SPAWN_DEADLINE: Duration = Duration::from_secs(30);
+/// What the program runs of the call now running have used of its share, and what is left.
+///
+/// The runner arms it at each call's start with the call's budget and disarms it at the end;
+/// [`HostState`]'s `spawn` charges each run's wall time to it, and the runner moves the call's
+/// deadline back by that time. Armed, a run is killed at the earlier of its own deadline and the
+/// budget left. Unarmed, as with a [`State`] used without a runner, each run has its own deadline.
+/// Clones share one budget.
+#[derive(Clone, Default)]
+pub struct ProgramBudget(Arc<BudgetCells>);
+
+#[derive(Default)]
+struct BudgetCells {
+    armed: AtomicBool,
+    /// Nanoseconds the call's runs may take in all.
+    budget: AtomicU64,
+    /// Nanoseconds the call's runs have taken.
+    spent: AtomicU64,
+}
+
+fn nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
+impl ProgramBudget {
+    /// Starts a call whose runs may take `budget` in all.
+    pub fn arm(&self, budget: Duration) {
+        self.0.spent.store(0, Ordering::Release);
+        self.0.budget.store(nanos(budget), Ordering::Release);
+        self.0.armed.store(true, Ordering::Release);
+    }
+
+    /// Ends the call: nothing is charged, and runs have their own deadlines again.
+    pub fn disarm(&self) {
+        self.0.armed.store(false, Ordering::Release);
+        self.0.spent.store(0, Ordering::Release);
+    }
+
+    /// How long the running call's program runs have taken.
+    pub fn spent(&self) -> Duration {
+        Duration::from_nanos(self.0.spent.load(Ordering::Acquire))
+    }
+
+    /// `deadline` moved back by [`Self::spent`]: the call's deadline, which doesn't count the
+    /// time its runs took. None when it is none, or too far off to name.
+    pub fn extend(&self, deadline: Option<Instant>) -> Option<Instant> {
+        deadline?.checked_add(self.spent())
+    }
+
+    /// What is left of the call's share, if a call is running.
+    pub(crate) fn remaining(&self) -> Option<Duration> {
+        self.0.armed.load(Ordering::Acquire).then(|| {
+            let left = (self.0.budget.load(Ordering::Acquire))
+                .saturating_sub(self.0.spent.load(Ordering::Acquire));
+            Duration::from_nanos(left)
+        })
+    }
+
+    /// Charges `taken` to the call's share, no more than is left of it, and returns what was
+    /// charged: the time the call's deadline moves back by, so the time a call can exclude from
+    /// its deadline is capped at its budget however many runs or refusals it makes.
+    pub(crate) fn charge(&self, taken: Duration) -> Duration {
+        let armed = self.0.armed.load(Ordering::Acquire);
+        let budget = self.0.budget.load(Ordering::Acquire);
+        let mut charged = 0;
+        let _ = self
+            .0
+            .spent
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |spent| {
+                let most = if armed {
+                    budget.saturating_sub(spent)
+                } else {
+                    u64::MAX
+                };
+                charged = nanos(taken).min(most);
+                Some(spent.saturating_add(charged))
+            });
+        Duration::from_nanos(charged)
+    }
+}
 
 /// The `PATH` a spawned program gets: the system's own directories, not the app's.
 pub const SYSTEM_PATH: &str = "/usr/bin:/bin";
@@ -54,13 +135,13 @@ impl Default for State {
 
 impl State {
     /// Spawns as `record` grants, each stream of output capped at `limits.max_read_bytes`, each
-    /// run killed after [`SPAWN_DEADLINE`], in [`minimal_environment`] taken from the app's.
+    /// run killed after [`PROGRAM_DEADLINE`], in [`minimal_environment`] taken from the app's.
     pub fn new(record: GrantRecord, limits: &Limits) -> Self {
         Self {
             record,
             store: None,
             max_output: limits.max_read_bytes,
-            deadline: SPAWN_DEADLINE,
+            deadline: PROGRAM_DEADLINE,
             environment: minimal_environment(std::env::vars_os()),
         }
     }
@@ -71,7 +152,7 @@ impl State {
         self
     }
 
-    /// Kills each run after `deadline` rather than [`SPAWN_DEADLINE`].
+    /// Kills each run after `deadline` rather than [`PROGRAM_DEADLINE`].
     pub fn with_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
         self
@@ -94,29 +175,103 @@ impl State {
         args: &[String],
         stdin: Option<&[u8]>,
     ) -> Result<Output, SpawnError> {
+        self.spawn_within(program, args, stdin, None)
+    }
+
+    /// [`Self::spawn`], killed at the earlier of the run's deadline and `left`, what is left of
+    /// the call's share of program time. The share runs from this call, so the time checking the
+    /// program takes comes out of it: a run is refused when that used it up.
+    pub fn spawn_within(
+        &mut self,
+        program: &str,
+        args: &[String],
+        stdin: Option<&[u8]>,
+        left: Option<Duration>,
+    ) -> Result<Output, SpawnError> {
+        self.spawn_from(program, args, stdin, left, Instant::now())
+    }
+
+    /// [`Self::spawn_within`] with `left` counted from `entered`, when the share was read.
+    pub(crate) fn spawn_from(
+        &mut self,
+        program: &str,
+        args: &[String],
+        stdin: Option<&[u8]>,
+        left: Option<Duration>,
+        entered: Instant,
+    ) -> Result<Output, SpawnError> {
+        let share_ends = left.map(|left| entered.checked_add(left));
+        // What is left of the share now, if there is one: none is no limit but the run's own.
+        let share = || {
+            share_ends.map(|ends| match ends {
+                Some(ends) => ends.saturating_duration_since(Instant::now()),
+                None => Duration::MAX,
+            })
+        };
+        let timed_out = |deadline| SpawnError::TimedOut {
+            program: program.to_owned(),
+            deadline,
+        };
         let identity = self.granted(program)?;
-        if let Err(suspended) = grants::check_program(&identity) {
-            self.suspend(program, suspended);
-            return Err(SpawnError::Suspended {
-                program: program.to_owned(),
-                suspended,
-            });
+        // A share already used up refuses before the program is checked, which reads the file.
+        if share().is_some_and(|share| share.is_zero()) {
+            return Err(timed_out(Duration::ZERO));
+        }
+        // Reading the program, and recording a suspension, stop at the share's end too.
+        let ends = share_ends.flatten();
+        let checked = match ends {
+            Some(ends) => grants::check_program_by(&identity, ends),
+            None => Ok(grants::check_program(&identity)),
+        };
+        match checked {
+            Err(grants::CheckTimedOut) => return Err(timed_out(share().unwrap_or_default())),
+            Ok(Err(suspended)) => {
+                if !self.suspend(program, suspended, ends) {
+                    return Err(timed_out(share().unwrap_or_default()));
+                }
+                return Err(SpawnError::Suspended {
+                    program: program.to_owned(),
+                    suspended,
+                });
+            }
+            Ok(Ok(())) => {}
         }
         let mut command = Command::new(&identity.path);
         command
             .args(args)
             .env_clear()
             .envs(self.environment.iter().map(|(name, value)| (name, value)));
-        run(command, stdin, self.max_output, self.deadline).map_err(|failure| match failure {
+        // The check and the setup took their time from the share too: what is left is the run's,
+        // and none left means nothing launches.
+        let deadline = share().map_or(self.deadline, |share| share.min(self.deadline));
+        if deadline.is_zero() {
+            return Err(timed_out(deadline));
+        }
+        run(command, stdin, self.max_output, deadline).map_err(|failure| match failure {
             Failure::Io(source) => SpawnError::Io {
                 path: identity.path.clone(),
                 source,
             },
             Failure::TimedOut => SpawnError::TimedOut {
                 program: program.to_owned(),
-                deadline: self.deadline,
+                deadline,
             },
         })
+    }
+
+    /// Withdraws `program`'s grant here, and records that in the store by `by`: false if the
+    /// store couldn't be written in time, so the suspension isn't persisted.
+    fn suspend(&mut self, program: &str, suspended: Suspended, by: Option<Instant>) -> bool {
+        log::warn!("process.spawn:{program}: {suspended}");
+        self.record.suspend(program, suspended.reason);
+        if let Some((store, plugin)) = &self.store
+            && let Err(error) = store.check_programs_by(plugin, by)
+        {
+            log::warn!("can't record that process.spawn:{program} is suspended: {error}");
+            return !matches!(&error, GrantStoreError::Io { source, .. }
+                if source.kind() == io::ErrorKind::TimedOut);
+        }
+        true
     }
 
     /// What `program`'s grant is bound to, if it is granted and bound.
@@ -141,16 +296,6 @@ impl State {
             .cloned()
             .ok_or_else(not_granted)
     }
-
-    fn suspend(&mut self, program: &str, suspended: Suspended) {
-        log::warn!("process.spawn:{program}: {suspended}");
-        self.record.suspend(program, suspended.reason);
-        if let Some((store, plugin)) = &self.store
-            && let Err(error) = store.check_programs(plugin)
-        {
-            log::warn!("can't record that process.spawn:{program} is suspended: {error}");
-        }
-    }
 }
 
 impl Host for HostState {
@@ -160,16 +305,26 @@ impl Host for HostState {
         args: Vec<String>,
         stdin: Option<Vec<u8>>,
     ) -> Result<Output, Error> {
-        self.process
-            .spawn(&program, &args, stdin.as_deref())
-            .map_err(|error| match error {
-                SpawnError::NotGranted { .. } | SpawnError::Suspended { .. } => {
-                    Error::Denied(error.to_string())
-                }
-                SpawnError::TimedOut { .. } | SpawnError::Io { .. } => {
-                    Error::Failed(error.to_string())
-                }
-            })
+        // A run isn't charged to the call: its wall time moves the call's deadline back, and
+        // the call's runs share the budget the runner armed.
+        let started = Instant::now();
+        let ran = self.process.spawn_within(
+            &program,
+            &args,
+            stdin.as_deref(),
+            self.program_runs.remaining(),
+        );
+        let taken = started.elapsed();
+        let charged = self.program_runs.charge(taken);
+        self.deadline = self
+            .deadline
+            .and_then(|deadline| deadline.checked_add(charged));
+        ran.map_err(|error| match error {
+            SpawnError::NotGranted { .. } | SpawnError::Suspended { .. } => {
+                Error::Denied(error.to_string())
+            }
+            SpawnError::TimedOut { .. } | SpawnError::Io { .. } => Error::Failed(error.to_string()),
+        })
     }
 }
 

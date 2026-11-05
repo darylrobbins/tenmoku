@@ -2,14 +2,23 @@
 
 //! How far a plugin may go: how long a call into it runs, how much memory it holds, how many
 //! events wait for it and how much the host reads for it; and the limiter that holds its store
-//! to them.
+//! to them. The call deadline bounds a call's wasm and its other imports; the programs a call
+//! runs (`process.spawn`) have their own [`PROGRAM_DEADLINE`], which the call deadline doesn't
+//! count.
 
 use std::time::Duration;
 
 use wasmtime::{ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
 /// How long one call into a plugin may run before it is interrupted and the plugin unloaded.
+/// Time spent waiting on a program the call runs isn't counted: see [`PROGRAM_DEADLINE`].
 pub const CALL_DEADLINE: Duration = Duration::from_millis(100);
+
+/// How long a plugin's program runs may take, all the runs of one call together (each run is
+/// killed at the earlier of this and what is left of the call's share). The call's
+/// [`CALL_DEADLINE`] doesn't count that time, so a call holds its thread at most
+/// `CALL_DEADLINE + PROGRAM_DEADLINE`.
+pub const PROGRAM_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The most linear memory a plugin's store holds, across all its memories.
 pub const MEMORY_BYTES: usize = 64 << 20;

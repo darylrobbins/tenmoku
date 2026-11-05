@@ -80,7 +80,7 @@ use kiln_plugin::{
     engine::PluginEngine,
     fs::Workspace,
     grants::{Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, resolve_program},
-    limits::{Limits, StoreLimiter},
+    limits::{Limits, PROGRAM_DEADLINE, StoreLimiter},
     manifest::{ExtensionOrigin, PluginManifest},
     process::SYSTEM_PATH,
     runner::{Call, CallError, Diagnostic, LoadError, Reason, Reply},
@@ -1409,9 +1409,8 @@ impl LoadContext {
             kiln.secrets = kiln_plugin::secrets::State::new(secrets);
         }
         kiln.net = kiln_plugin::net::State::new(grants, &limits, Box::new(FeNet::new(grants)));
-        // A spawn runs inside a call, so it's killed at the call's deadline.
-        let process = kiln_plugin::process::State::new(artifact.record.clone(), &limits)
-            .with_deadline(limits.call_deadline);
+        // A program run has its own limit, which the call's deadline doesn't count.
+        let process = kiln_plugin::process::State::new(artifact.record.clone(), &limits);
         kiln.process = match &self.store {
             Some(store) => process.recorded_in(store.clone(), id),
             None => process,
@@ -2042,10 +2041,9 @@ impl Guest {
         self.store.limiter(|data| &mut data.limiter);
         self.store.epoch_deadline_callback(|mut store| {
             let data = store.data_mut();
-            if data
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline)
-            {
+            // The call's deadline doesn't count the time its program runs took.
+            let deadline = data.host.kiln.program_runs.extend(data.deadline);
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 data.timed_out = true;
                 return Ok(UpdateDeadline::Interrupt);
             }
@@ -2086,7 +2084,12 @@ impl Guest {
         call: impl AsyncFnOnce(&mut Store<Data>) -> wasmtime::Result<R>,
     ) -> Result<R, Diagnostic> {
         let deadline = Instant::now().checked_add(self.limits.call_deadline);
-        let passed = || deadline.is_some_and(|deadline| Instant::now() >= deadline);
+        let program_runs = self.store.data().host.kiln.program_runs.clone();
+        program_runs.arm(PROGRAM_DEADLINE);
+        let passed = || {
+            let deadline = program_runs.extend(deadline);
+            deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        };
         let data = self.store.data_mut();
         data.deadline = deadline;
         data.host.kiln.deadline = deadline;
@@ -2111,6 +2114,7 @@ impl Guest {
         });
         drop(ticking);
         let overran = passed();
+        program_runs.disarm();
         let data = self.store.data_mut();
         data.deadline = None;
         data.host.kiln.deadline = None;

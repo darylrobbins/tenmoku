@@ -36,7 +36,7 @@ use crate::cache::ComponentCache;
 use crate::compat;
 use crate::engine::{self, PluginEngine};
 use crate::fs::{self, Workspace};
-use crate::limits::{Limits, StoreLimiter};
+use crate::limits::{Limits, PROGRAM_DEADLINE, StoreLimiter};
 
 /// Why a plugin was unloaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -480,10 +480,9 @@ impl Guest {
         self.store.limiter(|data| &mut data.limiter);
         self.store.epoch_deadline_callback(|mut store| {
             let data = store.data_mut();
-            if data
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline)
-            {
+            // The call's deadline doesn't count the time its program runs took.
+            let deadline = data.host.program_runs.extend(data.deadline);
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 data.timed_out = true;
                 return Ok(UpdateDeadline::Interrupt);
             }
@@ -515,7 +514,12 @@ impl Guest {
         call: impl AsyncFnOnce(&mut Store<Data>) -> wasmtime::Result<R>,
     ) -> Result<R, Diagnostic> {
         let deadline = Instant::now().checked_add(self.limits.call_deadline);
-        let passed = || deadline.is_some_and(|deadline| Instant::now() >= deadline);
+        let program_runs = self.store.data().host.program_runs.clone();
+        program_runs.arm(PROGRAM_DEADLINE);
+        let passed = || {
+            let deadline = program_runs.extend(deadline);
+            deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        };
         let data = self.store.data_mut();
         data.deadline = deadline;
         data.host.deadline = deadline;
@@ -540,6 +544,7 @@ impl Guest {
         });
         drop(ticking);
         let overran = passed();
+        program_runs.disarm();
         let data = self.store.data_mut();
         data.deadline = None;
         data.host.deadline = None;

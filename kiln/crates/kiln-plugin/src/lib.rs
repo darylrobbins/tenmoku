@@ -15,6 +15,8 @@ pub mod limits;
 pub mod manifest;
 pub mod net;
 pub mod process;
+#[cfg(test)]
+mod program_budget_tests;
 pub mod runner;
 pub mod secrets;
 pub mod warnings;

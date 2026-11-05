@@ -1225,45 +1225,49 @@ fn spawn(
 }
 
 #[gpui::test]
-fn a_spawn_is_killed_at_the_call_deadline(cx: &mut TestAppContext) {
+fn a_granted_program_that_outlasts_the_call_deadline_completes(cx: &mut TestAppContext) {
     let plugins = start(cx);
     let bin = tempfile::tempdir().unwrap();
-    let plugin = spawner(cx, &plugins, script(bin.path(), "nap", "exec sleep 5"));
+    let plugin = spawner(
+        cx,
+        &plugins,
+        script(bin.path(), "slow", "sleep 0.3\necho hi"),
+    );
+    // The run is longer than the call's 100ms deadline, which doesn't count it.
+    assert_eq!(spawn(&plugin, "slow"), Ok(Reply::RunCommand(Ok(()))));
+    assert_eq!(
+        logged(cx),
+        [format!("log {SPAWNER} on plugin {SPAWNER}: hi\n")]
+    );
+}
 
-    // The spawn is killed, and the call ends, about the call's deadline.
-    let started = Instant::now();
+#[gpui::test]
+fn a_spawn_in_flight_ends_before_the_plugin_unloads(cx: &mut TestAppContext) {
+    let plugins = start(cx);
+    let bin = tempfile::tempdir().unwrap();
+    let plugin = spawner(cx, &plugins, script(bin.path(), "nap", "exec sleep 1"));
+
+    // A program run has its own, longer limit: it isn't killed at the call's.
     let napped = spawn(&plugin, "nap");
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        started.elapsed()
-    );
-    assert!(
-        matches!(
-            &napped,
-            Ok(Reply::RunCommand(Err(Error::Failed(_))))
-                | Err(kiln_plugin::runner::CallError::Failed(_))
-        ),
-        "{napped:?}"
-    );
+    assert_eq!(napped, Ok(Reply::RunCommand(Ok(()))));
 
-    // And a preview turned off mid-spawn unloads it in as little.
+    // A preview turned off mid-spawn unloads the plugin once the run ends.
     cx.update(reevaluate);
     until(cx, "the plugin to run again", running(SPAWNER));
     let plugin = loaded_plugin(cx, SPAWNER);
     let started = Instant::now();
-    let napping = std::thread::spawn(move || drop(spawn(&plugin, "nap")));
+    let napping = std::thread::spawn(move || spawn(&plugin, "nap"));
     std::thread::sleep(Duration::from_millis(20));
     cx.update(|cx| set_preview(cx, false));
     until(cx, "the plugin to unload", |cx| {
         state(SPAWNER, cx) == Some(PluginState::PreviewOff)
     });
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(5),
         "{:?}",
         started.elapsed()
     );
-    napping.join().unwrap();
+    napping.join().unwrap().ok();
 }
 
 #[gpui::test]

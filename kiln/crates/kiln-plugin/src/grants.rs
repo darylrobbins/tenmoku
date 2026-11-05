@@ -20,10 +20,11 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use kiln_command::capability::{Capability, Grants, Target};
 use serde::{Deserialize, Serialize};
@@ -347,6 +348,64 @@ fn hash(file: &mut File) -> io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// [`hash`], read in chunks, none once `by` has passed: none if it did.
+fn hash_by(file: &mut File, by: Instant) -> io::Result<Option<String>> {
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0; HASH_CHUNK];
+    loop {
+        if Instant::now() >= by {
+            return Ok(None);
+        }
+        match file.read(&mut chunk) {
+            Ok(0) => return Ok(Some(format!("{:x}", hasher.finalize()))),
+            Ok(read) => {
+                hasher.update(&chunk[..read]);
+                #[cfg(test)]
+                hash_probe::after_chunk();
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Under test, slows a deadlined check's reads and counts the chunks it read, per thread.
+#[cfg(test)]
+pub(crate) mod hash_probe {
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    thread_local! {
+        static DELAY: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+        static CHUNKS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Each chunk read from here on takes `delay` more; none counted yet.
+    pub(crate) fn slow_reads(delay: Duration) {
+        DELAY.set(delay);
+        CHUNKS.set(0);
+    }
+
+    /// The chunks read since [`slow_reads`].
+    pub(crate) fn chunks() -> usize {
+        CHUNKS.get()
+    }
+
+    pub(super) fn after_chunk() {
+        CHUNKS.set(CHUNKS.get() + 1);
+        std::thread::sleep(DELAY.get());
+    }
+}
+
+/// How much of a program a deadlined check reads between looks at the clock.
+const HASH_CHUNK: usize = 64 << 10;
+
+/// A check by a deadline that the deadline ended before it finished: the program isn't known to
+/// have changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("checking the program ran past its deadline")]
+pub struct CheckTimedOut;
+
 /// That a program's file is no longer the one granted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("the program's grant is suspended: {reason}")]
@@ -376,24 +435,56 @@ impl std::fmt::Display for SuspendReason {
 /// executable file with the same device, inode, size, modification time
 /// and content.
 pub fn check_program(identity: &ProgramIdentity) -> Result<(), Suspended> {
+    // With no deadline it can't time out.
+    check_with(identity, None).unwrap_or(Ok(()))
+}
+
+/// [`check_program`], read in chunks, stopping once `by` has passed: then it is
+/// [`CheckTimedOut`], and the program, not known to have changed, is not suspended.
+pub fn check_program_by(
+    identity: &ProgramIdentity,
+    by: Instant,
+) -> Result<Result<(), Suspended>, CheckTimedOut> {
+    check_with(identity, Some(by))
+}
+
+fn check_with(
+    identity: &ProgramIdentity,
+    by: Option<Instant>,
+) -> Result<Result<(), Suspended>, CheckTimedOut> {
     let suspended = |error: io::Error| Suspended {
         reason: match error.kind() {
             io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => SuspendReason::Missing,
             _ => SuspendReason::Changed,
         },
     };
-    let (mut file, meta) = open_executable(&identity.path).map_err(suspended)?;
     let changed = Suspended {
         reason: SuspendReason::Changed,
+    };
+    let (mut file, meta) = match open_executable(&identity.path) {
+        Ok(opened) => opened,
+        Err(error) => return Ok(Err(suspended(error))),
     };
     let same_file = meta.dev() == identity.device
         && meta.ino() == identity.inode
         && meta.size() == identity.size
         && (meta.mtime(), meta.mtime_nsec()) == identity.modified;
-    if !same_file || hash(&mut file).map_err(suspended)? != identity.sha256 {
-        return Err(changed);
+    if !same_file {
+        return Ok(Err(changed));
     }
-    Ok(())
+    let hashed = match by {
+        Some(by) => match hash_by(&mut file, by) {
+            Ok(Some(hashed)) => Ok(hashed),
+            Ok(None) => return Err(CheckTimedOut),
+            Err(error) => Err(error),
+        },
+        None => hash(&mut file),
+    };
+    Ok(match hashed {
+        Ok(hashed) if hashed == identity.sha256 => Ok(()),
+        Ok(_) => Err(changed),
+        Err(error) => Err(suspended(error)),
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -595,15 +686,35 @@ impl GrantStore {
     /// [`check_program`]s each of `id`'s spawn grants, suspending those
     /// whose program changed or went, which are returned.
     pub fn check_programs(&self, id: &str) -> Result<Vec<(String, Suspended)>, GrantStoreError> {
+        self.check_programs_by(id, None)
+    }
+
+    /// [`Self::check_programs`], taking the lock, checking the programs and writing by `by`:
+    /// past it nothing is written, and the error is an [`io::ErrorKind::TimedOut`] one.
+    pub fn check_programs_by(
+        &self,
+        id: &str,
+        by: Option<Instant>,
+    ) -> Result<Vec<(String, Suspended)>, GrantStoreError> {
         let mut suspended = Vec::new();
-        self.update(id, |record| {
+        self.update_by(id, by, |record| {
             let Some(mut record) = record else {
                 return Ok(None);
             };
             for (program, identity) in record.programs.clone() {
-                if let Err(found) = check_program(&identity) {
-                    record.suspend(&program, found.reason);
-                    suspended.push((program, found));
+                match check_with(&identity, by) {
+                    Ok(Err(found)) => {
+                        record.suspend(&program, found.reason);
+                        suspended.push((program, found));
+                    }
+                    Ok(Ok(())) => {}
+                    // Out of time: nothing is written.
+                    Err(CheckTimedOut) => {
+                        return Err(GrantStoreError::Io {
+                            path: self.path.clone(),
+                            source: io::ErrorKind::TimedOut.into(),
+                        });
+                    }
                 }
             }
             Ok(Some(record))
@@ -618,11 +729,22 @@ impl GrantStore {
         id: &str,
         change: impl FnOnce(Option<GrantRecord>) -> Result<Option<GrantRecord>, GrantStoreError>,
     ) -> Result<(), GrantStoreError> {
+        self.update_by(id, None, change)
+    }
+
+    /// [`Self::update`], taking the lock and writing only by `by` when there is one: past it,
+    /// nothing is written and the error is an [`io::ErrorKind::TimedOut`] one.
+    fn update_by(
+        &self,
+        id: &str,
+        by: Option<Instant>,
+        change: impl FnOnce(Option<GrantRecord>) -> Result<Option<GrantRecord>, GrantStoreError>,
+    ) -> Result<(), GrantStoreError> {
         let io_error = |source| GrantStoreError::Io {
             path: self.path.clone(),
             source,
         };
-        locked(&self.path, || {
+        locked_by(&self.path, by, || {
             let mut file = self.read()?;
             let before = file.plugins.remove(id);
             let after = change(before.clone())?;
@@ -633,6 +755,9 @@ impl GrantStore {
                 file.plugins.insert(id.to_owned(), record);
             }
             let body = toml::to_string(&file).map_err(|error| io_error(io::Error::other(error)))?;
+            if by.is_some_and(|by| Instant::now() >= by) {
+                return Err(io_error(io::ErrorKind::TimedOut.into()));
+            }
             write(&self.path, format!("{HEADER}{body}").as_bytes()).map_err(io_error)
         })
         .map_err(io_error)?
@@ -661,10 +786,11 @@ impl GrantStore {
 // The lock and write below are `kiln_core::trust`'s, which that crate keeps
 // to itself.
 
-/// Runs `f` holding an exclusive lock on `<path>.lock` (created, mode
-/// 0600, beside `path` and never removed), blocking while another, in this
-/// process or another, holds it. Errs if the lock can't be taken.
-fn locked<T>(path: &Path, f: impl FnOnce() -> T) -> io::Result<T> {
+/// Runs `f` holding an exclusive lock on `<path>.lock` (created, mode 0600, beside `path` and
+/// never removed), blocking while another, in this process or another, holds it. With `by`, it
+/// waits no longer than that: past it, the error is [`io::ErrorKind::TimedOut`] and `f` doesn't
+/// run. Errs if the lock can't be taken.
+fn locked_by<T>(path: &Path, by: Option<Instant>, f: impl FnOnce() -> T) -> io::Result<T> {
     let mut lock_name = path.file_name().unwrap_or_default().to_owned();
     lock_name.push(".lock");
     let lock_path = path.with_file_name(lock_name);
@@ -676,10 +802,27 @@ fn locked<T>(path: &Path, f: impl FnOnce() -> T) -> io::Result<T> {
         .truncate(false)
         .mode(0o600)
         .open(&lock_path)?;
-    lock.lock()?;
+    match by {
+        None => lock.lock()?,
+        Some(by) => loop {
+            match lock.try_lock() {
+                Ok(()) => break,
+                Err(fs::TryLockError::WouldBlock) => {
+                    if Instant::now() >= by {
+                        return Err(io::ErrorKind::TimedOut.into());
+                    }
+                    std::thread::sleep(LOCK_POLL);
+                }
+                Err(fs::TryLockError::Error(error)) => return Err(error),
+            }
+        },
+    }
     // The lock is released when `lock` drops, after `f`.
     Ok(f())
 }
+
+/// How long a deadlined lock waits between tries.
+const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// Writes `contents` to `path` through a temporary file beside it, renamed
 /// over it, creating the directory (mode 0700) and the file (mode 0600).
