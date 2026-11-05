@@ -24,10 +24,9 @@ type Identity = (String, String, Option<String>, String, usize);
 
 /// `config`'s keymap loads cleanly on every platform and binds no keys
 /// twice in one context of a layer. Off macOS it is macOS's with `cmd` as
-/// `ctrl` (`secondary`), binding for binding (keys, command, context, args
-/// and layer), but for F10, which opens the menus drawn in the window
-/// (macOS's are native), and the bindings `substituted` names as
-/// `(macOS keys, other keys, command)`.
+/// `ctrl` (`secondary`), binding for binding (see [`compare`]), but for F10
+/// and the bindings `substituted` names as `(macOS keys, other keys,
+/// command)`.
 pub(crate) fn assert_keymaps_agree(
     config: &Config,
     catalog: &dyn CommandCatalog,
@@ -57,28 +56,59 @@ pub(crate) fn assert_keymaps_agree(
         found
     };
     let parse = |keys: &str, os| spelled(&KeySequence::parse(keys).unwrap(), os);
-    let mut macos_only: Vec<_> = substituted
+    let substituted: Vec<_> = substituted
         .iter()
-        .map(|&(keys, _, command)| (parse(keys, Os::MacOs), command.to_owned()))
+        .map(|&(macos, other, command)| (parse(macos, Os::MacOs), parse(other, Os::Linux), command))
         .collect();
-    macos_only.sort();
-    let mut others_only: Vec<_> = substituted
-        .iter()
-        .map(|&(_, keys, command)| (parse(keys, Os::Linux), command.to_owned()))
-        .chain([(parse("f10", Os::Linux), "menu_bar.open".to_owned())])
-        .collect();
-    others_only.sort();
 
     let macos = bindings(Os::MacOs);
     for os in [Os::Linux, Os::Windows] {
-        let other = bindings(os);
-        assert_eq!(
-            only(&macos, &other),
-            macos_only,
-            "macOS's alone, against {os:?}"
-        );
-        assert_eq!(only(&other, &macos), others_only, "{os:?}'s alone");
+        if let Err(why) = compare(&macos, &bindings(os), &substituted) {
+            panic!("macOS against {os:?}: {why}");
+        }
     }
+}
+
+/// The one binding that exists off macOS only: F10 opens the menu bar
+/// drawn in the window, anywhere, in the app's own layer.
+fn f10() -> Identity {
+    (
+        "f10".to_owned(),
+        "menu_bar.open".to_owned(),
+        None,
+        "Null".to_owned(),
+        0,
+    )
+}
+
+/// `other` is `macos` binding for binding (keys, command, context, args and
+/// layer), but for [`f10`] and the `substituted` bindings, given as `(macOS
+/// keys, other keys, command)`. A substituted binding differs in its keys
+/// alone: it is renamed to the macOS keys, then compared like the rest.
+fn compare(
+    macos: &[Identity],
+    other: &[Identity],
+    substituted: &[(String, String, &str)],
+) -> Result<(), String> {
+    let mut other = other.to_vec();
+    for (macos_keys, other_keys, command) in substituted {
+        let mut named = other
+            .iter_mut()
+            .filter(|binding| binding.0 == *other_keys && binding.1 == *command);
+        let Some(binding) = named.next() else {
+            return Err(format!("no `{command}` on {other_keys}"));
+        };
+        binding.0.clone_from(macos_keys);
+    }
+    let macos_only = only(macos, &other);
+    if !macos_only.is_empty() {
+        return Err(format!("macOS's alone: {macos_only:?}"));
+    }
+    let other_only = only(&other, macos);
+    if other_only != [f10()] {
+        return Err(format!("the other's alone: {other_only:?}, not [F10]"));
+    }
+    Ok(())
 }
 
 /// `keys` as written, with macOS's `cmd` as `ctrl`, `secondary` elsewhere.
@@ -98,9 +128,8 @@ fn spelled(keys: &KeySequence, os: Os) -> String {
     keys.join(" ")
 }
 
-/// The bindings of `of` that `not_in` lacks, one for one, as `(keys,
-/// command)`, sorted.
-fn only(of: &[Identity], not_in: &[Identity]) -> Vec<(String, String)> {
+/// The bindings of `of` that `not_in` lacks, one for one, sorted.
+fn only(of: &[Identity], not_in: &[Identity]) -> Vec<Identity> {
     let mut left = not_in.to_vec();
     let mut only = Vec::new();
     for binding in of {
@@ -108,9 +137,89 @@ fn only(of: &[Identity], not_in: &[Identity]) -> Vec<(String, String)> {
             Some(ix) => {
                 left.remove(ix);
             }
-            None => only.push((binding.0.clone(), binding.1.clone())),
+            None => only.push(binding.clone()),
         }
     }
     only.sort();
     only
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(keys: &str, command: &str, context: Option<&str>) -> Identity {
+        (
+            keys.to_owned(),
+            command.to_owned(),
+            context.map(str::to_owned),
+            "Null".to_owned(),
+            0,
+        )
+    }
+
+    fn subs() -> Vec<(String, String, &'static str)> {
+        vec![("alt-backspace".into(), "ctrl-backspace".into(), "w.del")]
+    }
+
+    fn pair() -> (Vec<Identity>, Vec<Identity>) {
+        (
+            vec![
+                id("a", "x", None),
+                id("alt-backspace", "w.del", Some("input")),
+            ],
+            vec![
+                id("a", "x", None),
+                id("ctrl-backspace", "w.del", Some("input")),
+                f10(),
+            ],
+        )
+    }
+
+    #[test]
+    fn the_permitted_differences_pass() {
+        let (macos, other) = pair();
+        assert_eq!(compare(&macos, &other, &subs()), Ok(()));
+    }
+
+    #[test]
+    fn a_substituted_binding_in_another_context_fails() {
+        let (macos, mut other) = pair();
+        other[1].2 = Some("picker".into());
+        assert!(compare(&macos, &other, &subs()).is_err());
+    }
+
+    #[test]
+    fn a_substituted_binding_with_other_args_or_layer_fails() {
+        let (macos, mut other) = pair();
+        other[1].3 = "Some(1)".into();
+        assert!(compare(&macos, &other, &subs()).is_err());
+        let (macos, mut other) = pair();
+        other[1].4 = 1;
+        assert!(compare(&macos, &other, &subs()).is_err());
+    }
+
+    #[test]
+    fn f10_restricted_to_a_context_or_moved_fails() {
+        for mutate in [
+            (|b: &mut Identity| b.2 = Some("picker".into())) as fn(&mut Identity),
+            |b| b.0 = "f9".into(),
+            |b| b.3 = "Some(1)".into(),
+            |b| b.4 = 1,
+        ] {
+            let (macos, mut other) = pair();
+            mutate(&mut other[2]);
+            assert!(compare(&macos, &other, &subs()).is_err());
+        }
+    }
+
+    #[test]
+    fn a_missing_f10_or_substitute_fails() {
+        let (macos, mut other) = pair();
+        other.pop();
+        assert!(compare(&macos, &other, &subs()).is_err());
+        let (macos, mut other) = pair();
+        other.remove(1);
+        assert!(compare(&macos, &other, &subs()).is_err());
+    }
 }
