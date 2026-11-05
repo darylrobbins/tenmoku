@@ -1,4 +1,4 @@
-# Dependency policy. fastedit is proprietary: every dependency must be
+# Dependency policy. Tenmoku is Apache-2.0: every dependency must be
 # permissively licensed. Run `cargo deny check` (CI does).
 
 [graph]
@@ -39,7 +39,7 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "option-ext" },
 ]
 
-# Our own crates are proprietary and unpublished.
+# Our own crates are Apache-2.0 and unpublished.
 [licenses.private]
 ignore = true
 

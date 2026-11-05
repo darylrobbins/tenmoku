@@ -1,7 +1,12 @@
 Tenmoku
-Copyright (c) 2026 Daryl Robbins. All rights reserved.
+Copyright 2026 Daryl Robbins
+Licensed under the Apache License, Version 2.0; see LICENSE.
 
 This product includes software developed by third parties. See THIRD_PARTY.md.
+
+Tenmoku app icon (crates/fastedit/assets/icon/fastedit.svg and fastedit-1024.png)
+Copyright 2026 Daryl Robbins. The author's own work.
+Licensed under the Apache License, Version 2.0, as Tenmoku.
 
 GPUI (gpui-pre-* crates)
 Copyright Zed Industries, Inc.

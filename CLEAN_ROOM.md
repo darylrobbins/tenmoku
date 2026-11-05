@@ -1,6 +1,6 @@
 # Clean-room and licensing policy
 
-fastedit is proprietary. Everything we ship must be ours or permissively licensed.
+Tenmoku is Apache-2.0. Everything we ship must be ours or permissively licensed.
 
 ## Never read, copy or port
 

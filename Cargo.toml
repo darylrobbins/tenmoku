@@ -9,7 +9,7 @@ default-members = ["crates/fastedit"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-license = "LicenseRef-Proprietary"
+license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]

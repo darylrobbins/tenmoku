@@ -77,6 +77,17 @@ None adapts nvim-treesitter. The other outline and definitions queries for
 C++, C#, Ruby, Swift and Lua are ours, written from the grammar's
 `node-types.json`, and say so in their headers.
 
+## Bundled assets audit (2026-10-31)
+
+One line per class of shipped non-code asset. Result: one gap, fixed in this card (see icons).
+
+- Fonts: none bundled; text renders in system fonts. No gap.
+- App icon: `crates/fastedit/assets/icon/fastedit.svg` and `fastedit-1024.png` are the author's own work, Apache-2.0 like Tenmoku, with a NOTICE entry. No gap.
+- Themes: `tenmoku-*` are our own; `vscode-*` and `catppuccin-*` each have a row above and a NOTICE entry (MIT). No gap.
+- Icons: Lucide (ISC, Feather-derived MIT) and Material Icon Theme (MIT), each with its LICENSE file under `kiln/crates/kiln-ui/assets/`. Gap found and fixed: eight Lucide icons (`chevron-down`, `cloud`, `fold-vertical`, `list-x`, `refresh-cw`, `rotate-ccw`, `tag`, `unfold-vertical`) shipped with no row; they are now in the icons table, the count is 68 and the Feather classification is updated.
+- Grammars and queries: every grammar crate is in the table below with its licence; adapted queries have rows above, the rest are ours. No gap.
+- Vendored crates: each of the nine under `vendor/` has a LICENSE file and a footnote below. No gap.
+
 ## Tree-sitter grammars and highlight queries
 
 `fe-syntax` links these grammars, one Cargo feature each, and uses the
@@ -215,10 +226,10 @@ licence. No module is committed.
 
 | Our path | Source | Tag / commit | License | Files |
 |---|---|---|---|---|
-| `kiln/crates/kiln-ui/assets/icons/` | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) `icons/` | 1.52.0 @ `500620a2e8123f8d1db191538886dc0c223f69a9` | ISC (Feather-derived icons: MIT) | `arrow-left.svg`, `arrow-right.svg`, `asterisk.svg`, `box.svg`, `braces.svg`, `check.svg`, `chevron-right.svg`, `circle-dot.svg`, `circle-x.svg`, `code.svg`, `columns-2.svg`, `component.svg`, `container.svg`, `copy.svg`, `database.svg`, `diamond.svg`, `ellipsis.svg`, `eye.svg`, `file-archive.svg`, `file-braces.svg`, `file-code.svg`, `file-cog.svg`, `file-diff.svg`, `file-image.svg`, `file-key.svg`, `file-lock.svg`, `file-music.svg`, `file-spreadsheet.svg`, `file-symlink.svg`, `file-terminal.svg`, `file-text.svg`, `file-video-camera.svg`, `file.svg`, `files.svg`, `folder-open.svg`, `folder.svg`, `git-branch.svg`, `git-graph.svg`, `hash.svg`, `heading.svg`, `link.svg`, `list-tree.svg`, `list.svg`, `lock.svg`, `message-square.svg`, `minus.svg`, `package.svg`, `panel-right-open.svg`, `plug.svg`, `rows-2.svg`, `scale.svg`, `search.svg`, `server.svg`, `square-function.svg`, `square.svg`, `table.svg`, `triangle-alert.svg`, `type.svg`, `variable.svg`, `x.svg` |
+| `kiln/crates/kiln-ui/assets/icons/` | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) `icons/` | 1.52.0 @ `500620a2e8123f8d1db191538886dc0c223f69a9` | ISC (Feather-derived icons: MIT) | `arrow-left.svg`, `arrow-right.svg`, `asterisk.svg`, `box.svg`, `braces.svg`, `check.svg`, `chevron-down.svg`, `chevron-right.svg`, `circle-dot.svg`, `circle-x.svg`, `cloud.svg`, `code.svg`, `columns-2.svg`, `component.svg`, `container.svg`, `copy.svg`, `database.svg`, `diamond.svg`, `ellipsis.svg`, `eye.svg`, `file-archive.svg`, `file-braces.svg`, `file-code.svg`, `file-cog.svg`, `file-diff.svg`, `file-image.svg`, `file-key.svg`, `file-lock.svg`, `file-music.svg`, `file-spreadsheet.svg`, `file-symlink.svg`, `file-terminal.svg`, `file-text.svg`, `file-video-camera.svg`, `file.svg`, `files.svg`, `fold-vertical.svg`, `folder-open.svg`, `folder.svg`, `git-branch.svg`, `git-graph.svg`, `hash.svg`, `heading.svg`, `link.svg`, `list-tree.svg`, `list-x.svg`, `list.svg`, `lock.svg`, `message-square.svg`, `minus.svg`, `package.svg`, `panel-right-open.svg`, `plug.svg`, `refresh-cw.svg`, `rotate-ccw.svg`, `rows-2.svg`, `scale.svg`, `search.svg`, `server.svg`, `square-function.svg`, `square.svg`, `table.svg`, `tag.svg`, `triangle-alert.svg`, `type.svg`, `unfold-vertical.svg`, `variable.svg`, `x.svg` |
 | `kiln/crates/kiln-ui/assets/file-icons/` | [material-extensions/vscode-material-icon-theme](https://github.com/material-extensions/vscode-material-icon-theme) `icons/`, as built into the npm package `material-icon-theme` 5.40.0 | v5.40.0 @ `045291ff033062a25441dd297fd51546326866f2` | MIT | `audio.svg`, `bun.svg`, `bun_light.svg`, `c.svg`, `certificate.svg`, `changelog.svg`, `cmake.svg`, `console.svg`, `cpp.svg`, `csharp.svg`, `css.svg`, `dart.svg`, `database.svg`, `diff.svg`, `docker.svg`, `document.svg`, `editorconfig.svg`, `elixir.svg`, `erlang.svg`, `exe.svg`, `file.svg`, `folder-benchmark-open.svg`, `folder-benchmark.svg`, `folder-config-open.svg`, `folder-config.svg`, `folder-css-open.svg`, `folder-css.svg`, `folder-dist-open.svg`, `folder-dist.svg`, `folder-docs-open.svg`, `folder-docs.svg`, `folder-examples-open.svg`, `folder-examples.svg`, `folder-font-open.svg`, `folder-font.svg`, `folder-git-open.svg`, `folder-git.svg`, `folder-github-open.svg`, `folder-github.svg`, `folder-i18n-open.svg`, `folder-i18n.svg`, `folder-images-open.svg`, `folder-images.svg`, `folder-include-open.svg`, `folder-include.svg`, `folder-lib-open.svg`, `folder-lib.svg`, `folder-mock-open.svg`, `folder-mock.svg`, `folder-node-open.svg`, `folder-node.svg`, `folder-open.svg`, `folder-packages-open.svg`, `folder-packages.svg`, `folder-public-open.svg`, `folder-public.svg`, `folder-resource-open.svg`, `folder-resource.svg`, `folder-rust-open.svg`, `folder-rust.svg`, `folder-scripts-open.svg`, `folder-scripts.svg`, `folder-src-open.svg`, `folder-src.svg`, `folder-target-open.svg`, `folder-target.svg`, `folder-temp-open.svg`, `folder-temp.svg`, `folder-test-open.svg`, `folder-test.svg`, `folder-theme-open.svg`, `folder-theme.svg`, `folder-tools-open.svg`, `folder-tools.svg`, `folder-utils-open.svg`, `folder-utils.svg`, `folder-vscode-open.svg`, `folder-vscode.svg`, `folder.svg`, `font.svg`, `gemfile.svg`, `git.svg`, `go-mod.svg`, `go.svg`, `gradle.svg`, `h.svg`, `haskell.svg`, `hpp.svg`, `html.svg`, `image.svg`, `java.svg`, `javascript.svg`, `json.svg`, `julia.svg`, `just.svg`, `key.svg`, `kotlin.svg`, `less.svg`, `license.svg`, `lock.svg`, `log.svg`, `lua.svg`, `makefile.svg`, `markdown.svg`, `maven.svg`, `nix.svg`, `nodejs.svg`, `npm.svg`, `ocaml.svg`, `pdf.svg`, `php.svg`, `pnpm.svg`, `pnpm_light.svg`, `powershell.svg`, `python-misc.svg`, `python.svg`, `r.svg`, `react.svg`, `react_ts.svg`, `readme.svg`, `ruby.svg`, `rust.svg`, `sass.svg`, `scala.svg`, `settings.svg`, `svelte.svg`, `svg.svg`, `swift.svg`, `table.svg`, `tex.svg`, `toml.svg`, `toml_light.svg`, `tune.svg`, `typescript-def.svg`, `typescript.svg`, `video.svg`, `vue.svg`, `xml.svg`, `yaml.svg`, `yarn.svg`, `zig.svg`, `zip.svg` |
 
-The 60 SVGs are copied unmodified, compiled into `kiln-ui` with `include_bytes!`.
+The 68 SVGs are copied unmodified, compiled into `kiln-ui` with `include_bytes!`.
 Lucide is ISC, "Copyright (c) 2026 Lucide Icons and Contributors". Icons derived
 from Feather are MIT, "Copyright (c) 2013-present Cole Bemis". Of ours, these are
 Feather-derived:
@@ -227,12 +238,16 @@ Feather-derived:
   `check`, `chevron-right`, `code`, `database`, `hash`, `link`, `lock`,
   `minus`, `search`, `server`, `square`, `type`, `x`, `columns-2` (listed
   under its old name `columns`), `ellipsis` (listed as `more-horizontal`),
-  `circle-x` (listed as `x-circle`) and `triangle-alert` (listed as
-  `alert-triangle`);
+  `circle-x` (listed as `x-circle`), `triangle-alert` (listed as
+  `alert-triangle`) and `chevron-down`;
 - not in that list, but crediting Feather's author `colebemis` as a contributor
   in `icons/<name>.json` at the commit, so treated as MIT too: `box`, `copy`,
   `eye`, `file`, `file-text`, `folder`, `git-branch`, `list`, `message-square`,
-  `package` and `table`.
+  `package` and `table`;
+- added by the 2026-10-31 audit (listed in no row before), not in the Feather
+  list: `cloud`, `refresh-cw`, `rotate-ccw` and `tag` are Feather icons by name,
+  so they are treated as MIT too, conservatively; `fold-vertical`, `list-x` and
+  `unfold-vertical` are Lucide-only, so ISC.
 
 The rest are ISC only. Lucide's `LICENSE`, which carries both notices, is
 copied beside them as `kiln/crates/kiln-ui/assets/icons/LICENSE` and must ship with
