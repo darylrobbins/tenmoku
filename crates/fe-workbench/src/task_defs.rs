@@ -757,10 +757,13 @@ fn find_unnested(text: &str, wanted: impl Fn(char) -> bool) -> Option<usize> {
 /// Whether a rule's target is one `make <target>` can ask for.
 ///
 /// Archive members (`lib.a(one.o)`) aren't: a word of a name, then `(`, then
-/// members up to a final `)`. Literal parentheses (`(x)`, `a(b)c`) are part of
+/// nonempty members up to a final `)` (`a()` is a plain name). Literal parentheses (`(x)`, `a(b)c`) are part of
 /// a plain name.
 fn nameable(target: &str) -> bool {
-    let archive_member = target.ends_with(')') && target.find('(').is_some_and(|at| at > 0);
+    let archive_member = target.ends_with(')')
+        && target
+            .find('(')
+            .is_some_and(|at| at > 0 && at + 1 < target.len() - 1);
     !target.starts_with('.') && !target.contains(['%', '$', '\\', '*', '?', '[']) && !archive_member
 }
 

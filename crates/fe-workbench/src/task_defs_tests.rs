@@ -526,6 +526,7 @@ lib.a(one.o):
 (wrapped) mid(dle)x:
 (foo(bar baz):
 lib.a(one).o two.o):
+a():
 spaced\\ name real:
 export override define MULTI
 phantom: not a rule
@@ -560,6 +561,7 @@ clean:
                 "make mid(dle)x",
                 "make (foo(bar",
                 "make baz)",
+                "make a()",
                 "make real",
                 "make grouped",
                 "make outputs",
