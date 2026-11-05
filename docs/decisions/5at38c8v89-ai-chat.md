@@ -329,6 +329,23 @@ edit (one `Origin::User` transaction, cmd-z takes it back:
 `chat.propose_edit` command in an `Invocation` with the AI actor (§ 9), so it's
 recorded and replayable.
 
+Known limit: a symlink swap between lookup and load. Chat Apply and OpenPath
+check that a target stays inside the root when they look it up (`locate` in
+`crates/fe-workbench/src/chat_apply.rs`), but what they carry on to loading is a
+pathname, not a file identity. If the file or one of its ancestors is swapped
+for a symlink pointing outside the root between that lookup and the load, the
+load follows the symlink. An open buffer found through an alias has the same gap
+if the buffer closes before the open and the alias has been retargeted. It
+stays because the swap needs something already able to write inside the project
+at that moment; a same-user process that can do that already has full access to
+the user's files, so what remains is mainly a folder shared with another user.
+Closing it would take every opener carrying file identity: `fe-buffer` and the
+editor model recording it at load, `fe-fileview` and the image viewer taking a
+verified handle instead of reopening the path, root-anchored resolution in place
+of `locate` and `real_path`, and real file ids on non-Unix. That is a separately
+sized piece of work, and no card is open for it (T451 tried and was abandoned on
+2026-11-05; it began as medium finding F3 in the review of T251).
+
 ## 9. The AI actor and capabilities
 
 - Everything the AI does goes through `kiln_command::Invocation` with
