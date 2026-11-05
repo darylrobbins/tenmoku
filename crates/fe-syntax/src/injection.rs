@@ -87,6 +87,54 @@ const MAX_KEPT_LAYERS: usize = 1024;
 /// highlights one range per run of consecutive visible rows.
 const RECENT_RANGES: usize = 8;
 
+/// A node of an injected layer's tree, as [`crate::Syntax::injected_nodes`]
+/// lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InjectedNode {
+    /// The layer's language.
+    pub language: &'static str,
+    pub kind: String,
+    /// Whether it's a named node of the grammar, not an anonymous token.
+    pub named: bool,
+    pub range: Range<usize>,
+    /// The index in the list of the node's parent, if it has one in the list.
+    pub parent: Option<usize>,
+}
+
+/// Adds `root` and, in order, its descendants that overlap `range`. Iterative,
+/// as a tree can nest deeper than the stack.
+fn collect_nodes(
+    language: &'static str,
+    root: Node,
+    range: &Range<usize>,
+    nodes: &mut Vec<InjectedNode>,
+) {
+    let mut cursor = root.walk();
+    let mut parents: Vec<usize> = Vec::new();
+    loop {
+        let node = cursor.node();
+        if node.start_byte() < range.end && node.end_byte() > range.start {
+            nodes.push(InjectedNode {
+                language,
+                kind: node.kind().to_string(),
+                named: node.is_named(),
+                range: node.byte_range(),
+                parent: parents.last().copied(),
+            });
+            if cursor.goto_first_child() {
+                parents.push(nodes.len() - 1);
+                continue;
+            }
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return;
+            }
+            parents.pop();
+        }
+    }
+}
+
 /// A layer's language and the bytes it was parsed from.
 #[cfg(test)]
 pub(crate) type LayerKey = (&'static str, Vec<Range<usize>>);
@@ -158,6 +206,24 @@ impl Layers {
         for range in &mut self.recent {
             *range = moved(range, edit);
         }
+    }
+
+    /// The nodes of the kept layers' trees that overlap `range`, each layer's
+    /// in order of where they start, a parent before its children.
+    pub(crate) fn nodes(&self, range: &Range<usize>) -> Vec<InjectedNode> {
+        let mut nodes = Vec::new();
+        for layer in &self.kept {
+            if !layer.ranges.iter().any(|bytes| overlaps(bytes, range)) {
+                continue;
+            }
+            collect_nodes(
+                layer.language.name(),
+                layer.tree.root_node(),
+                range,
+                &mut nodes,
+            );
+        }
+        nodes
     }
 
     /// The languages and ranges of the layers kept, sorted.

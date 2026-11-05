@@ -10,7 +10,7 @@
 use std::ops::Range;
 
 use fe_config::settings::SpellScope;
-use fe_syntax::{Highlight, HighlightSpan, Syntax};
+use fe_syntax::{Highlight, HighlightSpan, InjectedNode, Syntax};
 use fe_text::Text;
 
 /// The largest buffer that gets spell checked.
@@ -138,6 +138,11 @@ fn code_tokens(
     scopes: &[SpellScope],
     window: Range<usize>,
 ) -> Spellable {
+    // Highlighting the window parses the layers of injected languages, which
+    // are where their tokens' boundaries are.
+    if !syntax.checked_highlights(window.clone()).complete {
+        return Spellable::unfinished();
+    }
     let crossing = tokens_crossing(syntax, scopes, window.clone());
     let reach = (crossing.iter().map(|(_, token)| token)).fold(window.clone(), |reach, token| {
         reach.start.min(token.start)..reach.end.max(token.end)
@@ -176,41 +181,52 @@ pub(crate) fn words_in_spans(
     let (Some((first, _)), Some((last, _))) = (kept.first(), kept.last()) else {
         return Vec::new();
     };
-    let literals = host_literals(syntax, first.range.start..last.range.end);
-    let c_like = matches!(syntax.language().name(), "c" | "cpp");
-    let mut literal = 0;
+    let literals = literals(syntax, first.range.start..last.range.end);
+    let host = syntax.language().name();
+    // The literals holding the current span, the innermost last.
+    let mut open: Vec<&Literal> = Vec::new();
+    let mut next = 0;
     let mut ranges = Vec::new();
     for (span, token) in kept {
-        while literals
-            .get(literal)
-            .is_some_and(|it| it.range.end <= span.range.start)
-        {
-            literal += 1;
-        }
-        let source = text.slice_to_string(span.range.clone());
-        let pieces = match token {
-            Token::Comment => comment_text(&source),
-            Token::String => {
-                let around =
-                    (literals.get(literal)).filter(|it| it.range.start <= span.range.start);
-                string_text(&source, span.range.clone(), around, c_like)
+        // A string's highlights can run on from one literal into another, such
+        // as a layer's string painted over the end of its host's, so each part
+        // that a literal holds is read on its own.
+        let mut from = span.range.start;
+        while from < span.range.end {
+            while literals.get(next).is_some_and(|it| it.range.start <= from) {
+                open.push(&literals[next]);
+                next += 1;
             }
-        };
-        let words = pieces
-            .into_iter()
-            .filter(|piece| has_word(&source[piece.clone()]));
-        ranges.extend(
-            words.map(|piece| span.range.start + piece.start..span.range.start + piece.end),
-        );
+            while open.last().is_some_and(|it| it.range.end <= from) {
+                open.pop();
+            }
+            let upto = match token {
+                Token::Comment => span.range.end,
+                Token::String => (open.last().map(|it| it.range.end))
+                    .into_iter()
+                    .chain(literals.get(next).map(|it| it.range.start))
+                    .fold(span.range.end, usize::min),
+            };
+            let part = from..upto.max(from + 1);
+            let source = text.slice_to_string(part.clone());
+            let pieces = match token {
+                Token::Comment => comment_text(&source),
+                Token::String => string_text(&source, part.clone(), open.last().copied(), host),
+            };
+            let words = pieces
+                .into_iter()
+                .filter(|piece| has_word(&source[piece.clone()]));
+            ranges.extend(words.map(|piece| part.start + piece.start..part.start + piece.end));
+            from = part.end;
+        }
     }
     ranges
 }
 
 /// The comments and strings in `scopes` that cross either edge of `window`, as
-/// the host language's tree has them, the outermost of each kind, since an
-/// escape or a hole splits their highlights. Tokens of an injected language
-/// aren't in this tree, so they go only as far as their highlights do, which an
-/// escape or a hole can stop.
+/// the trees have them, the outermost of each kind, since an escape or a hole
+/// splits their highlights. That's the host language's tree and those of the
+/// injected layers highlighting has parsed.
 fn tokens_crossing(
     syntax: &Syntax,
     scopes: &[SpellScope],
@@ -221,17 +237,25 @@ fn tokens_crossing(
         return tokens;
     };
     for at in [window.start, window.end - 1] {
-        let mut string = None;
-        let mut comment = None;
+        let mut string: Option<Range<usize>> = None;
+        let mut comment: Option<Range<usize>> = None;
+        let mut widest = |kind: &str, range: Range<usize>| {
+            let slot = match (is_string_kind(kind), is_comment_kind(kind)) {
+                (true, _) => &mut string,
+                (_, true) => &mut comment,
+                _ => return,
+            };
+            if slot.as_ref().is_none_or(|it| range.len() > it.len()) {
+                *slot = Some(range);
+            }
+        };
         let mut found = tree.root_node().descendant_for_byte_range(at, at + 1);
         while let Some(node) = found {
-            if node.kind().contains("string") {
-                string = Some(node.byte_range());
-            }
-            if node.kind().contains("comment") {
-                comment = Some(node.byte_range());
-            }
+            widest(node.kind(), node.byte_range());
             found = node.parent();
+        }
+        for node in syntax.injected_nodes(at..at + 1) {
+            widest(&node.kind, node.range);
         }
         if scopes.contains(&SpellScope::Strings) {
             tokens.extend(string.map(|range| (Token::String, range)));
@@ -241,6 +265,71 @@ fn tokens_crossing(
         }
     }
     tokens
+}
+
+/// Whether a node of this `kind`, in any grammar, is a string: the whole
+/// of one, or the text of one that has no node for the whole, as in PHP's
+/// heredocs. What holds strings together, like C's `concatenated_string`, or
+/// has one inside, like Ruby's `string_array`, is not.
+fn is_string_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "string"
+            | "string_literal"
+            | "raw_string_literal"
+            | "raw_string"
+            | "verbatim_string_literal"
+            | "interpolated_string_expression"
+            | "interpreted_string_literal"
+            | "line_string_literal"
+            | "multi_line_string_literal"
+            | "template_string"
+            | "ansi_c_string"
+            | "translated_string"
+            | "bare_string"
+            | "encapsed_string"
+            | "heredoc"
+            | "nowdoc"
+    ) || is_string_text_kind(kind)
+}
+
+/// Whether a node of this `kind` is the name that opens or closes a heredoc,
+/// which highlights as a string but is a delimiter, whichever of the two ends of
+/// the heredoc it's at.
+fn is_heredoc_marker_kind(kind: &str) -> bool {
+    matches!(kind, "heredoc_start" | "heredoc_end" | "heredoc_beginning")
+}
+
+/// Whether a node of this `kind` is the words of a string, rather than a
+/// delimiter, an escape or an interpolation.
+fn is_string_text_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "string_content"
+            | "string_fragment"
+            | "string_value"
+            | "multiline_string_fragment"
+            | "multiline_string_content"
+            | "raw_string_content"
+            | "string_literal_content"
+            | "verbatim_string_content"
+            | "interpreted_string_literal_content"
+            | "raw_string_literal_content"
+            | "heredoc_content"
+            | "heredoc_body"
+            | "nowdoc_body"
+            | "nowdoc_string"
+            | "line_str_text"
+            | "multi_line_str_text"
+            | "raw_str_part"
+    )
+}
+
+/// Whether a node of this `kind` is a comment: `comment`, `line_comment`,
+/// `block_comment`, `multiline_comment`. Its parts, such as a doc comment's
+/// marker or text, aren't named so.
+fn is_comment_kind(kind: &str) -> bool {
+    kind == "comment" || kind.ends_with("_comment")
 }
 
 /// The highlights around `window`, wide enough that a comment or string
@@ -317,75 +406,138 @@ fn comment_text(source: &str) -> Vec<Range<usize>> {
     lines
 }
 
-/// A string as the host language's tree has it.
-struct Literal {
+/// A string as a tree has it, the host's or an injected layer's.
+pub(crate) struct Literal {
     range: Range<usize>,
+    /// The language of the tree it's in.
+    language: &'static str,
     /// The parts of `range` that aren't its text, sorted: its delimiters,
     /// escapes and interpolations, and none if it's a single token to the tree.
     not_text: Vec<Range<usize>>,
 }
 
-/// The strings of the host language touching `range`, in order: the outermost,
-/// so what's in an interpolation is part of that and not its text. What a
-/// string's children are varies by language, but those that are its text say so:
-/// `string_content`, `string_fragment`, `line_str_text`. Any other is taken for
-/// not being words, whether it's C++'s `R"tag(` or C's `\x41`.
-fn host_literals(syntax: &Syntax, range: Range<usize>) -> Vec<Literal> {
-    let mut literals = Vec::new();
+/// The strings touching `range` in the host language's tree and in the trees of
+/// injected layers, sorted by where they start, an outer one before what it
+/// holds. In each tree they're the outermost, so what's in an interpolation is
+/// part of that and not its text. What a string's children are varies by
+/// language, but those that are its text say so, by their kind: `string_content`,
+/// `string_fragment`, `line_str_text`. Any other is taken for not being words,
+/// whether it's C++'s `R"tag(` or C's `\x41`.
+fn literals(syntax: &Syntax, range: Range<usize>) -> Vec<Literal> {
+    let host = host_string_nodes(syntax, range.clone());
+    let mut literals = literals_in(&host);
+    literals.extend(literals_in(&syntax.injected_nodes(range)));
+    literals.sort_by(|a, b| {
+        (a.range.start, std::cmp::Reverse(a.range.end))
+            .cmp(&(b.range.start, std::cmp::Reverse(b.range.end)))
+    });
+    literals
+}
+
+/// The strings among `nodes`, one or more trees' nodes, parents before children.
+pub(crate) fn literals_in(nodes: &[InjectedNode]) -> Vec<Literal> {
+    let mut literals: Vec<Literal> = Vec::new();
+    // For each node: `None` outside any string, `Some(None)` in one but not
+    // its text, such as an interpolation, and the literal it's the text of or
+    // the root of otherwise.
+    let mut holder: Vec<Option<Option<usize>>> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let parent = node.parent.and_then(|parent| holder[parent]);
+        let own = match parent {
+            Some(Some(literal)) if node.named && is_string_text_kind(&node.kind) => {
+                Some(Some(literal))
+            }
+            Some(Some(literal)) => {
+                literals[literal].not_text.push(node.range.clone());
+                Some(None)
+            }
+            Some(None) => Some(None),
+            // A heredoc's marker is painted as a string, and is no words.
+            None if is_heredoc_marker_kind(&node.kind) => {
+                literals.push(Literal {
+                    range: node.range.clone(),
+                    language: node.language,
+                    not_text: vec![node.range.clone()],
+                });
+                Some(None)
+            }
+            None if is_string_kind(&node.kind) => {
+                literals.push(Literal {
+                    range: node.range.clone(),
+                    language: node.language,
+                    not_text: Vec::new(),
+                });
+                Some(Some(literals.len() - 1))
+            }
+            None => None,
+        };
+        holder.push(own);
+    }
+    for literal in &mut literals {
+        literal.not_text.sort_by_key(|range| range.start);
+    }
+    literals
+}
+
+/// The strings of the host language's tree touching `range`, each with its
+/// descendants, as [`InjectedNode`]s to read like a layer's.
+fn host_string_nodes(syntax: &Syntax, range: Range<usize>) -> Vec<InjectedNode> {
+    let mut nodes = Vec::new();
     let Some(tree) = syntax.tree() else {
-        return literals;
+        return nodes;
     };
+    let language = syntax.language().name();
     let mut cursor = tree.walk();
+    // The index in `nodes` of each node above the cursor, within a string.
+    let mut parents: Vec<usize> = Vec::new();
     loop {
         let node = cursor.node();
         // Whatever follows in the tree starts later still.
         if node.start_byte() >= range.end {
-            return literals;
+            return nodes;
         }
         let touches = node.end_byte() > range.start;
-        if touches && node.kind().contains("string") {
-            let mut not_text = Vec::new();
-            let mut nodes = vec![node];
-            while let Some(node) = nodes.pop() {
-                let mut children = node.walk();
-                for child in node.children(&mut children) {
-                    let kind = child.kind();
-                    let is_text = ["content", "fragment", "text"]
-                        .iter()
-                        .any(|name| kind.contains(name));
-                    match child.is_named() && is_text {
-                        true => nodes.push(child),
-                        false => not_text.push(child.byte_range()),
-                    }
-                }
-            }
-            not_text.sort_by_key(|range| range.start);
-            literals.push(Literal {
+        if touches
+            && (!parents.is_empty()
+                || is_string_kind(node.kind())
+                || is_heredoc_marker_kind(node.kind()))
+        {
+            nodes.push(InjectedNode {
+                language,
+                kind: node.kind().to_string(),
+                named: node.is_named(),
                 range: node.byte_range(),
-                not_text,
+                parent: parents.last().copied(),
             });
+            if cursor.goto_first_child() {
+                parents.push(nodes.len() - 1);
+                continue;
+            }
         } else if touches && cursor.goto_first_child() {
             continue;
         }
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
-                return literals;
+                return nodes;
             }
+            parents.pop();
         }
     }
 }
 
 /// The words of `source`, the bytes `span` of a string, without its delimiters,
 /// escapes or `{}` holes. The tree says what those are in a string of the host
-/// language that it has the parts of, `literal`. Otherwise, in a string it has
-/// as one token or that's in an injected language, they're told from the text.
-/// `c_like` is for the `\x` of C and C++.
-fn string_text(
+/// language that it has the parts of, `literal`, host or injected. Otherwise, in
+/// a string it has as one token, they're told from the text, by the rules of the
+/// literal's language, or of `host`, the buffer's, with no literal.
+pub(crate) fn string_text(
     source: &str,
     span: Range<usize>,
     literal: Option<&Literal>,
-    c_like: bool,
+    host: &str,
 ) -> Vec<Range<usize>> {
+    let language = literal.map_or(host, |it| it.language);
+    let c_like = matches!(language, "c" | "cpp");
     let not_text = literal.map_or(&[][..], |it| &it.not_text);
     let first = not_text.partition_point(|cut| cut.end <= span.start);
     let mut pieces = Vec::new();
@@ -419,20 +571,27 @@ fn string_text(
             let piece = piece.start - span.start..piece.end - span.start;
             let opens = starts && piece.start == 0;
             let closes = ends && piece.end == source.len();
-            text_of_piece(source, piece, opens, closes, not_text.is_empty())
+            text_of_piece(
+                source,
+                piece,
+                opens,
+                closes,
+                not_text.is_empty().then_some(language),
+            )
         })
         .collect()
 }
 
 /// `piece` of a string's `source` in the pieces it has for words: less its
 /// delimiters if it `opens` or `closes` the string, its `{}` holes, and with
-/// `escapes` its escapes, unless it opens as a raw string.
+/// `escapes`, the language whose escapes they are, its escapes, unless it opens
+/// as a raw string.
 fn text_of_piece(
     source: &str,
     piece: Range<usize>,
     opens: bool,
     closes: bool,
-    escapes: bool,
+    escapes: Option<&str>,
 ) -> Vec<Range<usize>> {
     let start = match opens {
         true => piece.start + string_open(&source[piece.clone()]),
@@ -445,7 +604,7 @@ fn text_of_piece(
         }
         false => piece.end,
     };
-    let escapes = escapes && !is_raw_string(&source[piece.start..start]);
+    let escapes = escapes.filter(|_| !is_raw_string(&source[piece.start..start]));
     let mut pieces = Vec::new();
     let mut from = start;
     let mut search = start;
@@ -469,8 +628,7 @@ fn text_of_piece(
                 }
                 close
             }
-            false if !escapes => None,
-            false => Some(escape_len(&source[at..end])),
+            false => escapes.map(|language| escape_len(language, &source[at..end])),
         };
         // A brace with no `}` on its line is just a brace.
         let Some(cut) = cut else {
@@ -488,17 +646,20 @@ fn text_of_piece(
         .collect()
 }
 
-/// How long the escape `text` starts with is, its backslash included: with the
-/// digits of `\x41`, `\u00e9`, `\U000000e9` or `\101`, a `\x`'s being as many as
-/// follow, and otherwise just the character after the backslash. A `\u{e9}`'s
-/// braces are a hole's.
-fn escape_len(text: &str) -> usize {
+/// How long the escape `text` of a string in `language` starts with is, its
+/// backslash included: with the digits of `\x41`, `\u00e9`, `\U000000e9` or
+/// `\101`, and otherwise just the character after the backslash. A `\x` in C
+/// and C++ takes as many digits as follow, and elsewhere two; a `\u` takes four
+/// and a `\U` eight, where the language has them. A `\u{e9}`'s braces are a
+/// hole's.
+fn escape_len(language: &str, text: &str) -> usize {
     let Some(kind) = text[1..].chars().next() else {
         return 1;
     };
     let after = text[1 + kind.len_utf8()..].chars();
     let more = match kind {
-        'x' => after.take_while(char::is_ascii_hexdigit).count(),
+        'x' if matches!(language, "c" | "cpp") => after.take_while(char::is_ascii_hexdigit).count(),
+        'x' => after.take(2).take_while(char::is_ascii_hexdigit).count(),
         'u' => after.take(4).take_while(char::is_ascii_hexdigit).count(),
         'U' => after.take(8).take_while(char::is_ascii_hexdigit).count(),
         '0'..='7' => after.take(2).take_while(|c| matches!(c, '0'..='7')).count(),

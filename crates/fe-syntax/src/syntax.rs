@@ -593,6 +593,15 @@ impl Syntax {
         ))
     }
 
+    /// The nodes overlapping `range` in the trees of the injected layers kept,
+    /// which are those highlighting `range` or near it just parsed: the token
+    /// boundaries of injected languages, as [`Syntax::tree`] gives the host's.
+    /// Each layer's nodes come in order of where they start, a parent before its
+    /// children. Nothing is parsed here.
+    pub fn injected_nodes(&self, range: Range<usize>) -> Vec<crate::InjectedNode> {
+        self.cache.borrow().layers.nodes(&range)
+    }
+
     /// The languages and ranges of the injected layers kept, sorted.
     #[cfg(test)]
     pub(crate) fn layers(&self) -> Vec<injection::LayerKey> {

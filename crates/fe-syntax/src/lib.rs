@@ -58,6 +58,7 @@ pub use fold::{fold_range_at, fold_ranges, fold_scopes};
 pub use highlight::{Highlight, HighlightSpan, Highlights, resolve_theme};
 pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};
 pub use indent::{IndentSuggestion, closer_outdents, suggest_indent};
+pub use injection::InjectedNode;
 pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,
     loaded_language,

@@ -8,12 +8,15 @@ use std::{
 
 use fe_buffer::Buffer;
 use fe_config::settings::SpellScope;
-use fe_syntax::{Highlight, HighlightSpan, Syntax, language_by_name, loaded_language};
+use fe_syntax::{
+    Highlight, HighlightSpan, InjectedNode, Syntax, language_by_name, loaded_language,
+};
 
 use crate::{
     spell::tokenize,
     spell_ranges::{
-        MAX_SPELLABLE_BYTES, checked_spellable_ranges, raw_html, spellable_ranges, words_in_spans,
+        MAX_SPELLABLE_BYTES, checked_spellable_ranges, literals_in, raw_html, spellable_ranges,
+        string_text, words_in_spans,
     },
 };
 
@@ -941,4 +944,147 @@ fn nothing_here_parses() {
         let ranges = found(&syntax, &buffer, &ALL, 0..9);
         assert_eq!(ranges.len(), 1, "{language}: {ranges:?}");
     }
+}
+
+/// Tokens of an injected language are found whole from either viewport edge,
+/// by the layer's own tree: an escape or a comment's rows don't cut them short.
+#[test]
+fn injected_tokens_expand_whole_at_both_viewport_edges() {
+    let html = "\
+<script>
+let a = `one \\x41 two
+three four`;
+/* c1
+ c2
+ c3 */
+</script>
+";
+    let buffer = Buffer::new(html);
+    let syntax = parsed("html", &buffer);
+    language_by_name("javascript").unwrap();
+    let at = |rows: Range<u32>| found(&syntax, &buffer, &ALL, rows);
+    // The escape in row 1 splits the string's highlights; row 2 is the bottom
+    // edge of the string, and row 1 the top.
+    let string = ["one", "two\nthree four"];
+    assert_eq!(at(2..3), string);
+    assert_eq!(at(1..2), string);
+    let block = ["c1", "c2", "c3"];
+    assert_eq!(at(4..5), block);
+    assert_eq!(at(3..4), block);
+    assert_eq!(at(5..6), block);
+    assert!(at(0..1).is_empty());
+    assert!(at(6..7).is_empty());
+}
+
+/// A heredoc's markers are names, not words, in the host and in an injected
+/// shell, and its text keeps its quotes.
+#[test]
+fn heredoc_markers_are_not_words() {
+    let strings = |l: &str, s: &str| found_all(l, s, &[SpellScope::Strings]);
+    assert_eq!(
+        strings("bash", "cat <<EOF\nhello \"words\"\nEOF\n"),
+        ["hello \"words\""]
+    );
+    assert_eq!(
+        strings("bash", "cat <<'MARKER'\nhello words\nMARKER\n"),
+        ["hello words"]
+    );
+    assert!(strings("make", "all:\n\tcat <<MARKER\n").is_empty());
+}
+
+/// An injected language's escapes are that language's: a `\x` takes two digits
+/// in JavaScript and as many as follow in C.
+#[test]
+fn escape_widths_follow_the_language_of_the_string() {
+    let source = "\"a \\x41bad\"";
+    let words = |host: &str| -> Vec<&str> {
+        string_text(source, 0..source.len(), None, host)
+            .into_iter()
+            .map(|range| &source[range])
+            .filter(|piece| !piece.is_empty())
+            .collect()
+    };
+    assert_eq!(words("javascript"), ["a", "bad"]);
+    assert_eq!(words("python"), ["a", "bad"]);
+    assert_eq!(words("c"), ["a"]);
+    // In a layer's tree, by the layer's language.
+    let html = "<script>\nlet a = \"hi \\x41bad words\";\n</script>\n";
+    assert_eq!(
+        found_all("html", html, &[SpellScope::Strings]),
+        ["hi", "bad words"]
+    );
+}
+
+fn node(
+    language: &'static str,
+    kind: &str,
+    named: bool,
+    range: Range<usize>,
+    parent: Option<usize>,
+) -> InjectedNode {
+    InjectedNode {
+        language,
+        kind: kind.to_string(),
+        named,
+        range,
+        parent,
+    }
+}
+
+/// C++'s `R"tag(` and `)tag"` are the delimiters of a raw string, however long
+/// the tag, when the tree is an injected layer's.
+#[test]
+fn injected_named_raw_string_delimiters_are_cut() {
+    let source = "R\"tag(hello words)tag\"";
+    let nodes = [
+        node("cpp", "raw_string_literal", true, 0..source.len(), None),
+        node("cpp", "\"", false, 0..2, Some(0)),
+        node("cpp", "raw_string_delimiter", true, 2..5, Some(0)),
+        node("cpp", "(", false, 5..6, Some(0)),
+        node("cpp", "raw_string_content", true, 6..17, Some(0)),
+        node("cpp", ")", false, 17..18, Some(0)),
+        node("cpp", "raw_string_delimiter", true, 18..21, Some(0)),
+        node("cpp", "\"", false, 21..22, Some(0)),
+    ];
+    let literals = literals_in(&nodes);
+    assert_eq!(literals.len(), 1);
+    let pieces = string_text(source, 0..source.len(), literals.first(), "html");
+    let found: Vec<_> = pieces.into_iter().map(|range| &source[range]).collect();
+    assert_eq!(found, ["hello words"]);
+}
+
+#[cfg(all(feature = "php", feature = "cpp"))]
+#[test]
+fn named_raw_strings_in_an_injected_heredoc() {
+    language_by_name("cpp").unwrap();
+    let php = "<?php\n$a = <<<cpp\nauto b = R\"tag(hello words)tag\";\ncpp;\n";
+    assert_eq!(
+        found_all("php", php, &[SpellScope::Strings]),
+        ["hello words"]
+    );
+}
+
+/// What is a string is told by the grammar's node kinds, whole: a kind that only
+/// has "string" in its name is not one.
+#[test]
+fn literal_structure_comes_from_node_kinds() {
+    let nodes = [
+        node("ruby", "string_array", true, 0..20, None),
+        node("ruby", "string_array_item", true, 0..4, Some(0)),
+        node("c", "system_lib_string", true, 30..40, None),
+        node("c", "concatenated_string", true, 50..70, None),
+    ];
+    assert!(literals_in(&nodes).is_empty());
+    // Python's forms: delimiters, the interpolation and its format are cuts.
+    let strings = |s: &str| found_all("python", s, &[SpellScope::Strings]);
+    assert_eq!(strings("a = f'x {y!r:>10} words'\n"), ["x", "words"]);
+    assert_eq!(
+        strings("a = 'one words' \"two words\"\n"),
+        ["one words", "two words"]
+    );
+    assert_eq!(
+        strings("a = rb'raw words'\nb = u\"uni words\"\n"),
+        ["raw words", "uni words"]
+    );
+    assert_eq!(strings("a = '''tri words'''\n"), ["tri words"]);
 }
