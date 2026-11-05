@@ -508,14 +508,15 @@ const DEFS: &[Def] = &[
         injections: Some(include_str!("../queries/go-injections.scm")),
         hidden: false,
     },
-    // printf directives, injected into Go format strings.
+    // Go format strings, injected for their verbs. The grammar only parses the
+    // layer: src/verbs.rs finds the verbs, as the C grammar misreads Go's.
     #[cfg(feature = "printf")]
     Def {
         name: "printf",
         extensions: &[],
         file_names: &[],
         grammar: || tree_sitter_printf::LANGUAGE.into(),
-        highlights: || &[include_str!("../queries/printf.scm")],
+        highlights: || &[],
         earlier_patterns_win: false,
         injections: None,
         hidden: true,

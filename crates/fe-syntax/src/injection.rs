@@ -433,14 +433,18 @@ impl Painter<'_> {
             let Some(layer) = self.layer(&injection) else {
                 continue;
             };
-            let (own, finished) = highlight_query_finished(
-                injection.language,
-                self.text,
-                &layer,
-                self.range.clone(),
-                injection.language.local_patterns,
-                self.deadline,
-            );
+            let (own, finished) = if injection.language.name() == "printf" {
+                (self.verbs(&injection.ranges), true)
+            } else {
+                highlight_query_finished(
+                    injection.language,
+                    self.text,
+                    &layer,
+                    self.range.clone(),
+                    injection.language.local_patterns,
+                    self.deadline,
+                )
+            };
             self.complete &= finished;
             let own = self.paint(
                 injection.language,
@@ -450,6 +454,20 @@ impl Painter<'_> {
                 own,
             );
             spans = overlay(spans, clip(own, &injection.ranges));
+        }
+        spans
+    }
+
+    /// The Go format verbs in a `printf` layer's `ranges`, found by
+    /// [`crate::verbs`] rather than the C grammar's query.
+    fn verbs(&self, ranges: &[Range<usize>]) -> Vec<Painted> {
+        let mut spans = Vec::new();
+        for range in ranges {
+            let bytes: Vec<u8> = chunks(self.text, range.clone())
+                .flatten()
+                .copied()
+                .collect();
+            spans.extend(crate::verbs::scan(&bytes, range.start));
         }
         spans
     }

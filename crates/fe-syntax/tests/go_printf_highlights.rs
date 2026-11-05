@@ -95,15 +95,18 @@ fn non_format_calls_stay_plain() {
 }
 
 #[test]
-fn directives_with_whitespace_stay_plain() {
-    for call in ["fmt.Errorf(\"%w happened\", e)", "fmt.Errorf(\"%w: x\", e)"] {
+fn go_verbs_followed_by_text() {
+    for (call, verb) in [
+        ("fmt.Errorf(\"%w happened\", e)", "%w"),
+        ("fmt.Errorf(\"%w: x\", e)", "%w"),
+        ("fmt.Printf(\"%t ok\", b)", "%t"),
+    ] {
+        assert_eq!(placeholders(call), vec![verb.to_string()], "{call}");
         let found = spans(&format!("package p\nfunc f() {{\n\t{call}\n}}\n"));
         assert!(
-            !found.iter().any(|(_, h)| *h == "string.placeholder"),
-            "{call}: {found:?}"
-        );
-        assert!(
-            !found.iter().any(|(_, h)| *h == "escape"),
+            found
+                .iter()
+                .any(|(t, h)| *h == "string" && !t.contains('%') && t.len() > 1),
             "{call}: {found:?}"
         );
     }
@@ -112,6 +115,36 @@ fn directives_with_whitespace_stay_plain() {
         found.contains(&("%d".to_string(), "string.placeholder")),
         "{found:?}"
     );
+}
+
+#[test]
+fn space_flag_is_part_of_the_verb() {
+    assert_eq!(
+        placeholders("fmt.Printf(\"% d\", n)"),
+        vec!["% d".to_string()]
+    );
+}
+
+#[test]
+fn c_size_modifiers_are_not_go_verbs() {
+    assert_eq!(
+        placeholders("fmt.Printf(\"%ld %zu\", a, b)"),
+        vec!["%l".to_string(), "%z".to_string()]
+    );
+}
+
+#[test]
+fn appendf_format_is_the_second_argument() {
+    assert_eq!(
+        placeholders("fmt.Appendf(b, \"%d\", n)"),
+        vec!["%d".to_string()]
+    );
+    assert_eq!(
+        placeholders("fmt.Appendf(b, `%d`, n)"),
+        vec!["%d".to_string()]
+    );
+    assert!(placeholders("fmt.Appendf(\"%d\", n)").is_empty());
+    assert!(placeholders("fmt.Appendf(b, format, \"%d\")").is_empty());
 }
 
 #[test]

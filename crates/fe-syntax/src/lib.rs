@@ -46,6 +46,7 @@ mod runtime;
 mod select;
 mod syntax;
 mod textobject;
+mod verbs;
 
 pub use brackets::{
     BracketDepth, BracketPair, bracket_depths, bracket_pair, enclosing_bracket_pair,
