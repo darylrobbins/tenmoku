@@ -42,5 +42,5 @@ mod bindings {
 }
 
 pub use bindings::*;
-pub use fastedit::editor::{buffer, decorations, status};
+pub use fastedit::editor::{buffer, decorations, diagnostics, status};
 pub use kiln::extension::{commands, events, fs, log, net, process, secrets, types};

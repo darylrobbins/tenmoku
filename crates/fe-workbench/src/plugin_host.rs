@@ -2096,12 +2096,15 @@ impl Drop for HostedPlugin {
 
 /// The editor world's imports and WASI's, against [`Data`].
 fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
-    use fe_plugin::fastedit::editor::{buffer, decorations, status};
+    use fe_plugin::fastedit::editor::{buffer, decorations, diagnostics, status};
     let mut linker = Linker::<Data>::new(engine.engine());
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     bindings::add_to_linker(&mut linker, |data| &mut data.host.kiln)?;
     buffer::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;
     decorations::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
+        &mut data.host
+    })?;
+    diagnostics::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
         &mut data.host
     })?;
     status::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;

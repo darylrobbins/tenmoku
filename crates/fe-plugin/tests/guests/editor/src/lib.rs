@@ -9,6 +9,9 @@
 //! - `edit`, `<buffer> <version>`, then one line per edit, `<start> <end> <text>`: logs the new
 //!   version.
 //! - `propose`, `<buffer> <version> <title>`, then the edits as for `edit`.
+//! - `diagnose`, `<buffer> <version> <set>`, then one line per diagnostic,
+//!   `<start> <end> <severity> <message>`, severity `error`, `warning`, `info` or `hint`.
+//! - `undiagnose`, `<buffer> <set>`.
 
 wit_bindgen::generate!({
     world: "fastedit:editor/editor-extension",
@@ -18,6 +21,8 @@ wit_bindgen::generate!({
 });
 
 use fastedit::editor::buffer::{self, ProposedChange, Range, TextEdit};
+use fastedit::editor::diagnostics;
+use kiln::extension::types::{Diagnostic, Severity};
 use kiln::extension::log::{Level, log};
 
 struct EditorGuest;
@@ -61,6 +66,16 @@ impl exports::kiln::extension::command_handler::Guest for EditorGuest {
                     edits: edits(lines)?,
                 })?;
             }
+            "diagnose" => {
+                let buffer = number(head.next())?;
+                let version = number(head.next())?;
+                let set = head.next().unwrap_or_default().to_owned();
+                diagnostics::publish(buffer, version, &set, &found(lines)?)?;
+            }
+            "undiagnose" => {
+                let buffer = number(head.next())?;
+                diagnostics::clear(buffer, head.next().unwrap_or_default())?;
+            }
             _ => return Err(Error::NotFound(id)),
         }
         Ok(())
@@ -88,6 +103,33 @@ fn edits<'a>(lines: impl Iterator<Item = &'a str>) -> Result<Vec<TextEdit>, Erro
                     end: number(words.next())?,
                 },
                 text: words.next().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// One diagnostic per line: `<start> <end> <severity> <message>`.
+fn found<'a>(lines: impl Iterator<Item = &'a str>) -> Result<Vec<Diagnostic>, Error> {
+    lines
+        .map(|line| {
+            let mut words = line.splitn(4, ' ');
+            let range = Range {
+                start: number(words.next())?,
+                end: number(words.next())?,
+            };
+            let severity = match words.next().unwrap_or_default() {
+                "error" => Severity::Error,
+                "warning" => Severity::Warning,
+                "info" => Severity::Info,
+                "hint" => Severity::Hint,
+                other => return Err(Error::InvalidArgument(format!("{other:?} isn't a severity"))),
+            };
+            Ok(Diagnostic {
+                range,
+                severity,
+                message: words.next().unwrap_or_default().to_owned(),
+                source: None,
+                code: None,
             })
         })
         .collect()
