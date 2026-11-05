@@ -58,6 +58,7 @@ mod path_commands;
 mod peek;
 mod persist;
 mod picker;
+mod plugin_bridge;
 mod plugin_host;
 mod plugin_manage;
 mod plugin_prompt;

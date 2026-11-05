@@ -23,8 +23,9 @@
 //!   live: commands on the host's [`CommandHost`], files in the trusted roots
 //!   of the windows open at load (a plugin with an `fs` grant reloads when
 //!   they change), secrets in the platform's secret store and the network
-//!   through fe-net. The editor's slices answer `unimplemented` until their
-//!   cards land.
+//!   through fe-net. Of the editor's slices, the buffers and the editor's
+//!   commands are reached through [`crate::plugin_bridge`]; the rest answer
+//!   `unimplemented` until their cards land.
 //! - **Reload.** A changed manifest or component reloads the plugin, its old
 //!   version shut down before the new one's `init`; with the same grants
 //!   nothing is asked. An update that asks for more keeps the old version
@@ -79,7 +80,7 @@ use kiln::core::{
 use kiln_plugin::{
     bindings::{self, Level, LogSink, kiln::extension::events::Event},
     cache::ComponentCache,
-    commands::{CallPlugin, CommandHost, Dispatcher, PluginCommand, Request},
+    commands::{CallPlugin, CommandHost, PluginCommand},
     compat,
     engine::PluginEngine,
     fs::Workspace,
@@ -103,6 +104,7 @@ pub use kiln_plugin::manifest::plugin_kind;
 
 use crate::{
     KEY_CONTEXT, PendingPluginGrant, PluginAnswer, PluginAsk, RootChanged, TrustChanged, Workbench,
+    plugin_bridge::{Bridge, CallDeadline},
     show_plugin_prompt,
 };
 
@@ -666,6 +668,11 @@ pub(crate) struct PluginHost {
     slots: HashMap<String, Slot>,
     /// Made with the first load, once the app's commands are registered.
     commands: Option<CommandHost>,
+    /// The plugins' way to the buffers and the editor's commands, made
+    /// with `commands`.
+    bridge: Option<Bridge>,
+    /// What each plugin runs under.
+    pub(crate) limits: Limits,
     /// The trusted roots of the open windows.
     workspace: Vec<PathBuf>,
     evaluating: Option<Task<()>>,
@@ -841,6 +848,8 @@ fn host_mut(cx: &mut App) -> &mut PluginHost {
             found: Vec::new(),
             slots: HashMap::new(),
             commands: None,
+            bridge: None,
+            limits: Limits::default(),
             workspace: Vec::new(),
             evaluating: None,
             listed: HashSet::new(),
@@ -1283,18 +1292,22 @@ fn start_load(id: &str, cx: &mut App) {
         .commands
         .is_none()
         .then(|| builtin_commands(cx));
-    let host = cx.global_mut::<PluginHost>();
     if let Some(builtin) = builtin {
-        let commands = CommandHost::new(builtin.iter().cloned(), Arc::new(NoInvoke));
+        let (bridge, jobs) = Bridge::new();
+        let commands = CommandHost::new(builtin.iter().cloned(), bridge.dispatcher());
         let namespaces: HashSet<&str> = builtin.iter().map(CommandId::namespace).collect();
         namespaces
             .into_iter()
             .for_each(|namespace| commands.reserve(namespace));
         commands.set_workspace(Workspace {
-            roots: host.workspace.clone(),
+            roots: cx.global::<PluginHost>().workspace.clone(),
         });
+        crate::plugin_bridge::serve(jobs, &commands, cx);
+        let host = cx.global_mut::<PluginHost>();
         host.commands = Some(commands);
+        host.bridge = Some(bridge);
     }
+    let host = cx.global_mut::<PluginHost>();
     let old = withdraw(id, host);
     let dirs = host.dirs.clone();
     if host.cache.is_none() {
@@ -1305,6 +1318,8 @@ fn start_load(id: &str, cx: &mut App) {
     let context = LoadContext {
         cache: host.cache.clone(),
         commands: host.commands.clone().expect("made above"),
+        bridge: host.bridge.clone().expect("made above"),
+        limits: host.limits,
         secrets: host.secrets.clone(),
         secrets_index: dirs
             .as_ref()
@@ -1435,6 +1450,15 @@ fn loaded_plugin(
     drive(id, cx);
 }
 
+/// Plugin `id`'s running load, for a test to call into.
+#[cfg(test)]
+pub(crate) fn plugin_handle(id: &str, cx: &App) -> Option<kiln_plugin::commands::PluginHandle> {
+    let host = cx.try_global::<PluginHost>()?;
+    let handle: kiln_plugin::commands::PluginHandle =
+        host.slots.get(id)?.loaded.as_ref()?.plugin.clone();
+    Some(handle)
+}
+
 /// Load `load` of plugin `id` was unloaded by a call into it, as
 /// `diagnostic` says: it stops, its commands withdrawn.
 fn stopped_running(id: &str, load: u64, diagnostic: Diagnostic, cx: &mut App) {
@@ -1476,23 +1500,12 @@ fn builtin_commands(cx: &App) -> Vec<CommandId> {
     ids
 }
 
-/// Answers each command a plugin invokes as not run: invoking the editor's
-/// commands is a later card's.
-struct NoInvoke;
-
-impl Dispatcher for NoInvoke {
-    fn dispatch(&self, request: Request) {
-        log::debug!(
-            "not running {} for a plugin: plugins can't invoke commands yet",
-            request.invocation().command
-        );
-    }
-}
-
 /// What a load needs from the host.
 struct LoadContext {
     cache: Option<Arc<ComponentCache>>,
     commands: CommandHost,
+    bridge: Bridge,
+    limits: Limits,
     secrets: Arc<dyn SecretStore>,
     secrets_index: Option<PathBuf>,
     /// Where a spawn grant whose program changed is suspended.
@@ -1525,7 +1538,7 @@ impl LoadContext {
         }
         let id = &artifact.manifest.id;
         let engine = PluginEngine::shared().map_err(|error| failed(error.to_string()))?;
-        let limits = Limits::default();
+        let limits = self.limits;
         let mut kiln = bindings::HostState::new(guest_log(id, self.record.clone()));
         kiln.commands = kiln_plugin::commands::State::new(id, grants, &self.commands)
             .map_err(|error| failed(error.to_string()))?;
@@ -1541,8 +1554,11 @@ impl LoadContext {
             Some(store) => process.recorded_in(store.clone(), id),
             None => process,
         };
+        let deadline = CallDeadline::default();
+        let buffers = self.bridge.buffers(deadline.clone(), limits.call_deadline);
         let host = fe_plugin::HostState {
             kiln,
+            editor: fe_plugin::editor::State::new(id, grants, &limits, buffers),
             ..fe_plugin::HostState::default()
         };
         let plugin = HostedPlugin::load(
@@ -1553,6 +1569,7 @@ impl LoadContext {
             grants,
             limits,
             host,
+            deadline,
             &self.workspace,
             self.record.clone(),
             self.ticker,
@@ -1936,6 +1953,7 @@ impl HostedPlugin {
         grants: &fe_command::Grants,
         limits: Limits,
         host: fe_plugin::HostState,
+        deadline: CallDeadline,
         workspace: &Workspace,
         record: Record,
         ticker: fn(&PluginEngine) -> Result<(), String>,
@@ -1983,6 +2001,7 @@ impl HostedPlugin {
             table: ResourceTable::new(),
             limiter: StoreLimiter::new(&limits),
             deadline: None,
+            call_deadline: deadline,
             timed_out: false,
         };
         let guest = Guest {
@@ -2098,6 +2117,8 @@ struct Data {
     limiter: StoreLimiter,
     /// When the running call must end.
     deadline: Option<Instant>,
+    /// The same, for the buffers' imports, which wait on the main thread.
+    call_deadline: CallDeadline,
     /// Whether the epoch stopped the running call at its deadline.
     timed_out: bool,
 }
@@ -2255,6 +2276,7 @@ impl Guest {
         let data = self.store.data_mut();
         data.deadline = deadline;
         data.host.kiln.deadline = deadline;
+        data.call_deadline.set(deadline);
         data.timed_out = false;
         data.limiter.clear_refused();
         self.store.set_epoch_deadline(1);
@@ -2280,6 +2302,7 @@ impl Guest {
         let data = self.store.data_mut();
         data.deadline = None;
         data.host.kiln.deadline = None;
+        data.call_deadline.set(None);
         let timed_out = data.timed_out || overran;
         match returned {
             Some(Ok(returned)) if !timed_out => Ok(returned),

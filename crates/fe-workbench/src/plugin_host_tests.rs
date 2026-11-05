@@ -1048,11 +1048,13 @@ fn no_deadline_ticker_no_plugin(cx: &mut TestAppContext) {
     // And a load without one refuses to run the plugin.
     let plugins = start(cx);
     let tool = plugins.install(TOOL, "1.0.0", COMMANDS, &["commands"]);
-    let commands =
-        kiln_plugin::commands::CommandHost::new(Vec::new(), std::sync::Arc::new(super::NoInvoke));
+    let (bridge, _) = crate::plugin_bridge::Bridge::new();
+    let commands = kiln_plugin::commands::CommandHost::new(Vec::new(), bridge.dispatcher());
     let context = cx.update(|cx| super::LoadContext {
         cache: None,
         commands,
+        bridge,
+        limits: kiln_plugin::limits::Limits::default(),
         secrets: std::sync::Arc::new(kiln::core::secrets::MemoryStore::new()),
         secrets_index: None,
         store: None,

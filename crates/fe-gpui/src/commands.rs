@@ -8,14 +8,16 @@ use std::{
     cell::{Cell, RefCell},
     ops::Range,
     ops::RangeInclusive,
+    path::PathBuf,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use fe_buffer::{BufferSnapshot, Version};
 use fe_command::{
     Actor, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError, Dispatched,
-    Effect, Invocation, Registry, Source, Value,
+    Effect, Grants, Invocation, PluginPolicy, Registry, Source, Value,
 };
 use fe_editor::{
     CommentTokens, IndentSuggestion,
@@ -47,6 +49,34 @@ const APP_NAME: &str = fe_config::APP_NAME;
 thread_local! {
     /// Built once: GPUI runs on one thread, and handlers aren't `Sync`.
     static EDITOR_COMMANDS: Rc<Registry<Editor>> = Rc::new(editor_registry());
+    /// What plugins' invocations of the editor's commands are checked
+    /// against ([`set_plugin_policy`]).
+    static PLUGIN_POLICY: RefCell<Option<Arc<dyn PluginPolicy>>> = const { RefCell::new(None) };
+}
+
+/// Checks plugins' invocations of the editor's commands against `policy`,
+/// the app's plugin host. Until it's set every plugin is refused, as one
+/// the host doesn't know.
+pub fn set_plugin_policy(policy: Arc<dyn PluginPolicy>) {
+    PLUGIN_POLICY.with(|installed| *installed.borrow_mut() = Some(policy));
+}
+
+/// The editor registry's [`PluginPolicy`]: whatever [`set_plugin_policy`]
+/// installed, as the registry is built once, before the plugin host is.
+struct InstalledPolicy;
+
+impl PluginPolicy for InstalledPolicy {
+    fn grants(&self, plugin: &str) -> Option<Grants> {
+        PLUGIN_POLICY.with(|installed| installed.borrow().as_ref()?.grants(plugin))
+    }
+
+    fn workspace_roots(&self) -> Vec<PathBuf> {
+        PLUGIN_POLICY.with(|installed| {
+            (installed.borrow().as_ref())
+                .map(|policy| policy.workspace_roots())
+                .unwrap_or_default()
+        })
+    }
 }
 
 /// Shows the hover popover at the caret ([`crate::hover`]).
@@ -64,9 +94,11 @@ const SAVE: &str = "editor.save";
 /// the completion menu's and the ghost text's in their own
 /// ([`completion_menu`], [`ghost_text`]). The
 /// view's do nothing to the model: once one has dispatched, the view does
-/// its work ([`EditorView::run_command`]).
+/// its work ([`EditorView::run_command`]). Plugins are checked against
+/// the [`InstalledPolicy`].
 fn editor_registry() -> Registry<Editor> {
     let mut registry = fe_editor::commands::registry();
+    registry.set_plugin_policy(Arc::new(InstalledPolicy));
     for (id, title) in [
         (SHOW_HOVER, "Show Hover"),
         (signature_help::SHOW, "Show Signature Help"),
