@@ -125,7 +125,12 @@ fn method(method: Method) -> http::Method {
     }
 }
 
-/// The plugin's headers, less [`DROPPED_REQUEST_HEADERS`]. A malformed one is an error.
+/// The most headers a plugin's request may carry. `HeaderMap` panics past its capacity (32 768
+/// entries), so this leaves ample room for the ones fe-net adds (`Host`, `Connection`, ...).
+const MAX_REQUEST_HEADERS: usize = 1024;
+
+/// The plugin's headers, less [`DROPPED_REQUEST_HEADERS`]. A malformed one, or more than
+/// [`MAX_REQUEST_HEADERS`], is an error.
 fn request_headers(headers: &[(String, String)]) -> Result<HeaderMap, Error> {
     let mut map = HeaderMap::new();
     for (name, value) in headers {
@@ -136,7 +141,12 @@ fn request_headers(headers: &[(String, String)]) -> Result<HeaderMap, Error> {
         }
         let value = HeaderValue::from_str(value)
             .map_err(|error| Error::InvalidArgument(format!("header {name}: {error}")))?;
-        map.append(name, value);
+        let too_many =
+            || Error::InvalidArgument(format!("more than {MAX_REQUEST_HEADERS} request headers"));
+        if map.len() >= MAX_REQUEST_HEADERS {
+            return Err(too_many());
+        }
+        map.try_append(name, value).map_err(|_| too_many())?;
     }
     Ok(map)
 }

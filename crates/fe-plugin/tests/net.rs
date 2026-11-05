@@ -112,3 +112,22 @@ fn the_fe_net_backend_fetches_from_a_local_server() {
     assert!(matches!(bypassed, Err(Error::Denied(_))), "{bypassed:?}");
     assert!(listener.accept().is_err(), "a connection was made");
 }
+
+#[test]
+fn excessive_request_headers_are_an_invalid_argument_not_a_panic() {
+    let headers = (0..40_000)
+        .map(|i| (format!("x-h{i}"), "v".to_owned()))
+        .collect();
+    let request = Request {
+        method: Method::Get,
+        url: "http://127.0.0.1:9/x".into(),
+        headers,
+        body: None,
+        timeout_ms: Some(1_000),
+    };
+    let result = net(&["net:127.0.0.1"]).fetch(request);
+    assert!(
+        matches!(result, Err(Error::InvalidArgument(_))),
+        "{result:?}"
+    );
+}
