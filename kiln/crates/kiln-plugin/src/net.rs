@@ -19,6 +19,10 @@
 //!   A redirect to another origin drops the request's credentials, and one that turns the
 //!   request into a `GET` drops its body.
 //! - The backend reports the host it connected to, which must equal the host checked.
+//! - A fetch counts with the call's program runs against the [`PROGRAM_DEADLINE`](crate::limits::PROGRAM_DEADLINE) share (10 s),
+//!   not against the 100 ms call deadline: its wall time moves that deadline back, and its
+//!   timeout is capped at what is left of the share. Outside a call nothing is capped or charged.
+//! - A response arriving after the fetch's timeout is a timeout error.
 //! - A response body over [`Limits::max_read_bytes`](crate::limits::Limits) is an error.
 
 use std::fmt;
@@ -121,9 +125,20 @@ impl State {
 
     /// Sends `request` if the grants reach its host, following redirects to granted hosts.
     pub fn fetch(&mut self, request: Request) -> Result<Response, Error> {
+        self.fetch_within(request, None)
+    }
+
+    /// [`Self::fetch`], its timeout (the request's own, or [`DEFAULT_TIMEOUT`]) capped at
+    /// `share`, what is left of the call's program share, if a call is running.
+    pub fn fetch_within(
+        &mut self,
+        request: Request,
+        share: Option<Duration>,
+    ) -> Result<Response, Error> {
         let timeout = request
             .timeout_ms
             .map_or(DEFAULT_TIMEOUT, |ms| Duration::from_millis(ms.into()));
+        let timeout = share.map_or(timeout, |share| share.min(timeout));
         let deadline = Instant::now() + timeout;
         let (mut url, host) = check(&self.grants, &request.url)?;
         let Some(backend) = &mut self.backend else {
@@ -145,6 +160,9 @@ impl State {
                 return Err(Error::Failed(format!("{} timed out", request.url)));
             }
             let received = backend.send(&outgoing)?;
+            if Instant::now() > deadline {
+                return Err(Error::Failed(format!("{} timed out", request.url)));
+            }
             if received.peer != outgoing.host {
                 return Err(Error::Denied(format!(
                     "{} connected to {}, not {}",
@@ -209,7 +227,18 @@ impl State {
 
 impl Host for HostState {
     fn fetch(&mut self, request: Request) -> Result<Response, Error> {
-        self.net.fetch(request)
+        // A fetch isn't charged to the call: its wall time moves the call's deadline back and
+        // counts against the call's program share, which also caps its timeout.
+        let started = Instant::now();
+        let share = self.program_runs.remaining();
+        let fetched = self.net.fetch_within(request, share);
+        if share.is_some() {
+            let charged = self.program_runs.charge(started.elapsed());
+            self.deadline = self
+                .deadline
+                .and_then(|deadline| deadline.checked_add(charged));
+        }
+        fetched
     }
 }
 

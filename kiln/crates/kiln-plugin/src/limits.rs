@@ -11,11 +11,12 @@ use std::time::Duration;
 use wasmtime::{ResourceLimiter, StoreLimits, StoreLimitsBuilder};
 
 /// How long one call into a plugin may run before it is interrupted and the plugin unloaded.
-/// Time spent waiting on a program the call runs isn't counted: see [`PROGRAM_DEADLINE`].
+/// Time spent waiting on a program the call runs, or on a `net.fetch`, isn't counted: both
+/// count against [`PROGRAM_DEADLINE`] instead.
 pub const CALL_DEADLINE: Duration = Duration::from_millis(100);
 
-/// How long a plugin's program runs may take, all the runs of one call together (each run is
-/// killed at the earlier of this and what is left of the call's share). The call's
+/// How long a plugin's program runs and `net.fetch`es may take, all of one call together (each
+/// run is killed, and each fetch's timeout capped, at what is left of the call's share). The call's
 /// [`CALL_DEADLINE`] doesn't count that time, so a call holds its thread at most
 /// `CALL_DEADLINE + PROGRAM_DEADLINE`.
 pub const PROGRAM_DEADLINE: Duration = Duration::from_secs(10);
