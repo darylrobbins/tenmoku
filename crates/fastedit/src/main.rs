@@ -504,6 +504,7 @@ fn main() {
         std::process::exit(error.exit_code())
     });
     let perf = cli.perf;
+    let cli_wait = cli.wait;
     how.no_ipc |= perf;
     // Over here if the running instance takes the launch, or a detached copy
     // of this process does.
@@ -547,6 +548,15 @@ fn main() {
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
+        // Never mid-`--wait` or `--perf`. The first-launch decision reads the
+        // config and state directories before the launch writes anything
+        // there, its windows' layouts included.
+        let setup = if cli_wait || perf {
+            fe_workbench::SetupLaunch::Never
+        } else {
+            fe_workbench::SetupLaunch::Normal
+        };
+        fe_workbench::begin_setup(setup, cx);
         // Paths macOS handed the app before this point (a cold launch by
         // open-document event): the first is the launch's when argv gave
         // none, so no empty window opens beside it.
@@ -727,6 +737,8 @@ fn main() {
         }
         follow_settings(launch_root.clone(), cx);
         watch_window(window, settings.clone(), cx);
+        // Once, for this first window.
+        fe_workbench::offer_setup(window, setup, cx);
         fe_workbench::set_window_opener(cx, open_window_on);
         let opened = open_files(window, files_left(files, launch_failed), cx);
         let landed = cx.spawn(async move |_| {

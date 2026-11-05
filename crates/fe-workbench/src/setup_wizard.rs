@@ -2,7 +2,8 @@
 //! [`crate::setup_wizard_model`]. It's a sheet in the window, not a tab or a
 //! palette: kiln's modal layer gives up its modal when focus leaves or the
 //! window deactivates, and a window of its own can fall behind the workbench.
-//! [`Workbench::show_setup`] puts it up, and nothing else does yet.
+//! [`Workbench::show_setup`] puts it up: [`crate::setup_launch`] on a first
+//! launch and for `app.set_up`.
 //!
 //! - A choice is written at once, off the main thread and after the one
 //!   before, so the config watcher's reload applies it to the whole window,
@@ -18,10 +19,11 @@
 //!   [`crate::setup_wizard_preview`]: tiles in each theme's own colours, and a
 //!   code sample that follows the theme and font as the choices reload.
 
-use std::{collections::HashMap, io, path::PathBuf};
+use std::{cell::Cell, collections::HashMap, io, path::PathBuf, rc::Rc};
 
 use fe_command::{ContextFrame, ContextStack, Invocation, Source, Value};
 use fe_config::first_run::{self, Outcome};
+use fe_gpui::commands::RunCommand;
 use fe_ui::{ActiveTheme as _, Button, Switch, Tooltip};
 use gpui::{
     AnyElement, App, AppContext as _, Context, FocusHandle, Global, InteractiveElement as _,
@@ -58,6 +60,14 @@ const CARD_HEIGHT: Pixels = px(560.);
 /// What's left of the window around a card too big for it.
 const CARD_MARGIN: Pixels = px(48.);
 
+/// The card's padding and border, on each side.
+const CARD_INSET: Pixels = px(25.);
+
+/// The room between the tiles and the sample, and the least the sample has
+/// beside them: with less, the sample goes under the tiles.
+const BODY_GAP: Pixels = px(16.);
+const SAMPLE_MIN_WIDTH: Pixels = px(200.);
+
 /// How tall the list of fonts is.
 const LIST_HEIGHT: Pixels = px(104.);
 
@@ -66,6 +76,8 @@ const SKIP_TOOLTIP: &str = "Keeps what you've chosen so far";
 const BACK: &str = "Back";
 const CONTINUE: &str = "Continue";
 const FINISH: &str = "Start Editing";
+const SHELL_COMMAND: &str = "Open files from Terminal with `tenmoku`";
+const INSTALL: &str = "Install";
 
 /// What's around a tile's art across its width: the focus ring's padding and
 /// border and the 2 px chosen ring, on both sides.
@@ -101,7 +113,7 @@ pub(crate) struct SetupPaths {
 
 impl Global for SetupPaths {}
 
-fn setup_paths(cx: &App) -> SetupPaths {
+pub(crate) fn setup_paths(cx: &App) -> SetupPaths {
     match cx.try_global::<SetupPaths>() {
         Some(paths) => paths.clone(),
         None if cfg!(test) => SetupPaths::default(),
@@ -116,6 +128,8 @@ fn setup_paths(cx: &App) -> SetupPaths {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Stop {
     Control(ControlId),
+    /// The Ready page's Install button, on macOS.
+    Install,
     Skip,
     Back,
     /// Continue, or on the last page Start Editing.
@@ -178,6 +192,8 @@ pub(crate) struct SetupWizard {
     writes: Option<Task<()>>,
     /// The page's body, or on Appearance the column of tiles beside the sample.
     body_scroll: ScrollHandle,
+    /// The control whose chosen tile the next frame scrolls into view.
+    reveal_tile: Rc<Cell<Option<ControlId>>>,
     font_scroll: ScrollHandle,
     swatches: Swatches,
     /// Once the workbench that's opening the sheet can be read for its pane.
@@ -236,6 +252,7 @@ impl SetupWizard {
             finished: 0,
             writes: None,
             body_scroll: ScrollHandle::new(),
+            reveal_tile: Rc::new(Cell::new(None)),
             font_scroll: ScrollHandle::new(),
             swatches: Swatches::load(),
             sample: None,
@@ -269,6 +286,9 @@ impl SetupWizard {
     fn stops(&self) -> Vec<Stop> {
         let controls = self.controls().into_iter();
         let mut stops: Vec<Stop> = controls.map(|control| Stop::Control(control.id)).collect();
+        if self.step() == Step::Ready && cfg!(target_os = "macos") {
+            stops.push(Stop::Install);
+        }
         stops.push(Stop::Skip);
         if self.page > 0 {
             stops.push(Stop::Back);
@@ -292,6 +312,12 @@ impl SetupWizard {
     /// Scrolls `id`'s control into view. On Font the body's first child holds
     /// all three.
     fn reveal(&self, id: ControlId) {
+        // A tile group may be taller than the page: the chosen tile, not
+        // the group's top, is what must show.
+        if shape(id) == Shape::Tiles {
+            self.reveal_tile.set(Some(id));
+            return;
+        }
         let row = (self.controls().iter()).position(|control| control.id == id);
         if let Some(row) = row {
             let row = if self.step() == Step::Font { 0 } else { row };
@@ -308,8 +334,11 @@ impl SetupWizard {
             .unwrap_or(0);
         let count = stops.len() as isize;
         self.stop = stops[(at as isize + by).rem_euclid(count) as usize];
-        if let Stop::Control(id) = self.stop {
-            self.reveal(id);
+        match self.stop {
+            Stop::Control(id) => self.reveal(id),
+            // The Ready page's last row, under the lead and the hints.
+            Stop::Install => self.body_scroll.scroll_to_item(2),
+            _ => {}
         }
         cx.notify();
     }
@@ -465,11 +494,24 @@ impl SetupWizard {
     /// What Space and Enter do on a button.
     fn press(&mut self, stop: Stop, window: &mut Window, cx: &mut Context<Self>) {
         match stop {
+            Stop::Install => self.install(window, cx),
             Stop::Skip => self.close(Outcome::Skipped, window, cx),
             Stop::Back => self.back(cx),
             Stop::Primary => self.primary(window, cx),
             Stop::Control(_) => {}
         }
+    }
+
+    /// Runs `app.install_shell_command` as a [`RunCommand`] from the sheet's
+    /// focus, which a click may have cleared, once this event is over.
+    fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        cx.defer_in(window, |_, window, cx| {
+            match Invocation::of("app.install_shell_command") {
+                Ok(invocation) => window.dispatch_action(Box::new(RunCommand(invocation)), cx),
+                Err(error) => log::warn!("{error}"),
+            }
+        });
     }
 
     fn space(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -656,6 +698,37 @@ impl SetupWizard {
     /// under it. A 2 px ring is on the chosen one and, around that, the focus
     /// ring while the group has the keyboard; the frames are the card's colour
     /// otherwise, so nothing moves.
+    /// An element over its tile that, once laid out, scrolls the body to show
+    /// the tile and asks for another frame.
+    fn scroll_to_tile(&self) -> impl IntoElement {
+        let (scroll, pending) = (self.body_scroll.clone(), self.reveal_tile.clone());
+        gpui::canvas(
+            move |tile, window, _| {
+                let view = scroll.bounds();
+                // Not laid out yet: try again next frame.
+                if view.size.height <= px(0.) {
+                    window.refresh();
+                    return;
+                }
+                pending.set(None);
+                let mut offset = scroll.offset();
+                let margin = px(2.);
+                if tile.top() < view.top() + margin {
+                    offset.y += view.top() + margin - tile.top();
+                } else if tile.bottom() > view.bottom() - margin {
+                    offset.y -= tile.bottom() - view.bottom() + margin;
+                } else {
+                    return;
+                }
+                scroll.set_offset(offset);
+                window.refresh();
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+
     fn tile(
         &self,
         control: &Control,
@@ -699,6 +772,9 @@ impl SetupWizard {
             .aria_selected(selected)
             .aria_position_in_set(option + 1)
             .aria_size_of_set(control.options.len())
+            .when(selected && self.reveal_tile.get() == Some(id), |tile| {
+                tile.relative().child(self.scroll_to_tile())
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.click_stop(Stop::Control(id), cx);
                 if let Some(control) = this.controls().into_iter().find(|c| c.id == id) {
@@ -884,16 +960,36 @@ impl SetupWizard {
 
     /// The Appearance page: the tiles, which scroll if they must, beside the
     /// sample, which doesn't.
-    fn render_appearance(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn render_appearance(
+        &self,
+        inner: Pixels,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         let groups: Vec<AnyElement> = (self.controls().iter())
             .map(|control| self.render_control(control, cx))
             .collect();
+        let sample = self.render_sample(cx);
+        if inner < TILES_WIDTH + BODY_GAP + SAMPLE_MIN_WIDTH {
+            // Too narrow for both side by side: the whole page scrolls, the
+            // tiles wrap to the room there is, the sample comes under them.
+            return div()
+                .id("setup-body")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .gap_3()
+                .overflow_y_scroll()
+                .track_scroll(&self.body_scroll)
+                .children(groups)
+                .child(sample.flex_none().h(SAMPLE_MIN_HEIGHT));
+        }
         div()
             .id("setup-body")
             .flex()
             .flex_1()
             .min_h_0()
-            .gap_4()
+            .gap(BODY_GAP)
             .child(
                 div()
                     .id("setup-tiles")
@@ -906,7 +1002,7 @@ impl SetupWizard {
                     .track_scroll(&self.body_scroll)
                     .children(groups),
             )
-            .child(self.render_sample(cx).flex_1().min_w_0())
+            .child(sample.flex_1().min_w(SAMPLE_MIN_WIDTH))
     }
 
     /// The Font page: the family beside the size and ligatures, and the sample
@@ -964,7 +1060,7 @@ impl SetupWizard {
 
     /// The Ready page: what the run changed, where to change it, and three
     /// hints with the keymap's keys.
-    fn render_ready(&self, cx: &App) -> Vec<AnyElement> {
+    fn render_ready(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let changed = match self.choices.changed_count() {
             0 => "Tenmoku's defaults are set".to_owned(),
             1 => "You changed 1 setting".to_owned(),
@@ -993,7 +1089,37 @@ impl SetupWizard {
                     .child(self.label("setup-settings", settings)),
             );
         let hints = div().flex().flex_col().gap_1().children(hints);
-        vec![lead.into_any_element(), hints.into_any_element()]
+        let mut parts = vec![lead.into_any_element(), hints.into_any_element()];
+        if cfg!(target_os = "macos") {
+            parts.push(self.render_shell_command(cx));
+        }
+        parts
+    }
+
+    /// The Ready page's row to install the `tenmoku` command.
+    fn render_shell_command(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors;
+        let focused = self.stop == Stop::Install;
+        let install = Button::new("setup-install-shell", INSTALL)
+            .debug_selector(|| "setup-install-shell".into())
+            .when(focused, |button| button.aria_active_descendant())
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.click_stop(Stop::Install, cx);
+                this.install(window, cx);
+            }));
+        let install = self.ring(focused, self.node(install, Role::Button, INSTALL), cx);
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .text_color(colors.text.muted)
+                    .child(self.label("setup-shell-command", SHELL_COMMAND)),
+            )
+            .child(install)
+            .into_any_element()
     }
 
     fn render_footer(&self, cx: &mut Context<Self>) -> gpui::Div {
@@ -1145,7 +1271,10 @@ impl Render for SetupWizard {
         context.add(HOLDS_ALL_KEYS);
         let step = self.step();
         let body = match step {
-            Step::Appearance => self.render_appearance(cx),
+            Step::Appearance => {
+                let card = CARD_WIDTH.min(viewport.width - CARD_MARGIN);
+                self.render_appearance(card - CARD_INSET * 2., cx)
+            }
             Step::Font => self.render_font(cx),
             _ => self.render_plain(cx),
         };
@@ -1172,6 +1301,15 @@ impl Render for SetupWizard {
             .key_context(context)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            // The workbench's typed handlers aren't attached under the sheet:
+            // the one command the Ready page offers is run from here.
+            .on_action(|run: &RunCommand, _, cx| {
+                if run.0.command.as_str() == "app.install_shell_command" {
+                    crate::workbench::run_shell_command(true, cx);
+                } else {
+                    cx.propagate();
+                }
+            })
             .w(CARD_WIDTH.min(viewport.width - CARD_MARGIN))
             .h(CARD_HEIGHT.min(viewport.height - CARD_MARGIN))
             .flex()

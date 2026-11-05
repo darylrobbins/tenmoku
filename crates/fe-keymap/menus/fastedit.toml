@@ -32,6 +32,10 @@ title = "Check for Updates…"
 command = "app.check_for_updates"
 
 [[menus.items]]
+title = "Set Up Tenmoku…"
+command = "app.set_up"
+
+[[menus.items]]
 title = "Settings…"
 command = "workbench.open_settings_ui"
 

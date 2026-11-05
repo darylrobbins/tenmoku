@@ -100,6 +100,10 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
 /// empty path, which no canonical root has, so their backups too are their
 /// own ([`hot_exit`]).
 pub fn window_layouts(dir: impl Into<PathBuf>, root: Option<&Path>) -> LayoutStore {
+    let dir = dir.into();
+    // Before this launch's first write there: its own files aren't earlier
+    // use, for the first-run decision.
+    fe_config::first_run::note_writing(&dir);
     LayoutStore::new(dir, root.unwrap_or(Path::new("")))
 }
 
@@ -967,8 +971,10 @@ impl Render for Workbench {
                         style.bg(drop_wash).border_2().border_color(drop_border)
                     }),
             )
+            .children(self.setup.clone())
             .child(
-                // The window's height, for toasts to fit in, bottom first.
+                // The window's height, for toasts to fit in, bottom first;
+                // over the setup sheet, which Install's result reports to.
                 div()
                     .absolute()
                     .top(px(8.))
@@ -980,7 +986,6 @@ impl Render for Workbench {
                     .items_end()
                     .child(self.toasts.clone()),
             )
-            .children(self.setup.clone())
     }
 }
 

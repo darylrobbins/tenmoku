@@ -144,6 +144,8 @@ impl RecentList {
 /// Runs `change` on the list at `path` under the advisory lock on
 /// `<path>.lock`, writing the result back.
 fn update(path: &Path, change: impl FnOnce(&mut RecentList)) -> io::Result<RecentList> {
+    // Before the first write here: a launch's own isn't earlier use.
+    crate::first_run::note_writing(path);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }

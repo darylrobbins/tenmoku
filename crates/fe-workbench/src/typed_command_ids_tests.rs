@@ -446,6 +446,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("git.stash_pop", "Git: Pop Stash…", "workbench"),
     ("git.stash_apply", "Git: Apply Stash…", "workbench"),
     ("app.check_for_updates", "Check for Updates…", "workbench"),
+    ("app.set_up", "Set Up Tenmoku…", "workbench"),
     ("git.fetch", "Git: Fetch", "workbench"),
     ("git.pull", "Git: Pull", "workbench"),
     ("git.push", "Git: Push", "workbench"),

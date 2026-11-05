@@ -69,6 +69,7 @@ mod references_panel;
 mod save_commands;
 mod search_panel;
 mod settings_editor;
+mod setup_launch;
 mod setup_wizard;
 mod setup_wizard_model;
 mod setup_wizard_preview;
@@ -139,6 +140,7 @@ pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
 pub use references_panel::ReferencesPanel;
 pub use search_panel::SearchPanel;
+pub use setup_launch::{SetupLaunch, begin_setup, offer_setup};
 pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use terminal_panel::TerminalPanel;
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
@@ -329,6 +331,8 @@ mod save_commands_tests;
 mod settings_editor_controls_tests;
 #[cfg(test)]
 mod settings_editor_tests;
+#[cfg(test)]
+mod setup_launch_tests;
 #[cfg(test)]
 mod setup_wizard_model_tests;
 #[cfg(test)]

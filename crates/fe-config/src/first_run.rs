@@ -9,10 +9,14 @@
 //! enough: any file a user makes by using the app counts as [`FirstRun::Existing`].
 
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use kiln_core::KEYMAP_FILE;
@@ -33,6 +37,10 @@ pub enum Outcome {
     Skipped,
     /// The person already used Tenmoku, so it was never shown.
     Existing,
+    /// A launch that must not show it (`--wait`, `--perf`) found a new
+    /// machine: no evidence of use, and the wizard still to offer. Its own
+    /// writes are not evidence either, so [`decide`] shows it.
+    Pending,
 }
 
 impl Outcome {
@@ -42,6 +50,7 @@ impl Outcome {
             Outcome::Completed => "completed",
             Outcome::Skipped => "skipped",
             Outcome::Existing => "existing",
+            Outcome::Pending => "pending",
         }
     }
 }
@@ -56,6 +65,37 @@ pub enum FirstRun {
     Existing,
     /// Already decided, or nothing could be recorded: show nothing.
     Done,
+}
+
+/// Paths this process is about to write, by whether they were absent (or an
+/// empty directory) before its first write there: what it made itself is not
+/// evidence of an earlier use.
+static WRITING: Mutex<Option<HashMap<PathBuf, bool>>> = Mutex::new(None);
+
+/// Notes that this process is about to write `path`, a file or a directory:
+/// call it before the process's first write there. Only the first call per
+/// path counts. The state listed after it is then known: `path` that was
+/// absent, or an empty directory, was made by this launch, and [`decide`]
+/// does not take it for use.
+pub fn note_writing(path: &Path) {
+    let mut noted = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    noted
+        .get_or_insert_with(HashMap::new)
+        .entry(path.to_owned())
+        .or_insert_with(|| match fs::read_dir(path) {
+            Ok(mut entries) => entries.next().is_none(),
+            Err(error) => error.kind() == io::ErrorKind::NotFound,
+        });
+}
+
+/// Whether this launch made `path`: see [`note_writing`].
+fn made_here(path: &Path) -> bool {
+    let noted = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    noted
+        .as_ref()
+        .and_then(|noted| noted.get(path))
+        .copied()
+        .unwrap_or(false)
 }
 
 /// Whether `path` is there. A lookup that fails other than by absence is
@@ -81,11 +121,15 @@ pub fn decide(config_dir: Option<&Path>, state_dir: Option<&Path>) -> FirstRun {
     let marker = state.join(MARKER_FILE);
     if present(&marker, true) {
         match fs::read_to_string(&marker) {
-            Ok(text) => {
-                if text.parse::<toml::Table>().is_err() {
-                    log::warn!("{} does not parse; not asking again", marker.display());
+            Ok(text) => match text.parse::<toml::Table>() {
+                // A launch that couldn't show it left the wizard to offer,
+                // and wrote layouts of its own meanwhile.
+                Ok(table) if table.get("outcome").and_then(|o| o.as_str()) == Some("pending") => {
+                    return FirstRun::Show;
                 }
-            }
+                Ok(_) => {}
+                Err(_) => log::warn!("{} does not parse; not asking again", marker.display()),
+            },
             Err(error) => log::warn!("{}: {error}; not asking again", marker.display()),
         }
         return FirstRun::Done;
@@ -130,21 +174,26 @@ fn state_has_user_files(state: &Path) -> bool {
     let recent = crate::recent_path()
         .and_then(|path| path.file_name().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("recent.toml"));
-    if present(&state.join(recent), true) {
-        return true;
-    }
+    let recent = state.join(recent);
     let layouts =
         app_paths_from(|name| (name == "TENMOKU_STATE_DIR").then(|| state.as_os_str().to_owned()))
             .layouts_dir()
             .unwrap_or_else(|| state.join("layouts"));
-    match fs::read_dir(&layouts) {
+    // Each is listed first and the registry read after: whatever this launch
+    // wrote and is listed here was noted before it was written.
+    let recent_there = present(&recent, true);
+    if recent_there && !made_here(&recent) {
+        return true;
+    }
+    let layouts_there = match fs::read_dir(&layouts) {
         Ok(mut entries) => entries.next().is_some(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(error) => {
             log::warn!("{}: {error}", layouts.display());
             true
         }
-    }
+    };
+    layouts_there && !made_here(&layouts)
 }
 
 /// Writes the marker, creating the state directory; a later call replaces
