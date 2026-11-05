@@ -380,7 +380,12 @@ const DEFS: &[Def] = &[
         extensions: &["py", "pyi", "pyw"],
         file_names: &[],
         grammar: || tree_sitter_python::LANGUAGE.into(),
-        highlights: || &[tree_sitter_python::HIGHLIGHTS_QUERY],
+        highlights: || {
+            &[
+                tree_sitter_python::HIGHLIGHTS_QUERY,
+                include_str!("../queries/python.scm"),
+            ]
+        },
         earlier_patterns_win: false,
         injections: None,
         hidden: false,
