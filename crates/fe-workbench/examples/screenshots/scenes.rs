@@ -7,14 +7,19 @@ use std::{
     sync::Arc,
 };
 
+use fe_config::{SettingsStore, themes};
 use fe_editor::EditorModel;
 use fe_gpui::{EditorPalette, EditorSettings, EditorTheme};
+use fe_ui::{Theme, ThemeData};
 use fe_workbench::{Launch, Workbench};
 use gpui::{
     AppContext as _, Context, Focusable as _, Pixels, Size, VisualTestAppContext, Window,
     WindowHandle, px, size,
 };
-use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
+use kiln_platform::{
+    config::{ConfigService, batch_channel},
+    screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args},
+};
 
 /// The window size of the scene, in logical pixels.
 pub(crate) const SCENE_SIZE: Size<Pixels> = size(px(1000.), px(600.));
@@ -59,6 +64,35 @@ pub(crate) fn write_project(parent: &Path) -> Result<PathBuf> {
         fs::write(root.join(rel), text)?;
     }
     Ok(root)
+}
+
+/// Starts kiln's config service on a user settings file `parent/settings.toml`
+/// holding `settings`, and puts the bundled theme `theme` in use. Returns that
+/// theme's palette for [`capture_with`].
+pub(crate) fn use_settings(
+    cx: &mut VisualTestAppContext,
+    parent: &Path,
+    theme: &str,
+    settings: &str,
+) -> Result<EditorPalette> {
+    let user = parent.join("settings.toml");
+    fs::write(&user, settings)?;
+    let theme = themes::find(theme).ok_or("a bundled theme")?.file();
+    let data = ThemeData::from_file(&theme);
+    let (palette, warnings) = EditorPalette::for_theme(&data);
+    assert_eq!(warnings, [] as [String; 0], "the bundled theme's tables");
+    let store = SettingsStore::load(Some(user), None).into_inner();
+    // Nothing changes the file, so nothing need send a batch.
+    let (_, batches) = batch_channel();
+    cx.update(|cx| {
+        ConfigService::new()
+            .settings(store)
+            .start_with(batches, cx)
+            .detach();
+        fe_ui::set_theme(cx, Theme::new(data));
+        fe_gpui::set_editor_palette(cx, Arc::new(palette.clone()));
+    });
+    Ok(palette)
 }
 
 /// Opens `root` in a workbench, off screen, with `src/` expanded and
@@ -198,10 +232,12 @@ pub(crate) fn main() -> ExitCode {
     });
     exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
-        // The setup scenes last: they leave their settings and theme in use.
+        // The setup and icon scenes last: they leave their settings, theme
+        // and icon set in use.
         None => check_scene(&mut cx)
             .and_then(|matched| Ok(crate::token_probe::check(&mut cx)? && matched))
-            .and_then(|matched| Ok(crate::setup_scene::check(&mut cx)? && matched)),
+            .and_then(|matched| Ok(crate::setup_scene::check(&mut cx)? && matched))
+            .and_then(|matched| Ok(crate::icons_scene::check(&mut cx)? && matched)),
         Some(_) => Err("usage: screenshots [render <out.png> <dir> [--size WxH]]".into()),
     })
 }

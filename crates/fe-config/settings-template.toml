@@ -227,6 +227,10 @@
 # italics, that the next one replaces. Editing it, double-clicking it or its
 # tab, or pinning it keeps it open.
 # preview_tabs = true
+# The file and folder icons: tenmoku draws them in colour, by language, file
+# name and folder name; minimal draws plain line icons in the theme's colours.
+# A project file can't set it.
+# icon_theme = "tenmoku"
 
 [workbench.zen_mode]
 # What Zen Mode (cmd-k z, ctrl-k z off macOS, again to leave it) hides

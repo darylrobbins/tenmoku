@@ -550,6 +550,21 @@ pub struct WorkbenchSettings {
     pub preview_tabs: bool,
     /// Zen Mode: the editor alone, VS Code's `zenMode.*`.
     pub zen_mode: ZenModeSettings,
+    /// The file and folder icons: `tenmoku` draws them in colour, by language,
+    /// file name and folder name; `minimal` draws plain line icons in the
+    /// theme's colours. A project file can't set it.
+    pub icon_theme: IconTheme,
+}
+
+/// `workbench.icon_theme`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IconTheme {
+    /// Coloured icons, by language, file name and folder name.
+    #[default]
+    Tenmoku,
+    /// Plain line icons in the theme's colours.
+    Minimal,
 }
 
 impl Default for WorkbenchSettings {
@@ -557,6 +572,7 @@ impl Default for WorkbenchSettings {
         Self {
             preview_tabs: true,
             zen_mode: ZenModeSettings::default(),
+            icon_theme: IconTheme::default(),
         }
     }
 }
@@ -1206,6 +1222,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("vim", drop_vim_user_only))
         .project_filter(ProjectFilter::new("chat", drop_chat))
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
+        .project_filter(ProjectFilter::new("workbench", drop_icon_theme))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -1727,6 +1744,31 @@ fn drop_vim_user_only(layer: &mut Layer) {
         );
         layer.diagnostics.push(warning);
     }
+}
+
+/// The warning for a `workbench.icon_theme` a project file sets.
+pub const PROJECT_ICON_THEME: &str =
+    "workbench.icon_theme in project files is ignored: the icons are the same in every window";
+
+/// Drops a project layer's `workbench.icon_theme`, with a
+/// [`PROJECT_ICON_THEME`] warning; its other `workbench` keys stay.
+fn drop_icon_theme(layer: &mut Layer) {
+    let Some(toml::Value::Table(workbench)) = layer.table.get_mut("workbench") else {
+        return;
+    };
+    if workbench.remove("icon_theme").is_none() {
+        return;
+    }
+    let offset = DeTable::parse(&layer.source).ok().map_or(0, |document| {
+        key_offset(document.get_ref(), "workbench", &["icon_theme".to_owned()])
+    });
+    let warning = layer.diagnostic_at(
+        Severity::Warning,
+        Some("workbench.icon_theme".to_owned()),
+        offset,
+        PROJECT_ICON_THEME.into(),
+    );
+    layer.diagnostics.push(warning);
 }
 
 /// Where the key at `first` then `rest` is in the source, or where the

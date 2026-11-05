@@ -2,8 +2,12 @@
 //! ([`Workbench::set_root`]), the project panel's and the Changes panel's
 //! events, the git state, and settings reloads.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use fe_config::settings::IconTheme;
 use fe_gpui::SettingsEvent;
 use gpui::{App, AppContext as _, Context, Entity, Focusable, Subscription, Window};
 
@@ -201,12 +205,25 @@ impl Workbench {
         Some(panel.read(cx).listing())
     }
 
+    /// Installs the icon set `workbench.icon_theme` names, redrawing every
+    /// window.
+    pub(crate) fn install_icon_theme(theme: IconTheme, cx: &mut App) {
+        match theme {
+            IconTheme::Tenmoku => fe_ui::set_icon_set(Arc::new(fe_ui::ColouredIcons), cx),
+            IconTheme::Minimal => fe_ui::reset_icon_set(cx),
+        }
+    }
+
     /// Applies reloaded settings to the open editors and to editors yet to
     /// open, and `status_bar.visible` to the status bar if the reload
     /// changed it, so reloading for any other key keeps a toggle.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.preview_tabs = event.settings.workbench.preview_tabs;
         self.follow_zen_settings(&event.settings.workbench.zen_mode);
+        let icon_theme = event.settings.workbench.icon_theme;
+        if icon_theme != event.previous.workbench.icon_theme {
+            Self::install_icon_theme(icon_theme, cx);
+        }
         let visible = event.settings.status_bar.visible;
         if visible != event.previous.status_bar.visible {
             self.set_status_bar_visible(visible, cx);

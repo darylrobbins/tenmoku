@@ -19,8 +19,15 @@
 //! `target/screenshots/workbench_tokens.diff.png`, those pixels in magenta.
 //!
 //! Then the setup wizard's sheet over the same workbench, dark and light
-//! (`setup_scene`), against goldens of their own.
+//! (`setup_scene`), against goldens of their own. They load settings, so
+//! they draw the default `workbench.icon_theme`'s coloured icons; the two
+//! scenes before them have no settings and stay on the line icons.
+//!
+//! Last, the project tree's file and folder icons, dark and light
+//! (`icons_scene`).
 
+#[cfg(target_os = "macos")]
+mod icons_scene;
 #[cfg(target_os = "macos")]
 mod scenes;
 #[cfg(target_os = "macos")]

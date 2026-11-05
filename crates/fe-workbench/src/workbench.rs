@@ -354,6 +354,12 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // At startup, and for a window opened after the last one closed, which
+        // no reload reached. With no settings service, as in most test apps,
+        // the installed set stays.
+        if let Some(global) = cx.try_global::<kiln::GlobalSettings<fe_config::Settings>>() {
+            Self::install_icon_theme(global.settings().workbench.icon_theme, cx);
+        }
         let format_on_save = settings.format_on_save;
         let code_actions_on_save = settings.code_actions_on_save.clone();
         let inlay_hints = settings.inlay_hints;
