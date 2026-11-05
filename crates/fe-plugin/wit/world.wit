@@ -11,5 +11,6 @@ world editor-extension {
     import buffer;
     import decorations;
     import diagnostics;
+    import formatting;
     import status;
 }

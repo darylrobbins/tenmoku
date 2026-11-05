@@ -9,12 +9,13 @@
 //! `Host` impls its slices hold.
 //!
 //! [`HostState`] wraps that state with one `State` per editor slice, each defined in its module
-//! (`editor`, `decorations`, `diagnostics`, `status`) beside its `Host` impl. A slice whose card has not landed
+//! (`editor`, `decorations`, `diagnostics`, `formatting`, `status`) beside its `Host` impl. A slice whose card has not landed
 //! answers every call with [`kiln_plugin::bindings::unimplemented`].
 
 pub mod decorations;
 pub mod diagnostics;
 pub mod editor;
+pub mod formatting;
 pub mod net;
 pub mod status;
 
@@ -36,6 +37,7 @@ pub struct HostState {
     pub editor: editor::State,
     pub decorations: decorations::State,
     pub diagnostics: diagnostics::State,
+    pub formatting: formatting::State,
     pub status: status::State,
 }
 
@@ -45,5 +47,6 @@ pub fn add_to_linker(linker: &mut Linker<HostState>) -> wasmtime::Result<()> {
     fastedit::editor::buffer::add_to_linker::<_, HasSelf<HostState>>(linker, |state| state)?;
     fastedit::editor::decorations::add_to_linker::<_, HasSelf<HostState>>(linker, |state| state)?;
     fastedit::editor::diagnostics::add_to_linker::<_, HasSelf<HostState>>(linker, |state| state)?;
+    fastedit::editor::formatting::add_to_linker::<_, HasSelf<HostState>>(linker, |state| state)?;
     fastedit::editor::status::add_to_linker::<_, HasSelf<HostState>>(linker, |state| state)
 }
