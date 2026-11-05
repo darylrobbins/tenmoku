@@ -500,8 +500,20 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_go::LANGUAGE.into(),
         highlights: || &[tree_sitter_go::HIGHLIGHTS_QUERY],
         earlier_patterns_win: true,
-        injections: None,
+        injections: Some(include_str!("../queries/go-injections.scm")),
         hidden: false,
+    },
+    // printf directives, injected into Go format strings.
+    #[cfg(feature = "printf")]
+    Def {
+        name: "printf",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_printf::LANGUAGE.into(),
+        highlights: || &[include_str!("../queries/printf.scm")],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
     },
     #[cfg(feature = "c")]
     Def {

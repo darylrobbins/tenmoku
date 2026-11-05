@@ -45,7 +45,8 @@ javascript = ["dep:tree-sitter-javascript"]
 typescript = ["dep:tree-sitter-typescript", "dep:tree-sitter-javascript"]
 json = ["dep:tree-sitter-json"]
 toml = ["dep:tree-sitter-toml-ng"]
-go = ["dep:tree-sitter-go"]
+go = ["dep:tree-sitter-go", "printf"]
+printf = ["dep:tree-sitter-printf"]
 c = ["dep:tree-sitter-c"]
 # C++'s highlights extend C's.
 cpp = ["dep:tree-sitter-cpp", "dep:tree-sitter-c"]
@@ -94,6 +95,7 @@ tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-diff = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-printf = { workspace = true, optional = true }
 tree-sitter-git-commit = { workspace = true, optional = true }
 tree-sitter-git-config = { workspace = true, optional = true }
 tree-sitter-git-rebase = { workspace = true, optional = true }
