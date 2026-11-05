@@ -73,16 +73,19 @@ fn details_hidden_until_toggled(cx: &mut TestAppContext) {
     draw(cx);
     assert!(!search.read_with(cx, |s, _| s.details_shown()));
     assert!(cx.debug_bounds("search-details-toggle").is_some());
-    let include = search.read_with(cx, |s, _| s.include_input().clone());
-    let field_bounds = |cx: &mut VisualTestContext| {
-        let _ = &include;
-        search.read_with(cx, |s, _| s.details_shown())
+    let fields_shown = |cx: &mut VisualTestContext| {
+        let include = cx.debug_bounds("search-include-field").is_some();
+        let exclude = cx.debug_bounds("search-exclude-field").is_some();
+        assert_eq!(include, exclude, "include and exclude show together");
+        include
     };
-    assert!(!field_bounds(cx));
+    assert!(!fields_shown(cx));
     click_toggle(cx);
     assert!(search.read_with(cx, |s, _| s.details_shown()));
+    assert!(fields_shown(cx));
     click_toggle(cx);
     assert!(!search.read_with(cx, |s, _| s.details_shown()));
+    assert!(!fields_shown(cx));
 }
 
 #[gpui::test]

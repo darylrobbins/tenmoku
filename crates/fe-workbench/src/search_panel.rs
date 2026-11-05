@@ -2174,8 +2174,16 @@ impl Render for SearchPanel {
                         .flex_none()
                         .flex()
                         .flex_col()
-                        .child(self.include.clone())
-                        .child(self.exclude.clone()),
+                        .child(
+                            div()
+                                .debug_selector(|| "search-include-field".into())
+                                .child(self.include.clone()),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(|| "search-exclude-field".into())
+                                .child(self.exclude.clone()),
+                        ),
                 )
             })
             .when_some(self.status(), |panel, (status, error)| {
