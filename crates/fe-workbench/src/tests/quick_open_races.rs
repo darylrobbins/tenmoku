@@ -2,7 +2,12 @@
 //! window deactivating with the palette open, Enter before a query's
 //! results land, and results moving under a pressed row.
 
-use std::{ffi::OsString, fs, os::unix::ffi::OsStringExt as _, path::PathBuf};
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt as _;
+use std::{ffi::OsString, fs, path::PathBuf};
 
 use fe_buffer::Buffer;
 use fe_project::{FinderMatch, FsChange};
@@ -217,6 +222,7 @@ fn a_row_moved_under_the_mouse_isnt_opened(cx: &mut TestAppContext) {
 
 /// A match for `caf<byte>.rs`, a name that isn't UTF-8 for bytes from
 /// 0x80, all of which display as `caf\u{fffd}.rs`.
+#[cfg(unix)]
 fn not_utf8(byte: u8) -> FinderMatch {
     let relative = PathBuf::from(OsString::from_vec([b"caf", &[byte][..], b".rs"].concat()));
     FinderMatch {
@@ -230,6 +236,7 @@ fn not_utf8(byte: u8) -> FinderMatch {
 /// Names that display alike once made UTF-8 are distinct rows. APFS
 /// refuses such names, so they're given as matches.
 #[gpui::test]
+#[cfg(unix)]
 fn names_alike_once_lossy_are_distinct_rows(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();

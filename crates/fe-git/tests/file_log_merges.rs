@@ -49,7 +49,7 @@ fn commit(root: &Path, n: u32, path: &str, text: &str) {
 #[test]
 fn a_merge_that_resolved_the_file_is_listed_as_git_log_lists_it() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, 0, &["init", "-q"]);
     commit(&root, 1, "f.txt", "a\nb\nc\n");
     git(&root, 2, &["checkout", "-q", "-b", "side"]);

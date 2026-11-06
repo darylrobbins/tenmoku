@@ -515,7 +515,7 @@ impl Session {
     fn start_with(server: Server, offer: Option<&[&str]>, options: Option<Value>) -> Option<Self> {
         let command = server.command()?;
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let fixture = manifest_dir().join("tests/fixtures/real");
         copy_dir(&fixture.join(server.project()), &root);
         if server == Server::RustAnalyzer {

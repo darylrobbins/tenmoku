@@ -2,7 +2,12 @@
 //! not: what the request a [`ScriptedProvider`] records carries, gathered
 //! from the open editors and picked as @files.
 
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, rc::Rc, sync::Arc};
+// What only its Unix tests use goes unused elsewhere.
+#![cfg_attr(not(unix), allow(unused_imports))]
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+use std::{fs, path::Path, rc::Rc, sync::Arc};
 
 use fe_buffer::{Origin, ResolvedSelection};
 use fe_chat::{BlockKind, ChatEvent, ChatProvider, ChatRequest, ScriptedProvider, StopReason};
@@ -307,6 +312,7 @@ fn untrusted_roots_attach_only_what_the_user_chose(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn at_file_refuses_secrets_and_large_files(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -373,6 +379,7 @@ fn at_file_refuses_secrets_and_large_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn automatic_context_skips_links_out_of_the_folder_and_to_secrets(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -451,6 +458,7 @@ fn at_files_wait_for_their_reads_and_keep_their_places(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn at_file_takes_an_open_buffer_however_its_open(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -526,6 +534,7 @@ fn reload(editor: &Entity<EditorView>, text: &str, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn automatic_context_is_vetted_again_as_its_file_changes(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -592,6 +601,7 @@ fn automatic_context_is_vetted_again_as_its_file_changes(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn dangling_links_are_vetted_by_their_targets(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -698,6 +708,7 @@ fn revoking_trust_cuts_the_context_before_a_pending_vetting_ends(cx: &mut TestAp
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn links_through_a_missing_folder_are_refused(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -735,6 +746,7 @@ fn links_through_a_missing_folder_are_refused(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_buffer_counts_only_for_the_file_its_text_came_from(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -781,6 +793,7 @@ fn a_buffer_counts_only_for_the_file_its_text_came_from(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_swapped_after_it_is_vetted_is_never_what_is_read(cx: &mut TestAppContext) {
     use std::os::unix::fs::MetadataExt as _;
 

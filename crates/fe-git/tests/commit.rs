@@ -1,3 +1,6 @@
+// Its hooks are shell scripts made executable by mode.
+#![cfg(unix)]
+
 //! Committing the index, against temp repositories with hooks.
 
 use std::fs;

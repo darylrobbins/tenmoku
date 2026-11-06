@@ -1,3 +1,7 @@
+// The launch handoff runs over Unix sockets; Windows builds stand in for
+// them, and every launch there is its own instance.
+#![cfg(unix)]
+
 //! `tenmoku --wait` end to end: the server's end in a live app, with the real
 //! binary, or `ipc::start`, as the client waiting on it.
 
@@ -57,7 +61,7 @@ fn open_window(root: Option<PathBuf>, cx: &mut App) -> Option<WindowHandle<Workb
 fn project() -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let base = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("a.txt"), "a\n").unwrap();
     (dir, base, root)
 }

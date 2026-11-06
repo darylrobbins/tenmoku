@@ -18,7 +18,7 @@ fn extension(dir: &Path) -> std::path::PathBuf {
     let extension = dir.join("toml");
     fs::create_dir_all(&extension).unwrap();
     fs::write(extension.join("server.js"), "console.log(1)\n").unwrap();
-    extension.canonicalize().unwrap()
+    dunce::canonicalize(&extension).unwrap()
 }
 
 /// `taplo`, the extension's TOML server running its `server.js`.

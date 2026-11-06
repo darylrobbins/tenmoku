@@ -62,10 +62,10 @@
 //! command under way would take the output into its own undo step. Toasts
 //! show in the command's window, whichever window is active.
 
+use crate::process_group::{self, GroupId};
 use std::collections::HashMap;
 use std::io::{Read, Write as _};
 use std::ops::Range;
-use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -127,7 +127,7 @@ pub(crate) const WATCH: Duration = Duration::from_millis(100);
 /// How long a stopped command has between `SIGTERM` and `SIGKILL`.
 pub(crate) const GRACE: Duration = Duration::from_secs(1);
 /// The command that cancels the focused editor's command, or the window's.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) const CANCEL: &str = "workbench.cancel_vim_filter";
 
 /// Whose shell rules apply: [`resolve_shell`] takes it as data, so both
@@ -318,7 +318,7 @@ struct Live {
     quitting: bool,
     /// Each command's group's id, once it has started, until its leader is
     /// reaped, so the id is still the group's.
-    groups: HashMap<u64, Option<libc::pid_t>>,
+    groups: HashMap<u64, Option<GroupId>>,
     next: u64,
 }
 
@@ -349,19 +349,19 @@ impl Lives {
         {
             let mut live = self.lock();
             live.quitting = true;
-            for group in live.groups.values().flatten() {
-                // SAFETY: kill(2) on a group whose leader isn't reaped while
-                // it's listed and the lock is held.
-                unsafe { libc::kill(-group, libc::SIGTERM) };
+            for &group in live.groups.values().flatten() {
+                // A group whose leader isn't reaped while it's listed and the
+                // lock is held, so it keeps its id.
+                process_group::terminate(group);
             }
         }
         let deadline = Instant::now() + GRACE + Duration::from_millis(200);
         while !self.lock().groups.is_empty() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
-        for group in self.lock().groups.values().flatten() {
-            // SAFETY: as above.
-            unsafe { libc::kill(-group, libc::SIGKILL) };
+        for &group in self.lock().groups.values().flatten() {
+            // As above.
+            process_group::kill(group);
         }
     }
 }
@@ -394,7 +394,7 @@ impl Group {
         let spawned = spawn();
         match &spawned {
             Ok(child) => {
-                let group = libc::pid_t::try_from(child.id()).ok();
+                let group = process_group::group_of(child);
                 live.groups.insert(self.key, group);
             }
             Err(_) => {
@@ -404,13 +404,14 @@ impl Group {
         Some(spawned)
     }
 
-    /// Sends `signal` to the group, if its leader isn't reaped.
-    fn signal(&self, signal: libc::c_int) {
+    /// Signals the group with `send` ([`process_group::terminate`] or
+    /// [`process_group::kill`]), if its leader isn't reaped.
+    fn signal(&self, send: fn(GroupId)) {
         let live = self.lives.lock();
-        if let Some(Some(group)) = live.groups.get(&self.key) {
-            // SAFETY: kill(2) on the group whose leader, not reaped while it's
-            // listed and the lock is held, keeps its id.
-            unsafe { libc::kill(-group, signal) };
+        if let Some(&Some(group)) = live.groups.get(&self.key) {
+            // The group's leader, not reaped while it's listed and the lock
+            // is held, keeps its id.
+            send(group);
         }
     }
 
@@ -453,8 +454,8 @@ pub(crate) fn run(run: Run) -> Outcome {
             None => Stdio::null(),
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .stderr(Stdio::piped());
+    process_group::lead_group(&mut command);
     if let Some(path) = fe_lsp::LoginPath::system().path() {
         command.env("PATH", path);
     }
@@ -500,7 +501,7 @@ pub(crate) fn run(run: Run) -> Outcome {
             let code = match status {
                 Ok(status) => status
                     .code()
-                    .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+                    .unwrap_or_else(|| 128 + process_group::signal_of(&status).unwrap_or(0)),
                 Err(error) => return Outcome::Failed(format!("Can't wait for it: {error}")),
             };
             let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
@@ -524,15 +525,7 @@ pub(crate) fn run(run: Run) -> Outcome {
 /// Whether `child` has exited, without reaping it: until it's reaped, its
 /// id, which is its group's, can't go to another process.
 fn exited(child: &Child) -> bool {
-    let pid: libc::id_t = child.id();
-    // SAFETY: a zeroed siginfo_t is valid, and waitid(2) only writes it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: as above; WNOWAIT leaves the child to be reaped by `wait`.
-    let waited = unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) };
-    // With WNOHANG, no child that has exited leaves si_pid 0.
-    // SAFETY: waitid filled in the pid, or left it 0.
-    waited == 0 && unsafe { info.si_pid() } != 0
+    process_group::exited(child)
 }
 
 /// Reads `pipe` to its end on a thread of its own, up to one byte past
@@ -558,10 +551,10 @@ fn read_capped(
 /// `SIGTERM`, on a thread of its own. The child, the group's leader, is
 /// reaped only after that, so the group's id is still its own.
 fn stop_group(mut child: Child, group: Group) {
-    group.signal(libc::SIGTERM);
+    group.signal(process_group::terminate);
     thread::spawn(move || {
         thread::sleep(GRACE);
-        group.signal(libc::SIGKILL);
+        group.signal(process_group::kill);
         group.reaping();
         let _ = child.wait();
     });
@@ -654,7 +647,7 @@ fn run_of(editor: EntityId, id: u64, cx: &mut App) -> Option<&mut Filter> {
 }
 
 /// How many shell commands run, in every window.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn running(cx: &App) -> usize {
     cx.try_global::<Running>()
         .map_or(0, |running| running.runs.len())
@@ -665,7 +658,7 @@ pub(crate) fn running(cx: &App) -> usize {
 /// under the root's: as typed when that holds as it's spelled, else the
 /// real one.
 pub(crate) fn within(path: &Path, root: &Path) -> Option<PathBuf> {
-    let real_root = std::fs::canonicalize(root).ok()?;
+    let real_root = dunce::canonicalize(root).ok()?;
     let real = real_path(path)?;
     let inside = real.strip_prefix(&real_root).ok()?.to_owned();
     let plain =
@@ -682,7 +675,7 @@ pub(crate) fn within(path: &Path, root: &Path) -> Option<PathBuf> {
 /// made yet (nothing at all there, not even a symlink), its folder's real
 /// path with its name. Anything else, such as a dangling symlink, is none.
 fn real_path(path: &Path) -> Option<PathBuf> {
-    if let Ok(real) = std::fs::canonicalize(path) {
+    if let Ok(real) = dunce::canonicalize(path) {
         return Some(real);
     }
     match std::fs::symlink_metadata(path) {
@@ -693,7 +686,7 @@ fn real_path(path: &Path) -> Option<PathBuf> {
         Component::Normal(name) => name,
         _ => return None,
     };
-    Some(std::fs::canonicalize(path.parent()?).ok()?.join(name))
+    Some(dunce::canonicalize(path.parent()?).ok()?.join(name))
 }
 
 impl Workbench {

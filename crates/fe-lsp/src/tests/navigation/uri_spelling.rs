@@ -66,7 +66,7 @@ fn definition_in_own_file_with_respelled_uri_decodes_against_the_buffer() {
     let item = &answer.value.items[0];
     assert_eq!(item.tier, Tier::SameFile);
     assert_eq!(item.location.snapshot, req.buffer);
-    assert_eq!(item.location.rel.to_str(), Some(page));
+    assert_eq!(item.location.rel.as_path(), std::path::Path::new(page));
     assert_eq!(item.location.range, 3..7);
     assert_eq!(item.location.row, 0);
 
@@ -78,7 +78,7 @@ fn definition_in_own_file_with_respelled_uri_decodes_against_the_buffer() {
     let answer = s.definitions(&req);
     assert_eq!(answer.value.items.len(), 1);
     let item = &answer.value.items[0];
-    assert_eq!(item.location.rel.to_str(), Some(other));
+    assert_eq!(item.location.rel.as_path(), std::path::Path::new(other));
     assert_eq!(item.location.range, 3..7);
     assert_eq!(item.location.row, 0);
     assert_eq!(

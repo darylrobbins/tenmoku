@@ -38,7 +38,7 @@ struct Dirs {
 impl Dirs {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let base = fs::canonicalize(temp.path()).unwrap();
+        let base = dunce::canonicalize(temp.path()).unwrap();
         Self {
             _temp: Some(temp),
             ..Self::at(&base)

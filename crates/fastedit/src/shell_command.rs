@@ -138,7 +138,7 @@ fn run(install_it: bool, cx: &mut App) {
                 if !install_it {
                     return uninstall(&link);
                 }
-                match std::env::current_exe().and_then(fs::canonicalize) {
+                match std::env::current_exe().and_then(dunce::canonicalize) {
                     Ok(target) => install(&link, &target, std::env::var_os("PATH").as_deref()),
                     Err(error) => {
                         Report::error(format!("Couldn't find the running binary: {error}"))

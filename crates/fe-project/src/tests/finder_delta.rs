@@ -17,7 +17,7 @@ fn walked(root: &Path) -> FinderIndex {
 }
 
 fn paths(rels: &[&str]) -> Vec<PathBuf> {
-    rels.iter().map(PathBuf::from).collect()
+    rels.iter().map(|rel| PathBuf::from(native(rel))).collect()
 }
 
 #[test]
@@ -79,9 +79,9 @@ fn apply_reports_present_and_removed() {
             rescanned: false,
         }
     );
-    assert!(index.contains("fresh/sub/two.rs"));
-    assert!(!index.contains("gone/a.rs"));
-    assert!(!index.contains("build/ignored.rs"));
+    assert!(index.contains(native("fresh/sub/two.rs")));
+    assert!(!index.contains(native("gone/a.rs")));
+    assert!(!index.contains(native("build/ignored.rs")));
 
     // A batch that changes nothing reports nothing.
     let delta = index.apply(&changes(&root, &["build/ignored.rs", "missing.rs"]));

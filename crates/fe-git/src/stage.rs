@@ -238,7 +238,7 @@ impl Repo {
                 path.display()
             )));
         }
-        let root = self.workdir.canonicalize().map_err(|_| outside())?;
+        let root = dunce::canonicalize(&self.workdir).map_err(|_| outside())?;
         let repo = self.repo.to_thread_local();
         let metadata: Vec<PathBuf> = [
             repo.git_dir(),
@@ -246,11 +246,11 @@ impl Repo {
             &self.workdir.join(".git"),
         ]
         .into_iter()
-        .filter_map(|dir| dir.canonicalize().ok())
+        .filter_map(|dir| dunce::canonicalize(dir).ok())
         .collect();
         let mut parent = path.parent();
         while let Some(dir) = parent {
-            if let Ok(real) = dir.canonicalize() {
+            if let Ok(real) = dunce::canonicalize(dir) {
                 let in_metadata = metadata.iter().any(|dir| real.starts_with(dir));
                 return if real.starts_with(&root) && !in_metadata {
                     Ok(())

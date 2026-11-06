@@ -25,7 +25,7 @@ const PNG: &[u8] = &[
 /// A project of `files` (name, contents).
 fn project(files: &[(&str, &[u8])]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for (name, bytes) in files {
         std::fs::write(root.join(name), bytes).unwrap();
     }

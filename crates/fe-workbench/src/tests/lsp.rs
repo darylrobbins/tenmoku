@@ -305,7 +305,7 @@ impl Lsp {
             cx.set_global(ConfigDirOverride(Some(config_dir)));
         });
         let dir = Rc::new(project());
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let launch = if rootless {
             Launch {
                 root: None,

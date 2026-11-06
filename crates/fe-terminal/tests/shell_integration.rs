@@ -1,3 +1,6 @@
+// Drives bash and zsh's shell integration.
+#![cfg(unix)]
+
 //! Shell integration: the working directory from OSC 7 and the prompt marks
 //! from OSC 133;A, printed by a `/bin/sh -c` script.
 

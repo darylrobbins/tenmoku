@@ -44,7 +44,7 @@ fn project() -> Project {
         )
         .unwrap();
     }
-    let root = fs::canonicalize(&root).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
     let store = LayoutStore::new(dir.path().join("layouts"), &root);
     Project {
         _dir: dir,

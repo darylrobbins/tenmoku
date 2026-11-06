@@ -122,7 +122,7 @@ fn fuzzy(cx: &mut TestAppContext) {
 #[gpui::test]
 fn without_a_root(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for file in ["under_score.txt", "plain.txt"] {
         std::fs::write(root.join(file), "one\n").unwrap();
     }
@@ -160,7 +160,7 @@ fn without_a_root(cx: &mut TestAppContext) {
 #[gpui::test]
 fn viewer_line(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     crate::loader::test_support::lower_threshold(&root, 64 * 1024, false);
     let big: String = (0..20_000).map(|row| format!("line {row:06}\n")).collect();
     std::fs::write(root.join("big.log"), big).unwrap();

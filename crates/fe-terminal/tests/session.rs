@@ -1,3 +1,6 @@
+// Runs /bin/sh scripts in the pty and checks Unix signals and modes.
+#![cfg(unix)]
+
 use std::time::{Duration, Instant};
 
 use fe_terminal::{
@@ -138,7 +141,7 @@ fn env_reaches_the_child_over_the_terminals_own() {
 #[test]
 fn runs_a_command_in_cwd() {
     let dir = temp_dir();
-    let cwd = dir.path().canonicalize().unwrap();
+    let cwd = dunce::canonicalize(dir.path()).unwrap();
     let mut session = Session::sh("pwd; printf hello", &cwd, 200, 10);
 
     // The child's last output is in the grid by the time `Exited` arrives.
@@ -317,6 +320,7 @@ fn selection_and_drop() {
 }
 
 #[test]
+#[cfg(unix)]
 fn refuses_a_cwd_the_user_cannot_enter() {
     use std::os::unix::fs::PermissionsExt;
 

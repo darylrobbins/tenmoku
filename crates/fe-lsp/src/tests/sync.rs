@@ -21,7 +21,7 @@ use crate::{LspManager, ManualClock, ServerId, ServerSpec, ServerStatus};
 
 mod file_operations;
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 /// A started server on the fake, with a manual clock, so the backstop tick
 /// fires only when a test says.

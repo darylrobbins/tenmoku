@@ -44,7 +44,7 @@ fn a_user_settings_file_in_the_environment_starts_no_server(cx: &mut TestAppCont
     unsafe { std::env::set_var("TENMOKU_CONFIG_DIR", config.path()) };
 
     let project = tempfile::tempdir().unwrap();
-    let root = project.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
     fs::write(root.join("go.mod"), "module m\n").unwrap();
     fs::write(root.join("main.go"), "package main\n").unwrap();
     // gopls is built in for Go: the project turns it off, so any launch

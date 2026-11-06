@@ -2,14 +2,9 @@
 //! [`ScriptedProvider`]'s, the button pressed on the turn's footer, and the
 //! changeset it loads looked at in the AI Changes panel.
 
-use std::{
-    cell::RefCell,
-    fs,
-    os::unix::fs::{PermissionsExt as _, symlink},
-    path::Path,
-    rc::Rc,
-    sync::Arc,
-};
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt as _, symlink};
+use std::{cell::RefCell, fs, path::Path, rc::Rc, sync::Arc};
 
 use fe_chat::{BlockKind, ChatEvent, ChatProvider, ScriptedProvider, StopReason};
 use fe_chat_view::SendMessage;
@@ -56,7 +51,7 @@ fn reply(text: &str) -> Vec<ChatEvent> {
 /// A folder holding `src/main.go` and `src/lib.go`, under the real temp
 /// folder.
 fn project() -> tempfile::TempDir {
-    let temp = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let temp = dunce::canonicalize(std::env::temp_dir()).unwrap();
     let dir = tempfile::tempdir_in(temp).unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
     fs::write(dir.path().join("src/main.go"), MAIN).unwrap();
@@ -316,10 +311,11 @@ fn new_file_block_becomes_new_file_entry(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn path_outside_root_refused(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
-    let outside = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
+    let outside = tempfile::tempdir_in(dunce::canonicalize(std::env::temp_dir()).unwrap()).unwrap();
     fs::write(outside.path().join("x.go"), "x\n").unwrap();
     symlink(outside.path(), root.join("link")).unwrap();
     let (workbench, cx) = opened(cx, root);
@@ -381,6 +377,7 @@ fn review_is_dispatched_as_ai_actor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn partial_failures_do_not_block_others(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();
@@ -452,6 +449,7 @@ fn show_chat(cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn aliases_of_one_file_are_reviewed_once(cx: &mut TestAppContext) {
     let dir = project();
     let root = dir.path();

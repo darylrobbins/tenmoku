@@ -73,7 +73,7 @@ fn two_split_views_of_a_file_round_trip(cx: &mut TestAppContext) {
     std::fs::create_dir(&root).unwrap();
     let path = root.join("a.txt");
     std::fs::write(&path, "alpha\nbeta\n").unwrap();
-    let root = std::fs::canonicalize(&root).unwrap();
+    let root = dunce::canonicalize(&root).unwrap();
     let store = LayoutStore::new(dir.path().join("layouts"), &root);
     cx.update(|cx| {
         fe_gpui::init(cx);

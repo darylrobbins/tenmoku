@@ -637,9 +637,11 @@ fn overlapping_candidates_as_the_search_has_them() {
 }
 
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn files_are_never_read_through_a_directory_being_swapped() {
     let dir = tempfile::tempdir().unwrap();
-    let dir = fs::canonicalize(dir.path()).unwrap();
+    let dir = dunce::canonicalize(dir.path()).unwrap();
     let (root, outside) = (dir.join("project"), dir.join("outside"));
     // The same bytes, the word in code inside and in a comment outside:
     // a hit read from outside would be dropped.
@@ -692,8 +694,10 @@ fn files_are_never_read_through_a_directory_being_swapped() {
 }
 
 /// Sets its flag when dropped.
+#[cfg(unix)]
 struct Stop<'a>(&'a AtomicBool);
 
+#[cfg(unix)]
 impl Drop for Stop<'_> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);

@@ -48,7 +48,7 @@ fn commit_verbatim(root: &Path, text: &str, message: &str) {
 #[test]
 fn summary_skips_leading_blank_lines_as_git_blame_does() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, &["init", "-q"]);
     let raw = "\n  \n\tSubject here  \nmore\n\nBody\n";
     commit_verbatim(&root, "one\n", raw);

@@ -50,6 +50,31 @@ use crate::launcher::{
     ExitInfo, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
 };
 
+/// A workspace root that doesn't exist, absolute on this platform: the
+/// fake never touches the disk, but the client wants absolute paths.
+#[cfg(unix)]
+pub const FAKE_ROOT: &str = "/fake/root";
+#[cfg(windows)]
+pub const FAKE_ROOT: &str = r"C:\fake\root";
+
+/// [`FAKE_ROOT`] as a `file:` URI.
+#[cfg(unix)]
+pub const FAKE_ROOT_URI: &str = "file:///fake/root";
+#[cfg(windows)]
+pub const FAKE_ROOT_URI: &str = "file:///C:/fake/root";
+
+/// The `file:` URI of `relative` (with `/` separators) under [`FAKE_ROOT`].
+pub fn fake_uri(relative: &str) -> String {
+    format!("{FAKE_ROOT_URI}/{relative}")
+}
+
+/// The path of `relative` (with `/` separators) under [`FAKE_ROOT`].
+pub fn fake_path(relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(PathBuf::from(FAKE_ROOT), |path, part| path.join(part))
+}
+
 /// How the fake behaves.
 #[derive(Clone, Debug)]
 pub struct Script {

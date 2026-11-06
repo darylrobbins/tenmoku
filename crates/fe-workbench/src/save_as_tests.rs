@@ -213,6 +213,7 @@ fn untitled_cmd_s(cx: &mut TestAppContext) {
     // A file another tab shows is refused, by any path to it.
     let a = dir.path().join("a.rs");
     fs::create_dir(dir.path().join("sub")).unwrap();
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut aliases = vec![a.clone(), dir.path().join("sub/../a.rs")];
     #[cfg(unix)]
     {

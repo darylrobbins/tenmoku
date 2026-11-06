@@ -35,7 +35,7 @@ fn git(dir: &Path, args: &[&str]) {
 /// A repository with one commit and a new intent-to-add file `new`.
 fn repo_with_intent_to_add() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     git(&root, &["init", "-q"]);
     fs::write(root.join("base.txt"), "base\n").unwrap();
     git(&root, &["add", "base.txt"]);

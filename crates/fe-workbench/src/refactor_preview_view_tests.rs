@@ -446,6 +446,7 @@ fn an_edited_buffer_refuses_apply_and_keeps_the_preview(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_failure_after_part_was_made_ends_the_preview(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let (mut s, editor) = setup(cx);
@@ -768,6 +769,7 @@ fn a_stale_buffer_after_an_operation_refuses_apply_first(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_write_through_a_symlink_then_a_failure_ends_the_preview(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let (mut s, _) = setup(cx);

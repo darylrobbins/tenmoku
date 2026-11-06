@@ -23,6 +23,24 @@ cargo build --release -p fastedit   # the package keeps its old name; produces t
 cargo run -p fastedit               # run a debug build
 ```
 
+### Windows
+
+You also need:
+
+- The MSVC toolchain: Visual Studio 2022 or its Build Tools, with the "Desktop
+  development with C++" workload.
+- CMake on `PATH`, for the WebAssembly runtime's C API. Visual Studio's own copy
+  works: `C:\Program Files\Microsoft Visual Studio\2022\<edition>\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
+
+The language servers aren't bundled. For Rust, add the `rust-analyzer` component
+to the pinned toolchain with `rustup component add rust-analyzer`.
+
+The Windows build lacks two things the other platforms have:
+
+- A second launch opens its own window. It doesn't hand its files to the running
+  instance.
+- Copying a symlink in the project tree is refused.
+
 ## Tests and checks
 
 CI runs these, and a pull request should pass all of them:

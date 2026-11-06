@@ -16,7 +16,7 @@ use fe_project::{FileTree, FinderIndex, TreeOptions, open_file_under};
 /// None when permissions don't bind (root).
 fn locked_project() -> Option<(tempfile::TempDir, PathBuf)> {
     let tmp = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(tmp.path()).unwrap();
+    let root = dunce::canonicalize(tmp.path()).unwrap();
     let project = root.join("locked/project");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(project.join("a.rs"), "fn a() {}\n").unwrap();
@@ -30,7 +30,7 @@ fn locked_project() -> Option<(tempfile::TempDir, PathBuf)> {
 }
 
 fn unlock(tmp: &tempfile::TempDir) {
-    let locked = fs::canonicalize(tmp.path()).unwrap().join("locked");
+    let locked = dunce::canonicalize(tmp.path()).unwrap().join("locked");
     fs::set_permissions(locked, fs::Permissions::from_mode(0o755)).unwrap();
 }
 

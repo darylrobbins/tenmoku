@@ -40,7 +40,9 @@ This is an early, pre-1.0 release (0.1).
 macOS on Apple Silicon is the primary platform (Metal through GPUI), and the
 only one with a release download. Linux builds in CI and the editor runs
 headless under Xvfb for testing (see `.claude/skills/run-fastedit-linux/`), but
-there is no supported Linux release yet.
+there is no supported Linux release yet. Windows (DirectX through GPUI) builds,
+runs and is tested in CI. There's no Windows release either; to build it, see
+the Windows notes in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install
 

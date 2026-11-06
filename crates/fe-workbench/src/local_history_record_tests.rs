@@ -26,7 +26,7 @@ fn fixture(cx: &mut TestAppContext, install: bool) -> Fixture<'_> {
     let root = tempfile::tempdir().unwrap();
     let store = tempfile::tempdir().unwrap();
     let history = LocalHistory::new(store.path().join("history"));
-    let path = root.path().canonicalize().unwrap().join("a.txt");
+    let path = dunce::canonicalize(root.path()).unwrap().join("a.txt");
     fs::write(&path, "one\n").unwrap();
     cx.update(|cx| {
         fe_gpui::init(cx);

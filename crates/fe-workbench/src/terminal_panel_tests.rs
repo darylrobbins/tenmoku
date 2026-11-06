@@ -154,7 +154,7 @@ fn starts_in_the_project_root(cx: &mut TestAppContext) {
 
     type_line(&view, "pwd", cx);
     let root = dir.path().to_owned();
-    let canonical = root.canonicalize().unwrap();
+    let canonical = dunce::canonicalize(&root).unwrap();
     let in_root = |text: &str| {
         text.lines().any(|line| {
             Path::new(line.trim_end()) == root || Path::new(line.trim_end()) == canonical

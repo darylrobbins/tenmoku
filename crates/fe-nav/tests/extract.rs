@@ -113,6 +113,8 @@ fn skips_what_it_cannot_index() {
 }
 
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn a_directory_swapped_for_a_symlink_is_not_followed() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("project");

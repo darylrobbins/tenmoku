@@ -2055,6 +2055,8 @@ name = "fastedit"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "dunce",
+ "embed-resource",
  "fe-buffer",
  "fe-config",
  "fe-gpui",
@@ -2081,6 +2083,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2178,6 +2181,7 @@ dependencies = [
 name = "fe-config"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "ec4rs",
  "fe-syntax",
  "kiln-core",
@@ -2210,6 +2214,7 @@ dependencies = [
 name = "fe-editor"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "fe-buffer",
  "fe-display",
  "fe-fileview",
@@ -2243,6 +2248,7 @@ dependencies = [
 name = "fe-git"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "gix",
  "imara-diff",
  "tempfile",
@@ -2254,6 +2260,7 @@ name = "fe-gpui"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "dunce",
  "fe-buffer",
  "fe-config",
  "fe-display",
@@ -2313,6 +2320,7 @@ dependencies = [
  "async-io",
  "async-lsp",
  "async-process",
+ "dunce",
  "fe-buffer",
  "fe-config",
  "fe-nav",
@@ -2326,12 +2334,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "fe-markdown"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "fe-buffer",
  "fe-syntax",
  "percent-encoding",
@@ -2343,6 +2353,7 @@ dependencies = [
 name = "fe-markdown-view"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "fe-gpui",
  "fe-markdown",
  "fe-syntax",
@@ -2360,6 +2371,7 @@ name = "fe-nav"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "dunce",
  "fe-buffer",
  "fe-project",
  "fe-syntax",
@@ -2413,6 +2425,7 @@ name = "fe-project"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "dunce",
  "fe-project",
  "frizbee",
  "grep-matcher",
@@ -2426,6 +2439,7 @@ dependencies = [
  "regex-syntax",
  "tempfile",
  "trash",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2484,6 +2498,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
+ "dunce",
  "libc",
  "polling",
  "rustix",
@@ -2538,6 +2553,7 @@ name = "fe-workbench"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "dunce",
  "fe-buffer",
  "fe-chat",
  "fe-chat-anthropic",
@@ -2580,6 +2596,7 @@ dependencies = [
  "unicode-width",
  "wasmtime",
  "wasmtime-wasi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5221,6 +5238,7 @@ dependencies = [
  "toml_edit 0.25.15+spec-1.1.0",
  "unicode-segmentation",
  "windows-native-keyring-store",
+ "windows-sys 0.61.2",
  "zbus-secret-service-keyring-store",
 ]
 
@@ -8063,6 +8081,7 @@ dependencies = [
 name = "tenmoku-plugin"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "fe-buffer",
  "fe-plugin",
  "kiln-command",

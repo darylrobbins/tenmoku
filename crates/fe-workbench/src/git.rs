@@ -572,7 +572,7 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
                 return Ok(None);
             };
             let resolved =
-                (repo.workdir().canonicalize()).unwrap_or_else(|_| repo.workdir().to_owned());
+                (dunce::canonicalize(repo.workdir())).unwrap_or_else(|_| repo.workdir().to_owned());
             Arc::new(Found {
                 repo,
                 resolved,
@@ -681,7 +681,7 @@ pub(crate) fn resolve(path: &Path) -> PathBuf {
     let mut at = path.to_owned();
     let mut links = 0;
     loop {
-        if let Ok(resolved) = at.canonicalize() {
+        if let Ok(resolved) = dunce::canonicalize(&at) {
             return missing
                 .into_iter()
                 .rev()

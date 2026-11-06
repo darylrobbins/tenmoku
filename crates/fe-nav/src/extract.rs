@@ -95,7 +95,7 @@ pub(crate) fn symbols_language(rel: &Path) -> Option<&'static str> {
 /// is read, and no more than the limit is read, so a file that grows
 /// meanwhile is still bounded.
 pub fn extract(root: &Path, rel: &Path) -> Result<FileSymbols, Skipped> {
-    let root = fs::canonicalize(root).map_err(|err| Skipped::Unreadable(err.kind()))?;
+    let root = dunce::canonicalize(root).map_err(|err| Skipped::Unreadable(err.kind()))?;
     extract_in(&root, rel)
 }
 

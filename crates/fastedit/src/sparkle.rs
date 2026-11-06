@@ -62,6 +62,7 @@ impl Policy {
 /// Sparkle reads as "never" and checks for at once; a last check in the future
 /// (the clock was set back) would delay checks for as long. A past last check is
 /// Sparkle's own record, and is left alone.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn first_check_seed(last_check: Option<f64>, now: f64) -> Option<f64> {
     match last_check {
         Some(last) if last <= now => None,

@@ -57,7 +57,6 @@ use std::{
     fs::{self, File},
     io,
     ops::Range,
-    os::unix::fs::FileExt as _,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
@@ -1638,10 +1637,39 @@ fn open_regular(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Opens the regular file at `path` for reading, not following a symlink or
+/// junction (opened as itself, which is then refused) that has taken its
+/// place since it was searched.
+#[cfg(windows)]
+fn open_regular(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
+    // `FILE_FLAG_OPEN_REPARSE_POINT` and `FILE_ATTRIBUTE_REPARSE_POINT`.
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const REPARSE_POINT: u32 = 0x400;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OPEN_REPARSE_POINT)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.file_attributes() & REPARSE_POINT != 0 {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    Ok(file)
+}
+
 /// Elsewhere nothing: the offsets stay as the search gave them.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn open_regular(_: &Path) -> io::Result<File> {
     Err(io::ErrorKind::Unsupported.into())
+}
+
+/// Reads into `buf` from `offset` in `file`. On Windows that moves the
+/// file's position, which nothing here reads by.
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    #[cfg(unix)]
+    return std::os::unix::fs::FileExt::read_at(file, buf, offset);
+    #[cfg(windows)]
+    return std::os::windows::fs::FileExt::seek_read(file, buf, offset);
 }
 
 /// Up to `len` bytes of the line at `offset` in `source`, short of its
@@ -1662,7 +1690,7 @@ fn read_line(
         bytes.resize(end, 0);
         let mut read = start;
         while read < end {
-            match source.read_at(&mut bytes[read..end], offset + read as u64) {
+            match read_at(source, &mut bytes[read..end], offset + read as u64) {
                 Ok(0) => break,
                 Ok(n) => read += n,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}

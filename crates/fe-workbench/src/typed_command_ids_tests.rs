@@ -769,7 +769,7 @@ fn helper_project(
     &mut VisualTestContext,
 ) {
     let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let text = "fn helper() {}\n\nfn main() {\n    helper();\n    helper();\n}\n";
     std::fs::write(root.join("a.rs"), text).unwrap();
     let (workbench, cx) = crate::tests::open_root(cx, &root);

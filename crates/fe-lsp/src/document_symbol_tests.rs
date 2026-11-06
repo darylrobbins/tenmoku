@@ -20,7 +20,7 @@ use crate::fake::{
 };
 use crate::{Clock, LspEvent, LspManager, ManualClock, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 /// Waits for `reply`; panics after 10 s of real time.
 fn answer<T>(reply: impl Future<Output = T>) -> T {

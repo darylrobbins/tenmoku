@@ -211,6 +211,7 @@ fn tabs(s: &mut Lsp) -> usize {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_jump_goes_to_the_buffer_the_server_named(cx: &mut gpui::TestAppContext) {
     let mut s = Lsp::new(cx);
     fs::write(s.path("src/main.rs"), MAIN).unwrap();

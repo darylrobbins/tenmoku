@@ -23,7 +23,6 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
@@ -328,16 +327,21 @@ pub enum ResolveError {
 /// `path_var` (a `PATH` value; relative entries, which follow the working
 /// directory, are skipped), with its identity and content hash.
 pub fn resolve_program(name: &str, path_var: &OsStr) -> Result<ProgramIdentity, ResolveError> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+    if name.is_empty() || name == "." || name == ".." || name.contains(std::path::is_separator) {
         return Err(ResolveError::NotAProgramName {
             name: name.to_owned(),
         });
     }
-    for dir in std::env::split_paths(path_var).filter(|dir| dir.is_absolute()) {
-        let path = dir.join(name);
+    let candidates = std::env::split_paths(path_var)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| kiln_core::platform::program_candidates(&dir, name));
+    for path in candidates {
         // Anything that isn't an executable file, or can't be opened, is
         // passed over, as a shell would.
         let Ok((mut file, meta)) = open_executable(&path) else {
+            continue;
+        };
+        let Ok((device, inode)) = kiln_core::platform::file_identity(&file) else {
             continue;
         };
         let sha256 = hash(&mut file).map_err(|source| ResolveError::Io {
@@ -347,10 +351,10 @@ pub fn resolve_program(name: &str, path_var: &OsStr) -> Result<ProgramIdentity, 
         return Ok(ProgramIdentity {
             name: name.to_owned(),
             path,
-            device: meta.dev(),
-            inode: meta.ino(),
-            size: meta.size(),
-            modified: (meta.mtime(), meta.mtime_nsec()),
+            device,
+            inode,
+            size: meta.len(),
+            modified: kiln_core::platform::modified_parts(&meta),
             sha256,
         });
     }
@@ -365,7 +369,7 @@ pub fn resolve_program(name: &str, path_var: &OsStr) -> Result<ProgramIdentity, 
 fn open_executable(path: &Path) -> io::Result<(File, fs::Metadata)> {
     let file = kiln_core::platform::open_for_reading(path)?;
     let meta = file.metadata()?;
-    if !meta.is_file() || meta.mode() & 0o111 == 0 {
+    if !kiln_core::platform::is_executable(path, &meta) {
         return Err(io::Error::other("not an executable file"));
     }
     Ok((file, meta))
@@ -411,12 +415,14 @@ pub(crate) mod hash_probe {
     }
 
     /// Each chunk read from here on takes `delay` more; none counted yet.
+    #[cfg(unix)]
     pub(crate) fn slow_reads(delay: Duration) {
         DELAY.set(delay);
         CHUNKS.set(0);
     }
 
     /// The chunks read since [`slow_reads`].
+    #[cfg(unix)]
     pub(crate) fn chunks() -> usize {
         CHUNKS.get()
     }
@@ -495,7 +501,7 @@ fn check_with(
         return Err(CheckTimedOut);
     }
     let opened = open_executable(&identity.path);
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     crate::prelaunch_tests::seams::after_open();
     // Past the end nothing the file turned out to be counts, an error from it included.
     if passed(by) {
@@ -505,10 +511,10 @@ fn check_with(
         Ok(opened) => opened,
         Err(error) => return Ok(Err(suspended(error))),
     };
-    let same_file = meta.dev() == identity.device
-        && meta.ino() == identity.inode
-        && meta.size() == identity.size
-        && (meta.mtime(), meta.mtime_nsec()) == identity.modified;
+    let same_file = kiln_core::platform::file_identity(&file).ok()
+        == Some((identity.device, identity.inode))
+        && meta.len() == identity.size
+        && kiln_core::platform::modified_parts(&meta) == identity.modified;
     if !same_file {
         return Ok(Err(changed));
     }
@@ -860,7 +866,7 @@ impl SuspensionWrite {
     /// under. If it doesn't, because the program was granted again since or the plugin forgotten,
     /// nothing changes: the finding was about a grant that has gone.
     fn write(&self) -> Result<(), GrantStoreError> {
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         crate::prelaunch_tests::seams::store_io(self.store.path()).map_err(|source| {
             GrantStoreError::Io {
                 path: self.store.path.clone(),
@@ -946,7 +952,7 @@ impl SuspensionWriter {
     }
 
     fn spawn(self: &Arc<Self>) -> io::Result<()> {
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         crate::prelaunch_tests::seams::thread_start(&self.path)?;
         let writer = Arc::clone(self);
         std::thread::Builder::new()
@@ -999,7 +1005,7 @@ impl SuspensionWriter {
     fn attempt(mut queued: Queued) -> Option<Queued> {
         match queued.write.write() {
             Ok(()) => {
-                #[cfg(test)]
+                #[cfg(all(test, unix))]
                 crate::prelaunch_tests::seams::written(queued.write.store.path());
                 // Whoever was waiting may have stopped.
                 let _ = queued.written.send(());
@@ -1036,13 +1042,14 @@ fn locked_by<T>(path: &Path, by: Option<Instant>, f: impl FnOnce() -> T) -> io::
     lock_name.push(".lock");
     let lock_path = path.with_file_name(lock_name);
     create_dir(lock_path.parent().unwrap_or(Path::new(".")))?;
-    let lock = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .open(&lock_path)?;
+    let lock = kiln_core::platform::private(
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false),
+    )
+    .open(&lock_path)?;
     match by {
         None => lock.lock()?,
         Some(by) => loop {
@@ -1079,11 +1086,9 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
+        let mut file =
+            kiln_core::platform::private(fs::OpenOptions::new().write(true).create_new(true))
+                .open(&temporary)?;
         file.write_all(contents)?;
         file.sync_all()?;
         fs::rename(&temporary, path)
@@ -1101,8 +1106,5 @@ fn create_dir(dir: &Path) -> io::Result<()> {
     } else {
         dir
     };
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
+    kiln_core::platform::create_private_dir(dir)
 }

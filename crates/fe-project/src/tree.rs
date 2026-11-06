@@ -197,7 +197,7 @@ impl FileTree {
     /// Opens the directory `root` and lists its entries, nothing deeper.
     pub fn open(root: impl AsRef<Path>, options: TreeOptions) -> io::Result<FileTree> {
         let given_root = root.as_ref().to_path_buf();
-        let root = fs::canonicalize(&given_root)?;
+        let root = dunce::canonicalize(&given_root)?;
         if !fs::metadata(&root)?.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotADirectory,

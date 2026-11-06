@@ -1,5 +1,8 @@
 //! Tenmoku, the standalone host: `tenmoku [options] [path[:line[:column]] ...]`
 //! ([`cli`]), a [`Workbench`] in a window.
+// A GUI app on Windows, so launching it opens no console window; started
+// from one, it writes to it all the same (`windows_console`).
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app_icon;
 mod cli;
@@ -19,6 +22,8 @@ mod sparkle_tests;
 mod theme;
 mod vim_remaps;
 mod wait;
+#[cfg(windows)]
+mod windows_console;
 mod workspace_extensions;
 
 use std::{
@@ -495,6 +500,8 @@ fn open_files(window: WindowHandle<Workbench>, files: Vec<Target>, cx: &mut App)
 }
 
 fn main() {
+    #[cfg(windows)]
+    windows_console::attach_to_parent();
     let mut startup = Startup::new();
     let started = Instant::now();
     init_logging();
@@ -836,7 +843,7 @@ mod tests {
     fn a_failed_launch_file_leaves_the_next_to_open(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let valid = root.join("valid.txt");
         fs::write(&valid, "valid\n").unwrap();
         cx.update(|cx| {

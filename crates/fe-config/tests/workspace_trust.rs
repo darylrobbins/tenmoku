@@ -4,12 +4,16 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
 use fe_config::paths::{state_dir_from, trust_path};
-use fe_config::trust::{Trust, TrustStore, canonical};
+#[cfg(unix)]
+use fe_config::trust::canonical;
+use fe_config::trust::{Trust, TrustStore};
 
+#[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
@@ -46,6 +50,7 @@ fn nearest_decision_wins() {
 }
 
 #[test]
+#[cfg(unix)]
 fn persists_across_loads() {
     let temp = tempfile::tempdir().unwrap();
     let base = canonical(temp.path());

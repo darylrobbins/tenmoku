@@ -307,7 +307,7 @@ impl QuickOpen {
     }
 
     /// Shows `matches` as the input's, as a query's results would.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn show_matches(&mut self, matches: Vec<FinderMatch>) {
         self.shown = Some(self.query.clone());
         self.matches = matches;

@@ -2,20 +2,39 @@
 //! keeping what it is, and never through a symlink, there or on the way,
 //! whenever it appeared.
 
-use std::{
-    fs,
-    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
-};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
 use tempfile::TempDir;
 
 use super::*;
 
+/// Links folder `link` to folder `target`: a symlink, or on Windows a
+/// junction, which needs no privilege and is a link all the same.
+fn dir_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        let plain = |path: &Path| {
+            let text = path.to_str().unwrap();
+            text.strip_prefix(r"\?\").unwrap_or(text).to_owned()
+        };
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", &plain(link), &plain(target)])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
+}
+
 /// A project in a temporary folder, with `a/b/f.txt`, and a folder outside
 /// it with `b/f.txt` in the same place, which nothing may empty.
 fn project() -> (TempDir, PathBuf, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let base = fs::canonicalize(dir.path()).unwrap();
+    let base = dunce::canonicalize(dir.path()).unwrap();
     let (root, outside) = (base.join("project"), base.join("outside"));
     for top in [root.join("a"), outside.clone()] {
         fs::create_dir_all(top.join("b")).unwrap();
@@ -25,6 +44,7 @@ fn project() -> (TempDir, PathBuf, PathBuf) {
 }
 
 /// A group of this process's other than its own, if it is in one.
+#[cfg(unix)]
 fn other_group() -> Option<libc::gid_t> {
     // SAFETY: a zero count asks only how many there are.
     let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
@@ -41,11 +61,17 @@ fn other_group() -> Option<libc::gid_t> {
 fn it_empties_the_file_in_place_keeping_its_mode_and_group() {
     let (_dir, root, _) = project();
     let path = root.join("a/b/f.txt");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-    if let Some(group) = other_group() {
-        std::os::unix::fs::chown(&path, None, Some(group)).unwrap();
+    #[cfg(unix)]
+    {
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        if let Some(group) = other_group() {
+            std::os::unix::fs::chown(&path, None, Some(group)).unwrap();
+        }
     }
+    #[cfg(unix)]
     let before = fs::metadata(&path).unwrap();
+    let identity = |path: &Path| listing::identity(&File::open(path).unwrap()).unwrap();
+    let before_id = identity(&path);
 
     // Absolute under the root, or relative to it.
     for path in [path.clone(), PathBuf::from("a/b/f.txt")] {
@@ -53,12 +79,16 @@ fn it_empties_the_file_in_place_keeping_its_mode_and_group() {
         let file = open_truncated(&root, &path).unwrap();
         assert_eq!(file.metadata().unwrap().len(), 0);
     }
-    let after = fs::metadata(&path).unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"");
-    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
-    assert_eq!(after.mode() & 0o7777, 0o640);
-    assert_eq!(after.gid(), before.gid());
-    assert_eq!(after.uid(), before.uid());
+    assert_eq!(identity(&path), before_id);
+    #[cfg(unix)]
+    {
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+        assert_eq!(after.mode() & 0o7777, 0o640);
+        assert_eq!(after.gid(), before.gid());
+        assert_eq!(after.uid(), before.uid());
+    }
 }
 
 #[test]
@@ -73,6 +103,7 @@ fn it_writes_through_the_handle_it_returns() {
 }
 
 #[test]
+#[cfg(unix)]
 fn it_refuses_a_symlink_in_place_of_the_file() {
     let (_dir, root, outside) = project();
     let link = root.join("a/b/link.txt");
@@ -86,20 +117,23 @@ fn it_refuses_a_symlink_in_place_of_the_file() {
 fn it_refuses_a_symlinked_folder_on_the_way() {
     let (_dir, root, outside) = project();
     fs::rename(root.join("a"), root.join("a.moved")).unwrap();
-    symlink(&outside, root.join("a")).unwrap();
+    dir_link(&outside, &root.join("a"));
     let err = open_truncated(&root, Path::new("a/b/f.txt")).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
     assert_eq!(fs::read(outside.join("b/f.txt")).unwrap(), b"kept\n");
 }
 
 #[test]
+// Windows won't rename a folder while a handle holds it (or what is
+// in it), as this race must.
+#[cfg(unix)]
 fn a_folder_swapped_for_a_symlink_once_reached_leads_nowhere_else() {
     let (_dir, root, outside) = project();
     let (a, moved) = (root.join("a"), root.join("a.moved"));
     let link = outside.clone();
     race_tests::at(Point::Truncating, move || {
         fs::rename(&a, &moved).unwrap();
-        symlink(&link, &a).unwrap();
+        dir_link(&link, &a);
     });
     let result = open_truncated(&root, Path::new("a/b/f.txt"));
     assert!(race_tests::reached(), "the swap was made");
@@ -111,6 +145,7 @@ fn a_folder_swapped_for_a_symlink_once_reached_leads_nowhere_else() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_file_swapped_for_a_symlink_once_its_folder_is_reached_is_refused() {
     let (_dir, root, outside) = project();
     let path = root.join("a/b/f.txt");
@@ -132,12 +167,19 @@ fn it_refuses_what_isnt_a_regular_file() {
     let err = open_truncated(&root, Path::new("a/b")).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::IsADirectory, "{err}");
 
+    // FIFOs are Unix's.
+    #[cfg(unix)]
+    refuses_a_fifo(&root);
+}
+
+#[cfg(unix)]
+fn refuses_a_fifo(root: &Path) {
     let fifo = root.join("a/fifo");
     let name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
     // SAFETY: `name` is NUL-terminated.
     check(unsafe { libc::mkfifo(name.as_ptr(), 0o644) }).unwrap();
     // No reader: the non-blocking open fails rather than waiting for one.
-    assert!(open_truncated(&root, &fifo).is_err());
+    assert!(open_truncated(root, &fifo).is_err());
     // With one, it opens, and is refused before anything is done to it.
     let _reader = {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -146,7 +188,7 @@ fn it_refuses_what_isnt_a_regular_file() {
             .open(&fifo)
             .unwrap()
     };
-    let err = open_truncated(&root, &fifo).unwrap_err();
+    let err = open_truncated(root, &fifo).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{err}");
 }
 

@@ -63,6 +63,7 @@ mod plugin_host;
 mod plugin_manage;
 mod plugin_prompt;
 mod preserve_case;
+mod process_group;
 mod project_panel;
 mod quick_open;
 mod references_panel;

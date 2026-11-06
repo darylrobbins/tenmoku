@@ -34,7 +34,7 @@ mod commit_stats {
 
     fn init() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         git(&root, &["init", "-q"]);
         (dir, root)
     }
@@ -139,9 +139,14 @@ mod commit_stats {
     fn paths_with_spaces_and_unicode() {
         let (_dir, root) = init();
         commit(&root, &[("base", b"x\n")], "base");
+        // Both names git quotes; a tab can't be in a Windows file name.
+        #[cfg(unix)]
+        let odd = "naïve\ttab é.txt";
+        #[cfg(windows)]
+        let odd = "naïve tab é.txt";
         let id = commit(
             &root,
-            &[("with space.txt", b"a\n"), ("naïve\ttab é.txt", b"a\nb\n")],
+            &[("with space.txt", b"a\n"), (odd, b"a\nb\n")],
             "odd names",
         );
         let stats = Repo::discover(&root)
@@ -151,7 +156,7 @@ mod commit_stats {
             .unwrap();
         let paths: Vec<_> = stats.files.iter().map(|f| f.path.clone()).collect();
         assert!(paths.contains(&root.join("with space.txt")));
-        assert!(paths.contains(&root.join("naïve\ttab é.txt")));
+        assert!(paths.contains(&root.join(odd)));
         assert_eq!(stats.total(), (3, 0));
     }
 }

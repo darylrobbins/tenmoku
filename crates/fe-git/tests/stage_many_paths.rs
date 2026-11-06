@@ -40,11 +40,19 @@ fn open(root: &Path) -> Repo {
     Repo::discover(root).unwrap().expect("a repository")
 }
 
+#[cfg(unix)]
 fn arg_max() -> usize {
     let out = Command::new("getconf").arg("ARG_MAX").output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
 }
 
+/// The longest command line `CreateProcess` takes, in UTF-16 units.
+#[cfg(windows)]
+fn arg_max() -> usize {
+    32_767
+}
+
+#[cfg(unix)]
 fn path_max() -> usize {
     let out = Command::new("getconf")
         .args(["PATH_MAX", "/"])
@@ -53,14 +61,24 @@ fn path_max() -> usize {
     String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
 }
 
+/// `MAX_PATH`, which Git for Windows keeps to without `core.longpaths`.
+#[cfg(windows)]
+fn path_max() -> usize {
+    260
+}
+
 /// Enough file names, in a directory nested to near PATH_MAX (so few files
-/// are needed), that their relative paths exceed ARG_MAX.
+/// are needed), that their relative paths exceed ARG_MAX. Not nested at all
+/// where PATH_MAX is short, as on Windows.
 fn many_names() -> Vec<String> {
-    let levels = (path_max() / 2 - 100) / 251;
-    let dir = vec!["d".repeat(250); levels].join("/");
-    let each = dir.len() + 1 + 12;
+    let levels = (path_max() / 2).saturating_sub(100) / 251;
+    let dir: String = vec!["d".repeat(250); levels]
+        .iter()
+        .map(|level| format!("{level}/"))
+        .collect();
+    let each = dir.len() + 12;
     let count = arg_max() / each + 200;
-    (0..count).map(|n| format!("{dir}/f{n:09}.txt")).collect()
+    (0..count).map(|n| format!("{dir}f{n:09}.txt")).collect()
 }
 
 fn create(root: &Path, names: &[String], text: &str) -> Vec<PathBuf> {

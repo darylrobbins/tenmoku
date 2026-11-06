@@ -2,9 +2,10 @@
 //! workspace activates, to its focus target, and a split doesn't copy a tab
 //! a loading file or a read error hides.
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::{
     fs,
-    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
 };
 
@@ -15,11 +16,13 @@ use crate::{Pane, Workbench, pane_group::Direction};
 
 fn project() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("a.txt"), "alpha\n").unwrap();
     fs::write(root.join("b.txt"), "beta\n").unwrap();
     // Unreadable: a read of it fails.
     fs::write(root.join("locked.txt"), "x\n").unwrap();
+    // Windows has no mode to lock it with: it stays readable.
+    #[cfg(unix)]
     fs::set_permissions(root.join("locked.txt"), fs::Permissions::from_mode(0o000)).unwrap();
     (dir, root)
 }

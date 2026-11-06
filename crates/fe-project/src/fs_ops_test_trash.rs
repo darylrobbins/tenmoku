@@ -15,7 +15,6 @@ use std::{
     fs::{self, File},
     io,
     marker::PhantomData,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
         Mutex, OnceLock, PoisonError,
@@ -23,7 +22,11 @@ use std::{
     },
 };
 
-use super::{Target, mkdir_at, open_subdir, rename_noreplace, unlink_at};
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+use super::{Target, mkdir_at, open_subdir, remove_at, rename_noreplace};
+use crate::listing::{self, Access};
 
 const PREFIX: &str = "fe-test-trash-";
 
@@ -114,8 +117,8 @@ pub(super) fn move_into(target: &Target<'_>) -> io::Result<()> {
     let moved = open_subdir(&trash.dir, &slot)
         .and_then(|dir| rename_noreplace(&target.parent, target.name, &dir, target.name));
     if let Err(err) = moved {
-        let _ = unlink_at(&trash.dir, &slot, libc::AT_REMOVEDIR);
-        if err.raw_os_error() == Some(libc::EXDEV) {
+        let _ = remove_at(&trash.dir, &slot, true);
+        if err.kind() == io::ErrorKind::CrossesDevices {
             return Err(io::Error::new(
                 io::ErrorKind::CrossesDevices,
                 format!(
@@ -158,17 +161,25 @@ fn opened() -> io::Result<&'static TestTrash> {
 }
 
 fn make() -> io::Result<TestTrash> {
-    let base = fs::canonicalize(std::env::temp_dir())?;
+    let base = dunce::canonicalize(std::env::temp_dir())?;
     remove_stale(&base);
-    // SAFETY: always safe to call.
-    let pid = unsafe { libc::getpid() };
+    let pid = std::process::id();
     let path = base.join(format!("{PREFIX}{pid}"));
     // One left by an earlier process of this pid, which is gone.
     if path.symlink_metadata().is_ok() {
         remove_all(&path)?;
     }
-    fs::DirBuilder::new().mode(0o700).create(&path)?;
-    let dir = File::open(&path)?;
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(&path)?;
+    // A folder's handle, as the moves are made from (`File::open` can't
+    // open a folder on Windows).
+    let dir: File = listing::open_dirs(&path, Access::Search)
+        .map_err(|unreached| unreached.err)?
+        .pop()
+        .expect("the path's own folder is opened last");
     Ok(TestTrash {
         path,
         dir,
@@ -185,18 +196,42 @@ fn remove_stale(base: &Path) {
         let name = entry.file_name();
         let Some(pid) = (name.to_str())
             .and_then(|name| name.strip_prefix(PREFIX))
-            .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+            .and_then(|pid| pid.parse::<u32>().ok())
             .filter(|&pid| pid > 0)
         else {
             continue;
         };
-        // SAFETY: signal 0 only checks whether the process exists.
-        let gone = unsafe { libc::kill(pid, 0) } != 0
-            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
-        if gone {
+        if process_gone(pid) {
             let _ = remove_all(&entry.path());
         }
     }
+}
+
+/// Whether no process `pid` is running.
+#[cfg(unix)]
+fn process_gone(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 only checks whether the process exists.
+    (unsafe { libc::kill(pid, 0) }) != 0
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+/// Whether no process `pid` is running: none can be opened by it, which a
+/// running one of another user's can't be either, so that is kept too.
+#[cfg(windows)]
+fn process_gone(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: always safe to call.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return io::Error::last_os_error().raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32);
+    }
+    // SAFETY: `process` is ours and not used after this.
+    unsafe { CloseHandle(process) };
+    false
 }
 
 /// Removes `path` and everything in it, giving each folder its owner's
@@ -209,6 +244,7 @@ fn remove_all(path: &Path) -> io::Result<()> {
         if !meta.is_dir() {
             return;
         }
+        #[cfg(unix)]
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
@@ -230,17 +266,17 @@ extern "C" fn remove_at_exit() {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::MetadataExt;
-
     use super::{super::trash, *};
 
     #[test]
     fn trash_goes_to_the_test_trash_not_the_system_trash() {
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let name = format!("{}-gone.txt", root.file_name().unwrap().to_str().unwrap());
         fs::write(root.join(&name), "gone").unwrap();
-        let ino = fs::symlink_metadata(root.join(&name)).unwrap().ino();
+        // What the file is, by its handle: its identity.
+        let id = |path: &Path| listing::identity(&File::open(path).unwrap()).unwrap();
+        let ino = id(&root.join(&name));
         let calls = real_calls();
 
         trash(&root, &[Path::new(&name)]).unwrap();
@@ -250,8 +286,8 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         let trash = trash_dir();
         assert!(found[0].starts_with(&trash), "{found:?} not in {trash:?}");
-        assert!(trash.starts_with(fs::canonicalize(std::env::temp_dir()).unwrap()));
-        assert_eq!(fs::symlink_metadata(&found[0]).unwrap().ino(), ino);
+        assert!(trash.starts_with(dunce::canonicalize(std::env::temp_dir()).unwrap()));
+        assert_eq!(id(&found[0]), ino);
         assert_eq!(fs::read_to_string(&found[0]).unwrap(), "gone");
         assert_eq!(real_calls(), calls, "the system Trash was not reached");
     }

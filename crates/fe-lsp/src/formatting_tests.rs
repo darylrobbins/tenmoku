@@ -20,7 +20,7 @@ use crate::fake::{
 };
 use crate::{Clock, LspError, LspManager, ManualClock, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const FORMATTING: &str = "textDocument/formatting";
 const RANGE: &str = "textDocument/rangeFormatting";
 const OPTIONS: FormatOptions = FormatOptions {

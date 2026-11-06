@@ -165,8 +165,10 @@ fn dot_dot_paths_match_their_resolved_file() {
     assert_eq!(editorconfig_for(&p.join("./sub/./../a.go")), direct);
 }
 
+#[cfg(unix)]
 struct Capture(std::sync::Mutex<Vec<String>>);
 
+#[cfg(unix)]
 impl log::Log for Capture {
     fn enabled(&self, _: &log::Metadata) -> bool {
         true
@@ -180,8 +182,10 @@ impl log::Log for Capture {
     fn flush(&self) {}
 }
 
+#[cfg(unix)]
 static CAPTURE: Capture = Capture(std::sync::Mutex::new(Vec::new()));
 
+#[cfg(unix)]
 fn warnings_naming(needle: &str) -> usize {
     CAPTURE
         .0
@@ -193,6 +197,7 @@ fn warnings_naming(needle: &str) -> usize {
 }
 
 #[test]
+#[cfg(unix)]
 fn skipped_files_are_warned_about_once() {
     use std::os::unix::fs::PermissionsExt;
     let _ = log::set_logger(&CAPTURE);

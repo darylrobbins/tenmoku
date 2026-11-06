@@ -2,11 +2,9 @@
 
 //! Writing a setting while the file changes under the writer.
 
-use std::{
-    fs,
-    os::unix::fs::{PermissionsExt as _, symlink},
-    path::Path,
-};
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt as _, symlink};
+use std::{fs, path::Path};
 
 use crate::write::{SYNCED, write_setting};
 
@@ -34,6 +32,7 @@ fn write_after(file: &Path, change: impl FnOnce(&Path) + 'static) {
 /// write_setting read it isn't written over: the setting is made to
 /// what's there now.
 #[test]
+#[cfg(unix)]
 fn a_change_meanwhile_is_kept() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("settings.toml");
@@ -74,6 +73,7 @@ fn a_change_meanwhile_is_kept() {
 /// write_setting resolved it is followed to the file it names now, and
 /// stays a link, even where that file holds the same text.
 #[test]
+#[cfg(unix)]
 fn a_link_changed_meanwhile_is_followed() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("settings.toml");

@@ -2,10 +2,14 @@
 //! symlink is followed at any component of the path below the root,
 //! whenever it was swapped in.
 
+// Most of these tests swap in symlinks or FIFOs, Unix's alone.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
+
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     fs,
     io::{ErrorKind, Read},
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicBool, Ordering},
@@ -19,7 +23,7 @@ use fe_project::open_file_under;
 /// with an `x.rs` of its own. Returns the canonical project root and the
 /// outside directory.
 fn project(dir: &Path) -> (PathBuf, PathBuf) {
-    let dir = fs::canonicalize(dir).unwrap();
+    let dir = dunce::canonicalize(dir).unwrap();
     let (root, outside) = (dir.join("project"), dir.join("outside"));
     fs::create_dir_all(root.join("src/a")).unwrap();
     fs::create_dir_all(&outside).unwrap();
@@ -39,6 +43,8 @@ fn error(root: &Path, rel: impl AsRef<Path>) -> ErrorKind {
 }
 
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn a_component_swapped_for_a_symlink_is_not_followed() {
     let dir = tempfile::tempdir().unwrap();
     let (root, outside) = project(dir.path());
@@ -72,6 +78,8 @@ fn paths_not_below_the_root_are_rejected() {
 }
 
 #[test]
+// FIFOs are Unix's.
+#[cfg(unix)]
 fn a_fifo_opens_without_waiting_for_a_writer() {
     let dir = tempfile::tempdir().unwrap();
     let (root, _) = project(dir.path());
@@ -89,6 +97,8 @@ fn a_fifo_opens_without_waiting_for_a_writer() {
 }
 
 #[test]
+// Swaps a folder for a symlink, which Windows makes only with a privilege.
+#[cfg(unix)]
 fn extraction_never_reads_through_a_directory_being_swapped() {
     let dir = tempfile::tempdir().unwrap();
     let (root, outside) = project(dir.path());

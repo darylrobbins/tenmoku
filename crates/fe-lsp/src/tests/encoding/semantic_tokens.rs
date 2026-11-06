@@ -207,7 +207,7 @@ fn full_tokens_decode_through_the_legend() {
         assert_eq!(sent[0].0, SemanticTokensFullRequest::METHOD);
         assert_eq!(
             sent[0].1,
-            json!({ "textDocument": { "uri": "file:///fake/root/a.rs" } })
+            json!({ "textDocument": { "uri": crate::fake::fake_uri("a.rs") } })
         );
     }
 }

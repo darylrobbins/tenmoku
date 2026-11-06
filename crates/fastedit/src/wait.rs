@@ -253,7 +253,7 @@ fn answer_all(cx: &mut App) {
 }
 
 /// How many clients are waiting.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn pending(cx: &App) -> usize {
     cx.global::<WaitSet>().waits.len()
 }

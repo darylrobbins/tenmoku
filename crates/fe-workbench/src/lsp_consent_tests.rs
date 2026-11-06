@@ -25,7 +25,7 @@ fn extension(dir: &Path) -> std::path::PathBuf {
     let extension = dir.join("zig");
     fs::create_dir_all(&extension).unwrap();
     fs::write(extension.join("server.js"), "console.log(1)\n").unwrap();
-    extension.canonicalize().unwrap()
+    dunce::canonicalize(&extension).unwrap()
 }
 
 /// `acme.zig`'s `zls`, run as `/usr/bin/node server.js --stdio`.
@@ -431,6 +431,7 @@ fn launch(gate: &ConsentGate, recorder: &Recorder, spec: &ServerSpec) -> Option<
 }
 
 /// Makes `path` an executable file.
+#[cfg(unix)]
 fn executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt as _;
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -450,6 +451,7 @@ fn grant(cx: &mut TestAppContext, server: &ExtensionServer) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn every_launch_is_checked_against_the_grant(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let extension = extension(dir.path());
@@ -512,6 +514,7 @@ fn every_launch_is_checked_against_the_grant(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_retargeted_or_new_script_is_a_change(cx: &mut TestAppContext, later: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let extension = extension(dir.path());
@@ -702,7 +705,7 @@ fn only_the_first_server_of_a_name_is_handed_and_checked(cx: &mut TestAppContext
     let extension = extension(dir.path());
     let other = dir.path().join("other");
     fs::create_dir_all(&other).unwrap();
-    let other = other.canonicalize().unwrap();
+    let other = dunce::canonicalize(&other).unwrap();
     // Two extensions' `zls`, both running the first's script, which is
     // outside the second's directory, so its grant doesn't hash it.
     let script = extension.join("server.js").to_string_lossy().into_owned();

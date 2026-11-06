@@ -45,12 +45,12 @@ fn unopened_files_diagnostics_are_reported_raw() {
         first.code = Some(NumberOrString::Number(7));
         first.tags = Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]);
         let second = over(text, "beta", utf16, "bad beta");
-        let uri = Url::from_file_path("/fake/root/b.rs").unwrap();
+        let uri = Url::from_file_path(crate::fake::fake_path("b.rs")).unwrap();
         publish(&s, &uri, None, vec![first.clone(), second.clone()]);
 
         let (got, path, got_encoding, items) = next_file(&s);
         assert_eq!(got, uri);
-        assert_eq!(path, Some(PathBuf::from("/fake/root/b.rs")));
+        assert_eq!(path, Some(crate::fake::fake_path("b.rs")));
         assert_eq!(got_encoding, encoding);
         let [one, two] = &items[..] else {
             panic!("two items")

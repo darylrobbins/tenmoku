@@ -1,6 +1,11 @@
+// Every test makes a symlink, which Windows makes only with a privilege.
+#![cfg(unix)]
+
 //! A file symlink is followed to its target before the root check (T235).
 
-use std::{fs, os::unix::fs::symlink, path::PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+use std::{fs, path::PathBuf};
 
 use gpui::TestAppContext;
 use lsp_types::Url;
@@ -17,10 +22,13 @@ impl Lsp {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_symlink_out_of_the_root_is_not_sent(cx: &mut TestAppContext) {
     let mut s = Lsp::new(cx);
     let outside = tempfile::tempdir().unwrap();
-    let target = fs::canonicalize(outside.path()).unwrap().join("secret.rs");
+    let target = dunce::canonicalize(outside.path())
+        .unwrap()
+        .join("secret.rs");
     fs::write(&target, "fn secret() {}\n").unwrap();
     let link = s.path("src/link.rs");
     symlink(&target, &link).unwrap();
@@ -44,10 +52,11 @@ fn a_file_symlink_out_of_the_root_is_not_sent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_file_symlink_into_the_root_opens_its_target(cx: &mut TestAppContext) {
     let mut s = Lsp::new(cx);
     let outside = tempfile::tempdir().unwrap();
-    let link = fs::canonicalize(outside.path())
+    let link = dunce::canonicalize(outside.path())
         .unwrap()
         .join("main_link.rs");
     symlink(s.path("src/main.rs"), &link).unwrap();

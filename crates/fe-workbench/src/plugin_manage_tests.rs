@@ -461,7 +461,7 @@ fn the_uninstall_confirmation_says_it_deletes_secrets(cx: &mut TestAppContext) {
 /// Uninstalls the plugin, kiln finding it through a symlink if `linked`.
 fn uninstalls(cx: &mut TestAppContext, linked: bool) {
     let (fixture, workbench, mut cx) = start(cx, true, linked);
-    let target = fs::canonicalize(&fixture.plugin_dir).unwrap();
+    let target = dunce::canonicalize(&fixture.plugin_dir).unwrap();
     pick_plugin("workbench.uninstall_plugin", &workbench, &mut cx);
     cx.simulate_prompt_answer("Uninstall");
     until(&mut cx, "the directory to go", |_| {
@@ -733,7 +733,7 @@ fn a_plugin_with_a_language_server_shows_both_states(cx: &mut TestAppContext) {
         extension_name: "Tool".into(),
         extension_version: "1.0.0".into(),
         extension_license: "MIT".into(),
-        extension_dir: fixture.plugin_dir.canonicalize().unwrap(),
+        extension_dir: dunce::canonicalize(&fixture.plugin_dir).unwrap(),
         spec: fe_lsp::ServerSpec {
             languages: vec!["zig".into()],
             ..fe_lsp::ServerSpec::new("tls", "/opt/tls/bin/tls")

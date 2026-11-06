@@ -124,7 +124,7 @@ impl Events {
     }
 }
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 
 /// A server started on the fake, with a manual clock that never moves, so
 /// no backstop tick drains behind a test's back.

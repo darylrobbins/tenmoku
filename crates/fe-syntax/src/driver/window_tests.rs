@@ -170,7 +170,8 @@ fn count_tree_sitter_bytes() -> impl Fn() -> isize {
         fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
         fn free(ptr: *mut c_void);
         #[cfg_attr(target_os = "macos", link_name = "malloc_size")]
-        #[cfg_attr(not(target_os = "macos"), link_name = "malloc_usable_size")]
+        #[cfg_attr(target_os = "linux", link_name = "malloc_usable_size")]
+        #[cfg_attr(windows, link_name = "_msize")]
         fn usable_size(ptr: *const c_void) -> usize;
     }
     fn size(ptr: *const c_void) -> isize {

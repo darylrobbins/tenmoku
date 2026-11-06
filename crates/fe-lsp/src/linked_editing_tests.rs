@@ -20,7 +20,7 @@ use crate::fake::{
 };
 use crate::{LspEvent, LspManager, ManualClock, ServerSpec, SystemClock};
 
-const ROOT: &str = "/fake/root";
+const ROOT: &str = crate::fake::FAKE_ROOT;
 const WAIT: Duration = Duration::from_secs(10);
 
 struct Started {

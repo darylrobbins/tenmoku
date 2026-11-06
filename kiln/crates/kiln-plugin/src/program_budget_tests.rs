@@ -1,3 +1,5 @@
+// Its programs are shell scripts made executable by mode.
+#![cfg(unix)]
 // SPDX-License-Identifier: Apache-2.0
 
 //! A call's program runs share one budget: the second of two, past what the first left, is

@@ -73,6 +73,9 @@ pub(crate) fn run_raw(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command.envs(envs.iter().copied());
+    // No console window for git from a GUI app (`CREATE_NO_WINDOW`).
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000);
     if access == Access::Read {
         command.env("GIT_OPTIONAL_LOCKS", "0");
     }

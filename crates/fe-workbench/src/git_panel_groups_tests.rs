@@ -551,6 +551,7 @@ fn set_index(root: &Path, rela: &str, text: &str) {
 
 /// What the index holds for `rela`, as `git cat-file` prints it: a
 /// symlink's target.
+#[cfg(unix)]
 fn index_blob(root: &Path, rela: &str) -> String {
     let output = Command::new("git")
         .args(["cat-file", "-p", &format!(":{rela}")])
@@ -605,6 +606,7 @@ fn buffer_text(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Strin
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn symlinks_are_staged_and_discarded_as_links(cx: &mut TestAppContext) {
     use std::os::unix::fs::symlink;
     let dir = fixture();
@@ -1038,6 +1040,7 @@ fn compare_reads_the_file_if_its_tab_closes_meanwhile(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn staging_from_a_staged_diff_saves_the_buffer_opened_through_an_alias(cx: &mut TestAppContext) {
     let dir = fixture();
     let root = dir.path();
@@ -1139,6 +1142,7 @@ fn stage_buffer_after_a_pending_discard_stages_nothing_unsaved(cx: &mut TestAppC
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_staged_symlinks_diff_compares_its_targets(cx: &mut TestAppContext) {
     use std::os::unix::fs::symlink;
     let dir = fixture();
@@ -1229,6 +1233,7 @@ fn a_queued_save_and_stage_stops_if_its_editor_moves_to_another_file(cx: &mut Te
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn staged_links_to_one_file_each_have_their_own_diff(cx: &mut TestAppContext) {
     use std::os::unix::fs::symlink;
     let dir = fixture();

@@ -372,6 +372,7 @@ fn servers_hear_of_operations_done_while_the_tree_reopens(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_renamed_path_keeps_its_spelling(cx: &mut TestAppContext) {
     let mut s = Lsp::with_scripts(cx, script(), Script::default());
     s.set_trust(true);

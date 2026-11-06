@@ -16,7 +16,7 @@ fn replaced() -> (tempfile::TempDir, FinderIndex) {
         index.extend(batch)
     });
     index.finish();
-    assert!(index.contains("a/b.rs"));
+    assert!(index.contains("a/b.rs".replace('/', std::path::MAIN_SEPARATOR_STR)));
     fs::remove_dir_all(dir.path().join("a")).unwrap();
     fs::write(dir.path().join("a"), "").unwrap();
     (dir, index)
@@ -30,7 +30,7 @@ fn change(index: &FinderIndex, rel: &str) -> FsChange {
 fn file_replacing_a_directory_stays_indexed_when_its_old_child_is_reported() {
     let (_dir, mut index) = replaced();
     index.apply(&[change(&index, "a"), change(&index, "a/b.rs")]);
-    assert!(!index.contains("a/b.rs"));
+    assert!(!index.contains("a/b.rs".replace('/', std::path::MAIN_SEPARATOR_STR)));
     assert!(index.contains("a"));
 }
 
@@ -38,6 +38,6 @@ fn file_replacing_a_directory_stays_indexed_when_its_old_child_is_reported() {
 fn child_reported_alone_under_a_new_file_indexes_the_file() {
     let (_dir, mut index) = replaced();
     index.apply(&[change(&index, "a/b.rs")]);
-    assert!(!index.contains("a/b.rs"));
+    assert!(!index.contains("a/b.rs".replace('/', std::path::MAIN_SEPARATOR_STR)));
     assert!(index.contains("a"));
 }

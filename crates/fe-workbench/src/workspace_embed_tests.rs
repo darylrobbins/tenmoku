@@ -16,7 +16,7 @@ fn workbench(
     cx: &mut TestAppContext,
 ) -> (Entity<Workbench>, &mut VisualTestContext, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     for (name, text) in [("a.txt", "alpha\n"), ("b.rs", "fn b() {}\n")] {
         fs::write(root.join(name), text).unwrap();
     }
@@ -105,7 +105,7 @@ fn a_split_goes_through_the_workspace(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_tab_moved_by_key_to_an_edge_splits_through_the_workspace(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx);
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     open_file(&workbench, root.join("b.rs"), cx);
     let first = active(&workbench, cx);
     assert_eq!(tabs(&first, cx), ["a.txt", "b.rs"]);

@@ -142,7 +142,7 @@ fn logged(log: &Path, sessions: usize, cx: &mut VisualTestContext) -> Vec<PathBu
 }
 
 fn canonical(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap()
+    dunce::canonicalize(path).unwrap()
 }
 
 #[gpui::test]

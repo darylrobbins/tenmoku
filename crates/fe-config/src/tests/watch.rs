@@ -15,10 +15,11 @@
 //! before. The watcher's own tests, symlink tracking included, are
 //! kiln-core's.
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     collections::HashMap,
     fs,
-    os::unix::fs::symlink,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
@@ -62,7 +63,7 @@ impl Control {
     fn new() -> Control {
         let dir = tempfile::tempdir().unwrap();
         // Canonical, as events name paths.
-        let root = dir.path().canonicalize().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         let (tx, events) = mpsc::channel();
         let mut watcher = notify::recommended_watcher(move |event| {
             tx.send((Instant::now(), event)).ok();
@@ -239,6 +240,7 @@ fn hot_reload_applies_valid_and_keeps_last_good() {
 }
 
 #[test]
+#[cfg(unix)]
 fn symlink_targets_are_watched() {
     let dir = tempfile::tempdir().unwrap();
     let dotfiles = dir.path().join("dotfiles");

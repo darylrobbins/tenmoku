@@ -642,12 +642,15 @@ fn runs_nothing_for(s: &mut Lsp, runner: &FakeRunner, name: &str) {
 fn a_file_outside_a_trusted_root_runs_no_formatter(cx: &mut TestAppContext) {
     let Wired { mut s, runner, .. } = setup(cx, no_formatter(), EXTERNAL, Mode::Output(SPACED));
     let outside = tempfile::tempdir().unwrap();
-    let file: PathBuf = outside.path().canonicalize().unwrap().join("other.rs");
+    let file: PathBuf = dunce::canonicalize(outside.path())
+        .unwrap()
+        .join("other.rs");
     fs::write(&file, TABS).unwrap();
     runs_nothing_for(&mut s, &runner, file.to_str().unwrap());
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_symlinked_folder_out_of_a_trusted_root_runs_no_formatter(cx: &mut TestAppContext) {
     let Wired { mut s, runner, .. } = setup(cx, no_formatter(), EXTERNAL, Mode::Output(SPACED));
     let outside = tempfile::tempdir().unwrap();
@@ -657,6 +660,7 @@ fn a_symlinked_folder_out_of_a_trusted_root_runs_no_formatter(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn a_symlinked_file_out_of_a_trusted_root_runs_no_formatter(cx: &mut TestAppContext) {
     let Wired { mut s, runner, .. } = setup(cx, no_formatter(), EXTERNAL, Mode::Output(SPACED));
     let outside = tempfile::tempdir().unwrap();
@@ -677,10 +681,11 @@ fn a_path_up_out_of_a_trusted_root_runs_no_formatter(cx: &mut TestAppContext) {
 }
 
 #[test]
+#[cfg(unix)]
 fn folders_are_resolved_past_symlinks_and_parents() {
     use crate::lsp_format::formatter_folders;
     let dir = tempfile::tempdir().unwrap();
-    let dir = dir.path().canonicalize().unwrap();
+    let dir = dunce::canonicalize(dir.path()).unwrap();
     let (trusted, outside) = (dir.join("trusted"), dir.join("outside"));
     fs::create_dir_all(&trusted).unwrap();
     fs::create_dir_all(&outside).unwrap();
@@ -716,7 +721,7 @@ fn folders_are_resolved_past_symlinks_and_parents() {
         formatter_folders(None, Some(&link)).unwrap(),
         std::slice::from_ref(&outside)
     );
-    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let here = dunce::canonicalize(std::env::current_dir().unwrap()).unwrap();
     assert_eq!(formatter_folders(None, None).unwrap(), [here]);
 }
 
@@ -751,7 +756,7 @@ fn a_rootless_unsaved_buffer_needs_the_process_folder_trusted(cx: &mut TestAppCo
     assert_eq!(toasts(&s), ["No formatter for Rust"]);
     assert_eq!(runner.calls(), 0);
 
-    let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+    let here = dunce::canonicalize(std::env::current_dir().unwrap()).unwrap();
     s.cx.update(|_, cx| kiln_shell::trust::decide(&here, true, cx));
     run(&mut s, "lsp.format_document");
     s.until("the format", |s| text(s, &unsaved) == "formatted\n");

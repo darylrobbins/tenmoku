@@ -4,7 +4,9 @@
 //! which asks about each waiting or declined server in turn through the
 //! consent prompt, or shows a row's details.
 
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{fs, path::Path};
 
 use fe_lsp::ServerSpec;
 use gpui::{Focusable as _, TestAppContext, VisualTestContext};
@@ -75,7 +77,7 @@ fn server(dir: &Path, name: &str, spec: ServerSpec) -> ExtensionServer {
         extension_name: name[..1].to_uppercase() + &name[1..],
         extension_version: "1.2.3".into(),
         extension_license: "MIT".into(),
-        extension_dir: dir.join("extensions").join(name).canonicalize().unwrap(),
+        extension_dir: dunce::canonicalize(dir.join("extensions").join(name)).unwrap(),
         spec: ServerSpec {
             languages: vec!["zig".into()],
             ..spec
@@ -293,6 +295,7 @@ fn a_picker_prompt_is_the_only_one_for_its_server(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg(unix)]
 fn servers_show_by_extension_with_what_they_run(cx: &mut TestAppContext) {
     let (host, _sender) = host(cx, &["zls"], Some("zls"));
     let (workbench, mut cx) = workbench(&host, cx);

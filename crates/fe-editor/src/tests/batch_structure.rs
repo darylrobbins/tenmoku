@@ -134,8 +134,47 @@ fn grouped_insertions_through_one_borrow_keep_the_fold_through_undo_and_redo() {
     }
 }
 
+/// CPU time this thread has used: kernel plus user time, from `GetThreadTimes`.
+#[cfg(windows)]
+fn thread_cpu_time() -> Duration {
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentThread() -> isize;
+        fn GetThreadTimes(
+            thread: isize,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+    let [mut creation, mut exit, mut kernel, mut user] = Default::default();
+    // SAFETY: the pseudo-handle names this thread, and each out-pointer is a
+    // valid, writable FILETIME for the call to fill in.
+    let ok = unsafe {
+        GetThreadTimes(
+            GetCurrentThread(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    assert_ne!(ok, 0, "GetThreadTimes failed");
+    let ticks = |t: FileTime| (u64::from(t.high) << 32) | u64::from(t.low);
+    // FILETIME counts 100 ns ticks.
+    Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+}
+
 /// CPU time this thread has used. Unlike wall clock it doesn't grow while the thread is
 /// descheduled, which is what heavy machine load does to a timing.
+#[cfg(unix)]
 fn thread_cpu_time() -> Duration {
     #[repr(C)]
     struct Timespec {

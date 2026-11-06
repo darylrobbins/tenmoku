@@ -19,8 +19,12 @@ fn space_separated_words_each_match_the_path() {
     });
     index.finish();
 
-    let mut paths =
-        |text: &str| -> Vec<String> { index.query(text, 10).into_iter().map(|m| m.path).collect() };
+    // Spelled with `/` on every platform, as the expectations are.
+    let mut paths = |text: &str| -> Vec<String> {
+        (index.query(text, 10).into_iter())
+            .map(|m| m.path.replace(std::path::MAIN_SEPARATOR, "/"))
+            .collect()
+    };
     for text in ["main rs", "rs main", "editor main", "src main rs"] {
         assert_eq!(paths(text), ["src/editor/main.rs"], "{text:?}");
     }
