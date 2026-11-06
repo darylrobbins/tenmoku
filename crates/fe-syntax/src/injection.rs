@@ -433,8 +433,13 @@ impl Painter<'_> {
             let Some(layer) = self.layer(&injection) else {
                 continue;
             };
-            let (own, finished) = if injection.language.name() == "printf" {
-                self.verbs(&injection.ranges)
+            let dialect = match injection.language.name() {
+                "printf" => Some(crate::verbs::Dialect::Go),
+                "printf-c" => Some(crate::verbs::Dialect::C),
+                _ => None,
+            };
+            let (own, finished) = if let Some(dialect) = dialect {
+                self.verbs(&injection.ranges, dialect)
             } else {
                 highlight_query_finished(
                     injection.language,
@@ -458,20 +463,24 @@ impl Painter<'_> {
         spans
     }
 
-    /// The Go format verbs in a `printf` layer's `ranges` that touch the
+    /// The format verbs in a `printf` or `printf-c` layer's `ranges` that touch the
     /// highlighted range, cut to it, found by [`crate::verbs`] rather than
     /// the C grammar's query. Each range is scanned from its start, a chunk
     /// at a time with only the scanner's phase carried across, so no
     /// directive is cut or rescanned however long, and the work between
     /// deadline checks is one chunk; it stops once past the highlighted range. False if
     /// the deadline passed first.
-    fn verbs(&self, ranges: &[Range<usize>]) -> (Vec<Painted>, bool) {
+    fn verbs(
+        &self,
+        ranges: &[Range<usize>],
+        dialect: crate::verbs::Dialect,
+    ) -> (Vec<Painted>, bool) {
         let mut spans = Vec::new();
         for range in ranges {
             if range.end <= self.range.start || range.start >= self.range.end {
                 continue;
             }
-            let mut scanner = crate::verbs::Scanner::new(range.start);
+            let mut scanner = crate::verbs::Scanner::new(range.start, dialect);
             let mut found = Vec::new();
             for chunk in chunks(self.text, range.clone()) {
                 if out_of_time(self.deadline) {

@@ -74,5 +74,6 @@ int main() {
     stack.push(Transaction{Edit{0, "", "hello"}});
     auto* raw = new int[4]{1, 2, 3, 4};
     delete[] raw;
+    std::printf("%d items, %s\n", 4, "ok");
     return stack.undo().has_value() && nullptr == nullptr ? 0 : 1;
 }

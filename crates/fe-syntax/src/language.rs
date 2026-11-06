@@ -521,6 +521,18 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: true,
     },
+    // C format strings: the same grammar, scanned with the C dialect.
+    #[cfg(feature = "printf")]
+    Def {
+        name: "printf-c",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_printf::LANGUAGE.into(),
+        highlights: || &[],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: true,
+    },
     #[cfg(feature = "c")]
     Def {
         name: "c",
@@ -529,7 +541,7 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_c::LANGUAGE.into(),
         highlights: || &[tree_sitter_c::HIGHLIGHT_QUERY],
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/c-injections.scm")),
         hidden: false,
     },
     // An extension by default (T427): built in only with the `cpp` feature.
@@ -546,7 +558,7 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
-        injections: None,
+        injections: Some(include_str!("../queries/cpp-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "bash")]
