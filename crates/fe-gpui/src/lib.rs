@@ -332,3 +332,5 @@ mod theme_tests;
 #[cfg(test)]
 #[path = "vim_key_fallback_tests.rs"]
 mod vim_key_fallback_tests;
+#[cfg(test)]
+mod wrap_column_tests;

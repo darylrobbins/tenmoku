@@ -311,6 +311,25 @@
           "maximum": 16,
           "minimum": 1,
           "type": "integer"
+        },
+        "wrap_column": {
+          "anyOf": [
+            {
+              "const": 0
+            },
+            {
+              "maximum": 500,
+              "minimum": 20
+            }
+          ],
+          "default": 0,
+          "description": "The column soft wrap wraps at, 20 to 500, for `wrap_mode` `column` and\n`bounded`; 0 leaves wrapping at the window's edge. Only meaningful\nwhen `soft_wrap` is on.",
+          "type": "integer"
+        },
+        "wrap_mode": {
+          "$ref": "#/$defs/WrapMode",
+          "default": "viewport",
+          "description": "Where soft wrap wraps: `viewport` (the window's edge), `column`\n(`wrap_column` columns whatever the window, so wider text scrolls) or\n`bounded` (the smaller of the two). Only meaningful when `soft_wrap`\nis on, as VS Code's `editor.wordWrap`."
         }
       },
       "type": "object"
@@ -1301,6 +1320,26 @@
       },
       "type": "object"
     },
+    "WrapMode": {
+      "description": "`editor.wrap_mode`.",
+      "oneOf": [
+        {
+          "const": "viewport",
+          "description": "Wrap at the window's edge.",
+          "type": "string"
+        },
+        {
+          "const": "column",
+          "description": "Wrap at `wrap_column` columns, however wide the window.",
+          "type": "string"
+        },
+        {
+          "const": "bounded",
+          "description": "Wrap at the smaller of the window's edge and `wrap_column` columns.",
+          "type": "string"
+        }
+      ]
+    },
     "ZenModeSettings": {
       "description": "`[workbench.zen_mode]`: what Zen Mode hides beyond the docks, the\npanels and the activity rail, which it always hides, after VS Code's\n`zenMode.*` settings, with its defaults.",
       "properties": {
@@ -1388,7 +1427,9 @@
           "max_line_count": 5,
           "scroll_with_editor": true
         },
-        "tab_size": 4
+        "tab_size": 4,
+        "wrap_column": 0,
+        "wrap_mode": "viewport"
       },
       "description": "The text editor."
     },

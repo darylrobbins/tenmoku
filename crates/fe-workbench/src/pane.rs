@@ -1737,7 +1737,12 @@ impl Pane {
         model.set_cursor_line(self.settings.cursor_line);
         model.set_auto_close(self.settings.auto_close_pairs);
         let theme = self.theme.clone();
-        cx.new(|cx| EditorView::new(model, theme, cx))
+        let settings = self.settings.clone();
+        cx.new(|cx| {
+            let mut view = EditorView::new(model, theme, cx);
+            view.set_wrap_settings(&settings);
+            view
+        })
     }
 
     /// A viewer of `view`, a file too large to edit, whose rows `index`

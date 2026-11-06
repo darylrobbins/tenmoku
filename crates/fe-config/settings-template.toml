@@ -23,6 +23,15 @@
 # Whether long lines wrap at the window's edge.
 # soft_wrap = false
 
+# The column soft wrap wraps at (20 to 500), for wrap_mode "column" and
+# "bounded"; 0 leaves wrapping at the window's edge. Only used with soft_wrap.
+# wrap_column = 0
+
+# Where soft wrap wraps: "viewport" (the window's edge), "column" (wrap_column
+# columns whatever the window) or "bounded" (the smaller of the two). Only used
+# with soft_wrap.
+# wrap_mode = "viewport"
+
 # Format a file with its language server before saving it. A server that
 # doesn't answer within a second is skipped and the file saves unformatted.
 # format_on_save = false

@@ -1090,6 +1090,11 @@ fn lay_out_frame<M: TextMeasure>(
     // by the row as it's laid out.
     let view_width = f64::from(text_width);
     let margin = f64::from(em) * 4.;
+    // Wrapped rows that fit the view don't scroll; ones wrapped at a fixed
+    // column wider than the view do.
+    let wrap_fits = display
+        .wrap_width()
+        .is_some_and(|width| f64::from(width) <= view_width);
     // Whether a long row has text drawn in it that its index doesn't know,
     // so its width as laid out depends on its slice.
     let spans_in_long_rows = inlay.is_some()
@@ -1332,8 +1337,8 @@ fn lay_out_frame<M: TextMeasure>(
         (scroll_x, long)
     };
 
-    // Horizontally, keep the cursor inside the text area too. Wrapped rows
-    // fit, so they don't scroll.
+    // Horizontally, keep the cursor inside the text area too. Rows wrapped
+    // to fit the view don't scroll.
     let follow = |x: f64, mut scroll_x: f64| {
         if x < scroll_x + margin {
             scroll_x = x - margin;
@@ -1343,11 +1348,11 @@ fn lay_out_frame<M: TextMeasure>(
         }
         scroll_x
     };
-    let wanted = if wrapped { 0. } else { f64::from(scroll.x) };
+    let wanted = if wrap_fits { 0. } else { f64::from(scroll.x) };
     let head_long = laid_out.iter().position(
         |row| matches!(row, Err((_, row)) if contains(row.range.clone(), row.last, primary_head)),
     );
-    let (scroll_x, long) = if wrapped || !autoscroll {
+    let (scroll_x, long) = if wrap_fits || !autoscroll {
         settle(measure, long_rows, widths, wanted)
     } else if let Some(ix) = head_long {
         let Err((_, display_row)) = &laid_out[ix] else {

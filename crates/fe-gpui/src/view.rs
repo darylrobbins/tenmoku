@@ -67,6 +67,10 @@ pub struct EditorView {
     /// How many ems soft wrap leaves free at the right, beyond its usual
     /// margin, for text after a line ([`EditorView::set_wrap_reserve`]).
     pub(crate) wrap_reserve: f32,
+    /// `editor.wrap_column` and `editor.wrap_mode`: where soft wrap wraps,
+    /// when on ([`EditorView::wrap_limit`]).
+    pub(crate) wrap_column: Option<u32>,
+    pub(crate) wrap_mode: fe_config::settings::WrapMode,
     /// Whether the gutter shows ([`EditorView::set_gutter`]).
     pub(crate) gutter: bool,
     /// The minimap's options, if it's on ([`EditorView::set_minimap`]).
@@ -409,6 +413,8 @@ impl EditorView {
             tab_tint: None,
             tab_title: None,
             wrap_reserve: 0.,
+            wrap_column: None,
+            wrap_mode: Default::default(),
             gutter: true,
             minimap: None,
             minimap_hover: Default::default(),
@@ -775,6 +781,7 @@ impl EditorView {
         if self.model.tab_size() != settings.tab_size {
             self.model.set_tab_size(settings.tab_size);
         }
+        self.set_wrap_settings(settings);
         cx.notify();
     }
 
@@ -799,6 +806,26 @@ impl EditorView {
         }
         if settings.cursor_line != previous.cursor_line {
             self.model.set_cursor_line(settings.cursor_line);
+        }
+    }
+
+    /// Takes `editor.wrap_column` and `editor.wrap_mode` from `settings`: for
+    /// an editor made from them rather than applied to ([`EditorView::apply_settings`]
+    /// does too). The frame loop wraps at the new width when it next draws.
+    pub fn set_wrap_settings(&mut self, settings: &EditorSettings) {
+        self.wrap_column = settings.effective_wrap_column();
+        self.wrap_mode = settings.wrap_mode;
+    }
+
+    /// The width soft wrap wraps at, given the `viewport` width it would
+    /// fill and the `em` of a monospace cell: `editor.wrap_column` columns
+    /// for `column`, the smaller of the two for `bounded`.
+    pub(crate) fn wrap_limit(&self, viewport: f32, em: f32) -> f32 {
+        use fe_config::settings::WrapMode;
+        match (self.wrap_mode, self.wrap_column) {
+            (WrapMode::Column, Some(n)) => n as f32 * em,
+            (WrapMode::Bounded, Some(n)) => viewport.min(n as f32 * em),
+            _ => viewport,
         }
     }
 

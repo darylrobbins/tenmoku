@@ -1036,8 +1036,11 @@ impl PaneItem for EditorView {
         let (accepts, unsavable) = (self.accepts_when_read_only, self.unsavable);
         let language = self.language_chosen.then_some(self.chosen_language);
         let source = self.language_source.clone();
+        let (wrap_column, wrap_mode) = (self.wrap_column, self.wrap_mode);
         Some(cx.new(|cx| {
             let mut view = EditorView::new(model, theme, cx);
+            view.wrap_column = wrap_column;
+            view.wrap_mode = wrap_mode;
             view.set_read_only(read_only, cx);
             view.accepts_when_read_only = accepts;
             view.unsavable = unsavable;
@@ -1133,7 +1136,11 @@ impl PaneItem for EditorView {
                 model.set_scroll_off(settings.cursor_surrounding_lines);
                 model.set_cursor_line(settings.cursor_line);
                 model.set_auto_close(settings.auto_close_pairs);
-                let view = cx.new(|cx| EditorView::new(model, theme, cx));
+                let view = cx.new(|cx| {
+                    let mut view = EditorView::new(model, theme, cx);
+                    view.set_wrap_settings(&settings);
+                    view
+                });
                 view.update(cx, |view, cx| place_caret(view, &state, cx));
                 if let Some(backup) = backup {
                     adopt_backup(&view, backup, cx);

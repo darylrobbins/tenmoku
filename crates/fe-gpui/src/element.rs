@@ -765,6 +765,7 @@ impl Element for EditorElement {
                 }
                 false => layout::wrap_width_without_gutter(width, em),
             } - view.wrap_reserve * em;
+            let wrap = view.wrap_limit(wrap, em);
             view.model.fit_wrap_width(wrap.max(em));
             view.model.sync_display();
             view.sync_visual();
@@ -1066,6 +1067,11 @@ impl Element for EditorElement {
         // frame scrolls further, then shifts the rest of the way where layout
         // doesn't scroll so far. Wrapped rows don't scroll, and a long row's
         // limit leaves the inlay out.
+        // Soft-wrapped rows that fit the view don't scroll.
+        let wrap_fits = model
+            .display()
+            .wrap_width()
+            .is_some_and(|width| width <= frame.width - frame.text_left);
         let caret = composition.map(|(_, composition)| composition.selected.end);
         let past_edge = |frame: &Frame<Line>| {
             // A text area narrower than the margin keeps the whole caret in
@@ -1080,7 +1086,7 @@ impl Element for EditorElement {
         // The scroll to keep for the next frame, where this one shifts past it.
         let mut kept_scroll = None;
         if let Some(past) = past_edge(&frame) {
-            if model.display().wrap_width().is_none() {
+            if !wrap_fits {
                 let scrolled = settle(&FrameInput {
                     scroll: Vec2 {
                         x: frame.scroll.x + past,
@@ -1134,7 +1140,7 @@ impl Element for EditorElement {
             let text_width = f64::from(frame.width - frame.text_left);
             let reach = (widest - text_width + f64::from(em) * 4.).max(0.) as f32;
             let wanted = input.scroll.x.min(reach).max(0.);
-            if model.display().wrap_width().is_some() {
+            if wrap_fits {
                 host_x = wanted;
                 if wanted > 0. {
                     kept_scroll = Some(Vec2 {

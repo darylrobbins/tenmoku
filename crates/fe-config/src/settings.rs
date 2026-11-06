@@ -623,6 +623,16 @@ pub struct EditorSettings {
     /// Whether long lines wrap at the window's edge. `alt-z` toggles it per
     /// editor.
     pub soft_wrap: bool,
+    /// The column soft wrap wraps at, 20 to 500, for `wrap_mode` `column` and
+    /// `bounded`; 0 leaves wrapping at the window's edge. Only meaningful
+    /// when `soft_wrap` is on.
+    #[schemars(schema_with = "wrap_column_schema")]
+    pub wrap_column: u32,
+    /// Where soft wrap wraps: `viewport` (the window's edge), `column`
+    /// (`wrap_column` columns whatever the window, so wider text scrolls) or
+    /// `bounded` (the smaller of the two). Only meaningful when `soft_wrap`
+    /// is on, as VS Code's `editor.wordWrap`.
+    pub wrap_mode: WrapMode,
     /// Format a file with its language server before saving it. A server that
     /// doesn't answer within a second is skipped and the file saves unformatted.
     pub format_on_save: bool,
@@ -743,6 +753,38 @@ pub enum InlineDiagnostics {
     Warning,
     /// Every diagnostic's message, information and hints too.
     All,
+}
+
+/// `editor.wrap_column`: 0, or 20 to 500.
+fn wrap_column_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "anyOf": [
+            { "const": 0 },
+            { "minimum": 20, "maximum": 500 }
+        ]
+    })
+}
+
+/// `editor.wrap_mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapMode {
+    /// Wrap at the window's edge.
+    #[default]
+    Viewport,
+    /// Wrap at `wrap_column` columns, however wide the window.
+    Column,
+    /// Wrap at the smaller of the window's edge and `wrap_column` columns.
+    Bounded,
+}
+
+impl EditorSettings {
+    /// `wrap_column` as soft wrap uses it: `None` for 0 (off), else clamped
+    /// to 20..=500.
+    pub fn effective_wrap_column(&self) -> Option<u32> {
+        (self.wrap_column != 0).then(|| self.wrap_column.clamp(20, 500))
+    }
 }
 
 /// `editor.line_numbers`.
@@ -926,6 +968,8 @@ impl Default for EditorSettings {
             line_height: 1.6,
             tab_size: 4,
             soft_wrap: false,
+            wrap_column: 0,
+            wrap_mode: WrapMode::default(),
             format_on_save: false,
             inlay_hints: true,
             semantic_highlighting: true,
